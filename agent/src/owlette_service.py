@@ -525,6 +525,50 @@ class OwletteService(win32serviceutil.ServiceFramework):
             except Exception as e:
                 logging.error(f"An unexpected error occurred while terminating the process: {e}")
 
+    def _refresh_user_token(self):
+        """Re-obtain the console user token, session ID, and environment block.
+
+        Called before each process launch to ensure we have a fresh token for the
+        current interactive session. This handles user logout/login, RDP disconnect,
+        and fast user switching — scenarios where the token obtained at service startup
+        becomes stale and points to a dead or wrong session.
+        """
+        try:
+            session_id = win32ts.WTSGetActiveConsoleSessionId()
+            if session_id == 0xFFFFFFFF:
+                logging.warning("No active console session (headless/locked machine)")
+                self.console_session_id = None
+                self.console_user_token = None
+                self.environment = None
+                return False
+
+            token = win32ts.WTSQueryUserToken(session_id)
+            environment = win32profile.CreateEnvironmentBlock(token, False)
+
+            # Close old token handle to avoid leaking logon sessions
+            if self.console_user_token and self.console_user_token != token:
+                try:
+                    self.console_user_token.Close()
+                except Exception:
+                    pass
+
+            self.console_session_id = session_id
+            self.console_user_token = token
+            self.environment = environment
+
+            if session_id != getattr(self, '_last_logged_session_id', None):
+                logging.info(f"User token refreshed for console session {session_id}")
+                self._last_logged_session_id = session_id
+
+            return True
+
+        except Exception as e:
+            logging.warning(f"Could not obtain console user token: {e}")
+            self.console_session_id = None
+            self.console_user_token = None
+            self.environment = None
+            return False
+
     # Start a python script as a user
     def launch_python_script_as_user(self, script_name, args=None):
         try:
@@ -535,9 +579,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.error(f"Cannot launch script {script_name}: {e}")
                 return False
 
+            # Refresh token to handle session changes since service startup
+            self._refresh_user_token()
+            if not self.console_user_token:
+                logging.error(f"Cannot launch script {script_name}: no interactive user session")
+                return False
+
             self.startup_info.wShowWindow = win32con.SW_HIDE
             command_line = f'"{python_exe}" "{shared_utils.get_path(script_name)}" {args}' if args else f'"{python_exe}" "{shared_utils.get_path(script_name)}"'
-            #logging.info(command_line)
             _, _, pid, _ = win32process.CreateProcessAsUser(self.console_user_token,
                 None,  # Application Name
                 command_line,  # Command Line
@@ -545,7 +594,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 None,
                 0,
                 win32con.NORMAL_PRIORITY_CLASS,
-                self.environment,  # To open in user's self.environment
+                self.environment,
                 None,
                 self.startup_info)
             if 'owlette_tray.py' in script_name:
@@ -591,12 +640,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.error(f"Working directory {cwd} does not exist.")
             return None
 
-        # Start the process via Windows Task Scheduler (schtasks)
-        # CRITICAL: This approach launches the process with svchost.exe (Task Scheduler) as parent,
-        # not the Owlette service. This completely bypasses NSSM's job object management and ensures
-        # the process survives service restarts.
-        #
-        # This is the same proven approach used in the self-update mechanism (lines 1123-1189)
+        # Launch the process as the logged-in user via CreateProcessAsUser.
+        # Token is refreshed before each launch to handle session changes.
 
         # Normalize visibility (backward compatible with Show/Hide)
         if visibility == 'Show':
@@ -676,150 +721,75 @@ WshShell.Run "{vbs_command}", 0, False
         if priority != 'Normal':
             logging.warning(f"Priority '{priority}' is not yet supported - using Normal priority")
 
-        # Generate unique task name
-        task_name = f"OwletteProcess_{process.get('id', 'unknown')}_{int(time.time())}"
+        pid = None
 
-        # Get the logged-in user from console session
-        user_context = None
-        if self.console_session_id is not None:
-            try:
-                # Query the username from the active console session
-                username = win32ts.WTSQuerySessionInformation(
-                    win32ts.WTS_CURRENT_SERVER_HANDLE,
-                    self.console_session_id,
-                    win32ts.WTSUserName
-                )
-                domain = win32ts.WTSQuerySessionInformation(
-                    win32ts.WTS_CURRENT_SERVER_HANDLE,
-                    self.console_session_id,
-                    win32ts.WTSDomainName
-                )
+        # Refresh user token to handle session changes (logout/login, RDP, user switch)
+        self._refresh_user_token()
 
-                if domain and username:
-                    user_context = f"{domain}\\{username}"
-                    logging.info(f"Task will run as: {user_context}")
-                else:
-                    user_context = None
-                    logging.warning("Could not determine user context - task will run as SYSTEM")
-            except Exception as e:
-                logging.error(f"Failed to query user session info: {e}")
-                user_context = None
-        else:
-            logging.debug("No console session available - task will run as SYSTEM")
-
-        try:
-            # Step 1: Create scheduled task
-            from datetime import datetime
-            start_date = datetime.now().strftime('%m/%d/%Y')  # Format: mm/dd/yyyy (required by schtasks)
-
-            create_cmd = [
-                'schtasks', '/Create',
-                '/TN', task_name,
-                '/TR', command,
-                '/SC', 'ONCE',
-                '/SD', start_date,  # Start date in mm/dd/yyyy format
-                '/ST', '00:00',  # Required but overridden by /Run
-                '/F'  # Force create
-            ]
-
-            # Only add /RU if we successfully got user context
-            if user_context:
-                create_cmd.extend(['/RU', user_context, '/RL', 'LIMITED'])
-
-            logging.info(f"Creating scheduled task: {task_name}")
-            logging.info(f"Command: {command}")
-
-            result = subprocess.run(
-                create_cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-
-            if result.returncode != 0:
-                logging.error(f"Failed to create task: {result.stderr}")
-                return None
-
-            logging.info(f"Task created successfully")
-
-            # Step 2: Run the task immediately
-            run_cmd = ['schtasks', '/Run', '/TN', task_name]
-            run_result = subprocess.run(
-                run_cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-
-            if run_result.returncode != 0:
-                logging.warning(f"Task run warning: {run_result.stderr}")
-            else:
-                logging.info(f"Task started successfully")
-
-            # Step 3: Wait for process to launch
-            time.sleep(2)
-
-            # Step 4: Find the launched process by matching executable
-            pid = None
-            exe_name = os.path.basename(exe_path)
-            newest_time = time.time() - 10  # Look for processes created in last 10 seconds
-
-            for proc in psutil.process_iter(['pid', 'name', 'exe', 'create_time']):
-                try:
-                    if proc.info['exe'] and proc.info['exe'].lower() == exe_path.lower():
-                        if proc.info['create_time'] > newest_time:
-                            pid = proc.info['pid']
-                            logging.info(f"Found launched process: PID {pid}")
-                            break
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-
-            # Step 5: Clean up the scheduled task
-            delete_cmd = ['schtasks', '/Delete', '/TN', task_name, '/F']
-            subprocess.run(
-                delete_cmd,
-                capture_output=True,
-                timeout=10
-            )
-            logging.info(f"Cleaned up task: {task_name}")
-
-            # Clean up VBS wrappers after a delay (in background thread)
-            # This prevents race condition where wscript.exe hasn't finished reading the VBS file yet
-            if vbs_cleanup_paths:
-                import threading
-
-                def delayed_vbs_cleanup(paths, delay=10):
-                    """Clean up VBS files after a delay to ensure wscript.exe has finished"""
-                    time.sleep(delay)
-                    for path in paths:
-                        if os.path.exists(path):
-                            try:
-                                os.unlink(path)
-                                logging.debug(f"Cleaned up VBS wrapper: {path}")
-                            except Exception as e:
-                                logging.warning(f"Failed to clean up VBS wrapper {path}: {e}")
-
-                cleanup_thread = threading.Thread(
-                    target=delayed_vbs_cleanup,
-                    args=(vbs_cleanup_paths.copy(),),
-                    daemon=True
-                )
-                cleanup_thread.start()
-                logging.debug(f"Scheduled VBS cleanup for {len(vbs_cleanup_paths)} file(s)")
-
-            if not pid:
-                logging.error(f"Could not find PID for newly launched process")
-                return None
-
-            logging.info(f"Process launched with PID {pid} (via schtasks - survives service restarts)")
-
-        except subprocess.TimeoutExpired:
-            logging.error("schtasks operation timed out")
+        if not self.console_user_token:
+            logging.error("No interactive user session available - cannot launch process")
             return None
+
+        # Launch process as the logged-in user via CreateProcessAsUser.
+        # The token from WTSQueryUserToken is a primary token that carries the correct
+        # session ID, so the process appears on the user's desktop automatically.
+        # CREATE_NEW_PROCESS_GROUP isolates the process from the service's control group.
+        try:
+            startup_info = win32process.STARTUPINFO()
+            startup_info.dwFlags = win32process.STARTF_USESHOWWINDOW
+            if visibility == 'Hidden':
+                startup_info.wShowWindow = win32con.SW_HIDE
+            else:
+                startup_info.wShowWindow = win32con.SW_SHOWNORMAL
+
+            creation_flags = (
+                win32con.NORMAL_PRIORITY_CLASS |
+                win32con.CREATE_NEW_PROCESS_GROUP
+            )
+
+            _, _, proc_pid, _ = win32process.CreateProcessAsUser(
+                self.console_user_token,
+                None,       # Application Name
+                command,    # Command Line
+                None,       # Process Attributes
+                None,       # Thread Attributes
+                0,          # Inherit Handles
+                creation_flags,
+                self.environment,
+                cwd,        # Working Directory
+                startup_info
+            )
+            pid = proc_pid
+            logging.info(f"Process launched with PID {pid} via CreateProcessAsUser")
+
         except Exception as e:
-            logging.error(f"Failed to launch via schtasks: {e}")
+            logging.error(f"CreateProcessAsUser failed: {e}")
             logging.exception("Full traceback:")
             return None
+
+        # Clean up VBS wrappers after a delay (in background thread)
+        # This prevents race condition where wscript.exe hasn't finished reading the VBS file yet
+        if vbs_cleanup_paths:
+            import threading
+
+            def delayed_vbs_cleanup(paths, delay=10):
+                """Clean up VBS files after a delay to ensure wscript.exe has finished"""
+                time.sleep(delay)
+                for path in paths:
+                    if os.path.exists(path):
+                        try:
+                            os.unlink(path)
+                            logging.debug(f"Cleaned up VBS wrapper: {path}")
+                        except Exception as e:
+                            logging.warning(f"Failed to clean up VBS wrapper {path}: {e}")
+
+            cleanup_thread = threading.Thread(
+                target=delayed_vbs_cleanup,
+                args=(vbs_cleanup_paths.copy(),),
+                daemon=True
+            )
+            cleanup_thread.start()
+            logging.debug(f"Scheduled VBS cleanup for {len(vbs_cleanup_paths)} file(s)")
 
         # Get the current Unix timestamp
         self.current_timestamp = int(time.time())
@@ -2059,25 +2029,13 @@ WshShell.Run "{vbs_command}", 0, False
         self.startup_info = win32process.STARTUPINFO()
         self.startup_info.dwFlags = win32process.STARTF_USESHOWWINDOW
 
-        # Get token for logged-in user (with fallback for headless/no-user scenarios)
-        # NOTE: Since we now use schtasks for process launching, this is less critical
-        # If this fails, the service will still work but launch_python_script_as_user will be unavailable
-        try:
-            self.console_session_id = win32ts.WTSGetActiveConsoleSessionId()
-            self.console_user_token = win32ts.WTSQueryUserToken(self.console_session_id)
-            # Get self.environment for logged-in user
-            self.environment = win32profile.CreateEnvironmentBlock(self.console_user_token, False)
-            logging.info("Successfully obtained user token for console session")
-        except Exception as e:
-            # This is expected when:
-            # - No user is logged into the console (server/headless machine)
-            # - Service doesn't have sufficient privileges
-            # - Session ID is invalid
-            logging.warning(f"Could not obtain console user token (expected for headless machines): {e}")
-            logging.info("Service will continue without user token - processes will be launched via schtasks")
-            self.console_session_id = None
-            self.console_user_token = None
-            self.environment = None
+        # Initial user token acquisition. This is refreshed before each process launch
+        # via _refresh_user_token() to handle session changes (logout/login, RDP, user switch).
+        self.console_session_id = None
+        self.console_user_token = None
+        self.environment = None
+        self._last_logged_session_id = None
+        self._refresh_user_token()
 
         logging.info("Service initialization complete")
 

@@ -19,6 +19,7 @@ agent/.venv/
 .vscode/
 .idea/
 .claude/settings.local.json
+.claude/session-edits.json
 .claude/memory/
 .claude/plans/
 *.swp

@@ -38,14 +38,6 @@
           "web/hooks/**/*.ts",
           "web/lib/**/*.ts",
           "web/contexts/**/*.tsx"
-        ],
-        "contentPatterns": [
-          "'use client'",
-          "'use server'",
-          "export default function",
-          "import.*from.*'react'",
-          "import.*from.*'next'",
-          "import.*from.*'@/components/ui'"
         ]
       }
     },
@@ -77,14 +69,6 @@
       "fileTriggers": {
         "pathPatterns": [
           "agent/src/**/*.py"
-        ],
-        "contentPatterns": [
-          "import psutil",
-          "import win32serviceutil",
-          "class.*Service.*win32serviceutil.ServiceFramework",
-          "def SvcDoRun",
-          "from.*firebase_admin",
-          "import.*firebase_client"
         ]
       }
     },
@@ -121,17 +105,10 @@
           "web/contexts/AuthContext.tsx",
           "web/hooks/useFirestore.ts",
           "web/hooks/useDeployments.ts",
-          "agent/src/firebase_client.py"
-        ],
-        "contentPatterns": [
-          "import.*from.*'firebase",
-          "import firebase_admin",
-          "from firebase_admin import",
-          "getFirestore",
-          "firestore\\.",
-          "onSnapshot",
-          "signInWith",
-          "getAuth"
+          "agent/src/firebase_client.py",
+          "agent/src/firestore_rest_client.py",
+          "agent/src/auth_manager.py",
+          "agent/src/connection_manager.py"
         ]
       }
     },
@@ -172,43 +149,52 @@
           "agent/tests/**/*.py",
           "agent/**/*_test.py",
           "agent/**/test_*.py"
-        ],
-        "contentPatterns": [
-          "import.*from.*'@testing-library",
-          "describe\\(",
-          "it\\(",
-          "test\\(",
-          "expect\\(",
-          "import pytest",
-          "def test_",
-          "@pytest"
         ]
       }
     },
 
-    "skill-developer": {
-      "type": "meta",
+    "build-system": {
+      "type": "domain",
       "enforcement": "suggest",
-      "priority": "medium",
-      "description": "Meta-skill for creating new skills",
+      "priority": "high",
+      "description": "Installer build pipeline, Inno Setup, NSSM service management, self-update",
       "promptTriggers": {
         "keywords": [
-          "create skill",
-          "new skill",
-          "write skill",
-          "skill guidelines",
-          "update skill"
+          "installer",
+          "build",
+          "inno setup",
+          "ISCC",
+          "nssm",
+          "package",
+          "deploy agent",
+          "update agent",
+          "self-update",
+          "embedded python",
+          "version bump",
+          "release"
         ],
         "intentPatterns": [
-          "(create|write|add|make|update).*?skill",
-          "(how to|best practice).*?skill"
+          "(build|compile|create|package).*?(installer|agent|release)",
+          "(install|deploy|update|upgrade).*?(agent|service|owlette)",
+          "(how to|best practice).*?(build|installer|deploy|release)",
+          "(fix|debug).*?(build|installer|install|update|nssm)",
+          "(configure|setup).*?(nssm|service|windows service)"
         ]
       },
       "fileTriggers": {
         "pathPatterns": [
-          ".claude/skills/**/*.md"
-        ],
-        "contentPatterns": []
+          "agent/build_installer_full.bat",
+          "agent/build_installer_quick.bat",
+          "agent/owlette_installer.iss",
+          "agent/scripts/*.bat",
+          "agent/src/owlette_updater.py",
+          "agent/src/owlette_runner.py",
+          "agent/src/configure_site.py",
+          "agent/src/installer_utils.py",
+          "agent/VERSION",
+          "VERSION",
+          "scripts/sync-versions.js"
+        ]
       }
     }
   },

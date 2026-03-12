@@ -4,7 +4,7 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. It consists of a Python Windows service (agent) and a Next.js web dashboard with Firebase/Firestore backend.
 
-**Version**: 2.0.54 (see [docs/version-management.md](../docs/version-management.md))
+**Version**: 2.0.55 (see [docs/version-management.md](../docs/version-management.md))
 **License**: GNU General Public License v3.0
 **Repository Type**: Monorepo (web + agent)
 
@@ -68,7 +68,7 @@ Owlette/
 │   │       ├── agent-architecture.md    # Agent internals & state machines
 │   │       ├── installer-build-system.md # Build pipeline & Inno Setup
 │   │       └── codebase-map.md          # Complete component/module inventory
-│   ├── hooks/                    # TypeScript hooks (skills activation, build checker)
+│   ├── hooks/                    # Hooks (skill activation, build checker, file tracking)
 │   ├── commands/                 # Slash commands
 │   ├── agents/                   # Specialized subagents
 │   └── CLAUDE.md                 # This file
@@ -132,10 +132,11 @@ For deeper understanding beyond this file:
 | `skills/resources/agent-architecture.md` | Agent service lifecycle, process state machine, ConnectionManager states, OAuth flow, command handling, IPC |
 | `skills/resources/installer-build-system.md` | Full vs quick build, Inno Setup steps, OAuth registration, NSSM config, self-update, file system layout |
 | `skills/resources/codebase-map.md` | Complete inventory of all web components, hooks, lib files, API routes, agent modules |
-| `skills/backend-dev-guidelines.md` | Agent development patterns, module map, critical do's/don'ts |
-| `skills/frontend-dev-guidelines.md` | Next.js App Router, React 19, TypeScript, shadcn/ui patterns |
-| `skills/firebase-integration.md` | Auth flows, Firestore CRUD, real-time listeners, security rules |
-| `skills/testing-guidelines.md` | Jest + pytest setup, Firebase mocks, test patterns |
+| `skills/backend-dev-guidelines.md` | Agent module map, development patterns, critical do's/don'ts, file paths |
+| `skills/frontend-dev-guidelines.md` | Owlette-specific web patterns, auth/data flow, gotchas |
+| `skills/firebase-integration.md` | Firestore data structure, two-client architecture, command flow |
+| `skills/testing-guidelines.md` | Jest + pytest config, Firebase mocks, test coverage gaps |
+| `skills/build-system.md` | Build pipeline, Inno Setup, NSSM, self-update, version management |
 
 ---
 
@@ -147,13 +148,21 @@ When starting multi-file features or complex work:
 1. Use `/dev-docs` in plan mode to create strategic plan
 2. Use `/create-dev-docs` to generate task tracking files in `dev/active/`
 3. Use `/update-dev-docs` before context compaction to preserve progress
-4. Move to `dev/completed/` when done
+4. Use `/resume-dev-docs` in a new session to restore context and continue
+5. Move to `dev/completed/` when done
 
 Skip for single-file tweaks, docs updates, or small bug fixes.
 
-### Skills Auto-Activation
+### Hooks (configured in `.claude/settings.json`)
 
-Skills auto-activate via `user-prompt-submit` hook based on keywords and file patterns:
+| Hook | Event | Purpose |
+|------|-------|---------|
+| `track-edits.mjs` | PostToolUse | Logs Edit/Write operations to `session-edits.json` |
+| `activate-skills.mjs` | UserPromptSubmit | Matches prompt keywords + recent files → activates relevant skills |
+| `pre-commit-check.mjs` | PreToolUse (Bash) | Blocks `git commit`/`push` if TypeScript or Python errors exist |
+| `check-builds.mjs` | Stop | Runs `tsc --noEmit` (web) / `py_compile` (agent) on edited files |
+
+Skills (in `skills/`) auto-activate based on keywords and recently edited file patterns (rules in `hooks/skill-rules.json`):
 
 | Skill | Triggers |
 |-------|----------|
@@ -161,13 +170,7 @@ Skills auto-activate via `user-prompt-submit` hook based on keywords and file pa
 | `backend-dev-guidelines` | Agent `.py` files, Python keywords |
 | `firebase-integration` | Firebase imports, Firestore operations |
 | `testing-guidelines` | Test files, "test" keyword |
-| `skill-developer` | Creating/updating skills |
-
-### Build Checker (Stop Hook)
-
-After Claude responds, the `stop` hook auto-runs builds on edited files:
-- **Web**: `npm run build` (TypeScript + Next.js)
-- **Agent**: `python -m py_compile src/**/*.py`
+| `build-system` | Build scripts, `.iss`/`.bat` files, installer/release keywords |
 
 ### Slash Commands
 
@@ -176,9 +179,8 @@ After Claude responds, the `stop` hook auto-runs builds on edited files:
 | `/dev-docs` | Create strategic plan (use in plan mode) |
 | `/create-dev-docs` | Convert plan into dev doc files |
 | `/update-dev-docs` | Update dev docs before compaction |
-| `/code-review` | Launch code-architecture-reviewer agent |
+| `/resume-dev-docs` | Resume work from dev docs in new session |
 | `/build-and-fix` | Build both web + agent, fix all errors |
-| `/deploy-web` | Deploy web dashboard to Railway |
 
 ---
 
@@ -199,6 +201,34 @@ All feature work on `dev`. Merge to `main` for production releases. Both auto-de
 **Web (Railway)**: Push to `dev`/`main` triggers auto-deploy. Required env vars: `NEXT_PUBLIC_*` (client) + `FIREBASE_*` (server Admin SDK for OAuth token generation).
 
 **Agent (Windows)**: Build installer via `build_installer_full.bat`, deploy via web dashboard remote deployment or manual installation.
+
+---
+
+## Don'ts / Guardrails
+
+### Files You Must Not Touch
+- `web/components/ui/*` — auto-generated by shadcn/ui, never edit directly
+- `firestore.rules` — version managed independently, don't modify without explicit request
+- `.tokens.enc` / any credential files — never read, log, or commit these
+- `owlette_installer.iss` — Inno Setup script, only modify if you understand the full build pipeline
+
+### Agent-Specific Landmines
+- **Never import `firebase_admin`** in agent code — we use a custom REST client, not the Admin SDK
+- **Never log OAuth tokens** — not even in debug mode, not even partially
+- **Never modify the `firebase` section** of `config.json` during remote config updates — this breaks agent registration
+- **Never use blocking operations** in the 10-second main service loop — it stalls all process monitoring
+- **Never spawn reconnection logic** outside `ConnectionManager` — it has circuit breaker and backoff built in
+
+### Web-Specific
+- **Never call Firestore directly from components** — always go through hooks in `web/hooks/`
+- **Never hardcode colors** — use CSS variables / Tailwind theme tokens for dark mode compatibility
+- **Never add icon libraries** beyond `lucide-react`
+
+### General
+- **Don't push to `main` directly** — all work goes through `dev`, then PR to `main`
+- **Don't create new `docs/*.md` files** without being asked — we have enough docs
+- **Don't install new npm/pip packages** without confirming with the user first
+- **Don't modify `.claude/hooks/` or `.claude/settings.json`** without explicit request — these are infrastructure
 
 ---
 
