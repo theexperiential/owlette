@@ -18,7 +18,9 @@ agent/.venv/
 # IDE
 .vscode/
 .idea/
-.claude/
+.claude/settings.local.json
+.claude/memory/
+.claude/plans/
 *.swp
 *.swo
 *~
@@ -57,6 +59,7 @@ agent/config/firebase-credentials.json
 agent/config/firebase_cache.json
 
 # Temporary/generated files
+nul
 Manage
 *.spec.bak
 hook-*.py

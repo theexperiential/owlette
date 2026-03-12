@@ -1,0 +1,223 @@
+{
+  "skills": {
+    "frontend-dev-guidelines": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "description": "Next.js/React/TypeScript patterns for web dashboard",
+      "promptTriggers": {
+        "keywords": [
+          "frontend",
+          "react",
+          "next",
+          "nextjs",
+          "component",
+          "dashboard",
+          "UI",
+          "interface",
+          "page",
+          "route",
+          "web",
+          "client",
+          "tailwind",
+          "shadcn",
+          "typescript"
+        ],
+        "intentPatterns": [
+          "(create|add|build|make).*?(component|page|route|interface|UI)",
+          "(how to|best practice).*?(react|next|frontend|component)",
+          "(fix|debug).*?(component|page|rendering|UI)",
+          "(style|design).*?(component|page|UI)"
+        ]
+      },
+      "fileTriggers": {
+        "pathPatterns": [
+          "web/app/**/*.tsx",
+          "web/app/**/*.ts",
+          "web/components/**/*.tsx",
+          "web/hooks/**/*.ts",
+          "web/lib/**/*.ts",
+          "web/contexts/**/*.tsx"
+        ],
+        "contentPatterns": [
+          "'use client'",
+          "'use server'",
+          "export default function",
+          "import.*from.*'react'",
+          "import.*from.*'next'",
+          "import.*from.*'@/components/ui'"
+        ]
+      }
+    },
+
+    "backend-dev-guidelines": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "description": "Python Windows service patterns for agent",
+      "promptTriggers": {
+        "keywords": [
+          "backend",
+          "python",
+          "agent",
+          "service",
+          "process",
+          "monitor",
+          "windows",
+          "psutil",
+          "pywin32"
+        ],
+        "intentPatterns": [
+          "(create|add|build).*?(service|process|monitor)",
+          "(how to|best practice).*?(python|backend|service|windows)",
+          "(fix|debug).*?(service|process|crash|agent)",
+          "(monitor|track|manage).*?process"
+        ]
+      },
+      "fileTriggers": {
+        "pathPatterns": [
+          "agent/src/**/*.py"
+        ],
+        "contentPatterns": [
+          "import psutil",
+          "import win32serviceutil",
+          "class.*Service.*win32serviceutil.ServiceFramework",
+          "def SvcDoRun",
+          "from.*firebase_admin",
+          "import.*firebase_client"
+        ]
+      }
+    },
+
+    "firebase-integration": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "description": "Firebase Auth and Firestore integration patterns",
+      "promptTriggers": {
+        "keywords": [
+          "firebase",
+          "firestore",
+          "auth",
+          "authentication",
+          "real-time",
+          "realtime",
+          "listener",
+          "sync",
+          "cloud",
+          "database"
+        ],
+        "intentPatterns": [
+          "(connect|integrate|setup).*?(firebase|firestore)",
+          "(how to|best practice).*?(firebase|firestore|auth)",
+          "(read|write|update|delete|query).*?(firestore|firebase)",
+          "(listen|subscribe|watch).*?(firestore|real-time)",
+          "(sign in|login|logout|authenticate).*?(firebase|auth)"
+        ]
+      },
+      "fileTriggers": {
+        "pathPatterns": [
+          "web/lib/firebase.ts",
+          "web/contexts/AuthContext.tsx",
+          "web/hooks/useFirestore.ts",
+          "web/hooks/useDeployments.ts",
+          "agent/src/firebase_client.py"
+        ],
+        "contentPatterns": [
+          "import.*from.*'firebase",
+          "import firebase_admin",
+          "from firebase_admin import",
+          "getFirestore",
+          "firestore\\.",
+          "onSnapshot",
+          "signInWith",
+          "getAuth"
+        ]
+      }
+    },
+
+    "testing-guidelines": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "medium",
+      "description": "Testing patterns for Jest/pytest",
+      "promptTriggers": {
+        "keywords": [
+          "test",
+          "testing",
+          "jest",
+          "pytest",
+          "spec",
+          "unit test",
+          "integration test",
+          "e2e",
+          "mock",
+          "coverage"
+        ],
+        "intentPatterns": [
+          "(write|create|add).*?test",
+          "(how to|best practice).*?test",
+          "(run|execute).*?test",
+          "(mock|stub|spy).*?(function|component|service)"
+        ]
+      },
+      "fileTriggers": {
+        "pathPatterns": [
+          "web/__tests__/**/*.ts",
+          "web/__tests__/**/*.tsx",
+          "web/**/*.test.ts",
+          "web/**/*.test.tsx",
+          "web/**/*.spec.ts",
+          "web/**/*.spec.tsx",
+          "agent/tests/**/*.py",
+          "agent/**/*_test.py",
+          "agent/**/test_*.py"
+        ],
+        "contentPatterns": [
+          "import.*from.*'@testing-library",
+          "describe\\(",
+          "it\\(",
+          "test\\(",
+          "expect\\(",
+          "import pytest",
+          "def test_",
+          "@pytest"
+        ]
+      }
+    },
+
+    "skill-developer": {
+      "type": "meta",
+      "enforcement": "suggest",
+      "priority": "medium",
+      "description": "Meta-skill for creating new skills",
+      "promptTriggers": {
+        "keywords": [
+          "create skill",
+          "new skill",
+          "write skill",
+          "skill guidelines",
+          "update skill"
+        ],
+        "intentPatterns": [
+          "(create|write|add|make|update).*?skill",
+          "(how to|best practice).*?skill"
+        ]
+      },
+      "fileTriggers": {
+        "pathPatterns": [
+          ".claude/skills/**/*.md"
+        ],
+        "contentPatterns": []
+      }
+    }
+  },
+
+  "activationConfig": {
+    "maxSkillsPerPrompt": 3,
+    "priorityOrder": ["high", "medium", "low"],
+    "requireExactKeywordMatch": false,
+    "caseSensitive": false,
+    "fileEditLookbackMinutes": 10
+  }
+}
