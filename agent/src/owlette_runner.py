@@ -6,6 +6,7 @@ import sys
 import os
 import datetime
 import logging
+import threading
 import time
 import signal
 
@@ -80,7 +81,13 @@ except ImportError as e:
 
 if __name__ == '__main__':
     # Initialize logging
-    shared_utils.initialize_logging("service")
+    log_level = shared_utils.get_log_level_from_config()
+    shared_utils.initialize_logging("service", level=log_level)
+
+    # Wire global exception hooks (after logging is configured)
+    from owlette_service import _handle_unhandled_exception, _handle_thread_exception
+    sys.excepthook = _handle_unhandled_exception
+    threading.excepthook = _handle_thread_exception
 
     logging.info("="*70)
     logging.info("OWLETTE SERVICE STARTING (NSSM MODE)")
@@ -102,6 +109,24 @@ if __name__ == '__main__':
             # Upgrade config to latest version
             logging.info(f"Config path: {shared_utils.CONFIG_PATH}")
             shared_utils.upgrade_config()
+
+            # --- STARTUP HEALTH PROBE ---
+            try:
+                from health_probe import HealthProbe
+                _api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
+                self._health_state = HealthProbe(
+                    config_path=shared_utils.CONFIG_PATH,
+                    api_base=_api_base,
+                ).run()
+                logging.info(f"Startup health probe: status={self._health_state.status}, results={self._health_state.probe_results}")
+                if not self._health_state.is_ok():
+                    logging.error(f"Health probe failed: {self._health_state.error_code} — {self._health_state.error_message}")
+            except Exception as e:
+                logging.error(f"Health probe error: {e}")
+                self._health_state = None
+
+            self._auth_manager = None
+            self._api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
 
             # Initialize all attributes from OwletteService.__init__
             self.is_alive = True
@@ -170,6 +195,12 @@ if __name__ == '__main__':
         # We need to bind it to our mock service instance
         _service_instance = object.__new__(OwletteService)
         _service_instance.__dict__.update(mock_service.__dict__)
+
+        # Write early health status so tray can show alerts before Firebase connects
+        try:
+            _service_instance._write_service_status_early()
+        except Exception as e:
+            logging.error(f"Failed to write early service status: {e}")
 
         # NOW register signal handlers (after _service_instance exists)
         signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
