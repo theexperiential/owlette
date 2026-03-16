@@ -524,19 +524,47 @@ If you add a database (PostgreSQL, Redis):
 2. Railway provides connection string as environment variable
 3. Access in Next.js via `process.env.DATABASE_URL`
 
-### Background Jobs
+### Background Jobs / Cron Health Checks
 
-Next.js API routes can run background tasks:
+Owlette uses a Railway Cron Job to poll all machines every 5 minutes and send email alerts when a machine goes offline without reporting in. The cron calls `GET /api/cron/health-check` with a shared secret header.
 
-```typescript
-// app/api/cron/route.ts
-export async function GET() {
-  // Background job logic
-  return Response.json({ status: 'ok' });
-}
+#### Setup (do this for both dev and prod Railway services)
+
+**Step 1 — Add `CRON_SECRET` environment variable**
+
+Generate a random secret locally:
+```bash
+# Windows (Python — already installed with Owlette)
+python -c "import secrets; print(secrets.token_hex(32))"
+
+# macOS/Linux
+openssl rand -hex 32
 ```
+Add it as a Railway variable named `CRON_SECRET` in the **Variables** tab of your web service. Railway automatically shares variables with Cron Job services in the same project.
 
-Use Railway Cron (or external service) to trigger periodically.
+**Step 2 — Enable the built-in Railway cron schedule**
+
+Railway has a built-in cron scheduler on every service — no separate service or third-party tool needed.
+
+1. In the Railway dashboard, open your **owlette-dev** (or **owlette-prod**) service
+2. Go to **Settings** tab and search for **"Cron Schedule"**
+3. Enter the schedule: `*/5 * * * *`
+   > ⚠️ Use spaces between the 5 fields — `*/5****` (no spaces) will fail with "Expected 5 values, but got 1"
+4. Save — Railway will call your service's start command on this schedule
+
+> **Note:** The Railway cron runs the service's start command on schedule. The `GET /api/cron/health-check` endpoint handles the actual work; Railway just wakes the service on the schedule.
+
+**What it does:**
+- Scans all `sites/{siteId}/machines/{machineId}` docs for stale heartbeats (> 3 minutes old)
+- Sends one grouped email per site via Resend when offline machines are found
+- Writes `health.lastCronAlertAt` to Firestore to prevent repeat emails within 1 hour per machine
+
+**Env vars required for this feature:**
+| Variable | Purpose |
+|----------|---------|
+| `CRON_SECRET` | Shared secret for cron auth (generate with Python: `secrets.token_hex(32)`) |
+| `RESEND_API_KEY` | Already required for other emails |
+| `ADMIN_EMAIL_PROD` / `ADMIN_EMAIL_DEV` | Fallback recipient if no site users found |
 
 ---
 
@@ -558,6 +586,8 @@ Use this checklist for every deployment:
 - [ ] Deployment branch configured (usually `main`)
 - [ ] All 6 Firebase environment variables added
 - [ ] `NODE_ENV=production` verified (auto-set by railway.toml)
+- [ ] `CRON_SECRET` variable added (use `python -c "import secrets; print(secrets.token_hex(32))"` on Windows)
+- [ ] Cron schedule configured (Railway Settings → "Cron Schedule" field → `*/5 * * * *`) with `X-Cron-Secret` header passed via env var
 
 ### First Deployment
 - [ ] Deployment triggered (automatic or manual)

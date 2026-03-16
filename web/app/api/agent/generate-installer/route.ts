@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { ApiAuthError, assertUserHasSiteAccess, requireSession } from '@/lib/apiAuth.server';
+import logger from '@/lib/logger';
 
 /**
  * POST /api/agent/generate-installer
@@ -62,11 +63,7 @@ export async function POST(request: NextRequest) {
       status: 'pending',
     });
 
-    // Log registration code generation (for auditing)
-    console.log(
-      `Registration code generated: site=${siteId}, user=${userId}, ` +
-      `expires=${expiresAt.toISOString()}`
-    );
+    logger.info(`Registration code generated: site=${siteId}, user=${userId}, expires=${expiresAt.toISOString()}`);
 
     return NextResponse.json(
       {

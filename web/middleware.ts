@@ -63,8 +63,11 @@ export async function middleware(request: NextRequest) {
       // Check if there's a redirect parameter
       const redirectParam = request.nextUrl.searchParams.get('redirect');
 
-      if (redirectParam && redirectParam.startsWith('/')) {
-        // Redirect to the intended destination
+      if (redirectParam &&
+          redirectParam.startsWith('/') &&
+          !redirectParam.startsWith('//') &&
+          protectedPaths.some(path => redirectParam.startsWith(path))) {
+        // Only allow redirects to known protected paths (prevents open redirect attacks)
         return NextResponse.redirect(new URL(redirectParam, request.url));
       }
 

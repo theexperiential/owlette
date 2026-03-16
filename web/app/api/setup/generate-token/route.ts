@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, assertUserHasSiteAccess, requireSession } from '@/lib/apiAuth.server';
+import logger from '@/lib/logger';
 
 /**
  * POST /api/setup/generate-token
@@ -49,7 +50,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       used: false,
     });
 
-    console.log(`Generated registration code for site ${siteId} by user ${userId}`);
+    logger.info(`Generated registration code for site ${siteId} by user ${userId}`);
 
     return NextResponse.json(
       {

@@ -36,13 +36,14 @@ const nextConfig: NextConfig = {
           },
           {
             // Content Security Policy - controls what resources can be loaded
-            // SECURITY UPDATE: Removed 'unsafe-eval' (not required by Next.js 13+ App Router)
-            // Keeping 'unsafe-inline' for compatibility (can be replaced with nonces in future)
+            // Note: 'unsafe-inline' in style-src is required by Tailwind CSS
+            // Note: 'unsafe-inline' in script-src is required by Google OAuth sign-in popups
+            // TODO: Replace with nonce-based CSP via Next.js middleware for stronger XSS protection
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com https://*.gstatic.com", // Removed unsafe-eval, Google OAuth requires Google domains
-              "style-src 'self' 'unsafe-inline'", // Tailwind requires unsafe-inline
+              "script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com https://*.gstatic.com", // Google OAuth requires inline scripts
+              "style-src 'self' 'unsafe-inline'", // Tailwind CSS requires unsafe-inline
               "img-src 'self' data: https:",
               "font-src 'self' data:",
               "connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com", // Firebase endpoints + Google OAuth
@@ -50,6 +51,8 @@ const nextConfig: NextConfig = {
               "frame-ancestors 'none'", // Equivalent to X-Frame-Options: DENY
               "base-uri 'self'",
               "form-action 'self'",
+              "object-src 'none'", // Prevent plugin-based attacks (Flash, Java applets)
+              "upgrade-insecure-requests", // Force HTTPS for all resources
             ].join('; '),
           },
         ],

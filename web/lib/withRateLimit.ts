@@ -25,12 +25,13 @@ import {
   tokenExchangeRateLimit,
   tokenRefreshRateLimit,
   userRateLimit,
+  agentAlertRateLimit,
   getClientIp,
   checkRateLimit,
   getRateLimitHeaders,
 } from './rateLimit';
 
-type RateLimitStrategy = 'auth' | 'tokenExchange' | 'tokenRefresh' | 'user';
+type RateLimitStrategy = 'auth' | 'tokenExchange' | 'tokenRefresh' | 'user' | 'agentAlert';
 type IdentifierType = 'ip' | 'user';
 
 interface RateLimitOptions {
@@ -56,6 +57,7 @@ export function withRateLimit(
       options.strategy === 'tokenExchange' ? tokenExchangeRateLimit :
       options.strategy === 'tokenRefresh' ? tokenRefreshRateLimit :
       options.strategy === 'user' ? userRateLimit :
+      options.strategy === 'agentAlert' ? agentAlertRateLimit :
       null;
 
     // Determine identifier (IP or user ID)
@@ -98,7 +100,6 @@ export function withRateLimit(
     }
 
     // Rate limit passed, call the handler
-    console.log(`[RateLimit] Request allowed for ${options.strategy}:`, identifier, `(${result.remaining}/${result.limit} remaining)`);
 
     const response = await handler(request);
 
@@ -113,12 +114,16 @@ export function withRateLimit(
 }
 
 /**
- * Extract user ID from session cookie or Firebase token
+ * Extract user ID from session cookie
  * Use this as the getUserId function for user-based rate limiting
  */
 export async function getUserIdFromSession(request: NextRequest): Promise<string | null> {
-  // This would integrate with your session management
-  // For now, return null (will fall back to IP-based)
-  // TODO: Implement actual session reading
-  return null;
+  try {
+    const { getSessionFromRequest } = await import('@/lib/sessionManager.server');
+    const session = await getSessionFromRequest(request);
+    return session.userId || null;
+  } catch {
+    // Session reading failed — fall back to IP-based rate limiting
+    return null;
+  }
 }

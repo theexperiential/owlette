@@ -1,0 +1,197 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { FieldValue } from 'firebase-admin/firestore';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { getSiteAdminEmails } from '@/lib/adminUtils.server';
+import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
+
+/**
+ * GET /api/cron/health-check
+ *
+ * Railway HTTP cron endpoint that scans all machines for stale heartbeats
+ * and sends email alerts to site admins when machines appear offline.
+ *
+ * Authentication: X-Cron-Secret header must match CRON_SECRET env var.
+ *
+ * Deduplication: Writes health.lastCronAlertAt to Firestore after sending,
+ * preventing repeat emails within ALERT_COOLDOWN_MS (default: 1 hour).
+ *
+ * Railway cron config (set in Railway dashboard):
+ *   Schedule:  * /5 * * * *   (every 5 minutes)
+ *   URL:       GET https://<your-app>/api/cron/health-check
+ *   Header:    X-Cron-Secret: <CRON_SECRET value>
+ */
+
+// A machine is considered offline if its heartbeat is older than this
+const OFFLINE_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
+
+// Don't re-alert for the same machine within this window
+const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+
+interface OfflineAlert {
+  siteId: string;
+  machineId: string;
+  lastHeartbeatMs: number;
+  heartbeatAgeMinutes: number;
+}
+
+function buildOfflineEmail(siteId: string, alerts: OfflineAlert[]): string {
+  const rows = alerts
+    .map(
+      (a) => `
+      <tr>
+        <td style="padding:6px;background:#f5f5f5;">${a.machineId}</td>
+        <td style="padding:6px;">${a.heartbeatAgeMinutes} minute(s) ago</td>
+      </tr>`
+    )
+    .join('');
+
+  return `
+    <h2 style="color:#d32f2f;">⚠️ Owlette Machines Offline</h2>
+    <p>${alerts.length} machine(s) in site <strong>${siteId}</strong> appear to be offline.</p>
+    <table style="border-collapse:collapse;width:100%;max-width:500px;">
+      <thead>
+        <tr>
+          <th style="padding:6px;text-align:left;background:#e0e0e0;">Machine</th>
+          <th style="padding:6px;text-align:left;background:#e0e0e0;">Last Seen</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p style="margin-top:16px;">
+      Please check each machine and verify that the Owlette service is running.
+    </p>
+    <hr>
+    <p style="color:#666;font-size:12px;">
+      Environment: ${ENV_LABEL} &nbsp;|&nbsp;
+      This is an automated alert from Owlette. Alerts are sent at most once per hour per machine.
+    </p>
+  `;
+}
+
+export async function GET(request: NextRequest) {
+  // Validate cron secret
+  const cronSecret = request.headers.get('x-cron-secret');
+  if (!process.env.CRON_SECRET || cronSecret !== process.env.CRON_SECRET) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const db = getAdminDb();
+  const now = Date.now();
+  const allAlerts: OfflineAlert[] = [];
+  let sitesChecked = 0;
+  let machinesChecked = 0;
+
+  try {
+    const sitesSnap = await db.collection('sites').get();
+    sitesChecked = sitesSnap.size;
+
+    for (const siteDoc of sitesSnap.docs) {
+      const siteId = siteDoc.id;
+
+      const machinesSnap = await db
+        .collection('sites')
+        .doc(siteId)
+        .collection('machines')
+        .get();
+
+      machinesChecked += machinesSnap.size;
+
+      for (const machineDoc of machinesSnap.docs) {
+        const machine = machineDoc.data();
+
+        // Only alert for machines that were previously online
+        if (machine.online !== true) continue;
+
+        const lastHeartbeatMs: number =
+          (machine.lastHeartbeat as FirebaseFirestore.Timestamp | null)?.toMillis?.() ?? 0;
+        const heartbeatAge = now - lastHeartbeatMs;
+
+        if (heartbeatAge <= OFFLINE_THRESHOLD_MS) continue;
+
+        // Check dedup cooldown
+        const lastAlertedMs: number =
+          (machine.health?.lastCronAlertAt as FirebaseFirestore.Timestamp | null)?.toMillis?.() ?? 0;
+
+        if (now - lastAlertedMs <= ALERT_COOLDOWN_MS) continue;
+
+        // Mark as alerted to prevent duplicate emails this hour
+        await machineDoc.ref.set(
+          { health: { lastCronAlertAt: FieldValue.serverTimestamp() } },
+          { merge: true }
+        );
+
+        allAlerts.push({
+          siteId,
+          machineId: machineDoc.id,
+          lastHeartbeatMs,
+          heartbeatAgeMinutes: Math.floor(heartbeatAge / 60000),
+        });
+      }
+    }
+  } catch (error) {
+    console.error('[cron/health-check] Error scanning machines:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+
+  if (allAlerts.length === 0) {
+    return NextResponse.json({
+      ok: true,
+      sitesChecked,
+      machinesChecked,
+      alertsSent: 0,
+    });
+  }
+
+  // Group alerts by site and send one email per site
+  const alertsBySite = new Map<string, OfflineAlert[]>();
+  for (const alert of allAlerts) {
+    const existing = alertsBySite.get(alert.siteId) ?? [];
+    existing.push(alert);
+    alertsBySite.set(alert.siteId, existing);
+  }
+
+  const resendClient = getResend();
+  let alertsSent = 0;
+
+  for (const [siteId, siteAlerts] of alertsBySite) {
+    try {
+      const recipients = await getSiteAdminEmails(siteId);
+      if (recipients.length === 0) {
+        console.warn(`[cron/health-check] No recipients for site ${siteId}`);
+        continue;
+      }
+
+      if (!resendClient) {
+        console.warn('[cron/health-check] Resend not configured — skipping email');
+        continue;
+      }
+
+      const result = await resendClient.emails.send({
+        from: FROM_EMAIL,
+        to: recipients,
+        subject: `[${ENV_LABEL}] [ALERT] ${siteAlerts.length} machine(s) offline in ${siteId}`,
+        html: buildOfflineEmail(siteId, siteAlerts),
+      });
+
+      if (result.error) {
+        console.error(`[cron/health-check] Resend error for site ${siteId}:`, result.error);
+      } else {
+        alertsSent++;
+        console.log(
+          `[cron/health-check] Alert sent for site ${siteId}: ` +
+            `${siteAlerts.length} machine(s) offline, ${recipients.length} recipient(s)`
+        );
+      }
+    } catch (error) {
+      console.error(`[cron/health-check] Failed to send alert for site ${siteId}:`, error);
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    sitesChecked,
+    machinesChecked,
+    offlineMachines: allAlerts.length,
+    alertsSent,
+  });
+}

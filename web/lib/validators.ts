@@ -45,7 +45,8 @@ export const validatePassword = (password: string): ValidationResult => {
  * Validates email format
  */
 export const validateEmail = (email: string): ValidationResult => {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  // Require at least 2-char local part, 2-char domain, and 2-char TLD
+  const emailRegex = /^[^\s@]{2,}@[^\s@]{2,}\.[^\s@]{2,}$/;
 
   if (!email || email.trim() === '') {
     return {

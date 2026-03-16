@@ -146,11 +146,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({ status: response.status }));
         console.error('Failed to send user creation notification:', error);
-      } else {
-        const result = await response.json();
-        console.log('✅ User creation notification sent:', result);
       }
     } catch (error) {
       // Don't fail user creation if notification fails
