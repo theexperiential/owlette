@@ -137,7 +137,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   <Button
                     variant="outline"
                     size="sm"
-                    className="w-full border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer lg:px-2 xl:px-3"
+                    className="w-full border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer lg:px-2 xl:px-3"
                   >
                     <ArrowLeft className="h-4 w-4 lg:mr-0 xl:mr-2" />
                     <span className="lg:hidden xl:inline">{getBackLabel()}</span>
@@ -166,7 +166,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           ${
                             isActive
                               ? 'bg-accent-cyan/15 text-accent-cyan border border-accent-cyan/30'
-                              : 'text-foreground hover:bg-muted hover:text-foreground'
+                              : 'text-foreground hover:bg-accent hover:text-foreground'
                           }
                         `}
                       >

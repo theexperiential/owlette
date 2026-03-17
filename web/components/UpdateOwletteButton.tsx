@@ -135,7 +135,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
           <span className="ml-2 text-xs">to v{latestVersion}</span>
         )}
         {totalMachinesNeedingUpdate > 0 && (
-          <Badge variant="destructive" className="ml-2">
+          <Badge className="ml-2 bg-orange-600 text-white">
             {totalMachinesNeedingUpdate}
           </Badge>
         )}

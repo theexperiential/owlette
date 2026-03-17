@@ -271,7 +271,7 @@ export default function UserManagementPage() {
                           <DropdownMenuTrigger asChild>
                             <Button
                               variant="ghost"
-                              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
                             >
                               <MoreVertical className="h-4 w-4" />
                             </Button>
@@ -279,7 +279,7 @@ export default function UserManagementPage() {
                           <DropdownMenuContent align="end" className="bg-card border-border">
                             <DropdownMenuItem
                               onClick={() => handleOpenManageSites(user.uid, user.email, user.role, user.sites || [])}
-                              className="text-foreground hover:bg-muted cursor-pointer focus:bg-muted focus:text-foreground"
+                              className="text-foreground hover:bg-accent cursor-pointer focus:bg-accent focus:text-foreground"
                             >
                               <Settings className="h-4 w-4 mr-2" />
                               Manage Sites
@@ -287,7 +287,7 @@ export default function UserManagementPage() {
                             <DropdownMenuItem
                               onClick={() => handleOpenRoleChangeDialog(user.uid, user.email, user.role)}
                               disabled={updatingUser === user.uid || user.uid === currentUser?.uid && user.role === 'admin'}
-                              className="text-foreground hover:bg-muted cursor-pointer focus:bg-muted focus:text-foreground"
+                              className="text-foreground hover:bg-accent cursor-pointer focus:bg-accent focus:text-foreground"
                             >
                               {updatingUser === user.uid ? (
                                 <>
@@ -389,7 +389,7 @@ export default function UserManagementPage() {
             <Button
               variant="outline"
               onClick={() => setRoleChangeDialogOpen(false)}
-              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
+              className="border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
             >
               Cancel
             </Button>
@@ -434,7 +434,7 @@ export default function UserManagementPage() {
             <Button
               variant="outline"
               onClick={() => setDeleteConfirmDialogOpen(false)}
-              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
+              className="border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
             >
               Cancel
             </Button>

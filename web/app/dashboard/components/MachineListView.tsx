@@ -304,7 +304,7 @@ export function MachineRow({
                             <div className="flex items-center gap-2 mb-1">
                               <Cog className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                               <span className="text-white font-medium truncate select-text">{process.name}</span>
-                              <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted hover:bg-muted' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-muted hover:bg-muted' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
+                              <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted hover:bg-muted' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-600 text-slate-200' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
                                 {!machine.online ? 'UNKNOWN' : process.status}
                               </Badge>
                             </div>

@@ -4,10 +4,9 @@ import React from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ChevronRight, Settings, ChevronsUpDown, LogOut, Shield } from 'lucide-react';
+import { ChevronDown, Settings, LogOut, Shield, Check } from 'lucide-react';
 import Image from 'next/image';
 import { getUserInitials, getUserShortName, getUserFirstName } from '@/lib/userUtils';
 
@@ -38,143 +37,141 @@ export function PageHeader({
   const router = useRouter();
   const { user, signOut, isAdmin } = useAuth();
 
+  const currentSiteName = sites.find(s => s.id === currentSiteId)?.name ?? 'Select site';
+
   return (
     <header className="border-b border-border bg-background">
-      <div className="mx-auto flex h-14 sm:h-16 max-w-screen-2xl items-center justify-between px-2 sm:px-4 gap-1 sm:gap-2 md:gap-4">
-        <div className="flex items-center gap-1 sm:gap-2 md:gap-3 min-w-0 flex-1">
-          {/* App Logo and Name */}
-          <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
-            <Image src="/owlette-icon.png" alt="Owlette" width={20} height={20} className="sm:w-8 sm:h-8" />
-            <h1 className="text-base sm:text-xl font-bold text-white hidden md:block">Owlette</h1>
+      <div className="mx-auto flex h-14 max-w-screen-2xl items-center justify-between px-3 md:px-6">
+        {/* Left: Logo + Breadcrumb navigation */}
+        <nav className="flex items-center gap-1.5 min-w-0">
+          {/* App Logo */}
+          <div className="flex items-center gap-2 flex-shrink-0 mr-1">
+            <Image src="/owlette-icon.png" alt="Owlette" width={24} height={24} />
+            <span className="text-base font-semibold text-foreground hidden md:block">Owlette</span>
           </div>
 
-          {/* Site Selector */}
+          {/* Breadcrumb: Site > Page */}
           {sites.length > 0 && currentSiteId && onSiteChange && (
             <>
-              <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground flex-shrink-0 hidden lg:block" />
-              <div className="flex items-stretch border border-border bg-secondary rounded-md overflow-hidden flex-shrink-0 min-w-0">
-                <Select value={currentSiteId} onValueChange={onSiteChange}>
-                  <SelectTrigger className="w-[100px] sm:w-[120px] md:w-[160px] lg:w-[200px] border-0 bg-transparent text-white font-semibold cursor-pointer text-xs sm:text-xs md:text-sm focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none">
-                    <SelectValue placeholder="Select site" />
-                  </SelectTrigger>
-                  <SelectContent className="border-border bg-secondary">
-                    {sites.map((site) => (
-                      <SelectItem
-                        key={site.id}
-                        value={site.id}
-                        className="text-white focus:bg-accent focus:text-white"
+              <span className="text-muted-foreground/60 text-lg select-none">/</span>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer truncate max-w-[140px] md:max-w-[200px]">
+                    <span className="truncate">{currentSiteName}</span>
+                    <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="border-border bg-secondary w-64">
+                  {sites.map((site) => (
+                    <DropdownMenuItem
+                      key={site.id}
+                      onClick={() => onSiteChange(site.id)}
+                      className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer flex items-center justify-between"
+                    >
+                      <span className="truncate">{site.name}</span>
+                      {site.id === currentSiteId && <Check className="h-4 w-4 text-accent-cyan flex-shrink-0" />}
+                    </DropdownMenuItem>
+                  ))}
+                  {onManageSites && (
+                    <>
+                      <DropdownMenuSeparator className="bg-border" />
+                      <DropdownMenuItem
+                        onClick={onManageSites}
+                        className="text-muted-foreground focus:bg-accent focus:text-foreground cursor-pointer"
                       >
-                        {site.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {onManageSites && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={onManageSites}
-                    className="h-auto px-1 sm:px-1.5 md:px-2 text-muted-foreground hover:text-white hover:bg-muted cursor-pointer border-l border-border flex-shrink-0"
-                  >
-                    <Settings className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
-                  </Button>
-                )}
-              </div>
+                        <Settings className="mr-2 h-4 w-4" />
+                        Manage Sites
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           )}
 
-          {/* Breadcrumb separator */}
-          <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground flex-shrink-0 hidden lg:block" />
+          <span className="text-muted-foreground/60 text-lg select-none">/</span>
 
-          {/* Navigation Menu - Breadcrumb style */}
+          {/* Page Selector */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="h-7 sm:h-8 md:h-10 px-1.5 sm:px-2 md:px-3 border-border bg-secondary text-xs sm:text-xs md:text-sm text-white hover:text-white hover:bg-secondary cursor-pointer flex-shrink-0">
-                <span className="hidden md:inline">{currentPage}</span>
-                <span className="md:hidden truncate max-w-[60px] sm:max-w-[80px]">{currentPage === 'Dashboard' ? 'Dash' : currentPage === 'Deploy Software' ? 'Deploy' : currentPage === 'Logs' ? 'Logs' : 'Proj'}</span>
-                <ChevronsUpDown className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 ml-0.5 sm:ml-1 flex-shrink-0" />
-              </Button>
+              <button className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer">
+                <span className="hidden sm:inline">{currentPage}</span>
+                <span className="sm:hidden">{currentPage === 'Dashboard' ? 'Dashboard' : currentPage === 'Deploy Software' ? 'Deploy' : currentPage === 'Logs' ? 'Logs' : 'Projects'}</span>
+                <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
+              </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="border-border bg-secondary w-80">
+            <DropdownMenuContent align="start" className="border-border bg-secondary w-72">
               <DropdownMenuItem
                 onClick={() => router.push('/dashboard')}
-                className="text-white focus:bg-accent focus:text-white cursor-pointer py-4 px-4 flex flex-col items-start gap-1"
+                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
               >
-                <span className="font-semibold text-base">Dashboard</span>
-                <span className="text-sm text-muted-foreground font-normal">
-                  Monitor machines, view status, and manage processes across your sites
+                <span className="font-medium">Dashboard</span>
+                <span className="text-xs text-muted-foreground font-normal">
+                  Monitor machines and manage processes
                 </span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => router.push('/deployments')}
-                className="text-white focus:bg-accent focus:text-white cursor-pointer py-4 px-4 flex flex-col items-start gap-1"
+                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
               >
-                <span className="font-semibold text-base">Deploy Software</span>
-                <span className="text-sm text-muted-foreground font-normal">
-                  Install software across multiple machines simultaneously
+                <span className="font-medium">Deploy Software</span>
+                <span className="text-xs text-muted-foreground font-normal">
+                  Install software across machines
                 </span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => router.push('/projects')}
-                className="text-white focus:bg-accent focus:text-white cursor-pointer py-4 px-4 flex flex-col items-start gap-1"
+                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
               >
-                <span className="font-semibold text-base">Distribute Projects</span>
-                <span className="text-sm text-muted-foreground font-normal">
-                  Share TouchDesigner projects and files to managed machines
+                <span className="font-medium">Distribute Projects</span>
+                <span className="text-xs text-muted-foreground font-normal">
+                  Share projects and files to machines
                 </span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => router.push('/logs')}
-                className="text-white focus:bg-accent focus:text-white cursor-pointer py-4 px-4 flex flex-col items-start gap-1"
+                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
               >
-                <span className="font-semibold text-base">Logs</span>
-                <span className="text-sm text-muted-foreground font-normal">
-                  Monitor process events and system activities
+                <span className="font-medium">Logs</span>
+                <span className="text-xs text-muted-foreground font-normal">
+                  Monitor events and system activities
                 </span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        </div>
+        </nav>
 
-        <div className="flex items-center gap-1 sm:gap-2 md:gap-4 flex-shrink-0">
-          {/* Optional action button (e.g., Download, New Deployment) */}
+        {/* Right: Actions + User */}
+        <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
           {actionButton}
 
           {/* User Menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="flex items-center gap-0.5 sm:gap-1 md:gap-2 h-auto py-1 sm:py-1.5 md:py-2 px-1 sm:px-2 md:px-3 hover:bg-secondary cursor-pointer">
-                <Avatar className="h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8">
+              <button className="inline-flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-secondary transition-colors cursor-pointer">
+                <Avatar className="h-7 w-7">
                   <AvatarFallback className="bg-accent-cyan text-gray-900 text-xs font-medium">
                     {user ? getUserInitials(user) : '?'}
                   </AvatarFallback>
                 </Avatar>
                 {user?.displayName && (
-                  <>
-                    {/* lg only: First name only (e.g., "Dylan") */}
-                    <span className="text-xs sm:text-sm text-white hidden lg:inline xl:hidden">{getUserFirstName(user)}</span>
-                    {/* xl only: First name + last initial (e.g., "Dylan R.") */}
-                    <span className="text-xs sm:text-sm text-white hidden xl:inline 2xl:hidden">{getUserShortName(user)}</span>
-                    {/* 2xl+: Full name (e.g., "Dylan Roscover") */}
-                    <span className="text-xs sm:text-sm text-white hidden 2xl:inline">{user.displayName}</span>
-                  </>
+                  <span className="text-sm text-foreground hidden lg:block">{getUserShortName(user)}</span>
                 )}
-                <ChevronsUpDown className="h-3 w-3 text-muted-foreground hidden sm:block" />
-              </Button>
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground hidden sm:block" />
+              </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56 border-border bg-secondary">
-              <div className="px-2 py-3 text-sm">
+              <div className="px-3 py-2.5">
                 {user?.displayName && (
-                  <p className="font-medium text-white mb-1">{user.displayName}</p>
+                  <p className="text-sm font-medium text-foreground">{user.displayName}</p>
                 )}
-                <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+                <p className="text-xs text-muted-foreground truncate mt-0.5">{user?.email}</p>
               </div>
-              <DropdownMenuSeparator className="bg-accent" />
+              <DropdownMenuSeparator className="bg-border" />
               {isAdmin && (
                 <DropdownMenuItem
                   onClick={() => router.push('/admin/installers')}
-                  className="text-white focus:bg-accent focus:text-white cursor-pointer"
+                  className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
                 >
                   <Shield className="mr-2 h-4 w-4" />
                   Admin Panel
@@ -183,7 +180,7 @@ export function PageHeader({
               {onAccountSettings && (
                 <DropdownMenuItem
                   onClick={onAccountSettings}
-                  className="text-white focus:bg-accent focus:text-white cursor-pointer"
+                  className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
                 >
                   <Settings className="mr-2 h-4 w-4" />
                   Account Settings
@@ -191,7 +188,7 @@ export function PageHeader({
               )}
               <DropdownMenuItem
                 onClick={signOut}
-                className="text-white focus:bg-accent focus:text-white cursor-pointer"
+                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
               >
                 <LogOut className="mr-2 h-4 w-4" />
                 Sign out

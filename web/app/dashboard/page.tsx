@@ -84,6 +84,10 @@ export default function DashboardPage() {
   const [removeMachineDialogOpen, setRemoveMachineDialogOpen] = useState(false);
   const [machineToRemove, setMachineToRemove] = useState<{ id: string; name: string; isOnline: boolean } | null>(null);
 
+  // Kill Process Confirmation state
+  const [killConfirmOpen, setKillConfirmOpen] = useState(false);
+  const [killTarget, setKillTarget] = useState<{ machineId: string; processId: string; processName: string } | null>(null);
+
   // Metrics Detail Panel state (replaces top stats cards when active)
   const [detailPanel, setDetailPanel] = useState<DetailPanelState | null>(null);
 
@@ -259,14 +263,21 @@ export default function DashboardPage() {
     }
   };
 
-  const handleKillProcess = async (machineId: string, processId: string, processName: string) => {
-    console.log('handleKillProcess called:', { machineId, processId, processName });
+  const handleKillProcess = (machineId: string, processId: string, processName: string) => {
+    setKillTarget({ machineId, processId, processName });
+    setKillConfirmOpen(true);
+  };
+
+  const confirmKillProcess = async () => {
+    if (!killTarget) return;
+    const { machineId, processId, processName } = killTarget;
+    setKillConfirmOpen(false);
+    setKillTarget(null);
     try {
       await killProcess(machineId, processId, processName);
-      console.log('killProcess completed successfully');
       toast.success(`Kill command sent for "${processName}"`);
     } catch (error: any) {
-      console.error('handleKillProcess error:', error);
+      console.error('confirmKillProcess error:', error);
       toast.error(error.message || 'Failed to kill process');
     }
   };
@@ -525,7 +536,7 @@ export default function DashboardPage() {
 
       {/* Main content */}
       {/* Subtle top glow for readability over dot grid */}
-      <div className="pointer-events-none fixed inset-x-0 top-14 sm:top-16 h-48 z-0" style={{ background: 'linear-gradient(to bottom, oklch(0.20 0.03 250 / 0.7), transparent)' }} />
+      <div className="pointer-events-none fixed inset-x-0 top-14 h-48 z-0" style={{ background: 'linear-gradient(to bottom, oklch(0.20 0.03 250 / 0.7), transparent)' }} />
 
       <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -1016,6 +1027,33 @@ export default function DashboardPage() {
           onConfirmRemove={handleConfirmRemoveMachine}
         />
       )}
+
+      {/* Kill Process Confirmation Dialog */}
+      <Dialog open={killConfirmOpen} onOpenChange={setKillConfirmOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Kill Process</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to kill <span className="font-semibold text-foreground">{killTarget?.processName}</span>? This will immediately terminate the process.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setKillConfirmOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmKillProcess}
+            >
+              <Square className="h-4 w-4 mr-2" />
+              Kill Process
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

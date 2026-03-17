@@ -130,8 +130,11 @@ export default function Setup2FAPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 to-gray-800 p-4">
-      <Card className="w-full max-w-2xl">
+    <div className="min-h-screen flex items-center justify-center p-4 relative">
+      {/* Grid background */}
+      <div className="absolute inset-0 dot-grid opacity-30" />
+      <div className="absolute inset-0 blueprint-grid opacity-15" />
+      <Card className="relative z-10 w-full max-w-2xl border-border bg-card">
         <CardHeader>
           <CardTitle>Set Up Two-Factor Authentication</CardTitle>
           <CardDescription>
@@ -141,8 +144,8 @@ export default function Setup2FAPage() {
         <CardContent>
           {step === 'setup' && (
             <div className="space-y-6">
-              <div className="text-sm text-gray-600 space-y-2">
-                <p className="font-semibold">Step 1: Scan QR Code</p>
+              <div className="text-sm text-muted-foreground space-y-2">
+                <p className="font-semibold text-foreground">Step 1: Scan QR Code</p>
                 <p>Open your authenticator app (Google Authenticator, Authy, etc.) and scan this QR code:</p>
               </div>
 
@@ -159,7 +162,7 @@ export default function Setup2FAPage() {
               )}
 
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-gray-600">Manual Entry Code:</p>
+                <p className="text-sm font-semibold text-muted-foreground">Manual Entry Code:</p>
                 <div className="flex gap-2">
                   <Input
                     value={secret}
@@ -174,7 +177,7 @@ export default function Setup2FAPage() {
                     Copy
                   </Button>
                 </div>
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-muted-foreground">
                   If you cannot scan the QR code, enter this code manually in your authenticator app.
                 </p>
               </div>
@@ -182,7 +185,7 @@ export default function Setup2FAPage() {
               <div className="space-y-2">
                 <Button
                   onClick={() => setStep('verify')}
-                  className="w-full"
+                  className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                 >
                   Continue to Verification
                 </Button>
@@ -200,8 +203,8 @@ export default function Setup2FAPage() {
 
           {step === 'verify' && (
             <form onSubmit={handleVerify} className="space-y-6">
-              <div className="text-sm text-gray-600 space-y-2">
-                <p className="font-semibold">Step 2: Verify Setup</p>
+              <div className="text-sm text-muted-foreground space-y-2">
+                <p className="font-semibold text-foreground">Step 2: Verify Setup</p>
                 <p>Enter the 6-digit code from your authenticator app to verify:</p>
               </div>
 
@@ -221,7 +224,7 @@ export default function Setup2FAPage() {
                 <Button
                   type="submit"
                   disabled={isSubmitting || verificationCode.length !== 6}
-                  className="w-full"
+                  className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                 >
                   {isSubmitting ? 'Verifying...' : 'Verify & Enable 2FA'}
                 </Button>
@@ -249,13 +252,13 @@ export default function Setup2FAPage() {
 
           {step === 'backup' && (
             <div className="space-y-6">
-              <div className="text-sm text-gray-600 space-y-2">
-                <p className="font-semibold text-red-600">Step 3: Save Backup Codes</p>
+              <div className="text-sm text-muted-foreground space-y-2">
+                <p className="font-semibold text-red-400">Step 3: Save Backup Codes</p>
                 <p>
                   Save these backup codes in a secure location. You can use them to access your account
                   if you lose access to your authenticator app.
                 </p>
-                <p className="text-red-600 font-semibold">
+                <p className="text-red-400 font-semibold">
                   These codes will only be shown once!
                 </p>
               </div>
@@ -274,7 +277,7 @@ export default function Setup2FAPage() {
               <div className="space-y-2">
                 <Button
                   onClick={handleFinish}
-                  className="w-full"
+                  className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                 >
                   I've Saved My Codes
                 </Button>

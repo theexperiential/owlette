@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, CheckCircle2, XCircle, Clock, Loader2, Trash2, X, MoreVertical, RefreshCw } from 'lucide-react';
+import { Plus, CheckCircle2, XCircle, Clock, Loader2, Trash2, X, MoreVertical, RefreshCw, Package, PlayCircle, Archive } from 'lucide-react';
 import DeploymentDialog from '@/components/DeploymentDialog';
 import UninstallDialog from '@/components/UninstallDialog';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
@@ -239,28 +239,11 @@ export default function DeploymentsPage() {
         onSiteCreated={(siteId) => setCurrentSiteId(siteId)}
       />
 
+      {/* Subtle top glow for readability */}
+      <div className="pointer-events-none fixed inset-x-0 top-14 h-48 z-0" style={{ background: 'linear-gradient(to bottom, oklch(0.20 0.03 250 / 0.7), transparent)' }} />
+
       {/* Main content */}
-      <main className="mx-auto max-w-screen-2xl p-3 md:p-4">
-        <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex-1">
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-1">Software Deployments</h2>
-            <p className="text-sm md:text-base text-muted-foreground">
-              Deploy software installers across your machines
-            </p>
-          </div>
-
-          <div className="flex-shrink-0 flex gap-2">
-            <UpdateOwletteButton siteId={currentSiteId} machines={machines} />
-            <Button
-              onClick={() => setDeployDialogOpen(true)}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              New Deployment
-            </Button>
-          </div>
-        </div>
-
+      <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
         {/* Dialogs */}
         <DeploymentDialog
           open={deployDialogOpen}
@@ -293,109 +276,114 @@ export default function DeploymentsPage() {
           variant="destructive"
         />
 
-        {/* Quick Stats */}
-        <div className="mb-6 grid gap-2 md:gap-4 grid-cols-2 md:grid-cols-4 animate-in fade-in duration-300">
-          <Card className="border-border bg-card">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-foreground">Total Deployments</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-foreground">{deployments.length}</div>
-            </CardContent>
-          </Card>
+        {/* Section header with inline stats */}
+        <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="flex items-center gap-6 md:gap-8">
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">Deployments</h2>
 
-          <Card className="border-border bg-card">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-foreground">In Progress</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-foreground">
-                {deployments.filter(d => d.status === 'in_progress').length}
+            <div className="flex items-center gap-6 md:gap-8">
+              <div className="flex items-center gap-2.5">
+                <div className={`rounded-md p-1.5 ${deployments.length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
+                  <Package className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className="text-xl font-bold text-foreground">{deployments.length}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">Total</p>
+                </div>
               </div>
-            </CardContent>
-          </Card>
 
-          <Card className="border-border bg-card">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-foreground">Completed</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-foreground">
-                {deployments.filter(d => d.status === 'completed').length}
+              <div className="h-8 w-px bg-border" />
+
+              <div className="flex items-center gap-2.5">
+                <div className={`rounded-md p-1.5 ${deployments.filter(d => d.status === 'in_progress').length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
+                  <PlayCircle className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className={`text-xl font-bold ${deployments.filter(d => d.status === 'in_progress').length > 0 ? 'text-accent-cyan' : 'text-foreground'}`}>{deployments.filter(d => d.status === 'in_progress').length}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">In Progress</p>
+                </div>
               </div>
-            </CardContent>
-          </Card>
 
-          <Card className="border-border bg-card">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-foreground">Templates</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-foreground">{templates.length}</div>
-            </CardContent>
-          </Card>
+              <div className="h-8 w-px bg-border" />
+
+              <div className="flex items-center gap-2.5">
+                <div className="rounded-md p-1.5 bg-muted text-muted-foreground">
+                  <Archive className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className="text-xl font-bold text-foreground">{templates.length}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">Templates</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <UpdateOwletteButton siteId={currentSiteId} machines={machines} />
+            <Button
+              onClick={() => setDeployDialogOpen(true)}
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              New Deployment
+            </Button>
+          </div>
         </div>
 
         {/* Deployments List */}
-        <div className="space-y-4 animate-in fade-in duration-300">
+        <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
           {deploymentsLoading ? (
-            <Card className="border-border bg-card">
-              <CardContent className="p-8 text-center">
-                <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
-                <p className="mt-2 text-muted-foreground">Loading deployments...</p>
-              </CardContent>
-            </Card>
+            <div className="p-8 text-center">
+              <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
+              <p className="mt-2 text-muted-foreground">Loading deployments...</p>
+            </div>
           ) : deployments.length === 0 ? (
-            <Card className="border-border bg-card">
-              <CardHeader>
-                <CardTitle className="text-foreground">No Deployments Yet</CardTitle>
-                <CardDescription className="text-muted-foreground">
-                  Create your first deployment to install software across your machines
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button
-                  onClick={() => setDeployDialogOpen(true)}
-                  className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  New Deployment
-                </Button>
-              </CardContent>
-            </Card>
-          ) : (
-            deployments.map((deployment) => (
-              <Card
-                key={deployment.id}
-                className="border-border bg-card cursor-pointer hover:border-border transition-colors"
-                onClick={() => {
-                  // Don't collapse/expand if user is selecting text
-                  const selection = window.getSelection();
-                  if (selection && selection.toString().length > 0) {
-                    return;
-                  }
-                  setSelectedDeploymentId(deployment.id === selectedDeploymentId ? null : deployment.id);
-                }}
+            <div className="p-8 text-center">
+              <p className="text-foreground font-medium mb-1">No Deployments Yet</p>
+              <p className="text-sm text-muted-foreground mb-4">Create your first deployment to install software across your machines</p>
+              <Button
+                onClick={() => setDeployDialogOpen(true)}
+                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                size="sm"
               >
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+                <Plus className="h-4 w-4 mr-1" />
+                New Deployment
+              </Button>
+            </div>
+          ) : (
+            <div className="divide-y divide-border">
+              {deployments.map((deployment) => (
+                <div key={deployment.id}>
+                  <div
+                    className="flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer"
+                    onClick={() => {
+                      const selection = window.getSelection();
+                      if (selection && selection.toString().length > 0) return;
+                      setSelectedDeploymentId(deployment.id === selectedDeploymentId ? null : deployment.id);
+                    }}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
                       {getStatusIcon(deployment.status)}
-                      <div className="space-y-2">
-                        <CardTitle className="text-foreground select-text">{deployment.name}</CardTitle>
-                        <CardDescription className="text-muted-foreground select-text">
-                          {deployment.installer_name}
-                        </CardDescription>
+                      <div className="min-w-0">
+                        <span className="text-foreground font-medium select-text">{deployment.name}</span>
+                        <p className="text-xs text-muted-foreground select-text truncate">{deployment.installer_name}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {(() => {
-                        // Collect error messages from all failed targets
-                        const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed' && t.error);
-                        const errorMessages = failedTargets.map((t: any) => `${t.machineId}: ${t.error}`).join('\n');
-                        return getStatusBadge(deployment.status, errorMessages || undefined);
-                      })()}
-                      <span className="text-xs text-muted-foreground">
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <div className="w-[90px] flex justify-end">
+                        {(() => {
+                          const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed' && t.error);
+                          const errorMessages = failedTargets.map((t: any) => `${t.machineId}: ${t.error}`).join('\n');
+                          return getStatusBadge(deployment.status, errorMessages || undefined);
+                        })()}
+                      </div>
+                      <span className="text-xs text-muted-foreground hidden sm:block w-[150px] text-right">
                         {new Date(deployment.createdAt).toLocaleString()}
                       </span>
                       <DropdownMenu>
@@ -409,14 +397,14 @@ export default function DeploymentsPage() {
                             <MoreVertical className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="border-border bg-muted">
+                        <DropdownMenuContent align="end" className="border-border bg-secondary">
                           {deployment.targets.some((t: any) => t.status === 'failed') && (
                             <DropdownMenuItem
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleRetryDeployment(deployment);
                               }}
-                              className="text-foreground focus:bg-muted focus:text-foreground cursor-pointer"
+                              className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
                             >
                               <RefreshCw className="h-4 w-4 mr-2" />
                               Retry Failed
@@ -430,7 +418,7 @@ export default function DeploymentsPage() {
                                 setUninstallDeploymentId(deployment.id);
                                 setUninstallDialogOpen(true);
                               }}
-                              className="text-foreground focus:bg-muted focus:text-foreground cursor-pointer"
+                              className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
                             >
                               <Trash2 className="h-4 w-4 mr-2" />
                               Uninstall Software
@@ -451,64 +439,67 @@ export default function DeploymentsPage() {
                       </DropdownMenu>
                     </div>
                   </div>
-                </CardHeader>
 
-                {selectedDeploymentId === deployment.id && (
-                  <CardContent className="space-y-4 border-t border-border pt-4">
-                    <div className="grid gap-3 text-sm">
-                      <div>
-                        <div className="text-muted-foreground mb-1">Installer URL:</div>
-                        <div className="text-foreground select-text break-all">{deployment.installer_url}</div>
-                      </div>
-                      <div>
-                        <div className="text-muted-foreground mb-1">Silent Flags:</div>
-                        <div className="text-foreground select-text break-all">{deployment.silent_flags || 'None'}</div>
-                      </div>
-                      {deployment.verify_path && (
-                        <div>
-                          <div className="text-muted-foreground mb-1">Verify Path:</div>
-                          <div className="text-foreground select-text break-all">{deployment.verify_path}</div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div>
-                      <h4 className="text-sm font-medium text-foreground mb-2">Target Machines ({deployment.targets.length})</h4>
-                      <div className="space-y-2">
-                        {deployment.targets.map((target) => (
-                          <div key={target.machineId} className="flex items-center justify-between p-2 rounded bg-muted">
-                            <span className="text-foreground select-text">{target.machineId}</span>
-                            <div className="flex items-center gap-2">
-                              {target.progress !== undefined && (target.status === 'downloading' || target.status === 'installing') && (
-                                <span className="text-xs text-muted-foreground">{target.progress}%</span>
-                              )}
-                              {getStatusBadge(target.status, target.error)}
-                              {(target.status === 'pending' || target.status === 'downloading' || target.status === 'installing') && (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={async () => {
-                                    try {
-                                      await cancelDeployment(deployment.id, target.machineId, deployment.installer_name);
-                                      // Status will update automatically via Firestore listener
-                                    } catch (error: any) {
-                                      console.error('Failed to cancel deployment:', error);
-                                    }
-                                  }}
-                                  className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
-                                >
-                                  <X className="h-4 w-4" />
-                                </Button>
-                              )}
-                            </div>
+                  {selectedDeploymentId === deployment.id && (
+                    <div className="border-t border-border">
+                      <div className="mx-4 my-3 rounded-lg border border-border bg-background p-4 space-y-4">
+                        <div className="grid gap-2 text-sm">
+                          <div className="flex gap-2">
+                            <span className="text-muted-foreground flex-shrink-0 w-24">Installer URL</span>
+                            <span className="text-foreground select-text break-all">{deployment.installer_url}</span>
                           </div>
-                        ))}
+                          {deployment.silent_flags && (
+                            <div className="flex gap-2">
+                              <span className="text-muted-foreground flex-shrink-0 w-24">Silent Flags</span>
+                              <span className="text-foreground select-text break-all font-mono text-xs leading-relaxed">{deployment.silent_flags}</span>
+                            </div>
+                          )}
+                          {deployment.verify_path && (
+                            <div className="flex gap-2">
+                              <span className="text-muted-foreground flex-shrink-0 w-24">Verify Path</span>
+                              <span className="text-foreground select-text break-all">{deployment.verify_path}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div>
+                          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Targets ({deployment.targets.length})</h4>
+                          <div className="space-y-1.5">
+                            {deployment.targets.map((target) => (
+                              <div key={target.machineId} className="flex items-center justify-between py-1.5 px-3 rounded border border-border/40 bg-background/50">
+                                <span className="text-foreground text-sm select-text">{target.machineId}</span>
+                                <div className="flex items-center gap-2">
+                                  {target.progress !== undefined && (target.status === 'downloading' || target.status === 'installing') && (
+                                    <span className="text-xs text-muted-foreground">{target.progress}%</span>
+                                  )}
+                                  {getStatusBadge(target.status, target.error)}
+                                  {(target.status === 'pending' || target.status === 'downloading' || target.status === 'installing') && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={async () => {
+                                        try {
+                                          await cancelDeployment(deployment.id, target.machineId, deployment.installer_name);
+                                        } catch (error: any) {
+                                          console.error('Failed to cancel deployment:', error);
+                                        }
+                                      }}
+                                      className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </CardContent>
-                )}
-              </Card>
-            ))
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </main>

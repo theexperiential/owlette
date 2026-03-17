@@ -128,7 +128,7 @@ export default function SystemPresetsPage() {
               className={
                 selectedCategory === 'All'
                   ? 'bg-accent-cyan text-gray-900 cursor-pointer'
-                  : 'border-border bg-card text-foreground hover:bg-muted hover:text-foreground cursor-pointer'
+                  : 'border-border bg-card text-foreground hover:bg-accent hover:text-foreground cursor-pointer'
               }
             >
               All ({presets.length})
@@ -144,7 +144,7 @@ export default function SystemPresetsPage() {
                   className={
                     selectedCategory === category
                       ? 'bg-accent-cyan text-gray-900 cursor-pointer'
-                      : 'border-border bg-card text-foreground hover:bg-muted hover:text-foreground cursor-pointer'
+                      : 'border-border bg-card text-foreground hover:bg-accent hover:text-foreground cursor-pointer'
                   }
                 >
                   {category} ({count})
@@ -244,7 +244,7 @@ export default function SystemPresetsPage() {
                               variant="outline"
                               size="sm"
                               onClick={() => handleEdit(preset)}
-                              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
+                              className="border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
                               title="Edit"
                             >
                               <Pencil className="h-4 w-4" />
@@ -318,7 +318,7 @@ export default function SystemPresetsPage() {
                       variant="outline"
                       size="sm"
                       onClick={() => handleEdit(preset)}
-                      className="flex-1 border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
+                      className="flex-1 border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
                     >
                       <Pencil className="h-4 w-4 mr-2" />
                       Edit
@@ -363,7 +363,7 @@ export default function SystemPresetsPage() {
                   setPresetToDelete(null);
                 }}
                 disabled={deleting}
-                className="border-border bg-background text-foreground hover:bg-muted cursor-pointer"
+                className="border-border bg-background text-foreground hover:bg-accent cursor-pointer"
               >
                 Cancel
               </Button>

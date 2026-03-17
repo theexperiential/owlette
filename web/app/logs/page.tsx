@@ -10,7 +10,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { collection, query, orderBy, limit, getDocs, where, startAfter, Query, DocumentData, Timestamp, onSnapshot, writeBatch, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
-import { ChevronLeft, ChevronRight, Filter, X, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -434,14 +434,60 @@ export default function LogsPage() {
         onOpenChange={setAccountSettingsOpen}
       />
 
+      {/* Subtle top glow for readability */}
+      <div className="pointer-events-none fixed inset-x-0 top-14 h-48 z-0" style={{ background: 'linear-gradient(to bottom, oklch(0.20 0.03 250 / 0.7), transparent)' }} />
+
       {/* Main content */}
-      <main className="mx-auto max-w-screen-2xl p-3 md:p-4">
+      <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
+        {/* Section header with inline stats */}
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex-1">
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-1">Event Logs</h2>
-            <p className="text-sm md:text-base text-muted-foreground">Monitor process events and system activities</p>
+          <div className="flex items-center gap-6 md:gap-8">
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">Logs</h2>
+
+            <div className="flex items-center gap-6 md:gap-8">
+              <div className="flex items-center gap-2.5">
+                <div className={`rounded-md p-1.5 ${logs.length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
+                  <ScrollText className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className="text-xl font-bold text-foreground">{logs.length}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">Events</p>
+                </div>
+              </div>
+
+              <div className="h-8 w-px bg-border" />
+
+              <div className="flex items-center gap-2.5">
+                <div className={`rounded-md p-1.5 ${logs.filter(l => l.level === 'warning').length > 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-muted text-muted-foreground'}`}>
+                  <AlertTriangle className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className={`text-xl font-bold ${logs.filter(l => l.level === 'warning').length > 0 ? 'text-yellow-400' : 'text-foreground'}`}>{logs.filter(l => l.level === 'warning').length}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">Warnings</p>
+                </div>
+              </div>
+
+              <div className="h-8 w-px bg-border" />
+
+              <div className="flex items-center gap-2.5">
+                <div className={`rounded-md p-1.5 ${logs.filter(l => l.level === 'error').length > 0 ? 'bg-red-500/10 text-red-400' : 'bg-muted text-muted-foreground'}`}>
+                  <AlertCircle className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className={`text-xl font-bold ${logs.filter(l => l.level === 'error').length > 0 ? 'text-red-400' : 'text-foreground'}`}>{logs.filter(l => l.level === 'error').length}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">Errors</p>
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="flex gap-2 flex-shrink-0">
+
+          <div className="flex items-center gap-2 flex-shrink-0">
             <Button
               variant="outline"
               onClick={() => setShowFilters(!showFilters)}
@@ -453,7 +499,8 @@ export default function LogsPage() {
             <Button
               onClick={() => setShowClearDialog(true)}
               disabled={isClearing || logs.length === 0}
-              className="gap-2 bg-muted border border-red-400 text-red-400 hover:bg-red-900 hover:border-red-200 hover:text-red-200 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+              variant="outline"
+              className="gap-2 border-red-400/60 text-red-400 hover:bg-red-950/50 hover:text-red-300 transition-colors cursor-pointer"
             >
               <Trash2 className="w-4 h-4" />
               {isClearing ? 'Clearing...' : 'Clear Logs'}
@@ -543,12 +590,12 @@ export default function LogsPage() {
               logs.map((log) => (
                 <div
                   key={log.id}
-                  className="px-4 py-2 hover:bg-muted/50 transition-colors border-b border-border last:border-b-0"
+                  className="px-4 py-3 hover:bg-muted/50 transition-colors border-b border-border last:border-b-0"
                 >
                   <div className="flex items-center justify-between gap-4 text-sm">
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
-                      {getLevelBadge(log.level)}
-                      <span className="text-foreground font-medium whitespace-nowrap">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <div className="w-[52px] flex-shrink-0">{getLevelBadge(log.level)}</div>
+                      <span className="text-foreground font-medium whitespace-nowrap w-[140px] flex-shrink-0">
                         {formatAction(log.action)}
                       </span>
                       <span className="text-muted-foreground">•</span>

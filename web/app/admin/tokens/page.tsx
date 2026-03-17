@@ -207,7 +207,7 @@ export default function TokensPage() {
               size="icon"
               onClick={fetchTokens}
               disabled={!selectedSiteId || loading}
-              className="border-border text-foreground hover:bg-muted hover:text-foreground"
+              className="border-border text-foreground hover:bg-accent hover:text-foreground"
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
@@ -323,7 +323,7 @@ export default function TokensPage() {
             <Button
               variant="outline"
               onClick={() => setRevokeDialogOpen(false)}
-              className="bg-card border-border hover:bg-muted"
+              className="bg-card border-border hover:bg-accent"
             >
               Cancel
             </Button>
@@ -357,7 +357,7 @@ export default function TokensPage() {
             <Button
               variant="outline"
               onClick={() => setRevokeAllDialogOpen(false)}
-              className="bg-card border-border hover:bg-muted"
+              className="bg-card border-border hover:bg-accent"
             >
               Cancel
             </Button>

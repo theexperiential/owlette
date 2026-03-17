@@ -167,7 +167,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
             Update your account information
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 py-4">
+        <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto pr-1">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="settings-firstName" className="text-white">First Name</Label>
@@ -261,13 +261,19 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                 <p className="text-sm text-white">Two-Factor Authentication</p>
                 <p className="text-xs text-muted-foreground">Add an extra layer of security to your account</p>
               </div>
-              <Link
-                href="/setup-2fa"
-                onClick={() => onOpenChange(false)}
-                className="text-sm text-accent-cyan hover:text-accent-cyan"
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+                className="h-8 cursor-pointer border-border text-accent-cyan hover:bg-muted hover:text-accent-cyan"
               >
-                Manage
-              </Link>
+                <Link
+                  href="/setup-2fa"
+                  onClick={() => onOpenChange(false)}
+                >
+                  Manage
+                </Link>
+              </Button>
             </div>
           </div>
 
@@ -279,7 +285,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
               <Label className="text-white">Change Password</Label>
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 onClick={() => {
                   setShowPasswordSection(!showPasswordSection);
@@ -290,7 +296,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                     setConfirmPassword('');
                   }
                 }}
-                className="h-8 cursor-pointer text-xs text-accent-cyan hover:text-accent-cyan hover:bg-muted"
+                className="h-8 cursor-pointer border-border text-accent-cyan hover:text-accent-cyan hover:bg-muted"
                 disabled={loading}
               >
                 {showPasswordSection ? 'Cancel' : 'Update Password'}
@@ -405,9 +411,8 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
             </div>
             <Button
               type="button"
-              variant="outline"
               onClick={() => setShowDeleteConfirm(true)}
-              className="w-full cursor-pointer border-red-800 bg-red-900/20 text-red-400 hover:bg-red-900/40 hover:text-red-300"
+              className="w-full cursor-pointer bg-red-600 hover:bg-red-700 text-white"
               disabled={loading || deleting}
             >
               Delete Account
