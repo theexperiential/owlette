@@ -57,7 +57,7 @@ export default function TestEmailPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 lg:p-10 max-w-screen-2xl mx-auto space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Email Test</h1>
         <p className="text-muted-foreground mt-2">
@@ -76,7 +76,7 @@ export default function TestEmailPage() {
           <Button
             onClick={sendTestEmail}
             disabled={isSending}
-            className="w-full sm:w-auto"
+            className="w-full sm:w-auto bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
           >
             {isSending ? 'Sending...' : 'Send Test Email'}
           </Button>

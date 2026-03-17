@@ -25,7 +25,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { formatStorageRange } from '@/lib/storageUtils';
@@ -38,17 +38,17 @@ import type { MetricType } from '@/components/charts';
 // Memoized table header to prevent flickering on data updates
 export const MemoizedTableHeader = memo(() => {
   return (
-    <TableHeader className="sticky top-0 z-10 bg-slate-900">
-      <TableRow className="border-slate-800">
-        <TableHead className="text-slate-200 w-8"></TableHead>
-        <TableHead className="text-slate-200 w-[100px]">Hostname</TableHead>
-        <TableHead className="text-slate-200 w-[72px]">Status</TableHead>
-        <TableHead className="text-slate-200 w-[160px]">CPU</TableHead>
-        <TableHead className="text-slate-200 w-[120px]">Memory</TableHead>
-        <TableHead className="text-slate-200 w-[100px]">Disk</TableHead>
-        <TableHead className="text-slate-200 w-[200px]">GPU</TableHead>
-        <TableHead className="text-slate-200 w-[150px]">Last Heartbeat</TableHead>
-        <TableHead className="text-slate-200 w-8"></TableHead>
+    <TableHeader className="sticky top-0 z-10 bg-background">
+      <TableRow className="border-border">
+        <TableHead className="text-foreground w-8"></TableHead>
+        <TableHead className="text-foreground w-[100px]">Hostname</TableHead>
+        <TableHead className="text-foreground w-[72px]">Status</TableHead>
+        <TableHead className="text-foreground w-[160px]">CPU</TableHead>
+        <TableHead className="text-foreground w-[120px]">Memory</TableHead>
+        <TableHead className="text-foreground w-[100px]">Disk</TableHead>
+        <TableHead className="text-foreground w-[200px]">GPU</TableHead>
+        <TableHead className="text-foreground w-[150px]">Last Heartbeat</TableHead>
+        <TableHead className="text-foreground w-8"></TableHead>
       </TableRow>
     </TableHeader>
   );
@@ -119,20 +119,23 @@ export function MachineRow({
   return (
     <>
       <TableRow
-        className="border-slate-800 hover:bg-slate-800/30 cursor-pointer"
+        className="border-border hover:bg-secondary/30 cursor-pointer"
         onClick={handleRowClick}
       >
         <TableCell className="w-8 p-2">
           <div className="flex items-center justify-center">
             {isExpanded ? (
-              <ChevronUp className="h-4 w-4 text-slate-300" />
+              <ChevronUp className="h-4 w-4 text-foreground/70" />
             ) : (
-              <ChevronDown className="h-4 w-4 text-slate-300" />
+              <ChevronDown className="h-4 w-4 text-foreground/70" />
             )}
           </div>
         </TableCell>
         <TableCell className="w-[100px] font-medium text-white select-text overflow-hidden">
-          <span className="truncate block">{machine.machineId}</span>
+          <div className="flex items-center gap-2">
+            <Monitor className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+            <span className="truncate">{machine.machineId}</span>
+          </div>
         </TableCell>
         <TableCell className="w-[72px] p-2">
           <Badge className={`text-xs select-none ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
@@ -144,7 +147,7 @@ export function MachineRow({
           className="text-white p-0 w-[160px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('cpu'); }}
         >
-          <div className="relative cursor-pointer hover:bg-slate-700/50 transition-colors overflow-hidden">
+          <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
             <div className="opacity-80">
               <SparklineChart data={sparklineData.cpu} color="cpu" height={52} loading={sparklineData.loading} />
             </div>
@@ -152,7 +155,7 @@ export function MachineRow({
             <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
               {machine.metrics?.cpu ? (
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs text-slate-400 truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
+                  <div className="text-xs text-muted-foreground truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
                     {machine.metrics.cpu.name || 'Unknown CPU'}
                   </div>
                   <div className="text-sm font-semibold whitespace-nowrap">
@@ -173,7 +176,7 @@ export function MachineRow({
           className="text-white p-0 w-[120px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('memory'); }}
         >
-          <div className="relative cursor-pointer hover:bg-slate-700/50 transition-colors overflow-hidden">
+          <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
             <div className="opacity-80">
               <SparklineChart data={sparklineData.memory} color="memory" height={52} loading={sparklineData.loading} />
             </div>
@@ -182,7 +185,7 @@ export function MachineRow({
               {machine.metrics?.memory ? (
                 <div className="min-w-0">
                   <div className="text-sm font-semibold">{machine.metrics.memory.percent}%</div>
-                  <div className="text-slate-400 text-xs truncate">
+                  <div className="text-muted-foreground text-xs truncate">
                     {formatStorageRange(machine.metrics.memory.used_gb, machine.metrics.memory.total_gb)}
                   </div>
                 </div>
@@ -195,7 +198,7 @@ export function MachineRow({
           className="text-white p-0 w-[100px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('disk'); }}
         >
-          <div className="relative cursor-pointer hover:bg-slate-700/50 transition-colors overflow-hidden">
+          <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
             <div className="opacity-80">
               <SparklineChart data={sparklineData.disk} color="disk" height={52} loading={sparklineData.loading} />
             </div>
@@ -204,7 +207,7 @@ export function MachineRow({
               {machine.metrics?.disk ? (
                 <div className="min-w-0">
                   <div className="text-sm font-semibold">{machine.metrics.disk.percent}%</div>
-                  <div className="text-slate-400 text-xs truncate">
+                  <div className="text-muted-foreground text-xs truncate">
                     {formatStorageRange(machine.metrics.disk.used_gb, machine.metrics.disk.total_gb)}
                   </div>
                 </div>
@@ -217,7 +220,7 @@ export function MachineRow({
           className="text-white p-0 w-[200px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('gpu'); }}
         >
-          <div className="relative cursor-pointer hover:bg-slate-700/50 transition-colors overflow-hidden">
+          <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
             <div className="opacity-80">
               <SparklineChart data={sparklineData.gpu.length > 0 ? sparklineData.gpu : []} color="gpu" height={52} loading={sparklineData.loading} />
             </div>
@@ -225,13 +228,13 @@ export function MachineRow({
             <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
               {machine.metrics?.gpu && machine.metrics.gpu.name && machine.metrics.gpu.name !== 'N/A' ? (
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs text-slate-400 truncate" title={machine.metrics.gpu.name}>
+                  <div className="text-xs text-muted-foreground truncate" title={machine.metrics.gpu.name}>
                     {machine.metrics.gpu.name}
                   </div>
                   <div className="text-sm font-semibold whitespace-nowrap">
                     {machine.metrics.gpu.usage_percent}%
                     {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
-                      <span className="text-slate-400 text-xs ml-1 font-normal">
+                      <span className="text-muted-foreground text-xs ml-1 font-normal">
                         ({formatStorageRange(machine.metrics.gpu.vram_used_gb, machine.metrics.gpu.vram_total_gb)})
                       </span>
                     )}
@@ -243,14 +246,14 @@ export function MachineRow({
                   </div>
                 </div>
               ) : (
-                <span className="text-slate-500">N/A</span>
+                <span className="text-muted-foreground">N/A</span>
               )}
             </div>
           </div>
         </TableCell>
         <TableCell className="w-[150px] overflow-hidden p-2">
           <span
-            className={`text-xs flex items-center gap-1 cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-slate-400'}`}
+            className={`text-xs flex items-center gap-1 cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
             title={heartbeat.tooltip}
           >
             <Clock className="h-3 w-3" />
@@ -270,7 +273,7 @@ export function MachineRow({
 
       {/* Expanded Process Details Row */}
       {isExpanded && (
-        <TableRow key={`${machine.machineId}-processes`} className="border-slate-800">
+        <TableRow key={`${machine.machineId}-processes`} className="border-border">
           <TableCell colSpan={9} className="p-0">
             <div className="pr-4 relative" style={{ paddingLeft: '12px', paddingTop: '8px', paddingBottom: '8px' }}>
               {machine.processes && machine.processes.length > 0 ? (
@@ -280,7 +283,7 @@ export function MachineRow({
                       <div key={process.id} className="relative flex items-stretch">
                         {/* Vertical line: from container top for first row, from row top for others */}
                         <div
-                          className="absolute w-px bg-slate-700/50"
+                          className="absolute w-px bg-border/50"
                           style={{
                             left: '4px',
                             top: index === 0 ? '-8px' : 0,
@@ -289,29 +292,30 @@ export function MachineRow({
                         />
                         {/* Extension for non-last rows bridging the gap */}
                         {index < machine.processes!.length - 1 && (
-                          <div className="absolute w-px bg-slate-700/50" style={{ left: '4px', top: '50%', bottom: '-8px' }} />
+                          <div className="absolute w-px bg-border/50" style={{ left: '4px', top: '50%', bottom: '-8px' }} />
                         )}
                         {/* Horizontal branch */}
                         <div className="relative w-5 flex-shrink-0">
-                          <div className="absolute h-px bg-slate-700/50" style={{ left: '4px', top: '50%', width: '12px' }} />
+                          <div className="absolute h-px bg-border/50" style={{ left: '4px', top: '50%', width: '12px' }} />
                           </div>
                           {/* Process card */}
-                          <div className="flex-1 flex items-center justify-between p-3 rounded border border-slate-700/50">
+                          <div className="flex-1 flex items-center justify-between p-3 rounded border border-border/50">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
+                              <Cog className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                               <span className="text-white font-medium truncate select-text">{process.name}</span>
-                              <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-slate-600 hover:bg-slate-700' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
+                              <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted hover:bg-muted' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-muted hover:bg-muted' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
                                 {!machine.online ? 'UNKNOWN' : process.status}
                               </Badge>
                             </div>
-                            <div className="flex items-center gap-3 text-xs text-slate-400 select-text">
+                            <div className="flex items-center gap-3 text-xs text-muted-foreground select-text">
                               {process.pid && <span>PID: {process.pid}</span>}
                               <span className="truncate" title={process.exe_path}>{process.exe_path}</span>
                             </div>
                           </div>
                           <div className="flex items-center gap-3 ml-4 flex-shrink-0">
                             <div className="flex items-center gap-2">
-                              <Label htmlFor={`autolaunch-list-${machine.machineId}-${process.id}`} className="text-xs text-slate-400 cursor-pointer select-none">
+                              <Label htmlFor={`autolaunch-list-${machine.machineId}-${process.id}`} className="text-xs text-muted-foreground cursor-pointer select-none">
                                 Autolaunch
                               </Label>
                               <Switch
@@ -325,7 +329,7 @@ export function MachineRow({
                               variant="outline"
                               size="sm"
                               onClick={() => onEditProcess(process)}
-                              className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:border-slate-600 hover:text-white cursor-pointer"
+                              className="bg-card border-border text-foreground hover:bg-muted hover:border-border hover:text-white cursor-pointer"
                             >
                               <Pencil className="h-3 w-3 mr-1" />
                               Edit
@@ -334,7 +338,7 @@ export function MachineRow({
                               variant="outline"
                               size="sm"
                               onClick={() => onKillProcess(process.id, process.name)}
-                              className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                              className="bg-card border-border text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                               disabled={process.status !== 'RUNNING'}
                             >
                               <Square className="h-3 w-3 mr-1" />
@@ -351,7 +355,7 @@ export function MachineRow({
                       variant="outline"
                       size="sm"
                       onClick={onCreateProcess}
-                      className="bg-slate-800 border-slate-700 text-blue-400 hover:bg-blue-900 hover:border-blue-800 hover:text-blue-200 cursor-pointer"
+                      className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/15 hover:border-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
                     >
                       <Plus className="h-3 w-3 mr-1" />
                       New Process
@@ -359,13 +363,13 @@ export function MachineRow({
                   </div>
                 </>
               ) : (
-                <div className="flex flex-col items-center justify-center py-8 text-slate-400">
+                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
                   <p className="mb-4 text-sm">No processes configured for this machine</p>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={onCreateProcess}
-                    className="bg-slate-800 border-slate-700 text-blue-400 hover:bg-blue-900 hover:border-blue-800 hover:text-blue-200 cursor-pointer"
+                    className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/15 hover:border-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
                   >
                     <Plus className="h-3 w-3 mr-1" />
                     New Process
@@ -397,7 +401,7 @@ export function MachineListView({
   const { userPreferences } = useAuth();
 
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden">
+    <div className="rounded-lg border border-border bg-background overflow-hidden">
       <Table className="table-fixed" style={{ contain: 'layout' }}>
         <MemoizedTableHeader />
         <TableBody>

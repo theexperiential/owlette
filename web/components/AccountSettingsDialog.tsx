@@ -160,10 +160,10 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white">
+      <DialogContent className="border-border bg-secondary text-white">
         <DialogHeader>
           <DialogTitle className="text-white">Account Settings</DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             Update your account information
           </DialogDescription>
         </DialogHeader>
@@ -177,7 +177,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                 placeholder="John"
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
-                className="border-slate-700 bg-slate-900 text-white"
+                className="border-border bg-background text-white"
                 disabled={loading}
               />
             </div>
@@ -189,7 +189,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                 placeholder="Doe"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
-                className="border-slate-700 bg-slate-900 text-white"
+                className="border-border bg-background text-white"
                 disabled={loading}
               />
             </div>
@@ -199,15 +199,15 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
             <Input
               type="email"
               value={user?.email || ''}
-              className="border-slate-700 bg-slate-900 text-slate-400"
+              className="border-border bg-background text-muted-foreground"
               disabled
               readOnly
             />
-            <p className="text-xs text-slate-500">Email cannot be changed</p>
+            <p className="text-xs text-muted-foreground">Email cannot be changed</p>
           </div>
 
           {/* Temperature Unit */}
-          <Separator className="bg-slate-700" />
+          <Separator className="bg-accent" />
 
           <div className="space-y-2">
             <Label htmlFor="temperatureUnit" className="text-white">Temperature Unit</Label>
@@ -218,15 +218,15 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
             >
               <SelectTrigger
                 id="temperatureUnit"
-                className="border-slate-700 bg-slate-900 text-white hover:bg-slate-800"
+                className="border-border bg-background text-white hover:bg-secondary"
               >
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="border-slate-700 bg-slate-800 text-white">
-                <SelectItem value="C" className="cursor-pointer hover:bg-slate-700">
+              <SelectContent className="border-border bg-secondary text-white">
+                <SelectItem value="C" className="cursor-pointer hover:bg-muted">
                   Celsius (°C)
                 </SelectItem>
-                <SelectItem value="F" className="cursor-pointer hover:bg-slate-700">
+                <SelectItem value="F" className="cursor-pointer hover:bg-muted">
                   Fahrenheit (°F)
                 </SelectItem>
               </SelectContent>
@@ -237,7 +237,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="healthAlerts" className="text-white">Machine Offline Alerts</Label>
-              <p className="text-xs text-slate-500">Receive email alerts when machines go offline</p>
+              <p className="text-xs text-muted-foreground">Receive email alerts when machines go offline</p>
             </div>
             <Switch
               id="healthAlerts"
@@ -248,23 +248,23 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
           </div>
 
           {/* Security Section */}
-          <Separator className="bg-slate-700" />
+          <Separator className="bg-accent" />
 
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <Shield className="h-4 w-4 text-slate-400" />
+              <Shield className="h-4 w-4 text-muted-foreground" />
               <Label className="text-white">Security</Label>
             </div>
 
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-white">Two-Factor Authentication</p>
-                <p className="text-xs text-slate-500">Add an extra layer of security to your account</p>
+                <p className="text-xs text-muted-foreground">Add an extra layer of security to your account</p>
               </div>
               <Link
                 href="/setup-2fa"
                 onClick={() => onOpenChange(false)}
-                className="text-sm text-blue-400 hover:text-blue-300"
+                className="text-sm text-accent-cyan hover:text-accent-cyan"
               >
                 Manage
               </Link>
@@ -272,7 +272,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
           </div>
 
           {/* Password Change Section */}
-          <Separator className="bg-slate-700" />
+          <Separator className="bg-accent" />
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">
@@ -290,7 +290,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                     setConfirmPassword('');
                   }
                 }}
-                className="h-8 cursor-pointer text-xs text-blue-400 hover:text-blue-300 hover:bg-slate-700"
+                className="h-8 cursor-pointer text-xs text-accent-cyan hover:text-accent-cyan hover:bg-muted"
                 disabled={loading}
               >
                 {showPasswordSection ? 'Cancel' : 'Update Password'}
@@ -298,7 +298,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
             </div>
 
             {showPasswordSection && (
-              <div className="space-y-3 rounded-md border border-slate-700 bg-slate-900/50 p-4">
+              <div className="space-y-3 rounded-md border border-border bg-background/50 p-4">
                 <div className="space-y-2">
                   <Label htmlFor="currentPassword" className="text-white">Current Password</Label>
                   <div className="relative">
@@ -308,13 +308,13 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                       placeholder="Enter current password"
                       value={currentPassword}
                       onChange={(e) => setCurrentPassword(e.target.value)}
-                      className="border-slate-700 bg-slate-900 pr-10 text-white"
+                      className="border-border bg-background pr-10 text-white"
                       disabled={loading}
                     />
                     <button
                       type="button"
                       onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-slate-400 hover:text-white"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
                       disabled={loading}
                     >
                       {showCurrentPassword ? (
@@ -335,13 +335,13 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                       placeholder="Enter new password"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      className="border-slate-700 bg-slate-900 pr-10 text-white"
+                      className="border-border bg-background pr-10 text-white"
                       disabled={loading}
                     />
                     <button
                       type="button"
                       onClick={() => setShowNewPassword(!showNewPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-slate-400 hover:text-white"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
                       disabled={loading}
                     >
                       {showNewPassword ? (
@@ -351,7 +351,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                       )}
                     </button>
                   </div>
-                  <p className="text-xs text-slate-500">Must be at least 6 characters</p>
+                  <p className="text-xs text-muted-foreground">Must be at least 6 characters</p>
                 </div>
 
                 <div className="space-y-2">
@@ -363,13 +363,13 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                       placeholder="Confirm new password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
-                      className="border-slate-700 bg-slate-900 pr-10 text-white"
+                      className="border-border bg-background pr-10 text-white"
                       disabled={loading}
                     />
                     <button
                       type="button"
                       onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-slate-400 hover:text-white"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
                       disabled={loading}
                     >
                       {showConfirmPassword ? (
@@ -391,14 +391,14 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
           </div>
 
           {/* Danger Zone */}
-          <Separator className="bg-slate-700" />
+          <Separator className="bg-accent" />
 
           <div className="space-y-3 rounded-md border border-red-800 bg-red-900/10 p-4">
             <div className="flex items-start gap-3">
               <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
               <div className="flex-1 space-y-2">
                 <Label className="text-red-400 font-semibold">Danger Zone</Label>
-                <p className="text-sm text-slate-300">
+                <p className="text-sm text-muted-foreground">
                   Permanently delete your account and all associated data. This action cannot be undone.
                 </p>
               </div>
@@ -417,20 +417,20 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
 
         {/* Delete Confirmation Dialog */}
         <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-          <DialogContent className="border-slate-700 bg-slate-800 text-white">
+          <DialogContent className="border-border bg-secondary text-white">
             <DialogHeader>
               <DialogTitle className="text-red-400 flex items-center gap-2">
                 <AlertTriangle className="h-5 w-5" />
                 Delete Account
               </DialogTitle>
-              <DialogDescription className="text-slate-400">
+              <DialogDescription className="text-muted-foreground">
                 This action is permanent and cannot be undone.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="rounded-md bg-red-900/20 border border-red-800 p-4">
                 <p className="text-sm text-red-300 font-semibold mb-2">Warning:</p>
-                <ul className="text-sm text-slate-300 space-y-1 list-disc list-inside">
+                <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
                   <li>All your sites and machines will be permanently deleted</li>
                   <li>All deployments and logs will be removed</li>
                   <li>Your account data cannot be recovered</li>
@@ -448,7 +448,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                   placeholder="Your password"
                   value={deletePassword}
                   onChange={(e) => setDeletePassword(e.target.value)}
-                  className="border-slate-700 bg-slate-900 text-white"
+                  className="border-border bg-background text-white"
                   disabled={deleting}
                   autoFocus
                 />
@@ -461,7 +461,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                   setShowDeleteConfirm(false);
                   setDeletePassword('');
                 }}
-                className="cursor-pointer border-slate-700 bg-slate-800 text-white hover:bg-slate-700"
+                className="cursor-pointer border-border bg-secondary text-white hover:bg-muted"
                 disabled={deleting}
               >
                 Cancel
@@ -481,14 +481,14 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
-            className="cursor-pointer border-slate-700 bg-slate-800 text-white hover:bg-slate-700"
+            className="cursor-pointer border-border bg-secondary text-white hover:bg-muted"
             disabled={loading}
           >
             Cancel
           </Button>
           <Button
             onClick={handleSave}
-            className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white"
+            className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900"
             disabled={loading}
           >
             {loading ? 'Saving...' : 'Save Changes'}

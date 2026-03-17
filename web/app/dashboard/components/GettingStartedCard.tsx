@@ -69,25 +69,25 @@ export function GettingStartedCard({
   };
 
   return (
-    <Card className="border-slate-800 bg-slate-900 animate-in fade-in duration-500">
+    <Card className="border-border bg-background animate-in fade-in duration-500">
       <CardHeader>
         <CardTitle className="text-white">Getting Started</CardTitle>
-        <CardDescription className="text-slate-400">
+        <CardDescription className="text-muted-foreground">
           Connect your first machine to start managing processes
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Step 1: Create Your First Site (only shown when no sites exist) */}
         {sites.length === 0 && (
-          <div className="rounded-lg border-2 border-blue-600 bg-blue-900/20 p-6">
+          <div className="rounded-lg border-2 border-accent-cyan/50 bg-accent-cyan/10 p-6">
             <h3 className="text-lg font-bold text-white mb-2">Step 1: Create Your First Site</h3>
-            <p className="text-sm text-slate-300 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               Sites organize your machines by location or purpose (e.g., &quot;NYC Office&quot;, &quot;Home Studio&quot;, &quot;Production Floor&quot;).
               Create your first site to get started!
             </p>
             <Button
               onClick={onCreateSite}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 cursor-pointer"
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 font-semibold px-6 py-3 cursor-pointer"
             >
               <Plus className="h-4 w-4 mr-2" />
               Create Your First Site
@@ -98,9 +98,9 @@ export function GettingStartedCard({
         {/* Steps 2-5: Only shown after site is created */}
         {sites.length > 0 && (
           <>
-            <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
+            <div className="rounded-lg border border-border bg-background p-4">
               <h3 className="font-semibold text-white mb-3">Step 1: Download Owlette Agent</h3>
-              <p className="text-sm text-slate-400 mb-4">
+              <p className="text-sm text-muted-foreground mb-4">
                 Download and run the installer <strong className="text-white">on the machine you want to add</strong> (not necessarily this one).
                 Use the copy link option if connecting via remote desktop tools like Parsec, TeamViewer, or RDP.
               </p>
@@ -108,7 +108,7 @@ export function GettingStartedCard({
                 <Button
                   onClick={handleDownload}
                   disabled={!downloadUrl}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+                  className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                 >
                   <Download className="h-4 w-4 mr-2" />
                   <span>Download {version && `v${version}`}</span>
@@ -116,28 +116,28 @@ export function GettingStartedCard({
                 <Button
                   onClick={handleCopyLink}
                   disabled={!downloadUrl}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+                  className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                 >
                   <Copy className="h-4 w-4 mr-2" />
                   <span>Copy Link</span>
                 </Button>
               </div>
             </div>
-            <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
+            <div className="rounded-lg border border-border bg-background p-4">
               <h3 className="font-semibold text-white">Step 2: Run the Installer</h3>
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-muted-foreground">
                 On that machine, double-click the installer - it will automatically open a browser for authentication
               </p>
             </div>
-            <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
+            <div className="rounded-lg border border-border bg-background p-4">
               <h3 className="font-semibold text-white">Step 3: Authorize Agent</h3>
-              <p className="text-sm text-slate-400">
-                Log in and authorize the agent for site <span className="font-mono text-blue-400">{currentSiteId}</span>
+              <p className="text-sm text-muted-foreground">
+                Log in and authorize the agent for site <span className="font-mono text-accent-cyan">{currentSiteId}</span>
               </p>
             </div>
-            <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
+            <div className="rounded-lg border border-border bg-background p-4">
               <h3 className="font-semibold text-white">Step 4: Done!</h3>
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-muted-foreground">
                 The installer completes automatically and that machine will appear above within seconds
               </p>
             </div>

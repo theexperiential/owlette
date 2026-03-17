@@ -119,7 +119,7 @@ export function MetricsDetailPanel({
 
   const availableMetrics: MetricType[] = useMemo(() => {
     const base: MetricType[] = ['cpu', 'memory', 'disk'];
-    if (chartData.some((d) => d.gpu !== undefined && d.gpu > 0)) {
+    if (chartData.some((d) => d.gpu != null && d.gpu > 0)) {
       base.push('gpu');
     }
     if (chartData.some((d) => d.cpuTemp !== undefined)) {
@@ -132,12 +132,12 @@ export function MetricsDetailPanel({
   }, [chartData]);
 
   return (
-    <Card className="border-slate-700 bg-slate-900">
+    <Card className="border-border bg-card">
       <CardContent className="p-3 pt-2">
         {/* Header row */}
         <div className="flex items-center gap-3 mb-3">
           {/* Machine name */}
-          <span className="text-base font-semibold text-white shrink-0">
+          <span className="text-base font-semibold text-foreground shrink-0">
             {machineName || machineId}
           </span>
 
@@ -156,8 +156,8 @@ export function MetricsDetailPanel({
                   className={cn(
                     'text-xs h-7 px-2',
                     isSelected
-                      ? 'bg-slate-700 text-white border-slate-600'
-                      : 'bg-transparent text-slate-300 border-slate-600 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-secondary text-foreground border-border'
+                      : 'bg-transparent text-muted-foreground border-border hover:bg-secondary hover:text-foreground'
                   )}
                 >
                   <span
@@ -179,7 +179,7 @@ export function MetricsDetailPanel({
             variant="ghost"
             size="sm"
             onClick={onClose}
-            className="h-7 w-7 p-0 text-slate-400 hover:text-white hover:bg-slate-800 shrink-0"
+            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-secondary shrink-0"
           >
             <X className="h-4 w-4" />
           </Button>
@@ -189,18 +189,18 @@ export function MetricsDetailPanel({
         <div className="h-[280px] w-full">
           {loading ? (
             <div className="flex items-center justify-center h-full">
-              <div className="text-slate-400 animate-pulse">Loading...</div>
+              <div className="text-muted-foreground animate-pulse">Loading...</div>
             </div>
           ) : error ? (
             <div className="flex items-center justify-center h-full">
-              <div className="text-red-400">{error}</div>
+              <div className="text-destructive">{error}</div>
             </div>
           ) : chartData.length === 0 ? (
             <div className="flex items-center justify-center h-full text-center">
-              <div className="text-slate-400">
+              <div className="text-muted-foreground">
                 No data available for this time range.
                 <br />
-                <span className="text-sm text-slate-500">Data appears as the agent collects metrics.</span>
+                <span className="text-sm text-muted-foreground/70">Data appears as the agent collects metrics.</span>
               </div>
             </div>
           ) : (
@@ -208,7 +208,7 @@ export function MetricsDetailPanel({
               <LineChart data={chartData}>
                 <CartesianGrid
                   strokeDasharray="3 3"
-                  stroke="rgb(51, 65, 85)"
+                  stroke="oklch(0.35 0.08 250)"
                   opacity={0.5}
                 />
                 <XAxis
@@ -216,7 +216,7 @@ export function MetricsDetailPanel({
                   type="number"
                   domain={timeDomain}
                   tickFormatter={formatXAxisTick}
-                  stroke="rgb(148, 163, 184)"
+                  stroke="oklch(0.708 0.05 250)"
                   fontSize={11}
                   tickLine={false}
                   axisLine={false}
@@ -224,7 +224,7 @@ export function MetricsDetailPanel({
                 />
                 <YAxis
                   domain={[0, 100]}
-                  stroke="rgb(148, 163, 184)"
+                  stroke="oklch(0.708 0.05 250)"
                   fontSize={11}
                   tickLine={false}
                   axisLine={false}
@@ -232,7 +232,7 @@ export function MetricsDetailPanel({
                 />
                 <Tooltip content={<ChartTooltip />} />
                 {/* Baseline reference line to show full time range */}
-                <ReferenceLine y={0} stroke="rgb(71, 85, 105)" strokeDasharray="3 3" />
+                <ReferenceLine y={0} stroke="oklch(0.35 0.08 250)" strokeDasharray="3 3" />
                 {selectedMetrics.map((metric) => (
                   <Line
                     key={metric}
@@ -244,7 +244,6 @@ export function MetricsDetailPanel({
                     dot={false}
                     activeDot={{ r: 4, strokeWidth: 2 }}
                     isAnimationActive={false}
-                    connectNulls
                   />
                 ))}
               </LineChart>
@@ -259,7 +258,7 @@ export function MetricsDetailPanel({
               const config = metricConfig[metric];
               const values = chartData
                 .map((d) => d[metric as keyof typeof d] as number | undefined)
-                .filter((v): v is number => v !== undefined);
+                .filter((v): v is number => v != null);
 
               if (values.length === 0) return null;
 
@@ -270,23 +269,23 @@ export function MetricsDetailPanel({
               return (
                 <div
                   key={metric}
-                  className="p-2 rounded-lg bg-slate-800 border border-slate-700"
+                  className="p-2 rounded-lg bg-secondary border border-border"
                   style={{ borderLeftColor: config.color, borderLeftWidth: '3px' }}
                 >
                   {/* Metric label */}
-                  <div className="text-xs font-medium text-white mb-1.5">{config.label}</div>
+                  <div className="text-xs font-medium text-foreground mb-1.5">{config.label}</div>
                   <div className="grid grid-cols-3 gap-2 text-xs">
                     <div>
-                      <div className="text-slate-400">Avg</div>
-                      <div className="font-semibold text-white">{avg.toFixed(1)}{config.unit}</div>
+                      <div className="text-muted-foreground">Avg</div>
+                      <div className="font-semibold text-foreground">{avg.toFixed(1)}{config.unit}</div>
                     </div>
                     <div>
-                      <div className="text-slate-400">Max</div>
-                      <div className="font-semibold text-white">{max.toFixed(1)}{config.unit}</div>
+                      <div className="text-muted-foreground">Max</div>
+                      <div className="font-semibold text-foreground">{max.toFixed(1)}{config.unit}</div>
                     </div>
                     <div>
-                      <div className="text-slate-400">Min</div>
-                      <div className="font-semibold text-white">{min.toFixed(1)}{config.unit}</div>
+                      <div className="text-muted-foreground">Min</div>
+                      <div className="font-semibold text-foreground">{min.toFixed(1)}{config.unit}</div>
                     </div>
                   </div>
                 </div>

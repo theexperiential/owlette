@@ -228,10 +228,10 @@ export default function ProjectDistributionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="border-border bg-secondary text-white max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-white">Distribute Projects</DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             Distribute project files (ZIPs, archives) across multiple machines
           </DialogDescription>
         </DialogHeader>
@@ -243,18 +243,18 @@ export default function ProjectDistributionDialog({
               <Label htmlFor="template" className="text-white">Load from Template</Label>
               <div className="flex gap-2">
                 <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
-                  <SelectTrigger className="border-slate-700 bg-slate-900 text-white flex-1">
+                  <SelectTrigger className="border-border bg-background text-white flex-1">
                     <SelectValue placeholder="Select a template..." />
                   </SelectTrigger>
-                  <SelectContent className="border-slate-700 bg-slate-800">
-                    <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
+                  <SelectContent className="border-border bg-secondary">
+                    <SelectItem value="none" className="text-white focus:bg-accent focus:text-white">
                       None
                     </SelectItem>
                     {templates.map((template) => (
                       <SelectItem
                         key={template.id}
                         value={template.id}
-                        className="text-white focus:bg-slate-700 focus:text-white"
+                        className="text-white focus:bg-accent focus:text-white"
                       >
                         {template.name}
                       </SelectItem>
@@ -268,7 +268,7 @@ export default function ProjectDistributionDialog({
                       variant="outline"
                       size="icon"
                       onClick={handleEditTemplate}
-                      className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                      className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer"
                       title="Edit template"
                     >
                       <Pencil className="h-4 w-4" />
@@ -278,7 +278,7 @@ export default function ProjectDistributionDialog({
                       variant="outline"
                       size="icon"
                       onClick={handleDeleteTemplate}
-                      className="border-slate-700 bg-slate-900 text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
+                      className="border-border bg-background text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
                       title="Delete template"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -287,9 +287,9 @@ export default function ProjectDistributionDialog({
                 )}
               </div>
               {editingTemplate && (
-                <div className="flex items-center gap-2 p-2 bg-blue-900/30 border border-blue-700 rounded text-sm">
-                  <Pencil className="h-3 w-3 text-blue-400" />
-                  <span className="text-blue-300">Editing template - changes will be saved when you distribute</span>
+                <div className="flex items-center gap-2 p-2 bg-accent-cyan/10 border border-accent-cyan/30 rounded text-sm">
+                  <Pencil className="h-3 w-3 text-accent-cyan" />
+                  <span className="text-accent-cyan">Editing template - changes will be saved when you distribute</span>
                 </div>
               )}
             </div>
@@ -302,12 +302,12 @@ export default function ProjectDistributionDialog({
               variant="outline"
               size="sm"
               onClick={handleTouchDesignerPreset}
-              className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 cursor-pointer"
+              className="border-border bg-background text-white hover:bg-muted cursor-pointer"
             >
               <FolderArchive className="h-4 w-4 mr-2" />
               TouchDesigner Preset
             </Button>
-            <span className="text-xs text-slate-500">Quick preset for TouchDesigner project distribution</span>
+            <span className="text-xs text-muted-foreground">Quick preset for TouchDesigner project distribution</span>
           </div>
 
           {/* Distribution Name */}
@@ -318,7 +318,7 @@ export default function ProjectDistributionDialog({
               placeholder="e.g., Summer Show 2024"
               value={distributionName}
               onChange={(e) => setDistributionName(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
           </div>
 
@@ -330,9 +330,9 @@ export default function ProjectDistributionDialog({
               placeholder="https://example.com/project.zip"
               value={projectUrl}
               onChange={(e) => setProjectUrl(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white font-mono text-sm"
+              className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-slate-500">Direct download link to your project ZIP (Dropbox, Google Drive, etc.)</p>
+            <p className="text-xs text-muted-foreground">Direct download link to your project ZIP (Dropbox, Google Drive, etc.)</p>
           </div>
 
           {/* Extract Path */}
@@ -343,10 +343,10 @@ export default function ProjectDistributionDialog({
               placeholder='Leave empty for default location'
               value={extractPath}
               onChange={(e) => setExtractPath(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">
-              Custom extraction path. Default: <span className="font-mono text-blue-400">~/Documents/OwletteProjects</span>
+            <p className="text-xs text-muted-foreground">
+              Custom extraction path. Default: <span className="font-mono text-accent-cyan">~/Documents/OwletteProjects</span>
             </p>
           </div>
 
@@ -358,9 +358,9 @@ export default function ProjectDistributionDialog({
               placeholder='project.toe, Assets/video.mp4'
               value={verifyFiles}
               onChange={(e) => setVerifyFiles(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               Check specific files exist after extraction (comma-separated). Leave empty to skip verification.
             </p>
           </div>
@@ -375,7 +375,7 @@ export default function ProjectDistributionDialog({
                   variant="outline"
                   size="sm"
                   onClick={selectOnlyOnlineMachines}
-                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer text-xs"
+                  className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
                 >
                   Online Only ({onlineMachines.length})
                 </Button>
@@ -384,21 +384,21 @@ export default function ProjectDistributionDialog({
                   variant="outline"
                   size="sm"
                   onClick={toggleAllMachines}
-                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer text-xs"
+                  className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
                 >
                   {allMachinesSelected ? 'Deselect All' : 'Select All'}
                 </Button>
               </div>
             </div>
 
-            <div className="border border-slate-700 rounded-lg p-3 bg-slate-900 max-h-48 overflow-y-auto space-y-2">
+            <div className="border border-border rounded-lg p-3 bg-background max-h-48 overflow-y-auto space-y-2">
               {machines.length === 0 ? (
-                <p className="text-slate-400 text-sm text-center py-2">No machines available</p>
+                <p className="text-muted-foreground text-sm text-center py-2">No machines available</p>
               ) : (
                 machines.map((machine) => (
                   <div
                     key={machine.machineId}
-                    className="flex items-center justify-between p-2 rounded hover:bg-slate-800 cursor-pointer"
+                    className="flex items-center justify-between p-2 rounded hover:bg-secondary cursor-pointer"
                     onClick={() => toggleMachine(machine.machineId)}
                   >
                     <div className="flex items-center gap-3">
@@ -436,14 +436,14 @@ export default function ProjectDistributionDialog({
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
-            className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
             disabled={distributing}
           >
             Cancel
           </Button>
           <Button
             onClick={handleDistribute}
-            className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             disabled={distributing}
           >
             {distributing ? (

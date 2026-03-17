@@ -73,9 +73,9 @@ export default function DownloadButton() {
   }
 
   return (
-    <TooltipProvider>
-      <div className="flex items-center gap-0.5 sm:gap-1">
-        {/* Download Button */}
+    <div className="flex items-center gap-0.5 sm:gap-1">
+      {/* Download Button */}
+      <TooltipProvider disableHoverableContent>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -83,7 +83,7 @@ export default function DownloadButton() {
               size="sm"
               onClick={handleDownload}
               disabled={isLoading || !downloadUrl}
-              className="flex items-center hover:bg-slate-800 hover:text-white cursor-pointer text-white p-1 sm:p-1.5 md:p-2"
+              className="flex items-center hover:bg-secondary hover:text-white cursor-pointer text-white p-1 sm:p-1.5 md:p-2"
             >
               {isLoading ? (
                 <Loader2 className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 animate-spin" />
@@ -94,7 +94,7 @@ export default function DownloadButton() {
           </TooltipTrigger>
           <TooltipContent
             side="bottom"
-            className="bg-slate-800 border-slate-700 text-white"
+            className="bg-secondary border-border text-white"
           >
             {isLoading ? (
               <p>Loading version info...</p>
@@ -103,8 +103,10 @@ export default function DownloadButton() {
             )}
           </TooltipContent>
         </Tooltip>
+      </TooltipProvider>
 
-        {/* Copy Link Button */}
+      {/* Copy Link Button */}
+      <TooltipProvider disableHoverableContent>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -112,14 +114,14 @@ export default function DownloadButton() {
               size="sm"
               onClick={handleCopyLink}
               disabled={isLoading || !downloadUrl}
-              className="flex items-center hover:bg-slate-800 hover:text-white cursor-pointer text-white p-1 sm:p-1.5 md:p-2"
+              className="flex items-center hover:bg-secondary hover:text-white cursor-pointer text-white p-1 sm:p-1.5 md:p-2"
             >
               <Copy className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
             </Button>
           </TooltipTrigger>
           <TooltipContent
             side="bottom"
-            className="bg-slate-800 border-slate-700 text-white"
+            className="bg-secondary border-border text-white"
           >
             {isLoading ? (
               <p>Loading version info...</p>
@@ -128,7 +130,7 @@ export default function DownloadButton() {
             )}
           </TooltipContent>
         </Tooltip>
-      </div>
-    </TooltipProvider>
+      </TooltipProvider>
+    </div>
   );
 }

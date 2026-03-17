@@ -50,7 +50,7 @@
 }
 
 :root {
-  --radius: 0.625rem;
+  --radius: 0.375rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -87,12 +87,12 @@
 .dark {
   --background: oklch(0.145 0.03 250);
   --foreground: oklch(0.985 0.01 250);
-  --card: oklch(0.205 0.04 250);
+  --card: oklch(0.23 0.04 250);
   --card-foreground: oklch(0.985 0.01 250);
   --popover: oklch(0.205 0.04 250);
   --popover-foreground: oklch(0.985 0.01 250);
-  --primary: oklch(0.65 0.25 250);
-  --primary-foreground: oklch(0.985 0.01 250);
+  --primary: oklch(0.75 0.18 195);
+  --primary-foreground: oklch(0.15 0.02 195);
   --secondary: oklch(0.269 0.05 250);
   --secondary-foreground: oklch(0.985 0.01 250);
   --muted: oklch(0.269 0.05 250);
@@ -102,7 +102,7 @@
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(0.35 0.08 250);
   --input: oklch(0.25 0.06 250);
-  --ring: oklch(0.65 0.25 250);
+  --ring: oklch(0.75 0.18 195);
 
   /* Cyan accent for CTAs and interactive elements */
   --accent-cyan: oklch(0.75 0.18 195);
@@ -179,6 +179,9 @@
   body {
     overflow-x: hidden;
     overflow-y: auto;
+    background-color: var(--background);
+    background-image: radial-gradient(circle, oklch(0.45 0.08 195 / 0.4) 1px, transparent 1px);
+    background-size: 20px 20px;
   }
 
   /* Select dropdown scrollbar - more visible */

@@ -67,7 +67,7 @@ export default function ProjectsPage() {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-screen items-center justify-center">
         <p className="text-muted-foreground">Loading...</p>
       </div>
     );
@@ -84,7 +84,7 @@ export default function ProjectsPage() {
       case 'failed':
         return <XCircle className="h-5 w-5 text-red-500" />;
       case 'in_progress':
-        return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />;
+        return <Loader2 className="h-5 w-5 text-accent-cyan animate-spin" />;
       case 'partial':
         return <Clock className="h-5 w-5 text-yellow-500" />;
       default:
@@ -96,9 +96,9 @@ export default function ProjectsPage() {
     const colors: Record<string, string> = {
       completed: 'bg-green-600 hover:bg-green-700',
       failed: 'bg-red-600 hover:bg-red-700',
-      in_progress: 'bg-blue-600 hover:bg-blue-700',
+      in_progress: 'bg-accent-cyan hover:bg-accent-cyan-hover',
       partial: 'bg-yellow-600 hover:bg-yellow-700',
-      pending: 'bg-slate-600 hover:bg-slate-700',
+      pending: 'bg-muted hover:bg-muted',
       downloading: 'bg-cyan-600 hover:bg-cyan-700',
       extracting: 'bg-purple-600 hover:bg-purple-700',
     };
@@ -113,7 +113,7 @@ export default function ProjectsPage() {
   const selectedDistribution = distributions.find(d => d.id === selectedDistributionId);
 
   return (
-    <div className="min-h-screen bg-background pb-8">
+    <div className="min-h-screen pb-8">
       {/* Header */}
       <PageHeader
         currentPage="Distribute Projects"
@@ -164,7 +164,7 @@ export default function ProjectsPage() {
           <div className="flex-shrink-0">
             <Button
               onClick={() => setDistributionDialogOpen(true)}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             >
               <Plus className="h-4 w-4 mr-2" />
               New Distribution
@@ -247,7 +247,7 @@ export default function ProjectsPage() {
               <CardContent>
                 <Button
                   onClick={() => setDistributionDialogOpen(true)}
-                  className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+                  className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   New Distribution

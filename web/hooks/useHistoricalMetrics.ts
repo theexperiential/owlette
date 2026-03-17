@@ -35,12 +35,12 @@ export interface MetricsSample {
  */
 export interface ChartDataPoint {
   time: number;     // timestamp in milliseconds
-  cpu: number;
-  memory: number;
-  disk: number;
-  gpu?: number;
-  cpuTemp?: number;
-  gpuTemp?: number;
+  cpu: number | null;
+  memory: number | null;
+  disk: number | null;
+  gpu?: number | null;
+  cpuTemp?: number | null;
+  gpuTemp?: number | null;
 }
 
 interface UseHistoricalMetricsResult {
@@ -111,6 +111,44 @@ function downsampleForDisplay(
     result.push(samples[samples.length - 1]);
   }
 
+  return result;
+}
+
+/**
+ * Insert null-value gap markers where consecutive samples are too far apart.
+ * This causes Recharts to break the line instead of interpolating across offline periods.
+ * Gap threshold = 3x the median interval between consecutive points.
+ */
+function insertGapMarkers(samples: ChartDataPoint[]): ChartDataPoint[] {
+  if (samples.length < 2) return samples;
+
+  // Calculate all intervals
+  const intervals: number[] = [];
+  for (let i = 1; i < samples.length; i++) {
+    intervals.push(samples[i].time - samples[i - 1].time);
+  }
+
+  // Use median interval to determine gap threshold (robust to outliers)
+  const sorted = [...intervals].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const gapThreshold = Math.max(median * 3, 5 * 60 * 1000); // At least 5 minutes
+
+  const result: ChartDataPoint[] = [];
+  for (let i = 0; i < samples.length; i++) {
+    if (i > 0 && samples[i].time - samples[i - 1].time > gapThreshold) {
+      // Insert a null marker at the midpoint of the gap
+      result.push({
+        time: samples[i - 1].time + 1,
+        cpu: null,
+        memory: null,
+        disk: null,
+        gpu: null,
+        cpuTemp: null,
+        gpuTemp: null,
+      });
+    }
+    result.push(samples[i]);
+  }
   return result;
 }
 
@@ -200,7 +238,8 @@ export function useHistoricalMetrics(
 
       // Downsample for performance
       const maxPoints = MAX_POINTS[timeRange];
-      const finalData = downsampleForDisplay(allSamples, maxPoints);
+      const downsampled = downsampleForDisplay(allSamples, maxPoints);
+      const finalData = insertGapMarkers(downsampled);
 
       setData(finalData);
     } catch (e: unknown) {

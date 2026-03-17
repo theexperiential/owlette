@@ -31,7 +31,7 @@ export function CTASection() {
         <Button
           asChild
           size="lg"
-          className="bg-accent-cyan hover:bg-accent-cyan-hover text-slate-950 font-semibold px-8 sm:px-10 h-12 sm:h-14 text-base sm:text-lg group"
+          className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-semibold px-8 sm:px-10 h-12 sm:h-14 text-base sm:text-lg group"
         >
           <Link href="/register" className="flex items-center gap-2">
             Join the Beta

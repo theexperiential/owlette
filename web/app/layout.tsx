@@ -70,7 +70,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark scroll-smooth">
       <body
-        className={`${inter.variable} ${spaceGrotesk.variable} ${geistMono.variable} font-sans antialiased bg-background text-foreground`}
+        className={`${inter.variable} ${spaceGrotesk.variable} ${geistMono.variable} font-sans antialiased text-foreground`}
       >
         <ErrorBoundary>
           <AuthProvider>

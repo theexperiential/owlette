@@ -115,18 +115,18 @@ export function ManageUserSitesDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-2xl">
+      <DialogContent className="border-border bg-card text-foreground max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="text-white">Manage Site Access</DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogTitle className="text-foreground">Manage Site Access</DialogTitle>
+          <DialogDescription className="text-muted-foreground">
             Control which sites {userEmail} can access
           </DialogDescription>
         </DialogHeader>
 
         {/* Admin Notice */}
         {userRole === 'admin' && (
-          <div className="bg-blue-950/30 border border-blue-700/50 rounded-lg p-3 mt-4">
-            <p className="text-blue-300 text-sm">
+          <div className="bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-3 mt-4">
+            <p className="text-accent-cyan text-sm">
               <strong className="font-semibold">Admin Access:</strong> This user has admin privileges and can access <strong>all sites</strong> in the system regardless of the assignments below. The "Assigned Sites" list only controls which sites appear in this user's site dropdown for convenience.
             </p>
           </div>
@@ -135,30 +135,30 @@ export function ManageUserSitesDialog({
         {/* Search Filter */}
         {!sitesLoading && sites.length > 0 && (
           <div className="relative mt-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search sites by name or ID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 border-slate-700 bg-slate-900 text-white placeholder:text-slate-500"
+              className="pl-9 border-border bg-background text-foreground placeholder:text-muted-foreground"
             />
           </div>
         )}
 
         {sitesLoading ? (
           <div className="flex justify-center items-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
-            <span className="ml-2 text-slate-400">Loading sites...</span>
+            <Loader2 className="h-6 w-6 animate-spin text-accent-cyan" />
+            <span className="ml-2 text-muted-foreground">Loading sites...</span>
           </div>
         ) : (
           <div className="space-y-6 py-4 max-h-[60vh] overflow-y-auto pr-2">
             {/* Assigned Sites */}
             <div>
-              <h3 className="text-sm font-semibold text-white mb-3">
+              <h3 className="text-sm font-semibold text-foreground mb-3">
                 Assigned Sites ({assignedSites.length})
               </h3>
               {assignedSites.length === 0 ? (
-                <div className="text-center py-6 text-slate-400 bg-slate-900 rounded-lg border border-slate-700">
+                <div className="text-center py-6 text-muted-foreground bg-background rounded-lg border border-border">
                   {searchQuery ? 'No assigned sites match your search' : 'No sites assigned yet'}
                 </div>
               ) : (
@@ -166,11 +166,11 @@ export function ManageUserSitesDialog({
                   {assignedSites.map((site) => (
                     <div
                       key={site.id}
-                      className="flex items-center justify-between p-3 bg-slate-900 rounded-lg border border-slate-700"
+                      className="flex items-center justify-between p-3 bg-background rounded-lg border border-border"
                     >
                       <div className="flex-1">
-                        <p className="text-white font-medium">{site.name}</p>
-                        <p className="text-xs text-slate-400 font-mono">{site.id}</p>
+                        <p className="text-foreground font-medium">{site.name}</p>
+                        <p className="text-xs text-muted-foreground font-mono">{site.id}</p>
                       </div>
                       <Button
                         size="sm"
@@ -198,7 +198,7 @@ export function ManageUserSitesDialog({
                   Invalid Site References ({orphanedSiteIds.length})
                 </h3>
                 <div className="space-y-2">
-                  <div className="text-xs text-slate-400 mb-2 p-2 bg-red-950/20 border border-red-900 rounded">
+                  <div className="text-xs text-muted-foreground mb-2 p-2 bg-red-950/20 border border-red-900 rounded">
                     These site IDs are in the user's access list but the sites no longer exist or are inaccessible. Remove them to fix the site count.
                   </div>
                   {orphanedSiteIds.map((siteId) => (
@@ -231,11 +231,11 @@ export function ManageUserSitesDialog({
 
             {/* Available Sites */}
             <div>
-              <h3 className="text-sm font-semibold text-white mb-3">
+              <h3 className="text-sm font-semibold text-foreground mb-3">
                 Available Sites ({availableSites.length})
               </h3>
               {availableSites.length === 0 && searchQuery ? (
-                <div className="text-center py-6 text-slate-400 bg-slate-900 rounded-lg border border-slate-700">
+                <div className="text-center py-6 text-muted-foreground bg-background rounded-lg border border-border">
                   No available sites match your search
                 </div>
               ) : availableSites.length > 0 ? (
@@ -243,18 +243,18 @@ export function ManageUserSitesDialog({
                   {availableSites.map((site) => (
                     <div
                       key={site.id}
-                      className="flex items-center justify-between p-3 bg-slate-900 rounded-lg border border-slate-700 hover:border-slate-600 transition-colors"
+                      className="flex items-center justify-between p-3 bg-background rounded-lg border border-border hover:border-accent-cyan/30 transition-colors"
                     >
                       <div className="flex-1">
-                        <p className="text-white font-medium">{site.name}</p>
-                        <p className="text-xs text-slate-400 font-mono">{site.id}</p>
+                        <p className="text-foreground font-medium">{site.name}</p>
+                        <p className="text-xs text-muted-foreground font-mono">{site.id}</p>
                       </div>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => handleAssignSite(site.id)}
                         disabled={assigningTo === site.id}
-                        className="border-blue-600 text-blue-400 hover:bg-blue-950/30 hover:text-blue-300 cursor-pointer"
+                        className="border-accent-cyan/50 text-accent-cyan hover:bg-accent-cyan/10 hover:text-accent-cyan cursor-pointer"
                       >
                         {assigningTo === site.id ? (
                           <>
@@ -277,7 +277,7 @@ export function ManageUserSitesDialog({
         )}
 
         {!sitesLoading && sites.length === 0 && (
-          <div className="text-center py-8 text-slate-400">
+          <div className="text-center py-8 text-muted-foreground">
             <p>No sites available yet.</p>
             <p className="text-sm mt-2">Create a site first from the dashboard.</p>
           </div>

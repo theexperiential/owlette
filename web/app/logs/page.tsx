@@ -54,7 +54,7 @@ const getLevelBadge = (level: string) => {
     case 'warning':
       return <Badge variant="default" className="bg-yellow-600 text-xs">Warning</Badge>;
     case 'info':
-      return <Badge variant="default" className="bg-blue-600 text-xs">Info</Badge>;
+      return <Badge variant="default" className="bg-accent-cyan text-gray-900 text-xs">Info</Badge>;
     default:
       return <Badge variant="outline" className="text-xs">{level}</Badge>;
   }
@@ -391,7 +391,7 @@ export default function LogsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-8">
+    <div className="min-h-screen pb-8">
       <PageHeader
         currentPage="Logs"
         sites={sites}

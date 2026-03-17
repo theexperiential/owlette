@@ -122,7 +122,7 @@ function LoginForm() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+    <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-md bg-card/50 border-border">
         <CardHeader className="space-y-4 flex flex-col items-center">
           <Image
@@ -168,7 +168,7 @@ function LoginForm() {
                 className="bg-input border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
-            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-slate-950 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
+            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
               {loading ? 'Signing in...' : 'Sign in with Email'}
             </Button>
           </form>
@@ -227,7 +227,7 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <Suspense fallback={
-      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <div className="flex min-h-screen items-center justify-center p-4">
         <Card className="w-full max-w-md bg-card/50 border-border">
           <CardHeader className="space-y-4 flex flex-col items-center">
             <Image

@@ -78,7 +78,7 @@ export default function SystemPresetsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
+      <div className="flex items-center justify-center min-h-screen">
         <div className="flex items-center gap-3 text-foreground">
           <Loader2 className="h-6 w-6 animate-spin" />
           <span>Loading presets...</span>
@@ -89,7 +89,7 @@ export default function SystemPresetsPage() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
+      <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
           <p className="text-red-400 font-medium mb-2">Error loading presets</p>
           <p className="text-muted-foreground text-sm">{error}</p>
@@ -99,7 +99,7 @@ export default function SystemPresetsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background p-6">
+    <div className="min-h-screen p-6">
       <div className="max-w-screen-2xl mx-auto">
         {/* Header */}
         <div className="mb-8">
@@ -112,7 +112,7 @@ export default function SystemPresetsPage() {
             </div>
             <Button
               onClick={handleCreateNew}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             >
               <Plus className="h-5 w-5 mr-2" />
               Add Template
@@ -127,7 +127,7 @@ export default function SystemPresetsPage() {
               onClick={() => setSelectedCategory('All')}
               className={
                 selectedCategory === 'All'
-                  ? 'bg-accent-cyan text-foreground cursor-pointer'
+                  ? 'bg-accent-cyan text-gray-900 cursor-pointer'
                   : 'border-border bg-card text-foreground hover:bg-muted hover:text-foreground cursor-pointer'
               }
             >
@@ -143,7 +143,7 @@ export default function SystemPresetsPage() {
                   onClick={() => setSelectedCategory(category)}
                   className={
                     selectedCategory === category
-                      ? 'bg-accent-cyan text-foreground cursor-pointer'
+                      ? 'bg-accent-cyan text-gray-900 cursor-pointer'
                       : 'border-border bg-card text-foreground hover:bg-muted hover:text-foreground cursor-pointer'
                   }
                 >
@@ -167,7 +167,7 @@ export default function SystemPresetsPage() {
             {selectedCategory === 'All' && (
               <Button
                 onClick={handleCreateNew}
-                className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
               >
                 <Plus className="h-5 w-5 mr-2" />
                 Add First Preset
@@ -213,7 +213,7 @@ export default function SystemPresetsPage() {
                                 <p className="text-muted-foreground text-sm">{preset.name}</p>
                               </div>
                               {preset.is_owlette_agent && (
-                                <Badge variant="outline" className="mt-1 border-blue-600 text-blue-400 text-xs">
+                                <Badge variant="outline" className="mt-1 border-accent-cyan/50 text-accent-cyan text-xs">
                                   Auto-update
                                 </Badge>
                               )}
@@ -287,7 +287,7 @@ export default function SystemPresetsPage() {
                         </Badge>
                       </div>
                       {preset.is_owlette_agent && (
-                        <Badge variant="outline" className="border-blue-600 text-blue-400 text-xs">
+                        <Badge variant="outline" className="border-accent-cyan/50 text-accent-cyan text-xs">
                           Auto-update
                         </Badge>
                       )}

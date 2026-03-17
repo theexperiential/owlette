@@ -89,7 +89,7 @@ function MachineCard({
   const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, siteTimezone, siteTimeFormat);
 
   return (
-    <Card className="border-slate-800 bg-slate-900">
+    <Card className="border-border bg-card">
       <CardHeader className="pb-3 md:pb-4">
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg font-semibold text-white select-text">{machine.machineId}</CardTitle>
@@ -98,7 +98,7 @@ function MachineCard({
               {machine.online ? 'Online' : 'Offline'}
             </Badge>
             <span
-              className={`text-xs flex items-center gap-1 select-none cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-slate-400'}`}
+              className={`text-xs flex items-center gap-1 select-none cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
               title={heartbeat.tooltip}
             >
               <Clock className="h-3 w-3" />
@@ -131,8 +131,8 @@ function MachineCard({
               {/* Content */}
               <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-sm font-medium text-slate-400">CPU</span>
-                  <span className="text-xs text-slate-400 truncate hidden sm:block" title={machine.metrics.cpu.name || 'Unknown'}>
+                  <span className="text-sm font-medium text-muted-foreground">CPU</span>
+                  <span className="text-xs text-muted-foreground truncate hidden sm:block" title={machine.metrics.cpu.name || 'Unknown'}>
                     {machine.metrics.cpu.name || 'Unknown'}
                   </span>
                 </div>
@@ -162,9 +162,9 @@ function MachineCard({
             {/* Content */}
             <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
               <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-slate-400">Memory</span>
+                <span className="text-sm font-medium text-muted-foreground">Memory</span>
                 {machine.metrics.memory?.used_gb !== undefined && machine.metrics.memory?.total_gb !== undefined && (
-                  <span className="text-xs text-slate-400 hidden sm:block">
+                  <span className="text-xs text-muted-foreground hidden sm:block">
                     {machine.metrics.memory.used_gb.toFixed(1)} / {machine.metrics.memory.total_gb.toFixed(1)} GB
                   </span>
                 )}
@@ -187,9 +187,9 @@ function MachineCard({
             {/* Content */}
             <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
               <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-slate-400">Disk</span>
+                <span className="text-sm font-medium text-muted-foreground">Disk</span>
                 {machine.metrics.disk?.used_gb !== undefined && machine.metrics.disk?.total_gb !== undefined && (
-                  <span className="text-xs text-slate-400 hidden sm:block">
+                  <span className="text-xs text-muted-foreground hidden sm:block">
                     {machine.metrics.disk.used_gb.toFixed(1)} / {machine.metrics.disk.total_gb.toFixed(1)} GB
                   </span>
                 )}
@@ -215,15 +215,15 @@ function MachineCard({
               {/* Content */}
               <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-sm font-medium text-slate-400">GPU</span>
-                  <span className="text-xs text-slate-400 truncate hidden sm:block" title={machine.metrics.gpu.name}>
+                  <span className="text-sm font-medium text-muted-foreground">GPU</span>
+                  <span className="text-xs text-muted-foreground truncate hidden sm:block" title={machine.metrics.gpu.name}>
                     {machine.metrics.gpu.name}
                   </span>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
                   <span className="text-lg font-bold text-white tabular-nums">{machine.metrics.gpu.usage_percent}%</span>
                   {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
-                    <span className="text-xs text-slate-400 hidden md:block">
+                    <span className="text-xs text-muted-foreground hidden md:block">
                       {machine.metrics.gpu.vram_used_gb.toFixed(1)}/{machine.metrics.gpu.vram_total_gb.toFixed(1)}GB
                     </span>
                   )}
@@ -243,23 +243,23 @@ function MachineCard({
       {machine.processes && machine.processes.length > 0 && (
         <Collapsible open={isExpanded} onOpenChange={onToggleExpanded}>
           <CollapsibleTrigger asChild>
-            <Button variant="ghost" className="w-full border-t border-slate-800 rounded-none hover:bg-slate-800/30 cursor-pointer">
+            <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer">
               <div className="flex items-center justify-between w-full select-none">
-                <span className="text-slate-400 text-sm">
+                <span className="text-muted-foreground text-sm">
                   {machine.processes.length} Process{machine.processes.length > 1 ? 'es' : ''}
                 </span>
-                {isExpanded ? <ChevronUp className="h-4 w-4 text-slate-300" /> : <ChevronDown className="h-4 w-4 text-slate-300" />}
+                {isExpanded ? <ChevronUp className="h-4 w-4 text-foreground/70" /> : <ChevronDown className="h-4 w-4 text-foreground/70" />}
               </div>
             </Button>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <div className="relative p-2 md:p-4 border-t border-slate-800">
+            <div className="relative p-2 md:p-4 border-t border-border">
               <div className="space-y-2">
                 {machine.processes.map((process, index) => (
                   <div key={process.id} className="relative flex items-stretch">
                     {/* Vertical line: from container top for first row, from row top for others */}
                     <div
-                      className="absolute w-px bg-slate-700/50"
+                      className="absolute w-px bg-border/50"
                       style={{
                         left: '2px',
                         top: index === 0 ? '-8px' : 0,
@@ -268,23 +268,23 @@ function MachineCard({
                     />
                     {/* Extension for non-last rows bridging the gap */}
                     {index < machine.processes!.length - 1 && (
-                      <div className="absolute w-px bg-slate-700/50" style={{ left: '2px', top: '50%', bottom: '-8px' }} />
+                      <div className="absolute w-px bg-border/50" style={{ left: '2px', top: '50%', bottom: '-8px' }} />
                     )}
                     {/* Horizontal branch */}
                     <div className="relative w-4 flex-shrink-0">
-                      <div className="absolute h-px bg-slate-700/50" style={{ left: '2px', top: '50%', width: '10px' }} />
+                      <div className="absolute h-px bg-border/50" style={{ left: '2px', top: '50%', width: '10px' }} />
                     </div>
                     {/* Process card */}
-                    <div className="flex-1 flex items-center justify-between p-2 md:p-3 rounded border border-slate-700/50">
+                    <div className="flex-1 flex items-center justify-between p-2 md:p-3 rounded border border-border/50">
                         <div className="flex-1 min-w-0 flex items-center gap-2">
                           <span className="text-sm md:text-base text-white font-medium truncate select-text">{process.name}</span>
-                          <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-slate-600 hover:bg-slate-700' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
+                          <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted hover:bg-muted' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-muted hover:bg-muted' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
                             {!machine.online ? 'UNKNOWN' : process.status}
                           </Badge>
                         </div>
                         <div className="flex items-center gap-2 md:gap-3 ml-2 md:ml-4 flex-shrink-0">
                           <div className="flex items-center gap-2">
-                            <Label htmlFor={`autolaunch-${machine.machineId}-${process.id}`} className="text-xs text-slate-400 cursor-pointer select-none hidden md:inline">
+                            <Label htmlFor={`autolaunch-${machine.machineId}-${process.id}`} className="text-xs text-muted-foreground cursor-pointer select-none hidden md:inline">
                               Autolaunch
                             </Label>
                             <Switch
@@ -298,7 +298,7 @@ function MachineCard({
                             variant="outline"
                             size="sm"
                             onClick={() => onEditProcess(process)}
-                            className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:border-slate-600 hover:text-white cursor-pointer p-2"
+                            className="bg-card border-border text-foreground hover:bg-muted hover:border-border hover:text-white cursor-pointer p-2"
                             title="Edit"
                           >
                             <Pencil className="h-3 w-3" />
@@ -307,7 +307,7 @@ function MachineCard({
                             variant="outline"
                             size="sm"
                             onClick={() => onKillProcess(process.id, process.name)}
-                            className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 p-2"
+                            className="bg-card border-border text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 p-2"
                             disabled={process.status !== 'RUNNING'}
                             title="Kill"
                           >
@@ -324,7 +324,7 @@ function MachineCard({
                     variant="outline"
                     size="sm"
                     onClick={onCreateProcess}
-                    className="bg-slate-800 border-slate-700 text-blue-400 hover:bg-blue-900 hover:border-blue-800 hover:text-blue-200 cursor-pointer"
+                    className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/15 hover:border-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
                   >
                     <Plus className="h-3 w-3 mr-1" />
                     New Process
@@ -337,12 +337,12 @@ function MachineCard({
 
       {/* New Process button for machines with no processes */}
       {(!machine.processes || machine.processes.length === 0) && (
-        <div className="border-t border-slate-800 p-4">
+        <div className="border-t border-border p-4">
           <Button
             variant="outline"
             size="sm"
             onClick={onCreateProcess}
-            className="w-full bg-slate-800 border-slate-700 text-blue-400 hover:bg-blue-900 hover:border-blue-800 hover:text-blue-200 cursor-pointer"
+            className="w-full bg-card border-border text-accent-cyan hover:bg-accent-cyan/15 hover:border-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
           >
             <Plus className="h-3 w-3 mr-1" />
             New Process

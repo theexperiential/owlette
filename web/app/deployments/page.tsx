@@ -132,7 +132,7 @@ export default function DeploymentsPage() {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-screen items-center justify-center">
         <p className="text-muted-foreground">Loading...</p>
       </div>
     );
@@ -153,7 +153,7 @@ export default function DeploymentsPage() {
       case 'cancelled':
         return <XCircle className="h-5 w-5 text-orange-500" />;
       case 'in_progress':
-        return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />;
+        return <Loader2 className="h-5 w-5 text-accent-cyan animate-spin" />;
       case 'partial':
         return <Clock className="h-5 w-5 text-yellow-500" />;
       default:
@@ -167,9 +167,9 @@ export default function DeploymentsPage() {
       uninstalled: 'bg-purple-600 hover:bg-purple-700',
       failed: 'bg-red-600 hover:bg-red-700',
       cancelled: 'bg-orange-600 hover:bg-orange-700',
-      in_progress: 'bg-blue-600 hover:bg-blue-700',
+      in_progress: 'bg-accent-cyan hover:bg-accent-cyan-hover',
       partial: 'bg-yellow-600 hover:bg-yellow-700',
-      pending: 'bg-slate-600 hover:bg-slate-700',
+      pending: 'bg-muted hover:bg-muted',
       downloading: 'bg-cyan-600 hover:bg-cyan-700',
       installing: 'bg-purple-600 hover:bg-purple-700',
     };
@@ -201,7 +201,7 @@ export default function DeploymentsPage() {
 
   return (
     <TooltipProvider delayDuration={200}>
-    <div className="min-h-screen bg-background pb-8">
+    <div className="min-h-screen pb-8">
       {/* Header */}
       <PageHeader
         currentPage="Deploy Software"
@@ -253,7 +253,7 @@ export default function DeploymentsPage() {
             <UpdateOwletteButton siteId={currentSiteId} machines={machines} />
             <Button
               onClick={() => setDeployDialogOpen(true)}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             >
               <Plus className="h-4 w-4 mr-2" />
               New Deployment
@@ -356,7 +356,7 @@ export default function DeploymentsPage() {
               <CardContent>
                 <Button
                   onClick={() => setDeployDialogOpen(true)}
-                  className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+                  className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   New Deployment

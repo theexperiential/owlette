@@ -36,13 +36,13 @@ export function RemoveMachineDialog({
 }: RemoveMachineDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-lg">
+      <DialogContent className="border-border bg-secondary text-white max-w-lg">
         <DialogHeader>
           <DialogTitle className="text-white flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-red-400" />
             Remove Machine from Site
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             This action will permanently remove <span className="font-mono text-white">{machineName}</span> from this site.
           </DialogDescription>
         </DialogHeader>
@@ -69,11 +69,11 @@ export function RemoveMachineDialog({
           )}
 
           {/* Main Warning */}
-          <div className="rounded-lg border border-slate-700 bg-slate-900 p-4 space-y-2">
-            <p className="text-sm text-slate-300">
+          <div className="rounded-lg border border-border bg-background p-4 space-y-2">
+            <p className="text-sm text-muted-foreground">
               The following will happen:
             </p>
-            <ul className="text-sm text-slate-400 space-y-1 list-disc list-inside">
+            <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
               <li>All machine data will be deleted from Firestore</li>
               <li>Process configurations will be removed</li>
               <li>Command history will be cleared</li>
@@ -82,8 +82,8 @@ export function RemoveMachineDialog({
           </div>
 
           {/* Reinstall Notice */}
-          <div className="rounded-lg border border-blue-800 bg-blue-950/30 p-4">
-            <p className="text-sm text-blue-300">
+          <div className="rounded-lg border border-accent-cyan/20 bg-accent-cyan/10 p-4">
+            <p className="text-sm text-accent-cyan">
               To add this machine back to a site, you will need to re-run the Owlette installer and configure it with a Site ID.
             </p>
           </div>
@@ -94,7 +94,7 @@ export function RemoveMachineDialog({
             variant="outline"
             onClick={() => onOpenChange(false)}
             disabled={isRemoving}
-            className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer disabled:cursor-not-allowed"
+            className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer disabled:cursor-not-allowed"
           >
             Cancel
           </Button>

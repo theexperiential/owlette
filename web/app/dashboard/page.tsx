@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Copy, Pencil, Trash2, Download } from 'lucide-react';
+import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Copy, Pencil, Trash2, Download, Monitor, Wifi, Cog } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -465,7 +465,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-screen items-center justify-center">
         <p className="text-muted-foreground">Loading...</p>
       </div>
     );
@@ -483,7 +483,7 @@ export default function DashboardPage() {
   const currentSite = sites.find(s => s.id === currentSiteId);
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen pb-24">
       {/* Header */}
       <PageHeader
         currentPage="Dashboard"
@@ -524,7 +524,10 @@ export default function DashboardPage() {
       />
 
       {/* Main content */}
-      <main className="mx-auto max-w-screen-2xl p-3 md:p-4">
+      {/* Subtle top glow for readability over dot grid */}
+      <div className="pointer-events-none fixed inset-x-0 top-14 sm:top-16 h-48 z-0" style={{ background: 'linear-gradient(to bottom, oklch(0.20 0.03 250 / 0.7), transparent)' }} />
+
+      <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex-1">
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-1">
@@ -546,11 +549,45 @@ export default function DashboardPage() {
               {randomJoke}
             </p>
           </div>
+
+          {/* Quick stats - inline with welcome */}
+          <div className="flex items-center gap-6 md:gap-8">
+            {/* Machines / Online ratio */}
+            <div className="flex items-center gap-2.5">
+              <div className={`rounded-md p-1.5 ${onlineMachines > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-muted text-muted-foreground'}`}>
+                <Monitor className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="flex items-baseline gap-0.5">
+                  <span className={`text-xl font-bold ${onlineMachines > 0 ? 'text-emerald-400' : 'text-foreground'}`}>{onlineMachines}</span>
+                  <span className="text-xs text-muted-foreground">/ {machines.length}</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-tight">Online</p>
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="h-8 w-px bg-border" />
+
+            {/* Processes */}
+            <div className="flex items-center gap-2.5">
+              <div className="rounded-md p-1.5 bg-muted text-muted-foreground">
+                <Cog className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="flex items-baseline gap-0.5">
+                  <span className="text-xl font-bold text-foreground">{totalProcesses}</span>
+                  <span className="text-xs text-muted-foreground">managed</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-tight">Processes</p>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Quick stats OR Metrics Detail Panel */}
-        <div className="mb-6">
-          {detailPanel ? (
+        {/* Metrics Detail Panel */}
+        {detailPanel && (
+          <div className="mb-6">
             <MetricsDetailPanel
               machineId={detailPanel.machineId}
               machineName={detailPanel.machineName}
@@ -558,46 +595,8 @@ export default function DashboardPage() {
               initialMetric={detailPanel.metric}
               onClose={handleCloseDetailPanel}
             />
-          ) : (
-            <div className="grid grid-cols-3 gap-2 md:gap-4">
-              <Card className="border-border bg-card">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
-                  <CardTitle className="text-xs md:text-sm font-medium text-foreground">Machines</CardTitle>
-                </CardHeader>
-                <CardContent className="pb-2 md:pb-6">
-                  <div className="text-xl md:text-2xl font-bold text-foreground">{machines.length}</div>
-                  <p className="text-xs text-muted-foreground hidden md:block">
-                    {machines.length === 0 ? 'No machines' : `${machines.length} registered`}
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="border-border bg-card">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
-                  <CardTitle className="text-xs md:text-sm font-medium text-foreground">Online</CardTitle>
-                </CardHeader>
-                <CardContent className="pb-2 md:pb-6">
-                  <div className="text-xl md:text-2xl font-bold text-foreground">{onlineMachines}</div>
-                  <p className="text-xs text-muted-foreground hidden md:block">
-                    {onlineMachines === 0 ? 'None online' : `${onlineMachines} online`}
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="border-border bg-card">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
-                  <CardTitle className="text-xs md:text-sm font-medium text-foreground">Processes</CardTitle>
-                </CardHeader>
-                <CardContent className="pb-2 md:pb-6">
-                  <div className="text-xl md:text-2xl font-bold text-foreground">{totalProcesses}</div>
-                  <p className="text-xs text-muted-foreground hidden md:block">
-                    Managed
-                  </p>
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Machines list */}
         {machines.length > 0 ? (
@@ -608,18 +607,18 @@ export default function DashboardPage() {
               {/* View Toggle - Hidden on mobile, always show card view */}
               <div className="hidden md:flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
                 <Button
-                  variant={viewType === 'card' ? 'default' : 'ghost'}
+                  variant="ghost"
                   size="sm"
                   onClick={() => handleViewChange('card')}
-                  className={`cursor-pointer ${viewType === 'card' ? 'bg-input text-foreground' : 'text-muted-foreground hover:bg-input hover:text-foreground'}`}
+                  className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                 >
                   <LayoutGrid className="h-4 w-4" />
                 </Button>
                 <Button
-                  variant={viewType === 'list' ? 'default' : 'ghost'}
+                  variant="ghost"
                   size="sm"
                   onClick={() => handleViewChange('list')}
-                  className={`cursor-pointer ${viewType === 'list' ? 'bg-input text-foreground' : 'text-muted-foreground hover:bg-input hover:text-foreground'}`}
+                  className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                 >
                   <List className="h-4 w-4" />
                 </Button>
@@ -695,7 +694,7 @@ export default function DashboardPage() {
                   </p>
                   <Button
                     onClick={() => setCreateDialogOpen(true)}
-                    className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground font-semibold px-6 py-3 cursor-pointer"
+                    className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 font-semibold px-6 py-3 cursor-pointer"
                   >
                     <Plus className="h-4 w-4 mr-2" />
                     Create Your First Site
@@ -733,7 +732,7 @@ export default function DashboardPage() {
                       }
                     }}
                     disabled={!downloadUrl}
-                    className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+                    className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                   >
                     <Download className="h-4 w-4 mr-2" />
                     <span>Download {version && `v${version}`}</span>
@@ -758,7 +757,7 @@ export default function DashboardPage() {
                       }
                     }}
                     disabled={!downloadUrl}
-                    className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+                    className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                   >
                     <Copy className="h-4 w-4 mr-2" />
                     <span>Copy Link</span>
@@ -962,7 +961,7 @@ export default function DashboardPage() {
               </Button>
               <Button
                 onClick={handleSaveProcess}
-                className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
               >
                 {processDialogMode === 'create' ? 'Create Process' : 'Save Changes'}
               </Button>

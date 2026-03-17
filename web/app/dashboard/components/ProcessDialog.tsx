@@ -49,12 +49,12 @@ export function ProcessDialog({
 }: ProcessDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-3xl">
+      <DialogContent className="border-border bg-card text-foreground max-w-3xl">
         <DialogHeader>
           <DialogTitle className="text-white">
             {mode === 'create' ? 'New Process' : 'Edit Process'}
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             {mode === 'create'
               ? 'Create a new process configuration'
               : 'Update process configuration'}
@@ -68,7 +68,7 @@ export function ProcessDialog({
               id="edit-name"
               value={form.name}
               onChange={(e) => onFormChange({ ...form, name: e.target.value })}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
           </div>
 
@@ -79,7 +79,7 @@ export function ProcessDialog({
               id="edit-exe-path"
               value={form.exe_path}
               onChange={(e) => onFormChange({ ...form, exe_path: e.target.value })}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
               placeholder="C:/Program Files/..."
             />
           </div>
@@ -91,7 +91,7 @@ export function ProcessDialog({
               id="edit-file-path"
               value={form.file_path}
               onChange={(e) => onFormChange({ ...form, file_path: e.target.value })}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
               placeholder="Optional"
             />
           </div>
@@ -103,7 +103,7 @@ export function ProcessDialog({
               id="edit-cwd"
               value={form.cwd}
               onChange={(e) => onFormChange({ ...form, cwd: e.target.value })}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
               placeholder="Optional"
             />
           </div>
@@ -116,10 +116,10 @@ export function ProcessDialog({
                 value={form.priority}
                 onValueChange={(value) => onFormChange({ ...form, priority: value })}
               >
-                <SelectTrigger id="edit-priority" className="border-slate-700 bg-slate-900 text-white">
+                <SelectTrigger id="edit-priority" className="border-border bg-background text-white">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="border-slate-700 bg-slate-900 text-white">
+                <SelectContent className="border-border bg-background text-white">
                   <SelectItem value="Low">Low</SelectItem>
                   <SelectItem value="Normal">Normal</SelectItem>
                   <SelectItem value="High">High</SelectItem>
@@ -135,10 +135,10 @@ export function ProcessDialog({
                 value={form.visibility}
                 onValueChange={(value) => onFormChange({ ...form, visibility: value })}
               >
-                <SelectTrigger id="edit-visibility" className="border-slate-700 bg-slate-900 text-white">
+                <SelectTrigger id="edit-visibility" className="border-border bg-background text-white">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="border-slate-700 bg-slate-900 text-white">
+                <SelectContent className="border-border bg-background text-white">
                   <SelectItem value="Normal">Normal</SelectItem>
                   <SelectItem value="Hidden">Hidden (console apps only)</SelectItem>
                 </SelectContent>
@@ -158,7 +158,7 @@ export function ProcessDialog({
                 type="number"
                 value={form.time_delay}
                 onChange={(e) => onFormChange({ ...form, time_delay: e.target.value })}
-                className="border-slate-700 bg-slate-900 text-white"
+                className="border-border bg-background text-white"
               />
             </div>
 
@@ -170,7 +170,7 @@ export function ProcessDialog({
                 type="number"
                 value={form.time_to_init}
                 onChange={(e) => onFormChange({ ...form, time_to_init: e.target.value })}
-                className="border-slate-700 bg-slate-900 text-white"
+                className="border-border bg-background text-white"
               />
             </div>
 
@@ -182,7 +182,7 @@ export function ProcessDialog({
                 type="number"
                 value={form.relaunch_attempts}
                 onChange={(e) => onFormChange({ ...form, relaunch_attempts: e.target.value })}
-                className="border-slate-700 bg-slate-900 text-white"
+                className="border-border bg-background text-white"
               />
             </div>
           </div>
@@ -213,13 +213,13 @@ export function ProcessDialog({
             <Button
               variant="outline"
               onClick={onClose}
-              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+              className="border-border bg-card text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
             >
               Cancel
             </Button>
             <Button
               onClick={onSave}
-              className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             >
               {mode === 'create' ? 'Create Process' : 'Save Changes'}
             </Button>

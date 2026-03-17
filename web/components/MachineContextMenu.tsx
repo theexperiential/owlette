@@ -73,7 +73,7 @@ export function MachineContextMenu({
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0 text-slate-400 hover:text-white hover:bg-slate-700 cursor-pointer"
+            className="h-8 w-8 p-0 text-muted-foreground hover:text-white hover:bg-accent cursor-pointer"
             onClick={(e) => {
               // Prevent row click event from firing
               e.stopPropagation();
@@ -82,7 +82,7 @@ export function MachineContextMenu({
             <MoreVertical className="h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="border-slate-700 bg-slate-800 w-48">
+        <DropdownMenuContent align="end" className="border-border bg-secondary w-48">
           <DropdownMenuItem
             onClick={(e) => {
               e.stopPropagation();
@@ -93,7 +93,7 @@ export function MachineContextMenu({
             <KeyRound className="mr-2 h-4 w-4" />
             Revoke Token
           </DropdownMenuItem>
-          <DropdownMenuSeparator className="bg-slate-700" />
+          <DropdownMenuSeparator className="bg-accent" />
           <DropdownMenuItem
             onClick={(e) => {
               e.stopPropagation();
@@ -108,10 +108,10 @@ export function MachineContextMenu({
       </DropdownMenu>
 
       <Dialog open={showRevokeDialog} onOpenChange={setShowRevokeDialog}>
-        <DialogContent className="bg-slate-900 border-slate-700">
+        <DialogContent className="bg-card border-border">
           <DialogHeader>
             <DialogTitle>Revoke Token for {machineName}?</DialogTitle>
-            <DialogDescription className="text-slate-400">
+            <DialogDescription className="text-muted-foreground">
               This will immediately invalidate the machine&apos;s authentication token.
               The agent will disconnect and cannot reconnect until re-registered with a new registration code.
             </DialogDescription>
@@ -120,7 +120,7 @@ export function MachineContextMenu({
             <Button
               variant="outline"
               onClick={() => setShowRevokeDialog(false)}
-              className="bg-slate-800 border-slate-700 hover:bg-slate-700"
+              className="bg-secondary border-border hover:bg-accent"
             >
               Cancel
             </Button>

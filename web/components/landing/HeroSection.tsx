@@ -44,7 +44,7 @@ export function HeroSection() {
 
         {/* CTA Buttons */}
         <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center animate-in fade-in slide-in-from-bottom-6 duration-700 delay-300">
-          <Button asChild size="lg" className="bg-accent-cyan hover:bg-accent-cyan-hover text-slate-950 font-semibold px-6 sm:px-8 h-11 sm:h-12 text-sm sm:text-base">
+          <Button asChild size="lg" className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-semibold px-6 sm:px-8 h-11 sm:h-12 text-sm sm:text-base">
             <Link href="/register">Create Free Account</Link>
           </Button>
           <Button asChild variant="outline" size="lg" className="border-accent-cyan/30 hover:bg-accent-cyan/10 h-11 sm:h-12 text-sm sm:text-base">

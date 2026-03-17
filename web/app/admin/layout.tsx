@@ -72,7 +72,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <RequireAdmin>
       <TooltipProvider delayDuration={100}>
-        <div className="flex min-h-screen bg-background">
+        <div className="flex min-h-screen">
         {/* Mobile Menu Button */}
         {!mobileMenuOpen && (
           <div className="lg:hidden fixed top-4 left-4 z-50">
@@ -165,7 +165,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           flex items-start gap-3 p-3 lg:p-2 lg:justify-center xl:justify-start xl:p-3 rounded-lg cursor-pointer transition-colors mb-2
                           ${
                             isActive
-                              ? 'bg-accent-cyan text-foreground'
+                              ? 'bg-accent-cyan/15 text-accent-cyan border border-accent-cyan/30'
                               : 'text-foreground hover:bg-muted hover:text-foreground'
                           }
                         `}
@@ -175,7 +175,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           <p className="font-medium text-sm">{item.name}</p>
                           <p
                             className={`text-xs mt-0.5 ${
-                              isActive ? 'text-accent-cyan-foreground' : 'text-muted-foreground'
+                              isActive ? 'text-accent-cyan/70' : 'text-muted-foreground'
                             }`}
                           >
                             {item.description}

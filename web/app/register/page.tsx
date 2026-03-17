@@ -90,7 +90,7 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+    <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-md bg-card/50 border-border">
         <CardHeader className="space-y-4 flex flex-col items-center">
           <Image
@@ -197,7 +197,7 @@ export default function RegisterPage() {
                 </Link>
               </Label>
             </div>
-            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-slate-950 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || !agreedToTerms}>
+            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || !agreedToTerms}>
               {loading ? 'Creating account...' : 'Create account'}
             </Button>
           </form>

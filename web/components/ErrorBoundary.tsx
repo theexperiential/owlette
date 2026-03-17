@@ -84,8 +84,8 @@ export class ErrorBoundary extends Component<Props, State> {
 
       // Default fallback UI
       return (
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-          <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-lg shadow-lg p-6">
+        <div className="min-h-screen bg-background flex items-center justify-center p-4">
+          <div className="max-w-md w-full bg-background border border-border rounded-lg shadow-lg p-6">
             <div className="flex items-center justify-center w-12 h-12 mx-auto bg-red-900/30 rounded-full mb-4">
               <svg
                 className="w-6 h-6 text-red-400"
@@ -104,22 +104,22 @@ export class ErrorBoundary extends Component<Props, State> {
               Something went wrong
             </h2>
 
-            <p className="text-slate-400 text-center mb-6">
+            <p className="text-muted-foreground text-center mb-6">
               An unexpected error occurred. Please try refreshing the page or contact support if the problem persists.
             </p>
 
             {/* Show error details in development mode */}
             {process.env.NODE_ENV === 'development' && this.state.error && (
               <details className="mb-6">
-                <summary className="cursor-pointer text-sm font-medium text-slate-300 hover:text-white mb-2">
+                <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-white mb-2">
                   Error Details (Development Only)
                 </summary>
-                <div className="bg-slate-800 rounded p-3 text-xs font-mono overflow-auto max-h-48">
+                <div className="bg-secondary rounded p-3 text-xs font-mono overflow-auto max-h-48">
                   <div className="text-red-400 mb-2">
                     <strong>Error:</strong> {this.state.error.toString()}
                   </div>
                   {this.state.errorInfo && (
-                    <div className="text-slate-300">
+                    <div className="text-muted-foreground">
                       <strong>Component Stack:</strong>
                       <pre className="mt-1 whitespace-pre-wrap">
                         {this.state.errorInfo.componentStack}
@@ -133,13 +133,13 @@ export class ErrorBoundary extends Component<Props, State> {
             <div className="flex gap-3">
               <button
                 onClick={this.handleReset}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition-colors"
+                className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 font-medium py-2 px-4 rounded-md transition-colors"
               >
                 Try Again
               </button>
               <button
                 onClick={() => window.location.href = '/dashboard'}
-                className="flex-1 bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 hover:text-white font-medium py-2 px-4 rounded-md transition-colors"
+                className="flex-1 bg-secondary border border-border hover:bg-muted text-foreground hover:text-white font-medium py-2 px-4 rounded-md transition-colors"
               >
                 Go to Dashboard
               </button>

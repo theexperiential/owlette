@@ -139,7 +139,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
           </Badge>
         )}
         {inProgressCount > 0 && (
-          <Badge className="ml-2 bg-blue-600 text-white">
+          <Badge className="ml-2 bg-accent-cyan text-gray-900">
             In Progress: {inProgressCount}
           </Badge>
         )}
@@ -156,12 +156,12 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
 
           <div className="space-y-4">
             {/* Info banner */}
-            <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+            <div className="bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-4">
               <div className="flex items-start gap-3">
-                <AlertCircle className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                <div className="text-sm text-blue-900 dark:text-blue-100">
+                <AlertCircle className="h-5 w-5 text-accent-cyan mt-0.5 flex-shrink-0" />
+                <div className="text-sm text-foreground">
                   <p className="font-medium mb-1">What happens during an update:</p>
-                  <ul className="list-disc list-inside space-y-1 text-blue-800 dark:text-blue-200">
+                  <ul className="list-disc list-inside space-y-1 text-muted-foreground">
                     <li>The Owlette service will stop automatically</li>
                     <li>The new version will install silently</li>
                     <li>The Owlette service will restart automatically</li>

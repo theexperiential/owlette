@@ -304,10 +304,10 @@ export default function DeploymentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-3xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
+      <DialogContent className="border-border bg-secondary text-white max-w-3xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle className="text-white">Deploy Software</DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             Install software across multiple machines simultaneously
           </DialogDescription>
         </DialogHeader>
@@ -321,17 +321,17 @@ export default function DeploymentDialog({
                 <div className="flex-1 space-y-2">
                   <Label htmlFor="system-preset" className="text-white">Template Library</Label>
                   <Select value={selectedPreset} onValueChange={handlePresetSelect}>
-                    <SelectTrigger className="border-slate-700 bg-slate-900 text-white overflow-hidden">
+                    <SelectTrigger className="border-border bg-background text-white overflow-hidden">
                       {selectedPreset ? (
                         <span className="truncate">
                           {truncateMiddle(presets.find(p => p.id === selectedPreset)?.name || '')}
                         </span>
                       ) : (
-                        <span className="text-slate-400">Select a template...</span>
+                        <span className="text-muted-foreground">Select a template...</span>
                       )}
                     </SelectTrigger>
-                    <SelectContent className="border-slate-700 bg-slate-800">
-                      <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
+                    <SelectContent className="border-border bg-secondary">
+                      <SelectItem value="none" className="text-white focus:bg-accent focus:text-white">
                         None
                       </SelectItem>
                       {categories.map(category => {
@@ -340,18 +340,18 @@ export default function DeploymentDialog({
 
                         return (
                           <SelectGroup key={category}>
-                            <SelectLabel className="text-slate-400">{category}</SelectLabel>
+                            <SelectLabel className="text-muted-foreground">{category}</SelectLabel>
                             {categoryPresets.map(preset => (
                               <SelectItem
                                 key={preset.id}
                                 value={preset.id}
-                                className="text-white focus:bg-slate-700 focus:text-white"
+                                className="text-white focus:bg-accent focus:text-white"
                               >
                                 <span className="flex items-center gap-2">
                                   {preset.icon && <span>{preset.icon}</span>}
                                   <span>{preset.name}</span>
                                   {preset.is_owlette_agent && (
-                                    <Badge variant="outline" className="ml-2 border-blue-600 text-blue-400 text-xs">
+                                    <Badge variant="outline" className="ml-2 border-accent-cyan/50 text-accent-cyan text-xs">
                                       Auto
                                     </Badge>
                                   )}
@@ -363,7 +363,7 @@ export default function DeploymentDialog({
                       })}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     Admin-curated software catalog (TouchDesigner, VLC, Owlette Agent, etc.)
                   </p>
                 </div>
@@ -375,7 +375,7 @@ export default function DeploymentDialog({
                   <Label htmlFor="template" className="text-white">My Templates</Label>
                   <div className="flex gap-2">
                     <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
-                      <SelectTrigger className="border-slate-700 bg-slate-900 text-white flex-1 overflow-hidden">
+                      <SelectTrigger className="border-border bg-background text-white flex-1 overflow-hidden">
                         {selectedTemplate ? (
                           <span className="truncate">
                             {/* Use more relaxed truncation when Template Library isn't shown (full width available) */}
@@ -384,18 +384,18 @@ export default function DeploymentDialog({
                               : truncateMiddle(templates.find(t => t.id === selectedTemplate)?.name || '')}
                           </span>
                         ) : (
-                          <span className="text-slate-400">Select a template...</span>
+                          <span className="text-muted-foreground">Select a template...</span>
                         )}
                       </SelectTrigger>
-                      <SelectContent className="border-slate-700 bg-slate-800">
-                        <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
+                      <SelectContent className="border-border bg-secondary">
+                        <SelectItem value="none" className="text-white focus:bg-accent focus:text-white">
                           None
                         </SelectItem>
                         {templates.map((template) => (
                           <SelectItem
                             key={template.id}
                             value={template.id}
-                            className="text-white focus:bg-slate-700 focus:text-white"
+                            className="text-white focus:bg-accent focus:text-white"
                           >
                             {template.name}
                           </SelectItem>
@@ -409,7 +409,7 @@ export default function DeploymentDialog({
                           variant="outline"
                           size="icon"
                           onClick={handleEditTemplate}
-                          className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                          className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer"
                           title="Edit template"
                         >
                           <Pencil className="h-4 w-4" />
@@ -419,7 +419,7 @@ export default function DeploymentDialog({
                           variant="outline"
                           size="icon"
                           onClick={handleDeleteTemplate}
-                          className="border-slate-700 bg-slate-900 text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
+                          className="border-border bg-background text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
                           title="Delete template"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -427,13 +427,13 @@ export default function DeploymentDialog({
                       </>
                     )}
                   </div>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     Your custom deployment templates
                   </p>
                   {editingTemplate && (
-                    <div className="flex items-center gap-2 p-2 bg-blue-900/30 border border-blue-700 rounded text-sm">
-                      <Pencil className="h-3 w-3 text-blue-400" />
-                      <span className="text-blue-300">Editing template - changes will be saved when you deploy</span>
+                    <div className="flex items-center gap-2 p-2 bg-accent-cyan/10 border border-accent-cyan/30 rounded text-sm">
+                      <Pencil className="h-3 w-3 text-accent-cyan" />
+                      <span className="text-accent-cyan">Editing template - changes will be saved when you deploy</span>
                     </div>
                   )}
                 </div>
@@ -449,7 +449,7 @@ export default function DeploymentDialog({
               placeholder="e.g., TouchDesigner 2023.11760"
               value={deploymentName}
               onChange={(e) => setDeploymentName(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
           </div>
 
@@ -461,9 +461,9 @@ export default function DeploymentDialog({
               placeholder="e.g., TouchDesigner.exe"
               value={installerName}
               onChange={(e) => setInstallerName(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">The filename to save the installer as</p>
+            <p className="text-xs text-muted-foreground">The filename to save the installer as</p>
           </div>
 
           {/* Installer URL */}
@@ -474,9 +474,9 @@ export default function DeploymentDialog({
               placeholder="https://example.com/installer.exe"
               value={installerUrl}
               onChange={(e) => setInstallerUrl(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white font-mono text-sm"
+              className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-slate-500">Direct download link to the installer</p>
+            <p className="text-xs text-muted-foreground">Direct download link to the installer</p>
           </div>
 
           {/* Silent Flags */}
@@ -487,9 +487,9 @@ export default function DeploymentDialog({
               placeholder='/VERYSILENT /DIR="C:\\Program Files\\App"'
               value={silentFlags}
               onChange={(e) => setSilentFlags(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">Command-line flags for silent installation</p>
+            <p className="text-xs text-muted-foreground">Command-line flags for silent installation</p>
           </div>
 
           {/* Verify Path (Optional) */}
@@ -500,9 +500,9 @@ export default function DeploymentDialog({
               placeholder='C:\\Program Files\\App\\app.exe'
               value={verifyPath}
               onChange={(e) => setVerifyPath(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">Path to verify after installation completes</p>
+            <p className="text-xs text-muted-foreground">Path to verify after installation completes</p>
           </div>
 
           {/* Target Machines */}
@@ -515,7 +515,7 @@ export default function DeploymentDialog({
                   variant="outline"
                   size="sm"
                   onClick={selectOnlyOnlineMachines}
-                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer text-xs"
+                  className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
                 >
                   Online Only ({onlineMachines.length})
                 </Button>
@@ -524,21 +524,21 @@ export default function DeploymentDialog({
                   variant="outline"
                   size="sm"
                   onClick={toggleAllMachines}
-                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer text-xs"
+                  className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
                 >
                   {allMachinesSelected ? 'Deselect All' : 'Select All'}
                 </Button>
               </div>
             </div>
 
-            <div className="border border-slate-700 rounded-lg p-3 bg-slate-900 max-h-48 overflow-y-auto space-y-2">
+            <div className="border border-border rounded-lg p-3 bg-background max-h-48 overflow-y-auto space-y-2">
               {machines.length === 0 ? (
-                <p className="text-slate-400 text-sm text-center py-2">No machines available</p>
+                <p className="text-muted-foreground text-sm text-center py-2">No machines available</p>
               ) : (
                 machines.map((machine) => (
                   <div
                     key={machine.machineId}
-                    className="flex items-center justify-between p-2 rounded hover:bg-slate-800 cursor-pointer"
+                    className="flex items-center justify-between p-2 rounded hover:bg-secondary cursor-pointer"
                     onClick={() => toggleMachine(machine.machineId)}
                   >
                     <div className="flex items-center gap-3">
@@ -576,14 +576,14 @@ export default function DeploymentDialog({
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
-            className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
             disabled={deploying}
           >
             Cancel
           </Button>
           <Button
             onClick={handleDeploy}
-            className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             disabled={deploying}
           >
             {deploying ? (
@@ -603,10 +603,10 @@ export default function DeploymentDialog({
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-md">
+        <DialogContent className="border-border bg-secondary text-white max-w-md">
           <DialogHeader>
             <DialogTitle className="text-white">Delete Template</DialogTitle>
-            <DialogDescription className="text-slate-400">
+            <DialogDescription className="text-muted-foreground">
               Delete template "{templates.find(t => t.id === selectedTemplate)?.name}"? This cannot be undone.
             </DialogDescription>
           </DialogHeader>
@@ -614,7 +614,7 @@ export default function DeploymentDialog({
             <Button
               variant="outline"
               onClick={() => setShowDeleteConfirm(false)}
-              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+              className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
             >
               Cancel
             </Button>

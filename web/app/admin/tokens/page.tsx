@@ -180,7 +180,7 @@ export default function TokensPage() {
     if (daysUntil <= 7) {
       return { label: `Expires in ${daysUntil}d`, color: 'bg-amber-500/20 text-amber-400 border-amber-500/30' };
     }
-    return { label: `Expires ${expiry.toLocaleDateString()}`, color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' };
+    return { label: `Expires ${expiry.toLocaleDateString()}`, color: 'bg-accent-cyan/20 text-accent-cyan border-accent-cyan/30' };
   };
 
   return (

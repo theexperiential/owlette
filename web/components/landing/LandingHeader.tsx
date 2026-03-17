@@ -68,7 +68,7 @@ export function LandingHeader() {
           {loading ? (
             <div className="w-20 h-9 bg-muted animate-pulse rounded-md" />
           ) : user ? (
-            <Button asChild variant="default" size="sm" className="bg-accent-cyan hover:bg-accent-cyan-hover text-slate-950 font-medium">
+            <Button asChild variant="default" size="sm" className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium">
               <Link href="/dashboard">Dashboard</Link>
             </Button>
           ) : (
@@ -76,7 +76,7 @@ export function LandingHeader() {
               <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex text-muted-foreground hover:text-foreground">
                 <Link href="/login">Sign In</Link>
               </Button>
-              <Button asChild size="sm" className="bg-accent-cyan hover:bg-accent-cyan-hover text-slate-950 font-medium">
+              <Button asChild size="sm" className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium">
                 <Link href="/register">Get Started</Link>
               </Button>
             </>
@@ -122,7 +122,7 @@ export function LandingHeader() {
                 <Button asChild variant="outline" size="lg" className="w-full">
                   <Link href="/login" onClick={handleNavClick}>Sign In</Link>
                 </Button>
-                <Button asChild size="lg" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-slate-950 font-medium">
+                <Button asChild size="lg" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium">
                   <Link href="/register" onClick={handleNavClick}>Create Free Account</Link>
                 </Button>
               </div>

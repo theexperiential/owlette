@@ -136,7 +136,7 @@ export default function InstallerVersionsPage() {
         </div>
         <Button
           onClick={() => setUploadDialogOpen(true)}
-          className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+          className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
         >
           <Plus className="h-4 w-4 mr-2" />
           Upload New Version
@@ -349,8 +349,8 @@ export default function InstallerVersionsPage() {
 
       {/* Info Box */}
       {!loading && !error && versions.length > 0 && (
-        <div className="mt-6 bg-blue-900/30 border border-blue-700 rounded-lg p-4">
-          <p className="text-blue-300 text-sm">
+        <div className="mt-6 bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-4">
+          <p className="text-accent-cyan text-sm">
             <strong>Note:</strong> The "Latest" version is what users will download from the public
             download link. You can upload multiple versions and switch between them at any time.
             Old versions cannot be deleted if they are currently set as latest.
@@ -384,7 +384,7 @@ export default function InstallerVersionsPage() {
             </Button>
             <Button
               onClick={confirmSetAsLatest}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             >
               OK
             </Button>

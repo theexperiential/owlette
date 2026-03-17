@@ -209,10 +209,10 @@ export default function SystemPresetDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="border-border bg-secondary text-white max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEditMode ? 'Edit Template' : 'Create Template'}</DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             {isEditMode
               ? 'Update the template configuration.'
               : 'Create a new software template for the deployment catalog.'}
@@ -221,13 +221,13 @@ export default function SystemPresetDialog({
 
         {/* Quick Fill Button - Only show when creating new preset */}
         {!isEditMode && (
-          <div className="pb-4 border-b border-slate-700">
+          <div className="pb-4 border-b border-border">
             <Button
               type="button"
               variant="outline"
               onClick={handleAutoFillOwlette}
               disabled={installerLoading || !latestInstallerUrl}
-              className="w-full border-blue-600 bg-blue-600/10 text-blue-400 hover:bg-blue-600/20 hover:text-blue-300 cursor-pointer"
+              className="w-full border-accent-cyan/50 bg-accent-cyan/10 text-accent-cyan hover:bg-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
             >
               <Sparkles className="mr-2 h-4 w-4" />
               {installerLoading
@@ -236,7 +236,7 @@ export default function SystemPresetDialog({
                 ? `Auto-fill Owlette Agent v${latestInstallerVersion || '...'}`
                 : 'No Owlette Installer Available'}
             </Button>
-            <p className="text-xs text-slate-500 text-center mt-2">
+            <p className="text-xs text-muted-foreground text-center mt-2">
               Automatically populate all fields for Owlette Agent deployment
             </p>
           </div>
@@ -253,9 +253,9 @@ export default function SystemPresetDialog({
               placeholder="e.g., TouchDesigner 2025.31550"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">Display name shown in UI</p>
+            <p className="text-xs text-muted-foreground">Display name shown in UI</p>
           </div>
 
           {/* Software Name */}
@@ -268,9 +268,9 @@ export default function SystemPresetDialog({
               placeholder="e.g., TouchDesigner"
               value={softwareName}
               onChange={(e) => setSoftwareName(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">Short identifier for grouping</p>
+            <p className="text-xs text-muted-foreground">Short identifier for grouping</p>
           </div>
 
           {/* Category */}
@@ -279,22 +279,22 @@ export default function SystemPresetDialog({
               Category *
             </Label>
             <Select value={category} onValueChange={setCategory}>
-              <SelectTrigger className="border-slate-700 bg-slate-900 text-white">
+              <SelectTrigger className="border-border bg-background text-white">
                 <SelectValue placeholder="Select a category..." />
               </SelectTrigger>
-              <SelectContent className="border-slate-700 bg-slate-800">
+              <SelectContent className="border-border bg-secondary">
                 {predefinedCategories.map((cat) => (
                   <SelectItem
                     key={cat}
                     value={cat}
-                    className="text-white focus:bg-slate-700 focus:text-white"
+                    className="text-white focus:bg-accent focus:text-white"
                   >
                     {cat}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-slate-500">Used for filtering and organization</p>
+            <p className="text-xs text-muted-foreground">Used for filtering and organization</p>
           </div>
 
           {/* Icon (optional) */}
@@ -308,9 +308,9 @@ export default function SystemPresetDialog({
               value={icon}
               onChange={(e) => setIcon(e.target.value)}
               maxLength={2}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">Optional emoji icon (one character)</p>
+            <p className="text-xs text-muted-foreground">Optional emoji icon (one character)</p>
           </div>
 
           {/* Description (optional) */}
@@ -324,7 +324,7 @@ export default function SystemPresetDialog({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
-              className="border-slate-700 bg-slate-900 text-white resize-none"
+              className="border-border bg-background text-white resize-none"
             />
           </div>
 
@@ -338,9 +338,9 @@ export default function SystemPresetDialog({
               placeholder="e.g., TouchDesigner.2025.31550.exe"
               value={installerName}
               onChange={(e) => setInstallerName(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white font-mono text-sm"
+              className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-slate-500">Name of the installer file</p>
+            <p className="text-xs text-muted-foreground">Name of the installer file</p>
           </div>
 
           {/* Installer URL */}
@@ -353,9 +353,9 @@ export default function SystemPresetDialog({
               placeholder="https://example.com/installer.exe"
               value={installerUrl}
               onChange={(e) => setInstallerUrl(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white font-mono text-sm"
+              className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               Direct download link for the installer
             </p>
           </div>
@@ -370,9 +370,9 @@ export default function SystemPresetDialog({
               placeholder="/VERYSILENT /NORESTART /SUPPRESSMSGBOXES"
               value={silentFlags}
               onChange={(e) => setSilentFlags(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white font-mono text-sm"
+              className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               Command-line flags for silent installation. Include custom directory here (e.g., /DIR=&quot;C:\Custom\Path&quot;)
             </p>
           </div>
@@ -387,9 +387,9 @@ export default function SystemPresetDialog({
               placeholder='C:\\Program Files\\Software\\app.exe'
               value={verifyPath}
               onChange={(e) => setVerifyPath(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white font-mono text-sm"
+              className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-slate-500">Optional: File path to verify installation success</p>
+            <p className="text-xs text-muted-foreground">Optional: File path to verify installation success</p>
           </div>
 
           {/* Advanced Options */}
@@ -406,9 +406,9 @@ export default function SystemPresetDialog({
                 max="3600"
                 value={timeoutSeconds}
                 onChange={(e) => setTimeoutSeconds(parseInt(e.target.value) || 600)}
-                className="border-slate-700 bg-slate-900 text-white"
+                className="border-border bg-background text-white"
               />
-              <p className="text-xs text-slate-500">Max install time (default: 600)</p>
+              <p className="text-xs text-muted-foreground">Max install time (default: 600)</p>
             </div>
 
             {/* Order */}
@@ -422,9 +422,9 @@ export default function SystemPresetDialog({
                 min="1"
                 value={order}
                 onChange={(e) => setOrder(parseInt(e.target.value) || 100)}
-                className="border-slate-700 bg-slate-900 text-white"
+                className="border-border bg-background text-white"
               />
-              <p className="text-xs text-slate-500">Sort priority (lower = first)</p>
+              <p className="text-xs text-muted-foreground">Sort priority (lower = first)</p>
             </div>
           </div>
         </div>
@@ -434,14 +434,14 @@ export default function SystemPresetDialog({
             variant="outline"
             onClick={() => onOpenChange(false)}
             disabled={saving}
-            className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 cursor-pointer"
+            className="border-border bg-background text-white hover:bg-muted cursor-pointer"
           >
             Cancel
           </Button>
           <Button
             onClick={handleSave}
             disabled={saving}
-            className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
           >
             {saving ? (
               <>

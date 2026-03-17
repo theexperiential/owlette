@@ -12,12 +12,12 @@ export type MetricType = 'cpu' | 'memory' | 'disk' | 'gpu' | 'cpuTemp' | 'gpuTem
 // Configuration for each metric type
 // Using explicit RGB colors because CSS variables don't work in SVG stroke attributes
 export const metricConfig: Record<MetricType, { label: string; color: string; unit: string }> = {
-  cpu: { label: 'CPU', color: 'rgb(59, 130, 246)', unit: '%' },       // blue-500
-  memory: { label: 'Memory', color: 'rgb(168, 85, 247)', unit: '%' }, // purple-500
-  disk: { label: 'Disk', color: 'rgb(34, 197, 94)', unit: '%' },      // green-500
-  gpu: { label: 'GPU', color: 'rgb(249, 115, 22)', unit: '%' },       // orange-500
-  cpuTemp: { label: 'CPU°', color: 'rgb(239, 68, 68)', unit: '°C' },  // red-500
-  gpuTemp: { label: 'GPU°', color: 'rgb(236, 72, 153)', unit: '°C' }, // pink-500
+  cpu: { label: 'CPU', color: 'oklch(0.75 0.18 195)', unit: '%' },       // cyan accent (matches --accent-cyan)
+  memory: { label: 'Memory', color: 'oklch(0.65 0.25 250)', unit: '%' }, // blue (matches sidebar-primary)
+  disk: { label: 'Disk', color: 'rgb(34, 197, 94)', unit: '%' },         // green-500
+  gpu: { label: 'GPU', color: 'rgb(249, 115, 22)', unit: '%' },          // orange-500
+  cpuTemp: { label: 'CPU°', color: 'rgb(239, 68, 68)', unit: '°C' },     // red-500
+  gpuTemp: { label: 'GPU°', color: 'rgb(236, 72, 153)', unit: '°C' },    // pink-500
 };
 
 interface TooltipPayloadEntry {

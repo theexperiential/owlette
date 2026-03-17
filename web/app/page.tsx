@@ -9,7 +9,7 @@ import {
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <LandingHeader />
       <main>
         <HeroSection />

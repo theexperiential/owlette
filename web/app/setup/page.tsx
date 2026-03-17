@@ -262,7 +262,7 @@ export default function SetupPage() {
 
   if (authLoading || loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
+      <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="h-8 w-8 animate-spin text-accent-cyan" />
       </div>
     );
@@ -273,7 +273,7 @@ export default function SetupPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+    <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-2xl bg-card/50 border-border">
         <CardHeader className="space-y-4 flex flex-col items-center">
           <Image
@@ -364,7 +364,7 @@ export default function SetupPage() {
                 <Button
                   onClick={handleCreateSite}
                   disabled={!newSiteName.trim() || loading}
-                  className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loading ? (
                     <>
@@ -393,14 +393,14 @@ export default function SetupPage() {
           {/* Authorize Agent Button */}
           {!creatingNewSite && selectedSiteId && (
             <div className="space-y-4 pt-4 border-t border-border">
-              <div className="bg-blue-950/50 border border-blue-900/50 p-4 rounded-lg space-y-2">
-                <p className="text-sm font-medium text-blue-300">
+              <div className="bg-accent-cyan/15 border border-accent-cyan/20 p-4 rounded-lg space-y-2">
+                <p className="text-sm font-medium text-accent-cyan">
                   Selected Site
                 </p>
-                <p className="text-lg font-semibold text-blue-100">
+                <p className="text-lg font-semibold text-foreground">
                   {sites.find((s) => s.id === selectedSiteId)?.name}
                 </p>
-                <p className="text-xs text-blue-400 font-mono">
+                <p className="text-xs text-accent-cyan font-mono">
                   {selectedSiteId}
                 </p>
               </div>
@@ -408,7 +408,7 @@ export default function SetupPage() {
               <Button
                 onClick={handleAuthorizeAgent}
                 disabled={isRedirecting}
-                className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 size="lg"
               >
                 {isRedirecting ? (

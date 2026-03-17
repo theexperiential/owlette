@@ -45,10 +45,10 @@ export default function RequireAdmin({ children }: { children: React.ReactNode }
   // Show nothing while loading or redirecting
   if (loading || !user || !isAdmin) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-900">
+      <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="text-center">
-          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-blue-500 border-r-transparent"></div>
-          <p className="mt-4 text-slate-400">Verifying permissions...</p>
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-accent-cyan border-r-transparent"></div>
+          <p className="mt-4 text-muted-foreground">Verifying permissions...</p>
         </div>
       </div>
     );

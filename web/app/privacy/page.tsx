@@ -8,12 +8,12 @@ export default function PrivacyPage() {
   const router = useRouter();
 
   return (
-    <div className="min-h-screen bg-slate-950 py-12 px-4">
+    <div className="min-h-screen py-12 px-4">
       <div className="max-w-3xl mx-auto">
         <div className="mb-8">
           <button
             onClick={() => router.back()}
-            className="text-blue-400 hover:text-blue-300 text-sm cursor-pointer"
+            className="text-accent-cyan hover:text-accent-cyan text-sm cursor-pointer"
           >
             &larr; Back
           </button>
@@ -21,9 +21,9 @@ export default function PrivacyPage() {
 
         <article className="prose prose-invert prose-slate max-w-none">
           <h1 className="text-3xl font-bold text-white mb-2">Privacy Policy</h1>
-          <p className="text-slate-400 text-sm mb-8">Last updated: {lastUpdated}</p>
+          <p className="text-muted-foreground text-sm mb-8">Last updated: {lastUpdated}</p>
 
-          <div className="space-y-8 text-slate-300">
+          <div className="space-y-8 text-muted-foreground">
             <section>
               <h2 className="text-xl font-semibold text-white mb-4">1. Introduction</h2>
               <p>
@@ -195,7 +195,7 @@ export default function PrivacyPage() {
               </p>
               <p className="mt-4">
                 <strong>Email:</strong>{' '}
-                <a href="mailto:support@owlette.app" className="text-blue-400 hover:text-blue-300">
+                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan">
                   support@owlette.app
                 </a>
               </p>
@@ -209,13 +209,13 @@ export default function PrivacyPage() {
           </div>
         </article>
 
-        <div className="mt-12 pt-8 border-t border-slate-800 text-center">
-          <p className="text-slate-500 text-sm">
-            <Link href="/terms" className="text-slate-400 hover:text-slate-300">
+        <div className="mt-12 pt-8 border-t border-border text-center">
+          <p className="text-muted-foreground text-sm">
+            <Link href="/terms" className="text-muted-foreground hover:text-muted-foreground">
               Terms of Service
             </Link>
             {' '}&middot;{' '}
-            <Link href="/dashboard" className="text-slate-400 hover:text-slate-300">
+            <Link href="/dashboard" className="text-muted-foreground hover:text-muted-foreground">
               Dashboard
             </Link>
           </p>

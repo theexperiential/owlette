@@ -160,7 +160,7 @@ export function CreateSiteDialog({
   const getAvailabilityIcon = () => {
     switch (availabilityStatus) {
       case 'checking':
-        return <Loader2 className="h-4 w-4 animate-spin text-blue-400" />;
+        return <Loader2 className="h-4 w-4 animate-spin text-accent-cyan" />;
       case 'available':
         return <CheckCircle2 className="h-4 w-4 text-green-500" />;
       case 'taken':
@@ -174,22 +174,22 @@ export function CreateSiteDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white">
+      <DialogContent className="border-border bg-secondary text-white">
         <DialogHeader>
           <DialogTitle className="text-white">Create New Site</DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             Sites organize your machines by location, purpose, or project. For example, create separate sites for different offices, studios, or installations.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
           {/* Helpful examples */}
-          <div className="rounded-lg bg-blue-900/20 border border-blue-700/50 p-3">
-            <p className="text-xs text-blue-300 mb-1 font-semibold">Example Site IDs:</p>
-            <p className="text-xs text-slate-400">
-              <span className="font-mono text-blue-400">home-studio</span> •
-              <span className="font-mono text-blue-400"> nyc-office</span> •
-              <span className="font-mono text-blue-400"> production-floor</span> •
-              <span className="font-mono text-blue-400"> client-site-a</span>
+          <div className="rounded-lg bg-accent-cyan/10 border border-accent-cyan/30 p-3">
+            <p className="text-xs text-accent-cyan mb-1 font-semibold">Example Site IDs:</p>
+            <p className="text-xs text-muted-foreground">
+              <span className="font-mono text-accent-cyan">home-studio</span> •
+              <span className="font-mono text-accent-cyan"> nyc-office</span> •
+              <span className="font-mono text-accent-cyan"> production-floor</span> •
+              <span className="font-mono text-accent-cyan"> client-site-a</span>
             </p>
           </div>
 
@@ -201,9 +201,9 @@ export function CreateSiteDialog({
               placeholder="e.g., NYC Office"
               value={newSiteName}
               onChange={(e) => setNewSiteName(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">Display name for the site</p>
+            <p className="text-xs text-muted-foreground">Display name for the site</p>
           </div>
 
           {/* Site ID Input with availability checking */}
@@ -215,7 +215,7 @@ export function CreateSiteDialog({
                 placeholder="e.g., nyc-office"
                 value={newSiteId}
                 onChange={(e) => handleSiteIdChange(e.target.value)}
-                className={`border-slate-700 bg-slate-900 text-white pr-10 ${
+                className={`border-border bg-background text-white pr-10 ${
                   availabilityStatus === 'taken' || availabilityStatus === 'invalid'
                     ? 'border-red-500/50 focus-visible:ring-red-500'
                     : availabilityStatus === 'available'
@@ -236,7 +236,7 @@ export function CreateSiteDialog({
               <p className="text-xs text-green-400">This Site ID is available!</p>
             )}
             {availabilityStatus === 'idle' && (
-              <p className="text-xs text-slate-500">Unique identifier - lowercase letters, numbers, hyphens</p>
+              <p className="text-xs text-muted-foreground">Unique identifier - lowercase letters, numbers, hyphens</p>
             )}
 
             {/* Auto-suggestion button */}
@@ -246,7 +246,7 @@ export function CreateSiteDialog({
                 variant="outline"
                 size="sm"
                 onClick={handleUseSuggestion}
-                className="mt-2 border-blue-700/50 bg-blue-900/20 text-blue-300 hover:bg-blue-900/40 cursor-pointer"
+                className="mt-2 border-accent-cyan/30 bg-accent-cyan/10 text-accent-cyan hover:bg-accent-cyan/20 cursor-pointer"
               >
                 <Sparkles className="h-3 w-3 mr-1" />
                 Use suggestion: <span className="font-mono ml-1">{suggestedId}</span>
@@ -258,14 +258,14 @@ export function CreateSiteDialog({
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
-            className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 cursor-pointer"
+            className="border-border bg-secondary text-white hover:bg-muted cursor-pointer"
           >
             Cancel
           </Button>
           <Button
             onClick={handleCreateSite}
             disabled={isCreating || availabilityStatus !== 'available'}
-            className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isCreating ? 'Creating...' : 'Create Site'}
           </Button>
