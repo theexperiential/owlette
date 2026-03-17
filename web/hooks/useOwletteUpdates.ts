@@ -182,9 +182,16 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
         return newSet;
       });
 
-      // Send update commands to all machines
+      // Send update commands to all machines (with version + checksum for agent verification)
       const updatePromises = machineIds.map(machineId =>
-        sendOwletteUpdateCommand(siteId, machineId, versionData.downloadUrl)
+        sendOwletteUpdateCommand(
+          siteId,
+          machineId,
+          versionData.downloadUrl,
+          undefined,
+          versionData.version,
+          versionData.sha256Checksum
+        )
           .catch(error => {
             console.error(`Failed to send update to ${machineId}:`, error);
             throw error;

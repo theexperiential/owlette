@@ -100,13 +100,17 @@ export async function getLatestOwletteVersion(): Promise<{
  * @param machineId Machine ID
  * @param installerUrl URL of the Owlette installer
  * @param deploymentId Optional deployment ID for tracking
+ * @param targetVersion Target version string (e.g., "2.1.0")
+ * @param checksumSha256 SHA256 checksum of the installer for verification
  * @returns Command ID
  */
 export async function sendOwletteUpdateCommand(
   siteId: string,
   machineId: string,
   installerUrl: string,
-  deploymentId?: string
+  deploymentId?: string,
+  targetVersion?: string,
+  checksumSha256?: string
 ): Promise<string> {
   if (!db) {
     throw new Error('Firestore not initialized');
@@ -126,6 +130,8 @@ export async function sendOwletteUpdateCommand(
         type: 'update_owlette',
         installer_url: installerUrl,
         deployment_id: deploymentId || null,
+        target_version: targetVersion || null,
+        checksum_sha256: checksumSha256 || null,
         timestamp: Timestamp.now(),
         status: 'pending',
       }
