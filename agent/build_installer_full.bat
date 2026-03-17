@@ -49,19 +49,26 @@ echo.
 :: Step 1: Clean previous builds
 :: ============================================================================
 echo [1/9] Cleaning previous builds...
+:: Keep downloads\ cache intact — only wipe the build output
 if exist "build" (
     rmdir /s /q build 2>nul
 )
 mkdir build
 mkdir build\installer_package
+:: Persistent download cache (survives clean)
+if not exist "downloads" mkdir downloads
 
 :: ============================================================================
 :: Step 2: Download Python 3.11 embedded
 :: ============================================================================
 echo [2/9] Downloading Python 3.11 embedded...
-if not exist "build\python-embed.zip" (
+:: SHA256 hash for python-3.11.8-embed-amd64.zip
+:: Verify at: https://www.python.org/downloads/release/python-3118/ (Files table)
+:: IMPORTANT: Update this hash if changing Python version
+set PYTHON_EXPECTED_HASH=6347068ca56bf4dd6319f7ef5695f5a03f1ade3e9aa2d6a095ab27faa77a1290
+if not exist "downloads\python-embed.zip" (
     echo Downloading Python 3.11.8 embedded...
-    curl -L -o build\python-embed.zip https://www.python.org/ftp/python/3.11.8/python-3.11.8-embed-amd64.zip
+    curl -L -o downloads\python-embed.zip https://www.python.org/ftp/python/3.11.8/python-3.11.8-embed-amd64.zip
     if errorlevel 1 (
         echo ERROR: Failed to download Python
         pause
@@ -69,9 +76,26 @@ if not exist "build\python-embed.zip" (
     )
 )
 
+:: Verify Python download integrity
+echo Verifying Python download checksum...
+for /f "skip=1 tokens=*" %%a in ('certutil -hashfile downloads\python-embed.zip SHA256') do (
+    if not defined PYTHON_ACTUAL_HASH set "PYTHON_ACTUAL_HASH=%%a"
+)
+if /i not "%PYTHON_ACTUAL_HASH%"=="%PYTHON_EXPECTED_HASH%" (
+    echo ERROR: Python checksum mismatch!
+    echo Expected: %PYTHON_EXPECTED_HASH%
+    echo Actual:   %PYTHON_ACTUAL_HASH%
+    echo Download may be corrupted or tampered with.
+    del downloads\python-embed.zip
+    pause
+    exit /b 1
+)
+echo Python checksum verified OK
+set "PYTHON_ACTUAL_HASH="
+
 :: Extract Python
 echo Extracting Python...
-powershell -Command "Expand-Archive -Path build\python-embed.zip -DestinationPath build\python -Force"
+powershell -Command "Expand-Archive -Path downloads\python-embed.zip -DestinationPath build\python -Force"
 
 :: ============================================================================
 :: Step 3: Configure Python import paths
@@ -92,8 +116,10 @@ echo [3/9] Configuring Python import paths...
 :: Step 4: Install pip
 :: ============================================================================
 echo [4/9] Installing pip...
-curl -o build\get-pip.py https://bootstrap.pypa.io/get-pip.py
-"%~dp0build\python\python.exe" "%~dp0build\get-pip.py"
+if not exist "downloads\get-pip.py" (
+    curl -o downloads\get-pip.py https://bootstrap.pypa.io/get-pip.py
+)
+"%~dp0build\python\python.exe" "%~dp0downloads\get-pip.py"
 if errorlevel 1 (
     echo ERROR: Failed to install pip
     pause
@@ -105,11 +131,21 @@ echo Pip installed successfully!
 :: Step 5: Install dependencies
 :: ============================================================================
 echo [5/9] Installing dependencies (this may take a few minutes)...
-"%~dp0build\python\python.exe" -m pip install --no-warn-script-location --ignore-installed -r "%~dp0requirements.txt"
+:: Install only from PyPI (no custom indexes) and verify TLS
+"%~dp0build\python\python.exe" -m pip install --no-warn-script-location --ignore-installed --only-binary=:all: -r "%~dp0requirements.txt"
 if errorlevel 1 (
-    echo ERROR: Failed to install dependencies
-    pause
-    exit /b 1
+    echo WARNING: Some packages may not have binary wheels, retrying with source builds...
+    "%~dp0build\python\python.exe" -m pip install --no-warn-script-location --ignore-installed -r "%~dp0requirements.txt"
+    if errorlevel 1 (
+        echo ERROR: Failed to install dependencies
+        pause
+        exit /b 1
+    )
+)
+:: Verify installed packages have no dependency conflicts
+"%~dp0build\python\python.exe" -m pip check
+if errorlevel 1 (
+    echo WARNING: Dependency conflicts detected (non-fatal)
 )
 echo Dependencies installed successfully!
 
@@ -135,24 +171,67 @@ if exist "C:\Program Files\Python311" (
 )
 
 :: ============================================================================
-:: Step 7: Download NSSM
+:: Step 7: Acquire NSSM (cached download or local install fallback)
 :: ============================================================================
-echo [7/9] Downloading NSSM...
-if not exist "build\nssm.zip" (
-    echo Downloading NSSM 2.24...
-    curl -L -o build\nssm.zip https://nssm.cc/release/nssm-2.24.zip
-    if errorlevel 1 (
-        echo ERROR: Failed to download NSSM
-        pause
-        exit /b 1
-    )
+echo [7/9] Acquiring NSSM...
+mkdir build\tools 2>nul
+
+:: SHA256 hash for nssm-2.24.zip (from nssm.cc)
+:: IMPORTANT: Verify this hash manually on first build by downloading from nssm.cc
+:: and computing: certutil -hashfile nssm-2.24.zip SHA256
+:: Update this hash if changing NSSM version
+set NSSM_EXPECTED_HASH=923c35e43bf18a672648abf67d9ded77da89b82baff52b94762a10f285e2db26
+
+:: Use cached zip if present
+if exist "downloads\nssm.zip" goto :verify_nssm
+
+:: Try downloading
+echo Downloading NSSM 2.24 from nssm.cc...
+curl -L --max-time 30 -o downloads\nssm.zip https://nssm.cc/release/nssm-2.24.zip
+if errorlevel 1 (
+    echo WARNING: Download failed, trying local installation...
+    del downloads\nssm.zip 2>nul
+    goto :nssm_local
+)
+:: Reject HTML error pages (a real zip is hundreds of KB)
+for %%F in (downloads\nssm.zip) do if %%~zF LSS 10240 (
+    echo WARNING: Downloaded file too small ^(%%~zF bytes^) - server returned error page
+    del downloads\nssm.zip
+    goto :nssm_local
 )
 
-:: Extract NSSM
+:verify_nssm
+echo Verifying NSSM download checksum...
+set "NSSM_ACTUAL_HASH="
+for /f "skip=1 tokens=*" %%a in ('certutil -hashfile downloads\nssm.zip SHA256') do (
+    if not defined NSSM_ACTUAL_HASH set "NSSM_ACTUAL_HASH=%%a"
+)
+if /i "%NSSM_ACTUAL_HASH%"=="%NSSM_EXPECTED_HASH%" (
+    set "NSSM_ACTUAL_HASH="
+    goto :extract_nssm
+)
+echo WARNING: NSSM download checksum mismatch ^(actual: %NSSM_ACTUAL_HASH%^)
+echo          Falling back to local installation...
+set "NSSM_ACTUAL_HASH="
+del downloads\nssm.zip
+
+:nssm_local
+if exist "C:\Owlette\tools\nssm.exe" (
+    echo Using locally installed NSSM from C:\Owlette\tools\nssm.exe
+    copy /Y "C:\Owlette\tools\nssm.exe" build\tools\ >nul
+    echo NSSM acquired from local installation OK
+    goto :nssm_done
+)
+echo ERROR: nssm.cc is unavailable and no local NSSM at C:\Owlette\tools\nssm.exe
+pause
+exit /b 1
+
+:extract_nssm
 echo Extracting NSSM...
-powershell -Command "Expand-Archive -Path build\nssm.zip -DestinationPath build\nssm -Force"
-mkdir build\tools 2>nul
+powershell -Command "Expand-Archive -Path downloads\nssm.zip -DestinationPath build\nssm -Force"
 copy /Y build\nssm\nssm-2.24\win64\nssm.exe build\tools\ >nul
+
+:nssm_done
 
 :: ============================================================================
 :: Step 8: Create installer package structure

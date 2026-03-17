@@ -141,6 +141,13 @@ echo Configuring service to run as LocalSystem...
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppExit Default Restart
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppExit 0 Exit
 
+:: Don't kill child processes on service stop.
+:: Managed processes (TouchDesigner, etc.) are launched via a helper script that
+:: breaks the parent-child chain, but this is a safety net to ensure they survive
+:: service restarts and upgrades.
+:: Note: AppKillProcessTree is not exposed via nssm set CLI, must use reg add.
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\OwletteService\Parameters" /v AppKillProcessTree /t REG_DWORD /d 0 /f >nul 2>&1
+
 :: ============================================================================
 :: Step 5: Start service
 :: ============================================================================

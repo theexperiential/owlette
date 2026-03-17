@@ -10,7 +10,6 @@ import GPUtil
 import platform
 import subprocess
 import threading
-import psutil
 import winreg
 import time
 from pathlib import Path
@@ -22,7 +21,7 @@ def get_app_version():
     This ensures a single source of truth for version management.
 
     Returns:
-        str: Version string (e.g., "2.0.3") or "0.0.0" if VERSION file not found
+        str: Version string (e.g., "2.0.55") or "0.0.0" if VERSION file not found
     """
     try:
         # VERSION file is in agent/ directory (parent of src/)
@@ -30,11 +29,11 @@ def get_app_version():
         if version_file.exists():
             return version_file.read_text().strip()
         else:
-            # Fallback for development or if VERSION file is missing
-            return '2.0.3'  # Hardcoded fallback
+            logging.warning("VERSION file not found — using fallback '0.0.0'")
+            return '0.0.0'
     except Exception as e:
-        # If anything goes wrong, use fallback version
-        return '2.0.3'
+        logging.warning(f"Failed to read VERSION file: {e} — using fallback '0.0.0'")
+        return '0.0.0'
 
 # GLOBAL VARS
 
@@ -47,6 +46,14 @@ BUTTON_COLOR = '#1e293b'      # slate-800 - buttons
 BUTTON_HOVER_COLOR = '#334155' # slate-700 - button hover
 BUTTON_IMPORTANT_COLOR = '#2563eb' # blue-600 - accent buttons (New, autolaunch toggle)
 TEXT_COLOR = "white"
+STATUS_COLORS = {
+    'RUNNING':   '#4ade80',  # green-400
+    'LAUNCHING': '#facc15',  # yellow-400
+    'QUEUED':    '#fb923c',  # orange-400
+    'KILLED':    '#f87171',  # red-400
+    'STOPPED':   '#f87171',  # red-400
+    'INACTIVE':  '#64748b',  # slate-500
+}
 WINDOW_TITLES = {
     "owlette_gui": "Owlette Configuration", 
     "prompt_slack_config": "Connect to Slack",
@@ -56,8 +63,47 @@ SERVICE_NAME = 'OwletteService'
 
 
 # OS
-# Initialize a global lock
+# Initialize a global lock (thread-level)
 json_lock = threading.Lock()
+
+# Cross-process mutex for JSON file access (service + GUI coordination)
+_json_file_mutex = None
+def _get_json_file_mutex():
+    """Get or create a Windows named mutex for cross-process JSON file locking."""
+    global _json_file_mutex
+    if _json_file_mutex is None:
+        try:
+            import win32event
+            # Named mutex shared between service and GUI processes
+            _json_file_mutex = win32event.CreateMutex(None, False, "Global\\OwletteJsonFileMutex")
+        except Exception:
+            _json_file_mutex = False  # Fallback: skip cross-process locking
+    return _json_file_mutex
+
+class _CrossProcessLock:
+    """Context manager for cross-process file locking using a Windows named mutex."""
+    def __init__(self, timeout_ms=2000):
+        self.timeout_ms = timeout_ms
+        self.mutex = _get_json_file_mutex()
+        self.acquired = False
+
+    def __enter__(self):
+        if self.mutex:
+            try:
+                import win32event, win32con
+                result = win32event.WaitForSingleObject(self.mutex, self.timeout_ms)
+                self.acquired = result in (win32event.WAIT_OBJECT_0, win32event.WAIT_ABANDONED)
+            except Exception:
+                pass
+        return self
+
+    def __exit__(self, *args):
+        if self.acquired and self.mutex:
+            try:
+                import win32event
+                win32event.ReleaseMutex(self.mutex)
+            except Exception:
+                pass
 
 # Return the hostname of the machine where the script is running
 def get_hostname():
@@ -645,10 +691,14 @@ def load_config(emails_to_entry=None):
 def save_config(config=None, emails_to_entry=None):
     if config is None:
         config = read_json_from_file(CONFIG_PATH)
-    
+
     if emails_to_entry is not None:
         config['gmail']['to'] = [email.strip() for email in emails_to_entry.get().split(',')]
-    
+
+    # Strip runtime-only fields before persisting — these belong in app_states.json, not config
+    for process in config.get('processes', []):
+        process.pop('status', None)
+
     write_json_to_file(config, CONFIG_PATH)
   
 # Maintain compatibility from JSON config versions < 1.1.0
@@ -747,7 +797,7 @@ def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
     Returns:
         Dictionary from JSON file, or {} if error/not found (never returns None)
     """
-    with json_lock:
+    with _CrossProcessLock(), json_lock:
         for attempt in range(max_retries):
             try:
                 with open(file_path, 'r') as f:
@@ -796,7 +846,7 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
         max_retries: Maximum number of retry attempts (default: 3)
         initial_delay: Initial delay in seconds, doubles with each retry (default: 0.1s)
     """
-    with json_lock:
+    with _CrossProcessLock(), json_lock:
         # Use atomic write pattern: write to temp file, then rename
         temp_path = file_path + '.tmp'
 
@@ -925,6 +975,72 @@ def write_config(keys, value):
 
     write_json_to_file(config, CONFIG_PATH)
 
+# PROCESS TERMINATION
+
+def find_windows_by_pid(pid):
+    """Find all top-level window handles (HWNDs) owned by a given PID."""
+    import win32gui
+    import win32process
+    windows = []
+    def enum_callback(hwnd, _):
+        try:
+            _, window_pid = win32process.GetWindowThreadProcessId(hwnd)
+            if window_pid == pid and win32gui.IsWindowVisible(hwnd):
+                windows.append(hwnd)
+        except Exception:
+            pass
+    try:
+        win32gui.EnumWindows(enum_callback, None)
+    except Exception:
+        pass
+    return windows
+
+
+def graceful_terminate(pid, timeout=5):
+    """Attempt graceful shutdown via WM_CLOSE, then fall back to hard terminate.
+
+    Returns True if the process was terminated, False if it was already gone.
+    """
+    import win32gui
+    import win32con
+
+    try:
+        proc = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return False
+
+    # Try graceful shutdown: send WM_CLOSE to all visible windows
+    windows = find_windows_by_pid(pid)
+    if windows:
+        for hwnd in windows:
+            try:
+                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+            except Exception:
+                pass
+
+        # Wait for process to exit gracefully
+        try:
+            proc.wait(timeout=timeout)
+            logging.info(f"Process {pid} exited gracefully after WM_CLOSE")
+            return True
+        except psutil.TimeoutExpired:
+            logging.info(f"Process {pid} did not exit after WM_CLOSE ({timeout}s), forcing terminate")
+
+    # Fall back to hard terminate
+    try:
+        proc.terminate()
+        proc.wait(timeout=3)
+        return True
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.TimeoutExpired:
+        try:
+            proc.kill()
+            return True
+        except psutil.NoSuchProcess:
+            return False
+
+
 # PROCESSES
 
 def fetch_pid_by_id(target_id):
@@ -946,14 +1062,15 @@ def fetch_pid_by_id(target_id):
     
     return newest_pid
 
-def update_process_status_in_json(pid, new_status, firebase_client=None):
+def update_process_status_in_json(pid, new_status, firebase_client=None, process_id=None):
     """
     Update process status in JSON file. Status will sync to Firebase via centralized metrics loop.
 
     Args:
-        pid: Process ID to update
+        pid: OS process ID to update
         new_status: New status string (LAUNCHING, RUNNING, STALLED, etc.)
         firebase_client: Deprecated parameter (kept for compatibility)
+        process_id: Config process ID (for GUI status mapping)
     """
     data = read_json_from_file(RESULT_FILE_PATH)
 
@@ -966,6 +1083,8 @@ def update_process_status_in_json(pid, new_status, firebase_client=None):
         data[str(pid)] = {}
 
     data[str(pid)]['status'] = new_status
+    if process_id:
+        data[str(pid)]['id'] = process_id
     write_json_to_file(data, RESULT_FILE_PATH)
 
     # Status updated locally - will sync via centralized metrics loop on next interval

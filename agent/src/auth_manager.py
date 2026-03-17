@@ -31,6 +31,7 @@ import time
 import socket
 import logging
 import json
+import threading
 from typing import Optional, Dict, Any
 from secure_storage import SecureStorage, get_storage
 import shared_utils
@@ -91,6 +92,9 @@ class AuthManager:
         self._consecutive_failures: int = 0  # Track consecutive failures
         self._backoff_logged: bool = False  # Track if we've logged backoff message
 
+        # Lock to prevent concurrent token refresh attempts from multiple threads
+        self._refresh_lock = threading.Lock()
+
         # Load cached tokens from storage
         self._load_cached_tokens()
 
@@ -139,7 +143,6 @@ class AuthManager:
 
             # Call exchange endpoint
             url = f"{self.api_base}/agent/auth/exchange"
-            print(f"DEBUG: Calling exchange endpoint: {url}")
             logger.info(f"Exchange URL: {url}")
             logger.info(f"Machine ID: {machine_id}")
 
@@ -159,7 +162,6 @@ class AuthManager:
                 },
                 timeout=30,
             )
-            print(f"DEBUG: Response status: {response.status_code}")
             logger.info(f"Exchange response status: {response.status_code}")
 
             # Log response to debug file
@@ -195,15 +197,12 @@ class AuthManager:
             expiry_timestamp = time.time() + expires_in
 
             # Store tokens securely
-            print(f"DEBUG: Saving tokens to encrypted file...")
             success_refresh = self.storage.save_refresh_token(refresh_token)
             success_access = self.storage.save_access_token(access_token, expiry_timestamp)
             success_site = self.storage.save_site_id(site_id)
 
             if not success_refresh or not success_access or not success_site:
                 raise AuthenticationError("Failed to save tokens to encrypted file")
-
-            print(f"DEBUG: Tokens saved successfully")
 
             # Update instance state
             self._access_token = access_token
@@ -355,51 +354,57 @@ class AuthManager:
 
             # Refresh if token expires in less than 5 minutes
             if time_until_expiry <= TOKEN_REFRESH_BUFFER_SECONDS:
-                # Check backoff - don't retry too soon after previous failure
-                if self._last_refresh_attempt:
-                    time_since_last_attempt = time.time() - self._last_refresh_attempt
-                    if time_since_last_attempt < self._refresh_backoff_seconds:
-                        # Still in backoff period - only log ONCE per backoff period
-                        retry_in = int(self._refresh_backoff_seconds - time_since_last_attempt)
-                        if not self._backoff_logged:
-                            logger.warning(
-                                f"Token refresh in backoff (waiting {int(self._refresh_backoff_seconds)}s, "
-                                f"{self._consecutive_failures} consecutive failures)"
-                            )
-                            self._backoff_logged = True
-                        # Use existing token even if close to expiry (better than spamming)
-                        if self._access_token and time_until_expiry > 0:
-                            return self._access_token
-                        # If token completely expired and still in backoff, raise error
-                        raise TokenRefreshError(
-                            f"Token expired and refresh in backoff period (retry in {retry_in}s)"
-                        )
-
-                # Attempt refresh - reset backoff log flag since we're trying again
-                self._backoff_logged = False
-                logger.info(
-                    f"[WARNING] Token expires in {int(time_until_expiry)}s (< {TOKEN_REFRESH_BUFFER_SECONDS}s buffer), triggering refresh..."
-                )
-                try:
-                    self._last_refresh_attempt = time.time()
-                    self.refresh_access_token()
-                    logger.info("[OK] Token refresh completed successfully")
-                except TokenRefreshError as e:
-                    # Double backoff on failure (exponential backoff)
-                    self._refresh_backoff_seconds = min(
-                        self._refresh_backoff_seconds * 2,
-                        self._max_backoff_seconds
-                    )
-                    logger.error(
-                        f"Token refresh failed, increasing backoff to {int(self._refresh_backoff_seconds)}s "
-                        f"({self._consecutive_failures} consecutive failures)"
-                    )
-                    # If token is still valid (not completely expired), use it
-                    if self._access_token and time_until_expiry > 0:
-                        logger.warning("Using expiring token due to refresh failure")
+                with self._refresh_lock:
+                    # Re-check after acquiring lock — another thread may have refreshed
+                    time_until_expiry = self._token_expiry - time.time()
+                    if time_until_expiry > TOKEN_REFRESH_BUFFER_SECONDS:
                         return self._access_token
-                    # Otherwise, re-raise the error
-                    raise
+
+                    # Check backoff - don't retry too soon after previous failure
+                    if self._last_refresh_attempt:
+                        time_since_last_attempt = time.time() - self._last_refresh_attempt
+                        if time_since_last_attempt < self._refresh_backoff_seconds:
+                            # Still in backoff period - only log ONCE per backoff period
+                            retry_in = int(self._refresh_backoff_seconds - time_since_last_attempt)
+                            if not self._backoff_logged:
+                                logger.warning(
+                                    f"Token refresh in backoff (waiting {int(self._refresh_backoff_seconds)}s, "
+                                    f"{self._consecutive_failures} consecutive failures)"
+                                )
+                                self._backoff_logged = True
+                            # Use existing token even if close to expiry (better than spamming)
+                            if self._access_token and time_until_expiry > 0:
+                                return self._access_token
+                            # If token completely expired and still in backoff, raise error
+                            raise TokenRefreshError(
+                                f"Token expired and refresh in backoff period (retry in {retry_in}s)"
+                            )
+
+                    # Attempt refresh - reset backoff log flag since we're trying again
+                    self._backoff_logged = False
+                    logger.info(
+                        f"[WARNING] Token expires in {int(time_until_expiry)}s (< {TOKEN_REFRESH_BUFFER_SECONDS}s buffer), triggering refresh..."
+                    )
+                    try:
+                        self._last_refresh_attempt = time.time()
+                        self.refresh_access_token()
+                        logger.info("[OK] Token refresh completed successfully")
+                    except TokenRefreshError as e:
+                        # Double backoff on failure (exponential backoff)
+                        self._refresh_backoff_seconds = min(
+                            self._refresh_backoff_seconds * 2,
+                            self._max_backoff_seconds
+                        )
+                        logger.error(
+                            f"Token refresh failed, increasing backoff to {int(self._refresh_backoff_seconds)}s "
+                            f"({self._consecutive_failures} consecutive failures)"
+                        )
+                        # If token is still valid (not completely expired), use it
+                        if self._access_token and time_until_expiry > 0:
+                            logger.warning("Using expiring token due to refresh failure")
+                            return self._access_token
+                        # Otherwise, re-raise the error
+                        raise
 
         # If we still don't have a token, authentication is required
         if not self._access_token:
@@ -491,7 +496,7 @@ if __name__ == "__main__":
     # Example: Get valid token (auto-refreshes if needed)
     try:
         token = auth.get_valid_token()
-        print(f"Got valid token: {token[:20]}...")  # Only print first 20 chars
+        print("Got valid token successfully")
     except (AuthenticationError, TokenRefreshError) as e:
         print(f"Failed to get token: {e}")
 

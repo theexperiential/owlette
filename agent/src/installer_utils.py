@@ -4,6 +4,7 @@ Installer utilities for downloading and executing software installers.
 
 import os
 import logging
+import shlex
 import subprocess
 import tempfile
 import requests
@@ -158,17 +159,23 @@ def execute_installer(
             logging.error(error_msg)
             return False, -1, error_msg
 
-        # Build command
-        command = f'"{installer_path}"'
+        # Build command as list to avoid shell injection
+        command = [installer_path]
         if flags:
-            command += f" {flags}"
+            # Use shlex.split to safely parse flags into a list
+            try:
+                command.extend(shlex.split(flags, posix=False))
+            except ValueError as e:
+                error_msg = f"Invalid installer flags: {e}"
+                logging.error(error_msg)
+                return False, -1, error_msg
 
         logging.info(f"Executing installer: {command}")
 
         # Use Popen instead of run so we can track and cancel the process
         process = subprocess.Popen(
             command,
-            shell=True,
+            shell=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True

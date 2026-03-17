@@ -4,6 +4,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 from CTkListbox import *
 from custom_messagebox import OwletteMessagebox as CTkMessagebox
+from CTkToolTip import CTkToolTip
 import os
 import signal
 import json
@@ -83,7 +84,7 @@ class OwletteConfigApp:
 
         # Start periodic updates
         self.master.after(1000, self.update_process_list_periodically)
-        self.master.after(5000, self.update_firebase_status_periodically)  # Refresh connection status every 5s
+        self.master.after(1000, self.update_firebase_status_periodically)  # Refresh connection status (initial fast check)
 
     def _start_background_initialization(self):
         """Start heavy operations in background threads"""
@@ -225,7 +226,7 @@ class OwletteConfigApp:
         # Create a Listbox to display the list of processes
         self.process_list = CTkListbox(self.master, command=self.on_select)
         self.process_list.grid(row=1, column=0, columnspan=3, rowspan=7, sticky='nsew', padx=(20, 10), pady=10)
-        self.process_list.configure(highlight_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1)
+        self.process_list.configure(highlight_color="#1e3a5f", hover_color=shared_utils.BUTTON_HOVER_COLOR, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1)
         # Adjust scrollbar padding to shift it left
         self.process_list._scrollbar.grid_configure(padx=(0, 8))
 
@@ -269,6 +270,9 @@ class OwletteConfigApp:
         footer_text = "Made with ♥ in California by TEC"
         self.footer_label = ctk.CTkLabel(self.master, text=footer_text, fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color="#60a5fa", font=("", 11))
         self.footer_label.grid(row=10, column=0, columnspan=8, sticky='', padx=0, pady=(5, 5))
+        # Lift buttons above the footer label (its columnspan=8 overlaps them, causing flash on resize)
+        self.site_button.lift()
+        self.firebase_status_label.lift()
         # Make TEC text clickable
         self.footer_label.configure(cursor="hand2")
         self.footer_label.bind("<Button-1>", lambda _: self._open_tec_website())
@@ -435,6 +439,31 @@ class OwletteConfigApp:
         # Bind a mouse click event to the root window to defocus entry fields
         self.master.bind("<Button-1>", self.defocus_entry)
 
+        # Tooltips
+        tooltip_opts = {"delay": 0.5, "alpha": 0.95, "corner_radius": 6}
+        CTkToolTip(self.autolaunch_toggle, message="Automatically launch and monitor this process", **tooltip_opts)
+        CTkToolTip(self.name_entry, message="Display name for this process", **tooltip_opts)
+        CTkToolTip(self.exe_path_entry, message="Full path to the executable (.exe)", **tooltip_opts)
+        CTkToolTip(self.exe_browse_button, message="Browse for an executable file", **tooltip_opts)
+        CTkToolTip(self.file_path_entry, message="A file to open with the executable (e.g. a .toe project),\nor command line arguments (e.g. --verbose --port 8080)", **tooltip_opts)
+        CTkToolTip(self.file_browse_button, message="Browse for a file to pass to the executable", **tooltip_opts)
+        CTkToolTip(self.cwd_entry, message="Working directory for the process", **tooltip_opts)
+        CTkToolTip(self.cwd_browse_button, message="Browse for a working directory", **tooltip_opts)
+        CTkToolTip(self.time_delay_entry, message="Seconds to wait before launching this process on startup", **tooltip_opts)
+        CTkToolTip(self.priority_menu, message="CPU priority level for the process", **tooltip_opts)
+        CTkToolTip(self.time_to_init_entry, message="Seconds to wait after launch before monitoring starts", **tooltip_opts)
+        CTkToolTip(self.visibility_menu, message="Whether the process window is visible or hidden", **tooltip_opts)
+        CTkToolTip(self.relaunch_attempts_entry, message="Max restart attempts before giving up (0 = unlimited)", **tooltip_opts)
+        CTkToolTip(self.new_button, message="Add a new process", **tooltip_opts)
+        CTkToolTip(self.up_button, message="Move process up in launch order", **tooltip_opts)
+        CTkToolTip(self.down_button, message="Move process down in launch order", **tooltip_opts)
+        CTkToolTip(self.kill_button, message="Force stop the selected process", **tooltip_opts)
+        CTkToolTip(self.remove_button, message="Remove process from the list", **tooltip_opts)
+        CTkToolTip(self.details_toggle_button, message="Show/hide process details panel", **tooltip_opts)
+        CTkToolTip(self.config_button, message="Open configuration file", **tooltip_opts)
+        CTkToolTip(self.logs_button, message="Open log file", **tooltip_opts)
+        CTkToolTip(self.site_button, message="Join or leave a cloud site for remote management", **tooltip_opts)
+
         # Make columns stretchable
         # Left side (process list): columns 0-2 - VERY high weight to dominate space
         # self.master.grid_columnconfigure(0, weight=1, minsize=120)
@@ -549,7 +578,7 @@ class OwletteConfigApp:
             # Status message if process has been launched
             try:
                 pid = shared_utils.fetch_pid_by_id(self.config['processes'][index]['id'])
-                shared_utils.update_process_status_in_json(pid, 'INACTIVE' if current_state else 'QUEUED')
+                shared_utils.update_process_status_in_json(pid, 'INACTIVE' if current_state else 'QUEUED', process_id=self.config['processes'][index]['id'])
             except Exception as e:
                 logging.info(e)
 
@@ -873,15 +902,9 @@ class OwletteConfigApp:
         if app_states is None:
             app_states = {}
 
-        # Filter the dictionary by the process_list_id
-        filtered_dict = {pid: info for pid, info in app_states.items() if info.get('id') == process_list_id}
-        
-        # Sort the filtered dictionary by the timestamp
-        sorted_dict = {k: v for k, v in sorted(filtered_dict.items(), key=lambda item: item[1]['timestamp'], reverse=True)}
-        
-        # Get the last (latest) pid
-        last_pid = next(iter(sorted_dict.keys()), None)
-        
+        # Filter the dictionary by the process_list_id and return the highest PID (most recent)
+        matching_pids = [pid for pid, info in app_states.items() if info.get('id') == process_list_id]
+        last_pid = max(matching_pids, key=int) if matching_pids else None
         return int(last_pid) if last_pid else None
 
     def kill_process(self):
@@ -898,7 +921,9 @@ class OwletteConfigApp:
 
             if os_pid:
                 try:
-                    os.kill(os_pid, signal.SIGTERM)  # or signal.SIGKILL
+                    # Use graceful_terminate (WM_CLOSE then hard kill) instead of
+                    # os.kill(SIGTERM) which doesn't work for Windows GUI processes
+                    shared_utils.graceful_terminate(os_pid)
                     killed = True
 
                     # Log process kill event to Firebase
@@ -925,16 +950,10 @@ class OwletteConfigApp:
             CTkMessagebox(master=self.master, title="Error", message=f"You must select a process to kill it.", icon="cancel")
 
     def get_status_indicator(self, status):
-        """Map status to fixed-width text badge"""
-        status_map = {
-            'RUNNING': '[RUN ]',      # Actively running
-            'LAUNCHING': '[INIT]',    # Starting up
-            'QUEUED': '[WAIT]',       # Waiting to start
-            'KILLED': '[STOP]',       # Manually stopped
-            'STOPPED': '[STOP]',      # Stopped
-            'INACTIVE': '[OFF ]',     # Inactive/not managed
-        }
-        return status_map.get(status, '[OFF ]')
+        """Map status to Unicode dot indicator"""
+        if status == 'INACTIVE':
+            return '○'  # Hollow dot for inactive
+        return '●'      # Solid dot for all active states
 
     def map_status_to_config(self, status_data, config_data):
         id_to_status = {}
@@ -992,21 +1011,35 @@ class OwletteConfigApp:
         updated_config = self.map_status_to_config(status_data, self.config)
 
         # Format with colored dot indicators
-        new_list = [f"{self.get_status_indicator(process['status'])} {process['name']}" for process in updated_config['processes']]
+        new_items = []
+        for process in updated_config['processes']:
+            status = process['status']
+            indicator = self.get_status_indicator(status)
+            display_text = f"{indicator} {process['name']}"
+            color = shared_utils.STATUS_COLORS.get(status, '#64748b')
+            new_items.append((display_text, color))
 
-        if new_list != self.prev_process_list:
-            if self.process_list.size() > 0:
-                self.process_list.delete(0, 'end')  # Clear the existing listbox items
-            for item in new_list:
-                self.process_list.insert('end', item)
-            self.prev_process_list = new_list  # Update the previous list
+        if new_items != self.prev_process_list:
+            if self.prev_process_list and len(new_items) == len(self.prev_process_list):
+                # In-place update: same number of items, just update text/color
+                for btn, (text, color) in zip(self.process_list.buttons.values(), new_items):
+                    btn.configure(text=text, text_color=color)
+            else:
+                # Full rebuild: item count changed (process added/removed)
+                if self.process_list.size() > 0:
+                    self.process_list.delete(0, 'end')
+                for text, color in new_items:
+                    self.process_list.insert('end', text)
+                for btn, (_, color) in zip(self.process_list.buttons.values(), new_items):
+                    btn.configure(text_color=color)
+            self.prev_process_list = new_items
 
-        # Try to reselect process list item automatically (if not editing an entry)
-        if self.selected_index is not None and current_focus == '.' or current_focus is None:
-            try:
-                self.process_list.activate(self.selected_index)
-            except Exception as e:
-                logging.info(e)
+            # Reselect process list item after rebuild (if not editing an entry)
+            if self.selected_index is not None and current_focus == '.' or current_focus is None:
+                try:
+                    self.process_list.activate(self.selected_index)
+                except Exception as e:
+                    logging.info(e)
 
         # Auto-refresh displayed fields if config changed externally AND user is not editing
         # This allows Firestore changes to appear immediately without overwriting user input
@@ -1022,7 +1055,10 @@ class OwletteConfigApp:
                     logging.debug(f"Auto-refreshed displayed fields for external config change")  # Debug level - fires frequently
 
     def update_process_list_periodically(self):
-        self.update_process_list()
+        try:
+            self.update_process_list()
+        except Exception as e:
+            logging.error(f"Error updating process list: {e}")
         self.master.after(1000, self.update_process_list_periodically)  # Schedule next run
 
     def update_firebase_status_periodically(self):
@@ -1031,7 +1067,7 @@ class OwletteConfigApp:
             self.update_firebase_status()
         except Exception as e:
             logging.debug(f"Error updating firebase status: {e}")
-        self.master.after(5000, self.update_firebase_status_periodically)  # Schedule next run (every 5s)
+        self.master.after(2000, self.update_firebase_status_periodically)  # Schedule next run (every 2s)
 
     def remove_process(self):
         if self.selected_process:
@@ -1131,9 +1167,9 @@ class OwletteConfigApp:
             CTkMessagebox(master=self.master, title="Error", message=f"You must select a process to move it down in the list.", icon="cancel")
 
     def on_select(self, process_name):
-        # Remove status indicator "[XXX] " from the beginning
-        if process_name.startswith('[') and '] ' in process_name:
-            process_name = process_name.split('] ', 1)[1]  # Strip status badge
+        # Remove status dot indicator "● " or "○ " from the beginning
+        if process_name and len(process_name) >= 2 and process_name[1] == ' ':
+            process_name = process_name[2:]
         process_id = shared_utils.fetch_process_id_by_name(process_name, self.config)
         self.selected_process = process_id
         process = shared_utils.fetch_process_by_id(process_id, self.config)

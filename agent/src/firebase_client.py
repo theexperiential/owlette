@@ -316,12 +316,14 @@ class FirebaseClient:
             self.connection_manager._restart_all_threads()
             self.logger.info("Listener threads started (supervised by ConnectionManager)")
 
-            # Sync software inventory once on startup
-            try:
-                self._sync_software_inventory(force=True)
-                self.logger.info("Initial software inventory synced to Firestore")
-            except Exception as e:
-                self.logger.error(f"Failed to sync initial software inventory: {e}")
+            # Sync software inventory once on startup (in background — can be slow)
+            def _sync_inventory_bg():
+                try:
+                    self._sync_software_inventory(force=True)
+                    self.logger.info("Initial software inventory synced to Firestore")
+                except Exception as e:
+                    self.logger.error(f"Failed to sync initial software inventory: {e}")
+            threading.Thread(target=_sync_inventory_bg, daemon=True, name="InventorySync").start()
         else:
             self.logger.warning("Listener threads NOT started (offline mode)")
             self.logger.warning("Software inventory NOT synced (offline mode)")
@@ -548,6 +550,37 @@ class FirebaseClient:
     # =========================================================================
     # Firestore Operations
     # =========================================================================
+
+    def write_health_to_firestore(self, status: str, error_code, error_message):
+        """
+        Write agent health status to the Firestore machine document.
+
+        Called when a health state change occurs (connection failure, recovery, etc.).
+        Only executes when connected — callers should guard with is_connected() if needed.
+
+        Args:
+            status: Health status string ('ok', 'connection_failure', etc.)
+            error_code: Short error code string, or None
+            error_message: Human-readable message, or None
+        """
+        if not self.connected or not self.db:
+            return
+        try:
+            machine_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+
+            machine_ref.set({
+                'health': {
+                    'status': status,
+                    'error_code': error_code,
+                    'error_message': error_message,
+                    'last_checked_at': SERVER_TIMESTAMP,
+                    'last_error_at': SERVER_TIMESTAMP if error_code else None,
+                }
+            }, merge=True)
+            self.logger.debug(f"[HEALTH] Wrote health to Firestore: status={status}")
+        except Exception as e:
+            self.logger.debug(f"[HEALTH] Failed to write health to Firestore: {e}")
 
     def _update_presence(self, online: bool):
         """Update machine presence/heartbeat in Firestore."""

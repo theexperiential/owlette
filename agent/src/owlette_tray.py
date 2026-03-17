@@ -156,6 +156,13 @@ def determine_status():
             # Service running but no status file - likely starting up
             return 'warning', 'Service: Running', 'Starting'
 
+    # --- Health probe errors take priority (config/auth issues) ---
+    health = status_data.get('health', {})
+    health_status = health.get('status')
+    if health_status and health_status not in ('ok', 'unknown'):
+        error_code = health.get('error_code', health_status)
+        return 'error', 'Service: Error', error_code
+
     # Service reports its own status
     service_running = status_data.get('service', {}).get('running', False)
     firebase_enabled = status_data.get('firebase', {}).get('enabled', False)
@@ -467,14 +474,44 @@ def monitor_status(icon):
             logging.error(f"Status monitoring error: {e}")
             time.sleep(60)
 
+_HEALTH_ERROR_MESSAGES = {
+    'config_error': (
+        "⚠️ Owlette Config Error",
+        "Config file missing or corrupted. Please reinstall Owlette."
+    ),
+    'auth_error': (
+        "⚠️ Owlette Not Registered",
+        "No authentication token found. Please run the Owlette installer again."
+    ),
+    'network_error': (
+        "⚠️ Network Unreachable",
+        "Network was not reachable at startup. Check internet connection."
+    ),
+    'connection_failure': (
+        "⚠️ Owlette Connection Failed",
+        "Persistent Firestore connection failures. Check service logs."
+    ),
+    'fatal_error': (
+        "⚠️ Owlette Fatal Error",
+        "A fatal connection error occurred. Check service logs."
+    ),
+}
+
+
 def send_status_notification(icon, status_code, service_msg, firebase_msg):
     """Send Windows notification when status changes."""
     try:
         if status_code == 'error':
-            icon.notify(
-                title="⚠️ Owlette Service Stopped",
-                message=f"{service_msg}\nThe service may have crashed or failed to start.\nClick 'Restart' to fix."
-            )
+            # Check if firebase_msg is a health error code
+            health_notification = _HEALTH_ERROR_MESSAGES.get(firebase_msg)
+            if health_notification:
+                title, message = health_notification
+                icon.notify(title=title, message=message)
+            else:
+                icon.notify(
+                    title="⚠️ Owlette Service Stopped",
+                    message=f"{service_msg}\nThe service may have crashed or failed to start.\nClick 'Restart' to fix."
+                )
         elif status_code == 'warning':
             icon.notify(
                 title="⚠️ Firebase Connection Issue",
@@ -580,17 +617,41 @@ def generate_menu():
         service_status = current_status.get('service', 'Checking...')
         firebase_status = current_status.get('firebase', 'Checking...')
 
-    return pystray.Menu(
+    # Check for health error message to surface in menu
+    health_error_item = None
+    try:
+        status_data = read_service_status()
+        if status_data:
+            health = status_data.get('health', {})
+            health_status = health.get('status')
+            if health_status and health_status not in ('ok', 'unknown'):
+                error_msg = health.get('error_message') or health.get('error_code', 'Unknown error')
+                # Truncate if too long for a menu item
+                if len(error_msg) > 60:
+                    error_msg = error_msg[:57] + '...'
+                health_error_item = item(f'  {error_msg}', lambda icon, i: None, enabled=False)
+    except Exception:
+        pass
+
+    menu_items = [
         item(f'Owlette v{shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),
         item(f'Hostname: {hostname}', lambda icon, item: None, enabled=False),
         item(f'{service_status}', lambda icon, item: None, enabled=False),
         item(f'Status: {firebase_status}', lambda icon, item: None, enabled=False),
+    ]
+
+    if health_error_item:
+        menu_items.append(health_error_item)
+
+    menu_items += [
         pystray.Menu.SEPARATOR,
         item('Open Config', open_config_gui),
         item('Start on Login', on_select, checked=lambda text: start_on_login),
         item('Restart', restart_service),
-        item('Exit', exit_action)
-    )
+        item('Exit', exit_action),
+    ]
+
+    return pystray.Menu(*menu_items)
 
 def is_script_running(script_name):
     count = 0

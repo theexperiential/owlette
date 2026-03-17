@@ -260,6 +260,31 @@ class ConnectionManager:
             if listener in self._state_listeners:
                 self._state_listeners.remove(listener)
 
+    def set_health_callback(self, callback: Callable[[str, str], None]):
+        """
+        Register a callback invoked when the connection enters a persistent
+        failure state (BACKOFF or FATAL_ERROR).
+
+        The callback receives (error_code: str, reason: str) and should update
+        the service health state for IPC, Firestore, and remote alerting.
+
+        Args:
+            callback: Called with (error_code, reason) on BACKOFF/FATAL_ERROR transitions.
+        """
+        def _health_listener(event: ConnectionEvent):
+            if event.new_state in (ConnectionState.BACKOFF, ConnectionState.FATAL_ERROR):
+                error_code = (
+                    'fatal_error' if event.new_state == ConnectionState.FATAL_ERROR
+                    else 'connection_failure'
+                )
+                try:
+                    callback(error_code, event.reason)
+                except Exception as e:
+                    self.logger.debug(f"Health callback error: {e}")
+
+        self.add_state_listener(_health_listener)
+        self.logger.debug("Health callback registered")
+
     # =========================================================================
     # State Management (Internal)
     # =========================================================================
