@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { getSiteAdminEmails } from '@/lib/adminUtils.server';
+import { getSiteAlertRecipients } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
+import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 
 /**
  * GET /api/cron/health-check
@@ -34,7 +35,7 @@ interface OfflineAlert {
   heartbeatAgeMinutes: number;
 }
 
-function buildOfflineEmail(siteId: string, alerts: OfflineAlert[]): string {
+function buildOfflineEmail(siteId: string, alerts: OfflineAlert[], unsubscribeUrl?: string): string {
   const rows = alerts
     .map(
       (a) => `
@@ -45,8 +46,12 @@ function buildOfflineEmail(siteId: string, alerts: OfflineAlert[]): string {
     )
     .join('');
 
+  const unsubscribeHtml = unsubscribeUrl
+    ? `<a href="${unsubscribeUrl}" style="color:#888;text-decoration:underline;">Unsubscribe</a> &nbsp;|&nbsp; `
+    : '';
+
   return `
-    <h2 style="color:#d32f2f;">⚠️ Owlette Machines Offline</h2>
+    <h2 style="color:#d32f2f;">Owlette Machines Offline</h2>
     <p>${alerts.length} machine(s) in site <strong>${siteId}</strong> appear to be offline.</p>
     <table style="border-collapse:collapse;width:100%;max-width:500px;">
       <thead>
@@ -62,8 +67,8 @@ function buildOfflineEmail(siteId: string, alerts: OfflineAlert[]): string {
     </p>
     <hr>
     <p style="color:#666;font-size:12px;">
-      Environment: ${ENV_LABEL} &nbsp;|&nbsp;
-      This is an automated alert from Owlette. Alerts are sent at most once per hour per machine.
+      ${unsubscribeHtml}Environment: ${ENV_LABEL} &nbsp;|&nbsp;
+      Alerts are sent at most once per hour per machine.
     </p>
   `;
 }
@@ -142,7 +147,7 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // Group alerts by site and send one email per site
+  // Group alerts by site and send individual emails (each with a personalized unsubscribe link)
   const alertsBySite = new Map<string, OfflineAlert[]>();
   for (const alert of allAlerts) {
     const existing = alertsBySite.get(alert.siteId) ?? [];
@@ -151,11 +156,12 @@ export async function GET(request: NextRequest) {
   }
 
   const resendClient = getResend();
+  const baseUrl = request.nextUrl.origin;
   let alertsSent = 0;
 
   for (const [siteId, siteAlerts] of alertsBySite) {
     try {
-      const recipients = await getSiteAdminEmails(siteId);
+      const recipients = await getSiteAlertRecipients(siteId);
       if (recipients.length === 0) {
         console.warn(`[cron/health-check] No recipients for site ${siteId}`);
         continue;
@@ -166,22 +172,34 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      const result = await resendClient.emails.send({
-        from: FROM_EMAIL,
-        to: recipients,
-        subject: `[${ENV_LABEL}] [ALERT] ${siteAlerts.length} machine(s) offline in ${siteId}`,
-        html: buildOfflineEmail(siteId, siteAlerts),
-      });
+      // Send individual emails so each user gets their own unsubscribe link
+      for (const recipient of recipients) {
+        try {
+          const unsubscribeUrl = recipient.userId !== 'fallback'
+            ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
+            : undefined;
 
-      if (result.error) {
-        console.error(`[cron/health-check] Resend error for site ${siteId}:`, result.error);
-      } else {
-        alertsSent++;
-        console.log(
-          `[cron/health-check] Alert sent for site ${siteId}: ` +
-            `${siteAlerts.length} machine(s) offline, ${recipients.length} recipient(s)`
-        );
+          const result = await resendClient.emails.send({
+            from: FROM_EMAIL,
+            to: [recipient.email],
+            subject: `[${ENV_LABEL}] ${siteAlerts.length} machine(s) offline in ${siteId}`,
+            html: buildOfflineEmail(siteId, siteAlerts, unsubscribeUrl),
+          });
+
+          if (result.error) {
+            console.error(`[cron/health-check] Resend error for ${recipient.email}:`, result.error);
+          } else {
+            alertsSent++;
+          }
+        } catch (emailError) {
+          console.error(`[cron/health-check] Failed to send to ${recipient.email}:`, emailError);
+        }
       }
+
+      console.log(
+        `[cron/health-check] Alert sent for site ${siteId}: ` +
+          `${siteAlerts.length} machine(s) offline, ${recipients.length} recipient(s)`
+      );
     } catch (error) {
       console.error(`[cron/health-check] Failed to send alert for site ${siteId}:`, error);
     }

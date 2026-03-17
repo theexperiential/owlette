@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { EyeIcon, EyeOffIcon, AlertTriangle, Shield } from 'lucide-react';
 import Link from 'next/link';
 
@@ -21,6 +22,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [temperatureUnit, setTemperatureUnit] = useState<'C' | 'F'>('C');
+  const [healthAlerts, setHealthAlerts] = useState(true);
   const [loading, setLoading] = useState(false);
 
   // Password change state
@@ -53,13 +55,15 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
         }
       }
 
-      // Load temperature unit preference
+      // Load preferences
       setTemperatureUnit(userPreferences.temperatureUnit);
+      setHealthAlerts(userPreferences.healthAlerts);
     } else {
       // Reset form when closing
       setFirstName('');
       setLastName('');
       setTemperatureUnit('C');
+      setHealthAlerts(true);
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
@@ -107,9 +111,11 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
         await updateUserProfile(firstName, lastName);
       }
 
-      // Update preferences if temperature unit changed
-      if (temperatureUnit !== userPreferences.temperatureUnit) {
-        await updateUserPreferences({ temperatureUnit });
+      // Update preferences if any changed
+      const prefsChanged = temperatureUnit !== userPreferences.temperatureUnit
+        || healthAlerts !== userPreferences.healthAlerts;
+      if (prefsChanged) {
+        await updateUserPreferences({ temperatureUnit, healthAlerts });
       }
 
       // Update password if password section is shown and fields are filled
@@ -225,6 +231,20 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                 </SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Email Alerts */}
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label htmlFor="healthAlerts" className="text-white">Machine Offline Alerts</Label>
+              <p className="text-xs text-slate-500">Receive email alerts when machines go offline</p>
+            </div>
+            <Switch
+              id="healthAlerts"
+              checked={healthAlerts}
+              onCheckedChange={setHealthAlerts}
+              disabled={loading}
+            />
           </div>
 
           {/* Security Section */}
