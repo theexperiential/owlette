@@ -26,7 +26,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
-import { RefreshCw, AlertCircle, CheckCircle2, Loader2, X } from 'lucide-react';
+import { RefreshCw, AlertCircle, AlertTriangle, CheckCircle2, Loader2, X } from 'lucide-react';
 import { useOwletteUpdates } from '@/hooks/useOwletteUpdates';
 import { Machine } from '@/hooks/useFirestore';
 import { toast } from 'sonner';
@@ -45,6 +45,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
     updateMachines,
     updatingMachines,
     cancelUpdate,
+    staleMachines,
   } = useOwletteUpdates(machines);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -202,7 +203,8 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
               <div className="border rounded-lg divide-y max-h-96 overflow-y-auto">
                 {outdatedMachines.map((machine) => {
                   const isSelected = selectedMachines.has(machine.machineId);
-                  const isUpdating = updatingMachines.has(machine.machineId);
+                  const isMachineUpdating = updatingMachines.has(machine.machineId);
+                  const isStale = staleMachines.has(machine.machineId);
 
                   return (
                     <label
@@ -212,7 +214,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                       <Checkbox
                         checked={isSelected}
                         onCheckedChange={() => handleToggleMachine(machine.machineId)}
-                        disabled={isUpdating}
+                        disabled={isMachineUpdating && !isStale}
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 mb-1">
@@ -225,7 +227,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        {isUpdating && (
+                        {isMachineUpdating && !isStale && (
                           <>
                             <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1">
                               <Loader2 className="h-3 w-3 animate-spin" />
@@ -242,6 +244,32 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                                 cancelUpdate(machine.machineId);
                                 toast.info('Update status cleared', {
                                   description: `Cleared updating status for ${machine.machineId}`,
+                                  duration: 3000,
+                                });
+                              }}
+                            >
+                              <X className="h-3.5 w-3.5 mr-1" />
+                              Clear
+                            </Button>
+                          </>
+                        )}
+                        {isStale && (
+                          <>
+                            <Badge variant="destructive" className="flex items-center gap-1.5 px-3 py-1">
+                              <AlertTriangle className="h-3 w-3" />
+                              May have failed
+                            </Badge>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                cancelUpdate(machine.machineId);
+                                toast.info('Update status cleared — you can retry', {
+                                  description: `Cleared stale update status for ${machine.machineId}`,
                                   duration: 3000,
                                 });
                               }}

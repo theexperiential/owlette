@@ -36,6 +36,8 @@ export interface UseOwletteUpdatesReturn {
   updatingMachines: Set<string>;
   updateError: string | null;
   cancelUpdate: (machineId: string) => void;
+  /** Machines that have been "Updating..." for > 15 min without reporting back */
+  staleMachines: Set<string>;
 }
 
 /**
@@ -68,6 +70,10 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
   // Update execution state
   const [updatingMachines, setUpdatingMachines] = useState<Set<string>>(new Set());
   const [updateError, setUpdateError] = useState<string | null>(null);
+  // ANTI-FRAGILE: Track when each machine started updating for timeout detection
+  const [updateStartTimes, setUpdateStartTimes] = useState<Map<string, number>>(new Map());
+  // Machines that have been updating for > 15 minutes without reporting back
+  const [staleMachines, setStaleMachines] = useState<Set<string>>(new Set());
 
   // Cancel/clear updating status for a machine
   const cancelUpdate = useCallback((machineId: string) => {
@@ -76,11 +82,49 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
       newSet.delete(machineId);
       return newSet;
     });
+    setUpdateStartTimes(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(machineId);
+      return newMap;
+    });
+    setStaleMachines(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(machineId);
+      return newSet;
+    });
   }, []);
+
+  // ANTI-FRAGILE: Detect stale updates (machines that have been "Updating..." for > 15 min)
+  // This prevents the UI from showing "Updating..." forever if the agent crashes mid-update
+  useEffect(() => {
+    if (updatingMachines.size === 0) return;
+
+    const UPDATE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+
+    const checkInterval = setInterval(() => {
+      const now = Date.now();
+      const newStaleMachines = new Set<string>();
+
+      updatingMachines.forEach(machineId => {
+        const startTime = updateStartTimes.get(machineId);
+        if (startTime && (now - startTime) > UPDATE_TIMEOUT_MS) {
+          newStaleMachines.add(machineId);
+        }
+      });
+
+      if (newStaleMachines.size > 0) {
+        setStaleMachines(newStaleMachines);
+      }
+    }, 30_000); // Check every 30 seconds
+
+    return () => clearInterval(checkInterval);
+  }, [updatingMachines, updateStartTimes]);
 
   // Auto-clear "Updating..." status when machine successfully updates
   useEffect(() => {
     if (updatingMachines.size === 0) return;
+
+    const clearedIds: string[] = [];
 
     setUpdatingMachines(prev => {
       const newSet = new Set(prev);
@@ -95,6 +139,7 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
         const isUpToDate = !isOutdated(machine.agent_version, latestVersion);
         if (isUpToDate) {
           newSet.delete(machineId);
+          clearedIds.push(machineId);
           changed = true;
           console.log(`Auto-cleared update status for ${machineId} (now at v${machine.agent_version})`);
         }
@@ -102,6 +147,20 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
 
       return changed ? newSet : prev;
     });
+
+    // Clean up associated state for cleared machines
+    if (clearedIds.length > 0) {
+      setUpdateStartTimes(prev => {
+        const newMap = new Map(prev);
+        clearedIds.forEach(id => newMap.delete(id));
+        return newMap;
+      });
+      setStaleMachines(prev => {
+        const newSet = new Set(prev);
+        clearedIds.forEach(id => newSet.delete(id));
+        return newSet;
+      });
+    }
   }, [machines, latestVersion, updatingMachines]);
 
   // Calculate machine update statuses
@@ -163,6 +222,9 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
 
   /**
    * Execute Owlette update on specified machines
+   *
+   * ANTI-FRAGILE: Uses Promise.allSettled so one machine's failure doesn't cancel others.
+   * Tracks update start time per machine for timeout detection.
    */
   const updateMachines = useCallback(async (siteId: string, machineIds: string[]) => {
     setUpdateError(null);
@@ -175,44 +237,97 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
         throw new Error('No Owlette installer uploaded yet. Please upload an installer via Admin → Installers first.');
       }
 
-      // Mark machines as updating
+      // ANTI-FRAGILE: Validate checksum exists before sending to any machine
+      // Agent now rejects updates without checksum, so fail fast on web side
+      if (!versionData.sha256Checksum) {
+        throw new Error('Installer checksum not available. Please re-upload the installer via Admin → Installers.');
+      }
+
+      // Mark machines as updating with timestamp for timeout tracking
+      const now = Date.now();
       setUpdatingMachines(prev => {
         const newSet = new Set(prev);
         machineIds.forEach(id => newSet.add(id));
         return newSet;
       });
+      setUpdateStartTimes(prev => {
+        const newMap = new Map(prev);
+        machineIds.forEach(id => newMap.set(id, now));
+        return newMap;
+      });
 
-      // Send update commands to all machines (with version + checksum for agent verification)
-      const updatePromises = machineIds.map(machineId =>
-        sendOwletteUpdateCommand(
-          siteId,
-          machineId,
-          versionData.downloadUrl,
-          undefined,
-          versionData.version,
-          versionData.sha256Checksum
+      // ANTI-FRAGILE: Use Promise.allSettled so one machine's Firestore write failure
+      // doesn't cancel commands already sent to other machines
+      const results = await Promise.allSettled(
+        machineIds.map(machineId =>
+          sendOwletteUpdateCommand(
+            siteId,
+            machineId,
+            versionData.downloadUrl,
+            undefined,
+            versionData.version,
+            versionData.sha256Checksum
+          )
         )
-          .catch(error => {
-            console.error(`Failed to send update to ${machineId}:`, error);
-            throw error;
-          })
       );
 
-      await Promise.all(updatePromises);
+      // Collect failures and remove only failed machines from updating state
+      const failedMachineIds: string[] = [];
+      const errors: string[] = [];
 
-      console.log(`Successfully sent update commands to ${machineIds.length} machine(s)`);
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          const machineId = machineIds[index];
+          failedMachineIds.push(machineId);
+          const errMsg = result.reason instanceof Error ? result.reason.message : String(result.reason);
+          errors.push(`${machineId}: ${errMsg}`);
+          console.error(`Failed to send update to ${machineId}:`, result.reason);
+        }
+      });
 
-      // Keep machines in "updating" state for a bit
-      // (They'll be removed when the component unmounts or machines reconnect with new version)
+      const successCount = machineIds.length - failedMachineIds.length;
+
+      if (failedMachineIds.length > 0) {
+        // Remove only the failed machines from updating state
+        setUpdatingMachines(prev => {
+          const newSet = new Set(prev);
+          failedMachineIds.forEach(id => newSet.delete(id));
+          return newSet;
+        });
+        setUpdateStartTimes(prev => {
+          const newMap = new Map(prev);
+          failedMachineIds.forEach(id => newMap.delete(id));
+          return newMap;
+        });
+
+        const errorMessage = `${successCount}/${machineIds.length} updates sent. Failed: ${errors.join('; ')}`;
+        if (successCount === 0) {
+          setUpdateError(errorMessage);
+          throw new Error(errorMessage);
+        } else {
+          // Partial success - report error but don't throw (some commands went through)
+          setUpdateError(errorMessage);
+        }
+      }
+
+      console.log(`Successfully sent update commands to ${successCount}/${machineIds.length} machine(s)`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to update machines';
-      setUpdateError(errorMessage);
+      if (!errorMessage.includes('updates sent')) {
+        // Only set error if we haven't already set a partial-success error
+        setUpdateError(errorMessage);
+      }
 
-      // Remove machines from updating state on error
+      // On total failure (before any commands sent), remove all from updating state
       setUpdatingMachines(prev => {
         const newSet = new Set(prev);
         machineIds.forEach(id => newSet.delete(id));
         return newSet;
+      });
+      setUpdateStartTimes(prev => {
+        const newMap = new Map(prev);
+        machineIds.forEach(id => newMap.delete(id));
+        return newMap;
       });
 
       throw error;
@@ -230,7 +345,8 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
     updateMachines,
     updatingMachines,
     updateError,
-    cancelUpdate
+    cancelUpdate,
+    staleMachines,
   };
 }
 
