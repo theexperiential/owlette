@@ -37,7 +37,7 @@ Version → `OWLETTE_VERSION` env var → Inno Setup reads it → installer file
 
 ### Don't
 - **Never edit `owlette_installer.iss`** without reading `skills/resources/installer-build-system.md` first — the config backup/restore logic, OAuth flow, and silent install behavior are interconnected
-- **Never change the install path** from `C:\Owlette` — NSSM paths, service registration, and multiple batch scripts hardcode this
+- **Never change the install path** from `C:\ProgramData\Owlette` — NSSM paths, service registration, and the Inno Setup script use this via `{commonappdata}`
 - **Never modify `python311._pth`** without understanding embedded Python import resolution — breaking this kills all imports
 - **Never skip the Defender exclusion** in the installer — LibreHardwareMonitor's WinRing0 driver triggers false positives
 - **Never change NSSM exit behavior** — exit code 0 = don't restart (graceful stop), non-zero = restart (crash recovery). `owlette_runner.py` depends on this.

@@ -84,7 +84,7 @@ import site          # Enables site.main() for pip
 
 ### Key Settings
 - **AppId**: `{A7B8C9D0-E1F2-4A5B-8C9D-0E1F2A3B4C5D}` (identifies Owlette in registry)
-- **Default install path**: `C:\Owlette` (no spaces — required for NSSM path compatibility)
+- **Default install path**: `C:\ProgramData\Owlette` (via Inno Setup `{commonappdata}` constant)
 - **Compression**: LZMA2 ultra64 (~50MB output)
 - **Architecture**: x64 only
 - **Privileges**: Admin required
@@ -94,7 +94,7 @@ import site          # Enables site.main() for pip
 
 **Step 0 — Windows Defender Exclusion**:
 ```powershell
-Add-MpPreference -ExclusionPath 'C:\Owlette'
+Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\...'
 ```
 **Why**: LibreHardwareMonitor uses WinRing0 driver for CPU/GPU temp monitoring. Windows Defender flags it as `VulnerableDriver:WinNT/Winring0` — a false positive for legitimate hardware monitoring.
 
@@ -127,8 +127,8 @@ During upgrades, config.json must survive reinstallation:
 1. `nssm stop OwletteService`
 2. `nssm remove OwletteService confirm`
 3. Remove Windows Defender exclusion
-4. Delete `C:\Owlette\` (installation directory)
-5. Prompt user about `C:\ProgramData\Owlette\` (config/logs/tokens)
+4. Delete installation directory
+5. Prompt user about `C:\ProgramData\Owlette\` config/logs/tokens
    - Silent uninstall: always preserve (for upgrades)
    - Interactive: ask user
 
@@ -183,9 +183,9 @@ Account:         LocalSystem (elevated privileges for process management)
 Start Type:      SERVICE_AUTO_START
 Console:         Disabled (AppNoConsole=1)
 Dependencies:    Tcpip, Dnscache (waits for network)
-Application:     C:\Owlette\python\python.exe
-Arguments:       C:\Owlette\agent\src\owlette_runner.py
-Working Dir:     C:\Owlette\agent\src
+Application:     C:\ProgramData\Owlette\python\python.exe
+Arguments:       C:\ProgramData\Owlette\agent\src\owlette_runner.py
+Working Dir:     C:\ProgramData\Owlette\agent\src
 ```
 
 ### Log Rotation
@@ -246,16 +246,18 @@ Triggered by `update_owlette` command from web dashboard:
 ## File System Layout After Installation
 
 ```
-C:\Owlette\                              Installation directory (read-only for users)
+C:\ProgramData\Owlette\                  Installation + data directory
 ├── python\                              Embedded Python 3.11 runtime
 ├── agent\src\                           Python source code
 ├── agent\icons\                         Application icons
 ├── agent\VERSION                        Version file
 ├── tools\nssm.exe                       Service manager
 ├── scripts\                             Batch launchers
-└── unins000.exe                         Inno Setup uninstaller
-
-C:\ProgramData\Owlette\                  User data (users-modify permissions)
+├── unins000.exe                         Inno Setup uninstaller
+├── config\                              Runtime configuration
+├── logs\                                Service logs (rotating)
+├── cache\                               Cached data
+└── tmp\                                 Temporary files
 ├── config\config.json                   Process + Firebase configuration
 ├── logs\                                All log files
 │   ├── service.log                      Main service log (RotatingFileHandler)
@@ -292,7 +294,7 @@ agent/VERSION (single source of truth)
     ↓ Inno Setup reads OWLETTE_VERSION → installer filename
     ↓
 Owlette-Installer-v{VERSION}.exe
-    ↓ Installs to C:\Owlette\agent\VERSION
+    ↓ Installs to C:\ProgramData\Owlette\agent\VERSION
     ↓
 Service reads at runtime: shared_utils.get_app_version()
     → Displayed in: tray icon, GUI, Firestore registration, OAuth device info
@@ -313,3 +315,9 @@ Service reads at runtime: shared_utils.get_app_version()
 **Installer hangs during silent update**: Usually means `ShouldConfigureSite()` returned true unexpectedly. Check that config.json exists at `C:\ProgramData\Owlette\config\config.json`.
 
 **Service won't start after update**: Check `C:\ProgramData\Owlette\logs\service_stderr.log` for Python import errors. May need a full rebuild if dependencies changed.
+
+**"nssm.cc is unavailable and no local NSSM"**: nssm.cc goes down occasionally (503/empty response). The build script falls back to `C:\ProgramData\Owlette\tools\nssm.exe`. If that doesn't exist either, copy it from the existing Owlette installation at `C:\Owlette\tools\nssm.exe`:
+```
+copy C:\Owlette\tools\nssm.exe C:\ProgramData\Owlette\tools\nssm.exe
+```
+Then re-run the build. The fallback location is permanently seeded after the first copy.

@@ -278,8 +278,8 @@ function MachineCard({
                     <div className="flex-1 flex items-center justify-between p-2 md:p-3 rounded border border-border/50">
                         <div className="flex-1 min-w-0 flex items-center gap-2">
                           <span className="text-sm md:text-base text-white font-medium truncate select-text">{process.name}</span>
-                          <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted hover:bg-muted' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-600 text-slate-200' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
-                            {!machine.online ? 'UNKNOWN' : process.status}
+                          <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted hover:bg-muted' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-600 text-slate-200' : process.status === 'LAUNCH_FAILED' || process.status === 'STOPPED' || process.status === 'KILLED' ? 'bg-red-600 hover:bg-red-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
+                            {!machine.online ? 'UNKNOWN' : process.status === 'LAUNCH_FAILED' ? 'FAILED' : process.status}
                           </Badge>
                         </div>
                         <div className="flex items-center gap-2 md:gap-3 ml-2 md:ml-4 flex-shrink-0">

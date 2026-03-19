@@ -98,7 +98,7 @@ class AuthManager:
         # Load cached tokens from storage
         self._load_cached_tokens()
 
-        logger.info(f"AuthManager initialized: machine={self.machine_id}, api={self.api_base}")
+        logger.debug(f"AuthManager initialized: machine={self.machine_id}, api={self.api_base}")
 
     def _load_cached_tokens(self):
         """Load cached access token and site ID from secure storage."""
@@ -143,8 +143,8 @@ class AuthManager:
 
             # Call exchange endpoint
             url = f"{self.api_base}/agent/auth/exchange"
-            logger.info(f"Exchange URL: {url}")
-            logger.info(f"Machine ID: {machine_id}")
+            logger.debug(f"Exchange URL: {url}")
+            logger.debug(f"Machine ID: {machine_id}")
 
             # Write to debug log for troubleshooting
             from pathlib import Path
@@ -162,7 +162,7 @@ class AuthManager:
                 },
                 timeout=30,
             )
-            logger.info(f"Exchange response status: {response.status_code}")
+            logger.debug(f"Exchange response status: {response.status_code}")
 
             # Log response to debug file
             with open(debug_log, 'a') as f:
@@ -238,7 +238,7 @@ class AuthManager:
             TokenRefreshError: If refresh fails
         """
         try:
-            logger.info("Refreshing access token...")
+            logger.debug("Refreshing access token...")
 
             # Get refresh token from storage
             refresh_token = self.storage.get_refresh_token()
@@ -315,7 +315,11 @@ class AuthManager:
             self._consecutive_failures = 0
             self._refresh_backoff_seconds = 60  # Reset backoff to 1 minute
 
-            logger.info(f"Token refreshed successfully, expires_in={expires_in}s")
+            # Only log at INFO when recovering from failures (state change)
+            if self._consecutive_failures > 0:
+                logger.info(f"Token refresh recovered after failures, expires_in={expires_in}s")
+            else:
+                logger.debug(f"Token refreshed successfully, expires_in={expires_in}s")
 
             return True
 
@@ -382,13 +386,13 @@ class AuthManager:
 
                     # Attempt refresh - reset backoff log flag since we're trying again
                     self._backoff_logged = False
-                    logger.info(
-                        f"[WARNING] Token expires in {int(time_until_expiry)}s (< {TOKEN_REFRESH_BUFFER_SECONDS}s buffer), triggering refresh..."
+                    logger.debug(
+                        f"Token expires in {int(time_until_expiry)}s (< {TOKEN_REFRESH_BUFFER_SECONDS}s buffer), triggering refresh..."
                     )
                     try:
                         self._last_refresh_attempt = time.time()
                         self.refresh_access_token()
-                        logger.info("[OK] Token refresh completed successfully")
+                        logger.debug("Token refresh completed successfully")
                     except TokenRefreshError as e:
                         # Double backoff on failure (exponential backoff)
                         self._refresh_backoff_seconds = min(

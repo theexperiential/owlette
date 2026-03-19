@@ -130,6 +130,7 @@ if __name__ == '__main__':
 
             # Initialize all attributes from OwletteService.__init__
             self.is_alive = True
+            self._restart_exit_code = 0
             self.tray_icon_pid = None
             self.relaunch_attempts = {}
             self.first_start = True
@@ -253,10 +254,13 @@ if __name__ == '__main__':
             else:
                 logging.info("Firebase client already stopped (by signal handler)")
 
-        # Exit cleanly with code 0 when service stops normally
-        # This tells NSSM not to restart (configured as AppExit 0 Exit)
-        logging.info("Service stopped cleanly")
-        sys.exit(0)
+        # Check if service requested a restart (exit code 42 triggers NSSM auto-restart)
+        exit_code = getattr(_service_instance, '_restart_exit_code', 0)
+        if exit_code:
+            logging.info(f"Service exiting with code {exit_code} for NSSM restart")
+        else:
+            logging.info("Service stopped cleanly (exit 0 — NSSM will not restart)")
+        sys.exit(exit_code)
 
     except KeyboardInterrupt:
         logging.info("Service stopped by user (Ctrl+C)")

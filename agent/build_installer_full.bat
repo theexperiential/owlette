@@ -216,13 +216,13 @@ set "NSSM_ACTUAL_HASH="
 del downloads\nssm.zip
 
 :nssm_local
-if exist "C:\Owlette\tools\nssm.exe" (
-    echo Using locally installed NSSM from C:\Owlette\tools\nssm.exe
-    copy /Y "C:\Owlette\tools\nssm.exe" build\tools\ >nul
+if exist "%ProgramData%\Owlette\tools\nssm.exe" (
+    echo Using locally installed NSSM from %ProgramData%\Owlette\tools\nssm.exe
+    copy /Y "%ProgramData%\Owlette\tools\nssm.exe" build\tools\ >nul
     echo NSSM acquired from local installation OK
     goto :nssm_done
 )
-echo ERROR: nssm.cc is unavailable and no local NSSM at C:\Owlette\tools\nssm.exe
+echo ERROR: nssm.cc is unavailable and no local NSSM at %ProgramData%\Owlette\tools\nssm.exe
 pause
 exit /b 1
 

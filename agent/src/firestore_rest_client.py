@@ -86,7 +86,7 @@ class FirestoreRestClient:
             'Content-Type': 'application/json',
         })
 
-        logger.info(f"FirestoreRestClient initialized: project={project_id}")
+        logger.debug(f"FirestoreRestClient initialized: project={project_id}")
 
     def _get_auth_headers(self) -> Dict[str, str]:
         """
@@ -508,16 +508,26 @@ class FirestoreRestClient:
             logger.error(f"Error deleting document {path}: {e}")
             raise
 
-    def listen_to_document(self, path: str, callback: Callable[[Optional[Dict[str, Any]]], None]) -> threading.Thread:
+    def listen_to_document(
+        self,
+        path: str,
+        callback: Callable[[Optional[Dict[str, Any]]], None],
+        min_interval: float = 2.0,
+        max_interval: float = 30.0,
+        backoff_multiplier: float = 1.5
+    ) -> threading.Thread:
         """
         Listen to document changes in real-time using adaptive polling.
 
-        Uses exponential backoff: starts at 2s polling, increases to 30s when idle.
-        This reduces Firebase read operations by ~80% while maintaining responsiveness.
+        Uses exponential backoff: starts at min_interval polling, increases to
+        max_interval when idle. Configurable per-listener for different responsiveness needs.
 
         Args:
             path: Document path to listen to
             callback: Function to call when document changes (receives doc data)
+            min_interval: Minimum polling interval in seconds (default: 2.0)
+            max_interval: Maximum polling interval in seconds (default: 30.0)
+            backoff_multiplier: Multiplier for interval increase when idle (default: 1.5)
 
         Returns:
             Thread object (already started)
@@ -529,11 +539,8 @@ class FirestoreRestClient:
             last_data = _UNINITIALIZED
             last_hash = None
 
-            # Exponential backoff parameters
-            current_interval = 2.0  # Start at 2 seconds
-            min_interval = 2.0      # Minimum interval (when changes detected)
-            max_interval = 30.0     # Maximum interval (when idle)
-            backoff_multiplier = 1.5  # Multiply by this when no change
+            # Adaptive polling parameters (configured per-listener)
+            current_interval = min_interval
 
             # Error tracking for reduced logging
             consecutive_errors = 0
@@ -615,7 +622,7 @@ class FirestoreRestClient:
 
         thread = threading.Thread(target=poll_document, daemon=True)
         thread.start()
-        logger.info(f"Started listener for document: {path}")
+        logger.debug(f"Started listener for document: {path}")
         return thread
 
     def batch_write(self, writes: List[Dict[str, Any]]):

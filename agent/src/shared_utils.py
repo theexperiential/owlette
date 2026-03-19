@@ -39,20 +39,27 @@ def get_app_version():
 
 APP_VERSION = get_app_version()
 CONFIG_VERSION = '1.5.0'  # Added environment configuration
-# Color scheme matching web app (Tailwind slate palette)
-WINDOW_COLOR = '#020617'      # slate-950 - main background
-FRAME_COLOR = '#0f172a'       # slate-900 - panels/cards
-BUTTON_COLOR = '#1e293b'      # slate-800 - buttons
-BUTTON_HOVER_COLOR = '#334155' # slate-700 - button hover
-BUTTON_IMPORTANT_COLOR = '#2563eb' # blue-600 - accent buttons (New, autolaunch toggle)
+# Color scheme matching web app dark theme (oklch hue 250 navy + cyan accent)
+WINDOW_COLOR = '#020b16'      # web --background oklch(0.145 0.03 250)
+FRAME_COLOR = '#0d1e2f'       # web --card oklch(0.23 0.04 250)
+BUTTON_COLOR = '#11283e'      # web --muted oklch(0.269 0.05 250)
+BUTTON_HOVER_COLOR = '#143c62' # web --accent/border oklch(0.35 0.08 250)
+BUTTON_IMPORTANT_COLOR = '#00cfd1' # web --accent-cyan oklch(0.75 0.18 195)
+BUTTON_IMPORTANT_HOVER = '#00e2e5' # web --accent-cyan-hover oklch(0.80 0.20 195)
+BUTTON_IMPORTANT_TEXT = '#020b16'  # dark text on cyan buttons (matches background)
+ACCENT_COLOR = '#00cfd1'      # web --accent-cyan oklch(0.75 0.18 195)
+BORDER_COLOR = '#143c62'      # web --border oklch(0.35 0.08 250)
+HIGHLIGHT_COLOR = '#006566'   # web --accent-cyan-muted oklch(0.45 0.10 195)
 TEXT_COLOR = "white"
+CORNER_RADIUS = 6             # consistent corner radius for all elements
 STATUS_COLORS = {
-    'RUNNING':   '#4ade80',  # green-400
-    'LAUNCHING': '#facc15',  # yellow-400
-    'QUEUED':    '#fb923c',  # orange-400
-    'KILLED':    '#f87171',  # red-400
-    'STOPPED':   '#f87171',  # red-400
-    'INACTIVE':  '#64748b',  # slate-500
+    'RUNNING':       '#4ade80',  # green-400
+    'LAUNCHING':     '#facc15',  # yellow-400
+    'QUEUED':        '#fb923c',  # orange-400
+    'LAUNCH_FAILED': '#ef4444',  # red-500
+    'KILLED':        '#f87171',  # red-400
+    'STOPPED':       '#f87171',  # red-400
+    'INACTIVE':      '#94a3b8',  # slate-400
 }
 WINDOW_TITLES = {
     "owlette_gui": "Owlette Configuration", 
@@ -297,8 +304,8 @@ def get_python_exe_path():
     Raises:
         FileNotFoundError: If neither pythonw.exe nor python.exe can be found
     """
-    # Get installation root (C:\Owlette or wherever installed)
-    # src is at C:\Owlette\agent\src, so go up 2 levels to get C:\Owlette
+    # Get installation root (C:\ProgramData\Owlette or wherever installed)
+    # src is at <install>\agent\src, so go up 2 levels to get <install>
     install_root = os.path.dirname(os.path.dirname(get_path()))
 
     # Try pythonw.exe first (for GUI scripts, no console window)
@@ -446,11 +453,14 @@ def get_project_id(environment=None):
 
 def is_script_running(script_name):
     for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
-        logging.debug(f"Checking process: {process.info['name']}")
-        logging.debug(f"Looking for script: {script_name}")
-        if 'python' in process.info['name']:
-            if script_name in ' '.join(process.info['cmdline']):
-                return True
+        try:
+            name = process.info.get('name') or ''
+            if 'python' in name:
+                cmdline = process.info.get('cmdline')
+                if cmdline and script_name in ' '.join(cmdline):
+                    return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
     return False
 
 # PATHS - Now using ProgramData for proper Windows service data storage
@@ -528,7 +538,7 @@ def cleanup_old_logs(max_age_days=90):
                     os.remove(file_path)
                     deleted_count += 1
                     total_size_freed += file_size
-                    logging.info(f"Deleted old log file: {filename} ({round(file_size / 1024 / 1024, 2)} MB)")
+                    logging.debug(f"Deleted old log file: {filename} ({round(file_size / 1024 / 1024, 2)} MB)")
                 except Exception as e:
                     logging.warning(f"Could not delete old log file {filename}: {e}")
 
@@ -1072,6 +1082,11 @@ def update_process_status_in_json(pid, new_status, firebase_client=None, process
         firebase_client: Deprecated parameter (kept for compatibility)
         process_id: Config process ID (for GUI status mapping)
     """
+    # Guard against None/invalid PIDs — writing "None" as a key corrupts app_states.json
+    if pid is None:
+        logging.debug(f"Skipping status update for None PID (status={new_status}, process_id={process_id})")
+        return
+
     data = read_json_from_file(RESULT_FILE_PATH)
 
     # Defensive programming: ensure data is never None
@@ -1231,10 +1246,15 @@ def get_system_metrics_with_config(config, skip_gpu=False):
                 pid_to_runtime = {}
                 if runtime_state:
                     for pid, state_info in runtime_state.items():
+                        # Skip invalid PID keys (e.g. "None" from failed launches)
+                        try:
+                            pid_int = int(pid)
+                        except (ValueError, TypeError):
+                            continue
                         process_id = state_info.get('id')
                         if process_id:
                             pid_to_runtime[process_id] = {
-                                'pid': int(pid),
+                                'pid': pid_int,
                                 'status': state_info.get('status', 'UNKNOWN'),
                                 'responsive': state_info.get('responsive', True),
                                 'timestamp': state_info.get('timestamp', 0)
@@ -1255,7 +1275,7 @@ def get_system_metrics_with_config(config, skip_gpu=False):
                             'visibility': process.get('visibility', 'Show'),
                             'time_delay': process.get('time_delay', 0),
                             'time_to_init': process.get('time_to_init', 10),
-                            'relaunch_attempts': process.get('relaunch_attempts', 3),
+                            'relaunch_attempts': process.get('relaunch_attempts', 5),
                             'index': index  # Preserve config order for web app display
                         }
 

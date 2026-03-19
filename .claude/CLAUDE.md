@@ -4,7 +4,7 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. It consists of a Python Windows service (agent) and a Next.js web dashboard with Firebase/Firestore backend.
 
-**Version**: 2.0.55 (see [docs/version-management.md](../docs/version-management.md))
+**Version**: 2.1.1 (see [docs/version-management.md](../docs/version-management.md))
 **License**: GNU General Public License v3.0
 **Repository Type**: Monorepo (web + agent)
 
@@ -158,6 +158,7 @@ Skip for single-file tweaks, docs updates, or small bug fixes.
 | Hook | Event | Purpose |
 |------|-------|---------|
 | `track-edits.mjs` | PostToolUse | Logs Edit/Write operations to `session-edits.json` |
+| `deploy-agent.mjs` | PostToolUse | Copies edited `agent/src/*.py` files to `C:\ProgramData\Owlette\agent\src\`, restarts service + GUI |
 | `activate-skills.mjs` | UserPromptSubmit | Matches prompt keywords + recent files → activates relevant skills |
 | `pre-commit-check.mjs` | PreToolUse (Bash) | Blocks `git commit`/`push` if TypeScript or Python errors exist |
 | `check-builds.mjs` | Stop | Runs `tsc --noEmit` (web) / `py_compile` (agent) on edited files |
@@ -232,4 +233,17 @@ All feature work on `dev`. Merge to `main` for production releases. Both auto-de
 
 ---
 
-**Last Updated**: 2026-03-12
+## Agent Dev Testing Workflow
+
+When editing `agent/src/*.py` files, the `deploy-agent.mjs` hook auto-copies them to `C:\ProgramData\Owlette\agent\src\`. However, changes to **service** files (e.g. `owlette_service.py`, `shared_utils.py`, `firebase_client.py`, `connection_manager.py`, `auth_manager.py`) require a service restart to take effect. **You must do this automatically** — don't wait for the user to ask.
+
+### Restart sequence (order matters):
+1. **Kill GUI** if running: `taskkill /F /IM pythonw.exe /FI "WINDOWTITLE eq Owlette*"` (or check via wmic for owlette_gui.py)
+2. **Restart service**: `powershell -Command "Start-Process cmd -ArgumentList '/c net stop OwletteService && net start OwletteService' -Verb RunAs -Wait"`
+3. **Relaunch GUI**: `start "" "C:/ProgramData/Owlette/python/pythonw.exe" "C:/ProgramData/Owlette/agent/src/owlette_gui.py"`
+
+GUI-only files (e.g. `owlette_gui.py`) only need steps 1 + 3 (no service restart).
+
+---
+
+**Last Updated**: 2026-03-15

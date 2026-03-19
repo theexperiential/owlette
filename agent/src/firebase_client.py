@@ -185,11 +185,11 @@ class FirebaseClient:
         try:
             # Send immediate heartbeat and metrics
             self._update_presence(True)
-            self.logger.info("Heartbeat sent after connection")
+            self.logger.debug("Heartbeat sent after connection")
 
             metrics = shared_utils.get_system_metrics()
             self._upload_metrics(metrics)
-            self.logger.info("Initial metrics uploaded after connection")
+            self.logger.debug("Initial metrics uploaded after connection")
         except Exception as e:
             self.logger.error(f"Failed to send initial data after connection: {e}")
             # Report error but don't fail - connection is still valid
@@ -295,7 +295,7 @@ class FirebaseClient:
 
                 metrics = shared_utils.get_system_metrics()
                 self._upload_metrics(metrics)
-                self.logger.info("Initial metrics uploaded")
+                self.logger.debug("Initial metrics uploaded")
 
                 # Report success to reset any failure counters
                 self.connection_manager.report_success()
@@ -303,18 +303,18 @@ class FirebaseClient:
                 self.logger.error(f"Failed to send initial heartbeat/metrics: {e}")
                 self.connection_manager.report_error(e, "Initial heartbeat/metrics")
 
-        self.logger.info("Heartbeat thread DISABLED - heartbeat data included in metrics")
+        self.logger.debug("Heartbeat thread DISABLED - heartbeat data included in metrics")
 
         # Start metrics thread (main loop with reconnection logic)
         self.metrics_thread = threading.Thread(target=self._metrics_loop, daemon=True)
         self.metrics_thread.start()
-        self.logger.info("Metrics thread started")
+        self.logger.debug("Metrics thread started")
 
         # Start listeners if connected (ConnectionManager will supervise these)
         if self.connected:
             # Trigger initial thread start via connection manager
             self.connection_manager._restart_all_threads()
-            self.logger.info("Listener threads started (supervised by ConnectionManager)")
+            self.logger.debug("Listener threads started (supervised by ConnectionManager)")
 
             # Sync software inventory once on startup (in background — can be slow)
             def _sync_inventory_bg():
@@ -382,8 +382,9 @@ class FirebaseClient:
         - 30s when processes are running (active monitoring)
         - 120s when idle (minimal overhead)
         """
-        self.logger.info("[THREAD] Metrics loop started")
+        self.logger.debug("[THREAD] Metrics loop started")
 
+        last_mode = None
         try:
             while self.running:
                 interval = 60  # Default interval
@@ -427,17 +428,21 @@ class FirebaseClient:
                                 interval = 120
                                 mode = 'idle'
 
-                        self.logger.info(f"Metrics uploaded - next in {interval}s ({mode})")
+                        if mode != last_mode:
+                            self.logger.info(f"Metrics interval changed to {interval}s ({mode})")
+                            last_mode = mode
+                        else:
+                            self.logger.debug(f"Metrics uploaded - next in {interval}s ({mode})")
 
                     else:
                         # NOT CONNECTED - actively trigger reconnection attempt
                         state = self.connection_manager.state
                         reason = self.connection_manager.state_reason
-                        self.logger.info(f"[METRICS] Not connected (state={state.name}): {reason}")
+                        self.logger.debug(f"[METRICS] Not connected (state={state.name}): {reason}")
 
                         # Trigger reconnection if not already in progress
                         if state == ConnectionState.DISCONNECTED:
-                            self.logger.info("[METRICS] Triggering reconnection attempt...")
+                            self.logger.debug("[METRICS] Triggering reconnection attempt...")
                             self.connection_manager.force_reconnect("Metrics loop detected disconnect")
 
                         # Use shorter interval when disconnected
@@ -461,7 +466,7 @@ class FirebaseClient:
 
     def _command_listener_loop(self):
         """Listen for commands from Firestore in real-time."""
-        self.logger.info("[THREAD] Command listener loop started")
+        self.logger.debug("[THREAD] Command listener loop started")
 
         if not self.connected:
             self.logger.warning("[THREAD] Command listener exiting - not connected")
@@ -476,8 +481,11 @@ class FirebaseClient:
                     for cmd_id, cmd_data in commands_data.items():
                         self._process_command(cmd_id, cmd_data)
 
-            # Start listener (runs in separate thread, polls every 2 seconds)
-            self.db.listen_to_document(commands_path, on_commands_changed)
+            # Start listener with tight polling (2-5s) for fast command pickup
+            self.db.listen_to_document(
+                commands_path, on_commands_changed,
+                min_interval=2.0, max_interval=5.0, backoff_multiplier=1.3
+            )
 
             # Keep this thread alive while running and connected
             while self.running and self.connected:
@@ -488,11 +496,11 @@ class FirebaseClient:
             # Report error to connection manager for centralized handling
             self.connection_manager.report_error(e, "Command listener")
         finally:
-            self.logger.info(f"[THREAD] Command listener loop EXITED (running={self.running}, connected={self.connected})")
+            self.logger.debug(f"[THREAD] Command listener loop EXITED (running={self.running}, connected={self.connected})")
 
     def _config_listener_loop(self):
         """Listen for config changes from Firestore in real-time."""
-        self.logger.info("[THREAD] Config listener loop started")
+        self.logger.debug("[THREAD] Config listener loop started")
 
         if not self.connected:
             self.logger.warning("[THREAD] Config listener exiting - not connected")
@@ -508,7 +516,7 @@ class FirebaseClient:
 
                 if first_snapshot:
                     first_snapshot = False
-                    self.logger.info("Config listener initialized (skipping initial snapshot)")
+                    self.logger.debug("Config listener initialized (skipping initial snapshot)")
                     return
 
                 if config_data:
@@ -533,8 +541,11 @@ class FirebaseClient:
                     else:
                         self.logger.warning("No config update callback registered")
 
-            # Start listener
-            self.db.listen_to_document(config_path, on_config_changed)
+            # Start listener with tight polling for fast config pickup
+            self.db.listen_to_document(
+                config_path, on_config_changed,
+                min_interval=2.0, max_interval=10.0, backoff_multiplier=1.3
+            )
 
             # Keep this thread alive while running and connected
             while self.running and self.connected:
@@ -545,7 +556,7 @@ class FirebaseClient:
             # Report error to connection manager for centralized handling
             self.connection_manager.report_error(e, "Config listener")
         finally:
-            self.logger.info(f"[THREAD] Config listener loop EXITED (running={self.running}, connected={self.connected})")
+            self.logger.debug(f"[THREAD] Config listener loop EXITED (running={self.running}, connected={self.connected})")
 
     # =========================================================================
     # Firestore Operations
@@ -658,6 +669,14 @@ class FirebaseClient:
                     self._mark_command_failed(cmd_id, result, deployment_id, cmd_type)
                 else:
                     self._mark_command_completed(cmd_id, result, deployment_id, cmd_type)
+
+                # Immediate metrics push so web dashboard sees state change instantly
+                try:
+                    metrics = shared_utils.get_system_metrics()
+                    self._upload_metrics(metrics)
+                    self.logger.debug(f"Immediate metrics push after command {cmd_id}")
+                except Exception as me:
+                    self.logger.warning(f"Post-command metrics push failed: {me}")
             else:
                 self.logger.warning(f"No command callback registered, ignoring command {cmd_id}")
 
@@ -888,7 +907,7 @@ class FirebaseClient:
             if os.path.exists(self.config_cache_path):
                 with open(self.config_cache_path, 'r') as f:
                     self.cached_config = json.load(f)
-                self.logger.info(f"Loaded cached config from {self.config_cache_path}")
+                self.logger.debug(f"Loaded cached config from {self.config_cache_path}")
         except Exception as e:
             self.logger.error(f"Failed to load cached config: {e}")
 
@@ -914,7 +933,7 @@ class FirebaseClient:
             callback: Function that takes (cmd_id, cmd_data) and returns result
         """
         self.command_callback = callback
-        self.logger.info("Command callback registered")
+        self.logger.debug("Command callback registered")
 
     def register_config_update_callback(self, callback: Callable):
         """
@@ -924,7 +943,7 @@ class FirebaseClient:
             callback: Function that takes (config) and handles the update
         """
         self.config_update_callback = callback
-        self.logger.info("Config update callback registered")
+        self.logger.debug("Config update callback registered")
 
     # =========================================================================
     # Event Logging
@@ -969,10 +988,10 @@ class FirebaseClient:
             doc_ref = logs_ref.document(doc_id)
             doc_ref.set(event_data)
 
-            self.logger.info(f"[EVENT LOGGED] {action} - {process_name} ({level})")
+            self.logger.debug(f"[EVENT LOGGED] {action} - {process_name} ({level})")
 
         except Exception as e:
-            self.logger.info(f"[EVENT LOG FAILED] {action}: {e}")
+            self.logger.debug(f"[EVENT LOG FAILED] {action}: {e}")
 
     def ship_logs(self, log_entries: list):
         """
@@ -1019,7 +1038,7 @@ class FirebaseClient:
         """
         try:
             self._sync_software_inventory(force=True)
-            self.logger.info("Software inventory synced on-demand")
+            self.logger.debug("Software inventory synced on-demand")
         except Exception as e:
             self.logger.error(f"On-demand software inventory sync failed: {e}")
 

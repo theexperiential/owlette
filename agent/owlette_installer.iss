@@ -68,7 +68,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName=C:\{#MyAppName}
+DefaultDirName={commonappdata}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 LicenseFile=..\LICENSE
@@ -132,8 +132,9 @@ Name: "{group}\View Logs"; Filename: "{commonappdata}\Owlette\logs"; IconFilenam
 Name: "{group}\Edit Configuration"; Filename: "{commonappdata}\Owlette\config\config.json"; IconFilename: "{sys}\shell32.dll"; IconIndex: 70
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
-; Startup shortcut (always installed - important for monitoring UX)
-Name: "{userstartup}\Owlette Tray"; Filename: "{app}\scripts\launch_tray.bat"; IconFilename: "{app}\agent\icons\normal.png"; WorkingDir: "{app}"
+; Startup shortcut — launches pythonw.exe directly (no batch file hop) for faster tray appearance.
+; owlette_tray.py has its own sys.path setup so PYTHONPATH is not required.
+Name: "{userstartup}\Owlette Tray"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\agent\src\owlette_tray.py"""; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}"
 
 [Run]
 ; Step 0: Add Windows Defender exclusion for Owlette directory
@@ -377,7 +378,13 @@ begin
       UninstallExe := RemoveQuotes(UninstallString);
 
       // Stop the service first (if NSSM exists)
-      if FileExists('C:\Owlette\tools\nssm.exe') then
+      // Check new location first, then fall back to legacy C:\Owlette for upgrades from older versions
+      if FileExists(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe')) then
+      begin
+        Exec(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe'), 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        Sleep(2000);
+      end
+      else if FileExists('C:\Owlette\tools\nssm.exe') then
       begin
         Exec('C:\Owlette\tools\nssm.exe', 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
         Sleep(2000);
@@ -407,20 +414,20 @@ begin
     end;
   end;
 
-  // Silently close any running Owlette processes if we didn't just uninstall
-  // (uninstall already stopped the service and closed processes)
-  if not DidUninstallExisting then
-  begin
-    Log('Closing any running Owlette processes (fresh install path)');
-    // Try to close GUI and tray icon processes silently
-    Exec('taskkill', '/F /IM pythonw.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec('taskkill', '/F /IM python.exe /FI "WINDOWTITLE eq OWLETTE*"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // ANTI-FRAGILE: ALWAYS kill Owlette Python processes before installation.
+  // The uninstaller only stops the service — it does NOT kill GUI/tray pythonw.exe processes.
+  // These hold DLL locks (libcrypto-3.dll, etc.) that cause file replacement to fail,
+  // triggering a rollback that leaves the machine with no Owlette installation at all.
+  // This was discovered in production: v56->v57 upgrade failed because pythonw.exe held libcrypto-3.dll.
+  Log('Killing any running Owlette Python processes (GUI, tray, scripts)...');
+  // Method 1: WMIC targeted kill by command line (preserves non-Owlette Python apps)
+  Exec('cmd', '/c wmic process where "name=''pythonw.exe'' and commandline like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd', '/c wmic process where "name=''python.exe'' and commandline like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Method 2: WMIC by executable path (catches processes where commandline is empty/truncated)
+  Exec('cmd', '/c wmic process where "executablepath like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Method 3: Fallback taskkill by window title
+  Exec('taskkill', '/F /IM python.exe /FI "WINDOWTITLE eq Owlette*"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-    // Wait a moment for processes to close
-    Sleep(2000);
-  end
-  else
-  begin
-    Log('Skipping process cleanup (already handled by uninstaller during upgrade)');
-  end;
+  // Wait for processes to fully release file handles
+  Sleep(3000);
 end;

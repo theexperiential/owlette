@@ -103,7 +103,7 @@ if %errorLevel% equ 0 (
 :: ============================================================================
 echo [3/4] Installing Owlette service...
 
-:: Install service with application and script (no spaces in C:\Owlette path)
+:: Install service with application and script
 "%INSTALL_DIR%\tools\nssm.exe" install OwletteService "%INSTALL_DIR%\python\python.exe" "%INSTALL_DIR%\agent\src\owlette_runner.py"
 
 if %errorLevel% neq 0 (
@@ -118,6 +118,11 @@ echo Configuring service...
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService DisplayName "Owlette Service"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Description "Owlette process monitoring and management service"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Start SERVICE_AUTO_START
+
+:: Enable delayed auto-start — gives Windows time to fully initialise the desktop,
+:: network adapters and user sessions before Owlette starts.  This is a separate
+:: registry flag on top of SERVICE_AUTO_START.
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\OwletteService" /v DelayedAutostart /t REG_DWORD /d 1 /f >nul 2>&1
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppNoConsole 1
 
 :: Run service as LocalSystem for elevated privileges (needed for silent installer execution)

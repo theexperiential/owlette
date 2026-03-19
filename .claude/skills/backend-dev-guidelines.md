@@ -127,7 +127,7 @@ Existing commands: `restart_process`, `kill_process`, `toggle_autolaunch`, `upda
 
 | Path | Purpose |
 |------|---------|
-| `C:\Owlette\` | Installation directory (agent code, Python, NSSM) |
+| `C:\ProgramData\Owlette\` | Installation directory (agent code, Python, NSSM) + runtime data |
 | `C:\ProgramData\Owlette\config\config.json` | Runtime configuration |
 | `C:\ProgramData\Owlette\logs\service.log` | Service logs (rotating) |
 | `C:\ProgramData\Owlette\logs\tray.log` | Tray icon logs |

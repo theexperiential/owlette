@@ -18,7 +18,7 @@ class PromptRestart:
         
 
         self.paused = False
-        self.time_left = 29
+        self.time_left = 119
 
         self.setup_ui()
 
@@ -26,7 +26,7 @@ class PromptRestart:
         self.main_frame = ctk.CTkFrame(master=self.master, fg_color=self.FRAME_COLOR)
         self.main_frame.pack(fill='both', expand=True)
 
-        self.label = ctk.CTkLabel(self.main_frame, text="The system will restart automatically in 0:30 seconds.", fg_color=self.FRAME_COLOR)
+        self.label = ctk.CTkLabel(self.main_frame, text="The system will restart automatically in 2:00.", fg_color=self.FRAME_COLOR)
         self.label.pack(padx=10, pady=(20, 10))
 
         self.restart_button = ctk.CTkButton(self.main_frame, text="Restart Now", command=self.restart_now, fg_color=self.BUTTON_COLOR, hover_color=self.BUTTON_HOVER_COLOR)
@@ -59,7 +59,7 @@ class PromptRestart:
             if self.time_left > 0:
                 mins, secs = divmod(self.time_left, 60)
                 time_str = f"{mins}:{secs}"
-                self.label.configure(text=f"The system will restart automatically in {time_str} seconds.")
+                self.label.configure(text=f"The system will restart automatically in {time_str}.")
                 self.time_left -= 1
                 self.master.after(1000, self.countdown)
             else:

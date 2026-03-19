@@ -38,17 +38,17 @@ def download_file(
         - success: True if download succeeded, False otherwise
         - actual_path: The actual path where the file was saved (may differ from dest_path if file was in use)
     """
-    logging.info(f"Starting download from {url}")
+    logging.debug(f"Starting download from {url}")
 
     # Create destination directory if it doesn't exist
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
     # Pre-download cleanup: handle existing files
     if os.path.exists(dest_path):
-        logging.info(f"File already exists at {dest_path}, attempting cleanup...")
+        logging.debug(f"File already exists at {dest_path}, attempting cleanup...")
         try:
             os.remove(dest_path)
-            logging.info("Existing file removed successfully")
+            logging.debug("Existing file removed successfully")
         except PermissionError as e:
             # File is locked by another process - generate unique filename
             timestamp = int(time.time())
@@ -184,7 +184,7 @@ def execute_installer(
         # Track process for potential cancellation
         if active_processes is not None and installer_name:
             active_processes[installer_name] = process
-            logging.info(f"Tracking installer process: {installer_name} (PID: {process.pid})")
+            logging.debug(f"Tracking installer process: {installer_name} (PID: {process.pid})")
 
         # Wait for installation to complete (configurable timeout)
         try:
@@ -235,7 +235,7 @@ def execute_installer(
         if active_processes and installer_name in active_processes:
             del active_processes[installer_name]
 
-        logging.info(f"Installer exit code: {exit_code}")
+        logging.debug(f"Installer exit code: {exit_code}")
 
         if exit_code == 0:
             return True, exit_code, ""
@@ -278,7 +278,7 @@ def verify_checksum(file_path: str, expected_sha256: str) -> bool:
         expected_hash = expected_sha256.lower()
 
         if actual_hash == expected_hash:
-            logging.info(f"Checksum verification passed: {actual_hash}")
+            logging.debug(f"Checksum verification passed: {actual_hash}")
             return True
         else:
             logging.error(f"Checksum verification FAILED!")
@@ -343,7 +343,7 @@ def cleanup_installer(installer_path: str, force: bool = False) -> bool:
         # Try simple deletion first
         try:
             os.remove(installer_path)
-            logging.info(f"Cleaned up installer: {installer_path}")
+            logging.debug(f"Cleaned up installer: {installer_path}")
             return True
         except PermissionError as e:
             if not force:
@@ -382,7 +382,7 @@ def cleanup_installer(installer_path: str, force: bool = False) -> bool:
 
                     # Retry deletion
                     os.remove(installer_path)
-                    logging.info(f"Force cleanup succeeded: {installer_path} (killed {len(killed_processes)} process(es))")
+                    logging.debug(f"Force cleanup succeeded: {installer_path} (killed {len(killed_processes)} process(es))")
                     return True
                 else:
                     logging.warning(f"No processes found using {installer_path}, but file is still locked")
@@ -418,7 +418,7 @@ def cancel_installation(installer_name: str, active_processes: Dict[str, subproc
         process = active_processes[installer_name]
 
         # Kill the installer process
-        logging.info(f"Cancelling installation: {installer_name} (PID: {process.pid})")
+        logging.debug(f"Cancelling installation: {installer_name} (PID: {process.pid})")
 
         # Try graceful termination first
         try:
@@ -426,7 +426,7 @@ def cancel_installation(installer_name: str, active_processes: Dict[str, subproc
             # Kill all child processes too
             children = parent.children(recursive=True)
             for child in children:
-                logging.info(f"Terminating child process: {child.pid}")
+                logging.debug(f"Terminating child process: {child.pid}")
                 child.terminate()
             parent.terminate()
 

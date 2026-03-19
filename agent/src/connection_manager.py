@@ -174,7 +174,7 @@ class ConnectionManager:
         self._disconnect_callback: Optional[Callable[[], None]] = None
         self._on_connected_callback: Optional[Callable[[], None]] = None
 
-        self.logger.info("ConnectionManager initialized")
+        self.logger.debug("ConnectionManager initialized")
 
     # =========================================================================
     # Properties
@@ -508,11 +508,11 @@ class ConnectionManager:
             wait_time = self._calculate_backoff_wait()
             if wait_time > 0:
                 self._set_state(ConnectionState.BACKOFF, f"Waiting {wait_time:.0f}s before retry")
-                self.logger.info(f"[BACKOFF] Waiting {wait_time:.0f}s (attempt #{self._consecutive_failures + 1})")
+                self.logger.debug(f"[BACKOFF] Waiting {wait_time:.0f}s (attempt #{self._consecutive_failures + 1})")
 
                 # Interruptible sleep
                 if self._shutdown_event.wait(wait_time):
-                    self.logger.info("[RECONNECT] Interrupted by shutdown")
+                    self.logger.debug("[RECONNECT] Interrupted by shutdown")
                     return
 
             self._set_state(ConnectionState.RECONNECTING, "Attempting reconnection")
@@ -550,7 +550,7 @@ class ConnectionManager:
         try:
             result = self._connect_callback()
             if result:
-                self.logger.info("[CONNECT] Callback returned success")
+                self.logger.debug("[CONNECT] Callback returned success")
             else:
                 self.logger.warning("[CONNECT] Callback returned failure")
             return result
@@ -771,7 +771,7 @@ class ConnectionManager:
             thread.daemon = True
             thread.start()
             self._supervised_threads[name] = thread
-            self.logger.info(f"[SUPERVISOR] Started thread: {name}")
+            self.logger.debug(f"[SUPERVISOR] Started thread: {name}")
         except Exception as e:
             self.logger.error(f"[SUPERVISOR] Failed to start thread {name}: {e}")
 
@@ -784,7 +784,7 @@ class ConnectionManager:
         threads are started at the right time.
         """
         self._thread_supervision_enabled = True
-        self.logger.info("[SUPERVISOR] Thread supervision enabled")
+        self.logger.debug("[SUPERVISOR] Thread supervision enabled")
 
         # If already connected, start threads now
         if self.state == ConnectionState.CONNECTED:
@@ -813,7 +813,7 @@ class ConnectionManager:
             name="ConnectionManager-Watchdog"
         )
         self._watchdog_thread.start()
-        self.logger.info("[WATCHDOG] Started")
+        self.logger.debug("[WATCHDOG] Started")
 
     def _watchdog_loop(self):
         """
@@ -822,7 +822,7 @@ class ConnectionManager:
         Runs in a background thread, checking thread health
         at regular intervals.
         """
-        self.logger.info("[WATCHDOG] Loop started")
+        self.logger.debug("[WATCHDOG] Loop started")
 
         while not self._shutdown_event.is_set():
             try:
@@ -849,7 +849,7 @@ class ConnectionManager:
             # Wait for next check (interruptible)
             self._shutdown_event.wait(self.WATCHDOG_INTERVAL)
 
-        self.logger.info("[WATCHDOG] Loop exited")
+        self.logger.debug("[WATCHDOG] Loop exited")
 
     def get_thread_status(self) -> Dict[str, bool]:
         """

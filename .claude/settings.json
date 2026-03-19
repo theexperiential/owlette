@@ -10,6 +10,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/deploy-agent.mjs\"",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
