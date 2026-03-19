@@ -197,22 +197,25 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
       throw new Error(error);
     }
 
-    // Check if site already exists (CRITICAL: Prevent overwriting existing sites)
-    const siteRef = doc(db, 'sites', siteId);
-    const siteSnap = await getDoc(siteRef);
-
-    if (siteSnap.exists()) {
-      throw new Error(`Site ID "${siteId}" is already taken. Please choose a different ID.`);
-    }
-
     // Create site document with owner field and timezone
-    await setDoc(siteRef, {
-      name,
-      createdAt: Date.now(),
-      owner: userId,
-      timezone: timezone || 'UTC',
-    });
-
+    // Note: No pre-read existence check — non-admin users can't read sites they don't own,
+    // so getDoc would fail with permission-denied. Firestore rules protect against overwrites:
+    // setDoc on an existing doc triggers the 'update' rule (requires canAccessSite), so a
+    // non-owner can't overwrite someone else's site. Availability is checked in CreateSiteDialog.
+    const siteRef = doc(db, 'sites', siteId);
+    try {
+      await setDoc(siteRef, {
+        name,
+        createdAt: Date.now(),
+        owner: userId,
+        timezone: timezone || 'UTC',
+      });
+    } catch (err: any) {
+      if (err?.code === 'permission-denied') {
+        throw new Error(`Site ID "${siteId}" is already taken. Please choose a different ID.`);
+      }
+      throw err;
+    }
 
     // Return the created site ID so caller can auto-switch to it
     return siteId;
@@ -477,32 +480,40 @@ export function useMachines(siteId: string) {
       })
     );
 
-    const commandPath = `sites/${siteId}/machines/${machineId}/commands/pending`;
-    const commandId = `toggle_autolaunch_${Date.now()}`;
+    const configRef = doc(db, 'config', siteId, 'machines', machineId);
+    const configPath = `config/${siteId}/machines/${machineId}`;
 
     logger.debug(`Toggling autolaunch for "${processName}" to ${newValue}`, {
       context: 'toggleAutolaunch',
-      data: { machineId, processId, commandId },
+      data: { machineId, processId },
     });
 
-    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-    const commandData = {
-      type: 'toggle_autolaunch',
-      process_name: processName,
-      autolaunch: newValue,
-      timestamp: Date.now(),
-      status: 'pending',
-    };
-
     try {
-      await setDoc(commandRef, {
-        [commandId]: commandData
-      }, { merge: true });
+      // Write directly to config document (bypasses command queue for faster sync)
+      const configSnap = await getDoc(configRef);
+      if (!configSnap.exists()) {
+        throw new Error('Configuration not found');
+      }
 
-      logger.firestore.write(commandPath, commandId, 'create');
-      logger.debug('Toggle command sent successfully', { context: 'toggleAutolaunch' });
+      const config = configSnap.data();
+      if (!config.processes || !Array.isArray(config.processes)) {
+        throw new Error('Invalid configuration structure');
+      }
+
+      const updatedProcesses = config.processes.map((proc: any) =>
+        proc.name === processName ? { ...proc, autolaunch: newValue } : proc
+      );
+
+      await updateDoc(configRef, { processes: updatedProcesses });
+      logger.firestore.write(configPath, undefined, 'update');
+
+      // Set configChangeFlag for immediate agent pickup
+      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+      await updateDoc(statusRef, { configChangeFlag: true });
+
+      logger.debug('Autolaunch toggled via config system', { context: 'toggleAutolaunch' });
     } catch (error) {
-      logger.firestore.error('Failed to send toggle command', error);
+      logger.firestore.error('Failed to toggle autolaunch', error);
       throw error;
     }
   };
