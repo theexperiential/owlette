@@ -168,7 +168,7 @@ export default function InstallerVersionsPage() {
                 onClick={() => window.open(latestVersion.download_url, '_blank')}
                 variant="outline"
                 size="icon"
-                className="border-border bg-background text-foreground hover:bg-muted-foreground/20 hover:text-foreground cursor-pointer"
+                className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
                 title={`Download Owlette Agent v${latestVersion.version}`}
               >
                 <Download className="h-4 w-4" />
@@ -177,7 +177,7 @@ export default function InstallerVersionsPage() {
                 onClick={() => copyDownloadLink(latestVersion.download_url, latestVersion.version)}
                 variant="outline"
                 size="icon"
-                className="border-border bg-background text-foreground hover:bg-muted-foreground/20 hover:text-foreground cursor-pointer"
+                className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
                 title={`Copy download link for Owlette Agent v${latestVersion.version}`}
               >
                 <Copy className="h-4 w-4" />
@@ -284,7 +284,7 @@ export default function InstallerVersionsPage() {
                                 variant="outline"
                                 onClick={() => handleSetAsLatest(version.version)}
                                 disabled={isSetting || isDeleting}
-                                className="border-border bg-background text-foreground hover:bg-muted-foreground/20 hover:text-foreground cursor-pointer text-xs"
+                                className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer text-xs"
                               >
                                 {isSetting ? (
                                   <>
@@ -304,7 +304,7 @@ export default function InstallerVersionsPage() {
                               size="sm"
                               variant="outline"
                               onClick={() => window.open(version.download_url, '_blank')}
-                              className="border-border bg-background text-foreground hover:bg-muted-foreground/20 hover:text-foreground cursor-pointer"
+                              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
                               title={`Download Owlette Agent v${version.version}`}
                             >
                               <Download className="h-3 w-3" />
@@ -313,7 +313,7 @@ export default function InstallerVersionsPage() {
                               size="sm"
                               variant="outline"
                               onClick={() => copyDownloadLink(version.download_url, version.version)}
-                              className="border-border bg-background text-foreground hover:bg-muted-foreground/20 hover:text-foreground cursor-pointer"
+                              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
                               title={`Copy download link for Owlette Agent v${version.version}`}
                             >
                               <Copy className="h-3 w-3" />
@@ -324,7 +324,7 @@ export default function InstallerVersionsPage() {
                                 variant="outline"
                                 onClick={() => handleDelete(version.version)}
                                 disabled={isDeleting || isSetting}
-                                className="border-border bg-background text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
+                                className="border-border bg-background text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer"
                               >
                                 {isDeleting ? (
                                   <Loader2 className="h-3 w-3 animate-spin" />

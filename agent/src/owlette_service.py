@@ -296,6 +296,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
             self.firebase_client.start()
             logging.info(f"[OK] Firebase client initialized and started for site: {site_id}")
 
+            # Clear any stale health errors (e.g. config_error from startup before site was joined)
+            self._update_health_state('ok', 'ok', 'Firebase connected successfully')
+
             return True
 
         except Exception as e:
@@ -2691,10 +2694,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                 self.first_start = False
 
-                # Periodic check for Firebase state changes (every 6 iterations = 1 minute)
+                # Periodic check for Firebase state changes (every 2 iterations = 10 seconds)
                 # This detects when Firebase is re-enabled via GUI or config file changes
                 firebase_check_counter += 1
-                if firebase_check_counter >= 12:
+                if firebase_check_counter >= 2:
                     try:
                         current_firebase_enabled = shared_utils.read_config(['firebase', 'enabled'])
                         current_site_id = shared_utils.read_config(['firebase', 'site_id'])

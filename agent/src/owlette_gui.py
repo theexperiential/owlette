@@ -1823,7 +1823,7 @@ class OwletteConfigApp:
                         master=self.master,
                         title="Joined Site Successfully",
                         message=f"This machine has been registered to site: {site_id}\n\n"
-                               f"The service is now connecting to Firebase. This may take awhile.\n\n"
+                               f"The service is now connecting to Firebase.\n\n"
                                f"The status will update automatically once connected.",
                         icon=None,
                         width=600

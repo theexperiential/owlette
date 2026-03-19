@@ -224,112 +224,133 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
             site_id: Site ID from OAuth callback
             registration_code: Registration code to exchange for tokens
         """
-        # Ensure config directory exists
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-        # Import auth_manager here to avoid import errors if not installed
-        from auth_manager import AuthManager, AuthenticationError
-
-        # Determine API base URL from setup URL
-        # If using dev.owlette.app, use dev API. Otherwise production API.
-        global web_app_url
-        # Use the global web_app_url set in main(), or fall back to env var + default
-        url_to_check = web_app_url or os.environ.get("OWLETTE_SETUP_URL", DEFAULT_URL)
-
-        # Determine environment from URL
-        if 'dev.owlette.app' in url_to_check:
-            environment = 'development'
-            api_base = "https://dev.owlette.app/api"
-            project_id = "owlette-dev-3838a"
-        else:
-            environment = 'production'
-            api_base = "https://owlette.app/api"
-            project_id = "owlette-prod-90a12"
-
-        print(f"  API Base: {api_base}")
-        print(f"  Project ID: {project_id}")
-        print()
-        print("Exchanging registration code for OAuth tokens...")
-
-        # Write debug info to file for troubleshooting (APPEND, don't overwrite)
         debug_log = Path(shared_utils.get_data_path('logs/oauth_debug.log'))
-        with open(debug_log, 'a') as f:
-            f.write(f"\nOAuth Exchange Debug\n")
-            f.write(f"====================\n")
-            f.write(f"API Base: {api_base}\n")
-            f.write(f"Project ID: {project_id}\n")
-            f.write(f"Site ID: {site_id}\n")
-            f.write(f"Registration Code: {registration_code[:20]}...\n\n")
-
-        # Initialize auth manager
-        auth_manager = AuthManager(api_base=api_base)
 
         try:
-            # Exchange registration code for access + refresh tokens
-            success = auth_manager.exchange_registration_code(registration_code)
+            # Ensure config directory exists
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-            if not success:
-                raise Exception("Token exchange returned False")
+            # Import auth_manager here to avoid import errors if not installed
+            from auth_manager import AuthManager, AuthenticationError
 
-            print("✓ OAuth tokens received and stored securely")
-            print("  - Access token: Valid for 1 hour")
-            print("  - Refresh token: Valid for 30 days (encrypted in C:\\ProgramData\\Owlette\\.tokens.enc)")
+            # Determine API base URL from setup URL
+            # If using dev.owlette.app, use dev API. Otherwise production API.
+            global web_app_url
+            # Use the global web_app_url set in main(), or fall back to env var + default
+            url_to_check = web_app_url or os.environ.get("OWLETTE_SETUP_URL", DEFAULT_URL)
 
-        except AuthenticationError as e:
-            raise Exception(f"OAuth authentication failed: {e}")
-        except Exception as e:
-            raise Exception(f"Failed to exchange registration code: {e}")
+            # Determine environment from URL
+            if 'dev.owlette.app' in url_to_check:
+                environment = 'development'
+                api_base = "https://dev.owlette.app/api"
+                project_id = "owlette-dev-3838a"
+            else:
+                environment = 'production'
+                api_base = "https://owlette.app/api"
+                project_id = "owlette-prod-90a12"
 
-        # Read existing config or create default
-        if CONFIG_PATH.exists():
-            with open(CONFIG_PATH, 'r') as f:
-                config = json.load(f)
-        else:
-            config = {
-                "_comment": "Owlette Configuration - Edit this file to add processes to monitor",
-                "version": shared_utils.CONFIG_VERSION,
-                "processes": [],
-                "logging": {
-                    "level": "INFO",
-                    "max_age_days": 90,
-                    "firebase_shipping": {
+            print(f"  API Base: {api_base}")
+            print(f"  Project ID: {project_id}")
+            print()
+            print("Exchanging registration code for OAuth tokens...")
+
+            # Write debug info to file for troubleshooting (APPEND, don't overwrite)
+            with open(debug_log, 'a') as f:
+                f.write(f"\nOAuth Exchange Debug\n")
+                f.write(f"====================\n")
+                f.write(f"API Base: {api_base}\n")
+                f.write(f"Project ID: {project_id}\n")
+                f.write(f"Site ID: {site_id}\n")
+                f.write(f"Registration Code: {registration_code[:20]}...\n\n")
+
+            # Initialize auth manager
+            auth_manager = AuthManager(api_base=api_base)
+
+            try:
+                # Exchange registration code for access + refresh tokens
+                success = auth_manager.exchange_registration_code(registration_code)
+
+                if not success:
+                    raise Exception("Token exchange returned False")
+
+                print("✓ OAuth tokens received and stored securely")
+                print("  - Access token: Valid for 1 hour")
+                print("  - Refresh token: Valid for 30 days (encrypted in C:\\ProgramData\\Owlette\\.tokens.enc)")
+
+            except AuthenticationError as e:
+                raise Exception(f"OAuth authentication failed: {e}")
+            except Exception as e:
+                raise Exception(f"Failed to exchange registration code: {e}")
+
+            # Read existing config or create default
+            if CONFIG_PATH.exists():
+                with open(CONFIG_PATH, 'r') as f:
+                    config = json.load(f)
+            else:
+                config = {
+                    "_comment": "Owlette Configuration - Edit this file to add processes to monitor",
+                    "version": shared_utils.CONFIG_VERSION,
+                    "processes": [],
+                    "logging": {
+                        "level": "INFO",
+                        "max_age_days": 90,
+                        "firebase_shipping": {
+                            "enabled": False,
+                            "ship_errors_only": True
+                        }
+                    },
+                    "firebase": {
+                        "_comment": "Cloud features: remote control, web dashboard, metrics",
                         "enabled": False,
-                        "ship_errors_only": True
+                        "site_id": ""
                     }
-                },
-                "firebase": {
-                    "_comment": "Cloud features: remote control, web dashboard, metrics",
-                    "enabled": False,
-                    "site_id": ""
                 }
-            }
 
-        # Update Firebase configuration
-        if 'firebase' not in config:
-            config['firebase'] = {}
+            # Update Firebase configuration
+            if 'firebase' not in config:
+                config['firebase'] = {}
 
-        config['firebase']['enabled'] = True
-        config['firebase']['site_id'] = site_id
-        config['firebase']['project_id'] = project_id
-        config['firebase']['api_base'] = api_base
+            config['firebase']['enabled'] = True
+            config['firebase']['site_id'] = site_id
+            config['firebase']['project_id'] = project_id
+            config['firebase']['api_base'] = api_base
 
-        # Save environment setting (production or development)
-        config['environment'] = environment
+            # Save environment setting (production or development)
+            config['environment'] = environment
 
-        # DO NOT store tokens in config.json - they are encrypted in C:\ProgramData\Owlette\.tokens.enc
-        # Remove old token field if it exists (from previous versions)
-        if 'token' in config['firebase']:
-            del config['firebase']['token']
+            # DO NOT store tokens in config.json - they are encrypted in C:\ProgramData\Owlette\.tokens.enc
+            # Remove old token field if it exists (from previous versions)
+            if 'token' in config['firebase']:
+                del config['firebase']['token']
 
-        # Write updated config
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(config, f, indent=2)
+            # Write updated config
+            with open(CONFIG_PATH, 'w') as f:
+                json.dump(config, f, indent=2)
 
-        print()
-        print(f"✓ Configuration saved to {CONFIG_PATH}")
-        print(f"  Site ID: {site_id}")
-        print(f"  Project ID: {project_id}")
-        print(f"  API Base: {api_base}")
+            with open(debug_log, 'a') as f:
+                f.write(f"\nConfig Write Success\n")
+                f.write(f"====================\n")
+                f.write(f"Config path: {CONFIG_PATH}\n")
+                f.write(f"Firebase enabled: True, Site: {site_id}\n\n")
+
+            print()
+            print(f"✓ Configuration saved to {CONFIG_PATH}")
+            print(f"  Site ID: {site_id}")
+            print(f"  Project ID: {project_id}")
+            print(f"  API Base: {api_base}")
+
+        except Exception as e:
+            # Log the full error to debug file so failures are diagnosable
+            import traceback
+            try:
+                with open(debug_log, 'a') as f:
+                    f.write(f"\nSave Config FAILED\n")
+                    f.write(f"==================\n")
+                    f.write(f"Error: {e}\n")
+                    f.write(f"Traceback:\n{traceback.format_exc()}\n")
+            except Exception:
+                pass  # Don't let debug logging mask the real error
+            raise
 
     def log_message(self, format, *args):
         """Suppress HTTP server logs during normal operation"""

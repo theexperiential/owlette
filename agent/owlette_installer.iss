@@ -232,42 +232,60 @@ end;
 procedure RestoreConfigIfBackedUp;
 var
   ConfigPath: String;
+  ConfigContent: AnsiString;
 begin
-  // CRITICAL: NEVER restore backup if OAuth just ran
-  // OAuth creates a fresh config with firebase authentication - we must preserve it!
-  if DidRunOAuth then
+  // No backup? Nothing to restore.
+  if ConfigBackupPath = '' then
   begin
-    Log('OAuth ran - SKIPPING config restore to preserve fresh authentication');
+    Log('No config backup exists - nothing to restore');
     Exit;
   end;
 
-  // IMPORTANT: DO NOT restore config during silent mode (self-updates)
-  // The service will sync processes/settings from Firestore automatically
-  if WizardSilent() then
+  if not FileExists(ConfigBackupPath) then
   begin
-    Log('Silent mode - SKIPPING config restore (service will sync from Firestore)');
+    Log('Config backup file missing - nothing to restore');
     Exit;
   end;
 
-  // For interactive upgrades without OAuth: restore the old config to preserve processes and Firebase settings
-  // This ensures "Leave Site" (enabled=false) is preserved across upgrades
-  if ConfigBackupPath <> '' then
+  ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
+
+  // CONTENT-BASED CHECK: Instead of tracking whether OAuth was *attempted* (DidRunOAuth),
+  // check whether OAuth actually *succeeded* by inspecting the config file.
+  // If config has a valid firebase section with enabled=true and a non-empty site_id,
+  // OAuth produced a good config — keep it. Otherwise, restore the backup.
+  if FileExists(ConfigPath) then
   begin
-    if FileExists(ConfigBackupPath) then
+    if LoadStringFromFile(ConfigPath, ConfigContent) then
     begin
-      ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
-      FileCopy(ConfigBackupPath, ConfigPath, False);
-      Log('Restored config from backup to preserve settings (interactive upgrade without OAuth)');
+      // Check for valid firebase auth: "enabled": true AND "site_id": "<something>"
+      // but NOT "site_id": "" (empty = not configured)
+      if (Pos('"enabled": true', ConfigContent) > 0) and
+         (Pos('"site_id"', ConfigContent) > 0) and
+         (Pos('"site_id": ""', ConfigContent) = 0) then
+      begin
+        Log('Current config has valid firebase section (OAuth succeeded) - preserving it');
+        Exit;
+      end;
+
+      Log('Current config missing valid firebase section - will restore backup');
     end;
-  end;
+  end
+  else
+    Log('No config file exists after install - will restore backup');
+
+  // Ensure config directory exists (uninstaller may have deleted it)
+  ForceDirectories(ExtractFilePath(ConfigPath));
+  FileCopy(ConfigBackupPath, ConfigPath, False);
+  Log('Restored config from backup to preserve firebase auth and settings');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
   begin
-    // Backup config before installation
-    BackupConfigIfExists;
+    // NOTE: Config backup now happens in InitializeSetup BEFORE the old uninstaller runs.
+    // Previously it ran here (ssInstall), which was too late — the uninstaller had already
+    // wiped C:\ProgramData\Owlette including config.json.
   end
   else if CurStep = ssPostInstall then
   begin
@@ -291,24 +309,31 @@ begin
   end
   else if CurUninstallStep = usPostUninstall then
   begin
-    // Clean up installation directory including runtime-generated files (.pyc, __pycache__)
+    // FIX: {app} and {commonappdata}\Owlette are the SAME directory (C:\ProgramData\Owlette).
+    // Previously, DelTree wiped the entire {app} dir, destroying config, tokens, and logs
+    // even during silent upgrades. Now we selectively remove only installed component dirs
+    // and always preserve user data (config/, logs/, cache/, tmp/, .tokens.enc).
     InstallDir := ExpandConstant('{app}');
+    DataDir := ExpandConstant('{commonappdata}\Owlette');
+
     if DirExists(InstallDir) then
     begin
-      Log('Removing installation directory and runtime files: ' + InstallDir);
-      if DelTree(InstallDir, True, True, True) then
-        Log('Installation directory removed successfully')
-      else
-        Log('Warning: Some files in installation directory could not be removed');
+      // Remove only installed component directories (not user data)
+      Log('Cleaning installed components from: ' + InstallDir);
+      DelTree(InstallDir + '\python', True, True, True);
+      DelTree(InstallDir + '\agent', True, True, True);
+      DelTree(InstallDir + '\tools', True, True, True);
+      DelTree(InstallDir + '\scripts', True, True, True);
+      // Remove installed doc files (but not user data files)
+      DeleteFile(InstallDir + '\README.md');
+      DeleteFile(InstallDir + '\LICENSE');
+      Log('Installed components removed (user data preserved)');
     end;
 
-    // Ask user if they want to remove configuration and logs from ProgramData
-    // In silent mode, always preserve data (for upgrades)
-    DataDir := ExpandConstant('{commonappdata}\Owlette');
+    // Ask user if they want to also remove configuration and user data
+    // In silent mode (upgrades), always preserve data
     if DirExists(DataDir) then
     begin
-      // Silent uninstall (triggered by upgrade) → preserve data automatically
-      // Interactive uninstall → ask user
       if not UninstallSilent() and
          (MsgBox('Do you want to remove all Owlette configuration and data files?' + #13#10#13#10 +
                  'This includes:' + #13#10 +
@@ -321,9 +346,9 @@ begin
       begin
         Log('User chose to remove all data');
         if DelTree(DataDir, True, True, True) then
-          Log('Removed user data from: ' + DataDir)
+          Log('Removed all data from: ' + DataDir)
         else
-          Log('Failed to remove user data from: ' + DataDir);
+          Log('Failed to remove some data from: ' + DataDir);
       end
       else
       begin
@@ -362,6 +387,11 @@ begin
   // Check for existing installation
   if RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{A7B8C9D0-E1F2-4A5B-8C9D-0E1F2A3B4C5D}_is1', 'UninstallString', UninstallString) then
   begin
+    // CRITICAL: Backup config BEFORE the old uninstaller runs.
+    // The old uninstaller's DelTree on {app} wipes C:\ProgramData\Owlette (install dir = data dir),
+    // destroying config.json. Backing up here preserves it for RestoreConfigIfBackedUp later.
+    BackupConfigIfExists;
+
     // In silent mode, automatically proceed with uninstall without user confirmation
     // In interactive mode, ask user for confirmation
     if WizardSilent() or

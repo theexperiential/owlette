@@ -40,7 +40,9 @@ build/
 dist/
 installer/
 agent/build/
+agent/build_output.txt
 agent/dist/
+agent/downloads/
 agent/installer/
 *.exe
 *.msi
