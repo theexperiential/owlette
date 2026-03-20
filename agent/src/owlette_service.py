@@ -127,7 +127,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         shared_utils.upgrade_config()
 
         # --- STARTUP HEALTH PROBE ---
-        api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
+        api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
         self._health_state: HealthState = HealthProbe(
             config_path=shared_utils.CONFIG_PATH,
             api_base=api_base
@@ -171,7 +171,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # Get configuration
                     site_id = shared_utils.read_config(['firebase', 'site_id'])
                     project_id = shared_utils.read_config(['firebase', 'project_id']) or "owlette-dev-3838a"
-                    api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
+                    api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
                     cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
 
                     logging.debug(f"Firebase config - site: {site_id}, project: {project_id}")
@@ -227,7 +227,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 return False
 
             project_id = shared_utils.read_config(['firebase', 'project_id']) or "owlette-dev-3838a"
-            api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
+            api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
             cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
 
             logging.info(f"Initializing Firebase client - site: {site_id}, project: {project_id}")
@@ -448,7 +448,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     token = self._auth_manager.get_valid_token()
                     site_id = self._auth_manager.get_site_id() or ''
                     machine_id = socket.gethostname()
-                    api_base = self._api_base or "https://owlette.app/api"
+                    api_base = self._api_base or shared_utils.get_api_base_url()
                     requests.post(
                         f"{api_base}/agent/alert",
                         json={

@@ -113,7 +113,7 @@ if __name__ == '__main__':
             # --- STARTUP HEALTH PROBE ---
             try:
                 from health_probe import HealthProbe
-                _api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
+                _api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
                 self._health_state = HealthProbe(
                     config_path=shared_utils.CONFIG_PATH,
                     api_base=_api_base,
@@ -126,7 +126,7 @@ if __name__ == '__main__':
                 self._health_state = None
 
             self._auth_manager = None
-            self._api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
+            self._api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
 
             # Initialize all attributes from OwletteService.__init__
             self.is_alive = True
