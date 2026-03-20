@@ -622,21 +622,22 @@ class FirebaseClient:
             processes_data = metrics.get('processes', {})
             self.logger.debug(f"Uploading metrics with {len(processes_data)} processes: {list(processes_data.keys())}")
 
-            metrics_ref.set({
+            # Use update() with dot notation so metrics.processes is REPLACED
+            # entirely (not deep-merged). This ensures deleted processes don't
+            # persist as ghost entries in Firestore.
+            metrics_ref.update({
                 'online': True,
                 'lastHeartbeat': SERVER_TIMESTAMP,
                 'agent_version': shared_utils.APP_VERSION,
                 'machineId': self.machine_id,
                 'siteId': self.site_id,
-                'metrics': {
-                    'cpu': metrics.get('cpu', {}),
-                    'memory': metrics.get('memory', {}),
-                    'disk': metrics.get('disk', {}),
-                    'gpu': metrics.get('gpu', {}),
-                    'timestamp': SERVER_TIMESTAMP,
-                    'processes': processes_data
-                }
-            }, merge=True)
+                'metrics.cpu': metrics.get('cpu', {}),
+                'metrics.memory': metrics.get('memory', {}),
+                'metrics.disk': metrics.get('disk', {}),
+                'metrics.gpu': metrics.get('gpu', {}),
+                'metrics.timestamp': SERVER_TIMESTAMP,
+                'metrics.processes': processes_data
+            })
 
         except Exception as e:
             self.logger.error(f"Error uploading metrics: {e}")

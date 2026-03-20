@@ -507,9 +507,13 @@ export function useMachines(siteId: string) {
       await updateDoc(configRef, { processes: updatedProcesses });
       logger.firestore.write(configPath, undefined, 'update');
 
-      // Set configChangeFlag for immediate agent pickup
-      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-      await updateDoc(statusRef, { configChangeFlag: true });
+      // Set configChangeFlag for immediate agent pickup (non-critical, agent polls anyway)
+      try {
+        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+        await updateDoc(statusRef, { configChangeFlag: true });
+      } catch (flagError) {
+        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'toggleAutolaunch' });
+      }
 
       logger.debug('Autolaunch toggled via config system', { context: 'toggleAutolaunch' });
     } catch (error) {
@@ -562,13 +566,13 @@ export function useMachines(siteId: string) {
       logger.firestore.write(configPath, undefined, 'update');
       logger.debug('Process updated successfully', { context: 'updateProcess' });
 
-      // Set config change flag to notify agent (push notification)
-      // This eliminates agent's need to constantly poll config (saves ~500K-1M reads/week)
-      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-      await updateDoc(statusRef, {
-        configChangeFlag: true
-      });
-      logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
+      // Set config change flag to notify agent (non-critical, agent polls anyway)
+      try {
+        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+        await updateDoc(statusRef, { configChangeFlag: true });
+      } catch (flagError) {
+        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'updateProcess' });
+      }
     } catch (error: any) {
       logger.firestore.error('Failed to update process', error);
 
@@ -637,12 +641,13 @@ export function useMachines(siteId: string) {
       logger.firestore.write(configPath, undefined, 'delete');
       logger.debug('Process deleted successfully', { context: 'deleteProcess' });
 
-      // Set config change flag to notify agent
-      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-      await updateDoc(statusRef, {
-        configChangeFlag: true
-      });
-      logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
+      // Set config change flag to notify agent (non-critical, agent polls anyway)
+      try {
+        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+        await updateDoc(statusRef, { configChangeFlag: true });
+      } catch (flagError) {
+        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'deleteProcess' });
+      }
     } catch (error: any) {
       logger.firestore.error('Failed to delete process', error);
 
@@ -721,12 +726,13 @@ export function useMachines(siteId: string) {
       logger.firestore.write(configPath, undefined, 'create');
       logger.debug('Process created successfully', { context: 'createProcess', data: { newProcessId } });
 
-      // Set config change flag to notify agent
-      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-      await updateDoc(statusRef, {
-        configChangeFlag: true
-      });
-      logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
+      // Set config change flag to notify agent (non-critical, agent polls anyway)
+      try {
+        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+        await updateDoc(statusRef, { configChangeFlag: true });
+      } catch (flagError) {
+        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'createProcess' });
+      }
 
       return newProcessId;
     } catch (error: any) {

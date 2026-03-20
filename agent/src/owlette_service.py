@@ -1581,7 +1581,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         # Clean up tracking
                         del self.last_started[removed_id]
 
-                # Check for autolaunch changes (disable -> terminate)
+                # Check for autolaunch changes
                 for process_id, new_proc in new_process_map.items():
                     if process_id in old_process_map:
                         old_proc = old_process_map[process_id]
@@ -1589,21 +1589,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         new_autolaunch = new_proc.get('autolaunch', False)
 
                         if old_autolaunch and not new_autolaunch:
-                            # Autolaunch disabled - terminate the process
-                            logging.info(f"Autolaunch disabled for {new_proc.get('name')} - terminating process")
-
-                            if process_id in self.last_started:
-                                pid_info = self.last_started[process_id]
-                                pid = pid_info.get('pid')
-
-                                if pid and Util.is_pid_running(pid):
-                                    try:
-                                        shared_utils.graceful_terminate(pid)
-                                        # Update status and sync to Firebase immediately
-                                        shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client, process_id=process_id)
-                                        logging.info(f"[OK] Terminated process with disabled autolaunch: {new_proc.get('name')} (PID {pid})")
-                                    except Exception as e:
-                                        logging.error(f"Failed to terminate PID {pid}: {e}")
+                            # Autolaunch disabled - stop monitoring but keep process running
+                            # The process should stay alive; we just won't relaunch it if it exits
+                            logging.info(f"Autolaunch disabled for {new_proc.get('name')} - stopping monitoring (process stays running)")
                         elif new_autolaunch and not old_autolaunch:
                             # Autolaunch enabled - clear any cooldown from prior failed launch,
                             # then launch immediately instead of waiting for next cycle
