@@ -62,14 +62,9 @@ class OwletteConfigApp:
 
         # Determine actual Windows minimum window width by requesting a small size
         # and seeing what Windows enforces (title bar buttons set the real minimum)
-        self.master.geometry('1x450')
-        self.master.update_idletasks()
+        self.master.geometry('100x450')
+        self.master.update()
         self.collapsed_width = max(self.master.winfo_width(), 270)
-
-        # Set col 1 minsize PERMANENTLY so the process list is always the same width
-        # This never changes between collapsed/expanded — the list looks identical in both
-        # 8px = frame padx (4 each side)
-        self.master.grid_columnconfigure(1, minsize=self.collapsed_width)
 
         # Apply saved window state
         self._apply_window_state()
@@ -175,14 +170,41 @@ class OwletteConfigApp:
             self.details_toggle_button.configure(text="\u276E")
 
     def _collapse_right_panel(self):
-        """Hide right-panel background frames (detail widgets stay in grid, clipped off-screen)"""
+        """Hide all right-panel widgets so nothing peeks into collapsed view"""
         self.panel_separator.grid_remove()
         self.process_details_frame.grid_remove()
+        for w in getattr(self, '_detail_widgets', []):
+            try:
+                w.grid_remove()
+            except Exception:
+                pass
+        # Give column 1 weight so process list stretches to fill the full window width
+        # Also zero out right-side column weights (6, 8) so they don't steal space
+        self.master.grid_columnconfigure(1, weight=1)
+        self.master.grid_columnconfigure(6, weight=0)
+        self.master.grid_columnconfigure(8, weight=0)
 
     def _expand_right_panel(self):
-        """Restore right-panel background frames"""
+        """Restore all right-panel widgets with saved grid positions"""
+        # Reset all column weights back to normal for expanded layout
+        self.master.grid_columnconfigure(1, weight=0)
+        self.master.grid_columnconfigure(6, weight=2)
+        self.master.grid_columnconfigure(8, weight=1)
         self.panel_separator.grid(row=0, column=3, rowspan=10, sticky='ns', padx=0, pady=(20, 10))
         self.process_details_frame.grid(row=0, column=4, sticky='news', rowspan=10, columnspan=6, padx=(4, 4), pady=(4, 4))
+        # Restore detail widgets using saved grid info (not relying on grid memory)
+        for w in getattr(self, '_detail_widgets', []):
+            info = self._detail_grid_info.get(id(w))
+            if info:
+                try:
+                    w.grid(**info)
+                except Exception:
+                    pass
+        # Then respect current selection state
+        if self.process_list.size() > 0 and self.process_list.curselection() is not None:
+            self._show_detail_fields(True)
+        else:
+            self._show_detail_fields(False)
 
     def _apply_windows11_theme(self):
         """Apply Windows 11 dark titlebar - deferred for faster startup"""
@@ -541,11 +563,21 @@ class OwletteConfigApp:
             self.relaunch_attempts_label, self.relaunch_attempts_entry,
         ]
 
+        # Save grid info for all detail widgets (used to restore after grid_remove)
+        self._detail_grid_info = {}
+        for w in self._detail_widgets:
+            info = w.grid_info()
+            if info:
+                self._detail_grid_info[id(w)] = {k: v for k, v in info.items() if k != 'in'}
+
         # Start with details hidden (no process selected)
         self._show_detail_fields(False)
 
     def _show_detail_fields(self, show):
         """Show or hide all detail fields, toggling the empty state placeholder."""
+        # Don't show detail widgets when the right panel is collapsed
+        if self.details_collapsed:
+            return
         if show:
             self.empty_state_label.place_forget()
             for w in self._detail_widgets:
@@ -1745,7 +1777,7 @@ class OwletteConfigApp:
                    "2. Select or create a site\n"
                    "3. Authorize this machine\n\n"
                    "The service will restart after authentication completes.",
-            icon=None,
+            icon="question",
             option_1="Cancel",
             option_2="Join Site",
             width=550
@@ -1825,7 +1857,7 @@ class OwletteConfigApp:
                         message=f"This machine has been registered to site: {site_id}\n\n"
                                f"The service is now connecting to Firebase.\n\n"
                                f"The status will update automatically once connected.",
-                        icon=None,
+                        icon="check",
                         width=600
                     ))
                 else:
@@ -1835,7 +1867,7 @@ class OwletteConfigApp:
                         master=self.master,
                         title="Failed to Join Site",
                         message=f"Could not complete authentication:\n\n{message}\n\nPlease try again or check the logs for details.",
-                        icon=None,
+                        icon="cancel",
                         width=600
                     ))
 
@@ -1846,7 +1878,7 @@ class OwletteConfigApp:
                     master=self.master,
                     title="Error",
                     message=f"An unexpected error occurred:\n\n{str(e)}",
-                    icon=None,
+                    icon="cancel",
                     width=600
                 ))
 

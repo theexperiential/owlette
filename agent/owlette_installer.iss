@@ -149,8 +149,7 @@ Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-
 ;        Owlette-Installer-v2.0.0.exe /SERVER=prod (uses owlette.app)
 ;        Owlette-Installer-v2.0.0.exe /SERVER=dev  (uses dev.owlette.app for testing)
 ;
-; IMPORTANT: Skip configuration in silent mode if config already exists (for self-updates)
-; This prevents the installer from hanging while waiting for browser OAuth that won't happen
+; Skip if config already exists (upgrade scenario — config/tokens preserved in place)
 Filename: "{app}\python\python.exe"; Parameters: """{app}\agent\src\configure_site.py"" --url ""{code:GetServerEnvironment}"""; Description: "Configure Owlette site"; StatusMsg: "Opening browser for site configuration..."; Flags: waituntilterminated; Check: ShouldConfigureSite
 
 ; Step 2: Install and start the Windows service - RUNS SECOND (only after configuration completes)
@@ -167,10 +166,6 @@ Filename: "{app}\tools\nssm.exe"; Parameters: "remove OwletteService confirm"; F
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\wintmp' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\LibreHardwareMonitor' -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated
 
 [Code]
-var
-  ConfigBackupPath: String;
-  DidUninstallExisting: Boolean;
-  DidRunOAuth: Boolean;  // Track if we ran OAuth configuration
 
 function GetServerEnvironment(Param: String): String;
 var
@@ -191,106 +186,27 @@ function ShouldConfigureSite(): Boolean;
 var
   ConfigPath: String;
 begin
-  // Check if config already exists (self-update scenario)
+  // Skip OAuth if config already exists (upgrade scenario).
+  // Fresh installs won't have config.json, so OAuth runs for those.
+  // If a user needs to reconfigure, they can delete config.json and re-run the installer.
   ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
 
-  // If running in silent mode AND config exists, skip configuration
-  // (machine is already set up - this is a self-update)
-  if WizardSilent() and FileExists(ConfigPath) then
+  if FileExists(ConfigPath) then
   begin
-    Log('Silent mode + config exists - skipping OAuth (self-update)');
-    DidRunOAuth := False;
+    Log('Config exists - skipping OAuth (upgrade)');
     Result := False;
   end
   else
   begin
-    Log('Will run OAuth configuration (fresh install or interactive)');
-    DidRunOAuth := True;  // Track that OAuth will run
+    Log('No config found - running OAuth (fresh install)');
     Result := True;
   end;
 end;
 
-procedure BackupConfigIfExists;
-var
-  ConfigPath: String;
-begin
-  // Check ProgramData location (proper location for config)
-  ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
-
-  // Fallback: Check old location if ProgramData doesn't exist
-  if not FileExists(ConfigPath) then
-    ConfigPath := ExpandConstant('{app}\agent\config\config.json');
-
-  if FileExists(ConfigPath) then
-  begin
-    ConfigBackupPath := ExpandConstant('{tmp}\config.json.backup');
-    FileCopy(ConfigPath, ConfigBackupPath, False);
-    Log('Backed up config from: ' + ConfigPath);
-  end;
-end;
-
-procedure RestoreConfigIfBackedUp;
-var
-  ConfigPath: String;
-  ConfigContent: AnsiString;
-begin
-  // No backup? Nothing to restore.
-  if ConfigBackupPath = '' then
-  begin
-    Log('No config backup exists - nothing to restore');
-    Exit;
-  end;
-
-  if not FileExists(ConfigBackupPath) then
-  begin
-    Log('Config backup file missing - nothing to restore');
-    Exit;
-  end;
-
-  ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
-
-  // CONTENT-BASED CHECK: Instead of tracking whether OAuth was *attempted* (DidRunOAuth),
-  // check whether OAuth actually *succeeded* by inspecting the config file.
-  // If config has a valid firebase section with enabled=true and a non-empty site_id,
-  // OAuth produced a good config — keep it. Otherwise, restore the backup.
-  if FileExists(ConfigPath) then
-  begin
-    if LoadStringFromFile(ConfigPath, ConfigContent) then
-    begin
-      // Check for valid firebase auth: "enabled": true AND "site_id": "<something>"
-      // but NOT "site_id": "" (empty = not configured)
-      if (Pos('"enabled": true', ConfigContent) > 0) and
-         (Pos('"site_id"', ConfigContent) > 0) and
-         (Pos('"site_id": ""', ConfigContent) = 0) then
-      begin
-        Log('Current config has valid firebase section (OAuth succeeded) - preserving it');
-        Exit;
-      end;
-
-      Log('Current config missing valid firebase section - will restore backup');
-    end;
-  end
-  else
-    Log('No config file exists after install - will restore backup');
-
-  // Ensure config directory exists (uninstaller may have deleted it)
-  ForceDirectories(ExtractFilePath(ConfigPath));
-  FileCopy(ConfigBackupPath, ConfigPath, False);
-  Log('Restored config from backup to preserve firebase auth and settings');
-end;
-
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssInstall then
+  if CurStep = ssPostInstall then
   begin
-    // NOTE: Config backup now happens in InitializeSetup BEFORE the old uninstaller runs.
-    // Previously it ran here (ssInstall), which was too late — the uninstaller had already
-    // wiped C:\ProgramData\Owlette including config.json.
-  end
-  else if CurStep = ssPostInstall then
-  begin
-    // Restore config after installation
-    RestoreConfigIfBackedUp;
     Log('Owlette installation completed successfully');
     Log('User data stored in: ' + ExpandConstant('{commonappdata}\Owlette'));
   end;
@@ -365,17 +281,13 @@ function InitializeSetup(): Boolean;
 var
   ResultCode: Integer;
   UninstallString: String;
-  UninstallExe: String;
 begin
   Result := True;
-  DidUninstallExisting := False;  // Initialize flag
-  DidRunOAuth := False;  // Initialize OAuth tracking flag
 
   // Check if running as admin
   if not IsAdmin then
   begin
     Log('ERROR: Not running as administrator');
-    // Only show error dialog in interactive mode
     if not WizardSilent() then
       MsgBox('This installer requires administrator privileges to install the Windows service.' + #13#10 +
              'Please right-click the installer and select "Run as administrator".',
@@ -384,78 +296,50 @@ begin
     Exit;
   end;
 
-  // Check for existing installation
+  // UPGRADE STRATEGY: Overwrite in place — never run the old uninstaller.
+  //
+  // Previous versions ran the old uninstaller during upgrades, which wiped the entire
+  // install directory (C:\ProgramData\Owlette), destroying config.json, .tokens.enc,
+  // and logs. A backup/restore dance was attempted but failed due to Inno Setup event
+  // ordering (ssPostInstall fires AFTER [Run] entries, not before).
+  //
+  // The fix: just stop the service, kill processes, and let Inno Setup overwrite files.
+  // Config, tokens, and logs live in subdirectories that [Files] entries don't touch,
+  // so they survive naturally. install.bat (in [Run]) handles service re-registration.
   if RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{A7B8C9D0-E1F2-4A5B-8C9D-0E1F2A3B4C5D}_is1', 'UninstallString', UninstallString) then
   begin
-    // CRITICAL: Backup config BEFORE the old uninstaller runs.
-    // The old uninstaller's DelTree on {app} wipes C:\ProgramData\Owlette (install dir = data dir),
-    // destroying config.json. Backing up here preserves it for RestoreConfigIfBackedUp later.
-    BackupConfigIfExists;
+    Log('Existing installation detected - upgrading in place (no uninstall)');
 
-    // In silent mode, automatically proceed with uninstall without user confirmation
-    // In interactive mode, ask user for confirmation
-    if WizardSilent() or
-       (MsgBox('An existing Owlette installation was detected.' + #13#10#13#10 +
-               'Your configuration can be preserved, but the installer needs to uninstall the old version first.' + #13#10#13#10 +
-               'Click OK to uninstall and continue, or Cancel to exit.',
-               mbConfirmation, MB_OKCANCEL) = IDOK) then
+    if not WizardSilent() then
     begin
-      if WizardSilent() then
-        Log('Proceeding with uninstall (Silent mode - auto-confirmed)')
-      else
-        Log('Proceeding with uninstall (Interactive mode - user confirmed)');
-      // Extract the uninstaller path (remove /SILENT flag if present)
-      UninstallExe := RemoveQuotes(UninstallString);
-
-      // Stop the service first (if NSSM exists)
-      // Check new location first, then fall back to legacy C:\Owlette for upgrades from older versions
-      if FileExists(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe')) then
+      if MsgBox('An existing Owlette installation was detected.' + #13#10#13#10 +
+                'The installer will upgrade in place, preserving your configuration and authentication.' + #13#10#13#10 +
+                'Click OK to continue or Cancel to exit.',
+                mbConfirmation, MB_OKCANCEL) <> IDOK then
       begin
-        Exec(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe'), 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-        Sleep(2000);
-      end
-      else if FileExists('C:\Owlette\tools\nssm.exe') then
-      begin
-        Exec('C:\Owlette\tools\nssm.exe', 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-        Sleep(2000);
-      end;
-
-      // Run uninstaller very silently (no dialogs at all)
-      if Exec(UninstallExe, '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-      begin
-        Log('Previous installation uninstalled successfully');
-        DidUninstallExisting := True;  // Track that we handled uninstall
-        Sleep(3000);  // Give Windows time to clean up
-      end
-      else
-      begin
-        Log('ERROR: Failed to uninstall the existing version');
-        // Only show error dialog in interactive mode
-        if not WizardSilent() then
-          MsgBox('Failed to uninstall the existing version. Please uninstall manually and try again.', mbError, MB_OK);
         Result := False;
         Exit;
       end;
-    end
-    else
+    end;
+
+    // Stop the service before overwriting files
+    if FileExists(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe')) then
     begin
-      Result := False;
-      Exit;
+      Exec(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe'), 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Sleep(2000);
+    end
+    else if FileExists('C:\Owlette\tools\nssm.exe') then
+    begin
+      Exec('C:\Owlette\tools\nssm.exe', 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Sleep(2000);
     end;
   end;
 
-  // ANTI-FRAGILE: ALWAYS kill Owlette Python processes before installation.
-  // The uninstaller only stops the service — it does NOT kill GUI/tray pythonw.exe processes.
-  // These hold DLL locks (libcrypto-3.dll, etc.) that cause file replacement to fail,
-  // triggering a rollback that leaves the machine with no Owlette installation at all.
-  // This was discovered in production: v56->v57 upgrade failed because pythonw.exe held libcrypto-3.dll.
+  // Kill Owlette Python processes to release DLL locks (prevents rollback on file overwrite).
   Log('Killing any running Owlette Python processes (GUI, tray, scripts)...');
-  // Method 1: WMIC targeted kill by command line (preserves non-Owlette Python apps)
   Exec('cmd', '/c wmic process where "name=''pythonw.exe'' and commandline like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('cmd', '/c wmic process where "name=''python.exe'' and commandline like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  // Method 2: WMIC by executable path (catches processes where commandline is empty/truncated)
   Exec('cmd', '/c wmic process where "executablepath like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  // Method 3: Fallback taskkill by window title
   Exec('taskkill', '/F /IM python.exe /FI "WINDOWTITLE eq Owlette*"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
   // Wait for processes to fully release file handles
