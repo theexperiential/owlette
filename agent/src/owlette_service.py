@@ -263,20 +263,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
             self.firebase_client.register_command_callback(self.handle_firebase_command)
             self.firebase_client.register_config_update_callback(self.handle_config_update)
 
-            # Upload local config before starting listeners
-            local_config = shared_utils.read_config()
-            if local_config:
-                config_for_firestore = {k: v for k, v in local_config.items() if k != 'firebase'}
-
-                # Pre-set hash to prevent listener loop
-                import hashlib
-                import json
-                config_hash = hashlib.md5(json.dumps(config_for_firestore, sort_keys=True).encode()).hexdigest()
-                self.firebase_client._last_uploaded_config_hash = config_hash
-                logging.debug(f"Pre-set config hash: {config_hash[:8]}...")
-
-                self.firebase_client.upload_config(config_for_firestore)
-                logging.debug("Local config uploaded to Firebase")
+            # Sync config: pull from Firestore (source of truth), or seed if new machine
+            sync_result = self.firebase_client.sync_config_on_startup()
+            logging.info(f"Config sync on reinit: {sync_result}")
 
             # Wire state listener BEFORE start() so the CONNECTED event
             # writes the status file immediately (tray polls every 1s)
@@ -2528,24 +2517,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # Register config update callback
                 self.firebase_client.register_config_update_callback(self.handle_config_update)
 
-                # CRITICAL: Upload local config to Firestore BEFORE starting the config listener
-                # This prevents a race condition where the listener processes an empty/old Firestore config
-                # before we upload the local config, which would wipe out the firebase auth section
-                local_config = shared_utils.read_config()
-                if local_config:
-                    # Create a copy without the firebase section (local auth config, not for Firestore)
-                    config_for_firestore = {k: v for k, v in local_config.items() if k != 'firebase'}
-
-                    # Pre-set the hash BEFORE uploading to prevent listener from processing this upload
-                    import hashlib
-                    import json
-                    config_hash = hashlib.md5(json.dumps(config_for_firestore, sort_keys=True).encode()).hexdigest()
-                    self.firebase_client._last_uploaded_config_hash = config_hash
-                    logging.debug(f"Pre-set config hash to prevent listener loop: {config_hash[:8]}...")
-
-                    # Now upload
-                    self.firebase_client.upload_config(config_for_firestore)
-                    logging.debug("Local config uploaded to Firebase (firebase auth section excluded)")
+                # Sync config: pull from Firestore (source of truth), or seed if new machine
+                sync_result = self.firebase_client.sync_config_on_startup()
+                logging.info(f"Config sync on startup: {sync_result}")
 
                 # Wire state listener BEFORE start() so the CONNECTED event
                 # writes the status file immediately (tray polls every 1s)

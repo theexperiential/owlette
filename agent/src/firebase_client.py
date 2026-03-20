@@ -508,17 +508,9 @@ class FirebaseClient:
 
         try:
             config_path = f"config/{self.site_id}/machines/{self.machine_id}"
-            first_snapshot = True
 
             def on_config_changed(config_data):
                 """Handle config document changes."""
-                nonlocal first_snapshot
-
-                if first_snapshot:
-                    first_snapshot = False
-                    self.logger.debug("Config listener initialized (skipping initial snapshot)")
-                    return
-
                 if config_data:
                     incoming_hash = hashlib.md5(json.dumps(config_data, sort_keys=True).encode()).hexdigest()
 
@@ -855,9 +847,8 @@ class FirebaseClient:
                 config_ref = self.db.collection('config').document(self.site_id)\
                     .collection('machines').document(self.machine_id)
 
-                doc = config_ref.get()
-                if doc.exists:
-                    config = doc.to_dict()
+                config = config_ref.get()
+                if config:
                     self._save_cached_config(config)
                     self.cached_config = config
                     return config
@@ -900,6 +891,55 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to upload config to Firestore: {e}")
             self.connection_manager.report_error(e, "Upload config")
+
+    def sync_config_on_startup(self) -> str:
+        """
+        Pull config from Firestore on startup (Firestore = source of truth).
+        If Firestore has no config for this machine, seed it with local config.
+
+        Returns:
+            'pulled'  - config was pulled from Firestore and applied locally
+            'seeded'  - local config was uploaded as seed (new machine)
+            'offline' - Firestore unreachable, using local config as-is
+        """
+        if not self.connected or not self.db:
+            self.logger.warning("Cannot sync config on startup - not connected to Firestore")
+            return 'offline'
+
+        try:
+            # One-time fetch from Firestore (source of truth)
+            firestore_config = self.get_config()
+
+            if firestore_config and 'processes' in firestore_config:
+                # Firestore has config — use it
+                config_hash = hashlib.md5(
+                    json.dumps(firestore_config, sort_keys=True).encode()
+                ).hexdigest()
+                self._last_uploaded_config_hash = config_hash
+                self.logger.info(f"Config pulled from Firestore (hash: {config_hash[:8]}...)")
+
+                # Apply to local config via the same callback used by the listener
+                if self.config_update_callback:
+                    self.config_update_callback(firestore_config)
+
+                return 'pulled'
+            else:
+                # Firestore has no config for this machine — seed it with local config
+                local_config = shared_utils.read_config()
+                if local_config:
+                    config_for_firestore = {
+                        k: v for k, v in local_config.items() if k != 'firebase'
+                    }
+                    self.upload_config(config_for_firestore)
+                    self.logger.info("New machine - seeded Firestore with local config")
+                    return 'seeded'
+                else:
+                    self.logger.warning("No local config to seed Firestore with")
+                    return 'offline'
+
+        except Exception as e:
+            self.logger.error(f"Failed to sync config on startup: {e}")
+            return 'offline'
 
     def _load_cached_config(self):
         """Load cached config from disk."""

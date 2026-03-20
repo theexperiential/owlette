@@ -361,7 +361,7 @@ export function useMachines(siteId: string) {
                   last_updated: processData.last_updated || 0,
                   index: processData.index ?? 999, // Preserve config order, default to end
                 }))
-                .sort((a, b) => a.index - b.index); // Sort by config order (index field)
+                .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id)); // Sort by config order, stable tiebreaker by ID
             }
 
             // Convert Firestore Timestamp to Unix timestamp in seconds
