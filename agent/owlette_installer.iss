@@ -113,7 +113,7 @@ Source: "build\installer_package\tools\*"; DestDir: "{app}\tools"; Flags: ignore
 Source: "build\installer_package\scripts\*"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
 ; README and documentation
-Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
+Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
@@ -185,16 +185,37 @@ end;
 function ShouldConfigureSite(): Boolean;
 var
   ConfigPath: String;
+  ConfigContent: AnsiString;
 begin
-  // Skip OAuth if config already exists (upgrade scenario).
-  // Fresh installs won't have config.json, so OAuth runs for those.
-  // If a user needs to reconfigure, they can delete config.json and re-run the installer.
+  // Skip OAuth only if config has a valid firebase section with a site_id.
+  // A config.json can exist WITHOUT firebase (e.g., service created a default,
+  // or a previous install failed mid-OAuth). In those cases, OAuth must still run.
   ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
 
   if FileExists(ConfigPath) then
   begin
-    Log('Config exists - skipping OAuth (upgrade)');
-    Result := False;
+    if LoadStringFromFile(ConfigPath, ConfigContent) then
+    begin
+      // Check for a populated site_id in the firebase section.
+      // A valid config has: "site_id": "<actual-value>" (not empty string)
+      // We look for "site_id": " followed by a non-empty character (not just "site_id": "")
+      if (Pos('"site_id"', ConfigContent) > 0) and
+         (Pos('"enabled": true', ConfigContent) > 0) then
+      begin
+        Log('Config has valid firebase section - skipping OAuth (upgrade)');
+        Result := False;
+      end
+      else
+      begin
+        Log('Config exists but firebase section missing/incomplete - running OAuth');
+        Result := True;
+      end;
+    end
+    else
+    begin
+      Log('Config exists but unreadable - running OAuth');
+      Result := True;
+    end;
   end
   else
   begin
