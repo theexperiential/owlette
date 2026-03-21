@@ -25,6 +25,7 @@ import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import DownloadButton from '@/components/DownloadButton';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { RemoveMachineDialog } from '@/components/RemoveMachineDialog';
+import { ScreenshotDialog } from '@/components/ScreenshotDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
@@ -44,7 +45,7 @@ interface DetailPanelState {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, loading, signOut, isAdmin, userSites, requiresMfaSetup, userPreferences } = useAuth();
+  const { user, loading, signOut, isAdmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
@@ -76,7 +77,7 @@ export default function DashboardPage() {
     autolaunch: false,
   });
 
-  const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending } = useMachines(currentSiteId);
+  const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot } = useMachines(currentSiteId);
   const { checkMachineHasActiveDeployment } = useDeployments(currentSiteId);
   const { removeMachineFromSite, removing: isRemovingMachine } = useMachineOperations(currentSiteId);
 
@@ -87,6 +88,10 @@ export default function DashboardPage() {
   // Kill Process Confirmation state
   const [killConfirmOpen, setKillConfirmOpen] = useState(false);
   const [killTarget, setKillTarget] = useState<{ machineId: string; processId: string; processName: string } | null>(null);
+
+  // Screenshot Dialog state
+  const [screenshotDialogOpen, setScreenshotDialogOpen] = useState(false);
+  const [screenshotTarget, setScreenshotTarget] = useState<{ machineId: string; machineName: string; isOnline: boolean } | null>(null);
 
   // Metrics Detail Panel state (replaces top stats cards when active)
   const [detailPanel, setDetailPanel] = useState<DetailPanelState | null>(null);
@@ -428,22 +433,21 @@ export default function DashboardPage() {
     localStorage.setItem('owlette_view_type', view);
   };
 
-  // Load saved site from localStorage or use first available
+  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
   useEffect(() => {
     if (!sitesLoading && sites.length > 0 && !currentSiteId) {
-      const savedSite = localStorage.getItem('owlette_current_site');
+      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
       if (savedSite && sites.find(s => s.id === savedSite)) {
         setCurrentSiteId(savedSite);
       } else {
         setCurrentSiteId(sites[0].id);
       }
     }
-  }, [sites, sitesLoading, currentSiteId]);
+  }, [sites, sitesLoading, currentSiteId, lastSiteId]);
 
-  // Save site selection to localStorage
   const handleSiteChange = (siteId: string) => {
     setCurrentSiteId(siteId);
-    localStorage.setItem('owlette_current_site', siteId);
+    updateLastSite(siteId);
   };
 
   // Handle metric click to open detail panel
@@ -615,8 +619,8 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <h3 className="text-lg md:text-xl font-bold text-foreground">machines</h3>
 
-              {/* View Toggle - Hidden on mobile, always show card view */}
-              <div className="hidden md:flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
+              {/* View Toggle */}
+              <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -636,8 +640,8 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Card View - Always shown on mobile, toggle on desktop */}
-            <div className={`animate-in fade-in duration-300 ${viewType === 'list' ? 'md:hidden' : ''}`}>
+            {/* Card View */}
+            <div className={`animate-in fade-in duration-300 ${viewType === 'list' ? 'hidden' : ''}`}>
               <MachineCardView
                 machines={machines}
                 expandedMachines={expandedMachines}
@@ -655,11 +659,16 @@ export default function DashboardPage() {
                 onShutdown={shutdownMachine}
                 onCancelReboot={cancelReboot}
                 onDismissRebootPending={dismissRebootPending}
+                onScreenshot={(machineId) => {
+                  const m = machines.find(m => m.machineId === machineId);
+                  setScreenshotTarget({ machineId, machineName: machineId, isOnline: m?.online ?? false });
+                  setScreenshotDialogOpen(true);
+                }}
               />
             </div>
 
-            {/* List View - Hidden on mobile, only shown on desktop when selected */}
-            <div className={`rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300 ${viewType === 'card' ? 'hidden' : 'hidden md:block'}`}>
+            {/* List View */}
+            <div className={`rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300 ${viewType === 'card' ? 'hidden' : ''}`}>
                 <Table style={{ contain: 'layout', tableLayout: 'fixed' }}>
                   <ListViewTableHeader />
                   <TableBody>
@@ -687,6 +696,10 @@ export default function DashboardPage() {
                         onMetricClick={(metricType) => handleMetricClick(machine.machineId, metricType)}
                         onReboot={() => rebootMachine(machine.machineId)}
                         onShutdown={() => shutdownMachine(machine.machineId)}
+                        onScreenshot={() => {
+                          setScreenshotTarget({ machineId: machine.machineId, machineName: machine.machineId, isOnline: machine.online });
+                          setScreenshotDialogOpen(true);
+                        }}
                       />
                     ))}
                   </TableBody>
@@ -791,7 +804,7 @@ export default function DashboardPage() {
               <div className="rounded-lg border border-border bg-background p-4">
                 <h3 className="font-semibold text-foreground">step 3: authorize agent</h3>
                 <p className="text-sm text-muted-foreground">
-                  log in and authorize the agent for site <span className="font-mono text-accent-cyan">{currentSiteId}</span>
+                  log in and authorize the agent for site <span className="font-mono text-accent-cyan">{currentSite?.name || currentSiteId}</span>
                 </p>
               </div>
               <div className="rounded-lg border border-border bg-background p-4">
@@ -1062,6 +1075,20 @@ export default function DashboardPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Screenshot Dialog */}
+      {screenshotTarget && (
+        <ScreenshotDialog
+          open={screenshotDialogOpen}
+          onOpenChange={setScreenshotDialogOpen}
+          machineId={screenshotTarget.machineId}
+          machineName={screenshotTarget.machineName}
+          siteId={currentSiteId}
+          isOnline={screenshotTarget.isOnline}
+          onCaptureScreenshot={() => captureScreenshot(screenshotTarget.machineId)}
+          lastScreenshot={machines.find(m => m.machineId === screenshotTarget.machineId)?.lastScreenshot}
+        />
+      )}
     </div>
   );
 }

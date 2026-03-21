@@ -43,11 +43,11 @@ export const MemoizedTableHeader = memo(() => {
         <TableHead className="text-foreground w-8"></TableHead>
         <TableHead className="text-foreground w-[100px]">hostname</TableHead>
         <TableHead className="text-foreground w-[72px]">status</TableHead>
-        <TableHead className="text-foreground w-[160px]">cpu</TableHead>
-        <TableHead className="text-foreground w-[120px]">memory</TableHead>
-        <TableHead className="text-foreground w-[100px]">disk</TableHead>
-        <TableHead className="text-foreground w-[200px]">gpu</TableHead>
-        <TableHead className="text-foreground w-[150px]">last heartbeat</TableHead>
+        <TableHead className="text-foreground w-[160px] hidden sm:table-cell">cpu</TableHead>
+        <TableHead className="text-foreground w-[120px] hidden sm:table-cell">memory</TableHead>
+        <TableHead className="text-foreground w-[100px] hidden lg:table-cell">disk</TableHead>
+        <TableHead className="text-foreground w-[200px] hidden lg:table-cell">gpu</TableHead>
+        <TableHead className="text-foreground w-[150px] hidden md:table-cell">last heartbeat</TableHead>
         <TableHead className="text-foreground w-8"></TableHead>
       </TableRow>
     </TableHeader>
@@ -91,6 +91,7 @@ interface MachineRowProps {
   onMetricClick?: (metricType: MetricType) => void;
   onReboot?: () => Promise<void>;
   onShutdown?: () => Promise<void>;
+  onScreenshot?: () => void;
 }
 
 export function MachineRow({
@@ -110,6 +111,7 @@ export function MachineRow({
   onMetricClick,
   onReboot,
   onShutdown,
+  onScreenshot,
 }: MachineRowProps) {
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
@@ -157,7 +159,7 @@ export function MachineRow({
         </TableCell>
         {/* CPU with Sparkline */}
         <TableCell
-          className="text-white p-0 w-[160px] overflow-hidden"
+          className="text-white p-0 w-[160px] overflow-hidden hidden sm:table-cell"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('cpu'); }}
         >
           <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
@@ -186,7 +188,7 @@ export function MachineRow({
         </TableCell>
         {/* Memory with Sparkline */}
         <TableCell
-          className="text-white p-0 w-[120px] overflow-hidden"
+          className="text-white p-0 w-[120px] overflow-hidden hidden sm:table-cell"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('memory'); }}
         >
           <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
@@ -208,7 +210,7 @@ export function MachineRow({
         </TableCell>
         {/* Disk with Sparkline */}
         <TableCell
-          className="text-white p-0 w-[100px] overflow-hidden"
+          className="text-white p-0 w-[100px] overflow-hidden hidden lg:table-cell"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('disk'); }}
         >
           <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
@@ -230,7 +232,7 @@ export function MachineRow({
         </TableCell>
         {/* GPU with Sparkline */}
         <TableCell
-          className="text-white p-0 w-[200px] overflow-hidden"
+          className="text-white p-0 w-[200px] overflow-hidden hidden lg:table-cell"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('gpu'); }}
         >
           <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
@@ -264,7 +266,7 @@ export function MachineRow({
             </div>
           </div>
         </TableCell>
-        <TableCell className="w-[150px] overflow-hidden p-2">
+        <TableCell className="w-[150px] overflow-hidden p-2 hidden md:table-cell">
           <span
             className={`text-xs flex items-center gap-1 cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
             title={heartbeat.tooltip}
@@ -283,6 +285,7 @@ export function MachineRow({
             onRemoveMachine={onRemoveMachine}
             onReboot={onReboot}
             onShutdown={onShutdown}
+            onScreenshot={onScreenshot}
           />
         </TableCell>
       </TableRow>

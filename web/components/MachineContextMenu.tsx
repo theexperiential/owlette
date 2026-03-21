@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { MoreVertical, Trash2, KeyRound, RotateCcw, Power } from 'lucide-react';
+import { MoreVertical, Trash2, KeyRound, RotateCcw, Power, Camera } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -29,6 +29,7 @@ interface MachineContextMenuProps {
   onRemoveMachine: () => void;
   onReboot?: () => Promise<void>;
   onShutdown?: () => Promise<void>;
+  onScreenshot?: () => void;
 }
 
 export function MachineContextMenu({
@@ -40,6 +41,7 @@ export function MachineContextMenu({
   onRemoveMachine,
   onReboot,
   onShutdown,
+  onScreenshot,
 }: MachineContextMenuProps) {
   const [showRevokeDialog, setShowRevokeDialog] = useState(false);
   const [showRebootDialog, setShowRebootDialog] = useState(false);
@@ -145,6 +147,16 @@ export function MachineContextMenu({
               >
                 <Power className="mr-2 h-4 w-4" />
                 shutdown machine
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onScreenshot?.();
+                }}
+                className="text-sky-400 focus:bg-sky-950/30 focus:text-sky-300 cursor-pointer"
+              >
+                <Camera className="mr-2 h-4 w-4" />
+                screenshot
               </DropdownMenuItem>
               <DropdownMenuSeparator className="bg-accent" />
             </>

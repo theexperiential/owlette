@@ -39,6 +39,11 @@ export interface Machine {
     reason: string | null;
     timestamp: number | null;
   };
+  lastScreenshot?: {
+    url: string;       // Firebase Storage public URL
+    timestamp: number;
+    sizeKB: number;
+  };
   metrics?: {
     cpu: { name?: string; percent: number; unit: string; temperature?: number };
     memory: { percent: number; total_gb: number; used_gb: number; unit: string };
@@ -768,5 +773,9 @@ export function useMachines(siteId: string) {
     await sendMachineCommand(machineId, 'dismiss_reboot_pending', { process_name: processName });
   };
 
-  return { machines, loading, error, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending };
+  const captureScreenshot = async (machineId: string) => {
+    await sendMachineCommand(machineId, 'capture_screenshot');
+  };
+
+  return { machines, loading, error, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot };
 }

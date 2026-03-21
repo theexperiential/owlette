@@ -49,6 +49,7 @@ interface MachineCardViewProps {
   onShutdown?: (machineId: string) => Promise<void>;
   onCancelReboot?: (machineId: string) => Promise<void>;
   onDismissRebootPending?: (machineId: string, processName: string) => Promise<void>;
+  onScreenshot?: (machineId: string) => void;
 }
 
 /**
@@ -74,6 +75,7 @@ interface MachineCardProps {
   onShutdown?: () => Promise<void>;
   onCancelReboot?: () => Promise<void>;
   onDismissRebootPending?: (processName: string) => Promise<void>;
+  onScreenshot?: () => void;
 }
 
 function MachineCard({
@@ -95,6 +97,7 @@ function MachineCard({
   onShutdown,
   onCancelReboot,
   onDismissRebootPending,
+  onScreenshot,
 }: MachineCardProps) {
   // Fetch sparkline data for this machine
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
@@ -149,6 +152,7 @@ function MachineCard({
               onRemoveMachine={onRemoveMachine}
               onReboot={onReboot}
               onShutdown={onShutdown}
+              onScreenshot={onScreenshot}
             />
           </div>
         </div>
@@ -455,6 +459,7 @@ export function MachineCardView({
   onShutdown,
   onCancelReboot,
   onDismissRebootPending,
+  onScreenshot,
 }: MachineCardViewProps) {
   const { userPreferences, isAdmin } = useAuth();
 
@@ -483,6 +488,7 @@ export function MachineCardView({
           onShutdown={onShutdown ? () => onShutdown(machine.machineId) : undefined}
           onCancelReboot={onCancelReboot ? () => onCancelReboot(machine.machineId) : undefined}
           onDismissRebootPending={onDismissRebootPending ? (processName) => onDismissRebootPending(machine.machineId, processName) : undefined}
+          onScreenshot={onScreenshot ? () => onScreenshot(machine.machineId) : undefined}
         />
       ))}
     </div>

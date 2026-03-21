@@ -856,6 +856,83 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.error(f"Failed to start process: {e}")
             return False
 
+    def execute_in_user_session(self, job_type, code, timeout=30):
+        """Execute code in the interactive user's desktop session.
+
+        Launches session_exec.py via CreateProcessAsUser, which runs
+        Python/cmd/PowerShell in the user's session and writes the result
+        to an IPC file.
+
+        Args:
+            job_type: 'python', 'cmd', or 'powershell'
+            code: The code or command string to execute
+            timeout: Max execution time in seconds (default 30, max 120)
+
+        Returns:
+            dict with keys: stdout, stderr, exitCode, error, durationMs, files
+            On failure returns dict with 'error' key.
+        """
+        import uuid
+        import json as _json
+
+        request_id = str(uuid.uuid4())
+        ipc_dir = shared_utils.get_data_path('ipc')
+        output_dir = os.path.join(ipc_dir, 'results', request_id)
+        job_path = os.path.join(ipc_dir, 'jobs', f'{request_id}.json')
+        result_path = os.path.join(output_dir, 'result.json')
+
+        os.makedirs(os.path.join(ipc_dir, 'jobs'), exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Write job file
+        job = {
+            'type': job_type,
+            'code': code,
+            'timeout': min(timeout, 120),
+            'outputDir': output_dir,
+        }
+        with open(job_path, 'w') as f:
+            _json.dump(job, f)
+
+        try:
+            # Launch session_exec.py in the user's session
+            success = self.launch_python_script_as_user(
+                'session_exec.py', f'"{job_path}"'
+            )
+            if not success:
+                return {'error': 'Failed to launch in user session — no interactive session available'}
+
+            # Poll for result (timeout + 5s grace period for startup)
+            poll_timeout = timeout + 5
+            start = time.time()
+            while time.time() - start < poll_timeout:
+                if os.path.exists(result_path):
+                    # Wait briefly for file to be fully written
+                    time.sleep(0.2)
+                    try:
+                        with open(result_path, 'r') as f:
+                            result = _json.load(f)
+                        return result
+                    except (_json.JSONDecodeError, IOError):
+                        time.sleep(0.3)
+                        continue
+                time.sleep(0.5)
+
+            return {'error': f'Execution timed out after {timeout}s'}
+
+        finally:
+            # Cleanup job file (result dir cleaned up by caller if needed)
+            try:
+                os.remove(job_path)
+            except OSError:
+                pass
+
+    def get_session_output_path(self, request_id, filename):
+        """Get the path to an output file from a user session execution."""
+        return os.path.join(
+            shared_utils.get_data_path('ipc'), 'results', request_id, filename
+        )
+
     @staticmethod
     def _validate_path(path, label="Path"):
         """Validate a file/directory path for security.
@@ -2378,13 +2455,21 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                 logging.info(f"Executing MCP tool: {tool_name} with params: {list(tool_params.keys())}")
 
+                # Tools that need user-session execution (desktop access)
+                import json as _json
+                user_session_result = self._try_user_session_tool(tool_name, tool_params)
+                if user_session_result is not None:
+                    return _json.dumps(user_session_result)
+
                 import mcp_tools
                 config = shared_utils.read_config()
                 result = mcp_tools.execute_tool(tool_name, tool_params, config)
 
                 # MCP tool results are dicts — serialize to JSON string for Firestore
-                import json as _json
                 return _json.dumps(result)
+
+            elif cmd_type == 'capture_screenshot':
+                return self._handle_capture_screenshot(cmd_data)
 
             elif cmd_type == 'reboot_machine':
                 return self._handle_reboot_machine(cmd_data)
@@ -2503,6 +2588,187 @@ class OwletteService(win32serviceutil.ServiceFramework):
             return f"Reboot pending dismissed, relaunch counters reset for {process_name}"
         except Exception as e:
             return f"Failed to dismiss reboot pending: {str(e)}"
+
+    def _try_user_session_tool(self, tool_name, tool_params):
+        """Handle MCP tools that require user-session execution.
+
+        Returns:
+            dict result if handled, None if the tool should fall through
+            to the standard mcp_tools.execute_tool() path.
+        """
+        if tool_name == 'run_command' and tool_params.get('user_session'):
+            command = tool_params.get('command', '').strip()
+            if not command:
+                return {'error': 'command parameter is required'}
+            result = self.execute_in_user_session('cmd', command, timeout=25)
+            return {
+                'command': command,
+                'exit_code': result.get('exitCode', -1),
+                'stdout': result.get('stdout', ''),
+                'stderr': result.get('stderr', ''),
+                'user_session': True,
+                'error': result.get('error'),
+            }
+
+        if tool_name == 'run_powershell' and tool_params.get('user_session'):
+            script = tool_params.get('script', '').strip()
+            if not script:
+                return {'error': 'script parameter is required'}
+            result = self.execute_in_user_session('powershell', script, timeout=25)
+            return {
+                'script': script,
+                'exit_code': result.get('exitCode', -1),
+                'stdout': result.get('stdout', ''),
+                'stderr': result.get('stderr', ''),
+                'user_session': True,
+                'error': result.get('error'),
+            }
+
+        if tool_name == 'run_python':
+            code = tool_params.get('code', '').strip()
+            if not code:
+                return {'error': 'code parameter is required'}
+            result = self.execute_in_user_session('python', code, timeout=25)
+            return {
+                'exit_code': result.get('exitCode', -1),
+                'stdout': result.get('stdout', ''),
+                'stderr': result.get('stderr', ''),
+                'files': result.get('files', []),
+                'duration_ms': result.get('durationMs', 0),
+                'error': result.get('error'),
+            }
+
+        return None  # Not a user-session tool, fall through
+
+    def _handle_capture_screenshot(self, command_data):
+        """Handle screenshot capture via user-session execution."""
+        try:
+            import base64
+
+            monitor = command_data.get('monitor', 0)
+
+            # Python code to run in the user's desktop session
+            capture_code = f"""
+import mss
+import io
+import os
+from mss.tools import to_png
+
+with mss.mss() as sct:
+    mon_idx = {monitor} if {monitor} > 0 and {monitor} < len(sct.monitors) else 0
+    screenshot = sct.grab(sct.monitors[mon_idx])
+    png_bytes = to_png(screenshot.rgb, screenshot.size)
+
+try:
+    from PIL import Image
+    img = Image.open(io.BytesIO(png_bytes))
+    max_width = 3840
+    if img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+    buffer = io.BytesIO()
+    img.save(buffer, format='JPEG', quality=80)
+    jpeg_bytes = buffer.getvalue()
+except ImportError:
+    jpeg_bytes = png_bytes
+
+out_path = os.path.join(output_dir, 'screenshot.jpg')
+with open(out_path, 'wb') as f:
+    f.write(jpeg_bytes)
+print(f'size_kb={{len(jpeg_bytes) // 1024}}')
+print(f'monitors={{len(sct.monitors) - 1}}')
+"""
+
+            result = self.execute_in_user_session('python', capture_code, timeout=20)
+
+            if result.get('error'):
+                return f"Error: Screenshot failed: {result['error']}"
+
+            if 'screenshot.jpg' not in result.get('files', []):
+                stderr = result.get('stderr', '')
+                return f"Error: Screenshot capture failed{': ' + stderr if stderr else ''}"
+
+            # Read the captured screenshot
+            # Find the output dir from the result files
+            ipc_dir = shared_utils.get_data_path('ipc')
+            # The result came from the most recent execution — find the screenshot
+            # We need to locate it via the results directory
+            results_base = os.path.join(ipc_dir, 'results')
+            screenshot_path = None
+            for d in sorted(os.listdir(results_base), reverse=True):
+                candidate = os.path.join(results_base, d, 'screenshot.jpg')
+                if os.path.exists(candidate):
+                    screenshot_path = candidate
+                    break
+
+            if not screenshot_path:
+                return "Error: Screenshot file not found after capture"
+
+            with open(screenshot_path, 'rb') as f:
+                jpeg_bytes = f.read()
+
+            size_kb = len(jpeg_bytes) / 1024
+            screenshot_b64 = base64.b64encode(jpeg_bytes).decode('ascii')
+
+            logging.info(f"Screenshot captured: {size_kb:.0f}KB")
+
+            # Cleanup result directory
+            result_dir = os.path.dirname(screenshot_path)
+            try:
+                import shutil
+                shutil.rmtree(result_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+            # Upload to Firebase Storage via web API
+            upload_result = self._upload_screenshot(screenshot_b64)
+
+            self.firebase_client.log_event(
+                action='command_executed',
+                level='info',
+                details=f'Screenshot captured ({size_kb:.0f}KB)'
+            )
+
+            url = upload_result.get('url', '') if upload_result else ''
+            monitor_label = f'monitor {monitor}' if monitor > 0 else 'all monitors'
+            result_msg = f"Screenshot captured ({monitor_label}, {size_kb:.0f}KB)"
+            if url:
+                result_msg += f" — URL: {url}"
+            return result_msg
+
+        except Exception as e:
+            return f"Error: Screenshot failed: {str(e)}"
+
+    def _upload_screenshot(self, screenshot_b64):
+        """Upload screenshot base64 to web API for storage in Firebase Storage.
+
+        Returns:
+            dict with 'url' and 'sizeKB' on success, None on failure.
+        """
+        try:
+            import requests
+            token = self.firebase_client.auth_manager.get_valid_token()
+            api_base = shared_utils.get_api_base_url()
+            response = requests.post(
+                f"{api_base}/agent/screenshot",
+                json={
+                    'siteId': self.firebase_client.site_id,
+                    'machineId': self.firebase_client.machine_id,
+                    'screenshot': screenshot_b64,
+                    'agentVersion': shared_utils.APP_VERSION,
+                },
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=30
+            )
+            if response.status_code != 200:
+                logging.warning(f"Screenshot upload failed: {response.status_code} {response.text}")
+                return None
+            else:
+                logging.info("Screenshot uploaded successfully")
+                return response.json()
+        except Exception as e:
+            logging.warning(f"Screenshot upload failed: {e}")
+            return None
 
     def _check_update_status(self):
         """
