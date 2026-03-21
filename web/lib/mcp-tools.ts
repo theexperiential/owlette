@@ -231,6 +231,21 @@ const tier2Tools: McpToolDefinition[] = [
       required: ['process_name'],
     },
   },
+  {
+    name: 'capture_screenshot',
+    description: 'Capture a screenshot of the remote machine\'s desktop. Returns a URL to the captured image in Firebase Storage. Use monitor=0 for all displays combined, or monitor=1, 2, etc. for a specific display.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        monitor: {
+          type: 'number',
+          description: 'Monitor index: 0 = all monitors combined (default), 1 = primary display, 2 = second display, etc.',
+          default: 0,
+        },
+      },
+    },
+  },
 ];
 
 // ─── Tier 3: Privileged Tools ───────────────────────────────────────────────
@@ -238,7 +253,7 @@ const tier2Tools: McpToolDefinition[] = [
 const tier3Tools: McpToolDefinition[] = [
   {
     name: 'run_command',
-    description: 'Execute a shell command on the remote machine. The command must start with an allowed command (e.g., ipconfig, systeminfo, tasklist). Returns stdout, stderr, and exit code.',
+    description: 'Execute a shell command on the remote machine. The command must start with an allowed command (e.g., ipconfig, systeminfo, tasklist). Returns stdout, stderr, and exit code. Set user_session=true to run in the logged-in user\'s desktop session (needed for GUI/display access).',
     tier: 3,
     parameters: {
       type: 'object',
@@ -247,13 +262,18 @@ const tier3Tools: McpToolDefinition[] = [
           type: 'string',
           description: 'The shell command to execute.',
         },
+        user_session: {
+          type: 'boolean',
+          description: 'If true, run in the interactive user session instead of the service session. Required for commands that need desktop/display access.',
+          default: false,
+        },
       },
       required: ['command'],
     },
   },
   {
     name: 'run_powershell',
-    description: 'Execute a PowerShell command on the remote machine. The first cmdlet must be in the allow-list (e.g., Get-Process, Get-Service). Returns stdout, stderr, and exit code.',
+    description: 'Execute a PowerShell command on the remote machine. The first cmdlet must be in the allow-list (e.g., Get-Process, Get-Service). Returns stdout, stderr, and exit code. Set user_session=true to run in the logged-in user\'s desktop session.',
     tier: 3,
     parameters: {
       type: 'object',
@@ -262,8 +282,28 @@ const tier3Tools: McpToolDefinition[] = [
           type: 'string',
           description: 'The PowerShell command or script to execute.',
         },
+        user_session: {
+          type: 'boolean',
+          description: 'If true, run in the interactive user session instead of the service session. Required for commands that need desktop/display access.',
+          default: false,
+        },
       },
       required: ['script'],
+    },
+  },
+  {
+    name: 'run_python',
+    description: 'Execute Python code on the remote machine in the user\'s desktop session. The code runs in the agent\'s Python environment with access to installed packages (mss, psutil, etc.). Use `output_dir` variable to write output files. Use `print()` for text output.',
+    tier: 3,
+    parameters: {
+      type: 'object',
+      properties: {
+        code: {
+          type: 'string',
+          description: 'Python code to execute. Has access to output_dir for writing files and print() for text output.',
+        },
+      },
+      required: ['code'],
     },
   },
   {
@@ -395,4 +435,5 @@ export const EXISTING_COMMAND_MAPPINGS: Record<string, string> = {
   reboot_machine: 'reboot_machine',
   shutdown_machine: 'shutdown_machine',
   cancel_reboot: 'cancel_reboot',
+  capture_screenshot: 'capture_screenshot',
 };

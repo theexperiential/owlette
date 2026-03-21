@@ -69,14 +69,14 @@ export function formatTimeOnly(
       minute: '2-digit',
       hour12,
       timeZone: timezone,
-    });
+    }).toLowerCase();
   } catch {
     // Fallback if timezone is invalid
     return date.toLocaleTimeString('en-US', {
       hour: 'numeric',
       minute: '2-digit',
       hour12,
-    });
+    }).toLowerCase();
   }
 }
 

@@ -217,6 +217,19 @@ export const POST = withRateLimit(
         ...(processName ? { process: { name: processName, error: errorMessage || '' } } : {}),
       }).catch(console.error);
 
+      // Trigger autonomous Cortex investigation (non-blocking, process events only)
+      if (isProcessEvent) {
+        triggerAutonomousCortex(db, {
+          siteId,
+          machineId,
+          machineName: machineId,
+          eventType: resolvedEventType,
+          processName: processName || '',
+          errorMessage: errorMessage || '',
+          agentVersion: agentVersion || '',
+        }).catch(err => console.error('[agent/alert] Cortex trigger failed:', err));
+      }
+
       return NextResponse.json({ success: true, emailSent: true, recipients: recipients.length });
     } catch (error: unknown) {
       console.error('[agent/alert] Unhandled error:', error);
@@ -225,3 +238,40 @@ export const POST = withRateLimit(
   },
   { strategy: 'agentAlert', identifier: 'ip' }
 );
+
+/**
+ * Trigger autonomous Cortex investigation for a process event.
+ * Checks if autonomous mode is enabled, then fires a non-blocking internal request.
+ */
+async function triggerAutonomousCortex(
+  db: FirebaseFirestore.Firestore,
+  params: {
+    siteId: string;
+    machineId: string;
+    machineName: string;
+    eventType: string;
+    processName: string;
+    errorMessage: string;
+    agentVersion: string;
+  }
+) {
+  const secret = process.env.CORTEX_INTERNAL_SECRET;
+  if (!secret) return; // Not configured — autonomous mode unavailable
+
+  // Quick check: is autonomous mode enabled for this site?
+  const settingsDoc = await db.doc(`sites/${params.siteId}/settings/cortex`).get();
+  if (!settingsDoc.exists || !settingsDoc.data()?.autonomousEnabled) return;
+
+  // Build internal URL for the autonomous endpoint
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+
+  // Fire and forget — don't await the response
+  fetch(`${baseUrl}/api/cortex/autonomous`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-cortex-secret': secret,
+    },
+    body: JSON.stringify(params),
+  }).catch(err => console.error('[agent/alert] Autonomous Cortex request failed:', err));
+}

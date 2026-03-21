@@ -16,6 +16,9 @@ pyqt6==6.6.1
 setuptools==75.6.0
 requests==2.31.0
 
+# Screenshot capture
+mss==9.0.2  # Fast cross-platform screenshot library
+
 # Temperature monitoring
 WinTmp==1.2.0  # CPU and GPU temperature (LibreHardwareMonitor wrapper)
 nvidia-ml-py==12.560.30  # NVIDIA GPU fallback (NVML bindings)

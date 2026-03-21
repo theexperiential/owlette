@@ -52,18 +52,18 @@ export function ProcessDialog({
       <DialogContent className="border-border bg-card text-foreground max-w-3xl">
         <DialogHeader>
           <DialogTitle className="text-white">
-            {mode === 'create' ? 'New Process' : 'Edit Process'}
+            {mode === 'create' ? 'new process' : 'edit process'}
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
             {mode === 'create'
-              ? 'Create a new process configuration'
-              : 'Update process configuration'}
+              ? 'create a new process configuration'
+              : 'update process configuration'}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
           {/* Name */}
           <div className="space-y-2">
-            <Label htmlFor="edit-name" className="text-white">Name</Label>
+            <Label htmlFor="edit-name" className="text-white">name</Label>
             <Input
               id="edit-name"
               value={form.name}
@@ -74,7 +74,7 @@ export function ProcessDialog({
 
           {/* Executable Path */}
           <div className="space-y-2">
-            <Label htmlFor="edit-exe-path" className="text-white">Executable Path</Label>
+            <Label htmlFor="edit-exe-path" className="text-white">executable path</Label>
             <Input
               id="edit-exe-path"
               value={form.exe_path}
@@ -86,32 +86,32 @@ export function ProcessDialog({
 
           {/* File Path / Cmd Args */}
           <div className="space-y-2">
-            <Label htmlFor="edit-file-path" className="text-white">File Path / Command Arguments</Label>
+            <Label htmlFor="edit-file-path" className="text-white">file path / command arguments</Label>
             <Input
               id="edit-file-path"
               value={form.file_path}
               onChange={(e) => onFormChange({ ...form, file_path: e.target.value })}
               className="border-border bg-background text-white"
-              placeholder="Optional"
+              placeholder="optional"
             />
           </div>
 
           {/* Working Directory */}
           <div className="space-y-2">
-            <Label htmlFor="edit-cwd" className="text-white">Working Directory</Label>
+            <Label htmlFor="edit-cwd" className="text-white">working directory</Label>
             <Input
               id="edit-cwd"
               value={form.cwd}
               onChange={(e) => onFormChange({ ...form, cwd: e.target.value })}
               className="border-border bg-background text-white"
-              placeholder="Optional"
+              placeholder="optional"
             />
           </div>
 
           <div className="grid grid-cols-3 gap-4">
             {/* Priority */}
             <div className="space-y-2">
-              <Label htmlFor="edit-priority" className="text-white">Task Priority</Label>
+              <Label htmlFor="edit-priority" className="text-white">task priority</Label>
               <Select
                 value={form.priority}
                 onValueChange={(value) => onFormChange({ ...form, priority: value })}
@@ -120,17 +120,17 @@ export function ProcessDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="border-border bg-background text-white">
-                  <SelectItem value="Low">Low</SelectItem>
-                  <SelectItem value="Normal">Normal</SelectItem>
-                  <SelectItem value="High">High</SelectItem>
-                  <SelectItem value="Realtime">Realtime</SelectItem>
+                  <SelectItem value="Low">low</SelectItem>
+                  <SelectItem value="Normal">normal</SelectItem>
+                  <SelectItem value="High">high</SelectItem>
+                  <SelectItem value="Realtime">realtime</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             {/* Visibility */}
             <div className="space-y-2">
-              <Label htmlFor="edit-visibility" className="text-white">Window Visibility</Label>
+              <Label htmlFor="edit-visibility" className="text-white">window visibility</Label>
               <Select
                 value={form.visibility}
                 onValueChange={(value) => onFormChange({ ...form, visibility: value })}
@@ -139,8 +139,8 @@ export function ProcessDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="border-border bg-background text-white">
-                  <SelectItem value="Normal">Normal</SelectItem>
-                  <SelectItem value="Hidden">Hidden (console apps only)</SelectItem>
+                  <SelectItem value="Normal">normal</SelectItem>
+                  <SelectItem value="Hidden">hidden (console apps only)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -152,7 +152,7 @@ export function ProcessDialog({
           <div className="grid grid-cols-3 gap-4">
             {/* Time Delay */}
             <div className="space-y-2">
-              <Label htmlFor="edit-time-delay" className="text-white">Launch Delay (sec)</Label>
+              <Label htmlFor="edit-time-delay" className="text-white">launch delay (sec)</Label>
               <Input
                 id="edit-time-delay"
                 type="number"
@@ -164,7 +164,7 @@ export function ProcessDialog({
 
             {/* Time to Init */}
             <div className="space-y-2">
-              <Label htmlFor="edit-time-init" className="text-white">Init Timeout (sec)</Label>
+              <Label htmlFor="edit-time-init" className="text-white">init timeout (sec)</Label>
               <Input
                 id="edit-time-init"
                 type="number"
@@ -176,7 +176,7 @@ export function ProcessDialog({
 
             {/* Relaunch Attempts */}
             <div className="space-y-2">
-              <Label htmlFor="edit-relaunch" className="text-white">Relaunch Attempts</Label>
+              <Label htmlFor="edit-relaunch" className="text-white">relaunch attempts</Label>
               <Input
                 id="edit-relaunch"
                 type="number"
@@ -195,7 +195,7 @@ export function ProcessDialog({
               onCheckedChange={(checked) => onFormChange({ ...form, autolaunch: checked })}
             />
             <Label htmlFor="edit-autolaunch" className="text-white cursor-pointer">
-              Enable Autolaunch
+              enable autolaunch
             </Label>
           </div>
         </div>
@@ -215,13 +215,13 @@ export function ProcessDialog({
               onClick={onClose}
               className="border-border bg-card text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
             >
-              Cancel
+              cancel
             </Button>
             <Button
               onClick={onSave}
               className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             >
-              {mode === 'create' ? 'Create Process' : 'Save Changes'}
+              {mode === 'create' ? 'create process' : 'save changes'}
             </Button>
           </div>
         </DialogFooter>

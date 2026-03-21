@@ -66,7 +66,9 @@ interface AuthContextType {
   role: UserRole;
   isAdmin: boolean;
   userSites: string[]; // Sites the user has access to
+  lastSiteId: string | null; // Last active site (synced to Firestore)
   requiresMfaSetup: boolean; // Whether user needs to complete 2FA setup
+  passkeyEnrolled: boolean; // Whether user has registered passkeys
   userPreferences: UserPreferences; // User preferences (temperature unit, etc.)
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, firstName?: string, lastName?: string) => Promise<void>;
@@ -75,6 +77,7 @@ interface AuthContextType {
   updateUserProfile: (firstName: string, lastName: string) => Promise<void>;
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   updateUserPreferences: (preferences: Partial<UserPreferences>) => Promise<void>;
+  updateLastSite: (siteId: string) => void;
   deleteAccount: (password: string) => Promise<void>;
 }
 
@@ -84,7 +87,9 @@ const AuthContext = createContext<AuthContextType>({
   role: 'user',
   isAdmin: false,
   userSites: [],
+  lastSiteId: null,
   requiresMfaSetup: false,
+  passkeyEnrolled: false,
   userPreferences: { temperatureUnit: 'C', healthAlerts: true, processAlerts: true },
   signIn: async () => {},
   signUp: async () => {},
@@ -93,6 +98,7 @@ const AuthContext = createContext<AuthContextType>({
   updateUserProfile: async () => {},
   updatePassword: async () => {},
   updateUserPreferences: async () => {},
+  updateLastSite: () => {},
   deleteAccount: async () => {},
 });
 
@@ -110,7 +116,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<UserRole>('user');
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
+  const [passkeyEnrolled, setPasskeyEnrolled] = useState(false);
   const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', healthAlerts: true, processAlerts: true });
+  const [lastSiteId, setLastSiteId] = useState<string | null>(null);
 
   // Helper function to send user creation notification
   const sendUserCreatedNotification = async (
@@ -198,6 +206,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setRole(userData.role || 'user');
                 setUserSites(userData.sites || []);
                 setRequiresMfaSetup(userData.requiresMfaSetup || false);
+                setPasskeyEnrolled(userData.passkeyEnrolled || false);
+                setLastSiteId(userData.lastSiteId || null);
 
                 // Load user preferences (with defaults if missing)
                 const preferences = userData.preferences || {};
@@ -485,6 +495,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateLastSite = (siteId: string) => {
+    setLastSiteId(siteId);
+    // Also keep localStorage for fast same-browser access
+    localStorage.setItem('owlette_current_site', siteId);
+    // Write to Firestore (fire-and-forget for responsiveness)
+    if (auth?.currentUser && db) {
+      const userDocRef = doc(db, 'users', auth.currentUser.uid);
+      setDoc(userDocRef, { lastSiteId: siteId }, { merge: true }).catch((err) =>
+        console.error('Failed to save lastSiteId:', err)
+      );
+    }
+  };
+
   const updatePassword = async (currentPassword: string, newPassword: string) => {
     try {
       if (!auth?.currentUser) {
@@ -645,7 +668,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     role,
     isAdmin: role === 'admin',
     userSites,
+    lastSiteId,
     requiresMfaSetup,
+    passkeyEnrolled,
     userPreferences,
     signIn,
     signUp,
@@ -654,6 +679,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     updateUserProfile,
     updatePassword,
     updateUserPreferences,
+    updateLastSite,
     deleteAccount,
   };
 

@@ -258,3 +258,30 @@ export const generateSiteIdFromName = (siteName: string): string => {
     .replace(/-+/g, '-') // Collapse multiple hyphens
     .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
 };
+
+const ADJECTIVES = [
+  'amber', 'bold', 'calm', 'dark', 'eager', 'fair', 'glad', 'hazy', 'keen', 'lush',
+  'mild', 'neat', 'pale', 'quick', 'rare', 'safe', 'tall', 'vast', 'warm', 'zesty',
+  'airy', 'blue', 'cool', 'deep', 'even', 'fine', 'gold', 'high', 'idle', 'just',
+  'kind', 'lean', 'mint', 'nova', 'open', 'pure', 'rich', 'soft', 'tidy', 'wise',
+  'aqua', 'bay', 'cozy', 'dusk', 'elm', 'frost', 'gray', 'hue', 'ivy', 'jade',
+  'knit', 'lime', 'moss', 'neon', 'oak', 'pine', 'quilt', 'reef', 'sage', 'teal',
+];
+
+const NOUNS = [
+  'arch', 'barn', 'cave', 'dawn', 'echo', 'fern', 'glen', 'hive', 'isle', 'jade',
+  'kite', 'lake', 'mesa', 'nest', 'opal', 'peak', 'quay', 'reef', 'star', 'tide',
+  'vale', 'wave', 'yard', 'apex', 'bay', 'cove', 'dell', 'elm', 'fort', 'gate',
+  'hall', 'ink', 'jet', 'knoll', 'loft', 'mist', 'nook', 'orb', 'pond', 'ridge',
+  'spire', 'trail', 'urn', 'vine', 'wren', 'yew', 'zen', 'bloom', 'crest', 'dune',
+  'flint', 'grove', 'heath', 'iron', 'brook', 'cliff', 'drift', 'field', 'glow', 'husk',
+];
+
+/**
+ * Generates a random two-word site ID like "calm-reef" or "bold-peak"
+ */
+export const generateRandomSiteId = (): string => {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  return `${adj}-${noun}`;
+};

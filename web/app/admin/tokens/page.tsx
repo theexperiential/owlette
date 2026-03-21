@@ -31,7 +31,7 @@ interface TokenInfo {
 }
 
 export default function TokensPage() {
-  const { user, isAdmin, userSites } = useAuth();
+  const { user, isAdmin, userSites, lastSiteId, updateLastSite } = useAuth();
   const { sites } = useSites(user?.uid, userSites, isAdmin);
   const [selectedSiteId, setSelectedSiteId] = useState<string>('');
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
@@ -50,22 +50,21 @@ export default function TokensPage() {
     }
   }, [selectedSiteId]);
 
-  // Load saved site from localStorage or use first available
+  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
   useEffect(() => {
     if (sites.length > 0 && !selectedSiteId) {
-      const savedSite = localStorage.getItem('owlette_current_site');
+      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
       if (savedSite && sites.find(s => s.id === savedSite)) {
         setSelectedSiteId(savedSite);
       } else {
         setSelectedSiteId(sites[0].id);
       }
     }
-  }, [sites, selectedSiteId]);
+  }, [sites, selectedSiteId, lastSiteId]);
 
-  // Save site selection to localStorage
   const handleSiteChange = (siteId: string) => {
     setSelectedSiteId(siteId);
-    localStorage.setItem('owlette_current_site', siteId);
+    updateLastSite(siteId);
   };
 
   const fetchTokens = async () => {
