@@ -85,6 +85,7 @@ ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\agent\icons\normal.png
 SetupIconFile=icons\normal.ico
+SetupLogging=yes
 DisableProgramGroupPage=yes
 ; Silent mode enhancements - prevent ALL prompts when run as SYSTEM
 AlwaysShowDirOnReadyPage=no
