@@ -25,16 +25,16 @@ firestore/
 │       └── commands/
 │           ├── pending/{commandId}   # Web → Agent
 │           └── completed/{commandId} # Agent → Web (result + completedAt)
-├── config/{siteId}/
-│   └── machines/{machineId}/      # Process configuration (version, processes[])
-│   └── webhooks/{webhookId}/       # Webhook notification endpoints
-│       ├── url: string              # Target URL (https required)
-│       ├── name: string             # User-friendly label
-│       ├── events: string[]         # ["machine.offline", "process.crashed", ...]
-│       ├── enabled: boolean         # Can be toggled without deleting
-│       ├── secret: string           # HMAC-SHA256 signing secret
+│   └── webhooks/{webhookId}/          # Webhook notification endpoints
+│       ├── url: string                # Target URL (https required)
+│       ├── name: string               # User-friendly label
+│       ├── events: string[]           # ["machine.offline", "process.crashed", ...]
+│       ├── enabled: boolean           # Can be toggled without deleting
+│       ├── secret: string             # HMAC-SHA256 signing secret
 │       ├── createdAt, createdBy, lastTriggered, lastStatus, failCount
 │       └── (auto-disables after 10 consecutive failures)
+├── config/{siteId}/
+│   └── machines/{machineId}/      # Process configuration (version, processes[])
 ├── users/{userId}/                # email, role, createdAt, sites[], preferences {healthAlerts, processAlerts, temperatureUnit}
 │   └── apiKeys/{keyId}/          # API key metadata (name, keyHash, keyPrefix, createdAt, lastUsedAt)
 ├── apiKeys/{keyHash}/            # Top-level API key lookup (userId, keyId) — O(1) resolution
