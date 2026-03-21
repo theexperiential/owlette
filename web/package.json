@@ -40,7 +40,7 @@
     "firebase-admin": "^13.5.0",
     "iron-session": "^8.0.3",
     "lucide-react": "^0.548.0",
-    "next": "^16.1.1",
+    "next": "^16.2.1",
     "next-themes": "^0.4.6",
     "openai": "^6.32.0",
     "otplib": "^12.0.1",
