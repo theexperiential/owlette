@@ -4,6 +4,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertRecipients } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
+import { fireWebhooks } from '@/lib/webhookSender.server';
 
 /**
  * GET /api/cron/health-check
@@ -200,6 +201,15 @@ export async function GET(request: NextRequest) {
         `[cron/health-check] Alert sent for site ${siteId}: ` +
           `${siteAlerts.length} machine(s) offline, ${recipients.length} recipient(s)`
       );
+
+      // Fire webhooks for each offline machine (non-blocking)
+      const siteDoc = await db.collection('sites').doc(siteId).get();
+      const siteName = siteDoc.data()?.name || siteId;
+      for (const alert of siteAlerts) {
+        fireWebhooks(siteId, siteName, 'machine.offline', {
+          machine: { id: alert.machineId, name: alert.machineId, lastSeen: new Date(alert.lastHeartbeatMs).toISOString() },
+        }).catch(console.error);
+      }
     } catch (error) {
       console.error(`[cron/health-check] Failed to send alert for site ${siteId}:`, error);
     }

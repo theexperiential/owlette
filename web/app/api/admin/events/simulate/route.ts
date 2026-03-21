@@ -3,6 +3,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
 import { getSiteAdminEmails, getSiteProcessAlertEmails } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
+import { fireWebhooks } from '@/lib/webhookSender.server';
 import logger from '@/lib/logger';
 
 /**
@@ -115,7 +116,8 @@ export const POST = withRateLimit(
         );
       }
 
-      await assertUserHasSiteAccess(userId, siteId);
+      const { siteData } = await assertUserHasSiteAccess(userId, siteId);
+      const siteName = (siteData as Record<string, unknown>)?.name as string || siteId;
 
       const machineId = data?.machineId || 'test-machine';
       const machineName = data?.machineName || 'Test Machine';
@@ -184,12 +186,24 @@ export const POST = withRateLimit(
 
       logger.info(`Simulated ${event} for site ${siteId} by user ${userId}`, { context: 'admin/events/simulate' });
 
+      // Fire webhooks
+      const webhookEvent = event === 'process_crash' ? 'process.crashed' : 'machine.offline';
+      let webhooksFired = 0;
+      try {
+        webhooksFired = await fireWebhooks(siteId, siteName, webhookEvent, {
+          machine: { id: machineId, name: machineName },
+          ...(processName ? { process: { name: processName, error: errorMessage } } : {}),
+        });
+      } catch (e) {
+        console.error('[admin/events/simulate] Webhook error:', e);
+      }
+
       return NextResponse.json({
         success: true,
         event,
         emailSent: true,
         recipients,
-        webhooksFired: 0, // Will be updated when WS2 adds webhooks
+        webhooksFired,
       });
     } catch (error: any) {
       if (error instanceof ApiAuthError) {

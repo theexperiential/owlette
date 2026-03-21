@@ -24,6 +24,7 @@ Quick reference of everything that exists. Check here before creating new files 
 | `/admin/installers` | `app/admin/installers/page.tsx` | Installer management | Admin |
 | `/admin/presets` | `app/admin/presets/page.tsx` | System presets | Admin |
 | `/admin/tokens` | `app/admin/tokens/page.tsx` | API token management | Admin |
+| `/admin/webhooks` | `app/admin/webhooks/page.tsx` | Webhook notification management | Admin |
 | `/admin/test-email` | `app/admin/test-email/page.tsx` | Email delivery testing | Admin |
 | `/privacy` | `app/privacy/page.tsx` | Privacy policy | No |
 | `/terms` | `app/terms/page.tsx` | Terms of service | No |
@@ -54,7 +55,8 @@ Quick reference of everything that exists. Check here before creating new files 
 | `/api/admin/machines/status` | GET | Get detailed machine status | Admin or API key | No |
 | `/api/admin/commands/send` | POST | Send command to machine (with optional polling) | Admin or API key | No |
 | `/api/admin/logs` | GET | Read activity logs with filters | Admin or API key | No |
-| `/api/admin/events/simulate` | POST | Simulate events (process_crash, machine_offline, connection_failure) | Admin or API key | No |
+| `/api/admin/events/simulate` | POST | Simulate events (process_crash, machine_offline, connection_failure) + fire webhooks | Admin or API key | No |
+| `/api/webhooks/test` | POST | Test webhook delivery for a specific webhook | Admin | No |
 
 ---
 
@@ -79,7 +81,7 @@ Quick reference of everything that exists. Check here before creating new files 
 | `DownloadButton.tsx` | Download installer button |
 | `ErrorBoundary.tsx` | React error boundary wrapper |
 | `Footer.tsx` | App footer with version |
-| `MachineContextMenu.tsx` | Right-click menu for machines |
+| `MachineContextMenu.tsx` | Right-click menu: reboot (blue), shutdown (orange), remove, revoke token. Admin-only reboot/shutdown with confirmation dialogs. |
 | `ManageSitesDialog.tsx` | Admin site management |
 | `ManageUserSitesDialog.tsx` | Assign users to sites |
 | `PageHeader.tsx` | Consistent page header |
@@ -89,6 +91,7 @@ Quick reference of everything that exists. Check here before creating new files 
 | `SystemPresetDialog.tsx` | System preset configuration |
 | `UninstallDialog.tsx` | Remote uninstall confirmation |
 | `UpdateOwletteButton.tsx` | Trigger remote agent update |
+| `WebhookSettingsDialog.tsx` | CRUD + test for site webhook notifications |
 
 ### Chart Components (`web/components/charts/`)
 | Component | Purpose |
@@ -163,6 +166,7 @@ Quick reference of everything that exists. Check here before creating new files 
 | `encryption.server.ts` | Server-side encryption utilities |
 | `adminUtils.server.ts` | Server-side admin utils: `getSiteAdminEmails()`, `getSiteProcessAlertEmails()`, `getSiteAlertRecipients()` |
 | `resendClient.server.ts` | Shared Resend email client singleton (`getResend()`, `FROM_EMAIL`, `ENV_LABEL`) |
+| `webhookSender.server.ts` | Webhook dispatch utility: `fireWebhooks(siteId, siteName, event, data)`, `testWebhook(url, secret)` — HMAC-SHA256 signed, auto-disable after 10 failures |
 | `apiAuth.server.ts` | API authentication: `requireAdminOrIdToken()`, `resolveApiKey()`, `assertUserHasSiteAccess()` |
 | `userUtils.ts` | User data utilities |
 | `validateEnv.ts` | Environment variable validation |

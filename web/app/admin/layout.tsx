@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import RequireAdmin from '@/components/RequireAdmin';
-import { Shield, Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound } from 'lucide-react';
+import { Shield, Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -45,6 +45,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       href: '/admin/tokens',
       icon: KeyRound,
       description: 'View and revoke agent tokens',
+    },
+    {
+      name: 'Webhooks',
+      href: '/admin/webhooks',
+      icon: Webhook,
+      description: 'Configure webhook notifications',
     },
     {
       name: 'Email Test',

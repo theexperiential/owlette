@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminAuth } from '@/lib/firebase-admin';
+import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAdminEmails, getSiteProcessAlertEmails } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { checkRateLimit, processAlertRateLimit } from '@/lib/rateLimit';
+import { fireWebhooks } from '@/lib/webhookSender.server';
 
 /**
  * POST /api/agent/alert
@@ -203,6 +204,19 @@ export const POST = withRateLimit(
       }
 
       console.log(`[agent/alert] Alert sent for ${machineId} (${siteId}): ${resolvedEventType}${isProcessEvent ? ` - ${processName}` : ''}`);
+
+      // Fire webhooks (non-blocking — don't delay the response)
+      const webhookEvent = resolvedEventType === 'process_crash' ? 'process.crashed'
+        : resolvedEventType === 'process_start_failed' ? 'process.restarted'
+        : 'machine.offline';
+      const db = getAdminDb();
+      const siteDoc = await db.collection('sites').doc(siteId).get();
+      const siteName = siteDoc.data()?.name || siteId;
+      fireWebhooks(siteId, siteName, webhookEvent, {
+        machine: { id: machineId, name: machineId },
+        ...(processName ? { process: { name: processName, error: errorMessage || '' } } : {}),
+      }).catch(console.error);
+
       return NextResponse.json({ success: true, emailSent: true, recipients: recipients.length });
     } catch (error: unknown) {
       console.error('[agent/alert] Unhandled error:', error);

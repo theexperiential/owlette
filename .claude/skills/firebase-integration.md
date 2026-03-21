@@ -15,7 +15,10 @@ firestore/
 │   └── machines/{machineId}/
 │       ├── presence/              # Agent heartbeat every 30s
 │       │   ├── online: boolean
-│       │   └── lastHeartbeat: timestamp
+│       │   ├── lastHeartbeat: timestamp
+│       │   ├── rebooting: boolean          # Set before remote reboot
+│       │   ├── shuttingDown: boolean       # Set before remote shutdown
+│       │   └── rebootPending: { active, processName, reason, timestamp }  # When relaunch limit exceeded
 │       ├── status/                # Agent metrics every 60s
 │       │   ├── cpu, memory, disk, gpu: number
 │       │   └── processes: map
@@ -24,6 +27,14 @@ firestore/
 │           └── completed/{commandId} # Agent → Web (result + completedAt)
 ├── config/{siteId}/
 │   └── machines/{machineId}/      # Process configuration (version, processes[])
+│   └── webhooks/{webhookId}/       # Webhook notification endpoints
+│       ├── url: string              # Target URL (https required)
+│       ├── name: string             # User-friendly label
+│       ├── events: string[]         # ["machine.offline", "process.crashed", ...]
+│       ├── enabled: boolean         # Can be toggled without deleting
+│       ├── secret: string           # HMAC-SHA256 signing secret
+│       ├── createdAt, createdBy, lastTriggered, lastStatus, failCount
+│       └── (auto-disables after 10 consecutive failures)
 ├── users/{userId}/                # email, role, createdAt, sites[], preferences {healthAlerts, processAlerts, temperatureUnit}
 │   └── apiKeys/{keyId}/          # API key metadata (name, keyHash, keyPrefix, createdAt, lastUsedAt)
 ├── apiKeys/{keyHash}/            # Top-level API key lookup (userId, keyId) — O(1) resolution
@@ -96,6 +107,27 @@ User preferences (`users/{userId}/preferences`):
 - `healthAlerts` (default: true) — machine offline email alerts
 - `processAlerts` (default: true) — process crash/start failure email alerts
 - `temperatureUnit` ('C' | 'F') — dashboard display preference
+
+---
+
+## Webhook Flow (Agent/Cron → Web API → External URLs)
+
+```
+Alert endpoint or cron detects event
+  → calls fireWebhooks(siteId, siteName, eventType, data) (fire-and-forget)
+  → queries sites/{siteId}/webhooks where enabled==true AND events array-contains eventType
+  → POSTs JSON payload to each webhook URL with HMAC-SHA256 signature
+  → updates lastTriggered, lastStatus, failCount on each webhook doc
+  → auto-disables webhook after 10 consecutive failures
+```
+
+Supported event types: `machine.offline`, `process.crashed`, `process.restarted`, `machine.online`, `deployment.completed`, `deployment.failed`
+
+Currently integrated: `machine.offline` (health-check cron + agent alert), `process.crashed` / `process.restarted` (agent alert), plus the simulate endpoint.
+
+Webhook payloads always include: `{ event, timestamp, site: { id, name }, data: { machine, process?, ... } }`
+
+Headers: `X-Owlette-Signature: sha256=<hmac>`, `X-Owlette-Event: <type>`, `User-Agent: Owlette-Webhooks/1.0`
 
 ---
 

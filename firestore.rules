@@ -249,6 +249,18 @@ service cloud.firestore {
       }
 
       // ----------------------------------------
+      // Webhooks Subcollection
+      // ----------------------------------------
+
+      match /webhooks/{webhookId} {
+        // Webhook notification endpoints
+        // READ: Users with site access can see webhooks
+        // WRITE: Only admins can create/update/delete webhooks
+        allow read: if isAuthenticated() && (isAdmin() || canAccessSite(siteId));
+        allow write: if isAuthenticated() && isAdmin();
+      }
+
+      // ----------------------------------------
       // Logs Subcollection
       // ----------------------------------------
 
@@ -340,6 +352,50 @@ service cloud.firestore {
 
       // Update and delete: admin only
       allow update, delete: if isAdmin();
+    }
+
+    // ============================================
+    // User Settings Subcollection
+    // ============================================
+
+    match /users/{userId}/settings/{settingId} {
+      // User-level settings (e.g., LLM API keys)
+      // Users can only read/write their own settings
+      // Admin SDK handles encryption server-side
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // ============================================
+    // Site Settings Subcollection
+    // ============================================
+
+    match /sites/{siteId}/settings/{settingId} {
+      // Site-level settings (e.g., shared LLM API keys)
+      // Only admins can manage site-level settings
+      // Regular users can read (to check if site key exists)
+      allow read: if canAccessSite(siteId);
+      allow write: if isAdmin();
+    }
+
+    // ============================================
+    // Chat Conversations Collection
+    // ============================================
+
+    match /chats/{chatId} {
+      // AI chat conversations
+      // Users can only access their own chats
+      allow read: if isAuthenticated() &&
+                     resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() &&
+                               resource.data.userId == request.auth.uid;
+
+      match /messages/{messageId} {
+        // Chat messages within a conversation
+        // Access controlled by parent chat ownership
+        allow read, write: if isAuthenticated() &&
+                              get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid;
+      }
     }
 
     // ============================================
