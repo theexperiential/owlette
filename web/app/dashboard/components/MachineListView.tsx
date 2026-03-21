@@ -41,13 +41,13 @@ export const MemoizedTableHeader = memo(() => {
     <TableHeader className="sticky top-0 z-10 bg-background">
       <TableRow className="border-border">
         <TableHead className="text-foreground w-8"></TableHead>
-        <TableHead className="text-foreground w-[100px]">Hostname</TableHead>
-        <TableHead className="text-foreground w-[72px]">Status</TableHead>
-        <TableHead className="text-foreground w-[160px]">CPU</TableHead>
-        <TableHead className="text-foreground w-[120px]">Memory</TableHead>
-        <TableHead className="text-foreground w-[100px]">Disk</TableHead>
-        <TableHead className="text-foreground w-[200px]">GPU</TableHead>
-        <TableHead className="text-foreground w-[150px]">Last Heartbeat</TableHead>
+        <TableHead className="text-foreground w-[100px]">hostname</TableHead>
+        <TableHead className="text-foreground w-[72px]">status</TableHead>
+        <TableHead className="text-foreground w-[160px]">cpu</TableHead>
+        <TableHead className="text-foreground w-[120px]">memory</TableHead>
+        <TableHead className="text-foreground w-[100px]">disk</TableHead>
+        <TableHead className="text-foreground w-[200px]">gpu</TableHead>
+        <TableHead className="text-foreground w-[150px]">last heartbeat</TableHead>
         <TableHead className="text-foreground w-8"></TableHead>
       </TableRow>
     </TableHeader>
@@ -81,6 +81,7 @@ interface MachineRowProps {
   siteTimezone: string;
   siteTimeFormat: '12h' | '24h';
   userPreferences: { temperatureUnit: 'C' | 'F' };
+  isAdmin?: boolean;
   onToggleExpanded: () => void;
   onEditProcess: (process: Process) => void;
   onCreateProcess: () => void;
@@ -88,6 +89,8 @@ interface MachineRowProps {
   onToggleAutolaunch: (processId: string, newValue: boolean, processName: string, exePath: string) => void;
   onRemoveMachine: () => void;
   onMetricClick?: (metricType: MetricType) => void;
+  onReboot?: () => Promise<void>;
+  onShutdown?: () => Promise<void>;
 }
 
 export function MachineRow({
@@ -97,6 +100,7 @@ export function MachineRow({
   siteTimezone,
   siteTimeFormat,
   userPreferences,
+  isAdmin,
   onToggleExpanded,
   onEditProcess,
   onCreateProcess,
@@ -104,6 +108,8 @@ export function MachineRow({
   onToggleAutolaunch,
   onRemoveMachine,
   onMetricClick,
+  onReboot,
+  onShutdown,
 }: MachineRowProps) {
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
@@ -138,8 +144,15 @@ export function MachineRow({
           </div>
         </TableCell>
         <TableCell className="w-[72px] p-2">
-          <Badge className={`text-xs select-none ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
-            {machine.online ? 'Online' : 'Offline'}
+          <Badge className={`text-xs select-none ${
+            machine.rebooting ? 'bg-amber-600 hover:bg-amber-700' :
+            machine.shuttingDown ? 'bg-amber-600 hover:bg-amber-700' :
+            machine.online ? 'bg-green-600 hover:bg-green-700' :
+            'bg-red-600 hover:bg-red-700'
+          }`}>
+            {machine.rebooting ? 'rebooting...' :
+             machine.shuttingDown ? 'shutting down...' :
+             machine.online ? 'online' : 'offline'}
           </Badge>
         </TableCell>
         {/* CPU with Sparkline */}
@@ -266,7 +279,10 @@ export function MachineRow({
             machineName={machine.machineId}
             siteId={currentSiteId}
             isOnline={machine.online}
+            isAdmin={isAdmin}
             onRemoveMachine={onRemoveMachine}
+            onReboot={onReboot}
+            onShutdown={onShutdown}
           />
         </TableCell>
       </TableRow>
@@ -305,7 +321,7 @@ export function MachineRow({
                               <Cog className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                               <span className="text-white font-medium truncate select-text">{process.name}</span>
                               <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted hover:bg-muted' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-600 text-slate-200' : process.status === 'LAUNCH_FAILED' || process.status === 'STOPPED' || process.status === 'KILLED' ? 'bg-red-600 hover:bg-red-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
-                                {!machine.online ? 'UNKNOWN' : process.status === 'LAUNCH_FAILED' ? 'FAILED' : process.status}
+                                {(!machine.online ? 'unknown' : process.status === 'LAUNCH_FAILED' ? 'failed' : process.status).toLowerCase()}
                               </Badge>
                             </div>
                             <div className="flex items-center gap-3 text-xs text-muted-foreground select-text">
@@ -316,7 +332,7 @@ export function MachineRow({
                           <div className="flex items-center gap-3 ml-4 flex-shrink-0">
                             <div className="flex items-center gap-2">
                               <Label htmlFor={`autolaunch-list-${machine.machineId}-${process.id}`} className="text-xs text-muted-foreground cursor-pointer select-none">
-                                Autolaunch
+                                autolaunch
                               </Label>
                               <Switch
                                 id={`autolaunch-list-${machine.machineId}-${process.id}`}
@@ -332,7 +348,7 @@ export function MachineRow({
                               className="bg-card border-border text-foreground hover:bg-muted hover:border-border hover:text-white cursor-pointer"
                             >
                               <Pencil className="h-3 w-3 mr-1" />
-                              Edit
+                              edit
                             </Button>
                             <Button
                               variant="outline"
@@ -342,14 +358,14 @@ export function MachineRow({
                               disabled={process.status !== 'RUNNING'}
                             >
                               <Square className="h-3 w-3 mr-1" />
-                              Kill
+                              kill
                             </Button>
                           </div>
                         </div>
                       </div>
                     ))}
                   </div>
-                  {/* New Process Button */}
+                  {/* new process Button */}
                   <div className="flex justify-center pt-3 ml-4">
                     <Button
                       variant="outline"
@@ -358,7 +374,7 @@ export function MachineRow({
                       className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/15 hover:border-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
                     >
                       <Plus className="h-3 w-3 mr-1" />
-                      New Process
+                      new process
                     </Button>
                   </div>
                 </>
@@ -372,7 +388,7 @@ export function MachineRow({
                     className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/15 hover:border-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
                   >
                     <Plus className="h-3 w-3 mr-1" />
-                    New Process
+                    new process
                   </Button>
                 </div>
               )}

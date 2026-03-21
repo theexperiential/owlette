@@ -131,7 +131,7 @@ export function MachineContextMenu({
                   e.stopPropagation();
                   setShowRebootDialog(true);
                 }}
-                className="text-amber-400 focus:bg-amber-950/30 focus:text-amber-300 cursor-pointer"
+                className="text-blue-400 focus:bg-blue-950/30 focus:text-blue-300 cursor-pointer"
               >
                 <RotateCcw className="mr-2 h-4 w-4" />
                 reboot machine
@@ -141,7 +141,7 @@ export function MachineContextMenu({
                   e.stopPropagation();
                   setShowShutdownDialog(true);
                 }}
-                className="text-red-400 focus:bg-red-950/30 focus:text-red-300 cursor-pointer"
+                className="text-orange-400 focus:bg-orange-950/30 focus:text-orange-300 cursor-pointer"
               >
                 <Power className="mr-2 h-4 w-4" />
                 shutdown machine

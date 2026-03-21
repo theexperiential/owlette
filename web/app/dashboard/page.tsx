@@ -672,6 +672,7 @@ export default function DashboardPage() {
                         siteTimezone={currentSite?.timezone || 'UTC'}
                         siteTimeFormat={currentSite?.timeFormat || '12h'}
                         userPreferences={userPreferences}
+                        isAdmin={isAdmin}
                         onToggleExpanded={() => handleRowClick(machine.machineId, true)}
                         onEditProcess={(process) => openEditProcessDialog(machine.machineId, process)}
                         onCreateProcess={() => openCreateProcessDialog(machine.machineId)}
@@ -684,6 +685,8 @@ export default function DashboardPage() {
                         }}
                         onRemoveMachine={() => openRemoveMachineDialog(machine.machineId, machine.machineId, machine.online)}
                         onMetricClick={(metricType) => handleMetricClick(machine.machineId, metricType)}
+                        onReboot={() => rebootMachine(machine.machineId)}
+                        onShutdown={() => shutdownMachine(machine.machineId)}
                       />
                     ))}
                   </TableBody>
