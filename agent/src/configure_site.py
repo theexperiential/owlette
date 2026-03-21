@@ -411,6 +411,14 @@ def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts
     if setup_url is None:
         setup_url = os.environ.get("OWLETTE_SETUP_URL", DEFAULT_URL)
 
+    # Respect existing config's environment setting
+    try:
+        existing_env = shared_utils.get_environment()
+        if existing_env == 'development' and 'dev.owlette.app' not in setup_url:
+            setup_url = 'https://dev.owlette.app/setup'
+    except Exception:
+        pass
+
     web_app_url = setup_url
 
     if show_prompts:
@@ -535,6 +543,18 @@ def main():
     # Use provided URL or environment variable override
     setup_url = os.environ.get("OWLETTE_SETUP_URL", args.url)
 
+    # If existing config has environment=development, override to dev URL.
+    # The installer defaults to prod, but we should respect the existing config's
+    # environment setting during re-registration (e.g. config exists but firebase
+    # section is incomplete).
+    try:
+        existing_env = shared_utils.get_environment()
+        if existing_env == 'development' and 'dev.owlette.app' not in setup_url:
+            setup_url = 'https://dev.owlette.app/setup'
+            print(f"  Existing config has environment=development, using dev URL")
+    except Exception:
+        pass  # No config or unreadable — use the URL as-is
+
     # Write command line args to debug log
     debug_log = Path(shared_utils.get_data_path('logs/oauth_debug.log'))
     Path(shared_utils.get_data_path('logs')).mkdir(parents=True, exist_ok=True)
@@ -543,6 +563,7 @@ def main():
         f.write(f"==================\n")
         f.write(f"DEFAULT_URL constant: {DEFAULT_URL}\n")
         f.write(f"--url argument received: {args.url}\n")
+        f.write(f"Existing environment: {shared_utils.get_environment()}\n")
         f.write(f"OWLETTE_SETUP_URL env var: {os.environ.get('OWLETTE_SETUP_URL', 'NOT SET')}\n")
         f.write(f"Final setup_url: {setup_url}\n\n")
 
