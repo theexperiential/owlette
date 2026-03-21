@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, query, setDoc, deleteDoc, updateDoc, getDoc, where } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
 
@@ -99,57 +99,23 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
         return () => unsubscribe();
       }
 
-      // NON-ADMINS: Combine owned sites + assigned sites
-      console.log('Non-admin user - fetching sites:', userSites);
-
+      // NON-ADMINS: Fetch each assigned site individually by ID.
+      // Collection queries (e.g. where('owner', '==', uid)) fail because
+      // Firestore rules use get() calls that can't be evaluated for queries.
       const unsubscribes: (() => void)[] = [];
       const siteDataMap = new Map<string, Site>();
-      let ownedSiteIds = new Set<string>();
-      const assignedSiteIds = new Set<string>(userSites);
 
       const updateStateFromMap = () => {
         const siteArray = Array.from(siteDataMap.values());
         siteArray.sort((a, b) => a.name.localeCompare(b.name));
-        console.log('dY?? User sites loaded:', siteArray.map(s => s.id));
         setSites(siteArray);
         setLoading(false);
       };
 
-      // Listen to sites owned by the user
-      const ownedQuery = query(collection(db, 'sites'), where('owner', '==', userId));
-      const ownedUnsub = onSnapshot(
-        ownedQuery,
-        (snapshot) => {
-          const nextOwned = new Set<string>();
-          snapshot.forEach((docSnap) => {
-            const data = docSnap.data();
-            nextOwned.add(docSnap.id);
-            siteDataMap.set(docSnap.id, {
-              id: docSnap.id,
-              name: data.name || docSnap.id,
-              createdAt: data.createdAt || Date.now(),
-              timezone: data.timezone,
-            });
-          });
+      if (userSites.length === 0) {
+        setLoading(false);
+      }
 
-          // Remove sites that are no longer owned and not assigned
-          ownedSiteIds.forEach((siteId) => {
-            if (!nextOwned.has(siteId) && !assignedSiteIds.has(siteId)) {
-              siteDataMap.delete(siteId);
-            }
-          });
-
-          ownedSiteIds = nextOwned;
-          updateStateFromMap();
-        },
-        (err) => {
-          console.error('Error fetching owned sites:', err);
-          setLoading(false);
-        }
-      );
-      unsubscribes.push(ownedUnsub);
-
-      // Listen to assigned sites from user document
       userSites.forEach((siteId) => {
         const siteDocRef = doc(db!, 'sites', siteId);
         const unsubscribe = onSnapshot(
@@ -163,9 +129,9 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
                 createdAt: data.createdAt || Date.now(),
                 timezone: data.timezone,
               });
-            } else if (!ownedSiteIds.has(siteId)) {
+            } else {
               siteDataMap.delete(siteId);
-              console.warn(`?s??,? Site "${siteId}" not found in Firestore`);
+              console.warn(`Site "${siteId}" not found in Firestore`);
             }
 
             updateStateFromMap();
