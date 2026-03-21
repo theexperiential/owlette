@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, Timestamp, getDoc, doc, setDoc, query, where } from 'firebase/firestore';
+import { collection, getDocs, Timestamp, getDoc, doc, setDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -74,44 +74,23 @@ export default function SetupPage() {
         const userSites = userData.sites || [];
         const isAdmin = userData.role === 'admin';
 
-        // If user is admin, fetch all sites
+        const fetchedSites: Site[] = [];
+
         if (isAdmin) {
+          // Admins can list all sites via collection query
           const sitesRef = collection(db, 'sites');
           const sitesSnapshot = await getDocs(sitesRef);
-
-          const fetchedSites: Site[] = [];
           sitesSnapshot.forEach((doc) => {
             fetchedSites.push({
               id: doc.id,
               ...doc.data() as Omit<Site, 'id'>
             });
           });
-
-          setSites(fetchedSites);
-
-          // Auto-select first site if only one exists
-          if (fetchedSites.length === 1) {
-            setSelectedSiteId(fetchedSites[0].id);
-          }
         } else {
-          // Fetch owned sites and assigned sites
-          const fetchedSites: Site[] = [];
-          const ownedIds = new Set<string>();
-
-          const ownedQuery = query(collection(db, 'sites'), where('owner', '==', user.uid));
-          const ownedSnapshot = await getDocs(ownedQuery);
-          ownedSnapshot.forEach((docSnap) => {
-            ownedIds.add(docSnap.id);
-            fetchedSites.push({
-              id: docSnap.id,
-              ...docSnap.data() as Omit<Site, 'id'>
-            });
-          });
-
+          // Non-admins: fetch each assigned site individually by ID.
+          // Collection queries fail because Firestore rules use get() calls
+          // that can't be evaluated for queries. Individual doc reads work fine.
           for (const siteId of userSites) {
-            if (ownedIds.has(siteId)) {
-              continue;
-            }
             try {
               const siteDoc = await getDoc(doc(db, 'sites', siteId));
               if (siteDoc.exists()) {
@@ -124,13 +103,13 @@ export default function SetupPage() {
               console.warn(`Failed to fetch site ${siteId}:`, err);
             }
           }
+        }
 
-          setSites(fetchedSites);
+        setSites(fetchedSites);
 
-          // Auto-select first site if only one exists
-          if (fetchedSites.length === 1) {
-            setSelectedSiteId(fetchedSites[0].id);
-          }
+        // Auto-select first site if only one exists
+        if (fetchedSites.length === 1) {
+          setSelectedSiteId(fetchedSites[0].id);
         }
       } catch (error: any) {
         console.error('Error fetching sites:', error);
