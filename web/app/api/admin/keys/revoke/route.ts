@@ -37,7 +37,14 @@ export const DELETE = withRateLimit(
         return NextResponse.json({ error: 'API key not found' }, { status: 404 });
       }
 
-      await keyRef.delete();
+      const keyHash = keyDoc.data()?.keyHash;
+      const batch = db.batch();
+      batch.delete(keyRef);
+      // Remove top-level lookup entry
+      if (keyHash) {
+        batch.delete(db.collection('apiKeys').doc(keyHash));
+      }
+      await batch.commit();
 
       return NextResponse.json({ success: true });
     } catch (error: any) {

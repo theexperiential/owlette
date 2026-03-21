@@ -79,8 +79,8 @@ export const tokenRefreshRateLimit = redis
 export const userRateLimit = redis
   ? new Ratelimit({
       redis,
-      limiter: Ratelimit.fixedWindow(10, '1 h'),
-      prefix: 'user-operations',
+      limiter: Ratelimit.fixedWindow(60, '1 h'),
+      prefix: 'user-ops',
       analytics: true,
     })
   : null;

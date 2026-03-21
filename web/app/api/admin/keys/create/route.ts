@@ -29,18 +29,27 @@ export const POST = withRateLimit(
       const keyId = crypto.randomUUID();
 
       const db = getAdminDb();
-      await db
-        .collection('users')
-        .doc(userId)
-        .collection('apiKeys')
-        .doc(keyId)
-        .set({
+      const batch = db.batch();
+
+      // User's subcollection entry (for listing/management)
+      batch.set(
+        db.collection('users').doc(userId).collection('apiKeys').doc(keyId),
+        {
           name,
           keyHash,
           keyPrefix: rawKey.slice(0, 11), // "owk_" + first 7 chars for display
           createdAt: Date.now(),
           lastUsedAt: null,
-        });
+        }
+      );
+
+      // Top-level lookup entry (for fast auth resolution — single doc read)
+      batch.set(
+        db.collection('apiKeys').doc(keyHash),
+        { userId, keyId }
+      );
+
+      await batch.commit();
 
       return NextResponse.json({
         success: true,

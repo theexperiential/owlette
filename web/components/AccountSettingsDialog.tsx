@@ -20,7 +20,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[
   { id: 'preferences', label: 'preferences', icon: Bell },
   { id: 'cortex', label: 'cortex', icon: Brain },
   { id: 'security', label: 'security', icon: Shield },
-  { id: 'api', label: 'API', icon: Code },
+  { id: 'api', label: 'api', icon: Code },
   { id: 'danger', label: 'danger zone', icon: Trash2 },
 ];
 
@@ -35,11 +35,12 @@ interface ApiKeyEntry {
 interface AccountSettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialSection?: SettingsSection;
 }
 
-export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDialogProps) {
+export function AccountSettingsDialog({ open, onOpenChange, initialSection }: AccountSettingsDialogProps) {
   const { user, userPreferences, updateUserProfile, updatePassword, updateUserPreferences, deleteAccount } = useAuth();
-  const [activeSection, setActiveSection] = useState<SettingsSection>('profile');
+  const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection || 'profile');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [temperatureUnit, setTemperatureUnit] = useState<'C' | 'F'>('C');
@@ -72,11 +73,19 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [creatingKey, setCreatingKey] = useState(false);
   const [revokingKeyId, setRevokingKeyId] = useState<string | null>(null);
+  const [confirmRevokeKeyId, setConfirmRevokeKeyId] = useState<string | null>(null);
 
   // Account deletion state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
+
+  // Navigate to initial section when dialog opens
+  useEffect(() => {
+    if (open && initialSection) {
+      setActiveSection(initialSection);
+    }
+  }, [open, initialSection]);
 
   // Load form state when dialog opens
   useEffect(() => {
@@ -206,13 +215,33 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="border-border bg-secondary text-white max-w-3xl p-0 gap-0">
+      <DialogContent className="border-border bg-secondary text-white sm:max-w-4xl p-0 gap-0 max-h-[90dvh]">
         <VisuallyHidden>
-          <DialogTitle>Account Settings</DialogTitle>
+          <DialogTitle>account settings</DialogTitle>
         </VisuallyHidden>
-        <div className="flex min-h-[480px]">
-          {/* Sidebar */}
-          <nav className="w-48 border-r border-border bg-background/50 p-2 flex flex-col gap-0.5 flex-shrink-0">
+        <div className="flex flex-col sm:flex-row sm:min-h-[480px] min-h-0 max-h-[85dvh]">
+          {/* Mobile: horizontal scrollable tabs */}
+          <nav className="sm:hidden flex overflow-x-auto border-b border-border bg-background/50 p-1.5 gap-1 flex-shrink-0">
+            {SECTIONS.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setActiveSection(id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors cursor-pointer flex-shrink-0 ${
+                  activeSection === id
+                    ? 'bg-accent text-white'
+                    : id === 'danger'
+                      ? 'text-red-400 hover:bg-red-950/30'
+                      : 'text-muted-foreground hover:bg-accent/50 hover:text-white'
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5 flex-shrink-0" />
+                {label}
+              </button>
+            ))}
+          </nav>
+
+          {/* Desktop: vertical sidebar */}
+          <nav className="hidden sm:flex w-48 border-r border-border bg-background/50 p-2 flex-col gap-0.5 flex-shrink-0">
             <div className="px-3 py-2.5 mb-1">
               <h2 className="text-sm font-semibold text-white">settings</h2>
             </div>
@@ -235,8 +264,8 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
           </nav>
 
           {/* Content */}
-          <div className="flex-1 flex flex-col min-w-0">
-            <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
               {/* ─── Profile ─── */}
               {activeSection === 'profile' && (
                 <div className="space-y-5">
@@ -245,7 +274,7 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                     <p className="text-xs text-muted-foreground mt-1">your personal information</p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="settings-firstName" className="text-white">first name</Label>
                       <Input
@@ -612,8 +641,15 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
 
                   {/* Show newly created key */}
                   {createdKey && (
-                    <div className="rounded-md border border-accent-cyan/50 bg-accent-cyan/5 p-4 space-y-2">
-                      <p className="text-sm text-accent-cyan font-medium">key created — copy it now, you won&apos;t see it again</p>
+                    <div className="relative rounded-md border border-accent-cyan/50 bg-accent-cyan/5 p-4 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => setCreatedKey(null)}
+                        className="absolute top-2.5 right-2.5 cursor-pointer text-muted-foreground hover:text-white"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                      <p className="text-sm text-accent-cyan font-medium pr-6">key created — copy it now, you won&apos;t see it again</p>
                       <div className="flex items-center gap-2">
                         <code className="flex-1 text-xs bg-background rounded px-3 py-2 text-white font-mono break-all select-all">
                           {createdKey}
@@ -631,15 +667,6 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                           <Copy className="h-3.5 w-3.5" />
                         </Button>
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setCreatedKey(null)}
-                        className="cursor-pointer text-muted-foreground hover:text-white text-xs h-7"
-                      >
-                        dismiss
-                      </Button>
                     </div>
                   )}
 
@@ -711,34 +738,59 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                                 )}
                               </div>
                             </div>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              onClick={async () => {
-                                setRevokingKeyId(k.id);
-                                try {
-                                  const res = await fetch('/api/admin/keys/revoke', {
-                                    method: 'DELETE',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ keyId: k.id }),
-                                  });
-                                  if (res.ok) {
-                                    setApiKeys((prev) => prev.filter((key) => key.id !== k.id));
-                                    toast.success('API key revoked');
-                                  } else {
-                                    toast.error('Failed to revoke key');
-                                  }
-                                } catch {
-                                  toast.error('Failed to revoke key');
-                                }
-                                setRevokingKeyId(null);
-                              }}
-                              disabled={revokingKeyId === k.id}
-                              className="cursor-pointer text-red-400 hover:text-red-300 hover:bg-red-950/30 h-8 flex-shrink-0"
-                            >
-                              {revokingKeyId === k.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
-                            </Button>
+                            {confirmRevokeKeyId === k.id ? (
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                <span className="text-xs text-red-400">revoke?</span>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={async () => {
+                                    setRevokingKeyId(k.id);
+                                    try {
+                                      const res = await fetch('/api/admin/keys/revoke', {
+                                        method: 'DELETE',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ keyId: k.id }),
+                                      });
+                                      if (res.ok) {
+                                        setApiKeys((prev) => prev.filter((key) => key.id !== k.id));
+                                        toast.success('API key revoked');
+                                      } else {
+                                        toast.error('Failed to revoke key');
+                                      }
+                                    } catch {
+                                      toast.error('Failed to revoke key');
+                                    }
+                                    setRevokingKeyId(null);
+                                    setConfirmRevokeKeyId(null);
+                                  }}
+                                  disabled={revokingKeyId === k.id}
+                                  className="cursor-pointer text-red-400 hover:text-red-300 hover:bg-red-950/30 h-7 px-2 text-xs"
+                                >
+                                  {revokingKeyId === k.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'yes'}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => setConfirmRevokeKeyId(null)}
+                                  className="cursor-pointer text-muted-foreground hover:text-white hover:bg-muted h-7 px-2 text-xs"
+                                >
+                                  no
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setConfirmRevokeKeyId(k.id)}
+                                className="cursor-pointer text-red-400 hover:text-red-300 hover:bg-red-950/30 h-8 flex-shrink-0"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
                           </div>
                         ))}
                       </div>
