@@ -9,19 +9,28 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, Loader2, User, Bell, Trash2, Key } from 'lucide-react';
+import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, Loader2, User, Bell, Trash2, Key, Copy, Plus, X, Code } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 
-type SettingsSection = 'profile' | 'preferences' | 'cortex' | 'security' | 'danger';
+type SettingsSection = 'profile' | 'preferences' | 'cortex' | 'security' | 'api' | 'danger';
 
 const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[] = [
   { id: 'profile', label: 'profile', icon: User },
   { id: 'preferences', label: 'preferences', icon: Bell },
   { id: 'cortex', label: 'cortex', icon: Brain },
   { id: 'security', label: 'security', icon: Shield },
+  { id: 'api', label: 'API', icon: Code },
   { id: 'danger', label: 'danger zone', icon: Trash2 },
 ];
+
+interface ApiKeyEntry {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
 
 interface AccountSettingsDialogProps {
   open: boolean;
@@ -56,6 +65,14 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
   const [llmSaving, setLlmSaving] = useState(false);
   const [showLlmKey, setShowLlmKey] = useState(false);
 
+  // API key state
+  const [apiKeys, setApiKeys] = useState<ApiKeyEntry[]>([]);
+  const [apiKeysLoading, setApiKeysLoading] = useState(false);
+  const [newKeyName, setNewKeyName] = useState('');
+  const [createdKey, setCreatedKey] = useState<string | null>(null);
+  const [creatingKey, setCreatingKey] = useState(false);
+  const [revokingKeyId, setRevokingKeyId] = useState<string | null>(null);
+
   // Account deletion state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
@@ -87,6 +104,14 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
           if (data.model) setLlmModel(data.model);
         })
         .catch(() => {});
+
+      // Load API keys
+      fetch('/api/admin/keys')
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success) setApiKeys(data.keys || []);
+        })
+        .catch(() => {});
     } else {
       setFirstName('');
       setLastName('');
@@ -102,6 +127,10 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
       setDeletePassword('');
       setLlmApiKey('');
       setShowLlmKey(false);
+      setApiKeys([]);
+      setNewKeyName('');
+      setCreatedKey(null);
+      setCreatingKey(false);
       setActiveSection('profile');
     }
   }, [open, user?.displayName, userPreferences.temperatureUnit, userPreferences.healthAlerts, userPreferences.processAlerts]);
@@ -567,6 +596,168 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                         )}
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* ─── API ─── */}
+              {activeSection === 'api' && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-base font-medium text-white">API keys</h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      create keys for programmatic access to the admin API
+                    </p>
+                  </div>
+
+                  {/* Show newly created key */}
+                  {createdKey && (
+                    <div className="rounded-md border border-accent-cyan/50 bg-accent-cyan/5 p-4 space-y-2">
+                      <p className="text-sm text-accent-cyan font-medium">key created — copy it now, you won&apos;t see it again</p>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 text-xs bg-background rounded px-3 py-2 text-white font-mono break-all select-all">
+                          {createdKey}
+                        </code>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            navigator.clipboard.writeText(createdKey);
+                            toast.success('API key copied to clipboard');
+                          }}
+                          className="cursor-pointer border-border text-accent-cyan hover:bg-muted h-8 flex-shrink-0"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setCreatedKey(null)}
+                        className="cursor-pointer text-muted-foreground hover:text-white text-xs h-7"
+                      >
+                        dismiss
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Create new key */}
+                  <div className="rounded-md border border-border bg-background/50 p-4 space-y-3">
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1 space-y-2">
+                        <Label htmlFor="apiKeyName" className="text-white">key name</Label>
+                        <Input
+                          id="apiKeyName"
+                          type="text"
+                          placeholder="e.g. CI/CD, monitoring script"
+                          value={newKeyName}
+                          onChange={(e) => setNewKeyName(e.target.value)}
+                          className="border-border bg-background text-white"
+                          disabled={creatingKey}
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={async () => {
+                          setCreatingKey(true);
+                          try {
+                            const res = await fetch('/api/admin/keys/create', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ name: newKeyName || 'API Key' }),
+                            });
+                            const data = await res.json();
+                            if (res.ok && data.success) {
+                              setCreatedKey(data.key);
+                              setNewKeyName('');
+                              // Refresh list
+                              const listRes = await fetch('/api/admin/keys');
+                              const listData = await listRes.json();
+                              if (listData.success) setApiKeys(listData.keys || []);
+                              toast.success('API key created');
+                            } else {
+                              toast.error(data.error || 'Failed to create key');
+                            }
+                          } catch {
+                            toast.error('Failed to create key');
+                          }
+                          setCreatingKey(false);
+                        }}
+                        disabled={creatingKey}
+                        className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 h-9"
+                      >
+                        {creatingKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5 mr-1" /> create key</>}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Existing keys list */}
+                  {apiKeys.length > 0 && (
+                    <div className="space-y-2">
+                      <Label className="text-white">active keys</Label>
+                      <div className="space-y-2">
+                        {apiKeys.map((k) => (
+                          <div key={k.id} className="flex items-center justify-between rounded-md border border-border bg-background/50 px-4 py-3">
+                            <div className="space-y-0.5 min-w-0">
+                              <p className="text-sm text-white truncate">{k.name}</p>
+                              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                <code className="font-mono">{k.keyPrefix}•••</code>
+                                <span>created {new Date(k.createdAt).toLocaleDateString()}</span>
+                                {k.lastUsedAt && (
+                                  <span>last used {new Date(k.lastUsedAt).toLocaleDateString()}</span>
+                                )}
+                              </div>
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={async () => {
+                                setRevokingKeyId(k.id);
+                                try {
+                                  const res = await fetch('/api/admin/keys/revoke', {
+                                    method: 'DELETE',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ keyId: k.id }),
+                                  });
+                                  if (res.ok) {
+                                    setApiKeys((prev) => prev.filter((key) => key.id !== k.id));
+                                    toast.success('API key revoked');
+                                  } else {
+                                    toast.error('Failed to revoke key');
+                                  }
+                                } catch {
+                                  toast.error('Failed to revoke key');
+                                }
+                                setRevokingKeyId(null);
+                              }}
+                              disabled={revokingKeyId === k.id}
+                              className="cursor-pointer text-red-400 hover:text-red-300 hover:bg-red-950/30 h-8 flex-shrink-0"
+                            >
+                              {revokingKeyId === k.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {apiKeys.length === 0 && !apiKeysLoading && (
+                    <p className="text-xs text-muted-foreground">no API keys yet. create one to get started.</p>
+                  )}
+
+                  {/* Usage example */}
+                  <div className="rounded-md border border-border bg-background/50 p-4 space-y-2">
+                    <p className="text-xs text-muted-foreground font-medium">usage</p>
+                    <code className="block text-[11px] bg-background rounded px-3 py-2 text-muted-foreground font-mono whitespace-pre-wrap">
+                      {`curl "https://owlette.app/api/admin/machines?siteId=SITE_ID&api_key=owk_..."`}
+                    </code>
+                    <p className="text-[11px] text-muted-foreground">
+                      or pass as header: <code className="font-mono">x-api-key: owk_...</code>
+                    </p>
                   </div>
                 </div>
               )}
