@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdmin, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
+import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import logger from '@/lib/logger';
 
@@ -29,7 +29,7 @@ const MAX_TIMEOUT_S = 120;
 export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
-      const userId = await requireAdmin(request);
+      const userId = await requireAdminOrIdToken(request);
       const body = await request.json();
       const { siteId, machineId, command, data, wait, timeout } = body;
 

@@ -64,6 +64,19 @@ export async function requireAdmin(request: NextRequest): Promise<string> {
   return userId;
 }
 
+export async function requireAdminOrIdToken(request: NextRequest): Promise<string> {
+  const userId = await requireSessionOrIdToken(request);
+  const db = getAdminDb();
+  const userDoc = await db.collection('users').doc(userId).get();
+  const role = userDoc.exists ? userDoc.data()?.role : null;
+
+  if (role !== 'admin') {
+    throw new ApiAuthError(403, 'Forbidden: Admin access required');
+  }
+
+  return userId;
+}
+
 export async function requireSessionUser(
   request: NextRequest,
   userId: string

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdmin, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
+import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
 import { getSiteAdminEmails, getSiteProcessAlertEmails } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import logger from '@/lib/logger';
@@ -97,7 +97,7 @@ function buildSimulatedAlertEmail(
 export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
-      const userId = await requireAdmin(request);
+      const userId = await requireAdminOrIdToken(request);
       const body = await request.json();
       const { siteId, event, data } = body;
 
