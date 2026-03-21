@@ -99,6 +99,19 @@ export const agentAlertRateLimit = redis
   : null;
 
 /**
+ * Process alert rate limiter
+ * Allows 3 alerts per hour per machineId:processName combo — prevents crash-loop spam
+ */
+export const processAlertRateLimit = redis
+  ? new Ratelimit({
+      redis,
+      limiter: Ratelimit.fixedWindow(3, '1 h'),
+      prefix: 'process-alert',
+      analytics: true,
+    })
+  : null;
+
+/**
  * Extract client IP from NextRequest
  * Handles proxies (Railway, Cloudflare, etc.)
  */

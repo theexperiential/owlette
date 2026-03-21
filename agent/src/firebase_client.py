@@ -987,6 +987,66 @@ class FirebaseClient:
         self.logger.debug("Config update callback registered")
 
     # =========================================================================
+    # Machine Flags (reboot, shutdown, reboot pending)
+    # =========================================================================
+
+    def set_machine_flag(self, flag_name, value):
+        """Set a flag on the machine's presence document (e.g., rebooting, shuttingDown)."""
+        if not self.connected or not self.db:
+            return
+
+        try:
+            machine_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+
+            machine_ref.set({flag_name: value}, merge=True)
+            self.logger.debug(f"[FLAG] Set {flag_name}={value} on machine document")
+        except Exception as e:
+            self.logger.error(f"Failed to set machine flag {flag_name}: {e}")
+
+    def set_reboot_pending(self, process_name, reason, timestamp):
+        """Write a reboot_pending object to the machine document when relaunch limit is exceeded."""
+        if not self.connected or not self.db:
+            return
+
+        try:
+            machine_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+
+            machine_ref.set({
+                'rebootPending': {
+                    'active': True,
+                    'processName': process_name,
+                    'reason': reason,
+                    'timestamp': timestamp
+                }
+            }, merge=True)
+            self.logger.info(f"[FLAG] Reboot pending set for process: {process_name}")
+        except Exception as e:
+            self.logger.error(f"Failed to set reboot pending: {e}")
+
+    def clear_reboot_pending(self):
+        """Clear the reboot_pending flag on the machine document."""
+        if not self.connected or not self.db:
+            return
+
+        try:
+            machine_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+
+            machine_ref.set({
+                'rebootPending': {
+                    'active': False,
+                    'processName': None,
+                    'reason': None,
+                    'timestamp': None
+                }
+            }, merge=True)
+            self.logger.debug("[FLAG] Reboot pending cleared")
+        except Exception as e:
+            self.logger.error(f"Failed to clear reboot pending: {e}")
+
+    # =========================================================================
     # Event Logging
     # =========================================================================
 
@@ -1033,6 +1093,33 @@ class FirebaseClient:
 
         except Exception as e:
             self.logger.debug(f"[EVENT LOG FAILED] {action}: {e}")
+
+    def send_process_alert(self, process_name, error_message, event_type='process_crash'):
+        """Send process alert to web API. Non-blocking (fire and forget)."""
+        def _send():
+            try:
+                token = self.auth_manager.get_valid_token()
+                api_base = shared_utils.get_api_base_url()
+                import requests
+                requests.post(
+                    f"{api_base}/agent/alert",
+                    json={
+                        'siteId': self.site_id,
+                        'machineId': self.machine_id,
+                        'eventType': event_type,
+                        'processName': process_name,
+                        'errorMessage': error_message or 'Process exited unexpectedly',
+                        'agentVersion': shared_utils.APP_VERSION,
+                    },
+                    headers={'Authorization': f'Bearer {token}'},
+                    timeout=10
+                )
+                self.logger.info(f"[ALERT] Process alert sent: {event_type} - {process_name}")
+            except Exception as e:
+                self.logger.warning(f"Failed to send process alert: {e}")
+
+        thread = threading.Thread(target=_send, daemon=True)
+        thread.start()
 
     def ship_logs(self, log_entries: list):
         """

@@ -1175,6 +1175,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         process_name=process_name,
                         details=f'Failed to kill and restart PID {pid}: {str(e)}'
                     )
+                    self.firebase_client.send_process_alert(
+                        process_name, f'Failed to kill and restart PID {pid}: {str(e)}', 'process_crash'
+                    )
                 return None
 
     # Attempt to launch the process if not running
@@ -1221,6 +1224,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             level='error',
                             process_name=Util.get_process_name(process),
                             details=str(e)
+                        )
+                        self.firebase_client.send_process_alert(
+                            Util.get_process_name(process), str(e), 'process_start_failed'
                         )
                     return None
 
@@ -1405,6 +1411,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 level='error',
                                 process_name=process_name,
                                 details=f'Process stopped unexpectedly (PID {last_pid} no longer running)'
+                            )
+                            self.firebase_client.send_process_alert(
+                                process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash'
                             )
                     else:
                         logging.debug(f"Process {last_pid} was manually killed - skipping crash log")
@@ -2350,6 +2359,24 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 project_utils.cleanup_project_zip(project_path)
 
                 return f"Distribution cancelled: {project_name} (cleaned up temporary files)"
+
+            elif cmd_type == 'mcp_tool_call':
+                # MCP tool call from chat interface
+                tool_name = cmd_data.get('tool_name')
+                tool_params = cmd_data.get('tool_params', {})
+
+                if not tool_name:
+                    return "Error: No tool_name provided for mcp_tool_call"
+
+                logging.info(f"Executing MCP tool: {tool_name} with params: {list(tool_params.keys())}")
+
+                import mcp_tools
+                config = shared_utils.read_config()
+                result = mcp_tools.execute_tool(tool_name, tool_params, config)
+
+                # MCP tool results are dicts — serialize to JSON string for Firestore
+                import json as _json
+                return _json.dumps(result)
 
             else:
                 logging.warning(f"Unknown command type: {cmd_type}")

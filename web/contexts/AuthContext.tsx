@@ -57,6 +57,7 @@ type UserRole = 'user' | 'admin';
 export interface UserPreferences {
   temperatureUnit: 'C' | 'F'; // Default: 'C'
   healthAlerts: boolean; // Receive email alerts when machines go offline. Default: true
+  processAlerts: boolean; // Receive email alerts when processes crash or fail to start. Default: true
 }
 
 interface AuthContextType {
@@ -84,7 +85,7 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   userSites: [],
   requiresMfaSetup: false,
-  userPreferences: { temperatureUnit: 'C', healthAlerts: true },
+  userPreferences: { temperatureUnit: 'C', healthAlerts: true, processAlerts: true },
   signIn: async () => {},
   signUp: async () => {},
   signInWithGoogle: async () => {},
@@ -109,7 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<UserRole>('user');
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
-  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', healthAlerts: true });
+  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', healthAlerts: true, processAlerts: true });
 
   // Helper function to send user creation notification
   const sendUserCreatedNotification = async (
@@ -203,6 +204,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setUserPreferences({
                   temperatureUnit: preferences.temperatureUnit || 'C',
                   healthAlerts: preferences.healthAlerts !== false, // Default: true
+                  processAlerts: preferences.processAlerts !== false, // Default: true
                 });
 
                 setLoading(false);

@@ -1,16 +1,27 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Separator } from '@/components/ui/separator';
+import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { EyeIcon, EyeOffIcon, AlertTriangle, Shield } from 'lucide-react';
+import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, Loader2, User, Bell, Trash2, Key } from 'lucide-react';
 import Link from 'next/link';
+import { toast } from 'sonner';
+
+type SettingsSection = 'profile' | 'preferences' | 'cortex' | 'security' | 'danger';
+
+const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[] = [
+  { id: 'profile', label: 'profile', icon: User },
+  { id: 'preferences', label: 'preferences', icon: Bell },
+  { id: 'cortex', label: 'cortex', icon: Brain },
+  { id: 'security', label: 'security', icon: Shield },
+  { id: 'danger', label: 'danger zone', icon: Trash2 },
+];
 
 interface AccountSettingsDialogProps {
   open: boolean;
@@ -19,10 +30,12 @@ interface AccountSettingsDialogProps {
 
 export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDialogProps) {
   const { user, userPreferences, updateUserProfile, updatePassword, updateUserPreferences, deleteAccount } = useAuth();
+  const [activeSection, setActiveSection] = useState<SettingsSection>('profile');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [temperatureUnit, setTemperatureUnit] = useState<'C' | 'F'>('C');
   const [healthAlerts, setHealthAlerts] = useState(true);
+  const [processAlerts, setProcessAlerts] = useState(true);
   const [loading, setLoading] = useState(false);
 
   // Password change state
@@ -35,15 +48,22 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
 
+  // LLM API key state
+  const [llmProvider, setLlmProvider] = useState<'anthropic' | 'openai'>('anthropic');
+  const [llmApiKey, setLlmApiKey] = useState('');
+  const [llmModel, setLlmModel] = useState('');
+  const [llmConfigured, setLlmConfigured] = useState(false);
+  const [llmSaving, setLlmSaving] = useState(false);
+  const [showLlmKey, setShowLlmKey] = useState(false);
+
   // Account deletion state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
 
-  // Parse existing display name and preferences when dialog opens
-  const handleOpenChange = (isOpen: boolean) => {
-    if (isOpen) {
-      // Load display name
+  // Load form state when dialog opens
+  useEffect(() => {
+    if (open) {
       if (user?.displayName) {
         const names = user.displayName.split(' ');
         if (names.length >= 2) {
@@ -55,15 +75,24 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
         }
       }
 
-      // Load preferences
       setTemperatureUnit(userPreferences.temperatureUnit);
       setHealthAlerts(userPreferences.healthAlerts);
+      setProcessAlerts(userPreferences.processAlerts);
+
+      fetch('/api/settings/llm-key')
+        .then((res) => res.json())
+        .then((data) => {
+          setLlmConfigured(data.configured || false);
+          if (data.provider) setLlmProvider(data.provider);
+          if (data.model) setLlmModel(data.model);
+        })
+        .catch(() => {});
     } else {
-      // Reset form when closing
       setFirstName('');
       setLastName('');
       setTemperatureUnit('C');
       setHealthAlerts(true);
+      setProcessAlerts(true);
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
@@ -71,67 +100,61 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
       setShowPasswordSection(false);
       setShowDeleteConfirm(false);
       setDeletePassword('');
+      setLlmApiKey('');
+      setShowLlmKey(false);
+      setActiveSection('profile');
     }
+  }, [open, user?.displayName, userPreferences.temperatureUnit, userPreferences.healthAlerts, userPreferences.processAlerts]);
+
+  const handleOpenChange = (isOpen: boolean) => {
     onOpenChange(isOpen);
   };
 
   const validatePassword = (): boolean => {
     setPasswordError('');
-
     if (!currentPassword || !newPassword || !confirmPassword) {
       setPasswordError('All password fields are required');
       return false;
     }
-
     if (newPassword.length < 6) {
       setPasswordError('New password must be at least 6 characters');
       return false;
     }
-
     if (newPassword !== confirmPassword) {
       setPasswordError('New passwords do not match');
       return false;
     }
-
     if (newPassword === currentPassword) {
       setPasswordError('New password must be different from current password');
       return false;
     }
-
     return true;
   };
 
   const handleSave = async () => {
     setLoading(true);
     setPasswordError('');
-
     try {
-      // Always update profile if name fields are filled
       if (firstName || lastName) {
         await updateUserProfile(firstName, lastName);
       }
-
-      // Update preferences if any changed
       const prefsChanged = temperatureUnit !== userPreferences.temperatureUnit
-        || healthAlerts !== userPreferences.healthAlerts;
+        || healthAlerts !== userPreferences.healthAlerts
+        || processAlerts !== userPreferences.processAlerts;
       if (prefsChanged) {
-        await updateUserPreferences({ temperatureUnit, healthAlerts });
+        await updateUserPreferences({ temperatureUnit, healthAlerts, processAlerts });
       }
-
-      // Update password if password section is shown and fields are filled
       if (showPasswordSection && (currentPassword || newPassword || confirmPassword)) {
         if (!validatePassword()) {
           setLoading(false);
           return;
         }
         await updatePassword(currentPassword, newPassword);
-        // Clear password fields after successful update
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
         setShowPasswordSection(false);
       }
-
       onOpenChange(false);
     } catch (error) {
       // Error already handled by AuthContext with toast
@@ -141,282 +164,464 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
   };
 
   const handleDeleteAccount = async () => {
-    if (!deletePassword) {
-      return;
-    }
-
+    if (!deletePassword) return;
     setDeleting(true);
-
     try {
       await deleteAccount(deletePassword);
-      // Account deletion successful - user will be signed out automatically
       setShowDeleteConfirm(false);
       onOpenChange(false);
     } catch (error) {
-      // Error already handled by AuthContext with toast
       setDeleting(false);
     }
   };
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="border-border bg-secondary text-white">
-        <DialogHeader>
-          <DialogTitle className="text-white">Account Settings</DialogTitle>
-          <DialogDescription className="text-muted-foreground">
-            Update your account information
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto pr-1">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="settings-firstName" className="text-white">First Name</Label>
-              <Input
-                id="settings-firstName"
-                type="text"
-                placeholder="John"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                className="border-border bg-background text-white"
-                disabled={loading}
-              />
+      <DialogContent className="border-border bg-secondary text-white max-w-3xl p-0 gap-0">
+        <VisuallyHidden>
+          <DialogTitle>Account Settings</DialogTitle>
+        </VisuallyHidden>
+        <div className="flex min-h-[480px]">
+          {/* Sidebar */}
+          <nav className="w-48 border-r border-border bg-background/50 p-2 flex flex-col gap-0.5 flex-shrink-0">
+            <div className="px-3 py-2.5 mb-1">
+              <h2 className="text-sm font-semibold text-white">settings</h2>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="settings-lastName" className="text-white">Last Name</Label>
-              <Input
-                id="settings-lastName"
-                type="text"
-                placeholder="Doe"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                className="border-border bg-background text-white"
-                disabled={loading}
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-white">Email</Label>
-            <Input
-              type="email"
-              value={user?.email || ''}
-              className="border-border bg-background text-muted-foreground"
-              disabled
-              readOnly
-            />
-            <p className="text-xs text-muted-foreground">Email cannot be changed</p>
-          </div>
-
-          {/* Temperature Unit */}
-          <Separator className="bg-accent" />
-
-          <div className="space-y-2">
-            <Label htmlFor="temperatureUnit" className="text-white">Temperature Unit</Label>
-            <Select
-              value={temperatureUnit}
-              onValueChange={(value: 'C' | 'F') => setTemperatureUnit(value)}
-              disabled={loading}
-            >
-              <SelectTrigger
-                id="temperatureUnit"
-                className="border-border bg-background text-white hover:bg-secondary"
+            {SECTIONS.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setActiveSection(id)}
+                className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors cursor-pointer ${
+                  activeSection === id
+                    ? 'bg-accent text-white'
+                    : id === 'danger'
+                      ? 'text-red-400 hover:bg-red-950/30'
+                      : 'text-muted-foreground hover:bg-accent/50 hover:text-white'
+                }`}
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="border-border bg-secondary text-white">
-                <SelectItem value="C" className="cursor-pointer hover:bg-muted">
-                  Celsius (°C)
-                </SelectItem>
-                <SelectItem value="F" className="cursor-pointer hover:bg-muted">
-                  Fahrenheit (°F)
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+                <Icon className="h-4 w-4 flex-shrink-0" />
+                {label}
+              </button>
+            ))}
+          </nav>
 
-          {/* Email Alerts */}
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label htmlFor="healthAlerts" className="text-white">Machine Offline Alerts</Label>
-              <p className="text-xs text-muted-foreground">Receive email alerts when machines go offline</p>
+          {/* Content */}
+          <div className="flex-1 flex flex-col min-w-0">
+            <div className="flex-1 overflow-y-auto p-6">
+              {/* ─── Profile ─── */}
+              {activeSection === 'profile' && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-base font-medium text-white">profile</h3>
+                    <p className="text-xs text-muted-foreground mt-1">your personal information</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="settings-firstName" className="text-white">first name</Label>
+                      <Input
+                        id="settings-firstName"
+                        type="text"
+                        placeholder="first name"
+                        value={firstName}
+                        onChange={(e) => setFirstName(e.target.value)}
+                        className="border-border bg-background text-white"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="settings-lastName" className="text-white">last name</Label>
+                      <Input
+                        id="settings-lastName"
+                        type="text"
+                        placeholder="last name"
+                        value={lastName}
+                        onChange={(e) => setLastName(e.target.value)}
+                        className="border-border bg-background text-white"
+                        disabled={loading}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-white">email</Label>
+                    <Input
+                      type="email"
+                      value={user?.email || ''}
+                      className="border-border bg-background text-muted-foreground"
+                      disabled
+                      readOnly
+                    />
+                    <p className="text-xs text-muted-foreground">email cannot be changed</p>
+                  </div>
+                </div>
+              )}
+
+              {/* ─── Preferences ─── */}
+              {activeSection === 'preferences' && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-base font-medium text-white">preferences</h3>
+                    <p className="text-xs text-muted-foreground mt-1">dashboard display and notification settings</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="temperatureUnit" className="text-white">temperature unit</Label>
+                    <Select
+                      value={temperatureUnit}
+                      onValueChange={(value: 'C' | 'F') => setTemperatureUnit(value)}
+                      disabled={loading}
+                    >
+                      <SelectTrigger id="temperatureUnit" className="border-border bg-background text-white hover:bg-secondary w-48">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="border-border bg-secondary text-white">
+                        <SelectItem value="C" className="cursor-pointer hover:bg-muted">Celsius (°C)</SelectItem>
+                        <SelectItem value="F" className="cursor-pointer hover:bg-muted">Fahrenheit (°F)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-border bg-background/50 p-4">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="healthAlerts" className="text-white">machine offline alerts</Label>
+                      <p className="text-xs text-muted-foreground">receive email alerts when machines go offline</p>
+                    </div>
+                    <Switch
+                      id="healthAlerts"
+                      checked={healthAlerts}
+                      onCheckedChange={setHealthAlerts}
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-border bg-background/50 p-4">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="processAlerts" className="text-white">process crash alerts</Label>
+                      <p className="text-xs text-muted-foreground">receive email alerts when monitored processes crash or fail to start</p>
+                    </div>
+                    <Switch
+                      id="processAlerts"
+                      checked={processAlerts}
+                      onCheckedChange={setProcessAlerts}
+                      disabled={loading}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* ─── Cortex ─── */}
+              {activeSection === 'cortex' && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-base font-medium text-white flex items-center gap-2">
+                      cortex
+                      {llmConfigured && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-900/30 text-green-400 flex items-center gap-1 font-normal">
+                          <Check className="h-3 w-3" /> connected
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      connect an LLM provider to power Owlette&apos;s intelligence layer. query machines,
+                      run diagnostics, and manage your fleet through natural language.
+                    </p>
+                  </div>
+
+                  <div className="space-y-4 rounded-md border border-border bg-background/50 p-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="llmProvider" className="text-white">provider</Label>
+                      <Select
+                        value={llmProvider}
+                        onValueChange={(value: 'anthropic' | 'openai') => {
+                          setLlmProvider(value);
+                          setLlmModel('');
+                        }}
+                        disabled={llmSaving}
+                      >
+                        <SelectTrigger id="llmProvider" className="border-border bg-background text-white hover:bg-secondary w-64">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="border-border bg-secondary text-white">
+                          <SelectItem value="anthropic" className="cursor-pointer hover:bg-muted">Anthropic (Claude)</SelectItem>
+                          <SelectItem value="openai" className="cursor-pointer hover:bg-muted">OpenAI</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="llmApiKey" className="text-white flex items-center gap-2">
+                        <Key className="h-3.5 w-3.5" />
+                        api key
+                      </Label>
+                      <div className="relative">
+                        <Input
+                          id="llmApiKey"
+                          type={showLlmKey ? 'text' : 'password'}
+                          placeholder={llmConfigured ? '••••••••••••••••••••••••' : llmProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}
+                          value={llmApiKey}
+                          onChange={(e) => setLlmApiKey(e.target.value)}
+                          className="border-border bg-background pr-10 text-white"
+                          disabled={llmSaving}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowLlmKey(!showLlmKey)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
+                        >
+                          {showLlmKey ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        your key is encrypted with AES-256 and never leaves the server.
+                      </p>
+                    </div>
+
+                    <div className="flex gap-2 pt-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={async () => {
+                          if (!llmApiKey) return;
+                          setLlmSaving(true);
+                          try {
+                            const res = await fetch('/api/settings/llm-key', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                provider: llmProvider,
+                                apiKey: llmApiKey,
+                                model: llmModel || undefined,
+                              }),
+                            });
+                            if (res.ok) {
+                              setLlmConfigured(true);
+                              setLlmApiKey('');
+                              toast.success('API key saved');
+                            } else {
+                              const err = await res.json().catch(() => ({}));
+                              toast.error(err.error || 'Failed to save API key');
+                            }
+                          } catch (e) {
+                            toast.error(`Failed to save API key: ${e instanceof Error ? e.message : 'Unknown error'}`);
+                          }
+                          setLlmSaving(false);
+                        }}
+                        disabled={!llmApiKey || llmSaving}
+                        className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 h-8"
+                      >
+                        {llmSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : 'save key'}
+                      </Button>
+                      {llmConfigured && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            setLlmSaving(true);
+                            try {
+                              await fetch('/api/settings/llm-key', { method: 'DELETE' });
+                              setLlmConfigured(false);
+                              setLlmApiKey('');
+                              toast.success('API key removed');
+                            } catch {
+                              toast.error('Failed to remove API key');
+                            }
+                            setLlmSaving(false);
+                          }}
+                          disabled={llmSaving}
+                          className="cursor-pointer border-border text-red-400 hover:bg-muted h-8"
+                        >
+                          remove key
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ─── Security ─── */}
+              {activeSection === 'security' && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-base font-medium text-white">security</h3>
+                    <p className="text-xs text-muted-foreground mt-1">authentication and access control</p>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-border bg-background/50 p-4">
+                    <div>
+                      <p className="text-sm text-white">two-factor authentication</p>
+                      <p className="text-xs text-muted-foreground">add an extra layer of security to your account</p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      asChild
+                      className="h-8 cursor-pointer border-border text-accent-cyan hover:bg-muted hover:text-accent-cyan"
+                    >
+                      <Link href="/setup-2fa" onClick={() => onOpenChange(false)}>
+                        manage
+                      </Link>
+                    </Button>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-white">change password</Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setShowPasswordSection(!showPasswordSection);
+                          setPasswordError('');
+                          if (showPasswordSection) {
+                            setCurrentPassword('');
+                            setNewPassword('');
+                            setConfirmPassword('');
+                          }
+                        }}
+                        className="h-8 cursor-pointer border-border text-accent-cyan hover:text-accent-cyan hover:bg-muted"
+                        disabled={loading}
+                      >
+                        {showPasswordSection ? 'cancel' : 'update password'}
+                      </Button>
+                    </div>
+
+                    {showPasswordSection && (
+                      <div className="space-y-3 rounded-md border border-border bg-background/50 p-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="currentPassword" className="text-white">current password</Label>
+                          <div className="relative">
+                            <Input
+                              id="currentPassword"
+                              type={showCurrentPassword ? 'text' : 'password'}
+                              placeholder="enter current password"
+                              value={currentPassword}
+                              onChange={(e) => setCurrentPassword(e.target.value)}
+                              className="border-border bg-background pr-10 text-white"
+                              disabled={loading}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
+                              disabled={loading}
+                            >
+                              {showCurrentPassword ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="newPassword" className="text-white">new password</Label>
+                          <div className="relative">
+                            <Input
+                              id="newPassword"
+                              type={showNewPassword ? 'text' : 'password'}
+                              placeholder="enter new password"
+                              value={newPassword}
+                              onChange={(e) => setNewPassword(e.target.value)}
+                              className="border-border bg-background pr-10 text-white"
+                              disabled={loading}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowNewPassword(!showNewPassword)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
+                              disabled={loading}
+                            >
+                              {showNewPassword ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+                            </button>
+                          </div>
+                          <p className="text-xs text-muted-foreground">must be at least 6 characters</p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="confirmPassword" className="text-white">confirm new password</Label>
+                          <div className="relative">
+                            <Input
+                              id="confirmPassword"
+                              type={showConfirmPassword ? 'text' : 'password'}
+                              placeholder="confirm new password"
+                              value={confirmPassword}
+                              onChange={(e) => setConfirmPassword(e.target.value)}
+                              className="border-border bg-background pr-10 text-white"
+                              disabled={loading}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
+                              disabled={loading}
+                            >
+                              {showConfirmPassword ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        {passwordError && (
+                          <div className="rounded-md bg-red-900/20 border border-red-800 p-3">
+                            <p className="text-sm text-red-400">{passwordError}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ─── Danger Zone ─── */}
+              {activeSection === 'danger' && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-base font-medium text-red-400">danger zone</h3>
+                    <p className="text-xs text-muted-foreground mt-1">irreversible account actions</p>
+                  </div>
+
+                  <div className="space-y-3 rounded-md border border-red-800 bg-red-900/10 p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <Label className="text-red-400 font-semibold">delete account</Label>
+                        <p className="text-sm text-muted-foreground">
+                          permanently delete your account and all associated data. this action cannot be undone.
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={() => setShowDeleteConfirm(true)}
+                      className="w-full cursor-pointer bg-red-600 hover:bg-red-700 text-white"
+                      disabled={loading || deleting}
+                    >
+                      delete account
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
-            <Switch
-              id="healthAlerts"
-              checked={healthAlerts}
-              onCheckedChange={setHealthAlerts}
-              disabled={loading}
-            />
-          </div>
 
-          {/* Security Section */}
-          <Separator className="bg-accent" />
-
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Shield className="h-4 w-4 text-muted-foreground" />
-              <Label className="text-white">Security</Label>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-white">Two-Factor Authentication</p>
-                <p className="text-xs text-muted-foreground">Add an extra layer of security to your account</p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                asChild
-                className="h-8 cursor-pointer border-border text-accent-cyan hover:bg-muted hover:text-accent-cyan"
-              >
-                <Link
-                  href="/setup-2fa"
+            {/* Footer — only show save/cancel for sections that need it */}
+            {(activeSection === 'profile' || activeSection === 'preferences' || activeSection === 'security') && (
+              <div className="border-t border-border px-6 py-3 flex justify-end gap-2">
+                <Button
+                  variant="outline"
                   onClick={() => onOpenChange(false)}
+                  className="cursor-pointer border-border bg-secondary text-white hover:bg-muted"
+                  disabled={loading}
                 >
-                  Manage
-                </Link>
-              </Button>
-            </div>
-          </div>
-
-          {/* Password Change Section */}
-          <Separator className="bg-accent" />
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-white">Change Password</Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setShowPasswordSection(!showPasswordSection);
-                  setPasswordError('');
-                  if (showPasswordSection) {
-                    setCurrentPassword('');
-                    setNewPassword('');
-                    setConfirmPassword('');
-                  }
-                }}
-                className="h-8 cursor-pointer border-border text-accent-cyan hover:text-accent-cyan hover:bg-muted"
-                disabled={loading}
-              >
-                {showPasswordSection ? 'Cancel' : 'Update Password'}
-              </Button>
-            </div>
-
-            {showPasswordSection && (
-              <div className="space-y-3 rounded-md border border-border bg-background/50 p-4">
-                <div className="space-y-2">
-                  <Label htmlFor="currentPassword" className="text-white">Current Password</Label>
-                  <div className="relative">
-                    <Input
-                      id="currentPassword"
-                      type={showCurrentPassword ? 'text' : 'password'}
-                      placeholder="Enter current password"
-                      value={currentPassword}
-                      onChange={(e) => setCurrentPassword(e.target.value)}
-                      className="border-border bg-background pr-10 text-white"
-                      disabled={loading}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
-                      disabled={loading}
-                    >
-                      {showCurrentPassword ? (
-                        <EyeOffIcon className="h-4 w-4" />
-                      ) : (
-                        <EyeIcon className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="newPassword" className="text-white">New Password</Label>
-                  <div className="relative">
-                    <Input
-                      id="newPassword"
-                      type={showNewPassword ? 'text' : 'password'}
-                      placeholder="Enter new password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      className="border-border bg-background pr-10 text-white"
-                      disabled={loading}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewPassword(!showNewPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
-                      disabled={loading}
-                    >
-                      {showNewPassword ? (
-                        <EyeOffIcon className="h-4 w-4" />
-                      ) : (
-                        <EyeIcon className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">Must be at least 6 characters</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="confirmPassword" className="text-white">Confirm New Password</Label>
-                  <div className="relative">
-                    <Input
-                      id="confirmPassword"
-                      type={showConfirmPassword ? 'text' : 'password'}
-                      placeholder="Confirm new password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      className="border-border bg-background pr-10 text-white"
-                      disabled={loading}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
-                      disabled={loading}
-                    >
-                      {showConfirmPassword ? (
-                        <EyeOffIcon className="h-4 w-4" />
-                      ) : (
-                        <EyeIcon className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {passwordError && (
-                  <div className="rounded-md bg-red-900/20 border border-red-800 p-3">
-                    <p className="text-sm text-red-400">{passwordError}</p>
-                  </div>
-                )}
+                  cancel
+                </Button>
+                <Button
+                  onClick={handleSave}
+                  className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900"
+                  disabled={loading}
+                >
+                  {loading ? 'saving...' : 'save changes'}
+                </Button>
               </div>
             )}
-          </div>
-
-          {/* Danger Zone */}
-          <Separator className="bg-accent" />
-
-          <div className="space-y-3 rounded-md border border-red-800 bg-red-900/10 p-4">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
-              <div className="flex-1 space-y-2">
-                <Label className="text-red-400 font-semibold">Danger Zone</Label>
-                <p className="text-sm text-muted-foreground">
-                  Permanently delete your account and all associated data. This action cannot be undone.
-                </p>
-              </div>
-            </div>
-            <Button
-              type="button"
-              onClick={() => setShowDeleteConfirm(true)}
-              className="w-full cursor-pointer bg-red-600 hover:bg-red-700 text-white"
-              disabled={loading || deleting}
-            >
-              Delete Account
-            </Button>
           </div>
         </div>
 
@@ -426,31 +631,30 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
             <DialogHeader>
               <DialogTitle className="text-red-400 flex items-center gap-2">
                 <AlertTriangle className="h-5 w-5" />
-                Delete Account
+                delete account
               </DialogTitle>
               <DialogDescription className="text-muted-foreground">
-                This action is permanent and cannot be undone.
+                this action is permanent and cannot be undone.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="rounded-md bg-red-900/20 border border-red-800 p-4">
-                <p className="text-sm text-red-300 font-semibold mb-2">Warning:</p>
+                <p className="text-sm text-red-300 font-semibold mb-2">warning:</p>
                 <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-                  <li>All your sites and machines will be permanently deleted</li>
-                  <li>All deployments and logs will be removed</li>
-                  <li>Your account data cannot be recovered</li>
-                  <li>You will be immediately signed out</li>
+                  <li>all your sites and machines will be permanently deleted</li>
+                  <li>all deployments and logs will be removed</li>
+                  <li>your account data cannot be recovered</li>
+                  <li>you will be immediately signed out</li>
                 </ul>
               </div>
-
               <div className="space-y-2">
                 <Label htmlFor="deletePassword" className="text-white">
-                  Enter your password to confirm
+                  enter your password to confirm
                 </Label>
                 <Input
                   id="deletePassword"
                   type="password"
-                  placeholder="Your password"
+                  placeholder="your password"
                   value={deletePassword}
                   onChange={(e) => setDeletePassword(e.target.value)}
                   className="border-border bg-background text-white"
@@ -469,36 +673,18 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
                 className="cursor-pointer border-border bg-secondary text-white hover:bg-muted"
                 disabled={deleting}
               >
-                Cancel
+                cancel
               </Button>
               <Button
                 onClick={handleDeleteAccount}
                 className="cursor-pointer bg-red-600 hover:bg-red-700 text-white"
                 disabled={deleting || !deletePassword}
               >
-                {deleting ? 'Deleting...' : 'Delete My Account'}
+                {deleting ? 'deleting...' : 'delete my account'}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
-
-        <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            className="cursor-pointer border-border bg-secondary text-white hover:bg-muted"
-            disabled={loading}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSave}
-            className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900"
-            disabled={loading}
-          >
-            {loading ? 'Saving...' : 'Save Changes'}
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
