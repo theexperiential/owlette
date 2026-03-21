@@ -24,7 +24,9 @@ firestore/
 │           └── completed/{commandId} # Agent → Web (result + completedAt)
 ├── config/{siteId}/
 │   └── machines/{machineId}/      # Process configuration (version, processes[])
-├── users/{userId}/                # email, role, createdAt, sites[]
+├── users/{userId}/                # email, role, createdAt, sites[], preferences {healthAlerts, processAlerts, temperatureUnit}
+│   └── apiKeys/{keyId}/          # API key metadata (name, keyHash, keyPrefix, createdAt, lastUsedAt)
+├── apiKeys/{keyHash}/            # Top-level API key lookup (userId, keyId) — O(1) resolution
 ├── deployments/{deploymentId}/    # Remote installer deployments
 │   ├── installerUrl, silentFlags, targetMachines[], status, createdBy
 │   └── results: map
@@ -73,6 +75,27 @@ Web listener sees completion → updates UI
 ```
 
 Command types: `restart_process`, `kill_process`, `toggle_autolaunch`, `update_config`, `install_software`, `distribute_project`
+
+---
+
+## Alert Flow (Agent → Web API → Email)
+
+```
+Agent detects crash → firebase_client.send_process_alert()
+  → daemon thread POSTs to /api/agent/alert with bearer token
+  → API validates agent token, checks per-process rate limit (3/hr per machineId:processName)
+  → queries users with processAlerts !== false for the site
+  → sends email via Resend
+```
+
+Two alert types flow through `/api/agent/alert`:
+- **Connection failure** (`eventType: 'connection_failure'`): existing health alerts, filtered by `healthAlerts` preference
+- **Process events** (`eventType: 'process_crash' | 'process_start_failed'`): filtered by `processAlerts` preference
+
+User preferences (`users/{userId}/preferences`):
+- `healthAlerts` (default: true) — machine offline email alerts
+- `processAlerts` (default: true) — process crash/start failure email alerts
+- `temperatureUnit` ('C' | 'F') — dashboard display preference
 
 ---
 

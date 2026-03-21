@@ -51,52 +51,36 @@ This workstream runs in parallel with WS4 (Remote Reboot/Shutdown). To avoid con
 | `web/components/AccountSettingsDialog.tsx` | Add "Process Crash Alerts" toggle for `processAlerts` preference |
 | `web/contexts/AuthContext.tsx` | Ensure `processAlerts` is included in preferences read/write |
 
-### Implementation Details
+### What Was Implemented
 
-**Agent side — `firebase_client.py`:**
-```python
-def send_process_alert(self, process_name, error_message, event_type='process_crash'):
-    """Send process alert to web API. Non-blocking (fire and forget)."""
-    def _send():
-        try:
-            payload = {
-                'siteId': self.site_id,
-                'machineId': self.machine_id,
-                'eventType': event_type,
-                'processName': process_name,
-                'errorMessage': error_message or 'Process exited unexpectedly',
-                'agentVersion': self.agent_version
-            }
-            # POST to /api/agent/alert with bearer token
-            # Same auth pattern as existing health alert
-        except Exception as e:
-            logger.warning(f"Failed to send process alert: {e}")
+**Agent — `firebase_client.py`:**
+- Added `send_process_alert(process_name, error_message, event_type)` method
+- Spawns daemon thread that POSTs to `/api/agent/alert` with bearer token, `eventType`, `processName`, `errorMessage`, `agentVersion`
+- Non-blocking, failures logged as warnings
 
-    thread = threading.Thread(target=_send, daemon=True)
-    thread.start()
-```
-
-**Agent side — `owlette_service.py`:**
-Find all locations where `log_event('process_crash', ...)` and `log_event('process_start_failed', ...)` are called. After each, add:
-```python
-self.firebase_client.send_process_alert(process_name, error_details, 'process_crash')
-```
+**Agent — `owlette_service.py`:**
+- Added `send_process_alert()` calls after all 3 crash/failure locations:
+  1. `kill_and_relaunch_process()` exception handler (~line 1177)
+  2. `handle_process_launch()` launch exception (~line 1225)
+  3. `handle_process()` unexpected exit detection (~line 1408)
 
 **Web API — `route.ts`:**
-- Add `eventType` to request body validation (default: `'connection_failure'` for backward compat)
-- Add `processName` to request body
-- New rate limit strategy: key by `${ip}:${eventType}:${processName}:${machineId}`, limit 3/hr
-- New email template for process events:
-  - Subject: `[Owlette] Process crashed: {processName} on {machineName}`
-  - Body: HTML table with Machine, Process, Error, Timestamp, Agent Version
-- Filter recipients: query users with `processAlerts !== false` (default true)
+- Extended to accept `eventType` (default: `'connection_failure'` for backward compat) and `processName`
+- Per-process rate limiting via `processAlertRateLimit` (3/hr per `machineId:processName` key in Upstash Redis)
+- New `buildProcessAlertEmail()` template with Process, Event, Error, Machine, Agent Version, Time
+- Recipients filtered via `getSiteProcessAlertEmails()` (users with `processAlerts !== false`)
 
-**User preference:**
-- Add `processAlerts` boolean (default: `true`) to user preferences
-- Separate from `healthAlerts` — users can opt into machine alerts but not process alerts
-- Add toggle in `AccountSettingsDialog.tsx` below existing "Machine Offline Alerts"
-- Label: "Process Crash Alerts"
-- Description: "Receive email alerts when monitored processes crash or fail to start"
+**Web — `rateLimit.ts`:**
+- Added `processAlertRateLimit` export (3 requests/hr, `process-alert` prefix)
+
+**Web — `adminUtils.server.ts`:**
+- Added `getSiteProcessAlertEmails(siteId)` — queries users by `processAlerts` preference
+
+**Web — `AuthContext.tsx`:**
+- Added `processAlerts: boolean` to `UserPreferences` interface (default: `true`)
+
+**Web — `AccountSettingsDialog.tsx`:**
+- Added "process crash alerts" toggle below "machine offline alerts" in Preferences section
 
 ### Rate Limiting Strategy
 - Key: `process_alert:{machineId}:{processName}` (not IP-based — multiple processes on same machine need independent limits)
@@ -105,11 +89,33 @@ self.firebase_client.send_process_alert(process_name, error_details, 'process_cr
 - After rate limit hit, log a warning but don't send email
 
 ### Testing Plan
-1. Configure a process in Owlette, start it, then kill it via Task Manager → verify email arrives within 30 seconds
-2. Create a process that exits immediately (e.g., `cmd /c exit 1`) with autolaunch on → verify only 3 emails arrive in the first hour
-3. Toggle `processAlerts` off in account settings → kill a process → verify no email
-4. Test with an agent that doesn't send `eventType` field → verify existing connection_failure behavior still works
-5. Check email template renders correctly (machine name, process name, timestamp)
+
+**Using the Admin API with API keys (see `dev/active/ws0-admin-api.md` for setup):**
+
+Create an API key first via the dashboard or session cookie, then use the `x-api-key` header:
+
+1. **Simulate a crash alert via API:**
+   ```bash
+   curl -X POST "http://localhost:3000/api/admin/events/simulate" \
+     -H "x-api-key: owk_YOUR_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"siteId":"default_site","event":"process_crash","data":{"processName":"MyApp.exe","errorMessage":"Exited with code 1"}}'
+   ```
+   Verify email arrives. Check Resend dashboard for delivery confirmation.
+
+2. **Test rate limiting:** Note: the simulate endpoint uses IP-based rate limiting (5/hr), not the per-process limiter. Per-process rate limiting (3/hr per `machineId:processName`) only applies to the real `/api/agent/alert` endpoint.
+
+3. **Test preference toggle:** Toggle `processAlerts` off in Account Settings > Preferences, then simulate again → response should show `emailSent: false, reason: "No recipients"`.
+
+4. **Test backward compat:**
+   ```bash
+   curl -X POST "http://localhost:3000/api/admin/events/simulate" \
+     -H "x-api-key: owk_YOUR_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"siteId":"default_site","event":"connection_failure","data":{"errorMessage":"Simulated connection loss"}}'
+   ```
+
+5. **End-to-end with real agent:** Requires deploying to `dev.owlette.app` first (agent POSTs to its configured `api_base`). Kill a monitored process via Task Manager → verify email arrives within 30 seconds.
 
 ### Notes
 - Do NOT block the 10-second monitoring loop. All alert sending must be in daemon threads.

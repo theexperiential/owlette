@@ -1,6 +1,6 @@
 # Owlette Codebase Map
 
-**Last Updated**: 2026-03-12
+**Last Updated**: 2026-03-21
 
 Quick reference of everything that exists. Check here before creating new files — reuse what's already built.
 
@@ -44,8 +44,17 @@ Quick reference of everything that exists. Check here before creating new files 
 | `/api/admin/tokens/list` | POST | List API tokens | Admin | No |
 | `/api/admin/tokens/revoke` | POST | Revoke API token | Admin | No |
 | `/api/setup/generate-token` | POST | Generate admin setup token | Admin | No |
+| `/api/agent/alert` | POST | Agent health + process crash email alerts (Resend) | Agent token | Yes: `firebase_client.py` |
 | `/api/webhooks/user-created` | POST | Signup notification email (Resend) | Webhook | No |
 | `/api/test-email` | POST | Test email delivery | Admin | No |
+| `/api/admin/keys/create` | POST | Create API key (`owk_` prefix) | Session (admin) | No |
+| `/api/admin/keys` | GET | List user's API keys | Session (admin) | No |
+| `/api/admin/keys/revoke` | DELETE | Revoke an API key | Session (admin) | No |
+| `/api/admin/machines` | GET | List machines for a site | Admin or API key | No |
+| `/api/admin/machines/status` | GET | Get detailed machine status | Admin or API key | No |
+| `/api/admin/commands/send` | POST | Send command to machine (with optional polling) | Admin or API key | No |
+| `/api/admin/logs` | GET | Read activity logs with filters | Admin or API key | No |
+| `/api/admin/events/simulate` | POST | Simulate events (process_crash, machine_offline, connection_failure) | Admin or API key | No |
 
 ---
 
@@ -63,7 +72,7 @@ Quick reference of everything that exists. Check here before creating new files 
 ### App Components (`web/components/`)
 | Component | Purpose |
 |-----------|---------|
-| `AccountSettingsDialog.tsx` | User profile, password, preferences |
+| `AccountSettingsDialog.tsx` | User profile, password, preferences (healthAlerts, processAlerts toggles) |
 | `ConfirmDialog.tsx` | Generic confirmation dialog |
 | `CreateSiteDialog.tsx` | Create new site |
 | `DeploymentDialog.tsx` | Create/manage deployments |
@@ -148,11 +157,13 @@ Quick reference of everything that exists. Check here before creating new files 
 | `timeUtils.ts` | Timezone + time format (12h/24h) handling |
 | `usageColorUtils.ts` | CPU/memory percentage → color coding |
 | `dashboardConstants.ts` | Color scales, thresholds, metric constants |
-| `rateLimit.ts` | Upstash Redis rate limiting configuration |
+| `rateLimit.ts` | Upstash Redis rate limiting (exports: `authRateLimit`, `agentAlertRateLimit`, `processAlertRateLimit`, `checkRateLimit`) |
 | `withRateLimit.ts` | Rate limit wrapper for API routes |
 | `versionUtils.ts` | Version string comparison |
 | `encryption.server.ts` | Server-side encryption utilities |
-| `apiAuth.server.ts` | API authentication helpers |
+| `adminUtils.server.ts` | Server-side admin utils: `getSiteAdminEmails()`, `getSiteProcessAlertEmails()`, `getSiteAlertRecipients()` |
+| `resendClient.server.ts` | Shared Resend email client singleton (`getResend()`, `FROM_EMAIL`, `ENV_LABEL`) |
+| `apiAuth.server.ts` | API authentication: `requireAdminOrIdToken()`, `resolveApiKey()`, `assertUserHasSiteAccess()` |
 | `userUtils.ts` | User data utilities |
 | `validateEnv.ts` | Environment variable validation |
 | `utils.ts` | General utilities (cn() for class merging) |
@@ -171,7 +182,7 @@ Quick reference of everything that exists. Check here before creating new files 
   updateUserProfile, updatePassword, updateUserPreferences, deleteAccount }
 
 type UserRole = 'user' | 'admin'
-interface UserPreferences { temperatureUnit: 'C' | 'F' }
+interface UserPreferences { temperatureUnit: 'C' | 'F'; healthAlerts: boolean; processAlerts: boolean }
 ```
 
 ---
@@ -188,7 +199,7 @@ interface UserPreferences { temperatureUnit: 'C' | 'F' }
 ### Firebase / Cloud
 | Module | Purpose |
 |--------|---------|
-| `firebase_client.py` | Firestore sync — presence, metrics, commands, config, offline cache |
+| `firebase_client.py` | Firestore sync — presence, metrics, commands, config, offline cache, process alerts |
 | `connection_manager.py` | State machine + circuit breaker + thread watchdog |
 | `auth_manager.py` | OAuth two-token system (access + refresh tokens) |
 | `secure_storage.py` | Encrypted token file (Fernet AES, machine-specific key) |

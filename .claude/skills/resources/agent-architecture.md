@@ -1,6 +1,6 @@
 # Owlette Agent Architecture Reference
 
-**Last Updated**: 2026-03-12
+**Last Updated**: 2026-03-21
 **Applies To**: `agent/src/` (Python 3.9+ Windows Service)
 
 This document captures the architecture and design decisions of the Owlette agent — a Windows service that monitors processes, syncs with Firebase, and accepts remote commands. Read this before modifying any agent code.
@@ -124,6 +124,22 @@ On service restart:
 4. Clean dead PIDs from state file
 5. Adopt valid processes (skip launch, mark RUNNING)
 
+### Process Crash Alerts
+
+When a process crash or start failure is detected, the agent sends an email alert:
+
+```
+log_event('process_crash', ...)  →  send_process_alert(name, error, 'process_crash')
+log_event('process_start_failed', ...)  →  send_process_alert(name, error, 'process_start_failed')
+```
+
+Alert locations in `owlette_service.py`:
+1. `kill_and_relaunch_process()` — failed to kill and restart
+2. `handle_process_launch()` — launch exception
+3. `handle_process()` — unexpected process exit (not manually killed)
+
+`send_process_alert()` in `firebase_client.py` spawns a daemon thread that POSTs to `/api/agent/alert` with bearer token auth. The web API applies per-process rate limiting (3/hr per `machineId:processName`) and emails users who have `processAlerts !== false`.
+
 ### Relaunch Limits
 - Per-process config: `relaunch_attempts` (default: 3, 0 = unlimited)
 - Tracked in `self.relaunch_attempts[process_name]`
@@ -165,6 +181,7 @@ FirebaseClient
 - `register_command_callback(fn)` — service registers command handler
 - `register_config_update_callback(fn)` — service registers config handler
 - `log_event(action, level, details)` — log events for web dashboard
+- `send_process_alert(process_name, error_message, event_type)` — fire-and-forget email alert via `/api/agent/alert` (daemon thread, non-blocking)
 - `is_connected()` — check connection state
 
 ### ConnectionManager (`connection_manager.py`)

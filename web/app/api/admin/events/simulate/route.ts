@@ -188,6 +188,7 @@ export const POST = withRateLimit(
         success: true,
         event,
         emailSent: true,
+        recipients,
         webhooksFired: 0, // Will be updated when WS2 adds webhooks
       });
     } catch (error: any) {

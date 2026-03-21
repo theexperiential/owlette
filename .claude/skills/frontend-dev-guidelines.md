@@ -74,6 +74,7 @@ Dark mode via `next-themes` (configured in layout). Use CSS variables from `glob
 3. **Site-scoped data** — almost all Firestore paths are `sites/{siteId}/...`. Always scope queries to the user's current site.
 4. **Deployment targets are machine arrays** — deployments and project distributions target `machineId[]`, not sites.
 5. **Process status comes from agent heartbeats** — don't try to query process status directly. It's pushed by the agent every 10s via Firestore.
+6. **User preferences include alert toggles** — `healthAlerts` (machine offline) and `processAlerts` (process crash) are separate booleans in `UserPreferences`, both default to `true`. They're managed in `AccountSettingsDialog.tsx` and read/written via `AuthContext.updateUserPreferences()`. The server-side alert endpoints filter recipients by these preferences.
 
 ---
 

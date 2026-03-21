@@ -1,7 +1,7 @@
 # Backend Development Guidelines
 
 **Version**: 2.0.0
-**Last Updated**: 2026-03-12
+**Last Updated**: 2026-03-21
 **Applies To**: Owlette Python Agent (`agent/` directory)
 
 ---
@@ -31,7 +31,7 @@
 ### Firebase Chain
 | Module | Purpose |
 |--------|---------|
-| `firebase_client.py` | Cloud communication — presence/heartbeat (30s), metrics (60s), config sync, command listener |
+| `firebase_client.py` | Cloud communication — presence/heartbeat (30s), metrics (60s), config sync, command listener, process crash alerts |
 | `firestore_rest_client.py` | Low-level Firestore REST API wrapper (GET/POST/PATCH/DELETE) |
 | `connection_manager.py` | State machine (6 states), circuit breaker, exponential backoff, thread supervision watchdog |
 | `auth_manager.py` | OAuth two-token system — access token (1h) + refresh token (30d), auto-refresh 5min before expiry |
@@ -94,6 +94,15 @@ Existing commands: `restart_process`, `kill_process`, `toggle_autolaunch`, `upda
 2. Use atomic writes: write to `.tmp` file → `os.replace()` to final path
 3. **NEVER modify the `firebase` section** during remote config updates
 4. Hash-based dedup prevents listener feedback loops
+
+### Process Crash Alerts
+
+When a process crashes or fails to start, the agent sends an email alert via the web API:
+
+1. After each `log_event('process_crash', ...)` or `log_event('process_start_failed', ...)` call in `owlette_service.py`, a call to `firebase_client.send_process_alert()` follows
+2. `send_process_alert(process_name, error_message, event_type)` spawns a daemon thread that POSTs to `/api/agent/alert` with `eventType`, `processName`, and `errorMessage`
+3. The web API rate-limits per `machineId:processName` (3/hr) and routes to users with `processAlerts !== false`
+4. All alert sending is non-blocking — failures are logged and silently ignored
 
 ### Error Handling
 
