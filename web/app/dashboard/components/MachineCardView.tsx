@@ -23,7 +23,7 @@ import { Switch } from '@/components/ui/switch';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass, getUsageRingClass } from '@/lib/usageColorUtils';
@@ -45,6 +45,10 @@ interface MachineCardViewProps {
   onToggleAutolaunch: (machineId: string, processId: string, newValue: boolean, processName: string, exePath: string) => void;
   onRemoveMachine: (machineId: string, machineName: string, isOnline: boolean) => void;
   onMetricClick?: (machineId: string, metricType: MetricType) => void;
+  onReboot?: (machineId: string) => Promise<void>;
+  onShutdown?: (machineId: string) => Promise<void>;
+  onCancelReboot?: (machineId: string) => Promise<void>;
+  onDismissRebootPending?: (machineId: string, processName: string) => Promise<void>;
 }
 
 /**
@@ -58,6 +62,7 @@ interface MachineCardProps {
   siteTimezone: string;
   siteTimeFormat: '12h' | '24h';
   userPreferences: { temperatureUnit: 'C' | 'F' };
+  isAdmin: boolean;
   onToggleExpanded: () => void;
   onEditProcess: (process: Process) => void;
   onCreateProcess: () => void;
@@ -65,6 +70,10 @@ interface MachineCardProps {
   onToggleAutolaunch: (processId: string, newValue: boolean, processName: string, exePath: string) => void;
   onRemoveMachine: () => void;
   onMetricClick?: (metricType: MetricType) => void;
+  onReboot?: () => Promise<void>;
+  onShutdown?: () => Promise<void>;
+  onCancelReboot?: () => Promise<void>;
+  onDismissRebootPending?: (processName: string) => Promise<void>;
 }
 
 function MachineCard({
@@ -74,6 +83,7 @@ function MachineCard({
   siteTimezone,
   siteTimeFormat,
   userPreferences,
+  isAdmin,
   onToggleExpanded,
   onEditProcess,
   onCreateProcess,
@@ -81,6 +91,10 @@ function MachineCard({
   onToggleAutolaunch,
   onRemoveMachine,
   onMetricClick,
+  onReboot,
+  onShutdown,
+  onCancelReboot,
+  onDismissRebootPending,
 }: MachineCardProps) {
   // Fetch sparkline data for this machine
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
@@ -94,9 +108,31 @@ function MachineCard({
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg font-semibold text-white select-text">{machine.machineId}</CardTitle>
           <div className="flex items-center gap-2">
-            <Badge className={`select-none text-xs ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
-              {machine.online ? 'Online' : 'Offline'}
+            <Badge className={`select-none text-xs ${
+              machine.rebooting ? 'bg-amber-600 hover:bg-amber-700' :
+              machine.shuttingDown ? 'bg-amber-600 hover:bg-amber-700' :
+              machine.online ? 'bg-green-600 hover:bg-green-700' :
+              'bg-red-600 hover:bg-red-700'
+            }`}>
+              {machine.rebooting ? 'rebooting...' :
+               machine.shuttingDown ? 'shutting down...' :
+               machine.online ? 'online' : 'offline'}
             </Badge>
+            {(machine.rebooting || machine.shuttingDown) && isAdmin && onCancelReboot && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-950/30 cursor-pointer"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  try {
+                    await onCancelReboot();
+                  } catch {}
+                }}
+              >
+                cancel
+              </Button>
+            )}
             <span
               className={`text-xs flex items-center gap-1 select-none cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
               title={heartbeat.tooltip}
@@ -109,11 +145,60 @@ function MachineCard({
               machineName={machine.machineId}
               siteId={currentSiteId}
               isOnline={machine.online}
+              isAdmin={isAdmin}
               onRemoveMachine={onRemoveMachine}
+              onReboot={onReboot}
+              onShutdown={onShutdown}
             />
           </div>
         </div>
       </CardHeader>
+      {/* Reboot Pending Banner */}
+      {machine.rebootPending?.active && (
+        <div className="mx-4 mb-2 p-3 rounded-lg border border-amber-600/30 bg-amber-950/20">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0" />
+              <span className="text-sm text-amber-300 truncate">
+                reboot pending: {machine.rebootPending.reason || 'process crashed'}
+              </span>
+            </div>
+            {isAdmin && (
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs bg-amber-600 hover:bg-amber-700 text-white cursor-pointer"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (onReboot) {
+                      try { await onReboot(); } catch {}
+                    }
+                  }}
+                >
+                  <RotateCcw className="h-3 w-3 mr-1" />
+                  approve
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs text-muted-foreground hover:text-white hover:bg-accent cursor-pointer"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (onDismissRebootPending && machine.rebootPending?.processName) {
+                      try { await onDismissRebootPending(machine.rebootPending.processName); } catch {}
+                    }
+                  }}
+                >
+                  <X className="h-3 w-3 mr-1" />
+                  dismiss
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {machine.metrics && (
         <CardContent className="space-y-1.5 select-none pt-0 pb-4">
           {/* CPU Metric */}
@@ -246,7 +331,7 @@ function MachineCard({
             <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer">
               <div className="flex items-center justify-between w-full select-none">
                 <span className="text-muted-foreground text-sm">
-                  {machine.processes.length} Process{machine.processes.length > 1 ? 'es' : ''}
+                  {machine.processes.length} process{machine.processes.length > 1 ? 'es' : ''}
                 </span>
                 {isExpanded ? <ChevronUp className="h-4 w-4 text-foreground/70" /> : <ChevronDown className="h-4 w-4 text-foreground/70" />}
               </div>
@@ -279,13 +364,13 @@ function MachineCard({
                         <div className="flex-1 min-w-0 flex items-center gap-2">
                           <span className="text-sm md:text-base text-white font-medium truncate select-text">{process.name}</span>
                           <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted hover:bg-muted' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-600 text-slate-200' : process.status === 'LAUNCH_FAILED' || process.status === 'STOPPED' || process.status === 'KILLED' ? 'bg-red-600 hover:bg-red-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
-                            {!machine.online ? 'UNKNOWN' : process.status === 'LAUNCH_FAILED' ? 'FAILED' : process.status}
+                            {(!machine.online ? 'unknown' : process.status === 'LAUNCH_FAILED' ? 'failed' : process.status).toLowerCase()}
                           </Badge>
                         </div>
                         <div className="flex items-center gap-2 md:gap-3 ml-2 md:ml-4 flex-shrink-0">
                           <div className="flex items-center gap-2">
                             <Label htmlFor={`autolaunch-${machine.machineId}-${process.id}`} className="text-xs text-muted-foreground cursor-pointer select-none hidden md:inline">
-                              Autolaunch
+                              autolaunch
                             </Label>
                             <Switch
                               id={`autolaunch-${machine.machineId}-${process.id}`}
@@ -299,7 +384,7 @@ function MachineCard({
                             size="sm"
                             onClick={() => onEditProcess(process)}
                             className="bg-card border-border text-foreground hover:bg-muted hover:border-border hover:text-white cursor-pointer p-2"
-                            title="Edit"
+                            title="edit"
                           >
                             <Pencil className="h-3 w-3" />
                           </Button>
@@ -309,7 +394,7 @@ function MachineCard({
                             onClick={() => onKillProcess(process.id, process.name)}
                             className="bg-card border-border text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 p-2"
                             disabled={process.status !== 'RUNNING'}
-                            title="Kill"
+                            title="kill"
                           >
                             <Square className="h-3 w-3" />
                           </Button>
@@ -318,7 +403,7 @@ function MachineCard({
                     </div>
                   ))}
                 </div>
-                {/* New Process Button */}
+                {/* new process Button */}
                 <div className="flex justify-center pt-3 ml-3">
                   <Button
                     variant="outline"
@@ -327,7 +412,7 @@ function MachineCard({
                     className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/15 hover:border-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
                   >
                     <Plus className="h-3 w-3 mr-1" />
-                    New Process
+                    new process
                   </Button>
                 </div>
             </div>
@@ -335,7 +420,7 @@ function MachineCard({
         </Collapsible>
       )}
 
-      {/* New Process button for machines with no processes */}
+      {/* new process button for machines with no processes */}
       {(!machine.processes || machine.processes.length === 0) && (
         <div className="border-t border-border p-4">
           <Button
@@ -345,7 +430,7 @@ function MachineCard({
             className="w-full bg-card border-border text-accent-cyan hover:bg-accent-cyan/15 hover:border-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
           >
             <Plus className="h-3 w-3 mr-1" />
-            New Process
+            new process
           </Button>
         </div>
       )}
@@ -366,8 +451,12 @@ export function MachineCardView({
   onToggleAutolaunch,
   onRemoveMachine,
   onMetricClick,
+  onReboot,
+  onShutdown,
+  onCancelReboot,
+  onDismissRebootPending,
 }: MachineCardViewProps) {
-  const { userPreferences } = useAuth();
+  const { userPreferences, isAdmin } = useAuth();
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -380,6 +469,7 @@ export function MachineCardView({
           siteTimezone={siteTimezone}
           siteTimeFormat={siteTimeFormat}
           userPreferences={userPreferences}
+          isAdmin={isAdmin}
           onToggleExpanded={() => onToggleExpanded(machine.machineId)}
           onEditProcess={(process) => onEditProcess(machine.machineId, process)}
           onCreateProcess={() => onCreateProcess(machine.machineId)}
@@ -389,6 +479,10 @@ export function MachineCardView({
           }
           onRemoveMachine={() => onRemoveMachine(machine.machineId, machine.machineId, machine.online)}
           onMetricClick={onMetricClick ? (metricType) => onMetricClick(machine.machineId, metricType) : undefined}
+          onReboot={onReboot ? () => onReboot(machine.machineId) : undefined}
+          onShutdown={onShutdown ? () => onShutdown(machine.machineId) : undefined}
+          onCancelReboot={onCancelReboot ? () => onCancelReboot(machine.machineId) : undefined}
+          onDismissRebootPending={onDismissRebootPending ? (processName) => onDismissRebootPending(machine.machineId, processName) : undefined}
         />
       ))}
     </div>

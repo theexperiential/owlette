@@ -31,6 +31,14 @@ export interface Machine {
   lastHeartbeat: number;
   online: boolean;
   agent_version?: string;  // Agent version for update detection (e.g., "2.0.0")
+  rebooting?: boolean;
+  shuttingDown?: boolean;
+  rebootPending?: {
+    active: boolean;
+    processName: string | null;
+    reason: string | null;
+    timestamp: number | null;
+  };
   metrics?: {
     cpu: { name?: string; percent: number; unit: string; temperature?: number };
     memory: { percent: number; total_gb: number; used_gb: number; unit: string };
@@ -727,5 +735,38 @@ export function useMachines(siteId: string) {
     }
   };
 
-  return { machines, loading, error, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess };
+  const sendMachineCommand = async (machineId: string, commandType: string, extraData: Record<string, any> = {}) => {
+    if (!db || !siteId) throw new Error('Firebase not configured');
+
+    const commandId = `${commandType}_${Date.now()}`;
+    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
+    const commandData = {
+      type: commandType,
+      timestamp: Date.now(),
+      status: 'pending',
+      ...extraData,
+    };
+
+    await setDoc(commandRef, {
+      [commandId]: commandData
+    }, { merge: true });
+  };
+
+  const rebootMachine = async (machineId: string) => {
+    await sendMachineCommand(machineId, 'reboot_machine');
+  };
+
+  const shutdownMachine = async (machineId: string) => {
+    await sendMachineCommand(machineId, 'shutdown_machine');
+  };
+
+  const cancelReboot = async (machineId: string) => {
+    await sendMachineCommand(machineId, 'cancel_reboot');
+  };
+
+  const dismissRebootPending = async (machineId: string, processName: string) => {
+    await sendMachineCommand(machineId, 'dismiss_reboot_pending', { process_name: processName });
+  };
+
+  return { machines, loading, error, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending };
 }

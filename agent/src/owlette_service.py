@@ -1104,7 +1104,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     )
                 # If this is more than the maximum number of attempts allowed
                 if attempts > relaunches_to_attempt and relaunches_to_attempt != 0:
-                    # If a restart prompt isn't already running, open one
+                    # Write reboot_pending to Firestore so dashboard can approve/dismiss remotely
+                    if self.firebase_client and self.firebase_client.is_connected():
+                        self.firebase_client.set_reboot_pending(
+                            process_name=process_name,
+                            reason=f'{process_name} crashed {relaunches_to_attempt} times',
+                            timestamp=time.time()
+                        )
+
+                    # If a restart prompt isn't already running, open one (local fallback)
                     started_restart_prompt = self.launch_python_script_as_user(
                         shared_utils.get_path('prompt_restart.py'),
                         None
@@ -2378,6 +2386,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 import json as _json
                 return _json.dumps(result)
 
+            elif cmd_type == 'reboot_machine':
+                return self._handle_reboot_machine(cmd_data)
+
+            elif cmd_type == 'shutdown_machine':
+                return self._handle_shutdown_machine(cmd_data)
+
+            elif cmd_type == 'cancel_reboot':
+                return self._handle_cancel_reboot(cmd_data)
+
+            elif cmd_type == 'dismiss_reboot_pending':
+                return self._handle_dismiss_reboot_pending(cmd_data)
+
             else:
                 logging.warning(f"Unknown command type: {cmd_type}")
                 return f"Unknown command type: {cmd_type}"
@@ -2386,6 +2406,103 @@ class OwletteService(win32serviceutil.ServiceFramework):
             error_msg = f"Error executing command {cmd_type}: {e}"
             logging.error(error_msg)
             return error_msg
+
+    def _handle_reboot_machine(self, command_data):
+        """Handle remote reboot command."""
+        try:
+            self.firebase_client.log_event(
+                action='command_executed',
+                level='warning',
+                details='Remote reboot initiated from dashboard'
+            )
+
+            # Set rebooting flag so dashboard shows "Rebooting..."
+            self.firebase_client.set_machine_flag('rebooting', True)
+
+            # Schedule reboot with 30-second delay (gives agent time to complete Firestore writes)
+            import subprocess
+            subprocess.run(
+                ['shutdown', '/r', '/t', '30', '/c', 'Owlette remote reboot requested'],
+                check=True
+            )
+
+            return "Reboot scheduled in 30 seconds"
+        except Exception as e:
+            return f"Reboot failed: {str(e)}"
+
+    def _handle_shutdown_machine(self, command_data):
+        """Handle remote shutdown command."""
+        try:
+            self.firebase_client.log_event(
+                action='command_executed',
+                level='warning',
+                details='Remote shutdown initiated from dashboard'
+            )
+
+            self.firebase_client.set_machine_flag('shuttingDown', True)
+
+            import subprocess
+            subprocess.run(
+                ['shutdown', '/s', '/t', '30', '/c', 'Owlette remote shutdown requested'],
+                check=True
+            )
+
+            return "Shutdown scheduled in 30 seconds"
+        except Exception as e:
+            return f"Shutdown failed: {str(e)}"
+
+    def _handle_cancel_reboot(self, command_data):
+        """Cancel a pending reboot/shutdown."""
+        try:
+            import subprocess
+            subprocess.run(['shutdown', '/a'], check=True)
+
+            self.firebase_client.set_machine_flag('rebooting', False)
+            self.firebase_client.set_machine_flag('shuttingDown', False)
+            self.firebase_client.log_event(
+                action='command_executed',
+                level='info',
+                details='Pending reboot/shutdown cancelled from dashboard'
+            )
+
+            return "Reboot/shutdown cancelled"
+        except subprocess.CalledProcessError:
+            return "No pending reboot to cancel"
+
+    def _handle_dismiss_reboot_pending(self, command_data):
+        """Dismiss a reboot pending prompt and reset relaunch counters."""
+        try:
+            process_name = command_data.get('process_name')
+
+            # Clear the reboot pending flag
+            self.firebase_client.clear_reboot_pending()
+
+            # Reset relaunch counter for the affected process so it gets fresh attempts
+            if process_name and process_name in self.relaunch_attempts:
+                del self.relaunch_attempts[process_name]
+                logging.info(f"Reset relaunch counter for {process_name}")
+
+            # Kill the local restart prompt if it's still running
+            if shared_utils.is_script_running('prompt_restart.py'):
+                try:
+                    import subprocess
+                    subprocess.run(
+                        ['taskkill', '/F', '/IM', 'pythonw.exe', '/FI', 'WINDOWTITLE eq *restart*'],
+                        capture_output=True
+                    )
+                except Exception:
+                    pass
+
+            self.firebase_client.log_event(
+                action='command_executed',
+                level='info',
+                process_name=process_name,
+                details='Reboot dismissed by admin from dashboard'
+            )
+
+            return f"Reboot pending dismissed, relaunch counters reset for {process_name}"
+        except Exception as e:
+            return f"Failed to dismiss reboot pending: {str(e)}"
 
     def _check_update_status(self):
         """
@@ -2602,6 +2719,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Recover processes from previous session (if any are still running)
         logging.debug("Checking for processes from previous session...")
         self.recover_running_processes()
+
+        # Clear stale reboot/shutdown flags from previous session (e.g., after a completed reboot)
+        if self.firebase_client and self.firebase_client.is_connected():
+            try:
+                self.firebase_client.set_machine_flag('rebooting', False)
+                self.firebase_client.set_machine_flag('shuttingDown', False)
+                self.firebase_client.clear_reboot_pending()
+                logging.info("Cleared stale reboot/shutdown flags on startup")
+            except Exception as e:
+                logging.warning(f"Failed to clear stale flags on startup: {e}")
 
         # The heart of Owlette
         cleanup_counter = 0  # Counter for periodic cleanup

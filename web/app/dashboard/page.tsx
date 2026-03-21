@@ -76,7 +76,7 @@ export default function DashboardPage() {
     autolaunch: false,
   });
 
-  const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess } = useMachines(currentSiteId);
+  const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending } = useMachines(currentSiteId);
   const { checkMachineHasActiveDeployment } = useDeployments(currentSiteId);
   const { removeMachineFromSite, removing: isRemovingMachine } = useMachineOperations(currentSiteId);
 
@@ -287,7 +287,7 @@ export default function DashboardPage() {
 
     // Validate exe_path before enabling autolaunch
     if (newValue && (!exePath || exePath.trim() === '')) {
-      toast.error(`Cannot enable autolaunch for "${processName}": Executable path is not set. Please edit the process and set a valid executable path.`);
+      toast.error(`cannot enable autolaunch for "${processName}": executable path is not set. please edit the process and set a valid executable path.`);
       return;
     }
 
@@ -352,12 +352,12 @@ export default function DashboardPage() {
   const handleSaveProcess = async () => {
     // Validation
     if (!editProcessForm.name || !editProcessForm.name.trim()) {
-      toast.error('Process name is required');
+      toast.error('process name is required');
       return;
     }
 
     if (!editProcessForm.exe_path || !editProcessForm.exe_path.trim()) {
-      toast.error('Executable path is required');
+      toast.error('executable path is required');
       return;
     }
 
@@ -477,7 +477,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-muted-foreground">Loading...</p>
+        <p className="text-muted-foreground">loading...</p>
       </div>
     );
   }
@@ -497,7 +497,7 @@ export default function DashboardPage() {
     <div className="min-h-screen pb-24">
       {/* Header */}
       <PageHeader
-        currentPage="Dashboard"
+        currentPage="dashboard"
         sites={sites}
         currentSiteId={currentSiteId}
         onSiteChange={handleSiteChange}
@@ -546,7 +546,7 @@ export default function DashboardPage() {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span className="cursor-help">
-                      {randomWelcome.text}{user.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}!
+                      {randomWelcome.text.toLowerCase()}{user.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}!
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>
@@ -557,7 +557,7 @@ export default function DashboardPage() {
               </TooltipProvider>
             </h2>
             <p className="text-sm md:text-base text-muted-foreground">
-              {randomJoke}
+              {randomJoke.toLowerCase()}
             </p>
           </div>
 
@@ -573,7 +573,7 @@ export default function DashboardPage() {
                   <span className={`text-xl font-bold ${onlineMachines > 0 ? 'text-emerald-400' : 'text-foreground'}`}>{onlineMachines}</span>
                   <span className="text-xs text-muted-foreground">/ {machines.length}</span>
                 </div>
-                <p className="text-[11px] text-muted-foreground leading-tight">Online</p>
+                <p className="text-[11px] text-muted-foreground leading-tight">online</p>
               </div>
             </div>
 
@@ -590,7 +590,7 @@ export default function DashboardPage() {
                   <span className="text-xl font-bold text-foreground">{totalProcesses}</span>
                   <span className="text-xs text-muted-foreground">managed</span>
                 </div>
-                <p className="text-[11px] text-muted-foreground leading-tight">Processes</p>
+                <p className="text-[11px] text-muted-foreground leading-tight">processes</p>
               </div>
             </div>
           </div>
@@ -613,7 +613,7 @@ export default function DashboardPage() {
         {machines.length > 0 ? (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg md:text-xl font-bold text-foreground">Machines</h3>
+              <h3 className="text-lg md:text-xl font-bold text-foreground">machines</h3>
 
               {/* View Toggle - Hidden on mobile, always show card view */}
               <div className="hidden md:flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
@@ -651,6 +651,10 @@ export default function DashboardPage() {
                 onToggleAutolaunch={handleToggleAutolaunch}
                 onRemoveMachine={openRemoveMachineDialog}
                 onMetricClick={handleMetricClick}
+                onReboot={rebootMachine}
+                onShutdown={shutdownMachine}
+                onCancelReboot={cancelReboot}
+                onDismissRebootPending={dismissRebootPending}
               />
             </div>
 
@@ -689,16 +693,16 @@ export default function DashboardPage() {
         ) : canShowGettingStarted ? (
           <Card className="border-border bg-card animate-in fade-in duration-500">
             <CardHeader>
-              <CardTitle className="text-foreground">Getting Started</CardTitle>
+              <CardTitle className="text-foreground">getting started</CardTitle>
               <CardDescription className="text-muted-foreground">
-                Connect your first machine to start managing processes
+                connect your first machine to start managing processes
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Step 1: Create Your First Site (only shown when no sites exist) */}
               {sites.length === 0 && (
                 <div className="rounded-lg border-2 border-accent-cyan bg-accent-cyan/10 p-6">
-                  <h3 className="text-lg font-bold text-foreground mb-2">Step 1: Create Your First Site</h3>
+                  <h3 className="text-lg font-bold text-foreground mb-2">step 1: create your first site</h3>
                   <p className="text-sm text-foreground mb-4">
                     Sites organize your machines by location or purpose (e.g., &quot;NYC Office&quot;, &quot;Home Studio&quot;, &quot;Production Floor&quot;).
                     Create your first site to get started!
@@ -708,7 +712,7 @@ export default function DashboardPage() {
                     className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 font-semibold px-6 py-3 cursor-pointer"
                   >
                     <Plus className="h-4 w-4 mr-2" />
-                    Create Your First Site
+                    create your first site
                   </Button>
                 </div>
               )}
@@ -717,28 +721,28 @@ export default function DashboardPage() {
               {sites.length > 0 && (
                 <>
                   <div className="rounded-lg border border-border bg-background p-4">
-                    <h3 className="font-semibold text-foreground mb-3">Step 1: Download Owlette Agent</h3>
+                    <h3 className="font-semibold text-foreground mb-3">step 1: download owlette agent</h3>
                 <p className="text-sm text-muted-foreground mb-4">
-                  Download and run the installer <strong className="text-foreground">on the machine you want to add</strong> (not necessarily this one).
-                  Use the copy link option if connecting via remote desktop tools like Parsec, TeamViewer, or RDP.
+                  download and run the installer <strong className="text-foreground">on the machine you want to add</strong> (not necessarily this one).
+                  use the copy link option if connecting via remote desktop tools like Parsec, TeamViewer, or RDP.
                 </p>
                 <div className="flex gap-2">
                   <Button
                     onClick={() => {
                       if (!downloadUrl) {
-                        toast.error('Download Unavailable', {
-                          description: 'Installer download URL is not available.',
+                        toast.error('download unavailable', {
+                          description: 'installer download URL is not available.',
                         });
                         return;
                       }
                       try {
                         window.open(downloadUrl, '_blank');
-                        toast.success('Download Started', {
-                          description: `Downloading Owlette v${version}`,
+                        toast.success('download started', {
+                          description: `downloading Owlette v${version}`,
                         });
                       } catch (err) {
-                        toast.error('Download Failed', {
-                          description: 'Failed to start download. Please try again.',
+                        toast.error('download failed', {
+                          description: 'failed to start download. please try again.',
                         });
                       }
                     }}
@@ -746,24 +750,24 @@ export default function DashboardPage() {
                     className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                   >
                     <Download className="h-4 w-4 mr-2" />
-                    <span>Download {version && `v${version}`}</span>
+                    <span>download {version && `v${version}`}</span>
                   </Button>
                   <Button
                     onClick={() => {
                       if (!downloadUrl) {
-                        toast.error('Copy Failed', {
-                          description: 'Download URL is not available.',
+                        toast.error('copy failed', {
+                          description: 'download URL is not available.',
                         });
                         return;
                       }
                       try {
                         navigator.clipboard.writeText(downloadUrl);
-                        toast.success('Link Copied', {
-                          description: 'Download link copied to clipboard',
+                        toast.success('link copied', {
+                          description: 'download link copied to clipboard',
                         });
                       } catch (err) {
-                        toast.error('Copy Failed', {
-                          description: 'Failed to copy link. Please try again.',
+                        toast.error('copy failed', {
+                          description: 'failed to copy link. please try again.',
                         });
                       }
                     }}
@@ -771,26 +775,26 @@ export default function DashboardPage() {
                     className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                   >
                     <Copy className="h-4 w-4 mr-2" />
-                    <span>Copy Link</span>
+                    <span>copy link</span>
                   </Button>
                 </div>
               </div>
               <div className="rounded-lg border border-border bg-background p-4">
-                <h3 className="font-semibold text-foreground">Step 2: Run the Installer</h3>
+                <h3 className="font-semibold text-foreground">step 2: run the installer</h3>
                 <p className="text-sm text-muted-foreground">
-                  On that machine, double-click the installer - it will automatically open a browser for authentication
+                  on that machine, double-click the installer - it will automatically open a browser for authentication
                 </p>
               </div>
               <div className="rounded-lg border border-border bg-background p-4">
-                <h3 className="font-semibold text-foreground">Step 3: Authorize Agent</h3>
+                <h3 className="font-semibold text-foreground">step 3: authorize agent</h3>
                 <p className="text-sm text-muted-foreground">
-                  Log in and authorize the agent for site <span className="font-mono text-accent-cyan">{currentSiteId}</span>
+                  log in and authorize the agent for site <span className="font-mono text-accent-cyan">{currentSiteId}</span>
                 </p>
               </div>
               <div className="rounded-lg border border-border bg-background p-4">
-                <h3 className="font-semibold text-foreground">Step 4: Done!</h3>
+                <h3 className="font-semibold text-foreground">step 4: done!</h3>
                 <p className="text-sm text-muted-foreground">
-                  The installer completes automatically and that machine will appear above within seconds
+                  the installer completes automatically and that machine will appear above within seconds
                 </p>
               </div>
                 </>
@@ -805,18 +809,19 @@ export default function DashboardPage() {
         <DialogContent className="border-border bg-muted text-foreground max-w-3xl">
           <DialogHeader>
             <DialogTitle className="text-foreground">
-              {processDialogMode === 'create' ? 'New Process' : 'Edit Process'}
+              {processDialogMode === 'create' ? 'new process' : 'edit process'}
+
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
               {processDialogMode === 'create'
-                ? 'Create a new process configuration'
-                : 'Update process configuration'}
+                ? 'create a new process configuration'
+                : 'update process configuration'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             {/* Name */}
             <div className="space-y-2">
-              <Label htmlFor="edit-name" className="text-foreground">Name</Label>
+              <Label htmlFor="edit-name" className="text-foreground">name</Label>
               <Input
                 id="edit-name"
                 value={editProcessForm.name}
@@ -827,7 +832,7 @@ export default function DashboardPage() {
 
             {/* Executable Path */}
             <div className="space-y-2">
-              <Label htmlFor="edit-exe-path" className="text-foreground">Executable Path</Label>
+              <Label htmlFor="edit-exe-path" className="text-foreground">executable path</Label>
               <Input
                 id="edit-exe-path"
                 value={editProcessForm.exe_path}
@@ -839,7 +844,7 @@ export default function DashboardPage() {
 
             {/* File Path / Cmd Args */}
             <div className="space-y-2">
-              <Label htmlFor="edit-file-path" className="text-foreground">File Path / Command Arguments</Label>
+              <Label htmlFor="edit-file-path" className="text-foreground">file path / command arguments</Label>
               <Input
                 id="edit-file-path"
                 value={editProcessForm.file_path}
@@ -851,7 +856,7 @@ export default function DashboardPage() {
 
             {/* Working Directory */}
             <div className="space-y-2">
-              <Label htmlFor="edit-cwd" className="text-foreground">Working Directory</Label>
+              <Label htmlFor="edit-cwd" className="text-foreground">working directory</Label>
               <Input
                 id="edit-cwd"
                 value={editProcessForm.cwd}
@@ -864,7 +869,7 @@ export default function DashboardPage() {
             <div className="grid grid-cols-3 gap-4">
               {/* Priority */}
               <div className="space-y-2">
-                <Label htmlFor="edit-priority" className="text-foreground">Task Priority</Label>
+                <Label htmlFor="edit-priority" className="text-foreground">task priority</Label>
                 <Select
                   value={editProcessForm.priority}
                   onValueChange={(value) => setEditProcessForm({ ...editProcessForm, priority: value })}
@@ -883,7 +888,7 @@ export default function DashboardPage() {
 
               {/* Visibility */}
               <div className="space-y-2">
-                <Label htmlFor="edit-visibility" className="text-foreground">Window Visibility</Label>
+                <Label htmlFor="edit-visibility" className="text-foreground">window visibility</Label>
                 <Select
                   value={editProcessForm.visibility}
                   onValueChange={(value) => setEditProcessForm({ ...editProcessForm, visibility: value })}
@@ -905,7 +910,7 @@ export default function DashboardPage() {
             <div className="grid grid-cols-3 gap-4">
               {/* Time Delay */}
               <div className="space-y-2">
-                <Label htmlFor="edit-time-delay" className="text-foreground">Launch Delay (sec)</Label>
+                <Label htmlFor="edit-time-delay" className="text-foreground">launch delay (sec)</Label>
                 <Input
                   id="edit-time-delay"
                   type="number"
@@ -917,7 +922,7 @@ export default function DashboardPage() {
 
               {/* Time to Init */}
               <div className="space-y-2">
-                <Label htmlFor="edit-time-init" className="text-foreground">Init Timeout (sec)</Label>
+                <Label htmlFor="edit-time-init" className="text-foreground">init timeout (sec)</Label>
                 <Input
                   id="edit-time-init"
                   type="number"
@@ -929,7 +934,7 @@ export default function DashboardPage() {
 
               {/* Relaunch Attempts */}
               <div className="space-y-2">
-                <Label htmlFor="edit-relaunch" className="text-foreground">Relaunch Attempts</Label>
+                <Label htmlFor="edit-relaunch" className="text-foreground">relaunch attempts</Label>
                 <Input
                   id="edit-relaunch"
                   type="number"
@@ -948,7 +953,7 @@ export default function DashboardPage() {
                 onCheckedChange={(checked) => setEditProcessForm({ ...editProcessForm, autolaunch: checked })}
               />
               <Label htmlFor="edit-autolaunch" className="text-foreground cursor-pointer">
-                Enable Autolaunch
+                enable autolaunch
               </Label>
             </div>
           </div>
@@ -968,13 +973,13 @@ export default function DashboardPage() {
                 onClick={() => setProcessDialogOpen(false)}
                 className="border-border bg-muted text-foreground hover:bg-input hover:text-foreground cursor-pointer"
               >
-                Cancel
+                cancel
               </Button>
               <Button
                 onClick={handleSaveProcess}
                 className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
               >
-                {processDialogMode === 'create' ? 'Create Process' : 'Save Changes'}
+                {processDialogMode === 'create' ? 'create process' : 'save changes'}
               </Button>
             </div>
           </DialogFooter>
@@ -985,9 +990,9 @@ export default function DashboardPage() {
       <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <DialogContent className="border-border bg-muted text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-foreground">Delete Process</DialogTitle>
+            <DialogTitle className="text-foreground">delete process</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              Are you sure you want to permanently delete "{editProcessForm.name}"? This action cannot be undone.
+              are you sure you want to permanently delete "{editProcessForm.name}"? this action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -996,13 +1001,13 @@ export default function DashboardPage() {
               onClick={() => setDeleteConfirmOpen(false)}
               className="border-border bg-muted text-foreground hover:bg-input hover:text-foreground cursor-pointer"
             >
-              Cancel
+              cancel
             </Button>
             <Button
               onClick={handleDeleteProcess}
               className="bg-red-600 hover:bg-red-700 text-foreground cursor-pointer"
             >
-              Delete Process
+              delete process
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1032,9 +1037,9 @@ export default function DashboardPage() {
       <Dialog open={killConfirmOpen} onOpenChange={setKillConfirmOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Kill Process</DialogTitle>
+            <DialogTitle>kill process</DialogTitle>
             <DialogDescription>
-              Are you sure you want to kill <span className="font-semibold text-foreground">{killTarget?.processName}</span>? This will immediately terminate the process.
+              are you sure you want to kill <span className="font-semibold text-foreground">{killTarget?.processName}</span>? this will immediately terminate the process.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1042,14 +1047,14 @@ export default function DashboardPage() {
               variant="outline"
               onClick={() => setKillConfirmOpen(false)}
             >
-              Cancel
+              cancel
             </Button>
             <Button
               variant="destructive"
               onClick={confirmKillProcess}
             >
               <Square className="h-4 w-4 mr-2" />
-              Kill Process
+              kill process
             </Button>
           </DialogFooter>
         </DialogContent>
