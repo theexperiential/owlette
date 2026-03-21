@@ -22,6 +22,10 @@ firestore/
 │       ├── status/                # Agent metrics every 60s
 │       │   ├── cpu, memory, disk, gpu: number
 │       │   └── processes: map
+│       ├── lastScreenshot/           # Most recent screenshot (overwritten each capture)
+│       │   ├── url: string           # Firebase Storage public URL (with cache-buster)
+│       │   ├── timestamp: number     # Capture time (Date.now())
+│       │   └── sizeKB: number        # Image size in KB
 │       └── commands/
 │           ├── pending/{commandId}   # Web → Agent
 │           └── completed/{commandId} # Agent → Web (result + completedAt)

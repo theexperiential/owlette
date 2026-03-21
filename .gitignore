@@ -36,6 +36,7 @@ agent/logs/
 agent/tmp/
 
 # Build artifacts
+site/
 build/
 dist/
 installer/

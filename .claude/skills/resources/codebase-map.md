@@ -11,9 +11,9 @@ Quick reference of everything that exists. Check here before creating new files 
 | Route | File | Purpose | Auth |
 |-------|------|---------|------|
 | `/` | `app/page.tsx` | Landing page | No |
-| `/login` | `app/login/page.tsx` | Email/password + Google OAuth | No |
+| `/login` | `app/login/page.tsx` | Email/password + Google OAuth + Passkey | No |
 | `/register` | `app/register/page.tsx` | Account creation + 2FA prompt | No |
-| `/setup-2fa` | `app/setup-2fa/page.tsx` | TOTP authenticator setup (QR) | Yes |
+| `/setup-2fa` | `app/setup-2fa/page.tsx` | TOTP authenticator setup (QR) + optional passkey registration | Yes |
 | `/verify-2fa` | `app/verify-2fa/page.tsx` | TOTP code verification | Partial |
 | `/setup` | `app/setup/page.tsx` | Admin first-time setup | Admin |
 | `/dashboard` | `app/dashboard/page.tsx` | Main dashboard (machines, processes) | Yes |
@@ -42,10 +42,17 @@ Quick reference of everything that exists. Check here before creating new files 
 | `/api/mfa/setup` | POST | Generate TOTP secret + QR code | Session | No |
 | `/api/mfa/verify-setup` | POST | Confirm TOTP setup with code | Session | No |
 | `/api/mfa/verify-login` | POST | Verify TOTP during login | Partial | No |
+| `/api/passkeys/register/options` | POST | Generate WebAuthn registration challenge | Session | No |
+| `/api/passkeys/register/verify` | POST | Verify registration + store credential | Session | No |
+| `/api/passkeys/authenticate/options` | POST | Generate WebAuthn auth challenge (pre-login) | None | No |
+| `/api/passkeys/authenticate/verify` | POST | Verify passkey login + create session/token | None | No |
+| `/api/passkeys/list` | GET | List user's registered passkeys | Session | No |
+| `/api/passkeys/{credentialId}` | PATCH/DELETE | Rename or delete a passkey | Session | No |
 | `/api/admin/tokens/list` | POST | List API tokens | Admin | No |
 | `/api/admin/tokens/revoke` | POST | Revoke API token | Admin | No |
 | `/api/setup/generate-token` | POST | Generate admin setup token | Admin | No |
 | `/api/agent/alert` | POST | Agent health + process crash email alerts (Resend) | Agent token | Yes: `firebase_client.py` |
+| `/api/agent/screenshot` | POST | Receive screenshot upload (base64 JPEG) → store in Firestore machine doc | Agent token | Yes: `owlette_service.py` |
 | `/api/webhooks/user-created` | POST | Signup notification email (Resend) | Webhook | No |
 | `/api/test-email` | POST | Test email delivery | Admin | No |
 | `/api/admin/keys/create` | POST | Create API key (`owk_` prefix) | Session (admin) | No |
@@ -83,7 +90,8 @@ Quick reference of everything that exists. Check here before creating new files 
 | `DownloadButton.tsx` | Download installer button |
 | `ErrorBoundary.tsx` | React error boundary wrapper |
 | `Footer.tsx` | App footer with version |
-| `MachineContextMenu.tsx` | Right-click menu: reboot (blue), shutdown (orange), remove, revoke token. Admin-only reboot/shutdown with confirmation dialogs. |
+| `MachineContextMenu.tsx` | Right-click menu: reboot, shutdown, screenshot, remove, revoke token. Admin-only actions with confirmation dialogs. |
+| `ScreenshotDialog.tsx` | Modal to capture/view machine screenshots via Firestore command + real-time listener |
 | `ManageSitesDialog.tsx` | Admin site management |
 | `ManageUserSitesDialog.tsx` | Assign users to sites |
 | `PageHeader.tsx` | Consistent page header |
@@ -93,6 +101,7 @@ Quick reference of everything that exists. Check here before creating new files 
 | `SystemPresetDialog.tsx` | System preset configuration |
 | `UninstallDialog.tsx` | Remote uninstall confirmation |
 | `UpdateOwletteButton.tsx` | Trigger remote agent update |
+| `PasskeyManager.tsx` | Register, rename, delete passkeys (WebAuthn) |
 | `WebhookSettingsDialog.tsx` | CRUD + test for site webhook notifications |
 
 ### Chart Components (`web/components/charts/`)
@@ -129,7 +138,7 @@ Quick reference of everything that exists. Check here before creating new files 
 
 | Hook | Purpose | Key Exports |
 |------|---------|-------------|
-| `useFirestore.ts` | Real-time Firestore listeners | `useSites()`, `useMachines(siteId)` — interfaces: `Site`, `Machine`, `Process` |
+| `useFirestore.ts` | Real-time Firestore listeners | `useSites()`, `useMachines(siteId)` — interfaces: `Site`, `Machine` (includes `lastScreenshot`), `Process` |
 | `useDeployments.ts` | Deployment CRUD + templates | `useDeployments(siteId)` — `Deployment`, `DeploymentTemplate` |
 | `useMachineOperations.ts` | Machine actions (remove, commands) | `useMachineOperations()` |
 | `useInstallerVersion.ts` | Fetch latest Owlette version | `useInstallerVersion()` |
@@ -140,6 +149,7 @@ Quick reference of everything that exists. Check here before creating new files 
 | `useSystemPresets.ts` | System preset CRUD | `useSystemPresets()` |
 | `useUninstall.ts` | Remote uninstall operations | `useUninstall()` |
 | `useOwletteUpdates.ts` | Remote agent update operations | `useOwletteUpdates()` |
+| `usePasskeys.ts` | Passkey registration, management | `usePasskeys(userId)` — `registerPasskey()`, `deletePasskey()`, `renamePasskey()`, `supported` |
 | `useUserManagement.ts` | Admin user CRUD | `useUserManagement()` |
 
 ---
@@ -166,6 +176,7 @@ Quick reference of everything that exists. Check here before creating new files 
 | `withRateLimit.ts` | Rate limit wrapper for API routes |
 | `versionUtils.ts` | Version string comparison |
 | `encryption.server.ts` | Server-side encryption utilities |
+| `webauthn.server.ts` | WebAuthn (passkey) config, challenge management, credential CRUD |
 | `adminUtils.server.ts` | Server-side admin utils: `getSiteAdminEmails()`, `getSiteProcessAlertEmails()`, `getSiteAlertRecipients()` |
 | `resendClient.server.ts` | Shared Resend email client singleton (`getResend()`, `FROM_EMAIL`, `ENV_LABEL`) |
 | `webhookSender.server.ts` | Webhook dispatch utility: `fireWebhooks(siteId, siteName, event, data)`, `testWebhook(url, secret)` — HMAC-SHA256 signed, auto-disable after 10 failures |
@@ -183,7 +194,7 @@ Quick reference of everything that exists. Check here before creating new files 
 
 **Exports**:
 ```typescript
-{ user, loading, role, isAdmin, userSites, requiresMfaSetup,
+{ user, loading, role, isAdmin, userSites, requiresMfaSetup, passkeyEnrolled,
   userPreferences, signIn, signUp, signInWithGoogle, signOut,
   updateUserProfile, updatePassword, updateUserPreferences, deleteAccount }
 
@@ -223,6 +234,7 @@ interface UserPreferences { temperatureUnit: 'C' | 'F'; healthAlerts: boolean; p
 ### GUI / UX
 | Module | Purpose |
 |--------|---------|
+| `session_exec.py` | User-session executor — runs Python/cmd/PowerShell in the desktop session (launched via CreateProcessAsUser) |
 | `owlette_gui.py` | CustomTkinter configuration GUI |
 | `owlette_tray.py` | System tray icon (reads IPC status file) |
 | `owlette_scout.py` | Process responsiveness checker (WM_NULL) |

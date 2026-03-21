@@ -16,7 +16,7 @@ Owlette is a cloud-connected Windows process management and remote deployment sy
 
 **Backend (agent/)**: Python 3.9+ Windows Service via NSSM, Firestore REST API (not Admin SDK), OAuth two-token auth, psutil, pywin32, Inno Setup installer (not PyInstaller)
 
-**Database & Auth**: Cloud Firestore (real-time NoSQL), Firebase Authentication (Email/Password, Google OAuth), bidirectional sync (agent <-> Firestore <-> web)
+**Database & Auth**: Cloud Firestore (real-time NoSQL), Firebase Authentication (Email/Password, Google OAuth, Passkey/WebAuthn), bidirectional sync (agent <-> Firestore <-> web)
 
 **Package Managers**: Web: npm (not pnpm/yarn) | Agent: pip
 
@@ -118,7 +118,9 @@ sites/{siteId}/machines/{machineId}/status    # Metrics (60s)
 sites/{siteId}/machines/{machineId}/commands/ # pending/ + completed/
 sites/{siteId}/webhooks/{webhookId}           # Webhook notification configs
 config/{siteId}/machines/{machineId}          # Process configuration
-users/{userId}                                 # Email, role, sites
+users/{userId}                                 # Email, role, sites, passkeyEnrolled
+users/{userId}/passkeys/{credentialId}         # WebAuthn credentials
+webauthn_challenges/{challengeId}              # Passkey registration/auth challenges (10-min expiry)
 deployments/{deploymentId}                     # Remote installer deployments
 ```
 

@@ -1,0 +1,16 @@
+/* Owlette brand — matches the app's dark navy UI */
+
+/* Primary color used for header, nav tabs, etc. */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #0f1629;
+  --md-primary-fg-color--light: #1a2035;
+  --md-primary-fg-color--dark: #080d1a;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0f1629;
+  --md-primary-fg-color--light: #1a2035;
+  --md-primary-fg-color--dark: #080d1a;
+  --md-default-bg-color: #111827;
+  --md-default-bg-color--light: #151d2e;
+}

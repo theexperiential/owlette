@@ -261,6 +261,21 @@ Commands arrive via Firestore listener on `commands/pending/{commandId}`.
 | `toggle_autolaunch` | `process_name`, `autolaunch` | Update config, affects next cycle |
 | `update_config` | `config` (full object) | Replace local config, preserve firebase section |
 | `install_software` | `installer_url`, `silent_flags`, `timeout_seconds`, `sha256_checksum`, `deployment_id` | Download + execute installer |
+| `reboot_machine` | — | Set `rebooting` flag, run `shutdown /r /t 30` |
+| `shutdown_machine` | — | Set `shuttingDown` flag, run `shutdown /s /t 30` |
+| `cancel_reboot` | — | Run `shutdown /a`, clear `rebooting`/`shuttingDown` flags |
+| `dismiss_reboot_pending` | `process_name` | Clear `rebootPending` flag, reset relaunch counter for process, kill local prompt |
+| `capture_screenshot` | — | IPC to GUI → capture screenshot → upload base64 JPEG to `/api/agent/screenshot` |
+
+### Machine Flags (Firestore)
+
+Written to `sites/{siteId}/machines/{machineId}`:
+
+| Flag | Set By | Cleared By | Purpose |
+|------|--------|-----------|---------|
+| `rebooting: true` | `_handle_reboot_machine` | Agent startup, `_handle_cancel_reboot` | Dashboard shows "Rebooting..." badge |
+| `shuttingDown: true` | `_handle_shutdown_machine` | Agent startup, `_handle_cancel_reboot` | Dashboard shows "Shutting down..." badge |
+| `rebootPending: { active, processName, reason, timestamp }` | `reached_max_relaunch_attempts` | Agent startup, `_handle_dismiss_reboot_pending` | Dashboard shows approve/dismiss banner |
 
 ### Config Update Preservation
 
@@ -296,6 +311,28 @@ Flow:
 - Red: Service stopped or Firebase disabled
 
 **Stale detection**: If file is >120s old → red (service likely crashed)
+
+### User-Session Execution (`session_exec.py`)
+
+**Mechanism**: The service launches `session_exec.py` in the interactive user's desktop session via `CreateProcessAsUser`. This enables execution of Python code, shell commands, and PowerShell scripts with full desktop/GPU access.
+
+**Path**: `C:\ProgramData\Owlette\ipc\jobs\` (job files) + `C:\ProgramData\Owlette\ipc\results\{requestId}\` (output)
+
+**Flow**:
+1. Service writes job JSON to `ipc/jobs/{requestId}.json`: `{ type, code, timeout, outputDir }`
+2. Service launches `session_exec.py {job_path}` via `CreateProcessAsUser` in the active console session
+3. `session_exec.py` reads the job, executes (python/cmd/powershell), writes `result.json` + any output files to `outputDir`
+4. Service polls for `result.json` (timeout + 5s grace), returns parsed result
+5. Cleanup: job file deleted, result dir cleaned by caller
+
+**Job types**: `python` (exec'd in-process), `cmd` (subprocess), `powershell` (subprocess)
+
+**Session 0 note**: The service runs in Session 0 (no desktop access). `session_exec.py` is launched in the user's interactive session via the same `CreateProcessAsUser` mechanism used for managed processes.
+
+**Consumers**:
+- `capture_screenshot` command — runs Python capture code via `execute_in_user_session`
+- MCP `run_python` tool — arbitrary Python in user session
+- MCP `run_command` / `run_powershell` — with `user_session=true` param
 
 ---
 

@@ -1,0 +1,119 @@
+site_name: Owlette Documentation
+site_description: Cloud-connected Windows process management and remote deployment system
+site_url: https://theexperiential.github.io/Owlette/
+repo_url: https://github.com/theexperiential/Owlette
+repo_name: Owlette
+
+theme:
+  name: material
+  font:
+    text: Open Sans
+    code: Roboto Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - stylesheets/extra.css
+
+plugins:
+  - search
+  - tags
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - tables
+  - attr_list
+  - md_in_html
+  - def_list
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Agent:
+    - agent/index.md
+    - Installation: agent/installation.md
+    - Configuration: agent/configuration.md
+    - Process Monitoring: agent/process-monitoring.md
+    - System Tray: agent/system-tray.md
+    - Remote Commands: agent/remote-commands.md
+    - Self-Update: agent/self-update.md
+    - Troubleshooting: agent/troubleshooting.md
+  - Dashboard:
+    - dashboard/index.md
+    - Getting Started: dashboard/getting-started.md
+    - Machine Monitoring: dashboard/machine-monitoring.md
+    - Process Management: dashboard/process-management.md
+    - Deployments: dashboard/deployments.md
+    - Project Distribution: dashboard/project-distribution.md
+    - Cortex (AI Chat): dashboard/cortex.md
+    - Activity Logs: dashboard/activity-logs.md
+    - Admin:
+      - dashboard/admin/index.md
+      - User Management: dashboard/admin/user-management.md
+      - Installer Management: dashboard/admin/installer-management.md
+      - System Presets: dashboard/admin/system-presets.md
+      - Token Management: dashboard/admin/token-management.md
+      - Email Alerts: dashboard/admin/email-alerts.md
+  - Architecture: architecture.md
+  - Troubleshooting: troubleshooting.md
+  - Changelog: changelog.md
+  - Self-Hosting:
+    - setup/index.md
+    - Firebase Setup: setup/firebase.md
+    - Firestore Rules: setup/firestore-rules.md
+    - Web Deployment: setup/web-deployment.md
+    - Environment Variables: setup/environment-variables.md
+    - Reference:
+      - reference/index.md
+      - REST API: reference/api.md
+      - Firestore Data Model: reference/firestore-data-model.md
+      - Authentication: reference/authentication.md
+      - Cortex Tools: reference/cortex-tools.md
+      - Agent Commands: reference/agent-commands.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/theexperiential/Owlette
