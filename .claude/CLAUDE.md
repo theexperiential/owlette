@@ -203,6 +203,8 @@ All feature work on `dev`. Merge to `main` for production releases. Both auto-de
 
 **Agent (Windows)**: Build installer via `build_installer_full.bat`, deploy via web dashboard remote deployment or manual installation.
 
+**IMPORTANT: Always version up BEFORE building the installer.** If any code changes were made (agent or web), bump the version with `node scripts/sync-versions.js X.Y.Z` and commit the version bump BEFORE running `build_installer_full.bat`. The installer bakes the version into the exe filename and binary — building without versioning up first ships stale version numbers.
+
 ---
 
 ## Don'ts / Guardrails
