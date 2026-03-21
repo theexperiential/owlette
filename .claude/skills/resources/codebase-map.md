@@ -51,6 +51,8 @@ Quick reference of everything that exists. Check here before creating new files 
 | `/api/admin/keys/create` | POST | Create API key (`owk_` prefix) | Session (admin) | No |
 | `/api/admin/keys` | GET | List user's API keys | Session (admin) | No |
 | `/api/admin/keys/revoke` | DELETE | Revoke an API key | Session (admin) | No |
+| `/api/admin/sites` | GET | List all sites the user has access to | Admin or API key | No |
+| `/api/admin/webhooks` | GET/POST/DELETE | CRUD for site webhooks | Admin or API key | No |
 | `/api/admin/machines` | GET | List machines for a site | Admin or API key | No |
 | `/api/admin/machines/status` | GET | Get detailed machine status | Admin or API key | No |
 | `/api/admin/commands/send` | POST | Send command to machine (with optional polling) | Admin or API key | No |
