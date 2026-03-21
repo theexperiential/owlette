@@ -18,7 +18,7 @@ import DownloadButton from '@/components/DownloadButton';
 import { toast } from 'sonner';
 
 export default function ProjectsPage() {
-  const { user, loading: authLoading, signOut, userSites, isAdmin } = useAuth();
+  const { user, loading: authLoading, signOut, userSites, isAdmin, lastSiteId, updateLastSite } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [distributionDialogOpen, setDistributionDialogOpen] = useState(false);
@@ -41,22 +41,21 @@ export default function ProjectsPage() {
     deleteDistribution,
   } = useProjectDistributionManager(currentSiteId);
 
-  // Load saved site from localStorage or use first available
+  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
   useEffect(() => {
     if (!sitesLoading && sites.length > 0 && !currentSiteId) {
-      const savedSite = localStorage.getItem('owlette_current_site');
+      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
       if (savedSite && sites.find(s => s.id === savedSite)) {
         setCurrentSiteId(savedSite);
       } else {
         setCurrentSiteId(sites[0].id);
       }
     }
-  }, [sites, sitesLoading, currentSiteId]);
+  }, [sites, sitesLoading, currentSiteId, lastSiteId]);
 
-  // Save site selection to localStorage
   const handleSiteChange = (siteId: string) => {
     setCurrentSiteId(siteId);
-    localStorage.setItem('owlette_current_site', siteId);
+    updateLastSite(siteId);
   };
 
   useEffect(() => {
@@ -68,7 +67,7 @@ export default function ProjectsPage() {
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-muted-foreground">Loading...</p>
+        <p className="text-muted-foreground">loading...</p>
       </div>
     );
   }
@@ -116,7 +115,7 @@ export default function ProjectsPage() {
     <div className="min-h-screen pb-8">
       {/* Header */}
       <PageHeader
-        currentPage="Distribute Projects"
+        currentPage="distribute projects"
         sites={sites}
         currentSiteId={currentSiteId}
         onSiteChange={handleSiteChange}
@@ -171,7 +170,7 @@ export default function ProjectsPage() {
         {/* Section header with inline stats */}
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-center gap-6 md:gap-8">
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">Distributions</h2>
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">distributions</h2>
 
             <div className="flex items-center gap-6 md:gap-8">
               <div className="flex items-center gap-2.5">
@@ -182,7 +181,7 @@ export default function ProjectsPage() {
                   <div className="flex items-baseline gap-0.5">
                     <span className="text-xl font-bold text-foreground">{distributions.length}</span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-tight">Total</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">total</p>
                 </div>
               </div>
 
@@ -196,7 +195,7 @@ export default function ProjectsPage() {
                   <div className="flex items-baseline gap-0.5">
                     <span className={`text-xl font-bold ${distributions.filter(d => d.status === 'in_progress').length > 0 ? 'text-accent-cyan' : 'text-foreground'}`}>{distributions.filter(d => d.status === 'in_progress').length}</span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-tight">In Progress</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">in progress</p>
                 </div>
               </div>
 
@@ -210,7 +209,7 @@ export default function ProjectsPage() {
                   <div className="flex items-baseline gap-0.5">
                     <span className="text-xl font-bold text-foreground">{templates.length}</span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-tight">Templates</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">templates</p>
                 </div>
               </div>
             </div>
@@ -221,7 +220,7 @@ export default function ProjectsPage() {
             className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer flex-shrink-0"
           >
             <Plus className="h-4 w-4 mr-2" />
-            New Distribution
+            new distribution
           </Button>
         </div>
 
@@ -230,19 +229,19 @@ export default function ProjectsPage() {
           {distributionsLoading ? (
             <div className="p-8 text-center">
               <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
-              <p className="mt-2 text-muted-foreground">Loading distributions...</p>
+              <p className="mt-2 text-muted-foreground">loading distributions...</p>
             </div>
           ) : distributions.length === 0 ? (
             <div className="p-8 text-center">
-              <p className="text-foreground font-medium mb-1">No Distributions Yet</p>
-              <p className="text-sm text-muted-foreground mb-4">Create your first distribution to sync project files across your machines</p>
+              <p className="text-foreground font-medium mb-1">no distributions yet</p>
+              <p className="text-sm text-muted-foreground mb-4">create your first distribution to sync project files across your machines</p>
               <Button
                 onClick={() => setDistributionDialogOpen(true)}
                 className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                 size="sm"
               >
                 <Plus className="h-4 w-4 mr-1" />
-                New Distribution
+                new distribution
               </Button>
             </div>
           ) : (
@@ -300,25 +299,25 @@ export default function ProjectsPage() {
                       <div className="mx-4 my-3 rounded-lg border border-border bg-background p-4 space-y-4">
                         <div className="grid gap-2 text-sm">
                           <div className="flex gap-2">
-                            <span className="text-muted-foreground flex-shrink-0 w-24">Project URL</span>
+                            <span className="text-muted-foreground flex-shrink-0 w-24">project url</span>
                             <span className="text-foreground select-text break-all">{distribution.project_url}</span>
                           </div>
                           <div className="flex gap-2">
-                            <span className="text-muted-foreground flex-shrink-0 w-24">Extract Path</span>
+                            <span className="text-muted-foreground flex-shrink-0 w-24">extract path</span>
                             <span className="text-foreground select-text break-all">
                               {distribution.extract_path || <span className="text-muted-foreground italic">~/Documents/OwletteProjects (default)</span>}
                             </span>
                           </div>
                           {distribution.verify_files && distribution.verify_files.length > 0 && (
                             <div className="flex gap-2">
-                              <span className="text-muted-foreground flex-shrink-0 w-24">Verify Files</span>
+                              <span className="text-muted-foreground flex-shrink-0 w-24">verify files</span>
                               <span className="text-foreground select-text break-all">{distribution.verify_files.join(', ')}</span>
                             </div>
                           )}
                         </div>
 
                         <div>
-                          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Targets ({distribution.targets.length})</h4>
+                          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">targets ({distribution.targets.length})</h4>
                           <div className="space-y-1.5">
                             {distribution.targets.map((target) => (
                               <div key={target.machineId} className="flex items-center justify-between py-1.5 px-3 rounded border border-border/40 bg-background/50">

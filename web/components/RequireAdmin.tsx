@@ -35,8 +35,8 @@ export default function RequireAdmin({ children }: { children: React.ReactNode }
 
     // If user exists but is not admin, redirect to dashboard
     if (!isAdmin) {
-      toast.error('Access Denied', {
-        description: 'You do not have permission to access this page.',
+      toast.error('access denied', {
+        description: 'you do not have permission to access this page.',
       });
       router.push('/dashboard');
     }
@@ -48,7 +48,7 @@ export default function RequireAdmin({ children }: { children: React.ReactNode }
       <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="text-center">
           <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-accent-cyan border-r-transparent"></div>
-          <p className="mt-4 text-muted-foreground">Verifying permissions...</p>
+          <p className="mt-4 text-muted-foreground">verifying permissions...</p>
         </div>
       </div>
     );

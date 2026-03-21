@@ -1,21 +1,14 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, Inter, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Footer } from "@/components/Footer";
 
-const spaceGrotesk = Space_Grotesk({
-  variable: "--font-space-grotesk",
+const geist = Geist({
+  variable: "--font-geist",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
 });
 
 const geistMono = Geist_Mono({
@@ -24,24 +17,24 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Owlette - Always Watching",
+  title: "owlette — attention is all you need",
   description: "Cloud-connected Windows process management system for TouchDesigner, digital signage, and media servers. Remote monitoring, deployment, and control across your entire fleet.",
   icons: {
-    icon: '/owlette-icon.png',
-    shortcut: '/owlette-icon.png',
+    icon: '/icon.svg',
+    shortcut: '/icon.svg',
     apple: '/owlette-icon.png',
   },
   openGraph: {
-    title: "Owlette - Always Watching",
+    title: "owlette — attention is all you need",
     description: "Cloud-connected Windows process management system for TouchDesigner, digital signage, and media servers. Remote monitoring, deployment, and control across your entire fleet.",
     url: "https://owlette.app",
-    siteName: "Owlette",
+    siteName: "owlette",
     images: [
       {
         url: '/owlette-icon.png',
         width: 1024,
         height: 1024,
-        alt: 'Owlette - Always Watching',
+        alt: 'owlette — attention is all you need',
       },
     ],
     locale: 'en_US',
@@ -49,7 +42,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: "Owlette - Always Watching",
+    title: "owlette — attention is all you need",
     description: "Cloud-connected Windows process management system for TouchDesigner, digital signage, and media servers. Remote monitoring, deployment, and control across your entire fleet.",
     images: ['/owlette-icon.png'],
   },
@@ -70,7 +63,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark scroll-smooth">
       <body
-        className={`${inter.variable} ${spaceGrotesk.variable} ${geistMono.variable} font-sans antialiased text-foreground`}
+        className={`${geist.variable} ${geistMono.variable} font-sans antialiased text-foreground`}
       >
         <ErrorBoundary>
           <AuthProvider>

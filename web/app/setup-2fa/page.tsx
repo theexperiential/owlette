@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import Image from 'next/image';
+import { PasskeyManager } from '@/components/PasskeyManager';
+/* eslint-disable @next/next/no-img-element */
 
 export default function Setup2FAPage() {
   const { user, loading } = useAuth();
@@ -32,22 +33,28 @@ export default function Setup2FAPage() {
       fetch('/api/mfa/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           userId: user.uid,
           email: user.email,
         }),
       })
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.error) {
-            throw new Error(data.error);
+        .then(async (res) => {
+          const data = await res.json();
+          if (!res.ok || data.error) {
+            throw new Error(data.error || `Server error (${res.status})`);
           }
+          return data;
+        })
+        .then((data) => {
           setSecret(data.secret);
           setQrCodeUrl(data.qrCodeUrl);
         })
         .catch((error) => {
           console.error('Failed to generate MFA setup:', error);
-          toast.error('Failed to generate QR code');
+          toast.error('Failed to generate QR code', {
+            description: error.message,
+          });
         });
     }
   }, [user, loading, router, step, secret]);
@@ -151,7 +158,7 @@ export default function Setup2FAPage() {
 
               {qrCodeUrl && (
                 <div className="flex justify-center">
-                  <Image
+                  <img
                     src={qrCodeUrl}
                     alt="2FA QR Code"
                     width={250}
@@ -276,12 +283,6 @@ export default function Setup2FAPage() {
 
               <div className="space-y-2">
                 <Button
-                  onClick={handleFinish}
-                  className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
-                >
-                  I've Saved My Codes
-                </Button>
-                <Button
                   type="button"
                   variant="outline"
                   onClick={() => copyToClipboard(backupCodes.join('\n'))}
@@ -290,6 +291,18 @@ export default function Setup2FAPage() {
                   Copy All Codes
                 </Button>
               </div>
+
+              {/* Optional passkey registration */}
+              {user && (
+                <PasskeyManager userId={user.uid} compact />
+              )}
+
+              <Button
+                onClick={handleFinish}
+                className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              >
+                continue to dashboard
+              </Button>
             </div>
           )}
         </CardContent>

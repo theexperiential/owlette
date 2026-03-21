@@ -12,7 +12,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, Plus, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
-import Image from 'next/image';
+import { generateRandomSiteId } from '@/lib/validators';
+import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 
 interface Site {
   id: string;
@@ -138,17 +139,15 @@ export default function SetupPage() {
     }
 
     if (!user || !db) {
-      toast.error('You must be logged in to create a site');
+      toast.error('you must be logged in to create a site');
       return;
     }
 
     setLoading(true);
 
     try {
-      // Generate unique site ID: email@sitename format
-      const emailPrefix = user.email?.split('@')[0] || user.uid;
-      const sanitizedSiteName = newSiteName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-');
-      const siteId = `${emailPrefix}@${sanitizedSiteName}`;
+      // Generate a random two-word site ID
+      const siteId = generateRandomSiteId();
 
       // Check if site already exists
       const siteDoc = await getDoc(doc(db, 'sites', siteId));
@@ -196,12 +195,12 @@ export default function SetupPage() {
 
   const handleAuthorizeAgent = async () => {
     if (!selectedSiteId) {
-      toast.error('Please select a site');
+      toast.error('please select a site');
       return;
     }
 
     if (!user) {
-      toast.error('You must be logged in');
+      toast.error('you must be logged in');
       return;
     }
 
@@ -255,37 +254,30 @@ export default function SetupPage() {
     <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-2xl bg-card/50 border-border">
         <CardHeader className="space-y-4 flex flex-col items-center">
-          <Image
-            src="/owlette-icon.png"
-            alt="Owlette"
-            width={80}
-            height={80}
-            className="rounded-full"
-            priority
-          />
+          <OwletteEyeIcon size={64} />
           <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-foreground">Owlette Agent Setup</CardTitle>
+            <CardTitle className="text-2xl font-bold text-foreground">owlette agent setup</CardTitle>
             <CardDescription className="text-muted-foreground">
-              Configure your Owlette Agent by selecting a site or creating a new one.
+              configure your agent by selecting a site or creating a new one.
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
           {/* User Info */}
           <div className="bg-muted/50 border border-border p-4 rounded-lg">
-            <p className="text-sm text-muted-foreground">Logged in as</p>
+            <p className="text-sm text-muted-foreground">logged in as</p>
             <p className="font-medium text-foreground">{user.email}</p>
           </div>
 
           {/* Site Selection */}
           {!creatingNewSite && (
             <div className="space-y-4">
-              <Label htmlFor="site-select" className="text-foreground">Select Site</Label>
+              <Label htmlFor="site-select" className="text-foreground">select site</Label>
               {sites.length > 0 ? (
                 <div className="flex gap-2">
                   <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
                     <SelectTrigger id="site-select" className="bg-muted/50 border-border text-foreground flex-1">
-                      <SelectValue placeholder="Choose a site..." />
+                      <SelectValue placeholder="choose a site..." />
                     </SelectTrigger>
                     <SelectContent className="bg-muted border-border">
                       {sites.map((site) => (
@@ -301,13 +293,13 @@ export default function SetupPage() {
                     className="bg-muted/50 border-border text-foreground hover:bg-muted hover:text-foreground whitespace-nowrap"
                   >
                     <Plus className="h-4 w-4 mr-2" />
-                    Create New Site
+                    create new site
                   </Button>
                 </div>
               ) : (
                 <>
                   <p className="text-sm text-muted-foreground">
-                    No sites available. Create a new site to get started.
+                    no sites available. create a new site to get started.
                   </p>
                   <Button
                     variant="outline"
@@ -315,7 +307,7 @@ export default function SetupPage() {
                     className="w-full bg-muted/50 border-border text-foreground hover:bg-muted hover:text-foreground"
                   >
                     <Plus className="h-4 w-4 mr-2" />
-                    Create New Site
+                    create new site
                   </Button>
                 </>
               )}
@@ -325,7 +317,7 @@ export default function SetupPage() {
           {/* Create New Site */}
           {creatingNewSite && (
             <div className="space-y-4">
-              <Label htmlFor="site-name" className="text-foreground">New Site Name</Label>
+              <Label htmlFor="site-name" className="text-foreground">new site name</Label>
               <Input
                 id="site-name"
                 placeholder="e.g., My Studio, Client A, Production Floor"
@@ -348,10 +340,10 @@ export default function SetupPage() {
                   {loading ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Creating...
+                      creating...
                     </>
                   ) : (
-                    'Create Site'
+                    'create site'
                   )}
                 </Button>
                 <Button
@@ -363,7 +355,7 @@ export default function SetupPage() {
                   disabled={loading}
                   className="bg-muted/50 border-border text-foreground hover:bg-muted hover:text-foreground"
                 >
-                  Cancel
+                  cancel
                 </Button>
               </div>
             </div>
@@ -374,7 +366,7 @@ export default function SetupPage() {
             <div className="space-y-4 pt-4 border-t border-border">
               <div className="bg-accent-cyan/15 border border-accent-cyan/20 p-4 rounded-lg space-y-2">
                 <p className="text-sm font-medium text-accent-cyan">
-                  Selected Site
+                  selected site
                 </p>
                 <p className="text-lg font-semibold text-foreground">
                   {sites.find((s) => s.id === selectedSiteId)?.name}
@@ -393,18 +385,18 @@ export default function SetupPage() {
                 {isRedirecting ? (
                   <>
                     <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                    Authorizing Agent...
+                    authorizing agent...
                   </>
                 ) : (
                   <>
                     <CheckCircle2 className="h-5 w-5 mr-2" />
-                    Authorize Agent
+                    authorize agent
                   </>
                 )}
               </Button>
 
               <p className="text-xs text-muted-foreground text-center">
-                This will configure your agent and redirect you back to the installer.
+                this will configure your agent and redirect you back to the installer.
               </p>
             </div>
           )}

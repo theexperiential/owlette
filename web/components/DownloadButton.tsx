@@ -28,8 +28,8 @@ export default function DownloadButton() {
 
   const handleDownload = () => {
     if (!downloadUrl) {
-      toast.error('Download Unavailable', {
-        description: 'Installer download URL is not available.',
+      toast.error('download unavailable', {
+        description: 'installer download URL is not available.',
       });
       return;
     }
@@ -37,32 +37,32 @@ export default function DownloadButton() {
     try {
       // Open download URL in new tab
       window.open(downloadUrl, '_blank');
-      toast.success('Download Started', {
-        description: `Downloading Owlette v${version}`,
+      toast.success('download started', {
+        description: `downloading Owlette v${version}`,
       });
     } catch (err) {
-      toast.error('Download Failed', {
-        description: 'Failed to start download. Please try again.',
+      toast.error('download failed', {
+        description: 'failed to start download. please try again.',
       });
     }
   };
 
   const handleCopyLink = async () => {
     if (!downloadUrl) {
-      toast.error('Copy Failed', {
-        description: 'Download URL is not available.',
+      toast.error('copy failed', {
+        description: 'download URL is not available.',
       });
       return;
     }
 
     try {
       await navigator.clipboard.writeText(downloadUrl);
-      toast.success('Link Copied', {
-        description: `Download link for v${version} copied to clipboard.`,
+      toast.success('link copied', {
+        description: `download link for v${version} copied to clipboard.`,
       });
     } catch (err) {
-      toast.error('Copy Failed', {
-        description: 'Failed to copy link to clipboard.',
+      toast.error('copy failed', {
+        description: 'failed to copy link to clipboard.',
       });
     }
   };
@@ -97,9 +97,9 @@ export default function DownloadButton() {
             className="bg-secondary border-border text-white"
           >
             {isLoading ? (
-              <p>Loading version info...</p>
+              <p>loading version info...</p>
             ) : (
-              <p>Download Owlette Agent v{version}</p>
+              <p>download Owlette agent v{version}</p>
             )}
           </TooltipContent>
         </Tooltip>
@@ -124,9 +124,9 @@ export default function DownloadButton() {
             className="bg-secondary border-border text-white"
           >
             {isLoading ? (
-              <p>Loading version info...</p>
+              <p>loading version info...</p>
             ) : (
-              <p>Copy download link for Owlette Agent v{version}</p>
+              <p>copy download link for Owlette agent v{version}</p>
             )}
           </TooltipContent>
         </Tooltip>

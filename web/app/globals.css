@@ -6,12 +6,16 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-inter);
-  --font-heading: var(--font-space-grotesk);
+  --font-sans: var(--font-geist);
+  --font-heading: var(--font-geist);
   --font-mono: var(--font-geist-mono);
   --color-accent-cyan: var(--accent-cyan);
   --color-accent-cyan-hover: var(--accent-cyan-hover);
   --color-accent-cyan-muted: var(--accent-cyan-muted);
+  --color-accent-warm: var(--accent-warm);
+  --color-accent-warm-hover: var(--accent-warm-hover);
+  --color-accent-warm-muted: var(--accent-warm-muted);
+  --color-accent-coral: var(--accent-coral);
   --color-grid-line: var(--grid-line);
   --color-grid-line-accent: var(--grid-line-accent);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -109,6 +113,12 @@
   --accent-cyan-hover: oklch(0.80 0.20 195);
   --accent-cyan-muted: oklch(0.45 0.10 195);
 
+  /* Warm accent — Blade Runner amber/coral tones */
+  --accent-warm: oklch(0.72 0.16 55);
+  --accent-warm-hover: oklch(0.78 0.18 55);
+  --accent-warm-muted: oklch(0.45 0.10 45);
+  --accent-coral: oklch(0.70 0.14 30);
+
   /* Blueprint grid lines */
   --grid-line: oklch(0.25 0.05 250 / 0.3);
   --grid-line-accent: oklch(0.45 0.10 195 / 0.4);
@@ -139,7 +149,7 @@
   h1, h2, h3, h4, h5, h6,
   [data-slot="card-title"],
   [data-slot="dialog-title"] {
-    font-family: var(--font-space-grotesk);
+    font-family: var(--font-geist);
   }
 
   /* Tabular figures for aligned numbers in data tables */
@@ -209,12 +219,12 @@
 @layer components {
   /* Utility to apply heading font to any element */
   .font-heading {
-    font-family: var(--font-space-grotesk);
+    font-family: var(--font-geist);
   }
 
   /* Hero typography - Mission Control aesthetic with fluid scaling */
   .hero-headline {
-    font-family: var(--font-space-grotesk);
+    font-family: var(--font-geist);
     /* Fluid: 2.5rem (40px) at 320px → 4.5rem (72px) at 1280px+ */
     font-size: clamp(2.5rem, 5vw + 1rem, 4.5rem);
     @apply font-bold tracking-tight leading-[1.1];
@@ -227,7 +237,7 @@
   }
 
   .section-headline {
-    font-family: var(--font-space-grotesk);
+    font-family: var(--font-geist);
     /* Fluid: 1.75rem (28px) → 2.5rem (40px) */
     font-size: clamp(1.75rem, 3vw + 0.5rem, 2.5rem);
     @apply font-semibold tracking-tight;
@@ -241,7 +251,7 @@
 
   /* Stats/metrics display text */
   .stat-value {
-    font-family: var(--font-space-grotesk);
+    font-family: var(--font-geist);
   }
 
   /* Fluid section padding utility */

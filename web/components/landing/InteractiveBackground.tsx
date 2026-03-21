@@ -103,9 +103,19 @@ export function InteractiveBackground() {
       <div
         className="absolute w-[min(900px,150vw)] h-[min(900px,150vw)] rounded-full blur-3xl"
         style={{
-          background: 'radial-gradient(circle, oklch(0.75 0.18 195 / 0.12) 0%, transparent 60%)',
+          background: 'radial-gradient(circle, oklch(0.75 0.18 195 / 0.10) 0%, transparent 60%)',
           left: `calc(${mousePos.x * 100}% - min(450px, 75vw))`,
           top: `calc(${mousePos.y * 100}% - min(450px, 75vw))`,
+        }}
+      />
+
+      {/* Secondary warm glow - offset from mouse for depth */}
+      <div
+        className="absolute w-[min(600px,100vw)] h-[min(600px,100vw)] rounded-full blur-3xl"
+        style={{
+          background: 'radial-gradient(circle, oklch(0.72 0.16 55 / 0.06) 0%, oklch(0.70 0.14 30 / 0.03) 40%, transparent 70%)',
+          left: `calc(${(1 - mousePos.x) * 100}% - min(300px, 50vw))`,
+          top: `calc(${(1 - mousePos.y) * 100}% - min(300px, 50vw))`,
         }}
       />
 

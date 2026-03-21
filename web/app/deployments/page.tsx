@@ -24,7 +24,7 @@ import { useUninstall } from '@/hooks/useUninstall';
 import { toast } from 'sonner';
 
 export default function DeploymentsPage() {
-  const { user, loading: authLoading, signOut, userSites, isAdmin } = useAuth();
+  const { user, loading: authLoading, signOut, userSites, isAdmin, lastSiteId, updateLastSite } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
@@ -59,7 +59,7 @@ export default function DeploymentsPage() {
     try {
       await createUninstall(currentSiteId, softwareName, machineIds, deploymentId);
     } catch (error: any) {
-      throw new Error(error.message || 'Failed to create uninstall task');
+      throw new Error(error.message || 'failed to create uninstall task');
     }
   };
 
@@ -68,10 +68,10 @@ export default function DeploymentsPage() {
 
     try {
       await deleteDeployment(deploymentToDelete);
-      toast.success('Deployment record deleted successfully');
+      toast.success('deployment record deleted successfully');
     } catch (error: any) {
       console.error('Failed to delete deployment:', error);
-      toast.error(error.message || 'Failed to delete deployment record');
+      toast.error(error.message || 'failed to delete deployment record');
     } finally {
       setDeploymentToDelete(null);
     }
@@ -83,7 +83,7 @@ export default function DeploymentsPage() {
       const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed');
 
       if (failedTargets.length === 0) {
-        toast.error('No failed targets to retry');
+        toast.error('no failed targets to retry');
         return;
       }
 
@@ -99,29 +99,28 @@ export default function DeploymentsPage() {
         targets: [], // Will be initialized by createDeployment
       }, machineIds);
 
-      toast.success(`Retrying deployment for ${failedTargets.length} failed machine(s)`);
+      toast.success(`retrying deployment for ${failedTargets.length} failed machine(s)`);
     } catch (error: any) {
       console.error('Failed to retry deployment:', error);
-      toast.error(error.message || 'Failed to retry deployment');
+      toast.error(error.message || 'failed to retry deployment');
     }
   };
 
-  // Load saved site from localStorage or use first available
+  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
   useEffect(() => {
     if (!sitesLoading && sites.length > 0 && !currentSiteId) {
-      const savedSite = localStorage.getItem('owlette_current_site');
+      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
       if (savedSite && sites.find(s => s.id === savedSite)) {
         setCurrentSiteId(savedSite);
       } else {
         setCurrentSiteId(sites[0].id);
       }
     }
-  }, [sites, sitesLoading, currentSiteId]);
+  }, [sites, sitesLoading, currentSiteId, lastSiteId]);
 
-  // Save site selection to localStorage
   const handleSiteChange = (siteId: string) => {
     setCurrentSiteId(siteId);
-    localStorage.setItem('owlette_current_site', siteId);
+    updateLastSite(siteId);
   };
 
   useEffect(() => {
@@ -133,7 +132,7 @@ export default function DeploymentsPage() {
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-muted-foreground">Loading...</p>
+        <p className="text-muted-foreground">loading...</p>
       </div>
     );
   }
@@ -204,7 +203,7 @@ export default function DeploymentsPage() {
     <div className="min-h-screen pb-8">
       {/* Header */}
       <PageHeader
-        currentPage="Deploy Software"
+        currentPage="deploy software"
         sites={sites}
         currentSiteId={currentSiteId}
         onSiteChange={handleSiteChange}
@@ -268,10 +267,10 @@ export default function DeploymentsPage() {
         <ConfirmDialog
           open={deleteDialogOpen}
           onOpenChange={setDeleteDialogOpen}
-          title="Delete Deployment Record"
-          description={`Are you sure you want to delete this deployment record?\n\nThis will permanently remove the deployment from the list. This action cannot be undone.\n\nNote: This only deletes the record - it does not uninstall software from machines.`}
-          confirmText="Delete"
-          cancelText="Cancel"
+          title="delete deployment record"
+          description={`are you sure you want to delete this deployment record?\n\nthis will permanently remove the deployment from the list. this action cannot be undone.\n\nnote: this only deletes the record - it does not uninstall software from machines.`}
+          confirmText="delete"
+          cancelText="cancel"
           onConfirm={handleDeleteDeployment}
           variant="destructive"
         />
@@ -279,7 +278,7 @@ export default function DeploymentsPage() {
         {/* Section header with inline stats */}
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-center gap-6 md:gap-8">
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">Deployments</h2>
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">deployments</h2>
 
             <div className="flex items-center gap-6 md:gap-8">
               <div className="flex items-center gap-2.5">
@@ -290,7 +289,7 @@ export default function DeploymentsPage() {
                   <div className="flex items-baseline gap-0.5">
                     <span className="text-xl font-bold text-foreground">{deployments.length}</span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-tight">Total</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">total</p>
                 </div>
               </div>
 
@@ -304,7 +303,7 @@ export default function DeploymentsPage() {
                   <div className="flex items-baseline gap-0.5">
                     <span className={`text-xl font-bold ${deployments.filter(d => d.status === 'in_progress').length > 0 ? 'text-accent-cyan' : 'text-foreground'}`}>{deployments.filter(d => d.status === 'in_progress').length}</span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-tight">In Progress</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">in progress</p>
                 </div>
               </div>
 
@@ -318,7 +317,7 @@ export default function DeploymentsPage() {
                   <div className="flex items-baseline gap-0.5">
                     <span className="text-xl font-bold text-foreground">{templates.length}</span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-tight">Templates</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">templates</p>
                 </div>
               </div>
             </div>
@@ -331,7 +330,7 @@ export default function DeploymentsPage() {
               className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             >
               <Plus className="h-4 w-4 mr-2" />
-              New Deployment
+              new deployment
             </Button>
           </div>
         </div>
@@ -341,19 +340,19 @@ export default function DeploymentsPage() {
           {deploymentsLoading ? (
             <div className="p-8 text-center">
               <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
-              <p className="mt-2 text-muted-foreground">Loading deployments...</p>
+              <p className="mt-2 text-muted-foreground">loading deployments...</p>
             </div>
           ) : deployments.length === 0 ? (
             <div className="p-8 text-center">
-              <p className="text-foreground font-medium mb-1">No Deployments Yet</p>
-              <p className="text-sm text-muted-foreground mb-4">Create your first deployment to install software across your machines</p>
+              <p className="text-foreground font-medium mb-1">no deployments yet</p>
+              <p className="text-sm text-muted-foreground mb-4">create your first deployment to install software across your machines</p>
               <Button
                 onClick={() => setDeployDialogOpen(true)}
                 className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                 size="sm"
               >
                 <Plus className="h-4 w-4 mr-1" />
-                New Deployment
+                new deployment
               </Button>
             </div>
           ) : (
@@ -407,7 +406,7 @@ export default function DeploymentsPage() {
                               className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
                             >
                               <RefreshCw className="h-4 w-4 mr-2" />
-                              Retry Failed
+                              retry failed
                             </DropdownMenuItem>
                           )}
                           {deployment.status !== 'uninstalled' && (
@@ -421,7 +420,7 @@ export default function DeploymentsPage() {
                               className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
                             >
                               <Trash2 className="h-4 w-4 mr-2" />
-                              Uninstall Software
+                              uninstall software
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuItem
@@ -433,7 +432,7 @@ export default function DeploymentsPage() {
                             className="text-red-400 focus:bg-red-950/30 focus:text-red-400 cursor-pointer"
                           >
                             <X className="h-4 w-4 mr-2" />
-                            Delete Record
+                            delete record
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -445,25 +444,25 @@ export default function DeploymentsPage() {
                       <div className="mx-4 my-3 rounded-lg border border-border bg-background p-4 space-y-4">
                         <div className="grid gap-2 text-sm">
                           <div className="flex gap-2">
-                            <span className="text-muted-foreground flex-shrink-0 w-24">Installer URL</span>
+                            <span className="text-muted-foreground flex-shrink-0 w-24">installer url</span>
                             <span className="text-foreground select-text break-all">{deployment.installer_url}</span>
                           </div>
                           {deployment.silent_flags && (
                             <div className="flex gap-2">
-                              <span className="text-muted-foreground flex-shrink-0 w-24">Silent Flags</span>
+                              <span className="text-muted-foreground flex-shrink-0 w-24">silent flags</span>
                               <span className="text-foreground select-text break-all font-mono text-xs leading-relaxed">{deployment.silent_flags}</span>
                             </div>
                           )}
                           {deployment.verify_path && (
                             <div className="flex gap-2">
-                              <span className="text-muted-foreground flex-shrink-0 w-24">Verify Path</span>
+                              <span className="text-muted-foreground flex-shrink-0 w-24">verify path</span>
                               <span className="text-foreground select-text break-all">{deployment.verify_path}</span>
                             </div>
                           )}
                         </div>
 
                         <div>
-                          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Targets ({deployment.targets.length})</h4>
+                          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">targets ({deployment.targets.length})</h4>
                           <div className="space-y-1.5">
                             {deployment.targets.map((target) => (
                               <div key={target.machineId} className="flex items-center justify-between py-1.5 px-3 rounded border border-border/40 bg-background/50">

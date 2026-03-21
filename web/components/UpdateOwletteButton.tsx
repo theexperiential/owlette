@@ -130,7 +130,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
         className="border-orange-600 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950 cursor-pointer"
       >
         <RefreshCw className={`h-4 w-4 mr-2 ${inProgressCount > 0 ? 'animate-spin' : ''}`} />
-        Update Owlette
+        update owlette
         {latestVersion && (
           <span className="ml-2 text-xs">to v{latestVersion}</span>
         )}
@@ -141,7 +141,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
         )}
         {inProgressCount > 0 && (
           <Badge className="ml-2 bg-accent-cyan text-gray-900">
-            In Progress: {inProgressCount}
+            in progress: {inProgressCount}
           </Badge>
         )}
       </Button>
@@ -149,9 +149,9 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Update Owlette Agents</DialogTitle>
+            <DialogTitle>update owlette agents</DialogTitle>
             <DialogDescription>
-              Update selected machines to Owlette v{latestVersion || 'latest'}
+              update selected machines to Owlette v{latestVersion || 'latest'}
             </DialogDescription>
           </DialogHeader>
 
@@ -161,12 +161,12 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
               <div className="flex items-start gap-3">
                 <AlertCircle className="h-5 w-5 text-accent-cyan mt-0.5 flex-shrink-0" />
                 <div className="text-sm text-foreground">
-                  <p className="font-medium mb-1">What happens during an update:</p>
+                  <p className="font-medium mb-1">what happens during an update:</p>
                   <ul className="list-disc list-inside space-y-1 text-muted-foreground">
-                    <li>The Owlette service will stop automatically</li>
-                    <li>The new version will install silently</li>
-                    <li>The Owlette service will restart automatically</li>
-                    <li>The machine will appear online again within 1-2 minutes</li>
+                    <li>the owlette service will stop automatically</li>
+                    <li>the new version will install silently</li>
+                    <li>the owlette service will restart automatically</li>
+                    <li>the machine will appear online again within 1-2 minutes</li>
                   </ul>
                 </div>
               </div>
@@ -176,7 +176,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
             <div>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-medium">
-                  Select machines to update ({selectedMachines.size} of {outdatedMachines.length} selected)
+                  select machines to update ({selectedMachines.size} of {outdatedMachines.length} selected)
                 </h3>
                 <div className="flex gap-2">
                   <Button
@@ -186,7 +186,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                     onClick={handleSelectAll}
                     disabled={selectedMachines.size === outdatedMachines.length}
                   >
-                    Select All
+                    select all
                   </Button>
                   <Button
                     type="button"
@@ -195,7 +195,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                     onClick={handleDeselectAll}
                     disabled={selectedMachines.size === 0}
                   >
-                    Deselect All
+                    deselect all
                   </Button>
                 </div>
               </div>
@@ -223,7 +223,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                           </span>
                         </div>
                         <div className="text-sm text-gray-500 dark:text-gray-400">
-                          Current: {machine.agent_version ? `v${machine.agent_version}` : '< v2.0.8'} → Latest: v{latestVersion}
+                          current: {machine.agent_version ? `v${machine.agent_version}` : '< v2.0.8'} → latest: v{latestVersion}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
@@ -231,7 +231,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                           <>
                             <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1">
                               <Loader2 className="h-3 w-3 animate-spin" />
-                              Updating...
+                              updating...
                             </Badge>
                             <Button
                               type="button"
@@ -249,7 +249,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                               }}
                             >
                               <X className="h-3.5 w-3.5 mr-1" />
-                              Clear
+                              clear
                             </Button>
                           </>
                         )}
@@ -257,7 +257,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                           <>
                             <Badge variant="destructive" className="flex items-center gap-1.5 px-3 py-1">
                               <AlertTriangle className="h-3 w-3" />
-                              May have failed
+                              may have failed
                             </Badge>
                             <Button
                               type="button"
@@ -275,17 +275,17 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                               }}
                             >
                               <X className="h-3.5 w-3.5 mr-1" />
-                              Clear
+                              clear
                             </Button>
                           </>
                         )}
                         {machine.online ? (
                           <Badge className="bg-green-100 text-green-800 border-green-200 px-3 py-1">
-                            Online
+                            online
                           </Badge>
                         ) : (
                           <Badge variant="secondary" className="px-3 py-1">
-                            Offline
+                            offline
                           </Badge>
                         )}
                       </div>
@@ -303,7 +303,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
               onClick={() => setDialogOpen(false)}
               disabled={isUpdating}
             >
-              Cancel
+              cancel
             </Button>
             <Button
               type="button"
@@ -314,12 +314,12 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
               {isUpdating ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Updating...
+                  updating...
                 </>
               ) : (
                 <>
                   <CheckCircle2 className="h-4 w-4 mr-2" />
-                  Update {selectedMachines.size} Machine{selectedMachines.size !== 1 ? 's' : ''}
+                  update {selectedMachines.size} machine{selectedMachines.size !== 1 ? 's' : ''}
                 </>
               )}
             </Button>

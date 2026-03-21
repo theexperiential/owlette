@@ -1,79 +1,102 @@
-import { Building2, Monitor, Sparkles, Zap } from 'lucide-react';
+'use client';
 
-const useCases = [
+import { useState } from 'react';
+import { ChevronDown } from 'lucide-react';
+import Image from 'next/image';
+
+const capabilities = [
   {
-    icon: Building2,
-    title: 'Museums & Exhibitions',
-    description: 'Keep interactive exhibits running 24/7. Auto-restart crashed applications before visitors notice. Monitor video walls and projection mapping across your entire venue.',
-    highlight: 'Zero downtime',
+    label: 'monitor',
+    detail: 'real-time metrics across your fleet',
+    expanded: 'live cpu, memory, gpu, and disk usage for every machine. inline sparkline charts track trends over time. know instantly when something drifts.',
+    preview: '/dashboard-preview.png',
   },
   {
-    icon: Monitor,
-    title: 'Digital Signage',
-    description: 'Manage hundreds of screens across locations. Deploy content updates simultaneously. Know instantly when a display goes offline, from anywhere.',
-    highlight: 'Fleet-wide control',
+    label: 'control',
+    detail: 'start, stop, restart — from anywhere',
+    expanded: 'full remote process control across your entire fleet. configure startup sequences, manage dependencies, and auto-restart crashed processes before anyone notices.',
   },
   {
-    icon: Sparkles,
-    title: 'Themed Entertainment',
-    description: 'Ensure show-critical systems never fail. Real-time monitoring for immersive experiences. From theme parks to escape rooms, every moment matters.',
-    highlight: 'Mission critical',
+    label: 'deploy',
+    detail: 'push updates to every machine at once',
+    expanded: 'deploy software, configurations, and content to any machine, anywhere. fleet-wide rollouts or targeted single-machine updates — your call.',
+    preview: '/deploy-preview.png',
   },
   {
-    icon: Zap,
-    title: 'Live Events',
-    description: 'Mission-critical reliability for concerts, festivals, and productions. When the show must go on, Owlette ensures your systems keep running.',
-    highlight: 'Real-time response',
+    label: 'converse',
+    detail: 'conversational fleet management',
+    expanded: 'cortex lets you talk to your machines in natural language. ask questions, run diagnostics, and execute commands across your fleet through a conversational interface.',
   },
 ];
 
 export function UseCaseSection() {
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+
+  const toggle = (i: number) => {
+    setOpenIndex(openIndex === i ? null : i);
+  };
+
+  const activePreview = openIndex !== null ? capabilities[openIndex].preview : undefined;
+
   return (
-    <section id="use-cases" className="py-16 sm:py-24 md:py-32 px-4 sm:px-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Section Header */}
-        <div className="text-center mb-10 sm:mb-16">
-          <h2 className="section-headline text-foreground mb-3 sm:mb-4">
-            Built for critical installations
-          </h2>
-          <p className="section-subheadline max-w-2xl mx-auto px-4 sm:px-0">
-            Owlette was designed for environments where downtime isn&apos;t an option.
-            From museums to live events, we keep your installations running.
-          </p>
+    <section className="pt-40 sm:pt-52 pb-20 sm:pb-32 px-4 sm:px-6 relative">
+      {/* Warm gradient accent */}
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-accent-warm/[0.02] to-transparent pointer-events-none" />
+
+      <div className="max-w-5xl mx-auto relative">
+        {/* Preview image — positioned above the grid without pushing it down */}
+        <div
+          className={`absolute bottom-full left-0 right-0 mb-6 transition-all duration-500 ease-out pointer-events-none ${activePreview ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}
+        >
+          {activePreview && (
+            <div className="relative rounded-xl overflow-hidden shadow-2xl shadow-accent-cyan/5"
+              style={{
+                maskImage: 'linear-gradient(to bottom, transparent, black 25px, black calc(100% - 25px), transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
+                maskComposite: 'intersect',
+                WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 25px, black calc(100% - 25px), transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
+                WebkitMaskComposite: 'source-in',
+              }}
+            >
+              <Image
+                src={activePreview}
+                alt="Owlette dashboard preview"
+                width={1400}
+                height={800}
+                className="w-full h-auto"
+                priority
+              />
+            </div>
+          )}
         </div>
 
-        {/* Use Case Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
-          {useCases.map((useCase, index) => (
-            <div
-              key={useCase.title}
-              className="group relative p-5 sm:p-6 md:p-8 rounded-lg border border-border/50 bg-card/50 hover:bg-card hover:border-accent-cyan/30 transition-all duration-300"
-              style={{ animationDelay: `${index * 100}ms` }}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+          {capabilities.map((cap, i) => (
+            <button
+              key={cap.label}
+              onClick={() => toggle(i)}
+              className="text-center group cursor-pointer rounded-lg p-4 transition-all duration-300 hover:bg-card/50"
             >
-              {/* Icon */}
-              <div className="w-10 sm:w-12 h-10 sm:h-12 rounded-lg bg-accent-cyan/10 flex items-center justify-center mb-4 sm:mb-6 group-hover:bg-accent-cyan/20 transition-colors">
-                <useCase.icon className="w-5 sm:w-6 h-5 sm:h-6 text-accent-cyan" />
+              <div className="flex items-center justify-center gap-1.5 mb-2">
+                <h3 className={`text-xl sm:text-2xl font-bold font-heading transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-foreground group-hover:text-accent-cyan'}`}>
+                  {cap.label}
+                </h3>
+                <ChevronDown
+                  className={`w-4 h-4 text-muted-foreground transition-transform duration-300 ${openIndex === i ? 'rotate-180' : ''}`}
+                />
               </div>
-
-              {/* Content */}
-              <h3 className="text-lg sm:text-xl font-semibold text-foreground mb-2 sm:mb-3">
-                {useCase.title}
-              </h3>
-              <p className="text-sm sm:text-base text-muted-foreground leading-relaxed mb-3 sm:mb-4">
-                {useCase.description}
+              <p className="text-sm text-muted-foreground">
+                {cap.detail}
               </p>
 
-              {/* Highlight Badge */}
-              <div className="inline-flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 rounded-full bg-accent-cyan/5 border border-accent-cyan/20">
-                <div className="w-1 sm:w-1.5 h-1 sm:h-1.5 rounded-full bg-accent-cyan" />
-                <span className="text-[10px] sm:text-xs font-medium text-accent-cyan uppercase tracking-wider">
-                  {useCase.highlight}
-                </span>
+              {/* Expanded content */}
+              <div
+                className={`overflow-hidden transition-all duration-300 ${openIndex === i ? 'max-h-48 opacity-100 mt-3' : 'max-h-0 opacity-0'}`}
+              >
+                <p className="text-xs text-muted-foreground/80 leading-relaxed border-t border-border/30 pt-3">
+                  {cap.expanded}
+                </p>
               </div>
-
-              {/* Corner accent on hover */}
-              <div className="absolute top-0 right-0 w-12 sm:w-16 h-12 sm:h-16 border-t-2 border-r-2 border-transparent group-hover:border-accent-cyan/20 rounded-tr-lg transition-colors" />
-            </div>
+            </button>
           ))}
         </div>
       </div>

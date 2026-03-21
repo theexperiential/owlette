@@ -7,6 +7,11 @@ if _src_dir not in sys.path:
     sys.path.insert(0, _src_dir)
 
 import shared_utils
+
+# Set app identity so Windows notifications show "owlette" instead of "Python"
+import ctypes
+ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('tec.owlette.tray')
+
 import pystray
 from pystray import MenuItem as item
 from PIL import Image
@@ -28,6 +33,41 @@ start_on_login = True  # updated from registry in _run_tray() before first menu 
 current_status = {'service': 'unknown', 'firebase': 'unknown'}
 last_status = {'service': 'unknown', 'firebase': 'unknown'}
 status_lock = threading.Lock()
+
+# Icon flashing state
+_flash_active = False
+_flash_stop = threading.Event()
+
+def _start_flash(icon, status_code):
+    """Start flashing the tray icon between normal and error/warning."""
+    global _flash_active
+    if _flash_active:
+        return
+    _flash_active = True
+    _flash_stop.clear()
+
+    def flash_loop():
+        global _flash_active
+        normal_icon = load_icon('normal')
+        alert_icon = load_icon(status_code)
+        show_alert = True
+        while not _flash_stop.is_set():
+            try:
+                icon.icon = alert_icon if show_alert else normal_icon
+            except Exception:
+                break
+            show_alert = not show_alert
+            _flash_stop.wait(0.8)
+        _flash_active = False
+
+    t = threading.Thread(target=flash_loop, daemon=True)
+    t.start()
+
+def _stop_flash():
+    """Stop flashing the tray icon."""
+    global _flash_active
+    _flash_stop.set()
+    _flash_active = False
 
 # Function to detect Windows theme (light or dark)
 def is_windows_dark_theme():
@@ -221,10 +261,9 @@ def open_config_gui(icon, item):
             )
             pid = process.pid
         except Exception as e:
-            logging.error(f"Failed to open Owlette Configuration: {e}")
+            logging.error(f"Failed to open Owlette GUI: {e}")
     else:
         try:
-            # Assuming the window title contains "Owlette"
             hwnd = win32gui.FindWindow(None, shared_utils.WINDOW_TITLES.get("owlette_gui"))
             if hwnd:
                 # Restore window if minimized.
@@ -232,7 +271,7 @@ def open_config_gui(icon, item):
                 # Bring window to front.
                 win32gui.SetForegroundWindow(hwnd)
         except Exception as e:
-            logging.error(f"Failed to bring Owlette Configuration to the front: {e}")
+            logging.error(f"Failed to bring Owlette GUI to the front: {e}")
 
 # Function to restart the service (using UAC elevation)
 def restart_service(icon, item):
@@ -249,8 +288,8 @@ def restart_service(icon, item):
         # Show notification immediately for user feedback
         try:
             icon.notify(
-                title="Restarting Owlette",
-                message="Restarting service - will return momentarily"
+                title="owlette — restarting",
+                message="restarting service — will return momentarily"
             )
         except:
             pass
@@ -282,7 +321,7 @@ def restart_service(icon, item):
         logging.error(f"Failed to initiate service restart: {e}")
         try:
             icon.notify(
-                title="⚠️ Restart Failed",
+                title="restart failed",
                 message=f"Error: {str(e)}"
             )
         except:
@@ -395,7 +434,7 @@ def monitor_status(icon):
 
             # Update tooltip and menu OUTSIDE the lock (generate_menu also uses lock)
             hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
-            tooltip = f"Owlette v{shared_utils.APP_VERSION}\nHostname: {hostname}\n{service_msg}\nStatus: {firebase_msg}"
+            tooltip = f"owlette v{shared_utils.APP_VERSION}\nhostname: {hostname}\n{service_msg.lower()}\nstatus: {firebase_msg.lower()}"
             icon.title = tooltip
             icon.menu = generate_menu()  # Update menu object
             icon.update_menu()  # Signal OS to refresh the menu display
@@ -403,8 +442,18 @@ def monitor_status(icon):
             with status_lock:
                 # Check if icon color should change
                 if last_status.get('code') != status_code:
-                    # Update icon
-                    icon.icon = load_icon(status_code)
+                    # Error: flash blood red. Warning: dim solid. Normal: solid coral.
+                    if status_code == 'error':
+                        _stop_flash()
+                        time.sleep(0.1)
+                        _start_flash(icon, 'error')
+                    else:
+                        _stop_flash()
+                        time.sleep(0.1)
+                        if status_code == 'warning':
+                            icon.icon = load_icon('disconnected')
+                        else:
+                            icon.icon = load_icon('normal')
                     logging.info(f"[TRAY] Icon updated: {last_status.get('code')} -> {status_code} ({firebase_msg})")
 
                     # Send notification on state change (skip during startup grace period)
@@ -422,24 +471,24 @@ def monitor_status(icon):
 
 _HEALTH_ERROR_MESSAGES = {
     'config_error': (
-        "⚠️ Owlette Config Error",
-        "Config file missing or corrupted. Please reinstall Owlette."
+        "owlette — config error",
+        "config file missing or corrupted. please reinstall owlette."
     ),
     'auth_error': (
-        "⚠️ Owlette Not Registered",
-        "No authentication token found. Please run the Owlette installer again."
+        "owlette — not registered",
+        "no authentication token found. please run the installer again."
     ),
     'network_error': (
-        "⚠️ Network Unreachable",
-        "Network was not reachable at startup. Check internet connection."
+        "owlette — network unreachable",
+        "network was not reachable at startup. check internet connection."
     ),
     'connection_failure': (
-        "⚠️ Owlette Connection Failed",
-        "Persistent Firestore connection failures. Check service logs."
+        "owlette — connection failed",
+        "persistent connection failures. check service logs."
     ),
     'fatal_error': (
-        "⚠️ Owlette Fatal Error",
-        "A fatal connection error occurred. Check service logs."
+        "owlette — fatal error",
+        "a fatal connection error occurred. check service logs."
     ),
 }
 
@@ -455,13 +504,13 @@ def send_status_notification(icon, status_code, service_msg, firebase_msg):
                 icon.notify(title=title, message=message)
             else:
                 icon.notify(
-                    title="⚠️ Owlette Service Stopped",
-                    message=f"{service_msg}\nThe service may have crashed or failed to start.\nClick 'Restart' to fix."
+                    title="owlette — service stopped",
+                    message="the service may have crashed or failed to start.\nclick 'restart' to fix."
                 )
         elif status_code == 'warning':
             icon.notify(
-                title="⚠️ Firebase Connection Issue",
-                message=f"{firebase_msg}\nLocal monitoring still works, but cloud sync is unavailable."
+                title="owlette — reconnecting",
+                message="cloud sync temporarily unavailable. local monitoring still active."
             )
         # Don't notify on normal status (too noisy)
     except Exception as e:
@@ -493,7 +542,7 @@ def leave_site(icon, item):
     result = ctypes.windll.user32.MessageBoxW(
         0,
         message,
-        "Leave Site?",
+        "owlette — leave site?",
         MB_YESNO | MB_ICONWARNING
     )
 
@@ -501,8 +550,8 @@ def leave_site(icon, item):
         try:
             # Show notification immediately
             icon.notify(
-                title="🔄 Leaving Site...",
-                message="Stopping service and marking machine offline..."
+                title="owlette — leaving site",
+                message="stopping service and marking machine offline..."
             )
 
             # CRITICAL: Restart service FIRST while Firebase is still enabled
@@ -533,15 +582,15 @@ def leave_site(icon, item):
 
                 logging.info("Service restarted successfully after leaving site")
                 icon.notify(
-                    title="✓ Service Restarted",
-                    message="The Owlette service has been restarted successfully."
+                    title="owlette — service restarted",
+                    message="service is running normally."
                 )
             except Exception as restart_error:
                 logging.error(f"Error restarting service: {restart_error}")
                 ctypes.windll.user32.MessageBoxW(
                     0,
                     f"Failed to restart service:\n{str(restart_error)}\n\nPlease restart manually.",
-                    "Restart Failed",
+                    "restart failed",
                     0x10  # MB_ICONERROR
                 )
 
@@ -580,10 +629,10 @@ def generate_menu():
         pass
 
     menu_items = [
-        item(f'Owlette v{shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),
-        item(f'Hostname: {hostname}', lambda icon, item: None, enabled=False),
-        item(f'{service_status}', lambda icon, item: None, enabled=False),
-        item(f'Status: {firebase_status}', lambda icon, item: None, enabled=False),
+        item(f'owlette v{shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),
+        item(f'hostname: {hostname}', lambda icon, item: None, enabled=False),
+        item(f'{service_status.lower()}', lambda icon, item: None, enabled=False),
+        item(f'status: {firebase_status.lower()}', lambda icon, item: None, enabled=False),
     ]
 
     if health_error_item:
@@ -591,10 +640,10 @@ def generate_menu():
 
     menu_items += [
         pystray.Menu.SEPARATOR,
-        item('Open Config', open_config_gui),
-        item('Start on Login', on_select, checked=lambda text: start_on_login),
-        item('Restart', restart_service),
-        item('Exit', exit_action),
+        item('open owlette', open_config_gui),
+        item('start on login', on_select, checked=lambda text: start_on_login),
+        item('restart', restart_service),
+        item('exit', exit_action),
     ]
 
     return pystray.Menu(*menu_items)
@@ -673,7 +722,7 @@ def _run_tray(is_restarted=False):
 
     # Create the system tray icon with initial status
     hostname = os.environ.get('COMPUTERNAME', 'Unknown')
-    tooltip = f"Owlette v{shared_utils.APP_VERSION}\nHostname: {hostname}\n{service_msg}\nStatus: {firebase_msg}"
+    tooltip = f"owlette v{shared_utils.APP_VERSION}\nhostname: {hostname}\n{service_msg.lower()}\nstatus: {firebase_msg.lower()}"
     image = load_icon(status_code)
 
     icon = pystray.Icon(
@@ -693,8 +742,8 @@ def _run_tray(is_restarted=False):
             time.sleep(1)
             try:
                 icon.notify(
-                    title="✅ Back online!",
-                    message="Owlette service running normally."
+                    title="owlette — back online",
+                    message="service running normally."
                 )
                 logging.info("Restart complete - 'back online' notification shown")
             except Exception as e:

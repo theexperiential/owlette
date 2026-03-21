@@ -117,9 +117,9 @@ export function ManageUserSitesDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="border-border bg-card text-foreground max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="text-foreground">Manage Site Access</DialogTitle>
+          <DialogTitle className="text-foreground">manage site access</DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            Control which sites {userEmail} can access
+            control which sites {userEmail} can access
           </DialogDescription>
         </DialogHeader>
 
@@ -137,7 +137,7 @@ export function ManageUserSitesDialog({
           <div className="relative mt-4">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search sites by name or ID..."
+              placeholder="search sites by name or ID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9 border-border bg-background text-foreground placeholder:text-muted-foreground"
@@ -148,18 +148,18 @@ export function ManageUserSitesDialog({
         {sitesLoading ? (
           <div className="flex justify-center items-center py-8">
             <Loader2 className="h-6 w-6 animate-spin text-accent-cyan" />
-            <span className="ml-2 text-muted-foreground">Loading sites...</span>
+            <span className="ml-2 text-muted-foreground">loading sites...</span>
           </div>
         ) : (
           <div className="space-y-6 py-4 max-h-[60vh] overflow-y-auto pr-2">
             {/* Assigned Sites */}
             <div>
               <h3 className="text-sm font-semibold text-foreground mb-3">
-                Assigned Sites ({assignedSites.length})
+                assigned sites ({assignedSites.length})
               </h3>
               {assignedSites.length === 0 ? (
                 <div className="text-center py-6 text-muted-foreground bg-background rounded-lg border border-border">
-                  {searchQuery ? 'No assigned sites match your search' : 'No sites assigned yet'}
+                  {searchQuery ? 'no assigned sites match your search' : 'no sites assigned yet'}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -195,11 +195,11 @@ export function ManageUserSitesDialog({
             {orphanedSiteIds.length > 0 && (
               <div>
                 <h3 className="text-sm font-semibold text-red-400 mb-3">
-                  Invalid Site References ({orphanedSiteIds.length})
+                  invalid site references ({orphanedSiteIds.length})
                 </h3>
                 <div className="space-y-2">
                   <div className="text-xs text-muted-foreground mb-2 p-2 bg-red-950/20 border border-red-900 rounded">
-                    These site IDs are in the user's access list but the sites no longer exist or are inaccessible. Remove them to fix the site count.
+                    these site IDs are in the user's access list but the sites no longer exist or are inaccessible. remove them to fix the site count.
                   </div>
                   {orphanedSiteIds.map((siteId) => (
                     <div
@@ -207,7 +207,7 @@ export function ManageUserSitesDialog({
                       className="flex items-center justify-between p-3 bg-red-950/30 rounded-lg border border-red-900"
                     >
                       <div className="flex-1">
-                        <p className="text-red-300 font-medium">Invalid/Orphaned Site</p>
+                        <p className="text-red-300 font-medium">invalid/orphaned site</p>
                         <p className="text-xs text-red-400 font-mono">{siteId}</p>
                       </div>
                       <Button
@@ -232,11 +232,11 @@ export function ManageUserSitesDialog({
             {/* Available Sites */}
             <div>
               <h3 className="text-sm font-semibold text-foreground mb-3">
-                Available Sites ({availableSites.length})
+                available sites ({availableSites.length})
               </h3>
               {availableSites.length === 0 && searchQuery ? (
                 <div className="text-center py-6 text-muted-foreground bg-background rounded-lg border border-border">
-                  No available sites match your search
+                  no available sites match your search
                 </div>
               ) : availableSites.length > 0 ? (
                 <div className="space-y-2">
@@ -259,12 +259,12 @@ export function ManageUserSitesDialog({
                         {assigningTo === site.id ? (
                           <>
                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Assigning...
+                            assigning...
                           </>
                         ) : (
                           <>
                             <Plus className="h-4 w-4 mr-2" />
-                            Assign
+                            assign
                           </>
                         )}
                       </Button>
@@ -278,8 +278,8 @@ export function ManageUserSitesDialog({
 
         {!sitesLoading && sites.length === 0 && (
           <div className="text-center py-8 text-muted-foreground">
-            <p>No sites available yet.</p>
-            <p className="text-sm mt-2">Create a site first from the dashboard.</p>
+            <p>no sites available yet.</p>
+            <p className="text-sm mt-2">create a site first from the dashboard.</p>
           </div>
         )}
       </DialogContent>

@@ -101,18 +101,18 @@ export class ErrorBoundary extends Component<Props, State> {
             </div>
 
             <h2 className="text-xl font-semibold text-white text-center mb-2">
-              Something went wrong
+              something went wrong
             </h2>
 
             <p className="text-muted-foreground text-center mb-6">
-              An unexpected error occurred. Please try refreshing the page or contact support if the problem persists.
+              an unexpected error occurred. please try refreshing the page or contact support if the problem persists.
             </p>
 
             {/* Show error details in development mode */}
             {process.env.NODE_ENV === 'development' && this.state.error && (
               <details className="mb-6">
                 <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-white mb-2">
-                  Error Details (Development Only)
+                  error details (development only)
                 </summary>
                 <div className="bg-secondary rounded p-3 text-xs font-mono overflow-auto max-h-48">
                   <div className="text-red-400 mb-2">
@@ -135,13 +135,13 @@ export class ErrorBoundary extends Component<Props, State> {
                 onClick={this.handleReset}
                 className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 font-medium py-2 px-4 rounded-md transition-colors"
               >
-                Try Again
+                try again
               </button>
               <button
                 onClick={() => window.location.href = '/dashboard'}
                 className="flex-1 bg-secondary border border-border hover:bg-muted text-foreground hover:text-white font-medium py-2 px-4 rounded-md transition-colors"
               >
-                Go to Dashboard
+                go to dashboard
               </button>
             </div>
           </div>

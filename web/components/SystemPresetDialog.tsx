@@ -211,11 +211,11 @@ export default function SystemPresetDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="border-border bg-secondary text-white max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEditMode ? 'Edit Template' : 'Create Template'}</DialogTitle>
+          <DialogTitle>{isEditMode ? 'edit template' : 'create template'}</DialogTitle>
           <DialogDescription className="text-muted-foreground">
             {isEditMode
-              ? 'Update the template configuration.'
-              : 'Create a new software template for the deployment catalog.'}
+              ? 'update the template configuration.'
+              : 'create a new software template for the deployment catalog.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -237,7 +237,7 @@ export default function SystemPresetDialog({
                 : 'No Owlette Installer Available'}
             </Button>
             <p className="text-xs text-muted-foreground text-center mt-2">
-              Automatically populate all fields for Owlette Agent deployment
+              automatically populate all fields for Owlette agent deployment
             </p>
           </div>
         )}
@@ -246,7 +246,7 @@ export default function SystemPresetDialog({
           {/* Name */}
           <div className="space-y-2">
             <Label htmlFor="name" className="text-white">
-              Name *
+              name *
             </Label>
             <Input
               id="name"
@@ -255,13 +255,13 @@ export default function SystemPresetDialog({
               onChange={(e) => setName(e.target.value)}
               className="border-border bg-background text-white"
             />
-            <p className="text-xs text-muted-foreground">Display name shown in UI</p>
+            <p className="text-xs text-muted-foreground">display name shown in UI</p>
           </div>
 
           {/* Software Name */}
           <div className="space-y-2">
             <Label htmlFor="softwareName" className="text-white">
-              Software Name *
+              software name *
             </Label>
             <Input
               id="softwareName"
@@ -270,17 +270,17 @@ export default function SystemPresetDialog({
               onChange={(e) => setSoftwareName(e.target.value)}
               className="border-border bg-background text-white"
             />
-            <p className="text-xs text-muted-foreground">Short identifier for grouping</p>
+            <p className="text-xs text-muted-foreground">short identifier for grouping</p>
           </div>
 
           {/* Category */}
           <div className="space-y-2">
             <Label htmlFor="category" className="text-white">
-              Category *
+              category *
             </Label>
             <Select value={category} onValueChange={setCategory}>
               <SelectTrigger className="border-border bg-background text-white">
-                <SelectValue placeholder="Select a category..." />
+                <SelectValue placeholder="select a category..." />
               </SelectTrigger>
               <SelectContent className="border-border bg-secondary">
                 {predefinedCategories.map((cat) => (
@@ -294,13 +294,13 @@ export default function SystemPresetDialog({
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">Used for filtering and organization</p>
+            <p className="text-xs text-muted-foreground">used for filtering and organization</p>
           </div>
 
           {/* Icon (optional) */}
           <div className="space-y-2">
             <Label htmlFor="icon" className="text-white">
-              Icon (Emoji)
+              icon (emoji)
             </Label>
             <Input
               id="icon"
@@ -310,13 +310,13 @@ export default function SystemPresetDialog({
               maxLength={2}
               className="border-border bg-background text-white"
             />
-            <p className="text-xs text-muted-foreground">Optional emoji icon (one character)</p>
+            <p className="text-xs text-muted-foreground">optional emoji icon (one character)</p>
           </div>
 
           {/* Description (optional) */}
           <div className="space-y-2">
             <Label htmlFor="description" className="text-white">
-              Description
+              description
             </Label>
             <Textarea
               id="description"
@@ -331,7 +331,7 @@ export default function SystemPresetDialog({
           {/* Installer Name */}
           <div className="space-y-2">
             <Label htmlFor="installerName" className="text-white">
-              Installer Filename *
+              installer filename *
             </Label>
             <Input
               id="installerName"
@@ -340,13 +340,13 @@ export default function SystemPresetDialog({
               onChange={(e) => setInstallerName(e.target.value)}
               className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-muted-foreground">Name of the installer file</p>
+            <p className="text-xs text-muted-foreground">name of the installer file</p>
           </div>
 
           {/* Installer URL */}
           <div className="space-y-2">
             <Label htmlFor="installerUrl" className="text-white">
-              Installer URL *
+              installer URL *
             </Label>
             <Input
               id="installerUrl"
@@ -356,14 +356,14 @@ export default function SystemPresetDialog({
               className="border-border bg-background text-white font-mono text-sm"
             />
             <p className="text-xs text-muted-foreground">
-              Direct download link for the installer
+              direct download link for the installer
             </p>
           </div>
 
           {/* Silent Flags */}
           <div className="space-y-2">
             <Label htmlFor="silentFlags" className="text-white">
-              Silent Install Flags *
+              silent install flags *
             </Label>
             <Input
               id="silentFlags"
@@ -380,7 +380,7 @@ export default function SystemPresetDialog({
           {/* Verify Path (optional) */}
           <div className="space-y-2">
             <Label htmlFor="verifyPath" className="text-white">
-              Verification Path
+              verification path
             </Label>
             <Input
               id="verifyPath"
@@ -389,7 +389,7 @@ export default function SystemPresetDialog({
               onChange={(e) => setVerifyPath(e.target.value)}
               className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-muted-foreground">Optional: File path to verify installation success</p>
+            <p className="text-xs text-muted-foreground">optional: file path to verify installation success</p>
           </div>
 
           {/* Advanced Options */}
@@ -397,7 +397,7 @@ export default function SystemPresetDialog({
             {/* Timeout */}
             <div className="space-y-2">
               <Label htmlFor="timeout" className="text-white">
-                Timeout (seconds)
+                timeout (seconds)
               </Label>
               <Input
                 id="timeout"
@@ -414,7 +414,7 @@ export default function SystemPresetDialog({
             {/* Order */}
             <div className="space-y-2">
               <Label htmlFor="order" className="text-white">
-                Display Order
+                display order
               </Label>
               <Input
                 id="order"
@@ -424,7 +424,7 @@ export default function SystemPresetDialog({
                 onChange={(e) => setOrder(parseInt(e.target.value) || 100)}
                 className="border-border bg-background text-white"
               />
-              <p className="text-xs text-muted-foreground">Sort priority (lower = first)</p>
+              <p className="text-xs text-muted-foreground">sort priority (lower = first)</p>
             </div>
           </div>
         </div>
@@ -436,7 +436,7 @@ export default function SystemPresetDialog({
             disabled={saving}
             className="border-border bg-background text-white hover:bg-muted cursor-pointer"
           >
-            Cancel
+            cancel
           </Button>
           <Button
             onClick={handleSave}
@@ -446,10 +446,10 @@ export default function SystemPresetDialog({
             {saving ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                {isEditMode ? 'Updating...' : 'Creating...'}
+                {isEditMode ? 'updating...' : 'creating...'}
               </>
             ) : (
-              isEditMode ? 'Update Template' : 'Create Template'
+              isEditMode ? 'update template' : 'create template'
             )}
           </Button>
         </DialogFooter>

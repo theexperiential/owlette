@@ -62,9 +62,9 @@ STATUS_COLORS = {
     'INACTIVE':      '#94a3b8',  # slate-400
 }
 WINDOW_TITLES = {
-    "owlette_gui": "Owlette Configuration", 
-    "prompt_slack_config": "Connect to Slack",
-    "prompt_restart": "Process repeatedly failing!"
+    "owlette_gui": "owlette",
+    "prompt_slack_config": "connect to slack",
+    "prompt_restart": "process repeatedly failing!"
 }
 SERVICE_NAME = 'OwletteService'
 

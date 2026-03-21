@@ -142,7 +142,7 @@ class OwletteConfigApp:
                     # Update UI on main thread
                     self.master.after(0, self.update_firebase_status)
                 else:
-                    # Firebase is disabled - still update status to show "Disabled"
+                    # Firebase is disabled - still update status to show "disabled"
                     logging.info("Firebase is disabled in config")
                     self.master.after(0, self.update_firebase_status)
             except ImportError as e:
@@ -246,7 +246,7 @@ class OwletteConfigApp:
         self.header_frame.grid(row=0, column=0, columnspan=3, sticky='ew', padx=(14, 14), pady=(12, 0))
 
         # PROCESSES label (left aligned)
-        self.process_list_label = ctk.CTkLabel(self.header_frame, text="Processes", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.process_list_label = ctk.CTkLabel(self.header_frame, text="processes", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.process_list_label.pack(side='left')
 
         # Toggle button (right aligned)
@@ -256,7 +256,7 @@ class OwletteConfigApp:
         # Add process button (in header, next to toggle)
         self.new_button = ctk.CTkButton(self.header_frame, text="\uff0b", command=self.new_process, width=30, height=30, fg_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_IMPORTANT_HOVER, text_color=shared_utils.BUTTON_IMPORTANT_TEXT, bg_color=shared_utils.FRAME_COLOR, corner_radius=15, font=("Segoe UI", 14))
         self.new_button.pack(side='right', padx=(0, 5))
-        CTkToolTip(self.new_button, message="Add new process")
+        CTkToolTip(self.new_button, message="add new process")
 
         # Create a Listbox to display the list of processes
         self.process_list = CTkListbox(self.master, command=self.on_select)
@@ -318,7 +318,7 @@ class OwletteConfigApp:
 
         self.site_button = ctk.CTkButton(
             self.footer_left,
-            text="Join Site",
+            text="join site",
             command=self.on_site_button_click,
             width=100,
             height=24,
@@ -330,7 +330,7 @@ class OwletteConfigApp:
         self.site_button.pack(side='left', padx=(10, 0), pady=0)
 
         # Center section: Footer text
-        footer_text = "Made with \u2665 in California by TEC"
+        footer_text = "made with \u2665 in california by TEC"
         self.footer_label = ctk.CTkLabel(self.footer_frame, text=footer_text, fg_color='transparent', text_color=shared_utils.ACCENT_COLOR, font=("", 11))
         self.footer_label.pack(side='left', expand=True)
         self.footer_label.configure(cursor="hand2")
@@ -342,7 +342,7 @@ class OwletteConfigApp:
 
         self.config_button = ctk.CTkButton(
             self.footer_right,
-            text="Config",
+            text="config",
             command=self.open_config,
             width=70,
             height=24,
@@ -355,7 +355,7 @@ class OwletteConfigApp:
 
         self.logs_button = ctk.CTkButton(
             self.footer_right,
-            text="Logs",
+            text="logs",
             command=self.open_logs,
             width=70,
             height=24,
@@ -389,14 +389,14 @@ class OwletteConfigApp:
         self.empty_state_label.place(relx=0.5, rely=0.45, anchor='center')
 
         # Create a label for the process details
-        self.process_details_label = ctk.CTkLabel(self.master, text="Process Details", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.process_details_label = ctk.CTkLabel(self.master, text="process details", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.process_details_label.grid(row=0, column=4, columnspan=3, sticky='w', padx=(20, 10), pady=(20, 0))
 
         # Invisible spacer — keeps grid layout stable (previously held machine info)
         self.machine_info_frame = ctk.CTkFrame(self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, height=0, width=0)
 
         # Create a toggle switch for process
-        self.autolaunch_label = ctk.CTkLabel(self.master, text="Autolaunch:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.autolaunch_label = ctk.CTkLabel(self.master, text="autolaunch:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.autolaunch_label.grid(row=1, column=4, sticky='e', padx=(15, 5), pady=5)
         self.autolaunch_toggle = ctk.CTkSwitch(master=self.master, text="", command=self.toggle_launch_process, onvalue="on", offvalue="off")
         self.autolaunch_toggle.grid(row=1, column=5, columnspan=2, sticky='w', padx=10, pady=5)
@@ -404,43 +404,43 @@ class OwletteConfigApp:
         self.autolaunch_toggle.select()
 
         # Create Name of process field
-        self.name_label = ctk.CTkLabel(self.master, text="Name:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.name_label = ctk.CTkLabel(self.master, text="name:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.name_label.grid(row=2, column=4, sticky='e', padx=(15, 5), pady=5)
-        self.name_entry = ctk.CTkEntry(self.master, placeholder_text="Name of your process", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
+        self.name_entry = ctk.CTkEntry(self.master, placeholder_text="name of your process", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
         self.name_entry.grid(row=2, column=5, columnspan=4, sticky='ew', padx=(10, 20), pady=5)
 
         # Create Exe path field
-        self.exe_path_label = ctk.CTkLabel(self.master, text="Exe:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.exe_path_label = ctk.CTkLabel(self.master, text="exe:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.exe_path_label.grid(row=3, column=4, sticky='e', padx=(15, 5), pady=5)
         self.exe_browse_button = ctk.CTkButton(self.master, text="\uE838", command=self.browse_exe, width=36, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=shared_utils.CORNER_RADIUS, font=("Segoe MDL2 Assets", 14))
         self.exe_browse_button.grid(row=3, column=5, sticky='w', padx=(10, 2), pady=5)
-        self.exe_path_entry = ctk.CTkEntry(self.master, placeholder_text="The full path to your executable (application)", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
+        self.exe_path_entry = ctk.CTkEntry(self.master, placeholder_text="the full path to your executable (application)", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
         self.exe_path_entry.grid(row=3, column=6, columnspan=3, sticky='ew', padx=(2, 20), pady=5)
 
         # Create File path / cmd line args
-        self.file_path_label = ctk.CTkLabel(self.master, text="Path / Args:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.file_path_label = ctk.CTkLabel(self.master, text="path / args:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.file_path_label.grid(row=4, column=4, sticky='e', padx=(15, 5), pady=5)
         self.file_browse_button = ctk.CTkButton(self.master, text="\uE838", command=self.browse_file, width=36, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=shared_utils.CORNER_RADIUS, font=("Segoe MDL2 Assets", 14))
         self.file_browse_button.grid(row=4, column=5, sticky='w', padx=(10, 2), pady=5)
-        self.file_path_entry = ctk.CTkEntry(self.master, placeholder_text="The full path to your document or command line arguments", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
+        self.file_path_entry = ctk.CTkEntry(self.master, placeholder_text="the full path to your document or command line arguments", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
         self.file_path_entry.grid(row=4, column=6, columnspan=3, sticky='ew', padx=(2, 20), pady=5)
 
         # Create CWD path field
-        self.cwd_label = ctk.CTkLabel(self.master, text="CWD:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.cwd_label = ctk.CTkLabel(self.master, text="cwd:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.cwd_label.grid(row=5, column=4, sticky='e', padx=(15, 5), pady=5)
         self.cwd_browse_button = ctk.CTkButton(self.master, text="\uED25", command=self.browse_cwd, width=36, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=shared_utils.CORNER_RADIUS, font=("Segoe MDL2 Assets", 14))
         self.cwd_browse_button.grid(row=5, column=5, sticky='w', padx=(10, 2), pady=5)
-        self.cwd_entry = ctk.CTkEntry(self.master, placeholder_text="The working directory for your process", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
+        self.cwd_entry = ctk.CTkEntry(self.master, placeholder_text="the working directory for your process", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
         self.cwd_entry.grid(row=5, column=6, columnspan=3, sticky='ew', padx=(2, 20), pady=5)
 
         # Create Time delay label and field
-        self.time_delay_label = ctk.CTkLabel(self.master, text="Delay (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.time_delay_label = ctk.CTkLabel(self.master, text="delay (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.time_delay_label.grid(row=6, column=4, sticky='e', padx=(15, 5), pady=5)
         self.time_delay_entry = ctk.CTkEntry(self.master, placeholder_text="0", width=50, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
         self.time_delay_entry.grid(row=6, column=5, columnspan=2, sticky='w', padx=(10, 5), pady=5)
 
         # Create Priority dropdown
-        self.priority_label = ctk.CTkLabel(self.master, text="Priority:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.priority_label = ctk.CTkLabel(self.master, text="priority:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.priority_label.grid(row=6, column=7, sticky='e', padx=5, pady=5)
         self.priority_options = ["Low", "Normal", "High", "Realtime"]
         self.priority_menu = ctk.CTkOptionMenu(self.master, values=self.priority_options, command=self.update_selected_process)
@@ -449,13 +449,13 @@ class OwletteConfigApp:
         self.priority_menu.set('Normal')
 
         # Create a label and entry for "Time to Initialize"
-        self.time_to_init_label = ctk.CTkLabel(self.master, text="Wait (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.time_to_init_label = ctk.CTkLabel(self.master, text="wait (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.time_to_init_label.grid(row=7, column=4, sticky='e', padx=(15, 5), pady=5)
         self.time_to_init_entry = ctk.CTkEntry(self.master, placeholder_text="10", width=50, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
         self.time_to_init_entry.grid(row=7, column=5, columnspan=2, sticky='w', padx=(10, 5), pady=5)
 
         # Create Visibility dropdown
-        self.visibility_label = ctk.CTkLabel(self.master, text="Visibility:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.visibility_label = ctk.CTkLabel(self.master, text="visibility:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.visibility_label.grid(row=7, column=7, sticky='e', padx=5, pady=5)
         self.visibility_options = ["Normal", "Hidden"]
         self.visibility_menu = ctk.CTkOptionMenu(self.master, values=self.visibility_options, command=self.update_selected_process)
@@ -464,7 +464,7 @@ class OwletteConfigApp:
         self.visibility_menu.set('Normal')
 
         # Create a label and entry for "Restart Attempts"
-        self.relaunch_attempts_label = ctk.CTkLabel(self.master, text="Attempts:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.relaunch_attempts_label = ctk.CTkLabel(self.master, text="attempts:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.relaunch_attempts_label.grid(row=8, column=4, sticky='e', padx=(15, 5), pady=5)
         self.relaunch_attempts_entry = ctk.CTkEntry(self.master, placeholder_text="5", width=50, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
         self.relaunch_attempts_entry.grid(row=8, column=5, columnspan=2, sticky='w', padx=(10, 5), pady=5)
@@ -1436,24 +1436,24 @@ class OwletteConfigApp:
             return action
 
         # Kill
-        ctk.CTkButton(frame, text="  Kill Process", command=make_action(self.kill_process), **btn_opts).pack(fill='x', padx=4, pady=(4, 0))
+        ctk.CTkButton(frame, text="  kill process", command=make_action(self.kill_process), **btn_opts).pack(fill='x', padx=4, pady=(4, 0))
 
         # Separator
         ctk.CTkFrame(frame, fg_color=shared_utils.BORDER_COLOR, height=1).pack(fill='x', padx=8, pady=3)
 
         # Move Up
         if can_move_up:
-            ctk.CTkButton(frame, text="  Move Up", command=make_action(self.move_up), **btn_opts).pack(fill='x', padx=4)
+            ctk.CTkButton(frame, text="  move up", command=make_action(self.move_up), **btn_opts).pack(fill='x', padx=4)
         else:
-            ctk.CTkButton(frame, text="  Move Up", state="disabled", text_color="#475569",
+            ctk.CTkButton(frame, text="  move up", state="disabled", text_color="#475569",
                           fg_color="transparent", hover_color=shared_utils.FRAME_COLOR, hover=False, anchor="w",
                           width=160, height=32, corner_radius=4, font=("Segoe UI", 13)).pack(fill='x', padx=4)
 
         # Move Down
         if can_move_down:
-            ctk.CTkButton(frame, text="  Move Down", command=make_action(self.move_down), **btn_opts).pack(fill='x', padx=4)
+            ctk.CTkButton(frame, text="  move down", command=make_action(self.move_down), **btn_opts).pack(fill='x', padx=4)
         else:
-            ctk.CTkButton(frame, text="  Move Down", state="disabled", text_color="#475569",
+            ctk.CTkButton(frame, text="  move down", state="disabled", text_color="#475569",
                           fg_color="transparent", hover_color=shared_utils.FRAME_COLOR, hover=False, anchor="w",
                           width=160, height=32, corner_radius=4, font=("Segoe UI", 13)).pack(fill='x', padx=4)
 
@@ -1461,7 +1461,7 @@ class OwletteConfigApp:
         ctk.CTkFrame(frame, fg_color=shared_utils.BORDER_COLOR, height=1).pack(fill='x', padx=8, pady=3)
 
         # Delete (red)
-        ctk.CTkButton(frame, text="  Delete", command=make_action(self.remove_process),
+        ctk.CTkButton(frame, text="  delete", command=make_action(self.remove_process),
                       fg_color="transparent", hover_color="#3b1111", text_color="#f87171",
                       anchor="w", width=160, height=32, corner_radius=4,
                       font=("Segoe UI", 13)).pack(fill='x', padx=4, pady=(0, 4))
@@ -1616,26 +1616,26 @@ class OwletteConfigApp:
 
         if firebase_enabled and not site_id:
             # Firebase was enabled but site_id is missing (removed from site)
-            self.firebase_status_label.configure(text="Removed from Site", text_color="#f87171")  # Red
-            self.site_button.configure(text="Join Site", state="normal")
+            self.firebase_status_label.configure(text="removed from site", text_color="#f87171")  # Red
+            self.site_button.configure(text="join site", state="normal")
         elif firebase_enabled and actually_connected:
-            self.firebase_status_label.configure(text="Connected", text_color="#4ade80")  # Green
-            self.site_button.configure(text="Leave Site", state="normal")
+            self.firebase_status_label.configure(text="connected", text_color="#4ade80")  # Green
+            self.site_button.configure(text="leave site", state="normal")
         elif firebase_enabled and service_status_valid and not service_connected:
             # Service is running but not connected (internet down, reconnecting, etc.)
-            self.firebase_status_label.configure(text="Disconnected", text_color="#f87171")  # Red
-            self.site_button.configure(text="Leave Site", state="normal")
+            self.firebase_status_label.configure(text="disconnected", text_color="#f87171")  # Red
+            self.site_button.configure(text="leave site", state="normal")
         elif firebase_enabled and not tokens_valid:
-            self.firebase_status_label.configure(text="Authentication Required", text_color="#fbbf24")  # Yellow/Warning
-            self.site_button.configure(text="Join Site", state="normal")
+            self.firebase_status_label.configure(text="authentication required", text_color="#fbbf24")  # Yellow/Warning
+            self.site_button.configure(text="join site", state="normal")
         else:
-            self.firebase_status_label.configure(text="Disabled", text_color="#9ca3af")  # Gray
-            self.site_button.configure(text="Join Site", state="normal")
+            self.firebase_status_label.configure(text="disabled", text_color="#9ca3af")  # Gray
+            self.site_button.configure(text="join site", state="normal")
 
     def on_site_button_click(self):
         """Route to appropriate handler based on current button state."""
         button_text = self.site_button.cget("text")
-        if button_text == "Leave Site":
+        if button_text == "leave site":
             self.on_leave_site_click()
         else:
             self.on_join_site_click()
@@ -1657,13 +1657,13 @@ class OwletteConfigApp:
                    "To re-join a site, you will need to run the Owlette installer again.",
             icon="warning",
             option_1="Cancel",
-            option_2="Leave Site",
+            option_2="leave site",
             width=550
         )
 
-        if response.get() == "Leave Site":
+        if response.get() == "leave site":
             # Update status immediately to show we're working (before GUI freezes)
-            self.firebase_status_label.configure(text="Disabling...", text_color="#fbbf24")  # Yellow
+            self.firebase_status_label.configure(text="disabling...", text_color="#fbbf24")  # Yellow
             self.master.update()  # Force GUI update before blocking operation
 
             try:
@@ -1779,15 +1779,15 @@ class OwletteConfigApp:
                    "The service will restart after authentication completes.",
             icon="question",
             option_1="Cancel",
-            option_2="Join Site",
+            option_2="join site",
             width=550
         )
 
-        if response.get() != "Join Site":
+        if response.get() != "join site":
             return
 
         # Update status immediately to show we're connecting (before any blocking operations)
-        self.firebase_status_label.configure(text="Connecting...", text_color="#fbbf24")  # Yellow
+        self.firebase_status_label.configure(text="connecting...", text_color="#fbbf24")  # Yellow
         self.master.update()  # Force GUI update before blocking operation
 
         # Get setup URL based on environment setting
@@ -1796,7 +1796,7 @@ class OwletteConfigApp:
         # Show loading dialog (not topmost so browser is accessible)
         loading_dialog = CTkMessagebox(
             master=self.master,
-            title="Joining Site...",
+            title="joining site...",
             message="Opening browser for authentication.\n\nPlease complete the steps in your browser.\n\nThis window will close automatically when done.",
             icon=None,
             option_1="Cancel",

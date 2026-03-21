@@ -136,9 +136,9 @@ export function ManageSitesDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="border-border bg-secondary text-white max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="text-white">Manage Sites</DialogTitle>
+            <DialogTitle className="text-white">manage sites</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              Edit site names, timezones, or delete sites
+              edit site names, timezones, or delete sites
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 py-4 pr-2 max-h-96 overflow-y-auto">
@@ -156,7 +156,7 @@ export function ManageSitesDialog({
                   <div className="p-4 space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor={`name-${site.id}`} className="text-muted-foreground text-sm">
-                        Site Name
+                        site name
                       </Label>
                       <Input
                         id={`name-${site.id}`}
@@ -173,14 +173,14 @@ export function ManageSitesDialog({
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor={`timezone-${site.id}`} className="text-muted-foreground text-sm">
-                          Timezone
+                          timezone
                         </Label>
                         <Select value={editingTimezone} onValueChange={setEditingTimezone}>
                           <SelectTrigger
                             id={`timezone-${site.id}`}
                             className="border-border bg-accent text-white"
                           >
-                            <SelectValue placeholder="Select timezone" />
+                            <SelectValue placeholder="select timezone" />
                           </SelectTrigger>
                           <SelectContent className="border-border bg-secondary max-h-60">
                             {COMMON_TIMEZONES.map((tz) => (
@@ -197,14 +197,14 @@ export function ManageSitesDialog({
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor={`timeformat-${site.id}`} className="text-muted-foreground text-sm">
-                          Time Format
+                          time format
                         </Label>
                         <Select value={editingTimeFormat} onValueChange={(v) => setEditingTimeFormat(v as '12h' | '24h')}>
                           <SelectTrigger
                             id={`timeformat-${site.id}`}
                             className="border-border bg-accent text-white"
                           >
-                            <SelectValue placeholder="Select format" />
+                            <SelectValue placeholder="select format" />
                           </SelectTrigger>
                           <SelectContent className="border-border bg-secondary">
                             <SelectItem value="12h" className="text-white hover:bg-muted cursor-pointer">
@@ -226,7 +226,7 @@ export function ManageSitesDialog({
                         className="text-muted-foreground hover:text-muted-foreground hover:bg-muted cursor-pointer"
                       >
                         <X className="h-4 w-4 mr-1" />
-                        Cancel
+                        cancel
                       </Button>
                       <Button
                         size="sm"
@@ -235,7 +235,7 @@ export function ManageSitesDialog({
                         className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                       >
                         <Check className="h-4 w-4 mr-1" />
-                        {isSaving ? 'Saving...' : 'Save'}
+                        {isSaving ? 'saving...' : 'save'}
                       </Button>
                     </div>
                   </div>
@@ -314,7 +314,7 @@ export function ManageSitesDialog({
               className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             >
               <Plus className="h-4 w-4 mr-2" />
-              New Site
+              new site
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -324,18 +324,18 @@ export function ManageSitesDialog({
       <Dialog open={deletingDialogOpen} onOpenChange={setDeletingDialogOpen}>
         <DialogContent className="border-border bg-secondary text-white">
           <DialogHeader>
-            <DialogTitle className="text-white">Delete Site</DialogTitle>
+            <DialogTitle className="text-white">delete site</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              Are you sure you want to delete this site? This action cannot be undone.
+              are you sure you want to delete this site? this action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           {siteToDelete && (
             <div className="py-4">
               <p className="text-white">
-                Site: <span className="font-semibold">{sites.find(s => s.id === siteToDelete)?.name}</span>
+                site: <span className="font-semibold">{sites.find(s => s.id === siteToDelete)?.name}</span>
               </p>
               <p className="text-sm text-muted-foreground mt-2">
-                Note: The site document will be deleted, but machine data may remain in Firestore.
+                note: the site document will be deleted, but machine data may remain in Firestore.
               </p>
             </div>
           )}
@@ -348,13 +348,13 @@ export function ManageSitesDialog({
               }}
               className="border-border bg-secondary text-white hover:bg-muted cursor-pointer"
             >
-              Cancel
+              cancel
             </Button>
             <Button
               onClick={handleDeleteSite}
               className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
             >
-              Delete Site
+              delete site
             </Button>
           </DialogFooter>
         </DialogContent>

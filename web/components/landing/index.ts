@@ -6,3 +6,4 @@ export { CTASection } from './CTASection';
 export { LandingFooter } from './LandingFooter';
 export { InteractiveBackground } from './InteractiveBackground';
 export { TypewriterText } from './TypewriterText';
+export { OwletteEye, OwletteEyeIcon } from './OwletteEye';

@@ -36,25 +36,25 @@ const LOGS_PER_PAGE = 50;
 
 // Action type labels for filtering
 const ACTION_TYPES = [
-  { value: 'all', label: 'All Actions' },
-  { value: 'agent_started', label: 'Agent Started' },
-  { value: 'agent_stopped', label: 'Agent Stopped' },
-  { value: 'process_started', label: 'Process Started' },
-  { value: 'process_killed', label: 'Process Killed' },
-  { value: 'process_crash', label: 'Process Crashed' },
-  { value: 'process_start_failed', label: 'Start Failed' },
-  { value: 'command_executed', label: 'Command Executed' },
+  { value: 'all', label: 'all actions' },
+  { value: 'agent_started', label: 'agent started' },
+  { value: 'agent_stopped', label: 'agent stopped' },
+  { value: 'process_started', label: 'process started' },
+  { value: 'process_killed', label: 'process killed' },
+  { value: 'process_crash', label: 'process crashed' },
+  { value: 'process_start_failed', label: 'start failed' },
+  { value: 'command_executed', label: 'command executed' },
 ];
 
 // Level badges styling
 const getLevelBadge = (level: string) => {
   switch (level.toLowerCase()) {
     case 'error':
-      return <Badge variant="destructive" className="text-xs">Error</Badge>;
+      return <Badge variant="destructive" className="text-xs">error</Badge>;
     case 'warning':
-      return <Badge variant="default" className="bg-yellow-600 text-xs">Warning</Badge>;
+      return <Badge variant="default" className="bg-yellow-600 text-xs">warning</Badge>;
     case 'info':
-      return <Badge variant="default" className="bg-accent-cyan text-gray-900 text-xs">Info</Badge>;
+      return <Badge variant="default" className="bg-accent-cyan text-gray-900 text-xs">info</Badge>;
     default:
       return <Badge variant="outline" className="text-xs">{level}</Badge>;
   }
@@ -64,13 +64,12 @@ const getLevelBadge = (level: string) => {
 const formatAction = (action: string) => {
   return action
     .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 };
 
 export default function LogsPage() {
   const router = useRouter();
-  const { user, loading, isAdmin, userSites } = useAuth();
+  const { user, loading, isAdmin, userSites, lastSiteId, updateLastSite } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [logs, setLogs] = useState<LogEvent[]>([]);
@@ -105,22 +104,21 @@ export default function LogsPage() {
     }
   }, [user, loading, router]);
 
-  // Set current site when sites load (restore from localStorage if available)
+  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
   useEffect(() => {
     if (!sitesLoading && sites.length > 0 && !currentSiteId) {
-      const savedSite = localStorage.getItem('owlette_current_site');
+      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
       if (savedSite && sites.find(s => s.id === savedSite)) {
         setCurrentSiteId(savedSite);
       } else {
         setCurrentSiteId(sites[0].id);
       }
     }
-  }, [sites, sitesLoading, currentSiteId]);
+  }, [sites, sitesLoading, currentSiteId, lastSiteId]);
 
-  // Save site selection to localStorage
   const handleSiteChange = (siteId: string) => {
     setCurrentSiteId(siteId);
-    localStorage.setItem('owlette_current_site', siteId);
+    updateLastSite(siteId);
   };
 
   // Real-time logs listener when on first page
@@ -385,7 +383,7 @@ export default function LogsPage() {
   if (loading || sitesLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="text-muted-foreground">Loading...</div>
+        <div className="text-muted-foreground">loading...</div>
       </div>
     );
   }
@@ -393,7 +391,7 @@ export default function LogsPage() {
   return (
     <div className="min-h-screen pb-8">
       <PageHeader
-        currentPage="Logs"
+        currentPage="logs"
         sites={sites}
         currentSiteId={currentSiteId}
         onSiteChange={handleSiteChange}
@@ -442,7 +440,7 @@ export default function LogsPage() {
         {/* Section header with inline stats */}
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-center gap-6 md:gap-8">
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">Logs</h2>
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">logs</h2>
 
             <div className="flex items-center gap-6 md:gap-8">
               <div className="flex items-center gap-2.5">
@@ -453,7 +451,7 @@ export default function LogsPage() {
                   <div className="flex items-baseline gap-0.5">
                     <span className="text-xl font-bold text-foreground">{logs.length}</span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-tight">Events</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">events</p>
                 </div>
               </div>
 
@@ -467,7 +465,7 @@ export default function LogsPage() {
                   <div className="flex items-baseline gap-0.5">
                     <span className={`text-xl font-bold ${logs.filter(l => l.level === 'warning').length > 0 ? 'text-yellow-400' : 'text-foreground'}`}>{logs.filter(l => l.level === 'warning').length}</span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-tight">Warnings</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">warnings</p>
                 </div>
               </div>
 
@@ -481,7 +479,7 @@ export default function LogsPage() {
                   <div className="flex items-baseline gap-0.5">
                     <span className={`text-xl font-bold ${logs.filter(l => l.level === 'error').length > 0 ? 'text-red-400' : 'text-foreground'}`}>{logs.filter(l => l.level === 'error').length}</span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-tight">Errors</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">errors</p>
                 </div>
               </div>
             </div>
@@ -494,7 +492,7 @@ export default function LogsPage() {
               className="gap-2 hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
             >
               <Filter className="w-4 h-4" />
-              {showFilters ? 'Hide Filters' : 'Show Filters'}
+              {showFilters ? 'hide filters' : 'show filters'}
             </Button>
             <Button
               onClick={() => setShowClearDialog(true)}
@@ -503,7 +501,7 @@ export default function LogsPage() {
               className="gap-2 border-red-400/60 text-red-400 hover:bg-red-950/50 hover:text-red-300 transition-colors cursor-pointer"
             >
               <Trash2 className="w-4 h-4" />
-              {isClearing ? 'Clearing...' : 'Clear Logs'}
+              {isClearing ? 'clearing...' : 'clear logs'}
             </Button>
           </div>
         </div>
@@ -513,7 +511,7 @@ export default function LogsPage() {
           <Card className="p-4 bg-card border-border mb-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
-                <Label className="text-foreground text-sm mb-2">Action Type</Label>
+                <Label className="text-foreground text-sm mb-2">action type</Label>
                 <Select value={filterAction} onValueChange={setFilterAction}>
                   <SelectTrigger className="bg-muted border-border">
                     <SelectValue />
@@ -529,13 +527,13 @@ export default function LogsPage() {
               </div>
 
               <div>
-                <Label className="text-foreground text-sm mb-2">Machine</Label>
+                <Label className="text-foreground text-sm mb-2">machine</Label>
                 <Select value={filterMachine} onValueChange={setFilterMachine}>
                   <SelectTrigger className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Machines</SelectItem>
+                    <SelectItem value="all">all machines</SelectItem>
                     {uniqueMachines.map(machine => (
                       <SelectItem key={machine} value={machine}>
                         {machine}
@@ -546,16 +544,16 @@ export default function LogsPage() {
               </div>
 
               <div>
-                <Label className="text-foreground text-sm mb-2">Level</Label>
+                <Label className="text-foreground text-sm mb-2">level</Label>
                 <Select value={filterLevel} onValueChange={setFilterLevel}>
                   <SelectTrigger className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Levels</SelectItem>
-                    <SelectItem value="info">Info</SelectItem>
-                    <SelectItem value="warning">Warning</SelectItem>
-                    <SelectItem value="error">Error</SelectItem>
+                    <SelectItem value="all">all levels</SelectItem>
+                    <SelectItem value="info">info</SelectItem>
+                    <SelectItem value="warning">warning</SelectItem>
+                    <SelectItem value="error">error</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -568,7 +566,7 @@ export default function LogsPage() {
                   className="w-full gap-2"
                 >
                   <X className="w-4 h-4" />
-                  Reset Filters
+                  reset filters
                 </Button>
               </div>
             </div>
@@ -580,11 +578,11 @@ export default function LogsPage() {
           <div className="divide-y divide-border">
             {logsLoading ? (
               <div className="p-8 text-center text-muted-foreground">
-                Loading logs...
+                loading logs...
               </div>
             ) : logs.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground">
-                No logs found for this site
+                no logs found for this site
               </div>
             ) : (
               logs.map((log) => (
@@ -627,7 +625,7 @@ export default function LogsPage() {
         {!logsLoading && logs.length > 0 && (
           <div className="flex items-center justify-between mt-6">
             <div className="text-sm text-muted-foreground">
-              Page {currentPage}
+              page {currentPage}
             </div>
             <div className="flex gap-2">
               <Button
@@ -637,7 +635,7 @@ export default function LogsPage() {
                 className="gap-2"
               >
                 <ChevronLeft className="w-4 h-4" />
-                Previous
+                previous
               </Button>
               <Button
                 variant="outline"
@@ -645,7 +643,7 @@ export default function LogsPage() {
                 disabled={!hasMore}
                 className="gap-2"
               >
-                Next
+                next
                 <ChevronRight className="w-4 h-4" />
               </Button>
             </div>
@@ -657,14 +655,14 @@ export default function LogsPage() {
       <ConfirmDialog
         open={showClearDialog}
         onOpenChange={setShowClearDialog}
-        title="Clear Event Logs"
+        title="clear event logs"
         description={
           filterAction !== 'all' || filterMachine !== 'all' || filterLevel !== 'all'
-            ? `This will permanently delete all logs matching the current filters.\n\nFilters active:\n${filterAction !== 'all' ? `• Action: ${ACTION_TYPES.find(t => t.value === filterAction)?.label}\n` : ''}${filterMachine !== 'all' ? `• Machine: ${filterMachine}\n` : ''}${filterLevel !== 'all' ? `• Level: ${filterLevel}\n` : ''}\nThis action cannot be undone.`
-            : `This will permanently delete ALL event logs for this site (across all machines).\n\nThis action cannot be undone.`
+            ? `this will permanently delete all logs matching the current filters.\n\nfilters active:\n${filterAction !== 'all' ? `• action: ${ACTION_TYPES.find(t => t.value === filterAction)?.label}\n` : ''}${filterMachine !== 'all' ? `• machine: ${filterMachine}\n` : ''}${filterLevel !== 'all' ? `• level: ${filterLevel}\n` : ''}\nthis action cannot be undone.`
+            : `this will permanently delete ALL event logs for this site (across all machines).\n\nthis action cannot be undone.`
         }
-        confirmText="Clear Logs"
-        cancelText="Cancel"
+        confirmText="clear logs"
+        cancelText="cancel"
         onConfirm={handleClearLogs}
         variant="destructive"
       />

@@ -7,8 +7,8 @@ import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ChevronDown, Settings, LogOut, Shield, Check } from 'lucide-react';
-import Image from 'next/image';
 import { getUserInitials, getUserShortName, getUserFirstName } from '@/lib/userUtils';
+import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 
 interface Site {
   id: string;
@@ -16,7 +16,7 @@ interface Site {
 }
 
 interface PageHeaderProps {
-  currentPage: 'Dashboard' | 'Deploy Software' | 'Distribute Projects' | 'Logs';
+  currentPage: 'Dashboard' | 'Deploy Software' | 'Distribute Projects' | 'Logs' | 'Cortex' | 'dashboard' | 'deploy software' | 'distribute projects' | 'logs' | 'cortex';
   sites?: Site[];
   currentSiteId?: string;
   onSiteChange?: (siteId: string) => void;
@@ -41,13 +41,13 @@ export function PageHeader({
 
   return (
     <header className="border-b border-border bg-background">
-      <div className="mx-auto flex h-14 max-w-screen-2xl items-center justify-between px-3 md:px-6">
+      <div className="mx-auto flex h-14 max-w-screen-2xl items-center justify-between px-2 md:px-3">
         {/* Left: Logo + Breadcrumb navigation */}
         <nav className="flex items-center gap-1.5 min-w-0">
           {/* App Logo */}
-          <div className="flex items-center gap-2 flex-shrink-0 mr-1">
-            <Image src="/owlette-icon.png" alt="Owlette" width={24} height={24} />
-            <span className="text-base font-semibold text-foreground hidden md:block">Owlette</span>
+          <div className="flex items-center gap-1.5 flex-shrink-0 mr-1">
+            <OwletteEyeIcon size={24} />
+            <span className="text-base font-semibold text-foreground hidden md:block translate-y-[1px]">owlette</span>
           </div>
 
           {/* Breadcrumb: Site > Page */}
@@ -80,7 +80,7 @@ export function PageHeader({
                         className="text-muted-foreground focus:bg-accent focus:text-foreground cursor-pointer"
                       >
                         <Settings className="mr-2 h-4 w-4" />
-                        Manage Sites
+                        manage sites
                       </DropdownMenuItem>
                     </>
                   )}
@@ -95,8 +95,8 @@ export function PageHeader({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer">
-                <span className="hidden sm:inline">{currentPage}</span>
-                <span className="sm:hidden">{currentPage === 'Dashboard' ? 'Dashboard' : currentPage === 'Deploy Software' ? 'Deploy' : currentPage === 'Logs' ? 'Logs' : 'Projects'}</span>
+                <span className="hidden sm:inline lowercase">{currentPage}</span>
+                <span className="sm:hidden lowercase">{currentPage.toLowerCase() === 'dashboard' ? 'dashboard' : currentPage.toLowerCase() === 'deploy software' ? 'deploy' : currentPage.toLowerCase() === 'logs' ? 'logs' : currentPage.toLowerCase() === 'cortex' ? 'cortex' : 'projects'}</span>
                 <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
               </button>
             </DropdownMenuTrigger>
@@ -105,36 +105,45 @@ export function PageHeader({
                 onClick={() => router.push('/dashboard')}
                 className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
               >
-                <span className="font-medium">Dashboard</span>
+                <span className="font-medium">dashboard</span>
                 <span className="text-xs text-muted-foreground font-normal">
-                  Monitor machines and manage processes
+                  monitor machines and manage processes
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => router.push('/cortex')}
+                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
+              >
+                <span className="font-medium">cortex</span>
+                <span className="text-xs text-muted-foreground font-normal">
+                  conversational fleet management
                 </span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => router.push('/deployments')}
                 className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
               >
-                <span className="font-medium">Deploy Software</span>
+                <span className="font-medium">deploy software</span>
                 <span className="text-xs text-muted-foreground font-normal">
-                  Install software across machines
+                  install software across machines
                 </span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => router.push('/projects')}
                 className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
               >
-                <span className="font-medium">Distribute Projects</span>
+                <span className="font-medium">distribute projects</span>
                 <span className="text-xs text-muted-foreground font-normal">
-                  Share projects and files to machines
+                  share projects and files to machines
                 </span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => router.push('/logs')}
                 className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
               >
-                <span className="font-medium">Logs</span>
+                <span className="font-medium">logs</span>
                 <span className="text-xs text-muted-foreground font-normal">
-                  Monitor events and system activities
+                  monitor events and system activities
                 </span>
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -174,7 +183,7 @@ export function PageHeader({
                   className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
                 >
                   <Shield className="mr-2 h-4 w-4" />
-                  Admin Panel
+                  admin panel
                 </DropdownMenuItem>
               )}
               {onAccountSettings && (
@@ -183,7 +192,7 @@ export function PageHeader({
                   className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
                 >
                   <Settings className="mr-2 h-4 w-4" />
-                  Account Settings
+                  account settings
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem
@@ -191,7 +200,7 @@ export function PageHeader({
                 className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
               >
                 <LogOut className="mr-2 h-4 w-4" />
-                Sign out
+                sign out
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
