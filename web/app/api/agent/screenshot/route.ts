@@ -17,9 +17,12 @@ import { withRateLimit } from '@/lib/withRateLimit';
  * - screenshot: string (base64-encoded JPEG)
  * - agentVersion: string
  *
- * Storage path: screenshots/{siteId}/{machineId}/latest.jpg
- * Firestore write:
+ * Storage paths:
+ *   screenshots/{siteId}/{machineId}/latest.jpg (overwritten each time)
+ *   screenshots/{siteId}/{machineId}/history/{timestamp}.jpg (history, max 20 kept)
+ * Firestore writes:
  *   sites/{siteId}/machines/{machineId} → lastScreenshot: { url, timestamp, sizeKB }
+ *   sites/{siteId}/machines/{machineId}/screenshots/{docId} → { url, timestamp, sizeKB }
  */
 export const POST = withRateLimit(
   async (request: NextRequest) => {
@@ -123,7 +126,51 @@ export const POST = withRateLimit(
         { merge: true }
       );
 
-      console.log(`[agent/screenshot] Screenshot uploaded for ${machineId} (${sizeKB}KB) → Storage`);
+      // --- Screenshot history ---
+      const captureTimestamp = Date.now();
+
+      // Upload history copy with timestamped path
+      const historyPath = `screenshots/${siteId}/${machineId}/history/${captureTimestamp}.jpg`;
+      const historyFile = bucket.file(historyPath);
+      await historyFile.save(imageBuffer, {
+        metadata: {
+          contentType: 'image/jpeg',
+          cacheControl: 'public, max-age=31536000', // immutable history file
+          metadata: { machineId, siteId, capturedAt: String(captureTimestamp) },
+        },
+      });
+      await historyFile.makePublic();
+      const historyUrl = `https://storage.googleapis.com/${bucket.name}/${historyPath}`;
+
+      // Write to screenshots subcollection
+      const screenshotsCol = machineRef.collection('screenshots');
+      await screenshotsCol.add({
+        url: historyUrl,
+        timestamp: captureTimestamp,
+        sizeKB,
+      });
+
+      // Auto-prune: keep only the 20 most recent
+      const MAX_HISTORY = 20;
+      const allDocs = await screenshotsCol.orderBy('timestamp', 'asc').get();
+      if (allDocs.size > MAX_HISTORY) {
+        const toDelete = allDocs.docs.slice(0, allDocs.size - MAX_HISTORY);
+        for (const docSnap of toDelete) {
+          const data = docSnap.data();
+          // Delete Storage file
+          try {
+            const oldPath = data.url?.split(`${bucket.name}/`)?.[1];
+            if (oldPath) await bucket.file(oldPath).delete();
+          } catch {
+            // Storage file may already be deleted
+          }
+          // Delete Firestore doc
+          await docSnap.ref.delete();
+        }
+        console.log(`[agent/screenshot] Pruned ${toDelete.length} old screenshots for ${machineId}`);
+      }
+
+      console.log(`[agent/screenshot] Screenshot uploaded for ${machineId} (${sizeKB}KB) → Storage + history`);
 
       return NextResponse.json({ success: true, sizeKB, url: urlWithCacheBuster });
     } catch (error: unknown) {
