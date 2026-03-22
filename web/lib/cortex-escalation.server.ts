@@ -7,7 +7,7 @@
  * IMPORTANT: Server-side only — never import this in client components.
  */
 
-import { getSiteAdminEmails } from '@/lib/adminUtils.server';
+import { getSiteAlertEmailsWithCc } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 
 /**
@@ -20,7 +20,7 @@ export async function escalate(
   processName: string,
   cortexResponse: string
 ): Promise<boolean> {
-  const recipients = await getSiteAdminEmails(siteId, true);
+  const { to: recipients, cc } = await getSiteAlertEmailsWithCc(siteId, 'healthAlerts');
   if (recipients.length === 0) {
     console.warn(`[cortex/escalation] No admin emails found for site ${siteId}`);
     return false;
@@ -38,6 +38,7 @@ export async function escalate(
   const result = await resend.emails.send({
     from: FROM_EMAIL,
     to: recipients,
+    ...(cc.length > 0 ? { cc } : {}),
     subject,
     html,
   });

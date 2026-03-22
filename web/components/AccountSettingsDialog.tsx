@@ -9,15 +9,18 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, Loader2, User, Bell, Trash2, Key, Copy, Plus, X, Code } from 'lucide-react';
+import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, Loader2, User, Bell, Mail, Trash2, Key, Copy, Plus, X, Code } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { PasskeyManager } from '@/components/PasskeyManager';
+import { COMMON_TIMEZONES, getBrowserTimezone } from '@/lib/timeUtils';
 
-type SettingsSection = 'profile' | 'preferences' | 'cortex' | 'security' | 'api' | 'danger';
+type SettingsSection = 'profile' | 'preferences' | 'notifications' | 'cortex' | 'security' | 'api' | 'danger';
 
 const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[] = [
   { id: 'profile', label: 'profile', icon: User },
   { id: 'preferences', label: 'preferences', icon: Bell },
+  { id: 'notifications', label: 'notifications', icon: Mail },
   { id: 'cortex', label: 'cortex', icon: Brain },
   { id: 'security', label: 'security', icon: Shield },
   { id: 'api', label: 'api', icon: Code },
@@ -44,8 +47,12 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [temperatureUnit, setTemperatureUnit] = useState<'C' | 'F'>('C');
+  const [timezone, setTimezone] = useState('UTC');
   const [healthAlerts, setHealthAlerts] = useState(true);
   const [processAlerts, setProcessAlerts] = useState(true);
+  const [alertCcEmails, setAlertCcEmails] = useState<string[]>([]);
+  const [newCcEmail, setNewCcEmail] = useState('');
+  const [ccEmailError, setCcEmailError] = useState('');
   const [loading, setLoading] = useState(false);
 
   // Password change state
@@ -102,8 +109,12 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       }
 
       setTemperatureUnit(userPreferences.temperatureUnit);
+      setTimezone(userPreferences.timezone || getBrowserTimezone());
       setHealthAlerts(userPreferences.healthAlerts);
       setProcessAlerts(userPreferences.processAlerts);
+      setAlertCcEmails(userPreferences.alertCcEmails || []);
+      setNewCcEmail('');
+      setCcEmailError('');
 
       fetch('/api/settings/llm-key')
         .then((res) => res.json())
@@ -125,8 +136,12 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setFirstName('');
       setLastName('');
       setTemperatureUnit('C');
+      setTimezone(getBrowserTimezone());
       setHealthAlerts(true);
       setProcessAlerts(true);
+      setAlertCcEmails([]);
+      setNewCcEmail('');
+      setCcEmailError('');
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
@@ -142,10 +157,35 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setCreatingKey(false);
       setActiveSection('profile');
     }
-  }, [open, user?.displayName, userPreferences.temperatureUnit, userPreferences.healthAlerts, userPreferences.processAlerts]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, user?.displayName, userPreferences.temperatureUnit, userPreferences.timezone, userPreferences.healthAlerts, userPreferences.processAlerts, JSON.stringify(userPreferences.alertCcEmails)]);
 
   const handleOpenChange = (isOpen: boolean) => {
     onOpenChange(isOpen);
+  };
+
+  const handleAddCcEmail = () => {
+    const email = newCcEmail.trim().toLowerCase();
+    if (!email) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setCcEmailError('please enter a valid email address');
+      return;
+    }
+    if (email === user?.email?.toLowerCase()) {
+      setCcEmailError('this is already your primary alert email');
+      return;
+    }
+    if (alertCcEmails.includes(email)) {
+      setCcEmailError('this email is already added');
+      return;
+    }
+    if (alertCcEmails.length >= 5) {
+      setCcEmailError('maximum of 5 CC addresses');
+      return;
+    }
+    setAlertCcEmails(prev => [...prev, email]);
+    setNewCcEmail('');
+    setCcEmailError('');
   };
 
   const validatePassword = (): boolean => {
@@ -177,10 +217,12 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         await updateUserProfile(firstName, lastName);
       }
       const prefsChanged = temperatureUnit !== userPreferences.temperatureUnit
+        || timezone !== userPreferences.timezone
         || healthAlerts !== userPreferences.healthAlerts
-        || processAlerts !== userPreferences.processAlerts;
+        || processAlerts !== userPreferences.processAlerts
+        || JSON.stringify(alertCcEmails) !== JSON.stringify(userPreferences.alertCcEmails || []);
       if (prefsChanged) {
-        await updateUserPreferences({ temperatureUnit, healthAlerts, processAlerts });
+        await updateUserPreferences({ temperatureUnit, timezone, healthAlerts, processAlerts, alertCcEmails });
       }
       if (showPasswordSection && (currentPassword || newPassword || confirmPassword)) {
         if (!validatePassword()) {
@@ -320,7 +362,27 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                 <div className="space-y-5">
                   <div>
                     <h3 className="text-base font-medium text-white">preferences</h3>
-                    <p className="text-xs text-muted-foreground mt-1">dashboard display and notification settings</p>
+                    <p className="text-xs text-muted-foreground mt-1">dashboard display settings</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="timezone" className="text-white">timezone</Label>
+                    <Select
+                      value={timezone}
+                      onValueChange={(value: string) => setTimezone(value)}
+                      disabled={loading}
+                    >
+                      <SelectTrigger id="timezone" className="border-border bg-background text-white hover:bg-secondary w-72">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="border-border bg-secondary text-white max-h-[300px]">
+                        {COMMON_TIMEZONES.map((tz) => (
+                          <SelectItem key={tz.value} value={tz.value} className="cursor-pointer hover:bg-muted">
+                            {tz.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div className="space-y-2">
@@ -338,6 +400,16 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                         <SelectItem value="F" className="cursor-pointer hover:bg-muted">Fahrenheit (°F)</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+                </div>
+              )}
+
+              {/* ─── Notifications ─── */}
+              {activeSection === 'notifications' && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-base font-medium text-white">notifications</h3>
+                    <p className="text-xs text-muted-foreground mt-1">configure email alerts for machine and process events</p>
                   </div>
 
                   <div className="flex items-center justify-between rounded-md border border-border bg-background/50 p-4">
@@ -364,6 +436,59 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       onCheckedChange={setProcessAlerts}
                       disabled={loading}
                     />
+                  </div>
+
+                  <div className="rounded-md border border-border bg-background/50 p-4 space-y-3">
+                    <div className="space-y-0.5">
+                      <Label className="text-white">alert email</Label>
+                      <p className="text-xs text-muted-foreground">
+                        alerts are sent to <span className="text-white font-medium">{user?.email}</span>
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-white text-xs">additional CC recipients</Label>
+                      {alertCcEmails.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {alertCcEmails.map((email) => (
+                            <span key={email} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/30 text-xs text-white">
+                              {email}
+                              <button
+                                type="button"
+                                onClick={() => setAlertCcEmails(prev => prev.filter(e => e !== email))}
+                                disabled={loading}
+                                className="cursor-pointer text-muted-foreground hover:text-white"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-2">
+                        <Input
+                          type="email"
+                          placeholder="colleague@example.com"
+                          value={newCcEmail}
+                          onChange={(e) => { setNewCcEmail(e.target.value); setCcEmailError(''); }}
+                          className="border-border bg-background text-white flex-1"
+                          disabled={loading}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCcEmail(); } }}
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={handleAddCcEmail}
+                          disabled={loading || !newCcEmail.trim()}
+                          className="border-border text-white hover:bg-secondary"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                      {ccEmailError && <p className="text-xs text-red-400">{ccEmailError}</p>}
+                      <p className="text-[11px] text-muted-foreground">these addresses will be CC&apos;d on all alert emails. max 5.</p>
+                    </div>
                   </div>
                 </div>
               )}
@@ -626,6 +751,11 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       </div>
                     )}
                   </div>
+
+                  {/* Passkey management */}
+                  {user && (
+                    <PasskeyManager userId={user.uid} compact />
+                  )}
                 </div>
               )}
 

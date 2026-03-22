@@ -183,6 +183,7 @@ export async function GET(request: NextRequest) {
           const result = await resendClient.emails.send({
             from: FROM_EMAIL,
             to: [recipient.email],
+            ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
             subject: `[${ENV_LABEL}] ${siteAlerts.length} machine(s) offline in ${siteId}`,
             html: buildOfflineEmail(siteId, siteAlerts, unsubscribeUrl),
           });

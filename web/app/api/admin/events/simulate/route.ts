@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
-import { getSiteAdminEmails, getSiteProcessAlertEmails } from '@/lib/adminUtils.server';
+import { getSiteAlertEmailsWithCc } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { fireWebhooks } from '@/lib/webhookSender.server';
 import logger from '@/lib/logger';
@@ -145,12 +145,10 @@ export const POST = withRateLimit(
       }
 
       // Get recipient emails based on event type
-      let recipients: string[];
-      if (event === 'process_crash') {
-        recipients = await getSiteProcessAlertEmails(siteId);
-      } else {
-        recipients = await getSiteAdminEmails(siteId, true);
-      }
+      const { to: recipients, cc } = await getSiteAlertEmailsWithCc(
+        siteId,
+        event === 'process_crash' ? 'processAlerts' : 'healthAlerts'
+      );
 
       if (recipients.length === 0) {
         logger.warn(`No recipients found for site ${siteId}`, { context: 'admin/events/simulate' });
@@ -175,6 +173,7 @@ export const POST = withRateLimit(
       const result = await resendClient.emails.send({
         from: FROM_EMAIL,
         to: recipients,
+        ...(cc.length > 0 ? { cc } : {}),
         subject,
         html,
       });

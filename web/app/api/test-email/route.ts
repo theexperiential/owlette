@@ -48,13 +48,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Parse optional to/cc overrides from request body
+    let bodyTo: string | string[] | undefined;
+    let bodyCc: string[] | undefined;
+    try {
+      const body = await request.json();
+      if (body.to) bodyTo = Array.isArray(body.to) ? body.to : [body.to];
+      if (body.cc) bodyCc = Array.isArray(body.cc) ? body.cc : [body.cc];
+    } catch {
+      // No body or invalid JSON — use defaults
+    }
+
+    const toAddresses = bodyTo || [ADMIN_EMAIL];
     const envLabel = isProduction ? 'PRODUCTION' : 'DEVELOPMENT';
     const timestamp = new Date().toLocaleString();
 
     // Send test email
     const result = await resendClient.emails.send({
       from: FROM_EMAIL,
-      to: ADMIN_EMAIL,
+      to: toAddresses,
+      ...(bodyCc && bodyCc.length > 0 ? { cc: bodyCc } : {}),
       subject: `[${envLabel}] Owlette Email Test`,
       html: `
         <h2>Email Test Successful!</h2>
@@ -64,7 +77,8 @@ export async function POST(request: NextRequest) {
         <h3>Configuration:</h3>
         <ul>
           <li><strong>From:</strong> ${FROM_EMAIL}</li>
-          <li><strong>To:</strong> ${ADMIN_EMAIL}</li>
+          <li><strong>To:</strong> ${Array.isArray(toAddresses) ? toAddresses.join(', ') : toAddresses}</li>
+          ${bodyCc ? `<li><strong>CC:</strong> ${bodyCc.join(', ')}</li>` : ''}
           <li><strong>Environment:</strong> ${envLabel}</li>
           <li><strong>API Key:</strong> ${process.env.RESEND_API_KEY?.substring(0, 10)}...</li>
         </ul>
@@ -91,7 +105,8 @@ export async function POST(request: NextRequest) {
       message: 'Test email sent successfully',
       emailId: result.data?.id,
       from: FROM_EMAIL,
-      to: ADMIN_EMAIL,
+      to: toAddresses,
+      ...(bodyCc ? { cc: bodyCc } : {}),
       environment: envLabel,
       timestamp,
     });

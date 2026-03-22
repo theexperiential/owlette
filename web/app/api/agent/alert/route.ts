@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
-import { getSiteAdminEmails, getSiteProcessAlertEmails } from '@/lib/adminUtils.server';
+import { getSiteAlertEmailsWithCc } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { checkRateLimit, processAlertRateLimit } from '@/lib/rateLimit';
@@ -165,12 +165,10 @@ export const POST = withRateLimit(
       }
 
       // Get recipient emails based on event type
-      let recipients: string[];
-      if (isProcessEvent) {
-        recipients = await getSiteProcessAlertEmails(siteId);
-      } else {
-        recipients = await getSiteAdminEmails(siteId, true);
-      }
+      const { to: recipients, cc } = await getSiteAlertEmailsWithCc(
+        siteId,
+        isProcessEvent ? 'processAlerts' : 'healthAlerts'
+      );
 
       if (recipients.length === 0) {
         console.warn(`[agent/alert] No recipients found for site ${siteId}`);
@@ -194,6 +192,7 @@ export const POST = withRateLimit(
       const result = await resendClient.emails.send({
         from: FROM_EMAIL,
         to: recipients,
+        ...(cc.length > 0 ? { cc } : {}),
         subject,
         html,
       });

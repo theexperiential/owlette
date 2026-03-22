@@ -10,6 +10,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 export interface SiteRecipient {
   userId: string;
   email: string;
+  ccEmails: string[];
 }
 
 const isProduction =
@@ -175,7 +176,7 @@ export async function getSiteAlertRecipients(siteId: string): Promise<SiteRecipi
       const email = data?.email as string | undefined;
       if (!email) continue;
       if (data?.preferences?.healthAlerts === false) continue;
-      recipients.push({ userId: doc.id, email });
+      recipients.push({ userId: doc.id, email, ccEmails: data?.preferences?.alertCcEmails || [] });
     }
 
     if (ownerId && !seenIds.has(ownerId)) {
@@ -184,7 +185,7 @@ export async function getSiteAlertRecipients(siteId: string): Promise<SiteRecipi
         const data = ownerDoc.data();
         const email = data?.email as string | undefined;
         if (email && data?.preferences?.healthAlerts !== false) {
-          recipients.push({ userId: ownerId, email });
+          recipients.push({ userId: ownerId, email, ccEmails: data?.preferences?.alertCcEmails || [] });
         }
       } catch {
         // Skip
@@ -196,8 +197,70 @@ export async function getSiteAlertRecipients(siteId: string): Promise<SiteRecipi
 
   // Fallback to ADMIN_EMAIL env var if no recipients found
   if (recipients.length === 0 && ADMIN_EMAIL) {
-    recipients.push({ userId: 'fallback', email: ADMIN_EMAIL });
+    recipients.push({ userId: 'fallback', email: ADMIN_EMAIL, ccEmails: [] });
   }
 
   return recipients;
+}
+
+/**
+ * Look up site alert emails with CC addresses, filtered by a specific alert preference.
+ * Returns deduplicated `to` and `cc` arrays ready for Resend.
+ */
+export async function getSiteAlertEmailsWithCc(
+  siteId: string,
+  filterPreference: 'healthAlerts' | 'processAlerts'
+): Promise<{ to: string[]; cc: string[] }> {
+  const db = getAdminDb();
+  const toEmails = new Set<string>();
+  const ccEmails = new Set<string>();
+
+  try {
+    const siteDoc = await db.collection('sites').doc(siteId).get();
+    const ownerId = siteDoc.data()?.owner as string | undefined;
+
+    const usersQuery = await db
+      .collection('users')
+      .where('sites', 'array-contains', siteId)
+      .get();
+
+    const queriedIds = new Set<string>();
+    for (const doc of usersQuery.docs) {
+      queriedIds.add(doc.id);
+      const data = doc.data();
+      const email = data?.email as string | undefined;
+      if (!email) continue;
+      if (data?.preferences?.[filterPreference] === false) continue;
+      toEmails.add(email);
+      const userCc = data?.preferences?.alertCcEmails as string[] | undefined;
+      if (userCc) userCc.forEach(cc => ccEmails.add(cc));
+    }
+
+    if (ownerId && !queriedIds.has(ownerId)) {
+      try {
+        const ownerDoc = await db.collection('users').doc(ownerId).get();
+        const data = ownerDoc.data();
+        const email = data?.email as string | undefined;
+        if (email && data?.preferences?.[filterPreference] !== false) {
+          toEmails.add(email);
+          const userCc = data?.preferences?.alertCcEmails as string[] | undefined;
+          if (userCc) userCc.forEach(cc => ccEmails.add(cc));
+        }
+      } catch {
+        // Skip if owner fetch fails
+      }
+    }
+  } catch (error) {
+    console.error('[adminUtils] Error fetching site alert emails with CC:', error);
+  }
+
+  if (toEmails.size === 0 && ADMIN_EMAIL) {
+    toEmails.add(ADMIN_EMAIL);
+  }
+
+  // Remove CC addresses that are already primary recipients
+  return {
+    to: Array.from(toEmails),
+    cc: Array.from(ccEmails).filter(cc => !toEmails.has(cc)),
+  };
 }
