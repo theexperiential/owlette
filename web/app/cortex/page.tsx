@@ -214,7 +214,16 @@ export default function CortexPage() {
           {chat.error && (
             <div className="px-4 py-2 bg-red-950/30 border-t border-red-800/50">
               <p className="text-xs text-red-400 max-w-3xl mx-auto">
-                {chat.error.message}
+                {(() => {
+                  const msg = chat.error?.message || 'Unknown error';
+                  // API errors come as JSON strings like '{"error":"..."}'
+                  try {
+                    const parsed = JSON.parse(msg);
+                    return parsed.error || msg;
+                  } catch {
+                    return msg;
+                  }
+                })()}
               </p>
             </div>
           )}

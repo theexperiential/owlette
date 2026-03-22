@@ -135,6 +135,10 @@ export function formatHeartbeatTime(
   timezone: string = 'UTC',
   timeFormat: '12h' | '24h' = '12h'
 ): { display: string; isStale: boolean; tooltip: string } {
+  // Guard against missing/invalid timestamps (epoch 0, negative, etc.)
+  if (!timestampSeconds || timestampSeconds < 86400) {
+    return { display: '--', isStale: true, tooltip: 'No heartbeat received' };
+  }
   const isStale = isHeartbeatStale(timestampSeconds);
   const tooltip = formatFullTimestamp(timestampSeconds, timezone, timeFormat);
 

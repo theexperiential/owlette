@@ -43,11 +43,17 @@ export async function resolveLlmConfig(
 
     if (userDoc.exists) {
       const data = userDoc.data()!;
-      return {
-        provider: data.provider,
-        apiKey: decryptApiKey(data.apiKeyEncrypted),
-        model: data.model || undefined,
-      };
+      try {
+        return {
+          provider: data.provider,
+          apiKey: decryptApiKey(data.apiKeyEncrypted),
+          model: data.model || undefined,
+        };
+      } catch {
+        throw new Error(
+          'Failed to decrypt your LLM API key. This usually means the server encryption key has changed since the key was saved. Please re-enter your API key in Account Settings → Cortex.'
+        );
+      }
     }
   }
 
@@ -61,9 +67,19 @@ export async function resolveLlmConfig(
 
   if (siteDoc.exists) {
     const data = siteDoc.data()!;
+    let decryptedKey: string;
+    try {
+      decryptedKey = decryptApiKey(data.apiKeyEncrypted);
+    } catch {
+      throw new Error(
+        options?.autonomous
+          ? 'Failed to decrypt site-level LLM API key. The server encryption key may have changed — re-save the key in Admin Settings.'
+          : 'Failed to decrypt the site LLM API key. The server encryption key may have changed. Please ask your admin to re-save the key, or set your own in Account Settings → Cortex.'
+      );
+    }
     const config: LlmConfig = {
       provider: data.provider,
-      apiKey: decryptApiKey(data.apiKeyEncrypted),
+      apiKey: decryptedKey,
       model: data.model || undefined,
     };
 

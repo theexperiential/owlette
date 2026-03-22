@@ -71,6 +71,15 @@ export function Footer() {
           >
             terms
           </Link>
+          <span>&middot;</span>
+          <Link
+            href="https://github.com/theexperiential/Owlette"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-muted-foreground transition-colors"
+          >
+            source (AGPL-3.0)
+          </Link>
         </p>
       </div>
     </footer>

@@ -17,6 +17,7 @@ import {
   doc,
   setDoc,
   deleteDoc,
+  getDoc,
   query,
   where,
   orderBy,
@@ -92,7 +93,7 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
     id: chatId,
     transport,
     onFinish: async () => {
-      // Persist conversation metadata after first assistant response
+      // Persist conversation metadata + messages after assistant response
       if (user && db) {
         try {
           const chatRef = doc(db, 'chats', chatId);
@@ -100,9 +101,17 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
           const firstTextPart = firstUserMsg?.parts?.find((p) => p.type === 'text');
           const title = firstTextPart && 'text' in firstTextPart
             ? (firstTextPart as { text: string }).text.slice(0, 100)
-            : 'New chat';
+            : 'New conversation';
 
           const isSiteMode = machineId === SITE_TARGET_ID;
+
+          // Serialize messages for Firestore storage
+          const serializedMessages = chat.messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            parts: m.parts.map((p) => JSON.parse(JSON.stringify(p))),
+          }));
+
           await setDoc(
             chatRef,
             {
@@ -112,6 +121,7 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
               targetMachineId: isSiteMode ? null : machineId,
               machineName: isSiteMode ? 'All Machines' : machineName,
               title,
+              messages: serializedMessages,
               updatedAt: serverTimestamp(),
               ...(chat.messages.length <= 2 ? { createdAt: serverTimestamp() } : {}),
             },
@@ -176,7 +186,7 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
       if (data.siteId !== siteId) return null;
       return {
         id: docSnap.id,
-        title: data.title || 'New chat',
+        title: data.title || 'New conversation',
         siteId: data.siteId,
         targetType: data.targetType || 'machine',
         targetMachineId: data.targetMachineId || null,
@@ -230,24 +240,65 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
     setChatId(newId);
     chat.setMessages([]);
     setInputValue('');
+
+    // Add optimistic entry to sidebar, removing any previous empty "New conversation" entries
+    const isSiteMode = machineIdRef.current === SITE_TARGET_ID;
+    setConversations((prev) => [
+      {
+        id: newId,
+        title: 'New conversation',
+        siteId: siteIdRef.current,
+        targetType: isSiteMode ? 'site' : 'machine',
+        targetMachineId: isSiteMode ? null : machineIdRef.current,
+        machineName: isSiteMode ? 'All Machines' : machineNameRef.current,
+        source: 'user',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      ...prev.filter((c) => c.title !== 'New conversation'),
+    ]);
   }, [chat]);
 
-  const loadChat = useCallback((conversationId: string) => {
-    setChatId(conversationId);
-    setInputValue('');
-  }, []);
+  const loadChat = useCallback(
+    async (conversationId: string) => {
+      setChatId(conversationId);
+      setInputValue('');
+
+      // Fetch persisted messages from Firestore
+      if (db) {
+        try {
+          const chatDoc = await getDoc(doc(db, 'chats', conversationId));
+          const data = chatDoc.data();
+          if (data?.messages && Array.isArray(data.messages)) {
+            chat.setMessages(data.messages as UIMessage[]);
+          } else {
+            chat.setMessages([]);
+          }
+        } catch (error) {
+          console.error('Failed to load chat messages:', error);
+          chat.setMessages([]);
+        }
+      }
+    },
+    [chat]
+  );
 
   const deleteChat = useCallback(
     async (conversationId: string) => {
-      if (!db) return;
+      // Remove from local list immediately (handles both persisted and optimistic entries)
+      setConversations((prev) => prev.filter((c) => c.id !== conversationId));
 
-      try {
-        await deleteDoc(doc(db, 'chats', conversationId));
-        if (conversationId === chatId) {
-          startNewChat();
+      if (conversationId === chatId) {
+        startNewChat();
+      }
+
+      // Try to delete from Firestore (will silently succeed even if doc doesn't exist)
+      if (db) {
+        try {
+          await deleteDoc(doc(db, 'chats', conversationId));
+        } catch (error) {
+          console.error('Failed to delete chat:', error);
         }
-      } catch (error) {
-        console.error('Failed to delete chat:', error);
       }
     },
     [chatId, startNewChat]

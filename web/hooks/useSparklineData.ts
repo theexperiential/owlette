@@ -115,25 +115,27 @@ export function useSparklineData(
  * @param machineId - The machine ID
  * @returns Object with sparkline data for each metric type
  */
-export function useAllSparklineData(
-  siteId: string | null,
-  machineId: string | null
-): {
+interface AllSparklineState {
   cpu: SparklineDataPoint[];
   memory: SparklineDataPoint[];
   disk: SparklineDataPoint[];
   gpu: SparklineDataPoint[];
   loading: boolean;
-} {
-  const [cpu, setCpu] = useState<SparklineDataPoint[]>([]);
-  const [memory, setMemory] = useState<SparklineDataPoint[]>([]);
-  const [disk, setDisk] = useState<SparklineDataPoint[]>([]);
-  const [gpu, setGpu] = useState<SparklineDataPoint[]>([]);
-  const [loading, setLoading] = useState(true);
+}
+
+const EMPTY_SPARKLINE_STATE: AllSparklineState = {
+  cpu: [], memory: [], disk: [], gpu: [], loading: true,
+};
+
+export function useAllSparklineData(
+  siteId: string | null,
+  machineId: string | null
+): AllSparklineState {
+  const [state, setState] = useState<AllSparklineState>(EMPTY_SPARKLINE_STATE);
 
   useEffect(() => {
     if (!db || !siteId || !machineId) {
-      setLoading(false);
+      setState(prev => prev.loading ? { ...prev, loading: false } : prev);
       return;
     }
 
@@ -155,38 +157,41 @@ export function useAllSparklineData(
       docRef,
       (snapshot) => {
         if (!snapshot.exists()) {
-          setCpu([]);
-          setMemory([]);
-          setDisk([]);
-          setGpu([]);
-          setLoading(false);
+          setState({ cpu: [], memory: [], disk: [], gpu: [], loading: false });
           return;
         }
 
         const docData = snapshot.data();
         const samples = docData?.samples || [];
 
-        // Get last 60 samples
+        // Get last 60 samples — single pass extracting all metrics
         const recentSamples = samples.slice(-60);
+        const cpu: SparklineDataPoint[] = [];
+        const memory: SparklineDataPoint[] = [];
+        const disk: SparklineDataPoint[] = [];
+        const gpu: SparklineDataPoint[] = [];
 
-        // Extract each metric
-        setCpu(recentSamples.map((s: Record<string, number>) => ({ t: s.t, v: s.c ?? 0 })));
-        setMemory(recentSamples.map((s: Record<string, number>) => ({ t: s.t, v: s.m ?? 0 })));
-        setDisk(recentSamples.map((s: Record<string, number>) => ({ t: s.t, v: s.d ?? 0 })));
-        setGpu(recentSamples.map((s: Record<string, number>) => ({ t: s.t, v: s.g ?? 0 })).filter((s: SparklineDataPoint) => s.v > 0));
+        for (const s of recentSamples) {
+          const t = s.t;
+          cpu.push({ t, v: s.c ?? 0 });
+          memory.push({ t, v: s.m ?? 0 });
+          disk.push({ t, v: s.d ?? 0 });
+          if (s.g > 0) gpu.push({ t, v: s.g });
+        }
 
-        setLoading(false);
+        // Single setState — one re-render instead of five
+        setState({ cpu, memory, disk, gpu, loading: false });
       },
       (error) => {
         console.error('Error listening to sparkline data:', error);
-        setLoading(false);
+        setState(prev => prev.loading ? { ...prev, loading: false } : prev);
       }
     );
 
     return () => unsubscribe();
   }, [siteId, machineId]);
 
-  return { cpu, memory, disk, gpu, loading };
+  return state;
 }
 
 /**
