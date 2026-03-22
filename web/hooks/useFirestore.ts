@@ -1,9 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc } from 'firebase/firestore';
+import { useEffect, useState, useRef } from 'react';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
+
+export type LaunchMode = 'off' | 'always' | 'scheduled';
+
+export interface TimeRange {
+  start: string; // "HH:MM"
+  stop: string;  // "HH:MM"
+}
+
+export interface ScheduleBlock {
+  name?: string;       // Optional custom name (e.g. 'Morning shift')
+  colorIndex?: number; // Stable color assignment (persists when blocks are deleted)
+  days: string[];      // e.g. ['mon', 'tue', 'wed', 'thu', 'fri']
+  ranges: TimeRange[];
+}
 
 export interface Process {
   id: string;
@@ -11,6 +25,9 @@ export interface Process {
   status: string;
   pid: number | null;
   autolaunch: boolean;
+  launch_mode?: LaunchMode;
+  schedules?: ScheduleBlock[] | null;
+  schedulePresetId?: string | null;
   exe_path: string;
   file_path: string;
   cwd: string;
@@ -24,6 +41,9 @@ export interface Process {
   index: number; // Order from config file
   // For optimistic UI updates
   _optimisticAutolaunch?: boolean;
+  _optimisticLaunchMode?: LaunchMode;
+  _optimisticSchedules?: ScheduleBlock[] | null;
+  _optimisticPresetId?: string | null;
 }
 
 export interface Machine {
@@ -262,6 +282,62 @@ export function useMachines(siteId: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Config doc overrides: authoritative launch_mode/schedules from config collection
+  // This prevents the 10-second flicker on page load where status doc has stale values
+  const configOverridesRef = useRef<Record<string, Record<string, { launch_mode?: string; schedules?: any; schedulePresetId?: string | null }>>>({});
+
+  // Fetch authoritative launch_mode/schedules from config docs on mount
+  // Config doc is source of truth — status doc may lag behind by 10-120s
+  useEffect(() => {
+    if (!db || !siteId) return;
+    (async () => {
+      try {
+        const configCol = collection(db, 'config', siteId, 'machines');
+        const configSnap = await getDocs(configCol);
+        const overrides: typeof configOverridesRef.current = {};
+        configSnap.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data.processes && Array.isArray(data.processes)) {
+            const processMap: Record<string, { launch_mode?: string; schedules?: any; schedulePresetId?: string | null }> = {};
+            for (const proc of data.processes) {
+              if (proc.id) {
+                processMap[proc.id] = {
+                  launch_mode: proc.launch_mode,
+                  schedules: proc.schedules,
+                  schedulePresetId: proc.schedulePresetId ?? null,
+                };
+              }
+            }
+            overrides[docSnap.id] = processMap;
+          }
+        });
+        configOverridesRef.current = overrides;
+
+        // Apply overrides to any already-loaded machines
+        setMachines(prev => prev.map(machine => {
+          const machineOverrides = overrides[machine.machineId];
+          if (!machineOverrides || !machine.processes) return machine;
+          return {
+            ...machine,
+            processes: machine.processes.map(p => {
+              const override = machineOverrides[p.id];
+              if (!override) return p;
+              return {
+                ...p,
+                launch_mode: (override.launch_mode || p.launch_mode) as LaunchMode,
+                schedules: override.schedules ?? p.schedules,
+                schedulePresetId: override.schedulePresetId,
+              };
+            }),
+          };
+        }));
+      } catch (e) {
+        // Non-critical — status doc values still work, just may lag
+        console.debug('Config override fetch skipped:', e);
+      }
+    })();
+  }, [siteId]);
+
   // Client-side heartbeat timeout checker
   // Re-evaluates machine online status every 30 seconds based on lastHeartbeat age
   // This catches machines that went offline without writing online=false (crashes, installer kills, etc.)
@@ -318,29 +394,76 @@ export function useMachines(siteId: string) {
 
             // Parse processes from the processes object - try both locations
             let processes: Process[] = [];
-            const processesData = data.processes || data.metrics?.processes;
+            const processesData = data.metrics?.processes || data.processes;
+
+            // Build a lookup of previous process state to preserve optimistic updates
+            // and avoid flicker when metrics uploads briefly lack launch_mode during write
+            const prevProcessMap: Record<string, {
+              launch_mode?: LaunchMode;
+              schedules?: any;
+              _optimisticLaunchMode?: LaunchMode;
+              _optimisticAutolaunch?: boolean;
+              _optimisticSchedules?: ScheduleBlock[] | null;
+              _optimisticPresetId?: string | null;
+            }> = {};
+            if (prevMachine?.processes) {
+              for (const p of prevMachine.processes) {
+                prevProcessMap[p.id] = {
+                  launch_mode: p.launch_mode,
+                  schedules: p.schedules,
+                  _optimisticLaunchMode: p._optimisticLaunchMode,
+                  _optimisticAutolaunch: p._optimisticAutolaunch,
+                  _optimisticSchedules: p._optimisticSchedules,
+                  _optimisticPresetId: p._optimisticPresetId,
+                };
+              }
+            }
 
             if (processesData && typeof processesData === 'object') {
               processes = Object.entries(processesData)
-                .map(([id, processData]: [string, any]) => ({
-                  id,
-                  name: processData.name || 'Unknown',
-                  status: processData.status || 'UNKNOWN',
-                  pid: processData.pid || null,
-                  autolaunch: processData.autolaunch || false,
-                  exe_path: processData.exe_path || '',
-                  file_path: processData.file_path || '',
-                  cwd: processData.cwd || '',
-                  priority: processData.priority || 'Normal',
-                  visibility: processData.visibility || 'Show',
-                  time_delay: processData.time_delay || '0',
-                  time_to_init: processData.time_to_init || '10',
-                  relaunch_attempts: processData.relaunch_attempts || '3',
-                  responsive: processData.responsive ?? true,
-                  last_updated: processData.last_updated || 0,
-                  index: processData.index ?? 999, // Preserve config order, default to end
-                }))
-                .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id)); // Sort by config order, stable tiebreaker by ID
+                .map(([id, processData]: [string, any]) => {
+                  const prev = prevProcessMap[id];
+                  // Config doc is authoritative for launch_mode/schedules — override status doc values
+                  const configOverride = configOverridesRef.current[doc.id]?.[id];
+                  const firestoreMode = configOverride?.launch_mode || processData.launch_mode || prev?.launch_mode || (processData.autolaunch ? 'always' : 'off') as LaunchMode;
+                  const firestoreSchedules = configOverride?.schedules ?? processData.schedules ?? prev?.schedules ?? null;
+                  const firestorePresetId = configOverride?.schedulePresetId ?? processData.schedulePresetId ?? null;
+
+                  // Preserve optimistic state until Firestore catches up
+                  // Clear optimistic flag once Firestore agrees with the optimistic value
+                  const optimisticMode = prev?._optimisticLaunchMode;
+                  const keepOptimistic = optimisticMode !== undefined && optimisticMode !== firestoreMode;
+
+                  return {
+                    id,
+                    name: processData.name || 'Unknown',
+                    status: processData.status || 'UNKNOWN',
+                    pid: processData.pid || null,
+                    autolaunch: processData.autolaunch || false,
+                    launch_mode: firestoreMode,
+                    schedulePresetId: firestorePresetId,
+                    schedules: firestoreSchedules,
+                    exe_path: processData.exe_path || '',
+                    file_path: processData.file_path || '',
+                    cwd: processData.cwd || '',
+                    priority: processData.priority || 'Normal',
+                    visibility: processData.visibility || 'Show',
+                    time_delay: processData.time_delay || '0',
+                    time_to_init: processData.time_to_init || '10',
+                    relaunch_attempts: processData.relaunch_attempts || '3',
+                    responsive: processData.responsive ?? true,
+                    last_updated: processData.last_updated || 0,
+                    index: processData.index ?? 999,
+                    // Carry optimistic state forward until Firestore confirms
+                    ...(keepOptimistic ? {
+                      _optimisticLaunchMode: prev._optimisticLaunchMode,
+                      _optimisticAutolaunch: prev._optimisticAutolaunch,
+                      _optimisticSchedules: prev._optimisticSchedules,
+                      _optimisticPresetId: prev._optimisticPresetId,
+                    } : {}),
+                  };
+                })
+                .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
             }
 
             // Convert Firestore Timestamp to Unix timestamp in seconds
@@ -435,10 +558,14 @@ export function useMachines(siteId: string) {
     }
   };
 
-  const toggleAutolaunch = async (machineId: string, processId: string, processName: string, newValue: boolean) => {
+  const setLaunchMode = async (
+    machineId: string, processId: string, processName: string,
+    mode: LaunchMode, schedules?: ScheduleBlock[] | null, schedulePresetId?: string | null
+  ) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
     // Optimistically update the UI immediately
+    // These fields persist until the Firestore listener confirms the change
     setMachines(prevMachines =>
       prevMachines.map(machine => {
         if (machine.machineId === machineId) {
@@ -448,7 +575,10 @@ export function useMachines(siteId: string) {
               if (process.id === processId) {
                 return {
                   ...process,
-                  _optimisticAutolaunch: newValue
+                  _optimisticLaunchMode: mode,
+                  _optimisticAutolaunch: mode !== 'off',
+                  _optimisticSchedules: schedules ?? process.schedules,
+                  _optimisticPresetId: schedulePresetId,
                 };
               }
               return process;
@@ -459,12 +589,20 @@ export function useMachines(siteId: string) {
       })
     );
 
+    // Update config overrides ref so subsequent listener fires use the new value
+    if (!configOverridesRef.current[machineId]) configOverridesRef.current[machineId] = {};
+    configOverridesRef.current[machineId][processId] = {
+      launch_mode: mode,
+      schedules: schedules ?? undefined,
+      schedulePresetId: schedulePresetId,
+    };
+
     const configRef = doc(db, 'config', siteId, 'machines', machineId);
     const configPath = `config/${siteId}/machines/${machineId}`;
 
-    logger.debug(`Toggling autolaunch for "${processName}" to ${newValue}`, {
-      context: 'toggleAutolaunch',
-      data: { machineId, processId },
+    logger.debug(`Setting launch mode for "${processName}" to ${mode}`, {
+      context: 'setLaunchMode',
+      data: { machineId, processId, mode },
     });
 
     try {
@@ -479,24 +617,45 @@ export function useMachines(siteId: string) {
         throw new Error('Invalid configuration structure');
       }
 
+      // Strip undefined values from schedule blocks (Firestore rejects undefined)
+      const cleanSchedules = schedules?.map(b => {
+        const clean: Record<string, unknown> = { days: b.days, ranges: b.ranges };
+        if (b.name) clean.name = b.name;
+        if (b.colorIndex != null) clean.colorIndex = b.colorIndex;
+        return clean;
+      });
+
       const updatedProcesses = config.processes.map((proc: any) =>
-        proc.name === processName ? { ...proc, autolaunch: newValue } : proc
+        proc.name === processName ? {
+          ...proc,
+          launch_mode: mode,
+          autolaunch: mode !== 'off',
+          ...(cleanSchedules !== undefined ? { schedules: cleanSchedules } : {}),
+          ...(schedulePresetId !== undefined ? { schedulePresetId: schedulePresetId || null } : {}),
+        } : proc
       );
 
       await updateDoc(configRef, { processes: updatedProcesses });
       logger.firestore.write(configPath, undefined, 'update');
 
-      // Set configChangeFlag for immediate agent pickup (non-critical, agent polls anyway)
+      // Mirror launch_mode + schedules to status doc for immediate UI visibility
+      // configChangeFlag signals the agent to pick up config changes
       try {
         const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-        await updateDoc(statusRef, { configChangeFlag: true });
+        await updateDoc(statusRef, {
+          configChangeFlag: true,
+          [`metrics.processes.${processId}.launch_mode`]: mode,
+          [`metrics.processes.${processId}.autolaunch`]: mode !== 'off',
+          ...(cleanSchedules !== undefined ? { [`metrics.processes.${processId}.schedules`]: cleanSchedules } : {}),
+          ...(schedulePresetId !== undefined ? { [`metrics.processes.${processId}.schedulePresetId`]: schedulePresetId || null } : {}),
+        });
       } catch (flagError) {
-        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'toggleAutolaunch' });
+        logger.debug('Status doc mirror write skipped (non-critical)', { context: 'setLaunchMode' });
       }
 
-      logger.debug('Autolaunch toggled via config system', { context: 'toggleAutolaunch' });
+      logger.debug('Launch mode set via config system', { context: 'setLaunchMode' });
     } catch (error) {
-      logger.firestore.error('Failed to toggle autolaunch', error);
+      logger.firestore.error('Failed to set launch mode', error);
       throw error;
     }
   };
@@ -534,8 +693,19 @@ export function useMachines(siteId: string) {
         throw new Error('Process not found');
       }
 
+      // Clean schedule blocks to strip undefined values (Firestore rejects undefined)
+      const cleanedData = { ...updatedData };
+      if (cleanedData.schedules) {
+        cleanedData.schedules = cleanedData.schedules.map(b => {
+          const clean: any = { days: b.days, ranges: b.ranges };
+          if (b.name) clean.name = b.name;
+          if (b.colorIndex != null) clean.colorIndex = b.colorIndex;
+          return clean;
+        });
+      }
+
       const updatedProcesses = config.processes.map((proc: any) =>
-        proc.id === processId ? { ...proc, ...updatedData } : proc
+        proc.id === processId ? { ...proc, ...cleanedData } : proc
       );
 
       await updateDoc(configRef, {
@@ -693,7 +863,9 @@ export function useMachines(siteId: string) {
         time_delay: processData.time_delay || '0',
         time_to_init: processData.time_to_init || '10',
         relaunch_attempts: processData.relaunch_attempts || '3',
-        autolaunch: processData.autolaunch ?? false
+        autolaunch: processData.autolaunch ?? false,
+        launch_mode: processData.launch_mode || 'off',
+        schedules: processData.schedules || null
       };
 
       const updatedProcesses = [...config.processes, newProcess];
@@ -777,5 +949,5 @@ export function useMachines(siteId: string) {
     await sendMachineCommand(machineId, 'capture_screenshot');
   };
 
-  return { machines, loading, error, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot };
+  return { machines, loading, error, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot };
 }

@@ -24,6 +24,7 @@ export interface McpToolDefinition {
       description: string;
       enum?: string[];
       default?: unknown;
+      items?: any;
     }>;
     required?: string[];
   };
@@ -217,18 +218,50 @@ const tier2Tools: McpToolDefinition[] = [
     },
   },
   {
-    name: 'toggle_autolaunch',
-    description: 'Toggle the autolaunch setting for an Owlette-configured process.',
+    name: 'set_launch_mode',
+    description: 'Set the launch mode for an Owlette-configured process. Modes: "off" (not managed), "always" (24/7 with crash recovery), "scheduled" (runs during configured time windows only). When setting to "scheduled", also provide a schedules array with day/time blocks.',
     tier: 2,
     parameters: {
       type: 'object',
       properties: {
         process_name: {
           type: 'string',
-          description: 'The name of the process to toggle autolaunch for.',
+          description: 'The name of the process to set launch mode for.',
+        },
+        mode: {
+          type: 'string',
+          enum: ['off', 'always', 'scheduled'],
+          description: 'The launch mode: "off", "always", or "scheduled".',
+        },
+        schedules: {
+          type: 'array',
+          description: 'Schedule blocks (required when mode is "scheduled"). Each block has days and time ranges.',
+          items: {
+            type: 'object',
+            properties: {
+              days: {
+                type: 'array',
+                items: { type: 'string', enum: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] },
+                description: 'Days this block applies to.',
+              },
+              ranges: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    start: { type: 'string', description: 'Start time in HH:MM format.' },
+                    stop: { type: 'string', description: 'Stop time in HH:MM format.' },
+                  },
+                  required: ['start', 'stop'],
+                },
+                description: 'Time windows within those days.',
+              },
+            },
+            required: ['days', 'ranges'],
+          },
         },
       },
-      required: ['process_name'],
+      required: ['process_name', 'mode'],
     },
   },
   {
@@ -431,7 +464,7 @@ export const EXISTING_COMMAND_MAPPINGS: Record<string, string> = {
   restart_process: 'restart_process',
   kill_process: 'kill_process',
   start_process: 'restart_process', // Start uses restart logic
-  toggle_autolaunch: 'toggle_autolaunch',
+  set_launch_mode: 'set_launch_mode',
   reboot_machine: 'reboot_machine',
   shutdown_machine: 'shutdown_machine',
   cancel_reboot: 'cancel_reboot',

@@ -22,17 +22,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog, Settings2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { formatScheduleSummary } from '@/components/ScheduleEditor';
+import { BLOCK_COLORS } from '@/lib/scheduleDefaults';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { formatStorageRange } from '@/lib/storageUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime } from '@/lib/timeUtils';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
-import type { Machine, Process } from '@/hooks/useFirestore';
+import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
 
 // Memoized table header to prevent flickering on data updates
@@ -58,15 +59,16 @@ MemoizedTableHeader.displayName = 'MemoizedTableHeader';
 
 interface MachineListViewProps {
   machines: Machine[];
-  expandedMachines: Set<string>;
+  processesExpanded: boolean;
   currentSiteId: string;
   siteTimezone?: string;
   siteTimeFormat?: '12h' | '24h';
-  onToggleExpanded: (machineId: string) => void;
+  onToggleProcesses: () => void;
   onEditProcess: (machineId: string, process: Process) => void;
   onCreateProcess: (machineId: string) => void;
   onKillProcess: (machineId: string, processId: string, processName: string) => void;
-  onToggleAutolaunch: (machineId: string, processId: string, newValue: boolean, processName: string, exePath: string) => void;
+  onSetLaunchMode: (machineId: string, processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
+  onConfigureSchedule?: (machineId: string, process: Process) => void;
   onRemoveMachine: (machineId: string, machineName: string, isOnline: boolean) => void;
   onMetricClick?: (machineId: string, metricType: MetricType) => void;
 }
@@ -86,7 +88,8 @@ interface MachineRowProps {
   onEditProcess: (process: Process) => void;
   onCreateProcess: () => void;
   onKillProcess: (processId: string, processName: string) => void;
-  onToggleAutolaunch: (processId: string, newValue: boolean, processName: string, exePath: string) => void;
+  onSetLaunchMode: (processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
+  onConfigureSchedule?: (process: Process) => void;
   onRemoveMachine: () => void;
   onMetricClick?: (metricType: MetricType) => void;
   onReboot?: () => Promise<void>;
@@ -106,7 +109,8 @@ export function MachineRow({
   onEditProcess,
   onCreateProcess,
   onKillProcess,
-  onToggleAutolaunch,
+  onSetLaunchMode,
+  onConfigureSchedule,
   onRemoveMachine,
   onMetricClick,
   onReboot,
@@ -331,19 +335,75 @@ export function MachineRow({
                               {process.pid && <span>PID: {process.pid}</span>}
                               <span className="truncate" title={process.exe_path}>{process.exe_path}</span>
                             </div>
+                            {((process._optimisticLaunchMode ?? process.launch_mode) === 'scheduled') && (process._optimisticSchedules ?? process.schedules) && (process._optimisticSchedules ?? process.schedules)!.length > 0 && (
+                              <div className="flex items-center gap-1.5 text-[11px] mt-0.5">
+                                <Clock className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+                                <span className="truncate">
+                                  {(process._optimisticSchedules ?? process.schedules)!.map((block, i) => {
+                                    const colorIdx = block.colorIndex ?? i;
+                                    const color = BLOCK_COLORS[colorIdx % BLOCK_COLORS.length];
+                                    const summary = block.name || formatScheduleSummary([block]);
+                                    return (
+                                      <span key={i}>
+                                        {i > 0 && <span className="text-muted-foreground"> · </span>}
+                                        <span className={color.label}>{summary}</span>
+                                      </span>
+                                    );
+                                  })}
+                                </span>
+                              </div>
+                            )}
                           </div>
                           <div className="flex items-center gap-3 ml-4 flex-shrink-0">
-                            <div className="flex items-center gap-2">
-                              <Label htmlFor={`autolaunch-list-${machine.machineId}-${process.id}`} className="text-xs text-muted-foreground cursor-pointer select-none">
-                                autolaunch
-                              </Label>
-                              <Switch
-                                id={`autolaunch-list-${machine.machineId}-${process.id}`}
-                                checked={process._optimisticAutolaunch !== undefined ? process._optimisticAutolaunch : process.autolaunch}
-                                onCheckedChange={(checked) => onToggleAutolaunch(process.id, checked, process.name, process.exe_path)}
-                                className="cursor-pointer"
-                              />
-                            </div>
+                            {(() => {
+                              const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
+                              const isScheduled = currentMode === 'scheduled';
+                              return (
+                                <div className="flex items-stretch rounded-md overflow-hidden border border-border h-8">
+                                  {(['off', 'always', 'scheduled'] as const).map((mode) => {
+                                    const isActive = currentMode === mode;
+                                    const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+                                    const activeColors = {
+                                      off: 'bg-muted text-foreground',
+                                      always: 'bg-emerald-600 text-white',
+                                      scheduled: 'bg-blue-600 text-white',
+                                    };
+
+                                    if (mode === 'scheduled' && isScheduled) {
+                                      // Split button: text + gear icon
+                                      return (
+                                        <span key={mode} className="flex items-stretch bg-blue-600 text-white">
+                                          <button
+                                            onClick={() => {}} // Already active, no-op
+                                            className="px-3 text-xs font-medium cursor-default"
+                                          >
+                                            {labels[mode]}
+                                          </button>
+                                          <span className="w-px bg-blue-400/50" />
+                                          <button
+                                            onClick={() => onConfigureSchedule?.(process)}
+                                            className="px-1.5 hover:bg-blue-500 transition-colors cursor-pointer flex items-center"
+                                            title="Configure schedule"
+                                          >
+                                            <Settings2 className="h-3.5 w-3.5" />
+                                          </button>
+                                        </span>
+                                      );
+                                    }
+
+                                    return (
+                                      <button
+                                        key={mode}
+                                        onClick={() => onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
+                                        className={`px-3 text-xs font-medium transition-all duration-500 cursor-pointer ${isActive ? activeColors[mode] : 'bg-card text-muted-foreground hover:bg-muted/50'}`}
+                                      >
+                                        {labels[mode]}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
                             <Button
                               variant="outline"
                               size="sm"
@@ -405,15 +465,16 @@ export function MachineRow({
 
 export function MachineListView({
   machines,
-  expandedMachines,
+  processesExpanded,
   currentSiteId,
   siteTimezone = 'UTC',
   siteTimeFormat = '12h',
-  onToggleExpanded,
+  onToggleProcesses,
   onEditProcess,
   onCreateProcess,
   onKillProcess,
-  onToggleAutolaunch,
+  onSetLaunchMode,
+  onConfigureSchedule,
   onRemoveMachine,
   onMetricClick,
 }: MachineListViewProps) {
@@ -428,18 +489,19 @@ export function MachineListView({
             <MachineRow
               key={machine.machineId}
               machine={machine}
-              isExpanded={expandedMachines.has(machine.machineId)}
+              isExpanded={processesExpanded}
               currentSiteId={currentSiteId}
               siteTimezone={siteTimezone}
               siteTimeFormat={siteTimeFormat}
               userPreferences={userPreferences}
-              onToggleExpanded={() => onToggleExpanded(machine.machineId)}
+              onToggleExpanded={onToggleProcesses}
               onEditProcess={(process) => onEditProcess(machine.machineId, process)}
               onCreateProcess={() => onCreateProcess(machine.machineId)}
               onKillProcess={(processId, processName) => onKillProcess(machine.machineId, processId, processName)}
-              onToggleAutolaunch={(processId, newValue, processName, exePath) =>
-                onToggleAutolaunch(machine.machineId, processId, newValue, processName, exePath)
+              onSetLaunchMode={(processId, processName, mode, exePath, schedules) =>
+                onSetLaunchMode(machine.machineId, processId, processName, mode, exePath, schedules)
               }
+              onConfigureSchedule={onConfigureSchedule ? (process) => onConfigureSchedule(machine.machineId, process) : undefined}
               onRemoveMachine={() => onRemoveMachine(machine.machineId, machine.machineId, machine.online)}
               onMetricClick={onMetricClick ? (metricType) => onMetricClick(machine.machineId, metricType) : undefined}
             />

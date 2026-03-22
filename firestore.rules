@@ -127,12 +127,13 @@ service cloud.firestore {
                        isServiceAccount() ||
                        agentCanAccessMachine(siteId, machineId);
 
-        // Allow web dashboard to update configChangeFlag (for push-based config updates)
-        // Also permit timestamp fields that Firebase may add automatically
-        // Block modifications to agent-managed fields (metrics, processes, online, lastHeartbeat)
+        // Allow web dashboard to update configChangeFlag and mirror launch_mode/schedules
+        // to metrics.processes for real-time UI responsiveness.
+        // configChangeFlag must always be included to distinguish from fake metrics writes.
+        // Agent-only fields (online, lastHeartbeat) remain protected.
         allow update: if canAccessSite(siteId) &&
                          request.resource.data.diff(resource.data).affectedKeys().hasAny(['configChangeFlag']) &&
-                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['metrics', 'processes', 'online', 'lastHeartbeat']);
+                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['online', 'lastHeartbeat']);
 
         // Allow agents full write access for metrics, heartbeats, processes
         allow write: if isServiceAccount() ||
@@ -296,6 +297,14 @@ service cloud.firestore {
                       isServiceAccount() ||
                       agentCanAccessMachine(siteId, machineId);
       allow delete: if canAccessSite(siteId); // Authenticated users can delete machine config
+    }
+
+    match /config/{siteId}/schedule_presets/{presetId} {
+      // Schedule presets for process scheduling
+      // Users with site access can read and manage presets
+      allow read: if canAccessSite(siteId);
+      allow write: if canAccessSite(siteId);
+      allow delete: if canAccessSite(siteId);
     }
 
     // ============================================

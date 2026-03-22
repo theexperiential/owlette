@@ -19,30 +19,32 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, Settings2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass, getUsageRingClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime } from '@/lib/timeUtils';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
-import type { Machine, Process } from '@/hooks/useFirestore';
+import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
 
 interface MachineCardViewProps {
   machines: Machine[];
-  expandedMachines: Set<string>;
+  statsExpanded: boolean;
+  processesExpanded: boolean;
+  onToggleStats: () => void;
+  onToggleProcesses: () => void;
   currentSiteId: string;
   siteTimezone?: string;
   siteTimeFormat?: '12h' | '24h';
-  onToggleExpanded: (machineId: string) => void;
   onEditProcess: (machineId: string, process: Process) => void;
   onCreateProcess: (machineId: string) => void;
   onKillProcess: (machineId: string, processId: string, processName: string) => void;
-  onToggleAutolaunch: (machineId: string, processId: string, newValue: boolean, processName: string, exePath: string) => void;
+  onSetLaunchMode: (machineId: string, processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
+  onConfigureSchedule?: (machineId: string, process: Process) => void;
   onRemoveMachine: (machineId: string, machineName: string, isOnline: boolean) => void;
   onMetricClick?: (machineId: string, metricType: MetricType) => void;
   onReboot?: (machineId: string) => Promise<void>;
@@ -58,17 +60,20 @@ interface MachineCardViewProps {
  */
 interface MachineCardProps {
   machine: Machine;
-  isExpanded: boolean;
+  statsExpanded: boolean;
+  processesExpanded: boolean;
   currentSiteId: string;
   siteTimezone: string;
   siteTimeFormat: '12h' | '24h';
   userPreferences: { temperatureUnit: 'C' | 'F' };
   isAdmin: boolean;
-  onToggleExpanded: () => void;
+  onToggleStats: () => void;
+  onToggleProcesses: () => void;
   onEditProcess: (process: Process) => void;
   onCreateProcess: () => void;
   onKillProcess: (processId: string, processName: string) => void;
-  onToggleAutolaunch: (processId: string, newValue: boolean, processName: string, exePath: string) => void;
+  onSetLaunchMode: (processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
+  onConfigureSchedule?: (process: Process) => void;
   onRemoveMachine: () => void;
   onMetricClick?: (metricType: MetricType) => void;
   onReboot?: () => Promise<void>;
@@ -80,17 +85,20 @@ interface MachineCardProps {
 
 function MachineCard({
   machine,
-  isExpanded,
+  statsExpanded,
+  processesExpanded,
   currentSiteId,
   siteTimezone,
   siteTimeFormat,
   userPreferences,
   isAdmin,
-  onToggleExpanded,
+  onToggleStats,
+  onToggleProcesses,
   onEditProcess,
   onCreateProcess,
   onKillProcess,
-  onToggleAutolaunch,
+  onSetLaunchMode,
+  onConfigureSchedule,
   onRemoveMachine,
   onMetricClick,
   onReboot,
@@ -106,10 +114,10 @@ function MachineCard({
   const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, siteTimezone, siteTimeFormat);
 
   return (
-    <Card className="border-border bg-card">
-      <CardHeader className="pb-3 md:pb-4">
+    <Card className="border-border bg-card py-0 gap-0">
+      <CardHeader className="py-3 px-4 gap-0">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-lg font-semibold text-white select-text">{machine.machineId}</CardTitle>
+          <CardTitle className="text-xl font-semibold text-white select-text">{machine.machineId}</CardTitle>
           <div className="flex items-center gap-2">
             <Badge className={`select-none text-xs ${
               machine.rebooting ? 'bg-amber-600 hover:bg-amber-700' :
@@ -204,6 +212,52 @@ function MachineCard({
       )}
 
       {machine.metrics && (
+        <Collapsible open={statsExpanded} onOpenChange={onToggleStats}>
+          {!statsExpanded && (
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
+                <div className="flex items-center gap-2 w-full select-none">
+                  <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
+                  <div className="flex items-center gap-2.5 text-sm text-muted-foreground overflow-hidden">
+                    {machine.metrics.cpu && (
+                      <span className="tabular-nums">cpu <span className="text-foreground font-medium">{machine.metrics.cpu.percent}%</span>
+                        {machine.metrics.cpu.temperature !== undefined && (
+                          <span className={`ml-1 ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
+                            {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    <span className="text-border">|</span>
+                    <span className="tabular-nums">mem <span className="text-foreground font-medium">{machine.metrics.memory?.percent}%</span></span>
+                    <span className="text-border">|</span>
+                    <span className="tabular-nums">disk <span className="text-foreground font-medium">{machine.metrics.disk?.percent}%</span></span>
+                    {machine.metrics.gpu && (
+                      <>
+                        <span className="text-border">|</span>
+                        <span className="tabular-nums">gpu <span className="text-foreground font-medium">{machine.metrics.gpu.usage_percent}%</span>
+                          {machine.metrics.gpu.temperature !== undefined && (
+                            <span className={`ml-1 ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
+                              {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
+                            </span>
+                          )}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </Button>
+            </CollapsibleTrigger>
+          )}
+          <CollapsibleContent>
+        <CollapsibleTrigger asChild>
+          <div className="border-t border-border relative cursor-pointer group">
+            <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="relative flex items-center px-4 py-1.5 select-none">
+              <ChevronUp className="h-4 w-4 text-foreground/50 group-hover:text-foreground/70 transition-colors flex-shrink-0" />
+            </div>
+          </div>
+        </CollapsibleTrigger>
         <CardContent className="space-y-1.5 select-none pt-0 pb-4">
           {/* CPU Metric */}
           {machine.metrics.cpu && (
@@ -326,23 +380,49 @@ function MachineCard({
             </div>
           )}
         </CardContent>
+          </CollapsibleContent>
+        </Collapsible>
       )}
 
       {/* Expandable Process List */}
       {machine.processes && machine.processes.length > 0 && (
-        <Collapsible open={isExpanded} onOpenChange={onToggleExpanded}>
-          <CollapsibleTrigger asChild>
-            <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer">
-              <div className="flex items-center justify-between w-full select-none">
-                <span className="text-muted-foreground text-sm">
-                  {machine.processes.length} process{machine.processes.length > 1 ? 'es' : ''}
-                </span>
-                {isExpanded ? <ChevronUp className="h-4 w-4 text-foreground/70" /> : <ChevronDown className="h-4 w-4 text-foreground/70" />}
-              </div>
-            </Button>
-          </CollapsibleTrigger>
+        <Collapsible open={processesExpanded} onOpenChange={onToggleProcesses}>
+          {!processesExpanded && (
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
+                <div className="flex items-center gap-2 w-full select-none">
+                  <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
+                  <span className="text-muted-foreground text-sm flex-shrink-0">
+                    {machine.processes.length} process{machine.processes.length > 1 ? 'es' : ''}
+                  </span>
+                  <div className="flex items-center gap-3 overflow-hidden">
+                    {machine.processes.map((proc) => (
+                      <span key={proc.id} className="flex items-center gap-1 flex-shrink-0">
+                        <span className="text-sm text-muted-foreground truncate max-w-[100px]">{proc.name}</span>
+                        <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${
+                          !machine.online ? 'bg-muted-foreground/40' :
+                          proc.status === 'RUNNING' ? 'bg-green-500' :
+                          proc.status === 'INACTIVE' ? 'bg-slate-500' :
+                          proc.status === 'LAUNCH_FAILED' || proc.status === 'STOPPED' || proc.status === 'KILLED' ? 'bg-red-500' :
+                          'bg-yellow-500'
+                        }`} />
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </Button>
+            </CollapsibleTrigger>
+          )}
           <CollapsibleContent>
-            <div className="relative p-2 md:p-4 border-t border-border">
+            <CollapsibleTrigger asChild>
+              <div className="border-t border-border relative cursor-pointer group">
+                <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div className="relative flex items-center px-4 py-2 select-none">
+                  <ChevronUp className="h-4 w-4 text-foreground/50 group-hover:text-foreground/70 transition-colors flex-shrink-0" />
+                </div>
+              </div>
+            </CollapsibleTrigger>
+            <div className="relative px-2 pb-2 pt-0 md:px-4 md:pb-4 md:pt-0">
               <div className="space-y-2">
                 {machine.processes.map((process, index) => (
                   <div key={process.id} className="relative flex items-stretch">
@@ -372,17 +452,54 @@ function MachineCard({
                           </Badge>
                         </div>
                         <div className="flex items-center gap-2 md:gap-3 ml-2 md:ml-4 flex-shrink-0">
-                          <div className="flex items-center gap-2">
-                            <Label htmlFor={`autolaunch-${machine.machineId}-${process.id}`} className="text-xs text-muted-foreground cursor-pointer select-none hidden md:inline">
-                              autolaunch
-                            </Label>
-                            <Switch
-                              id={`autolaunch-${machine.machineId}-${process.id}`}
-                              checked={process._optimisticAutolaunch !== undefined ? process._optimisticAutolaunch : process.autolaunch}
-                              onCheckedChange={(checked) => onToggleAutolaunch(process.id, checked, process.name, process.exe_path)}
-                              className="cursor-pointer"
-                            />
-                          </div>
+                          {(() => {
+                            const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
+                            const isScheduled = currentMode === 'scheduled';
+                            return (
+                              <div className="hidden md:flex items-stretch rounded-md overflow-hidden border border-border h-8">
+                                {(['off', 'always', 'scheduled'] as const).map((mode) => {
+                                  const isActive = currentMode === mode;
+                                  const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+                                  const activeColors = {
+                                    off: 'bg-muted text-foreground',
+                                    always: 'bg-emerald-600 text-white',
+                                    scheduled: 'bg-blue-600 text-white',
+                                  };
+
+                                  if (mode === 'scheduled' && isScheduled) {
+                                    return (
+                                      <span key={mode} className="flex items-stretch bg-blue-600 text-white">
+                                        <button
+                                          onClick={() => {}}
+                                          className="px-3 text-xs font-medium cursor-default"
+                                        >
+                                          {labels[mode]}
+                                        </button>
+                                        <span className="w-px bg-blue-400/50" />
+                                        <button
+                                          onClick={() => onConfigureSchedule?.(process)}
+                                          className="px-1.5 hover:bg-blue-500 transition-colors cursor-pointer flex items-center"
+                                          title="Configure schedule"
+                                        >
+                                          <Settings2 className="h-3.5 w-3.5" />
+                                        </button>
+                                      </span>
+                                    );
+                                  }
+
+                                  return (
+                                    <button
+                                      key={mode}
+                                      onClick={() => onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
+                                      className={`px-3 text-xs font-medium transition-all duration-500 cursor-pointer ${isActive ? activeColors[mode] : 'bg-card text-muted-foreground hover:bg-muted/50'}`}
+                                    >
+                                      {labels[mode]}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
                           <Button
                             variant="outline"
                             size="sm"
@@ -444,15 +561,18 @@ function MachineCard({
 
 export function MachineCardView({
   machines,
-  expandedMachines,
+  statsExpanded,
+  processesExpanded,
+  onToggleStats,
+  onToggleProcesses,
   currentSiteId,
   siteTimezone = 'UTC',
   siteTimeFormat = '12h',
-  onToggleExpanded,
   onEditProcess,
   onCreateProcess,
   onKillProcess,
-  onToggleAutolaunch,
+  onSetLaunchMode,
+  onConfigureSchedule,
   onRemoveMachine,
   onMetricClick,
   onReboot,
@@ -469,19 +589,22 @@ export function MachineCardView({
         <MachineCard
           key={machine.machineId}
           machine={machine}
-          isExpanded={expandedMachines.has(machine.machineId)}
+          statsExpanded={statsExpanded}
+          processesExpanded={processesExpanded}
           currentSiteId={currentSiteId}
           siteTimezone={siteTimezone}
           siteTimeFormat={siteTimeFormat}
           userPreferences={userPreferences}
           isAdmin={isAdmin}
-          onToggleExpanded={() => onToggleExpanded(machine.machineId)}
+          onToggleStats={onToggleStats}
+          onToggleProcesses={onToggleProcesses}
           onEditProcess={(process) => onEditProcess(machine.machineId, process)}
           onCreateProcess={() => onCreateProcess(machine.machineId)}
           onKillProcess={(processId, processName) => onKillProcess(machine.machineId, processId, processName)}
-          onToggleAutolaunch={(processId, newValue, processName, exePath) =>
-            onToggleAutolaunch(machine.machineId, processId, newValue, processName, exePath)
+          onSetLaunchMode={(processId, processName, mode, exePath, schedules) =>
+            onSetLaunchMode(machine.machineId, processId, processName, mode, exePath, schedules)
           }
+          onConfigureSchedule={onConfigureSchedule ? (process) => onConfigureSchedule(machine.machineId, process) : undefined}
           onRemoveMachine={() => onRemoveMachine(machine.machineId, machine.machineId, machine.online)}
           onMetricClick={onMetricClick ? (metricType) => onMetricClick(machine.machineId, metricType) : undefined}
           onReboot={onReboot ? () => onReboot(machine.machineId) : undefined}

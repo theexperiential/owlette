@@ -118,6 +118,9 @@ class FirebaseClient:
         # Track last uploaded config to prevent processing our own writes
         self._last_uploaded_config_hash: Optional[str] = None
 
+        # Cached site timezone (fetched from sites/{siteId} on connect)
+        self.site_timezone: Optional[str] = None
+
         # Track last synced software inventory hash to prevent unnecessary writes
         self._last_software_inventory_hash: Optional[str] = None
 
@@ -183,6 +186,9 @@ class FirebaseClient:
             return  # Don't send data if not started
 
         try:
+            # Fetch site timezone for schedule evaluation
+            self._fetch_site_timezone()
+
             # Send immediate heartbeat and metrics
             self._update_presence(True)
             self.logger.debug("Heartbeat sent after connection")
@@ -250,6 +256,23 @@ class FirebaseClient:
     def _create_config_listener_thread(self) -> threading.Thread:
         """Factory for creating config listener thread."""
         return threading.Thread(target=self._config_listener_loop, daemon=True)
+
+    # =========================================================================
+    # Site Metadata
+    # =========================================================================
+
+    def _fetch_site_timezone(self):
+        """Fetch and cache the site timezone from Firestore."""
+        try:
+            if not self.db:
+                return
+            site_doc = self.db.get_document(f"sites/{self.site_id}")
+            if site_doc:
+                self.site_timezone = site_doc.get('timezone') or None
+                if self.site_timezone:
+                    self.logger.info(f"Site timezone: {self.site_timezone}")
+        except Exception as e:
+            self.logger.debug(f"Could not fetch site timezone: {e}")
 
     # =========================================================================
     # Public Properties

@@ -132,6 +132,8 @@ def _get_process_list(params, config):
         proc_name = proc.get('name', 'Unknown')
         proc_id = proc.get('id', '')
         autolaunch = proc.get('autolaunch', False)
+        launch_mode = proc.get('launch_mode', 'always' if autolaunch else 'off')
+        schedules = proc.get('schedules', None)
 
         # Check runtime state
         state_info = {}
@@ -155,6 +157,8 @@ def _get_process_list(params, config):
             'id': proc_id,
             'path': proc.get('path', ''),
             'autolaunch': autolaunch,
+            'launch_mode': launch_mode,
+            'schedules': schedules,
             'running': is_running,
             'pid': pid if is_running else None,
             'status': state_info.get('status', 'unknown'),

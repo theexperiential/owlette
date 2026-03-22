@@ -11,9 +11,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Clock } from 'lucide-react';
+import { ScheduleBlocksEditor } from '@/components/ScheduleEditor';
+import WeekSummaryBar from '@/components/WeekSummaryBar';
+import { DEFAULT_SCHEDULE } from '@/lib/scheduleDefaults';
+import type { LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 
 export interface ProcessFormData {
   name: string;
@@ -26,6 +29,8 @@ export interface ProcessFormData {
   time_to_init: string;
   relaunch_attempts: string;
   autolaunch: boolean;
+  launch_mode?: LaunchMode;
+  schedules?: ScheduleBlock[] | null;
 }
 
 interface ProcessDialogProps {
@@ -36,6 +41,7 @@ interface ProcessDialogProps {
   onClose: () => void;
   onSave: () => void;
   onDelete: () => void;
+  siteTimezone?: string;
 }
 
 export function ProcessDialog({
@@ -46,6 +52,7 @@ export function ProcessDialog({
   onClose,
   onSave,
   onDelete,
+  siteTimezone,
 }: ProcessDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -70,6 +77,32 @@ export function ProcessDialog({
               onChange={(e) => onFormChange({ ...form, name: e.target.value })}
               className="border-border bg-background text-white"
             />
+          </div>
+
+          {/* Launch Mode — prominently after name */}
+          <div className="space-y-2">
+            <Label className="text-white text-sm">launch mode</Label>
+            <div className="flex rounded-lg overflow-hidden border border-border">
+              {(['off', 'always', 'scheduled'] as const).map((m) => {
+                const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+                const isActive = (form.launch_mode || 'off') === m;
+                const colors = {
+                  off: isActive ? 'bg-muted text-foreground' : '',
+                  always: isActive ? 'bg-emerald-600 text-white' : '',
+                  scheduled: isActive ? 'bg-blue-600 text-white' : '',
+                };
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => onFormChange({ ...form, launch_mode: m, autolaunch: m !== 'off' })}
+                    className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${colors[m]} ${!isActive ? 'bg-card text-muted-foreground hover:bg-muted/50' : ''}`}
+                  >
+                    {labels[m]}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Executable Path */}
@@ -187,17 +220,32 @@ export function ProcessDialog({
             </div>
           </div>
 
-          {/* Autolaunch */}
-          <div className="flex items-center space-x-2">
-            <Switch
-              id="edit-autolaunch"
-              checked={form.autolaunch}
-              onCheckedChange={(checked) => onFormChange({ ...form, autolaunch: checked })}
-            />
-            <Label htmlFor="edit-autolaunch" className="text-white cursor-pointer">
-              enable autolaunch
-            </Label>
-          </div>
+          {/* Schedule Configuration (shown when mode is 'scheduled') */}
+          {(form.launch_mode || 'off') === 'scheduled' && (
+            <div className="space-y-3 rounded-lg border border-blue-600/30 bg-blue-950/10 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-3.5 w-3.5 text-blue-400" />
+                  <span className="text-xs font-medium text-blue-400">schedule configuration</span>
+                </div>
+                {siteTimezone && (
+                  <span className="text-[10px] text-muted-foreground">
+                    times in {siteTimezone.replace(/_/g, ' ').split('/').pop()}
+                  </span>
+                )}
+              </div>
+              <div className="flex justify-center mb-2">
+                <WeekSummaryBar schedules={form.schedules} tall />
+              </div>
+              <div className="max-h-[200px] overflow-y-auto pr-1">
+                <ScheduleBlocksEditor
+                  blocks={form.schedules && form.schedules.length > 0 ? form.schedules : DEFAULT_SCHEDULE}
+                  onChange={(blocks) => onFormChange({ ...form, schedules: blocks })}
+                  compact
+                />
+              </div>
+            </div>
+          )}
         </div>
         <DialogFooter className="flex items-center">
           {mode === 'edit' && (

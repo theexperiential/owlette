@@ -366,7 +366,7 @@ class OwletteConfigApp:
         )
         self.logs_button.pack(side='left', padx=(0, 10))
 
-        self.version_label = ctk.CTkLabel(self.footer_right, text=f"v{shared_utils.APP_VERSION}", fg_color='transparent', text_color=shared_utils.TEXT_COLOR, font=("", 11))
+        self.version_label = ctk.CTkLabel(self.footer_right, text=f"v{shared_utils.APP_VERSION} | AGPL-3.0", fg_color='transparent', text_color=shared_utils.TEXT_COLOR, font=("", 11))
         self.version_label.pack(side='left')
 
         # VERTICAL SEPARATOR between panels
@@ -395,13 +395,17 @@ class OwletteConfigApp:
         # Invisible spacer — keeps grid layout stable (previously held machine info)
         self.machine_info_frame = ctk.CTkFrame(self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, height=0, width=0)
 
-        # Create a toggle switch for process
-        self.autolaunch_label = ctk.CTkLabel(self.master, text="autolaunch:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.autolaunch_label.grid(row=1, column=4, sticky='e', padx=(15, 5), pady=5)
-        self.autolaunch_toggle = ctk.CTkSwitch(master=self.master, text="", command=self.toggle_launch_process, onvalue="on", offvalue="off")
-        self.autolaunch_toggle.grid(row=1, column=5, columnspan=2, sticky='w', padx=10, pady=5)
-        self.autolaunch_toggle.configure(bg_color=shared_utils.FRAME_COLOR, fg_color='#475569', progress_color=shared_utils.BUTTON_IMPORTANT_COLOR)
-        self.autolaunch_toggle.select()
+        # Create launch mode dropdown
+        self.launch_mode_label = ctk.CTkLabel(self.master, text="launch mode:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.launch_mode_label.grid(row=1, column=4, sticky='e', padx=(15, 5), pady=5)
+        self.launch_mode_options = ["Off", "Always On", "Scheduled"]
+        self.launch_mode_menu = ctk.CTkOptionMenu(self.master, values=self.launch_mode_options, command=self.on_launch_mode_change)
+        self.launch_mode_menu.configure(fg_color=shared_utils.BUTTON_COLOR, bg_color=shared_utils.FRAME_COLOR, button_color=shared_utils.BUTTON_HOVER_COLOR, button_hover_color=shared_utils.ACCENT_COLOR, width=120, dropdown_fg_color=shared_utils.BUTTON_COLOR, corner_radius=shared_utils.CORNER_RADIUS)
+        self.launch_mode_menu.grid(row=1, column=5, columnspan=2, sticky='w', padx=10, pady=5)
+        self.launch_mode_menu.set('Off')
+        # Read-only schedule info label (shown when mode is Scheduled)
+        self.schedule_info_label = ctk.CTkLabel(self.master, text="", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color='#64748b', font=("", 11))
+        self.schedule_info_label.grid(row=1, column=7, columnspan=2, sticky='w', padx=(5, 20), pady=5)
 
         # Create Name of process field
         self.name_label = ctk.CTkLabel(self.master, text="name:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
@@ -497,8 +501,8 @@ class OwletteConfigApp:
 
         # Tooltips
         tooltip_opts = {"delay": 0.5, "alpha": 0.95, "corner_radius": shared_utils.CORNER_RADIUS}
-        CTkToolTip(self.autolaunch_label, message="Automatically launch and monitor this process", **tooltip_opts)
-        CTkToolTip(self.autolaunch_toggle, message="Automatically launch and monitor this process", **tooltip_opts)
+        CTkToolTip(self.launch_mode_label, message="Off: not managed | Always On: 24/7 with crash recovery | Scheduled: runs during configured time windows", **tooltip_opts)
+        CTkToolTip(self.launch_mode_menu, message="Off: not managed | Always On: 24/7 with crash recovery | Scheduled: runs during configured time windows", **tooltip_opts)
         CTkToolTip(self.name_label, message="Display name for this process", **tooltip_opts)
         CTkToolTip(self.name_entry, message="Display name for this process", **tooltip_opts)
         CTkToolTip(self.exe_path_label, message="Full path to the executable (.exe)", **tooltip_opts)
@@ -551,7 +555,7 @@ class OwletteConfigApp:
         # Collect all detail field widgets for empty state management
         self._detail_widgets = [
             self.process_details_label,
-            self.autolaunch_label, self.autolaunch_toggle,
+            self.launch_mode_label, self.launch_mode_menu, self.schedule_info_label,
             self.name_label, self.name_entry,
             self.exe_path_label, self.exe_browse_button, self.exe_path_entry,
             self.file_path_label, self.file_browse_button, self.file_path_entry,
@@ -640,29 +644,33 @@ class OwletteConfigApp:
 
     # PROCESS HANDLING
 
-    def toggle_launch_process(self):
+    def on_launch_mode_change(self, selected_mode=None):
         if self.selected_process:
             index = shared_utils.get_process_index(self.selected_process)
-            current_state = self.config['processes'][index].get('autolaunch', False)
-            new_state = not current_state
+            mode_map = {"Off": "off", "Always On": "always", "Scheduled": "scheduled"}
+            new_mode = mode_map.get(selected_mode, 'off')
 
-            # If turning ON, validate required fields
-            if new_state:
+            # If enabling (not off), validate required fields
+            if new_mode != 'off':
                 name = self.config['processes'][index].get('name', '')
                 exe_path = self.config['processes'][index].get('exe_path', '').strip()
 
                 if not name or not exe_path:
-                    CTkMessagebox(master=self.master, title="Validation Error", message="Name and Exe Path are required to enable Autolaunch.", icon="cancel")
-                    self.autolaunch_toggle.deselect()
+                    CTkMessagebox(master=self.master, title="Validation Error", message="Name and Exe Path are required to enable launch mode.", icon="cancel")
+                    self.launch_mode_menu.set('Off')
                     return
 
                 # Validate that executable path actually exists
                 if not os.path.isfile(exe_path):
-                    CTkMessagebox(master=self.master, title="Validation Error", message=f"Cannot enable Autolaunch: Executable path does not exist.\n\n{exe_path}\n\nPlease set a valid executable path first.", icon="cancel")
-                    self.autolaunch_toggle.deselect()
+                    CTkMessagebox(master=self.master, title="Validation Error", message=f"Cannot enable launch mode: Executable path does not exist.\n\n{exe_path}\n\nPlease set a valid executable path first.", icon="cancel")
+                    self.launch_mode_menu.set('Off')
                     return
 
-            self.config['processes'][index]['autolaunch'] = new_state
+            self.config['processes'][index]['launch_mode'] = new_mode
+            # Derive autolaunch for backward compat
+            self.config['processes'][index]['autolaunch'] = new_mode != 'off'
+            # Update schedule info display
+            self._update_schedule_info_label(self.config['processes'][index])
             shared_utils.save_config(self.config)
 
             # Upload to Firestore immediately for fast sync (in background thread)
@@ -686,9 +694,27 @@ class OwletteConfigApp:
             # Status message if process has been launched
             try:
                 pid = shared_utils.fetch_pid_by_id(self.config['processes'][index]['id'])
-                shared_utils.update_process_status_in_json(pid, 'INACTIVE' if current_state else 'QUEUED', process_id=self.config['processes'][index]['id'])
+                shared_utils.update_process_status_in_json(pid, 'INACTIVE' if new_mode == 'off' else 'QUEUED', process_id=self.config['processes'][index]['id'])
             except Exception as e:
                 logging.info(e)
+
+    def _update_schedule_info_label(self, process):
+        """Show read-only schedule summary when mode is Scheduled."""
+        mode = process.get('launch_mode', 'off')
+        schedules = process.get('schedules')
+        if mode == 'scheduled' and schedules:
+            parts = []
+            for block in schedules:
+                days = block.get('days', [])
+                ranges = block.get('ranges', [])
+                day_str = ', '.join(d.capitalize() for d in days) if days else 'All days'
+                range_str = ', '.join(f"{r['start']}-{r['stop']}" for r in ranges)
+                parts.append(f"{day_str}: {range_str}")
+            self.schedule_info_label.configure(text=' | '.join(parts))
+        elif mode == 'scheduled':
+            self.schedule_info_label.configure(text='(no schedule set — configure via web)')
+        else:
+            self.schedule_info_label.configure(text='')
 
     def new_process(self):
         """Create a new process entry immediately with default values"""
@@ -707,7 +733,9 @@ class OwletteConfigApp:
             'time_delay': '0',
             'time_to_init': '10',
             'relaunch_attempts': '5',
-            'autolaunch': False
+            'launch_mode': 'off',
+            'autolaunch': False,
+            'schedules': None
         }
 
         # Add to config and save
@@ -911,7 +939,8 @@ class OwletteConfigApp:
 
             # Generate unique ID
             unique_id = str(uuid.uuid4())
-            autolaunch = True if self.autolaunch_toggle.get() == 'on' else False
+            mode_map = {"Off": "off", "Always On": "always", "Scheduled": "scheduled"}
+            launch_mode = mode_map.get(self.launch_mode_menu.get(), 'off')
 
             new_process = {
                 'id': unique_id,
@@ -924,7 +953,9 @@ class OwletteConfigApp:
                 'time_delay': time_delay,
                 'time_to_init': time_to_init,
                 'relaunch_attempts': relaunch_attempts,
-                'autolaunch': autolaunch
+                'launch_mode': launch_mode,
+                'autolaunch': launch_mode != 'off',
+                'schedules': None
             }
 
             self.config['processes'].append(new_process)
@@ -949,16 +980,17 @@ class OwletteConfigApp:
         time_delay = self.time_delay_entry.get() if self.time_delay_entry.get() else 0 # Default to 0 if empty
         time_to_init = self.time_to_init_entry.get() if self.time_to_init_entry.get() else 60 # Default to 60 if empty
         relaunch_attempts = self.relaunch_attempts_entry.get() if self.relaunch_attempts_entry.get() else 5 # Default to 5 if empty
-        autolaunch = True if self.autolaunch_toggle.get() == 'on' else False
-        
+        mode_map = {"Off": "off", "Always On": "always", "Scheduled": "scheduled"}
+        launch_mode = mode_map.get(self.launch_mode_menu.get(), 'off')
+
         if not name or not exe_path:
             CTkMessagebox(master=self.master, title="Validation Error", message="Name and Exe Path are required fields.", icon="cancel")
             return
-        
+
         if not os.path.exists(exe_path):
             CTkMessagebox(master=self.master, title="Validation Error", message="The specified Exe Path does not exist.", icon="cancel")
             return
-        
+
         if file_path and not os.path.exists(file_path):
             CTkMessagebox(master=self.master, title="Validation Error", message="The specified File Path does not exist.", icon="cancel")
             return
@@ -974,7 +1006,9 @@ class OwletteConfigApp:
             'time_delay': time_delay,
             'time_to_init': time_to_init,
             'relaunch_attempts': relaunch_attempts,
-            'autolaunch': autolaunch
+            'launch_mode': launch_mode,
+            'autolaunch': launch_mode != 'off',
+            'schedules': None
         }
 
         self.config['processes'].append(new_process)
@@ -1555,11 +1589,11 @@ class OwletteConfigApp:
         self.time_to_init_entry.insert(0, process.get('time_to_init', ''))
         self.relaunch_attempts_entry.delete(0, tk.END)
         self.relaunch_attempts_entry.insert(0, process.get('relaunch_attempts', ''))
-        autolaunch = process.get('autolaunch', True)
-        if autolaunch:
-            self.autolaunch_toggle.select()
-        else:
-            self.autolaunch_toggle.deselect()
+        # Set launch mode dropdown
+        mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+        display_map = {'off': 'Off', 'always': 'Always On', 'scheduled': 'Scheduled'}
+        self.launch_mode_menu.set(display_map.get(mode, 'Off'))
+        self._update_schedule_info_label(process)
 
     # FIREBASE STATUS
 

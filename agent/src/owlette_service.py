@@ -153,6 +153,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.results = {} # App process response esults
         self.current_time = datetime.datetime.now()
         self.active_installations = {} # Track active installer processes for cancellation
+        self.manual_overrides = {} # Processes manually started outside their schedule window
+        self._cached_site_timezone = None  # Cached from firebase_client
 
         # Initialize Firebase client
         self.firebase_client = None
@@ -284,6 +286,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Start Firebase client background threads
             self.firebase_client.start()
             logging.info(f"[OK] Firebase client initialized and started for site: {site_id}")
+
+            # Cache site timezone for schedule evaluation
+            self._cached_site_timezone = self.firebase_client.site_timezone
 
             # Clear any stale health errors (e.g. config_error from startup before site was joined)
             self._update_health_state('ok', 'ok', 'Firebase connected successfully')
@@ -615,8 +620,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                     # Valid process - keep in cleaned state
                                     cleaned_states[pid_str] = state_info
 
-                                    # Only recover if autolaunch is enabled
-                                    if process.get('autolaunch', False):
+                                    # Only recover if launch_mode is active
+                                    mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+                                    if mode == 'always' or (mode == 'scheduled' and shared_utils.is_within_schedule(process.get('schedules'), self._cached_site_timezone)):
                                         # Adopt this process
                                         self.last_started[process_id] = {
                                             'time': datetime.datetime.now(),
@@ -625,7 +631,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                         recovered_count += 1
                                         logging.info(f"[OK] Recovered process '{process.get('name')}' with PID {pid}")
                                     else:
-                                        logging.info(f"Skipping recovery of '{process.get('name')}' (PID {pid}) - autolaunch is disabled")
+                                        logging.info(f"Skipping recovery of '{process.get('name')}' (PID {pid}) - launch_mode is '{mode}'")
                                 else:
                                     # PID reused for different process - don't recover
                                     dead_pid_count += 1
@@ -1271,7 +1277,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         exe_path = process.get('exe_path', '').strip()
         if not exe_path:
             process_name = Util.get_process_name(process)
-            logging.error(f"Cannot launch '{process_name}': Executable path is not set. Please configure a valid exe_path and disable/re-enable autolaunch.")
+            logging.error(f"Cannot launch '{process_name}': Executable path is not set. Please configure a valid exe_path and set launch mode to Always On or Scheduled.")
             self.last_started[process.get('id', '')] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
             return None
 
@@ -1503,13 +1509,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     else:
                         logging.debug(f"Process {last_pid} was manually killed - skipping crash log")
 
-                # Re-read config to get the latest autolaunch state
+                # Re-read config to get the latest launch_mode state
                 # (config may have changed via GUI/Firestore since the main loop started)
                 fresh_config = shared_utils.read_config()
                 fresh_processes = fresh_config.get('processes', []) if fresh_config else []
                 fresh_process = next((p for p in fresh_processes if p.get('id') == process_list_id), None)
-                if fresh_process and not fresh_process.get('autolaunch', False):
-                    logging.debug(f"Skipping relaunch of '{Util.get_process_name(process)}' - autolaunch is disabled")
+                fresh_mode = fresh_process.get('launch_mode', 'always' if fresh_process.get('autolaunch', False) else 'off') if fresh_process else 'off'
+                if fresh_mode == 'off' or (fresh_mode == 'scheduled' and not shared_utils.is_within_schedule(fresh_process.get('schedules') if fresh_process else None, self._cached_site_timezone)):
+                    logging.debug(f"Skipping relaunch of '{Util.get_process_name(process)}' - launch_mode is '{fresh_mode}' (not active)")
                     # Clear last_started so we don't keep detecting it as crashed
                     if process_list_id in self.last_started:
                         del self.last_started[process_list_id]
@@ -1599,10 +1606,38 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 else:
                     logging.warning("Old config exists but has no firebase section - proceeding with Firestore sync")
 
+            # Merge launch_mode/schedules: if Firestore processes don't have launch_mode,
+            # preserve the local values (GUI may have set them before Firestore caught up)
+            merged_launch_mode = False
+            if old_config:
+                old_processes = {p.get('id'): p for p in old_config.get('processes', []) if p.get('id')}
+                for process in new_config.get('processes', []):
+                    pid = process.get('id')
+                    if pid and pid in old_processes:
+                        old_proc = old_processes[pid]
+                        if 'launch_mode' not in process and 'launch_mode' in old_proc:
+                            process['launch_mode'] = old_proc['launch_mode']
+                            merged_launch_mode = True
+                        if 'schedules' not in process and 'schedules' in old_proc:
+                            process['schedules'] = old_proc['schedules']
+                    # Always derive autolaunch from launch_mode for consistency
+                    if 'launch_mode' in process:
+                        process['autolaunch'] = process['launch_mode'] != 'off'
+
             # Write the updated config to local config.json
             shared_utils.write_json_to_file(new_config, shared_utils.CONFIG_PATH)
 
             logging.info("Local config.json updated from Firestore")
+
+            # If we had to merge launch_mode from local, push back to Firestore
+            # so the Firestore config document gets launch_mode too (stops the sync cycle)
+            if merged_launch_mode and self.firebase_client and self.firebase_client.is_connected():
+                try:
+                    upload_config = {k: v for k, v in new_config.items() if k != 'firebase'}
+                    self.firebase_client.upload_config(upload_config)
+                    logging.info("Pushed launch_mode back to Firestore config (one-time sync)")
+                except Exception as e:
+                    logging.error(f"Failed to push launch_mode to Firestore: {e}")
 
             # Check for Firebase enable/disable changes (site rejoining detection)
             if old_config:
@@ -1675,26 +1710,32 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         # Clean up tracking
                         del self.last_started[removed_id]
 
-                # Check for autolaunch changes
+                # Check for launch_mode changes
                 for process_id, new_proc in new_process_map.items():
                     if process_id in old_process_map:
                         old_proc = old_process_map[process_id]
-                        old_autolaunch = old_proc.get('autolaunch', False)
-                        new_autolaunch = new_proc.get('autolaunch', False)
+                        old_mode = old_proc.get('launch_mode', 'always' if old_proc.get('autolaunch', False) else 'off')
+                        new_mode = new_proc.get('launch_mode', 'always' if new_proc.get('autolaunch', False) else 'off')
 
-                        if old_autolaunch and not new_autolaunch:
-                            # Autolaunch disabled - stop monitoring but keep process running
-                            # The process should stay alive; we just won't relaunch it if it exits
-                            logging.info(f"Autolaunch disabled for {new_proc.get('name')} - stopping monitoring (process stays running)")
-                        elif new_autolaunch and not old_autolaunch:
-                            # Autolaunch enabled - clear any cooldown from prior failed launch,
-                            # then launch immediately instead of waiting for next cycle
-                            logging.info(f"Autolaunch enabled for {new_proc.get('name')} - launching now")
-                            self.last_started.pop(new_proc.get('id'), None)
-                            try:
-                                self.handle_process(new_proc)
-                            except Exception as e:
-                                logging.error(f"Failed to immediately launch {new_proc.get('name')}: {e}")
+                        if old_mode != new_mode:
+                            logging.info(f"Launch mode changed for {new_proc.get('name')}: {old_mode} -> {new_mode}")
+
+                        if new_mode == 'off' and old_mode != 'off':
+                            # Mode set to off - stop monitoring but keep process running
+                            logging.info(f"Launch mode set to off for {new_proc.get('name')} - stopping monitoring (process stays running)")
+                            self.manual_overrides.pop(process_id, None)
+                        elif new_mode in ('always', 'scheduled') and old_mode == 'off':
+                            # Mode enabled - clear any cooldown, launch immediately if appropriate
+                            should_launch = new_mode == 'always' or shared_utils.is_within_schedule(new_proc.get('schedules'), self._cached_site_timezone)
+                            if should_launch:
+                                logging.info(f"Launch mode set to {new_mode} for {new_proc.get('name')} - launching now")
+                                self.last_started.pop(new_proc.get('id'), None)
+                                try:
+                                    self.handle_process(new_proc)
+                                except Exception as e:
+                                    logging.error(f"Failed to immediately launch {new_proc.get('name')}: {e}")
+                            else:
+                                logging.info(f"Launch mode set to {new_mode} for {new_proc.get('name')} - outside schedule, will launch when window opens")
 
                 # Log summary
                 logging.info(f"Config update complete - Processes: {len(old_processes)} -> {len(new_processes)}, Removed: {len(removed_process_ids)}")
@@ -1750,6 +1791,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 for process in processes:
                     if process.get('name') == process_name:
                         process_list_id = process['id']
+                        # Track manual override for scheduled processes started outside window
+                        mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+                        if mode == 'scheduled' and not shared_utils.is_within_schedule(process.get('schedules'), self._cached_site_timezone):
+                            self.manual_overrides[process_list_id] = True
+                            logging.info(f"Manual override set for '{process_name}' (started outside schedule window)")
                         last_info = self.last_started.get(process_list_id, {})
                         last_pid = last_info.get('pid')
                         if last_pid and Util.is_pid_running(last_pid):
@@ -1802,18 +1848,28 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             return f"Process {process_name} is not running"
                 return f"Process {process_name} not found in configuration"
 
-            elif cmd_type == 'toggle_autolaunch':
-                # Toggle autolaunch for a specific process
+            elif cmd_type in ('toggle_autolaunch', 'set_launch_mode'):
+                # Set launch mode for a specific process (also handles legacy toggle_autolaunch)
                 process_name = cmd_data.get('process_name')
-                new_autolaunch_value = cmd_data.get('autolaunch', False)
                 config = shared_utils.read_config()
                 processes = config.get('processes', [])
                 for process in processes:
                     if process.get('name') == process_name:
-                        process['autolaunch'] = new_autolaunch_value
+                        if cmd_type == 'set_launch_mode':
+                            new_mode = cmd_data.get('mode', 'off')
+                            new_schedules = cmd_data.get('schedules', None)
+                            process['launch_mode'] = new_mode
+                            if new_schedules is not None:
+                                process['schedules'] = new_schedules
+                        else:
+                            # Legacy toggle_autolaunch support
+                            new_autolaunch_value = cmd_data.get('autolaunch', False)
+                            process['launch_mode'] = 'always' if new_autolaunch_value else 'off'
+                        # Always derive autolaunch for backward compat
+                        process['autolaunch'] = process.get('launch_mode', 'off') != 'off'
                         shared_utils.save_config(config)
-                        logging.info(f"Autolaunch for {process_name} set to {new_autolaunch_value}")
-                        return f"Autolaunch for {process_name} set to {new_autolaunch_value}"
+                        logging.info(f"Launch mode for {process_name} set to {process['launch_mode']}")
+                        return f"Launch mode for {process_name} set to {process['launch_mode']}"
                 return f"Process {process_name} not found in configuration"
 
             elif cmd_type == 'update_config':
@@ -2938,6 +2994,9 @@ print(f'monitors={{len(sct.monitors) - 1}}')
                 self.firebase_client.start()
                 logging.info("Firebase client started successfully")
 
+                # Cache site timezone for schedule evaluation
+                self._cached_site_timezone = self.firebase_client.site_timezone
+
                 # Log any pending update event (from self-update check)
                 if hasattr(self, '_pending_update_event') and self._pending_update_event:
                     event_type, message, level = self._pending_update_event
@@ -3054,8 +3113,48 @@ print(f'monitors={{len(sct.monitors) - 1}}')
                 # Load in all processes in config json
                 processes = shared_utils.read_config(['processes'])
                 for process in processes:
-                    if process.get('autolaunch', False): # Default to False if not found
+                    mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+                    if mode == 'always':
                         self.handle_process(process)
+                    elif mode == 'scheduled':
+                        process_id = process.get('id')
+                        schedules = process.get('schedules')
+                        in_window = shared_utils.is_within_schedule(schedules, self._cached_site_timezone)
+                        has_override = process_id in self.manual_overrides
+
+                        if in_window:
+                            # Clear manual override when schedule window opens
+                            if has_override:
+                                del self.manual_overrides[process_id]
+                            self.handle_process(process)
+                        else:
+                            # Outside schedule window
+                            if has_override:
+                                # Manual override active — keep processing (don't kill)
+                                self.handle_process(process)
+                            else:
+                                # Check if process is running and should be stopped
+                                last_info = self.last_started.get(process_id, {})
+                                last_pid = last_info.get('pid')
+                                if last_pid and not last_info.get('failed'):
+                                    try:
+                                        p = psutil.Process(last_pid)
+                                        if p.is_running():
+                                            p.terminate()
+                                            logging.info(f"Stopped '{process.get('name')}' (PID {last_pid}) - outside schedule window")
+                                            if self.firebase_client and self.firebase_client.is_connected():
+                                                self.firebase_client.log_event(
+                                                    action='process_killed',
+                                                    level='info',
+                                                    process_name=process.get('name'),
+                                                    details='Stopped by schedule (outside active window)'
+                                                )
+                                            # Clear tracking so we don't keep trying to stop
+                                            if process_id in self.last_started:
+                                                del self.last_started[process_id]
+                                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                        pass
+                    # mode == 'off': skip entirely
 
                 if self.first_start:
                     logging.info('Owlette initialized')

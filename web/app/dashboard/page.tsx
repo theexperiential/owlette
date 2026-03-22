@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { useMachines, useSites } from '@/hooks/useFirestore';
+import { useMachines, useSites, type LaunchMode, type ScheduleBlock } from '@/hooks/useFirestore';
+import { DEFAULT_SCHEDULE } from '@/lib/scheduleDefaults';
+import { useSchedulePresets } from '@/hooks/useSchedulePresets';
 import { useDeployments } from '@/hooks/useDeployments';
 import { useMachineOperations } from '@/hooks/useMachineOperations';
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
@@ -15,7 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Copy, Pencil, Trash2, Download, Monitor, Wifi, Cog } from 'lucide-react';
+import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Copy, Pencil, Trash2, Download, Monitor, Wifi, Cog, Settings2 } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -31,8 +33,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { formatStorageRange } from '@/lib/storageUtils';
 import { MetricsDetailPanel, type MetricType } from '@/components/charts';
+import ScheduleEditor from '@/components/ScheduleEditor';
 import { MachineCardView } from './components/MachineCardView';
 import { MachineRow, MemoizedTableHeader as ListViewTableHeader } from './components/MachineListView';
+import type { Process } from '@/hooks/useFirestore';
 
 type ViewType = 'card' | 'list';
 
@@ -45,18 +49,47 @@ interface DetailPanelState {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, loading, signOut, isAdmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences } = useAuth();
+  const { user, loading, signOut, isAdmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences, updateUserPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [viewType, setViewType] = useState<ViewType>('card');
-  const [expandedMachines, setExpandedMachines] = useState<Set<string>>(new Set());
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
 
   // Delay showing "Getting Started" to avoid flash if machines are still loading
   const [canShowGettingStarted, setCanShowGettingStarted] = useState(false);
+
+  // Schedule Editor dialog state (single instance, opened by gear icon on any process)
+  const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
+  const [scheduleEditorTarget, setScheduleEditorTarget] = useState<{ machineId: string; process: Process } | null>(null);
+
+  const handleConfigureSchedule = (machineId: string, process: Process) => {
+    setScheduleEditorTarget({ machineId, process });
+    setScheduleEditorOpen(true);
+  };
+
+  const handleScheduleApply = (schedules: ScheduleBlock[], presetId: string | null) => {
+    if (scheduleEditorTarget) {
+      const { machineId, process } = scheduleEditorTarget;
+      handleSetLaunchMode(machineId, process.id, process.name, 'scheduled', process.exe_path, schedules, presetId);
+    }
+    setScheduleEditorOpen(false);
+    setScheduleEditorTarget(null);
+  };
+
+  const handleCreatePreset = async (name: string, blocks: ScheduleBlock[]) => {
+    if (!user?.uid) return;
+    await createPreset({
+      name,
+      blocks,
+      isBuiltIn: false,
+      order: 99,
+      createdBy: user.uid,
+    });
+    toast.success(`Preset "${name}" saved`);
+  };
 
   // Process Dialog state (supports both create and edit modes)
   const [processDialogOpen, setProcessDialogOpen] = useState(false);
@@ -64,7 +97,11 @@ export default function DashboardPage() {
   const [editingMachineId, setEditingMachineId] = useState<string>('');
   const [editingProcessId, setEditingProcessId] = useState<string>('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [editProcessForm, setEditProcessForm] = useState({
+  const [editProcessForm, setEditProcessForm] = useState<{
+    name: string; exe_path: string; file_path: string; cwd: string;
+    priority: string; visibility: string; time_delay: string; time_to_init: string;
+    relaunch_attempts: string; autolaunch: boolean; launch_mode: LaunchMode; schedules: ScheduleBlock[] | null;
+  }>({
     name: '',
     exe_path: '',
     file_path: '',
@@ -75,9 +112,12 @@ export default function DashboardPage() {
     time_to_init: '10',
     relaunch_attempts: '3',
     autolaunch: false,
+    launch_mode: 'off',
+    schedules: null,
   });
 
-  const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot } = useMachines(currentSiteId);
+  const { machines, loading: machinesLoading, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot } = useMachines(currentSiteId);
+  const { presets: schedulePresets, createPreset, deletePreset: deleteSchedulePreset, updatePreset: updateSchedulePreset } = useSchedulePresets(currentSiteId);
   const { checkMachineHasActiveDeployment } = useDeployments(currentSiteId);
   const { removeMachineFromSite, removing: isRemovingMachine } = useMachineOperations(currentSiteId);
 
@@ -96,8 +136,8 @@ export default function DashboardPage() {
   // Metrics Detail Panel state (replaces top stats cards when active)
   const [detailPanel, setDetailPanel] = useState<DetailPanelState | null>(null);
 
-  // Multilingual welcome messages with language info
-  const welcomeMessages = [
+  // Multilingual welcome messages with language info (memoized to avoid recreation)
+  const welcomeMessages = useMemo(() => [
     // English (heavy)
     { text: "Welcome back", language: "English", translation: "Welcome back" },
     { text: "Greetings", language: "English", translation: "Greetings" },
@@ -180,10 +220,10 @@ export default function DashboardPage() {
     { text: "Fàilte air ais", language: "Scottish Gaelic", translation: "Welcome back" },
     { text: "Croeso yn ôl", language: "Welsh", translation: "Welcome back" },
     { text: "Fáilte ar ais", language: "Irish", translation: "Welcome back" },
-  ];
+  ], []);
 
-  // Random cheesy tech jokes
-  const techJokes = [
+  // Random cheesy tech jokes (memoized)
+  const techJokes = useMemo(() => [
     "Your pixels are in good hands",
     "Keeping your GPUs well-fed and happy",
     "Because Ctrl+Alt+Delete is so 2000s",
@@ -239,24 +279,20 @@ export default function DashboardPage() {
     "Making Windows services less mysterious",
     "Your exhibition's technical director",
     "Process management: It's not rocket science, it's harder"
-  ];
+  ], []);
 
   const [randomWelcome] = useState(() => welcomeMessages[Math.floor(Math.random() * welcomeMessages.length)]);
   const [randomJoke] = useState(() => techJokes[Math.floor(Math.random() * techJokes.length)]);
 
-  const toggleMachineExpanded = (machineId: string) => {
-    setExpandedMachines(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(machineId)) {
-        newSet.delete(machineId);
-      } else {
-        newSet.add(machineId);
-      }
-      return newSet;
-    });
-  };
+  const toggleStatsExpanded = useCallback(() => {
+    updateUserPreferences({ statsExpanded: !userPreferences.statsExpanded }, { silent: true });
+  }, [userPreferences.statsExpanded, updateUserPreferences]);
 
-  const handleRowClick = (machineId: string, canExpand: boolean) => {
+  const toggleProcessesExpanded = useCallback(() => {
+    updateUserPreferences({ processesExpanded: !userPreferences.processesExpanded }, { silent: true });
+  }, [userPreferences.processesExpanded, updateUserPreferences]);
+
+  const handleRowClick = (_machineId: string, canExpand: boolean) => {
     // Don't toggle if user is selecting text
     const selection = window.getSelection();
     if (selection && selection.toString().length > 0) {
@@ -264,7 +300,7 @@ export default function DashboardPage() {
     }
 
     if (canExpand) {
-      toggleMachineExpanded(machineId);
+      toggleProcessesExpanded();
     }
   };
 
@@ -287,22 +323,24 @@ export default function DashboardPage() {
     }
   };
 
-  const handleToggleAutolaunch = async (machineId: string, processId: string, newValue: boolean, processName: string, exePath: string) => {
-    console.log('handleToggleAutolaunch called:', { machineId, processId, processName, newValue, exePath });
-
-    // Validate exe_path before enabling autolaunch
-    if (newValue && (!exePath || exePath.trim() === '')) {
-      toast.error(`cannot enable autolaunch for "${processName}": executable path is not set. please edit the process and set a valid executable path.`);
+  const handleSetLaunchMode = async (machineId: string, processId: string, processName: string, mode: 'off' | 'always' | 'scheduled', exePath: string, schedules?: any[] | null, schedulePresetId?: string | null) => {
+    // Validate exe_path before enabling
+    if (mode !== 'off' && (!exePath || exePath.trim() === '')) {
+      toast.error(`cannot enable launch mode for "${processName}": executable path is not set. please edit the process and set a valid executable path.`);
       return;
     }
 
     try {
-      await toggleAutolaunch(machineId, processId, processName, newValue);
-      console.log('toggleAutolaunch completed successfully');
-      toast.success(`Autolaunch ${newValue ? 'enabled' : 'disabled'} for "${processName}"`);
+      // When activating scheduled mode without schedules, use default (M-F 9-5)
+      const effectiveSchedules = mode === 'scheduled' && (!schedules || schedules.length === 0)
+        ? DEFAULT_SCHEDULE
+        : schedules;
+      await setLaunchMode(machineId, processId, processName, mode, effectiveSchedules, schedulePresetId);
+      const modeLabels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+      toast.success(`Launch mode set to ${modeLabels[mode]} for "${processName}"`);
     } catch (error: any) {
-      console.error('handleToggleAutolaunch error:', error);
-      toast.error(error.message || 'Failed to toggle autolaunch');
+      console.error('handleSetLaunchMode error:', error);
+      toast.error(error.message || 'Failed to set launch mode');
     }
   };
 
@@ -330,6 +368,8 @@ export default function DashboardPage() {
       time_to_init: process.time_to_init || '10',
       relaunch_attempts: process.relaunch_attempts || '3',
       autolaunch: process.autolaunch || false,
+      launch_mode: process.launch_mode || (process.autolaunch ? 'always' : 'off'),
+      schedules: process.schedules || null,
     });
     setProcessDialogOpen(true);
   };
@@ -350,6 +390,8 @@ export default function DashboardPage() {
       time_to_init: '10',
       relaunch_attempts: '3',
       autolaunch: false,
+      launch_mode: 'off' as LaunchMode,
+      schedules: null as ScheduleBlock[] | null,
     });
     setProcessDialogOpen(true);
   };
@@ -640,35 +682,41 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Card View */}
-            <div className={`animate-in fade-in duration-300 ${viewType === 'list' ? 'hidden' : ''}`}>
-              <MachineCardView
-                machines={machines}
-                expandedMachines={expandedMachines}
-                currentSiteId={currentSiteId}
-                siteTimezone={currentSite?.timezone}
-                siteTimeFormat={currentSite?.timeFormat}
-                onToggleExpanded={toggleMachineExpanded}
-                onEditProcess={openEditProcessDialog}
-                onCreateProcess={openCreateProcessDialog}
-                onKillProcess={handleKillProcess}
-                onToggleAutolaunch={handleToggleAutolaunch}
-                onRemoveMachine={openRemoveMachineDialog}
-                onMetricClick={handleMetricClick}
-                onReboot={rebootMachine}
-                onShutdown={shutdownMachine}
-                onCancelReboot={cancelReboot}
-                onDismissRebootPending={dismissRebootPending}
-                onScreenshot={(machineId) => {
-                  const m = machines.find(m => m.machineId === machineId);
-                  setScreenshotTarget({ machineId, machineName: machineId, isOnline: m?.online ?? false });
-                  setScreenshotDialogOpen(true);
-                }}
-              />
-            </div>
+            {/* Card View — only rendered when active */}
+            {viewType === 'card' && (
+              <div className="animate-in fade-in duration-300">
+                <MachineCardView
+                  machines={machines}
+                  statsExpanded={userPreferences.statsExpanded}
+                  processesExpanded={userPreferences.processesExpanded}
+                  onToggleStats={toggleStatsExpanded}
+                  onToggleProcesses={toggleProcessesExpanded}
+                  currentSiteId={currentSiteId}
+                  siteTimezone={currentSite?.timezone}
+                  siteTimeFormat={currentSite?.timeFormat}
+                  onEditProcess={openEditProcessDialog}
+                  onCreateProcess={openCreateProcessDialog}
+                  onKillProcess={handleKillProcess}
+                  onSetLaunchMode={handleSetLaunchMode}
+                  onConfigureSchedule={handleConfigureSchedule}
+                  onRemoveMachine={openRemoveMachineDialog}
+                  onMetricClick={handleMetricClick}
+                  onReboot={rebootMachine}
+                  onShutdown={shutdownMachine}
+                  onCancelReboot={cancelReboot}
+                  onDismissRebootPending={dismissRebootPending}
+                  onScreenshot={(machineId) => {
+                    const m = machines.find(m => m.machineId === machineId);
+                    setScreenshotTarget({ machineId, machineName: machineId, isOnline: m?.online ?? false });
+                    setScreenshotDialogOpen(true);
+                  }}
+                />
+              </div>
+            )}
 
-            {/* List View */}
-            <div className={`rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300 ${viewType === 'card' ? 'hidden' : ''}`}>
+            {/* List View — only rendered when active */}
+            {viewType === 'list' && (
+              <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
                 <Table style={{ contain: 'layout', tableLayout: 'fixed' }}>
                   <ListViewTableHeader />
                   <TableBody>
@@ -676,22 +724,20 @@ export default function DashboardPage() {
                       <MachineRow
                         key={machine.machineId}
                         machine={machine}
-                        isExpanded={expandedMachines.has(machine.machineId)}
+                        isExpanded={userPreferences.processesExpanded}
                         currentSiteId={currentSiteId}
                         siteTimezone={currentSite?.timezone || 'UTC'}
                         siteTimeFormat={currentSite?.timeFormat || '12h'}
                         userPreferences={userPreferences}
                         isAdmin={isAdmin}
-                        onToggleExpanded={() => handleRowClick(machine.machineId, true)}
+                        onToggleExpanded={toggleProcessesExpanded}
                         onEditProcess={(process) => openEditProcessDialog(machine.machineId, process)}
                         onCreateProcess={() => openCreateProcessDialog(machine.machineId)}
                         onKillProcess={(processId, processName) => handleKillProcess(machine.machineId, processId, processName)}
-                        onToggleAutolaunch={(processId, enabled) => {
-                          const process = machine.processes?.find(p => p.id === processId);
-                          if (process) {
-                            handleToggleAutolaunch(machine.machineId, processId, enabled, process.name, process.exe_path);
-                          }
-                        }}
+                        onSetLaunchMode={(processId, processName, mode, exePath, schedules) =>
+                          handleSetLaunchMode(machine.machineId, processId, processName, mode, exePath, schedules)
+                        }
+                        onConfigureSchedule={(process) => handleConfigureSchedule(machine.machineId, process)}
                         onRemoveMachine={() => openRemoveMachineDialog(machine.machineId, machine.machineId, machine.online)}
                         onMetricClick={(metricType) => handleMetricClick(machine.machineId, metricType)}
                         onReboot={() => rebootMachine(machine.machineId)}
@@ -705,6 +751,7 @@ export default function DashboardPage() {
                   </TableBody>
                 </Table>
               </div>
+            )}
           </div>
         ) : canShowGettingStarted ? (
           <Card className="border-border bg-card animate-in fade-in duration-500">
@@ -846,6 +893,65 @@ export default function DashboardPage() {
               />
             </div>
 
+            {/* Launch Mode — positioned prominently after name */}
+            <div className="space-y-2">
+              <Label className="text-foreground text-sm">launch mode</Label>
+              <div className="flex rounded-lg overflow-hidden border border-border">
+                {(['off', 'always', 'scheduled'] as const).map((mode) => {
+                  const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+                  const isActive = editProcessForm.launch_mode === mode;
+                  const colors = {
+                    off: isActive ? 'bg-muted text-foreground' : '',
+                    always: isActive ? 'bg-emerald-600 text-white' : '',
+                    scheduled: isActive ? 'bg-blue-600 text-white' : '',
+                  };
+
+                  if (mode === 'scheduled' && isActive) {
+                    return (
+                      <span key={mode} className="flex items-stretch flex-1 bg-blue-600 text-white">
+                        <button
+                          type="button"
+                          onClick={() => setEditProcessForm({ ...editProcessForm, launch_mode: mode, autolaunch: true })}
+                          className="flex-1 px-3 py-1.5 text-xs font-medium cursor-pointer"
+                        >
+                          {labels[mode]}
+                        </button>
+                        <span className="w-px bg-blue-400/50" />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProcessDialogOpen(false);
+                            handleConfigureSchedule(editingMachineId, {
+                              id: editingProcessId,
+                              name: editProcessForm.name,
+                              exe_path: editProcessForm.exe_path,
+                              schedules: editProcessForm.schedules || null,
+                              launch_mode: 'scheduled',
+                            } as Process);
+                          }}
+                          className="px-1.5 hover:bg-blue-500 transition-colors cursor-pointer flex items-center"
+                          title="configure schedule"
+                        >
+                          <Settings2 className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                    );
+                  }
+
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setEditProcessForm({ ...editProcessForm, launch_mode: mode, autolaunch: mode !== 'off' })}
+                      className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${colors[mode]} ${!isActive ? 'bg-card text-muted-foreground hover:bg-muted/50' : ''}`}
+                    >
+                      {labels[mode]}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Executable Path */}
             <div className="space-y-2">
               <Label htmlFor="edit-exe-path" className="text-foreground">executable path</Label>
@@ -866,7 +972,7 @@ export default function DashboardPage() {
                 value={editProcessForm.file_path}
                 onChange={(e) => setEditProcessForm({ ...editProcessForm, file_path: e.target.value })}
                 className="border-border bg-card text-foreground"
-                placeholder="Optional"
+                placeholder="optional"
               />
             </div>
 
@@ -878,7 +984,7 @@ export default function DashboardPage() {
                 value={editProcessForm.cwd}
                 onChange={(e) => setEditProcessForm({ ...editProcessForm, cwd: e.target.value })}
                 className="border-border bg-card text-foreground"
-                placeholder="Optional"
+                placeholder="optional"
               />
             </div>
 
@@ -886,6 +992,7 @@ export default function DashboardPage() {
               {/* Priority */}
               <div className="space-y-2">
                 <Label htmlFor="edit-priority" className="text-foreground">task priority</Label>
+
                 <Select
                   value={editProcessForm.priority}
                   onValueChange={(value) => setEditProcessForm({ ...editProcessForm, priority: value })}
@@ -894,10 +1001,10 @@ export default function DashboardPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="border-border bg-card text-foreground">
-                    <SelectItem value="Low">Low</SelectItem>
-                    <SelectItem value="Normal">Normal</SelectItem>
-                    <SelectItem value="High">High</SelectItem>
-                    <SelectItem value="Realtime">Realtime</SelectItem>
+                    <SelectItem value="Low">low</SelectItem>
+                    <SelectItem value="Normal">normal</SelectItem>
+                    <SelectItem value="High">high</SelectItem>
+                    <SelectItem value="Realtime">realtime</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -913,8 +1020,8 @@ export default function DashboardPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="border-border bg-card text-foreground">
-                    <SelectItem value="Show">Show</SelectItem>
-                    <SelectItem value="Hide">Hide</SelectItem>
+                    <SelectItem value="Normal">normal</SelectItem>
+                    <SelectItem value="Hidden">hidden (console apps only)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -961,17 +1068,6 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Autolaunch */}
-            <div className="flex items-center space-x-2">
-              <Switch
-                id="edit-autolaunch"
-                checked={editProcessForm.autolaunch}
-                onCheckedChange={(checked) => setEditProcessForm({ ...editProcessForm, autolaunch: checked })}
-              />
-              <Label htmlFor="edit-autolaunch" className="text-foreground cursor-pointer">
-                enable autolaunch
-              </Label>
-            </div>
           </div>
           <DialogFooter className="flex items-center">
             {processDialogMode === 'edit' && (
@@ -1075,6 +1171,25 @@ export default function DashboardPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Schedule Editor Dialog — only mounted when open for fresh state each time */}
+      {scheduleEditorOpen && scheduleEditorTarget && (
+        <ScheduleEditor
+          open
+          onOpenChange={(open) => {
+            setScheduleEditorOpen(open);
+            if (!open) setScheduleEditorTarget(null);
+          }}
+          schedules={scheduleEditorTarget.process._optimisticSchedules ?? scheduleEditorTarget.process.schedules ?? null}
+          initialPresetId={scheduleEditorTarget.process._optimisticPresetId ?? scheduleEditorTarget.process.schedulePresetId}
+          onChange={handleScheduleApply}
+          siteTimezone={currentSite?.timezone}
+          presets={schedulePresets}
+          onCreatePreset={handleCreatePreset}
+          onDeletePreset={async (id) => { await deleteSchedulePreset(id); toast.success('Preset deleted'); }}
+          onUpdatePreset={async (id, updates) => { await updateSchedulePreset(id, updates); toast.success('Preset updated'); }}
+        />
+      )}
 
       {/* Screenshot Dialog */}
       {screenshotTarget && (

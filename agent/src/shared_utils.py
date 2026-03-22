@@ -38,7 +38,7 @@ def get_app_version():
 # GLOBAL VARS
 
 APP_VERSION = get_app_version()
-CONFIG_VERSION = '1.5.0'  # Added environment configuration
+CONFIG_VERSION = '1.6.0'  # Added launch_mode (scheduling)
 # Color scheme matching web app dark theme (oklch hue 250 navy + cyan accent)
 WINDOW_COLOR = '#020b16'      # web --background oklch(0.145 0.03 250)
 FRAME_COLOR = '#0d1e2f'       # web --card oklch(0.23 0.04 250)
@@ -770,6 +770,19 @@ def upgrade_config():
                     config['environment'] = 'production'
                 logging.info(f"Added environment configuration to config.json (v1.5.0): {config['environment']}")
 
+            # Migrate autolaunch → launch_mode (v1.6.0+)
+            for process in config.get('processes', []):
+                if 'launch_mode' not in process:
+                    if process.get('autolaunch', False):
+                        process['launch_mode'] = 'always'
+                    else:
+                        process['launch_mode'] = 'off'
+                    logging.info(f"Migrated process '{process.get('name', '?')}' autolaunch={process.get('autolaunch')} -> launch_mode={process['launch_mode']}")
+                # Always derive autolaunch for backward compat with older agents
+                process['autolaunch'] = process.get('launch_mode', 'off') != 'off'
+                if 'schedules' not in process:
+                    process['schedules'] = None
+
             # Reorder the keys so that 'version' is at the top
             ordered_config = {'version': config['version']}
             for key in config:
@@ -793,6 +806,56 @@ def upgrade_config():
         logging.info("Config file doesn't exist, generating default...")
         new_config = generate_config_file()
         write_json_to_file(new_config, CONFIG_PATH)
+
+# Schedule utility for launch_mode='scheduled'
+def is_within_schedule(schedules, timezone_str=None):
+    """Check if current time falls within ANY schedule block's active window.
+
+    Args:
+        schedules: List of schedule blocks, each with 'days' and 'ranges'.
+        timezone_str: Optional IANA timezone (e.g. 'America/New_York'). Uses local time if None.
+
+    Returns:
+        True if current day+time matches any block, or if schedules is empty/None (safety fallback).
+    """
+    if not schedules:
+        return True  # No schedules = always active (safety fallback)
+
+    from datetime import datetime, time as dt_time
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo
+
+    try:
+        tz = ZoneInfo(timezone_str) if timezone_str else None
+    except (KeyError, Exception):
+        logging.warning(f"Invalid timezone '{timezone_str}', falling back to local time")
+        tz = None
+    now = datetime.now(tz)
+    day_names = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+    current_day = day_names[now.weekday()]
+    current_time = now.time()
+
+    for block in schedules:
+        days = block.get('days', day_names)
+        if current_day not in days:
+            continue
+        for time_range in block.get('ranges', []):
+            try:
+                start_h, start_m = map(int, time_range['start'].split(':'))
+                stop_h, stop_m = map(int, time_range['stop'].split(':'))
+            except (ValueError, KeyError):
+                continue
+            start = dt_time(start_h, start_m)
+            stop = dt_time(stop_h, stop_m)
+            if start <= stop:
+                if start <= current_time <= stop:
+                    return True
+            else:  # Overnight (e.g., 22:00 - 06:00)
+                if current_time >= start or current_time <= stop:
+                    return True
+    return False
 
 # Read a JSON file and returns its content as a Python dictionary with retry logic
 def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
@@ -1271,6 +1334,8 @@ def get_system_metrics_with_config(config, skip_gpu=False):
                             'file_path': process.get('file_path', ''),
                             'cwd': process.get('cwd', ''),
                             'autolaunch': process.get('autolaunch', False),
+                            'launch_mode': process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off'),
+                            'schedules': process.get('schedules', None),
                             'priority': process.get('priority', 'Normal'),
                             'visibility': process.get('visibility', 'Show'),
                             'time_delay': process.get('time_delay', 0),
@@ -1289,7 +1354,8 @@ def get_system_metrics_with_config(config, skip_gpu=False):
                         else:
                             # Process not running
                             process_data['pid'] = None
-                            process_data['status'] = 'INACTIVE' if not process.get('autolaunch', False) else 'STOPPED'
+                            mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+                            process_data['status'] = 'INACTIVE' if mode == 'off' else 'STOPPED'
                             process_data['responsive'] = True
                             process_data['last_updated'] = 0
 
