@@ -26,12 +26,14 @@ import {
   tokenRefreshRateLimit,
   userRateLimit,
   agentAlertRateLimit,
+  uploadRateLimit,
+  apiRateLimit,
   getClientIp,
   checkRateLimit,
   getRateLimitHeaders,
 } from './rateLimit';
 
-type RateLimitStrategy = 'auth' | 'tokenExchange' | 'tokenRefresh' | 'user' | 'agentAlert';
+type RateLimitStrategy = 'auth' | 'tokenExchange' | 'tokenRefresh' | 'user' | 'agentAlert' | 'upload' | 'api';
 type IdentifierType = 'ip' | 'user';
 
 interface RateLimitOptions {
@@ -58,6 +60,8 @@ export function withRateLimit(
       options.strategy === 'tokenRefresh' ? tokenRefreshRateLimit :
       options.strategy === 'user' ? userRateLimit :
       options.strategy === 'agentAlert' ? agentAlertRateLimit :
+      options.strategy === 'upload' ? uploadRateLimit :
+      options.strategy === 'api' ? apiRateLimit :
       null;
 
     // Determine identifier (IP or user ID)

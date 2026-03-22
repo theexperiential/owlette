@@ -99,6 +99,32 @@ export const agentAlertRateLimit = redis
   : null;
 
 /**
+ * Installer upload rate limiter (strict)
+ * Allows 5 uploads per hour per IP
+ */
+export const uploadRateLimit = redis
+  ? new Ratelimit({
+      redis,
+      limiter: Ratelimit.fixedWindow(5, '1 h'),
+      prefix: 'upload',
+      analytics: true,
+    })
+  : null;
+
+/**
+ * API key consumer rate limiter (higher limits for automated testing/CI)
+ * Allows 300 operations per hour per IP
+ */
+export const apiRateLimit = redis
+  ? new Ratelimit({
+      redis,
+      limiter: Ratelimit.fixedWindow(300, '1 h'),
+      prefix: 'api-ops',
+      analytics: true,
+    })
+  : null;
+
+/**
  * Process alert rate limiter
  * Allows 3 alerts per hour per machineId:processName combo — prevents crash-loop spam
  */

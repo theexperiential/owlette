@@ -39,7 +39,7 @@ agent/tmp/
 site/
 build/
 dist/
-installer/
+/installer/
 agent/build/
 agent/build_output.txt
 agent/dist/
