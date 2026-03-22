@@ -75,7 +75,12 @@ export const POST = withRateLimit(
 
       // Upload to Firebase Storage
       const storage = getAdminStorage();
-      const bucket = storage.bucket();
+      const bucketName = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
+      if (!bucketName) {
+        console.error('[agent/screenshot] NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET not configured');
+        return NextResponse.json({ error: 'Storage not configured' }, { status: 500 });
+      }
+      const bucket = storage.bucket(bucketName);
       const filePath = `screenshots/${siteId}/${machineId}/latest.jpg`;
       const file = bucket.file(filePath);
 
