@@ -142,6 +142,8 @@ def check_service_running():
         return False
 
 # Function to read service status from IPC file
+_last_good_status = None  # Cache last successful read to ride through atomic-rename races
+
 def read_service_status():
     """
     Read service status from status file written by service.
@@ -149,8 +151,12 @@ def read_service_status():
     The service writes C:\\ProgramData\\Owlette\\tmp\\service_status.json
     every 10 seconds with current Firebase connection state.
 
-    Returns dict or None if file doesn't exist/can't be read.
+    Returns dict or None if file doesn't exist and has never been read.
+    On transient read failures (PermissionError, JSONDecodeError during
+    atomic rename), returns the last successfully read status to avoid
+    false-positive "Starting" flickers in determine_status().
     """
+    global _last_good_status
     try:
         status_path = shared_utils.get_data_path('tmp/service_status.json')
 
@@ -168,13 +174,18 @@ def read_service_status():
         # Parse JSON
         with open(status_path, 'r') as f:
             status_data = json.load(f)
+            _last_good_status = status_data
             return status_data
 
     except NameError as e:
         logging.error(f"[STATUS] NameError (json module not imported?): {e}")
         return None
-    except json.JSONDecodeError as e:
-        logging.error(f"[STATUS] JSON decode error: {e}")
+    except (json.JSONDecodeError, PermissionError, OSError) as e:
+        # Transient failures during atomic rename — return cached status
+        if _last_good_status is not None:
+            logging.debug(f"[STATUS] Transient read error, using cached status: {e}")
+            return _last_good_status
+        logging.error(f"[STATUS] Failed to read service status (no cache): {e}")
         return None
     except Exception as e:
         logging.error(f"[STATUS] Failed to read service status: {e}", exc_info=True)

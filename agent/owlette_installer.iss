@@ -138,11 +138,11 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{userstartup}\Owlette Tray"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\agent\src\owlette_tray.py"""; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}"
 
 [Run]
-; Step 0: Add Windows Defender exclusion for Owlette directory
-; This prevents false positive alerts for the WinRing0 driver used by LibreHardwareMonitor
+; Step 0: Add Windows Defender exclusions for WinRing0 driver used by LibreHardwareMonitor
 ; WinRing0 is flagged as VulnerableDriver:WinNT/Winring0 but is required for CPU/GPU temperature monitoring
-; Only exclude the specific library directories that contain flagged drivers, not the entire app
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\wintmp' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\LibreHardwareMonitor' -ErrorAction SilentlyContinue"""; StatusMsg: "Configuring Windows Defender exclusion..."; Flags: runhidden waituntilterminated
+; LibreHardwareMonitorLib.dll (inside WinTmp) extracts and loads WinRing0x64.sys as a kernel driver at runtime,
+; so we need BOTH path exclusions (for the DLL) and process exclusions (for Python loading the driver)
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue"""; StatusMsg: "Configuring Windows Defender exclusion..."; Flags: runhidden waituntilterminated
 
 ; Step 1: Configure site (browser-based OAuth flow) - RUNS FIRST
 ; Pass server URL based on /SERVER= command-line parameter
@@ -164,7 +164,7 @@ Filename: "{app}\scripts\install.bat"; Parameters: "--silent"; Description: "Ins
 Filename: "{app}\tools\nssm.exe"; Parameters: "stop OwletteService"; Flags: runhidden waituntilterminated
 Filename: "{app}\tools\nssm.exe"; Parameters: "remove OwletteService confirm"; Flags: runhidden waituntilterminated
 ; Remove Windows Defender exclusions
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\wintmp' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\LibreHardwareMonitor' -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated
 
 [Code]
 
