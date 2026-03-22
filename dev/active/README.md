@@ -9,7 +9,7 @@ All work happens on the `dev` branch. Commit and verify each round before starti
 | **0** | WS0 (Admin API + API Keys) | 1 agent | **DONE** |
 | **1** | WS1 (Crash Alerts) + WS4+6 (Reboot/Shutdown + Prompt) | 2 agents in parallel | **DONE** |
 | **2** | WS2 (Webhooks) | 1 agent | **DONE** |
-| **3** | WS3 (Screenshots) | 1 agent | NOT STARTED |
+| **3** | WS3 (Screenshots) | 1 agent | **DONE** |
 | **4** | WS5 (Scheduling) | 1 agent | NOT STARTED |
 | **5** | WS7 (Autonomous Cortex) | 1 agent | **IN PROGRESS** |
 

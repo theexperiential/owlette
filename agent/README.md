@@ -8,8 +8,11 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 - **Firebase Integration**: Real-time cloud communication and remote control
 - **Offline Resilient**: Continues operating from cached config when offline
 - **System Metrics**: Reports CPU, memory, disk, and GPU usage to cloud
-- **Remote Commands**: Restart/kill processes from web portal
-- **Notification Support**: Gmail and Slack notifications (legacy)
+- **Remote Commands**: Restart/kill processes from web dashboard
+- **Remote Screenshots**: Capture and send screenshots to the dashboard
+- **MCP Tools**: Tool-calling support for the Cortex AI assistant
+- **Self-Update**: Update the agent remotely from the web dashboard
+- **OAuth Authentication**: Secure token-based auth with the Owlette Dashboard
 
 ---
 
@@ -19,33 +22,28 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 
 - Windows 10/11 or Windows Server
 - Python 3.9+ (installer will auto-install if missing)
-- Firebase project (OPTIONAL - only needed for cloud features)
+- Firebase project with Firestore enabled
 
 ### Installation
 
-1. **Run the installer** (as Administrator):
-   ```cmd
-   install.bat
-   ```
+1. **Run the installer** (recommended):
 
-   The installer will:
-   - Auto-install Python 3.9 if needed
-   - Install all dependencies
-   - Create config folder and default configuration
-   - Ask if you want Firebase (OPTIONAL - Owlette works great without it!)
-   - Install and start the Windows service
+   Download the installer from the Owlette web dashboard. It handles everything:
+   - Installs embedded Python runtime and all dependencies
+   - Opens browser for OAuth authorization
+   - Registers the agent with your site
+   - Installs and starts the Windows service
+
+   See [INSTALLER-USAGE.md](INSTALLER-USAGE.md) for the full OAuth flow documentation.
 
 2. **Configure processes** (optional):
-   - Edit `config/config.json` to add processes to monitor
-   - Or use the GUI: `python src/owlette_gui.py`
-   - Or manage from web portal (coming in Phase 2)
+   - Use the GUI: `python src/owlette_gui.py`
+   - Or manage from the web dashboard
 
 3. **Connect to Owlette Dashboard**:
-   - Download the installer from the Owlette web dashboard
-   - Run the installer - it will automatically open your browser
-   - Log in and authorize the agent via OAuth
+   - The installer automatically opens your browser for OAuth authorization
+   - Log in and authorize the agent
    - Installation completes automatically with secure token storage
-   - See [INSTALLER-USAGE.md](INSTALLER-USAGE.md) for detailed OAuth flow documentation
 
 ---
 
@@ -55,7 +53,7 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 
 ```json
 {
-  "version": "2.0.3",
+  "version": "2.2.0",
   "processes": [
     {
       "id": "unique-id-here",
@@ -74,13 +72,6 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
   "firebase": {
     "enabled": true,
     "site_id": "your-site-id"
-  },
-  "gmail": {
-    "enabled": false,
-    "to": ["email@example.com"]
-  },
-  "slack": {
-    "enabled": false
   }
 }
 ```
@@ -108,21 +99,13 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 | `enabled` | Enable Firebase cloud features |
 | `site_id` | Unique identifier for this site/location |
 
-**To connect to Owlette Dashboard:**
-
-Modern installations use OAuth authentication (no manual credentials needed):
-1. Download installer from the Owlette web dashboard
-2. Run installer - browser opens automatically for OAuth authorization
-3. Tokens stored securely in Windows Credential Manager
-4. See [INSTALLER-USAGE.md](INSTALLER-USAGE.md) for the OAuth flow details
-
-Legacy service account setup is deprecated. Use the OAuth flow above for all new installations.
+**Authentication:** Modern installations use OAuth authentication (no manual credentials needed). Tokens are stored securely in encrypted local storage. See [INSTALLER-USAGE.md](INSTALLER-USAGE.md) for the OAuth flow details.
 
 ---
 
 ## Manual Installation Steps
 
-If `install.bat` doesn't work, follow these manual steps:
+If the installer doesn't work, follow these manual steps:
 
 1. **Install Python 3.9+**
    ```cmd
@@ -178,35 +161,23 @@ python owlette_service.py debug
 
 **Single Source of Truth: `agent/VERSION` file**
 
-To bump the version:
+To bump the version across all components:
 
-1. **Edit VERSION file**:
-   ```cmd
-   echo 2.0.4 > agent\VERSION
-   ```
+```bash
+node scripts/sync-versions.js 2.3.0
+```
 
-2. **Rebuild installer**:
-   ```cmd
-   cd agent
-   build_installer_full.bat
-   ```
-
-That's it! The version automatically propagates to:
+The version automatically propagates to:
 - System tray display (`owlette_tray.py`)
 - Configuration GUI (`owlette_gui.py`)
 - Firestore agent registration (`firebase_client.py`)
 - OAuth device registration (`auth_manager.py`)
-- Installer filename (`Owlette-Installer-v2.0.4.exe`)
+- Installer filename (`Owlette-Installer-v2.2.0.exe`)
 
 **How it works:**
 - `shared_utils.py` reads `VERSION` file at runtime
 - Build script reads `VERSION` and passes to Inno Setup compiler
 - All code imports version from `shared_utils.APP_VERSION`
-
-**Do NOT manually edit:**
-- `shared_utils.py` - Reads from `VERSION` file
-- `owlette_installer.iss` - Reads from environment variable set by build script
-- `auth_manager.py` - Imports from `shared_utils`
 
 ### Building the Installer
 
@@ -247,11 +218,6 @@ build_installer_quick.bat
 **Prerequisites:** Must run full build at least once to set up build/ directory
 
 **Output:** Both scripts produce `build\installer_output\Owlette-Installer-v{VERSION}.exe`
-
-**Tip:** During development, use quick build for fast iteration. Only use full build when:
-- Starting fresh (no build/ directory)
-- Updating Python dependencies (requirements.txt)
-- After pulling major changes from git
 
 ---
 
@@ -300,7 +266,7 @@ python owlette_service.py remove
 1. **Check logs**: `logs/service.log`
 2. **Verify Python**: `python --version` should be 3.9+
 3. **Check permissions**: Service needs admin rights
-4. **Check OAuth tokens**: If using dashboard, ensure agent completed OAuth authorization
+4. **Check OAuth tokens**: Ensure agent completed OAuth authorization
 
 ### Processes won't launch
 
@@ -312,7 +278,7 @@ python owlette_service.py remove
 ### Dashboard not connecting
 
 1. **Check authentication**: Ensure OAuth authorization completed successfully
-2. **Check tokens**: Tokens stored in Windows Credential Manager (use `auth_manager.py` to verify)
+2. **Check tokens**: Tokens stored in encrypted local storage (use `auth_manager.py` to verify)
 3. **Check internet**: Service needs internet to connect to dashboard
 4. **Check config**: Ensure `firebase.enabled` is `true` in `config/config.json`
 5. **Check logs**: Look for authentication errors in `logs/service.log`
@@ -322,7 +288,7 @@ python owlette_service.py remove
 ### "Access Denied" errors
 
 - Service commands require administrator privileges
-- Right-click Command Prompt → "Run as administrator"
+- Right-click Command Prompt -> "Run as administrator"
 
 ---
 
@@ -330,43 +296,47 @@ python owlette_service.py remove
 
 ```
 agent/
-├── src/                       # Python source code
-│   ├── owlette_service.py     # Main Windows service
-│   ├── firebase_client.py     # Firebase integration
-│   ├── shared_utils.py        # Shared utilities
-│   ├── owlette_gui.py         # Configuration GUI
-│   ├── owlette_tray.py        # System tray icon
-│   └── ...
-├── config/                    # Configuration (gitignored)
-│   └── config.json            # Main config (OAuth tokens stored in Windows Credential Manager)
-├── logs/                      # Log files (gitignored)
+├── src/                           # Python source code (24 modules)
+│   ├── owlette_service.py         # Main Windows service
+│   ├── owlette_runner.py          # Process lifecycle management
+│   ├── owlette_gui.py             # Configuration GUI
+│   ├── owlette_tray.py            # System tray icon
+│   ├── owlette_scout.py           # System metrics collector
+│   ├── firebase_client.py         # Firebase integration & sync
+│   ├── firestore_rest_client.py   # Firestore REST API client
+│   ├── connection_manager.py      # Connection state machine & reconnect
+│   ├── auth_manager.py            # OAuth token management
+│   ├── secure_storage.py          # Encrypted credential storage
+│   ├── shared_utils.py            # Shared utilities & constants
+│   ├── process_launcher.py        # Process start/stop logic
+│   ├── session_exec.py            # User-session process execution
+│   ├── health_probe.py            # Health check endpoint
+│   ├── mcp_tools.py               # Cortex AI tool implementations
+│   ├── configure_site.py          # Site join/leave OAuth flow
+│   ├── installer_utils.py         # Remote deployment handler
+│   ├── project_utils.py           # Project distribution handler
+│   ├── registry_utils.py          # Windows registry operations
+│   ├── cleanup_commands.py        # Command queue cleanup
+│   ├── start_service.py           # Service startup helper
+│   ├── prompt_restart.py          # Restart countdown dialog
+│   ├── CTkMessagebox.py           # Custom message box widget
+│   └── custom_messagebox.py       # PyQt6 message box widget
+├── tests/                         # pytest tests
+├── config/                        # Configuration (gitignored)
+│   └── config.json                # Main config
+├── logs/                          # Log files (gitignored)
 │   └── service.log
-├── tmp/                       # Temporary files (gitignored)
-├── build.bat                  # Build script
-├── install.bat                # Installation script
-├── uninstall.bat              # Uninstallation script
-├── requirements.txt           # Python dependencies
-├── config.template.json       # Config template
-└── README.md                  # This file
+├── tmp/                           # Temporary files (gitignored)
+├── build_installer_full.bat       # Full build script
+├── build_installer_quick.bat      # Quick build script
+├── install.bat                    # Installation script
+├── uninstall.bat                  # Uninstallation script
+├── owlette_installer.iss          # Inno Setup script
+├── requirements.txt               # Python dependencies
+├── config.template.json           # Config template
+├── VERSION                        # Agent version file
+└── README.md                      # This file
 ```
-
----
-
-## Version History
-
-### v2.0.0 (Phase 1)
-- ✨ Firebase/Firestore integration
-- ✨ Real-time cloud communication
-- ✨ Remote command execution
-- ✨ System metrics reporting
-- ✨ Offline resilience
-- 🔧 Repository restructure
-
-### v0.4.2b (Legacy)
-- Gmail and Slack notifications
-- Process monitoring and auto-restart
-- System tray interface
-- Configuration GUI
 
 ---
 
@@ -377,7 +347,7 @@ agent/
 See [BUILD.md](BUILD.md) for comprehensive instructions on building the installer:
 
 - **Full Build**: Complete rebuild with embedded Python (~5-10 min)
-- **Quick Rebuild**: Fast iteration during development (~2 min)
+- **Quick Build**: Fast iteration during development (~30 sec)
 - Testing procedures and troubleshooting
 
 ### End-User Documentation
@@ -394,7 +364,7 @@ See [BUILD.md](BUILD.md) for comprehensive instructions on building the installe
 
 - **Documentation**: See [docs/](../docs/) folder
 - **Issues**: https://github.com/theexperiential/Owlette/issues
-- **Firebase Setup**: [docs/firebase-setup.md](../docs/firebase-setup.md)
+- **Firebase Setup**: [docs/setup/firebase.md](../docs/setup/firebase.md)
 
 ---
 

@@ -85,7 +85,7 @@ SvcStop()
 - `STALLED` — detected unresponsive (hung window)
 - `KILLED` — manually terminated via dashboard command
 - `STOPPED` — process terminated/crashed
-- `INACTIVE` — configured but autolaunch disabled
+- `INACTIVE` — configured but launch mode is `off` (or `scheduled` and outside schedule window)
 
 ### Two-Stage Process Launch (`launch_process_as_user`)
 
@@ -139,6 +139,32 @@ Alert locations in `owlette_service.py`:
 3. `handle_process()` — unexpected process exit (not manually killed)
 
 `send_process_alert()` in `firebase_client.py` spawns a daemon thread that POSTs to `/api/agent/alert` with bearer token auth. The web API applies per-process rate limiting (3/hr per `machineId:processName`) and emails users who have `processAlerts !== false`.
+
+### 3-Mode Launch System
+
+Processes use a `launch_mode` field instead of a binary `autolaunch` toggle:
+
+| Mode | Behavior |
+|------|----------|
+| `off` | Process is not launched or monitored (status: INACTIVE) |
+| `always` | Process is always launched and monitored (equivalent to old `autolaunch: true`) |
+| `scheduled` | Process is launched only during configured schedule windows |
+
+**Schedule enforcement** happens in the monitoring loop (`handle_process()`):
+- Each process can have a `schedules` array of `ScheduleBlock` objects: `{ days: string[], startTime: "HH:MM", endTime: "HH:MM" }`
+- `is_within_schedule(schedules)` in `shared_utils.py` checks if current time falls within any active window
+- When in `scheduled` mode and outside the window, the process is treated as INACTIVE (not launched, optionally killed)
+- When the schedule window opens, the process is launched automatically
+
+**Manual override tracking**: If a user manually starts/stops a process via the dashboard while in `scheduled` mode, the agent tracks this override so it does not fight the user's intent until the next schedule transition.
+
+**Config migration**: `upgrade_config()` in `shared_utils.py` migrates legacy `autolaunch: true/false` to `launch_mode: 'always'/'off'`.
+
+**Backward compatibility**: The `autolaunch` field is still derived and written to Firestore status for any consumers that read it (true when `launch_mode` is `always`, or `scheduled` and within window).
+
+**GUI**: Uses `CTkOptionMenu` dropdown (off / always / scheduled) instead of the old `CTkSwitch` toggle.
+
+**Web**: Uses segmented mode buttons instead of a Switch component.
 
 ### Relaunch Limits
 - Per-process config: `relaunch_attempts` (default: 3, 0 = unlimited)
@@ -258,7 +284,7 @@ Commands arrive via Firestore listener on `commands/pending/{commandId}`.
 |---------|-------------|----------|
 | `restart_process` | `process_name` | Kill running process + relaunch |
 | `kill_process` | `process_name` | Terminate via `psutil.Process(pid).terminate()` |
-| `toggle_autolaunch` | `process_name`, `autolaunch` | Update config, affects next cycle |
+| `set_launch_mode` | `process_name`, `launch_mode` | Update launch mode (`off`/`always`/`scheduled`), affects next cycle |
 | `update_config` | `config` (full object) | Replace local config, preserve firebase section |
 | `install_software` | `installer_url`, `silent_flags`, `timeout_seconds`, `sha256_checksum`, `deployment_id` | Download + execute installer |
 | `reboot_machine` | — | Set `rebooting` flag, run `shutdown /r /t 30` |

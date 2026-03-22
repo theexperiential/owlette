@@ -4,11 +4,17 @@ Next.js 16 web portal for managing Windows processes via Owlette agents.
 
 ## Features
 
-- 🔐 Firebase Authentication (Email + Google OAuth)
-- 📊 Real-time dashboard with live metrics
-- 🖥️ Machine management and monitoring
-- ⚙️ Process configuration from the web
-- 🔄 Bidirectional sync with Owlette agents
+- **Firebase Authentication** (Email/Password, Google OAuth, Passkeys/WebAuthn, 2FA/TOTP)
+- **Real-time dashboard** with live metrics
+- **Machine management** and monitoring
+- **Process configuration** from the web
+- **Remote screenshots** from managed machines
+- **Bidirectional sync** with Owlette agents
+- **Remote software deployment** and project distribution
+- **Activity logs** and event tracking
+- **Cortex AI** - LLM-powered assistant for fleet management
+- **Admin panel** - User management, installers, presets, tokens, webhooks, email alerts
+- **Email notifications** via Resend
 
 ## Getting Started
 
@@ -34,7 +40,7 @@ cp .env.example .env.local
 
 3. Add your Firebase credentials to `.env.local`:
 
-**Client-Side Config** (Firebase Console → Project Settings → General → Your apps → Web app):
+**Client-Side Config** (Firebase Console -> Project Settings -> General -> Your apps -> Web app):
 ```env
 NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project-id.firebaseapp.com
@@ -44,7 +50,7 @@ NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789012
 NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789012:web:abcdef123456
 ```
 
-**Server-Side Admin SDK** (Firebase Console → Project Settings → Service Accounts → Generate new private key):
+**Server-Side Admin SDK** (Firebase Console -> Project Settings -> Service Accounts -> Generate new private key):
 ```env
 FIREBASE_PROJECT_ID=your-project-id
 FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project-id.iam.gserviceaccount.com
@@ -124,11 +130,12 @@ npm run dev
 - **Framework:** Next.js 16 (App Router)
 - **React:** React 19
 - **Language:** TypeScript
-- **Styling:** Tailwind CSS
-- **UI Components:** shadcn/ui
-- **Authentication:** Firebase Auth
+- **Styling:** Tailwind CSS 4
+- **UI Components:** shadcn/ui (Radix UI)
+- **Authentication:** Firebase Auth (Email/Password, Google OAuth, Passkeys/WebAuthn, TOTP 2FA)
 - **Database:** Cloud Firestore
 - **Session Management:** iron-session (encrypted HTTPOnly cookies)
 - **Rate Limiting:** Upstash Redis + @upstash/ratelimit
 - **Email:** Resend (optional)
+- **AI:** Anthropic SDK + Vercel AI SDK (Cortex features)
 - **Deployment:** Railway

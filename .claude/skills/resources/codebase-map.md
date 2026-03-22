@@ -83,6 +83,7 @@ Quick reference of everything that exists. Check here before creating new files 
 ### App Components (`web/components/`)
 | Component | Purpose |
 |-----------|---------|
+| `ScheduleEditor.tsx` | Schedule block editor for process scheduled launch mode (days + time ranges) |
 | `AccountSettingsDialog.tsx` | User profile, password, preferences (healthAlerts, processAlerts toggles) |
 | `ConfirmDialog.tsx` | Generic confirmation dialog |
 | `CreateSiteDialog.tsx` | Create new site |
@@ -138,7 +139,7 @@ Quick reference of everything that exists. Check here before creating new files 
 
 | Hook | Purpose | Key Exports |
 |------|---------|-------------|
-| `useFirestore.ts` | Real-time Firestore listeners | `useSites()`, `useMachines(siteId)` — interfaces: `Site`, `Machine` (includes `lastScreenshot`), `Process` |
+| `useFirestore.ts` | Real-time Firestore listeners | `useSites()`, `useMachines(siteId)`, `setLaunchMode()` — interfaces: `Site`, `Machine` (includes `lastScreenshot`), `Process` (includes `launch_mode`, `schedules`) |
 | `useDeployments.ts` | Deployment CRUD + templates | `useDeployments(siteId)` — `Deployment`, `DeploymentTemplate` |
 | `useMachineOperations.ts` | Machine actions (remove, commands) | `useMachineOperations()` |
 | `useInstallerVersion.ts` | Fetch latest Owlette version | `useInstallerVersion()` |

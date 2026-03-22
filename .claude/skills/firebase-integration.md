@@ -39,6 +39,9 @@ firestore/
 │       └── (auto-disables after 10 consecutive failures)
 ├── config/{siteId}/
 │   └── machines/{machineId}/      # Process configuration (version, processes[])
+│       # Each process has: name, exe_path, launch_mode ("off"/"always"/"scheduled"),
+│       #   schedules?: [{ days: string[], startTime: "HH:MM", endTime: "HH:MM" }],
+│       #   autolaunch (derived, backward compat), check_responsive, relaunch_attempts, ...
 ├── users/{userId}/                # email, role, createdAt, sites[], preferences {healthAlerts, processAlerts, temperatureUnit}
 │   └── apiKeys/{keyId}/          # API key metadata (name, keyHash, keyPrefix, createdAt, lastUsedAt)
 ├── apiKeys/{keyHash}/            # Top-level API key lookup (userId, keyId) — O(1) resolution
@@ -89,7 +92,7 @@ Agent listener picks up → executes → moves to commands/completed/{commandId}
 Web listener sees completion → updates UI
 ```
 
-Command types: `restart_process`, `kill_process`, `toggle_autolaunch`, `update_config`, `install_software`, `distribute_project`
+Command types: `restart_process`, `kill_process`, `set_launch_mode`, `update_config`, `install_software`, `distribute_project`
 
 ---
 

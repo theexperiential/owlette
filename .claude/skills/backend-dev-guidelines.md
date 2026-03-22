@@ -78,7 +78,7 @@
 4. Always move command to `completed` collection after handling
 5. Log the action via `firebase_client.log_event()`
 
-Existing commands: `restart_process`, `kill_process`, `toggle_autolaunch`, `update_config`, `install_software`
+Existing commands: `restart_process`, `kill_process`, `set_launch_mode`, `update_config`, `install_software`
 
 ### Modifying Process Handling
 
@@ -87,6 +87,22 @@ Existing commands: `restart_process`, `kill_process`, `toggle_autolaunch`, `upda
 - Two-stage launch: Task Scheduler first (escapes NSSM job object), CreateProcessAsUser fallback
 - Hang detection: 3-stage confirmation (0-10s watch → 10-15s confirm → 15s+ kill)
 - Crash recovery: `recover_running_processes()` validates PIDs against `exe_path` on startup
+
+### Launch Mode Patterns
+
+Processes use a 3-mode `launch_mode` field (`off` / `always` / `scheduled`) instead of a binary `autolaunch` boolean.
+
+**Key utilities in `shared_utils.py`**:
+- `is_within_schedule(schedules)` — returns `True` if current day+time falls within any `ScheduleBlock` in the list. Each block has `{ days: ["Mon","Tue",...], startTime: "HH:MM", endTime: "HH:MM" }`. Handles overnight ranges (e.g. 22:00-06:00).
+- `upgrade_config()` — migrates legacy `autolaunch: bool` to `launch_mode: "always"/"off"` on startup.
+
+**In `owlette_service.py` `handle_process()`**:
+- `launch_mode == "off"` → skip (INACTIVE)
+- `launch_mode == "always"` → always launch/monitor
+- `launch_mode == "scheduled"` → call `is_within_schedule(proc.get("schedules", []))`, launch only if within window
+- Manual override tracking prevents the scheduler from fighting user intent during the current schedule window
+
+**Backward compatibility**: `autolaunch` is still derived and synced to Firestore (true when effectively active) for any legacy consumers.
 
 ### Changing Config Schema
 

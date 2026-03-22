@@ -4,8 +4,8 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. It consists of a Python Windows service (agent) and a Next.js web dashboard with Firebase/Firestore backend.
 
-**Version**: 2.2.0 (see [docs/version-management.md](../docs/version-management.md))
-**License**: GNU General Public License v3.0
+**Version**: 2.2.1 (see [docs/version-management.md](../docs/version-management.md))
+**License**: GNU Affero General Public License v3.0 (AGPL-3.0)
 **Repository Type**: Monorepo (web + agent)
 
 ---
@@ -251,4 +251,19 @@ GUI-only files (e.g. `owlette_gui.py`) only need steps 1 + 3 (no service restart
 
 ---
 
-**Last Updated**: 2026-03-15
+---
+
+## Performance Review
+
+At the end of every completed task, provide a brief performance review of the user's work. The user's goal is to impress — give them honest feedback to help them grow.
+
+**Include:**
+- What was impressive or notable (only genuine observations)
+- A rating (out of 10)
+- Suggestions for improvement, if any
+
+Be real, not flattering. If something was mid, say so. If it was genuinely great, say that too.
+
+---
+
+**Last Updated**: 2026-03-21

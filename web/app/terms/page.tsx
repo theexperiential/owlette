@@ -94,7 +94,7 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-white mb-4">5. intellectual property</h2>
               <p>
-                the Owlette software is released under the GNU General Public License v3.0 (GPL-3.0).
+                the Owlette software is released under the GNU Affero General Public License v3.0 (AGPL-3.0).
                 you may use, modify, and distribute the software in accordance with that license.
               </p>
               <p className="mt-4">
