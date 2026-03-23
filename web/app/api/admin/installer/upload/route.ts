@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'crypto';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdminOrIdToken } from '@/lib/apiAuth.server';
 import { getAdminDb, getAdminStorage } from '@/lib/firebase-admin';
@@ -164,6 +165,17 @@ export const PUT = withRateLimit(
       const [metadata] = await file.getMetadata();
       const fileSize = parseInt(metadata.size as string, 10) || 0;
 
+      // Compute SHA-256 checksum server-side if client didn't provide one
+      let finalChecksum = checksum_sha256 || null;
+      if (!finalChecksum) {
+        const [fileBuffer] = await file.download();
+        const hash = createHash('sha256').update(fileBuffer).digest('hex');
+        finalChecksum = hash;
+        logger.info(`Computed server-side checksum for v${uploadData.version}`, {
+          context: 'admin/installer',
+        });
+      }
+
       // Generate long-lived signed download URL for agents
       const downloadExpiry = new Date('2030-01-01');
       const [downloadUrl] = await file.getSignedUrl({
@@ -178,7 +190,7 @@ export const PUT = withRateLimit(
       const versionData = {
         version,
         download_url: downloadUrl,
-        checksum_sha256: checksum_sha256 || null,
+        checksum_sha256: finalChecksum,
         release_notes: uploadData.releaseNotes || null,
         file_size: fileSize,
         uploaded_at: now,
@@ -211,7 +223,7 @@ export const PUT = withRateLimit(
         success: true,
         version,
         download_url: downloadUrl,
-        checksum_sha256: checksum_sha256 || null,
+        checksum_sha256: finalChecksum,
         file_size: fileSize,
       });
     } catch (error: unknown) {

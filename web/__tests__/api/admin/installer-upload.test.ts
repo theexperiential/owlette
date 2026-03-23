@@ -37,6 +37,7 @@ const mockCollectionGet = jest.fn();
 const mockGetSignedUrl = jest.fn().mockResolvedValue(['https://storage.example.com/signed']);
 const mockExists = jest.fn().mockResolvedValue([true]);
 const mockGetMetadata = jest.fn().mockResolvedValue([{ size: '1048576' }]);
+const mockDownload = jest.fn().mockResolvedValue([Buffer.from('fake-installer-content')]);
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
@@ -69,6 +70,7 @@ jest.mock('@/lib/firebase-admin', () => ({
         getSignedUrl: mockGetSignedUrl,
         exists: mockExists,
         getMetadata: mockGetMetadata,
+        download: mockDownload,
       }),
     }),
   }),
@@ -244,6 +246,32 @@ describe('PUT /api/admin/installer/upload', () => {
 
     expect(res.status).toBe(404);
     expect(json.error).toMatch(/not found in storage/i);
+  });
+
+  it('computes checksum server-side when client does not provide one', async () => {
+    mockGet.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({
+        version: '2.2.1',
+        storagePath: 'agent-installers/versions/2.2.1/Owlette-Installer-v2.2.1.exe',
+        userId: 'test-admin',
+        releaseNotes: 'Bug fixes',
+        setAsLatest: true,
+        status: 'pending',
+        expiresAt: Date.now() + 600000,
+      }),
+    });
+
+    const res = await PUT(
+      makePutRequest({ uploadId: 'test-upload-id' }) // no checksum_sha256
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.checksum_sha256).toBeTruthy();
+    expect(json.checksum_sha256).toMatch(/^[a-f0-9]{64}$/); // valid SHA-256 hex
+    expect(mockDownload).toHaveBeenCalled();
   });
 
   it('returns 400 when uploadId is missing', async () => {
