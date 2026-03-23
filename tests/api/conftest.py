@@ -32,7 +32,7 @@ def process_cleanup(api_client, site_id, machine_id):
             pass  # Best-effort cleanup
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def deployment_cleanup(api_client, site_id, machine_id):
     """Cleanup registry for deployments created during tests.
 
