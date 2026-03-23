@@ -33,18 +33,41 @@ def process_cleanup(api_client, site_id, machine_id):
 
 
 @pytest.fixture
-def deployment_cleanup(api_client, site_id):
+def deployment_cleanup(api_client, site_id, machine_id):
     """Cleanup registry for deployments created during tests.
 
-    Append deployment IDs to this list; they'll be deleted in teardown.
+    Append (deployment_id, machine_ids) tuples to this list.
+    Teardown cancels all non-terminal targets first, then deletes.
     """
-    created_ids = []
-    yield created_ids
-    for did in reversed(created_ids):
+    created: list[tuple[str, list[str]]] = []
+    yield created
+    for did, machine_ids in reversed(created):
         try:
-            api_client.delete(
+            # Cancel all targets so the deployment reaches a terminal state.
+            # Without this, DELETE returns 409 and the deployment is orphaned.
+            for mid in machine_ids:
+                try:
+                    api_client.post(
+                        f"/api/admin/deployments/{did}/cancel",
+                        json={
+                            "siteId": site_id,
+                            "machineId": mid,
+                            "installer_name": "__cleanup__",
+                        },
+                    )
+                except Exception:
+                    pass
+
+            # Now delete — deployment should be in a terminal state
+            resp = api_client.delete(
                 f"/api/admin/deployments/{did}",
                 params={"siteId": site_id},
             )
+            # If still non-terminal (race condition), log but don't fail
+            if resp.status_code == 409:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"Could not delete deployment {did}: still non-terminal"
+                )
         except Exception:
             pass  # Best-effort cleanup

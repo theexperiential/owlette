@@ -35,7 +35,7 @@ export interface McpToolDefinition {
 const tier1Tools: McpToolDefinition[] = [
   {
     name: 'get_system_info',
-    description: 'Get comprehensive system information including CPU, memory, disk, GPU, hostname, OS version, uptime, and agent version.',
+    description: 'Get comprehensive system information: hostname, OS (with correct Windows 10/11 detection), CPU model and usage, memory (used/total GB), disk (used/total GB), GPU model, GPU driver version, VRAM (used/total GB), GPU load %, system uptime, and agent version. Use this as the first step for any hardware or system questions.',
     tier: 1,
     parameters: {
       type: 'object',
@@ -286,7 +286,7 @@ const tier2Tools: McpToolDefinition[] = [
 const tier3Tools: McpToolDefinition[] = [
   {
     name: 'run_command',
-    description: 'Execute a shell command on the remote machine. The command must start with an allowed command (e.g., ipconfig, systeminfo, tasklist). Returns stdout, stderr, and exit code. Set user_session=true to run in the logged-in user\'s desktop session (needed for GUI/display access).',
+    description: 'Execute a shell command on the remote machine. The command must start with an allowed command (e.g., ipconfig, systeminfo, tasklist, nvidia-smi). Use nvidia-smi for advanced GPU diagnostics: Mosaic topology, detailed driver info, process-level VRAM usage, ECC status. Returns stdout, stderr, and exit code. Set user_session=true to run in the logged-in user\'s desktop session (needed for GUI/display access).',
     tier: 3,
     parameters: {
       type: 'object',
