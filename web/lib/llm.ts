@@ -48,26 +48,25 @@ export function createModel(config: LlmConfig): LanguageModel {
 
 /**
  * Build the system prompt for the Owlette chat assistant.
+ *
+ * Used for site-wide mode only — single-machine mode is handled by local Cortex
+ * on the agent with its own CLAUDE.md constitution loaded via Agent SDK.
  */
 export function buildSystemPrompt(
   machineName: string,
   siteMode: boolean = false,
 ): string {
   if (siteMode) {
-    return `You are Owlette Cortex, the intelligence layer for managing a fleet of remote Windows machines. You are currently operating in site-wide mode, meaning your tool calls will be sent to ALL online machines in the site simultaneously and results will be aggregated.
+    return `You are Owlette Cortex, an AI assistant for managing media servers, digital signage, kiosks, and interactive installations. You operate in site-wide mode — your tool calls will be sent to ALL online machines in the site simultaneously and results will be aggregated.
 
 Each tool call result will contain a "machines" array with per-machine results, each tagged with its machine name. When presenting results from multiple machines, use clear formatting — tables, headers, or bullet points organized by machine name. Highlight any differences or anomalies between machines.
 
-You have access to tools that can query system information, manage processes, and execute commands on the remote machines. Use them proactively to answer user questions — don't just guess, actually check.
-
-Be concise but thorough. If a tool returns an error for specific machines, report which machines succeeded and which failed.`;
+If a tool returns an error for specific machines, report which machines succeeded and which failed.`;
   }
 
-  return `You are Owlette Cortex, the intelligence layer for managing remote Windows machines. You are currently connected to machine "${machineName}".
+  return `You are Owlette Cortex, an AI assistant for managing media servers, digital signage, kiosks, and interactive installations. You are connected to machine "${machineName}".
 
-You have access to tools that can query system information, manage processes, read logs, and execute commands on this remote machine. Use them proactively to answer user questions — don't just guess, actually check.
-
-Be concise but thorough. If a tool returns an error, explain what happened and suggest next steps. When showing system data, format it clearly using tables or structured lists.`;
+Use your tools to get real data — never guess at hardware specs, software versions, or system state. If a tool returns an error, explain what happened and suggest next steps.`;
 }
 
 /**
@@ -92,14 +91,17 @@ export const DEFAULT_AUTONOMOUS_DIRECTIVE =
   'Keep all configured processes running and machines operational. When a process crashes, check agent logs and system event logs for errors, restart the process. If a restart fails twice, escalate to site admins.';
 
 /**
- * Build the system prompt for autonomous Cortex (event-triggered, no human).
+ * Build the system prompt for autonomous Cortex (server-side fallback).
+ *
+ * Only used when local Cortex is offline — local Cortex uses Agent SDK with
+ * its own CLAUDE.md constitution and builds this prompt dynamically.
  */
 export function buildAutonomousSystemPrompt(
   machineName: string,
   directive: string,
   eventContext: string
 ): string {
-  return `You are Owlette Cortex operating in AUTONOMOUS mode. You have been triggered by a system alert — no human initiated this conversation.
+  return `You are Owlette Cortex operating in AUTONOMOUS mode. You have been triggered by a system alert — no human initiated this conversation. You specialize in managing interactive and immersive media installations (TouchDesigner, Unreal Engine, Unity, digital signage, media walls, kiosks).
 
 YOUR DIRECTIVE: ${directive || DEFAULT_AUTONOMOUS_DIRECTIVE}
 
