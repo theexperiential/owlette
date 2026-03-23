@@ -397,15 +397,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 'health': self._health_section()
             }
 
-            # Write atomically (write to temp file, then rename)
+            # Write atomically (write to temp file, then replace)
             temp_path = status_path + '.tmp'
             with open(temp_path, 'w') as f:
                 json.dump(status, f, indent=2)
 
-            # Atomic rename on Windows
-            if os.path.exists(status_path):
-                os.remove(status_path)
-            os.rename(temp_path, status_path)
+            # os.replace() is atomic on Windows (no gap where file is missing)
+            os.replace(temp_path, status_path)
 
         except Exception as e:
             logging.debug(f"Failed to write service status: {e}")

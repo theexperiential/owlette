@@ -38,6 +38,11 @@ status_lock = threading.Lock()
 _flash_active = False
 _flash_stop = threading.Event()
 
+# Notification debounce — only notify if degraded state persists
+_degraded_since = None   # timestamp when status first went non-normal
+_degraded_notified = False  # True once we've sent a notification for this degraded period
+_NOTIFY_DELAY = 5        # seconds a degraded state must persist before notifying
+
 def _start_flash(icon, status_code):
     """Start flashing the tray icon between normal and error/warning."""
     global _flash_active
@@ -264,25 +269,34 @@ def is_process_running(pid):
 # Function to open configuration
 def open_config_gui(icon, item):
     global pid
-    if not is_process_running(pid):
+    gui_title = shared_utils.WINDOW_TITLES.get("owlette_gui")
+    # First, try to find and focus an existing GUI window
+    try:
+        hwnd = win32gui.FindWindow(None, gui_title)
+        logging.info(f"[TRAY] open_config_gui: FindWindow('{gui_title}') = {hwnd}, pid={pid}, running={is_process_running(pid)}")
+        if hwnd:
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(hwnd)
+            return
+    except Exception as e:
+        logging.error(f"Failed to bring Owlette GUI to the front: {e}")
+
+    # No visible window — kill any zombie process and spawn fresh
+    if is_process_running(pid):
+        logging.info(f"[TRAY] Killing zombie GUI process {pid}")
         try:
-            process = subprocess.Popen(
-                ["pythonw", shared_utils.get_path('owlette_gui.py')],
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            pid = process.pid
-        except Exception as e:
-            logging.error(f"Failed to open Owlette GUI: {e}")
-    else:
-        try:
-            hwnd = win32gui.FindWindow(None, shared_utils.WINDOW_TITLES.get("owlette_gui"))
-            if hwnd:
-                # Restore window if minimized.
-                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                # Bring window to front.
-                win32gui.SetForegroundWindow(hwnd)
-        except Exception as e:
-            logging.error(f"Failed to bring Owlette GUI to the front: {e}")
+            psutil.Process(pid).kill()
+        except Exception:
+            pass
+    try:
+        process = subprocess.Popen(
+            ["pythonw", shared_utils.get_path('owlette_gui.py')],
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        pid = process.pid
+        logging.info(f"[TRAY] Spawned GUI process {pid}")
+    except Exception as e:
+        logging.error(f"Failed to open Owlette GUI: {e}")
 
 # Function to restart the service (using UAC elevation)
 def restart_service(icon, item):
@@ -451,6 +465,19 @@ def monitor_status(icon):
             icon.update_menu()  # Signal OS to refresh the menu display
 
             with status_lock:
+                # Track how long we've been in a degraded state (debounce)
+                global _degraded_since, _degraded_notified
+                if status_code != 'normal':
+                    if _degraded_since is None:
+                        _degraded_since = time.time()
+                        _degraded_notified = False
+                else:
+                    # Recovered — send recovery notification if we previously notified about degradation
+                    if _degraded_notified and last_status.get('code') != 'unknown' and time.time() - started_at > grace_period:
+                        send_status_notification(icon, status_code, service_msg, firebase_msg)
+                    _degraded_since = None
+                    _degraded_notified = False
+
                 # Check if icon color should change
                 if last_status.get('code') != status_code:
                     # Error: flash blood red. Warning: dim solid. Normal: solid coral.
@@ -467,9 +494,16 @@ def monitor_status(icon):
                             icon.icon = load_icon('normal')
                     logging.info(f"[TRAY] Icon updated: {last_status.get('code')} -> {status_code} ({firebase_msg})")
 
-                    # Send notification on state change (skip during startup grace period)
-                    if last_status.get('code') != 'unknown' and time.time() - started_at > grace_period:
-                        send_status_notification(icon, status_code, service_msg, firebase_msg)
+                # Send degraded notification only after debounce threshold (once per degraded period)
+                # This prevents spam from brief 1-second blips during status file rewrites
+                if (status_code != 'normal'
+                        and not _degraded_notified
+                        and _degraded_since is not None
+                        and time.time() - _degraded_since >= _NOTIFY_DELAY
+                        and last_status.get('code') != 'unknown'
+                        and time.time() - started_at > grace_period):
+                    _degraded_notified = True
+                    send_status_notification(icon, status_code, service_msg, firebase_msg)
 
                 # Always update last status
                 last_status = current_status.copy()

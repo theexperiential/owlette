@@ -168,6 +168,10 @@ Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remo
 
 [Code]
 
+var
+  ServiceWasStopped: Boolean;
+  InstallSucceeded: Boolean;
+
 function GetServerEnvironment(Param: String): String;
 var
   ServerParam: String;
@@ -229,8 +233,23 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
+    InstallSucceeded := True;
     Log('Owlette installation completed successfully');
     Log('User data stored in: ' + ExpandConstant('{commonappdata}\Owlette'));
+  end;
+end;
+
+procedure DeinitializeSetup();
+var
+  ResultCode: Integer;
+begin
+  // If we stopped the service during an upgrade but installation failed or was
+  // cancelled, restart it so the user isn't left with a dead service.
+  if ServiceWasStopped and (not InstallSucceeded) then
+  begin
+    Log('Installation did not complete - restarting OwletteService...');
+    Exec('net', 'start OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Log('Service restart returned with code: ' + IntToStr(ResultCode));
   end;
 end;
 
@@ -344,26 +363,38 @@ begin
       end;
     end;
 
-    // Stop the service before overwriting files
+    // Stop the service before overwriting files.
+    // Use 'net stop' which is synchronous — it waits for the service to fully stop
+    // (including NSSM killing its child Python process) before returning.
+    // This is critical because 'nssm stop' returns immediately while the Python
+    // process may still be running in Session 0, holding DLL locks.
+    Log('Stopping OwletteService via net stop (synchronous)...');
+    Exec('net', 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Log('net stop returned with code: ' + IntToStr(ResultCode));
+    ServiceWasStopped := True;
+
+    // Fallback: also tell NSSM directly in case net stop didn't fully clean up
     if FileExists(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe')) then
-    begin
-      Exec(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe'), 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      Sleep(2000);
-    end
+      Exec(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe'), 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
     else if FileExists('C:\Owlette\tools\nssm.exe') then
-    begin
       Exec('C:\Owlette\tools\nssm.exe', 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      Sleep(2000);
-    end;
   end;
 
-  // Kill Owlette Python processes to release DLL locks (prevents rollback on file overwrite).
-  Log('Killing any running Owlette Python processes (GUI, tray, scripts)...');
+  // Kill ALL Owlette Python processes to release DLL locks.
+  // Must use /F (force) and /T (tree kill) to ensure child processes are also terminated.
+  // The service Python process runs in Session 0, so we target by executable path
+  // rather than window title (service processes have no windows).
+  Log('Killing any running Owlette Python processes (GUI, tray, service)...');
+
+  // Force-kill by executable path — catches Session 0 service processes
+  Exec('cmd', '/c wmic process where "executablepath like ''%\\Owlette\\%python%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Also catch any other Owlette processes (e.g. NSSM child processes)
+  Exec('cmd', '/c wmic process where "executablepath like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Fallback: command-line matching
   Exec('cmd', '/c wmic process where "name=''pythonw.exe'' and commandline like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('cmd', '/c wmic process where "name=''python.exe'' and commandline like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('cmd', '/c wmic process where "executablepath like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('taskkill', '/F /IM python.exe /FI "WINDOWTITLE eq Owlette*"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-  // Wait for processes to fully release file handles
-  Sleep(3000);
+  // Wait for processes to fully exit and release file handles.
+  // DLL handles (especially libcrypto) can take a moment to release after process termination.
+  Sleep(5000);
 end;

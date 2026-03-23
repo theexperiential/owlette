@@ -22,6 +22,20 @@ import socket
 # from firebase_client import FirebaseClient  # Moved to background thread
 FIREBASE_AVAILABLE = True  # Assume available, handle import errors in background thread
 
+def _lazy_tooltip(widget, message, **opts):
+    """Attach a tooltip that is only created on first hover, saving ~25ms per tooltip at startup.
+    Returns a holder dict so callers can update the message later:
+      - holder['tooltip'] is the CTkToolTip once materialized (None before first hover)
+      - holder['message'] is the pending message (used if tooltip not yet created)"""
+    holder = {"tooltip": None, "message": message}
+    def on_enter(event):
+        if holder["tooltip"] is None:
+            holder["tooltip"] = CTkToolTip(widget, message=holder["message"], **opts)
+            # CTkToolTip binds its own <Enter>/<Leave>, so trigger show now
+            widget.event_generate("<Enter>")
+    widget.bind("<Enter>", on_enter, add="+")
+    return holder
+
 class OwletteConfigApp:
 
     def __init__(self, master):
@@ -57,14 +71,11 @@ class OwletteConfigApp:
         # Load saved UI state (default to collapsed)
         self.details_collapsed = self.config.get('gui', {}).get('details_collapsed', True)
 
+        # Collapsed width for the process-list-only view
+        self.collapsed_width = 270
+
         # Build UI directly - no loading screen
         self.setup_ui()
-
-        # Determine actual Windows minimum window width by requesting a small size
-        # and seeing what Windows enforces (title bar buttons set the real minimum)
-        self.master.geometry('100x450')
-        self.master.update()
-        self.collapsed_width = max(self.master.winfo_width(), 270)
 
         # Apply saved window state
         self._apply_window_state()
@@ -256,7 +267,7 @@ class OwletteConfigApp:
         # Add process button (in header, next to toggle)
         self.new_button = ctk.CTkButton(self.header_frame, text="\uff0b", command=self.new_process, width=30, height=30, fg_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_IMPORTANT_HOVER, text_color=shared_utils.BUTTON_IMPORTANT_TEXT, bg_color=shared_utils.FRAME_COLOR, corner_radius=15, font=("Segoe UI", 14))
         self.new_button.pack(side='right', padx=(0, 5))
-        CTkToolTip(self.new_button, message="add new process")
+        _lazy_tooltip(self.new_button, message="add new process")
 
         # Create a Listbox to display the list of processes
         self.process_list = CTkListbox(self.master, command=self.on_select)
@@ -306,7 +317,7 @@ class OwletteConfigApp:
 
         self.footer_site_label = ctk.CTkLabel(self.footer_left, text=f"{site_truncated}", fg_color='transparent', text_color=shared_utils.ACCENT_COLOR, font=("", 11))
         self.footer_site_label.pack(side='left', padx=(8, 0), pady=0)
-        self._footer_site_tooltip = CTkToolTip(self.footer_site_label, message=f"Site: {site_display}")
+        self._footer_site_holder = _lazy_tooltip(self.footer_site_label, message=f"Site: {site_display}")
 
         # Separator dot
         ctk.CTkLabel(self.footer_left, text="\u00b7", fg_color='transparent', text_color=shared_utils.BORDER_COLOR, font=("", 11)).pack(side='left', padx=(6, 0), pady=0)
@@ -314,7 +325,7 @@ class OwletteConfigApp:
         # Machine label in footer
         self.footer_machine_label = ctk.CTkLabel(self.footer_left, text=f"{hostname_truncated}", fg_color='transparent', text_color=shared_utils.TEXT_COLOR, font=("", 11))
         self.footer_machine_label.pack(side='left', padx=(6, 0), pady=0)
-        CTkToolTip(self.footer_machine_label, message=f"Machine: {hostname}")
+        _lazy_tooltip(self.footer_machine_label, message=f"Machine: {hostname}")
 
         self.site_button = ctk.CTkButton(
             self.footer_left,
@@ -499,41 +510,41 @@ class OwletteConfigApp:
         # Bind a mouse click event to the root window to defocus entry fields
         self.master.bind("<Button-1>", self.defocus_entry)
 
-        # Tooltips
+        # Tooltips (lazy — only created on first hover to speed up startup)
         tooltip_opts = {"delay": 0.5, "alpha": 0.95, "corner_radius": shared_utils.CORNER_RADIUS}
-        CTkToolTip(self.launch_mode_label, message="Off: not managed | Always On: 24/7 with crash recovery | Scheduled: runs during configured time windows", **tooltip_opts)
-        CTkToolTip(self.launch_mode_menu, message="Off: not managed | Always On: 24/7 with crash recovery | Scheduled: runs during configured time windows", **tooltip_opts)
-        CTkToolTip(self.name_label, message="Display name for this process", **tooltip_opts)
-        CTkToolTip(self.name_entry, message="Display name for this process", **tooltip_opts)
-        CTkToolTip(self.exe_path_label, message="Full path to the executable (.exe)", **tooltip_opts)
-        CTkToolTip(self.exe_path_entry, message="Full path to the executable (.exe)", **tooltip_opts)
-        CTkToolTip(self.exe_browse_button, message="Browse for an executable file", **tooltip_opts)
-        CTkToolTip(self.file_path_label, message="A file to open with the executable, or CLI arguments", **tooltip_opts)
-        CTkToolTip(self.file_path_entry, message="A file to open with the executable (e.g. a .toe project),\nor command line arguments (e.g. --verbose --port 8080)", **tooltip_opts)
-        CTkToolTip(self.file_browse_button, message="Browse for a file to pass to the executable", **tooltip_opts)
-        CTkToolTip(self.cwd_label, message="Working directory for the process", **tooltip_opts)
-        CTkToolTip(self.cwd_entry, message="Working directory for the process", **tooltip_opts)
-        CTkToolTip(self.cwd_browse_button, message="Browse for a working directory", **tooltip_opts)
-        CTkToolTip(self.time_delay_label, message="Seconds to wait before launching this process on startup", **tooltip_opts)
-        CTkToolTip(self.time_delay_entry, message="Seconds to wait before launching this process on startup", **tooltip_opts)
-        CTkToolTip(self.priority_label, message="CPU priority level for the process", **tooltip_opts)
-        CTkToolTip(self.priority_menu, message="CPU priority level for the process", **tooltip_opts)
-        CTkToolTip(self.time_to_init_label, message="Seconds to wait after launch before monitoring starts", **tooltip_opts)
-        CTkToolTip(self.time_to_init_entry, message="Seconds to wait after launch before monitoring starts", **tooltip_opts)
+        _lazy_tooltip(self.launch_mode_label, message="Off: not managed | Always On: 24/7 with crash recovery | Scheduled: runs during configured time windows", **tooltip_opts)
+        _lazy_tooltip(self.launch_mode_menu, message="Off: not managed | Always On: 24/7 with crash recovery | Scheduled: runs during configured time windows", **tooltip_opts)
+        _lazy_tooltip(self.name_label, message="Display name for this process", **tooltip_opts)
+        _lazy_tooltip(self.name_entry, message="Display name for this process", **tooltip_opts)
+        _lazy_tooltip(self.exe_path_label, message="Full path to the executable (.exe)", **tooltip_opts)
+        _lazy_tooltip(self.exe_path_entry, message="Full path to the executable (.exe)", **tooltip_opts)
+        _lazy_tooltip(self.exe_browse_button, message="Browse for an executable file", **tooltip_opts)
+        _lazy_tooltip(self.file_path_label, message="A file to open with the executable, or CLI arguments", **tooltip_opts)
+        _lazy_tooltip(self.file_path_entry, message="A file to open with the executable (e.g. a .toe project),\nor command line arguments (e.g. --verbose --port 8080)", **tooltip_opts)
+        _lazy_tooltip(self.file_browse_button, message="Browse for a file to pass to the executable", **tooltip_opts)
+        _lazy_tooltip(self.cwd_label, message="Working directory for the process", **tooltip_opts)
+        _lazy_tooltip(self.cwd_entry, message="Working directory for the process", **tooltip_opts)
+        _lazy_tooltip(self.cwd_browse_button, message="Browse for a working directory", **tooltip_opts)
+        _lazy_tooltip(self.time_delay_label, message="Seconds to wait before launching this process on startup", **tooltip_opts)
+        _lazy_tooltip(self.time_delay_entry, message="Seconds to wait before launching this process on startup", **tooltip_opts)
+        _lazy_tooltip(self.priority_label, message="CPU priority level for the process", **tooltip_opts)
+        _lazy_tooltip(self.priority_menu, message="CPU priority level for the process", **tooltip_opts)
+        _lazy_tooltip(self.time_to_init_label, message="Seconds to wait after launch before monitoring starts", **tooltip_opts)
+        _lazy_tooltip(self.time_to_init_entry, message="Seconds to wait after launch before monitoring starts", **tooltip_opts)
         visibility_tip = ("Window visibility on launch.\n"
                           "Hidden suppresses the console window, ideal for\n"
                           "background scripts and services. Apps that create\n"
                           "their own GUI windows (e.g. tkinter, Qt, WPF)\n"
                           "will still be visible.")
-        CTkToolTip(self.visibility_label, message=visibility_tip, **tooltip_opts)
-        CTkToolTip(self.visibility_menu, message=visibility_tip, **tooltip_opts)
-        CTkToolTip(self.relaunch_attempts_label, message="Max restart attempts before giving up (0 = unlimited)", **tooltip_opts)
-        CTkToolTip(self.relaunch_attempts_entry, message="Max restart attempts before giving up (0 = unlimited)", **tooltip_opts)
-        CTkToolTip(self.new_button, message="Add a new process", **tooltip_opts)
-        CTkToolTip(self.details_toggle_button, message="Show/hide process details panel", **tooltip_opts)
-        CTkToolTip(self.config_button, message="Open configuration file", **tooltip_opts)
-        CTkToolTip(self.logs_button, message="Open log folder", **tooltip_opts)
-        CTkToolTip(self.site_button, message="Join or leave a cloud site for remote management", **tooltip_opts)
+        _lazy_tooltip(self.visibility_label, message=visibility_tip, **tooltip_opts)
+        _lazy_tooltip(self.visibility_menu, message=visibility_tip, **tooltip_opts)
+        _lazy_tooltip(self.relaunch_attempts_label, message="Max restart attempts before giving up (0 = unlimited)", **tooltip_opts)
+        _lazy_tooltip(self.relaunch_attempts_entry, message="Max restart attempts before giving up (0 = unlimited)", **tooltip_opts)
+        _lazy_tooltip(self.new_button, message="Add a new process", **tooltip_opts)
+        _lazy_tooltip(self.details_toggle_button, message="Show/hide process details panel", **tooltip_opts)
+        _lazy_tooltip(self.config_button, message="Open configuration file", **tooltip_opts)
+        _lazy_tooltip(self.logs_button, message="Open log folder", **tooltip_opts)
+        _lazy_tooltip(self.site_button, message="Join or leave a cloud site for remote management", **tooltip_opts)
 
         # Make columns stretchable
         # Left side (process list): columns 0-2 - VERY high weight to dominate space
@@ -1019,18 +1030,24 @@ class OwletteConfigApp:
 
     def browse_exe(self):
         exe_path = filedialog.askopenfilename(initialdir="C:/", title="Select Exe File", filetypes=[("Executable files", "*.exe")])
+        if not exe_path:
+            return
         self.exe_path_entry.delete(0, tk.END)
         self.exe_path_entry.insert(0, exe_path)
         self.update_selected_process()
 
     def browse_file(self):
         file_path = filedialog.askopenfilename(initialdir="C:/", title="Select File")
+        if not file_path:
+            return
         self.file_path_entry.delete(0, tk.END)
         self.file_path_entry.insert(0, file_path)
         self.update_selected_process()
 
     def browse_cwd(self):
         cwd = filedialog.askdirectory(initialdir="C:/", title="Select Working Directory")
+        if not cwd:
+            return
         self.cwd_entry.delete(0, tk.END)
         self.cwd_entry.insert(0, cwd)
         self.update_selected_process()
@@ -1610,7 +1627,10 @@ class OwletteConfigApp:
         site_display = site_id if site_id else "Unassigned"
         site_truncated = site_display[:18] + "\u2026" if len(site_display) > 18 else site_display
         self.footer_site_label.configure(text=site_truncated)
-        self._footer_site_tooltip.configure(message=f"Site: {site_display}")
+        # Update tooltip message (materialized or pending)
+        self._footer_site_holder["message"] = f"Site: {site_display}"
+        if self._footer_site_holder["tooltip"]:
+            self._footer_site_holder["tooltip"].configure(message=f"Site: {site_display}")
 
         # Read ACTUAL connection status from service_status.json (IPC from service)
         # This is the real-time status, not just token validity
@@ -2068,6 +2088,14 @@ if __name__ == "__main__":
     # Initialize logging with configurable log level
     log_level = shared_utils.get_log_level_from_config()
     shared_utils.initialize_logging("gui", level=log_level)
-    root = ctk.CTk()
-    app = OwletteConfigApp(root)
-    root.mainloop()
+    try:
+        root = ctk.CTk()
+        app = OwletteConfigApp(root)
+        root.mainloop()
+    except Exception:
+        logging.exception("GUI crashed with unhandled exception")
+    finally:
+        logging.info("GUI process exiting")
+        # Force-exit the process — pythonw can hang if any non-daemon thread
+        # or background I/O (e.g. logging, firebase) keeps the interpreter alive
+        os._exit(0)
