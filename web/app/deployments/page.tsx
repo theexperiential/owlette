@@ -337,7 +337,7 @@ export default function DeploymentsPage() {
 
         {/* Deployments List */}
         <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
-          {deploymentsLoading ? (
+          {deploymentsLoading || sitesLoading || !currentSiteId ? (
             <div className="p-8 text-center">
               <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
               <p className="mt-2 text-muted-foreground">loading deployments...</p>
