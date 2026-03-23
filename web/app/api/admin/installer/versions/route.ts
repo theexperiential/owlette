@@ -48,5 +48,5 @@ export const GET = withRateLimit(
       );
     }
   },
-  { strategy: 'user', identifier: 'ip' }
+  { strategy: 'api', identifier: 'ip' }
 );

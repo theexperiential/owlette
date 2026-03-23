@@ -65,7 +65,7 @@ export const GET = withRateLimit(
       );
     }
   },
-  { strategy: 'user', identifier: 'ip' }
+  { strategy: 'api', identifier: 'ip' }
 );
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'partial', 'uninstalled'];
@@ -125,5 +125,5 @@ export const DELETE = withRateLimit(
       );
     }
   },
-  { strategy: 'user', identifier: 'ip' }
+  { strategy: 'api', identifier: 'ip' }
 );

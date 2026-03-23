@@ -116,5 +116,5 @@ export const PATCH = withRateLimit(
       );
     }
   },
-  { strategy: 'user', identifier: 'ip' }
+  { strategy: 'api', identifier: 'ip' }
 );
