@@ -99,13 +99,15 @@ export const agentAlertRateLimit = redis
   : null;
 
 /**
- * Installer upload rate limiter (strict)
- * Allows 5 uploads per hour per IP
+ * Installer upload rate limiter
+ * Prod: 5 uploads per hour per IP (prevent storage abuse)
+ * Dev: 30 per hour (allows iterating without hitting walls)
  */
+const isDevEnv = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.includes('-dev');
 export const uploadRateLimit = redis
   ? new Ratelimit({
       redis,
-      limiter: Ratelimit.fixedWindow(5, '1 h'),
+      limiter: Ratelimit.fixedWindow(isDevEnv ? 30 : 5, '1 h'),
       prefix: 'upload',
       analytics: true,
     })
