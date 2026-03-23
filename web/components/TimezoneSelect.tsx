@@ -48,7 +48,8 @@ export function TimezoneSelect({ value, onValueChange, disabled, className, id }
       (tz) =>
         tz.value.toLowerCase().includes(q) ||
         tz.label.toLowerCase().includes(q) ||
-        tz.offsetLabel.toLowerCase().includes(q)
+        tz.offsetLabel.toLowerCase().includes(q) ||
+        tz.aliases?.some((a) => a.includes(q))
     );
   }, [search, allTimezones]);
 

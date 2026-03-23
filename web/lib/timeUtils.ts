@@ -222,7 +222,28 @@ export interface TimezoneOption {
   offset: number;
   offsetLabel: string;
   region: string;
+  /** Extra search terms (alternative city spellings, old IANA names, etc.) */
+  aliases?: string[];
 }
+
+/**
+ * Map of IANA timezone IDs → alternative search terms.
+ * Covers renamed cities, transliterations, and common misspellings.
+ */
+const TIMEZONE_SEARCH_ALIASES: Record<string, string[]> = {
+  'Europe/Kiev': ['kyiv'],
+  'Europe/Kyiv': ['kiev'],
+  'Asia/Kolkata': ['bombay', 'mumbai', 'calcutta'],
+  'Asia/Ho_Chi_Minh': ['saigon'],
+  'Asia/Yangon': ['rangoon'],
+  'Atlantic/Reykjavik': ['reykjavík'],
+  'America/Nuuk': ['godthab', 'godthåb'],
+  'Pacific/Honolulu': ['hawaii'],
+  'America/Anchorage': ['alaska'],
+  'Asia/Istanbul': ['constantinople'],
+  'Europe/Istanbul': ['constantinople'],
+  'Africa/Abidjan': ['gmt', 'greenwich'],
+};
 
 /**
  * Get the current UTC offset for a timezone
@@ -286,7 +307,8 @@ export function getAllTimezones(): TimezoneOption[] {
     cachedTimezones = COMMON_TIMEZONES.map((tz) => {
       const { offset, offsetLabel } = getTimezoneOffset(tz.value);
       const region = tz.value.includes('/') ? tz.value.split('/')[0] : 'Other';
-      return { value: tz.value, label: formatTimezoneLabel(tz.value), offset, offsetLabel, region };
+      const aliases = TIMEZONE_SEARCH_ALIASES[tz.value];
+      return { value: tz.value, label: formatTimezoneLabel(tz.value), offset, offsetLabel, region, ...(aliases && { aliases }) };
     });
     return cachedTimezones;
   }
@@ -294,7 +316,8 @@ export function getAllTimezones(): TimezoneOption[] {
   cachedTimezones = tzIds.map((tz) => {
     const { offset, offsetLabel } = getTimezoneOffset(tz);
     const region = tz.includes('/') ? tz.split('/')[0] : 'Other';
-    return { value: tz, label: formatTimezoneLabel(tz), offset, offsetLabel, region };
+    const aliases = TIMEZONE_SEARCH_ALIASES[tz];
+    return { value: tz, label: formatTimezoneLabel(tz), offset, offsetLabel, region, ...(aliases && { aliases }) };
   });
 
   cachedTimezones.sort((a, b) => a.offset - b.offset || a.label.localeCompare(b.label));
