@@ -135,6 +135,8 @@ export function useDeployments(siteId: string) {
       return;
     }
 
+    setLoading(true);
+
     try {
       const deploymentsRef = collection(db, 'sites', siteId, 'deployments');
 
