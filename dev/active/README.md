@@ -11,7 +11,7 @@ All work happens on the `dev` branch. Commit and verify each round before starti
 | **2** | WS2 (Webhooks) | 1 agent | **DONE** |
 | **3** | WS3 (Screenshots) | 1 agent | **DONE** |
 | **4** | WS5 (Scheduling) | 1 agent | NOT STARTED |
-| **5** | WS7 (Autonomous Cortex) | 1 agent | **IN PROGRESS** |
+| **5** | Cortex: Local Agent SDK + Autonomous Mode | 1 agent | **NOT STARTED** |
 
 ## How to Assign Each Round
 
@@ -74,16 +74,14 @@ After implementation, test using /api/admin/commands/send to send a
 capture_screenshot command and verify the screenshot is returned.
 ```
 
-### Round 5 — One agent (Autonomous Cortex)
+### Round 5 — Cortex: Local Agent SDK + Autonomous Mode
 
 ```
-Read dev/active/ws7-autonomous-cortex.md and implement everything in it.
-This builds on the existing Cortex chat system and alert endpoint.
-Read the current state of web/app/api/cortex/route.ts and web/app/api/agent/alert/route.ts
-before starting, as previous rounds may have modified them.
-Work on the dev branch. Commit when done with a conventional commit message.
-After implementation, test using /api/admin/events/simulate to trigger a process_crash
-event and verify the autonomous investigation runs.
+Read dev/active/local-cortex-agent-sdk/cortex-plan.md for the full architecture,
+then use dev/active/local-cortex-agent-sdk/cortex-tasks.md as your checklist.
+Reference dev/active/local-cortex-agent-sdk/cortex-context.md for integration points.
+This is a multi-phase feature — work through phases 0-7 sequentially.
+Work on the dev branch. Commit after each phase with a conventional commit message.
 ```
 
 ### Round 4 — One agent
