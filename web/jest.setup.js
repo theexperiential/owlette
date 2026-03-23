@@ -17,6 +17,15 @@ process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET = 'test.appspot.com'
 process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID = '123456789'
 process.env.NEXT_PUBLIC_FIREBASE_APP_ID = 'test-app-id'
 
+// Server-side env vars for API route handler tests
+process.env.FIREBASE_PROJECT_ID = 'test-project'
+process.env.FIREBASE_CLIENT_EMAIL = 'test@test-project.iam.gserviceaccount.com'
+process.env.FIREBASE_PRIVATE_KEY = 'test-private-key'
+process.env.SESSION_SECRET = 'test-session-secret-must-be-at-least-32-chars-long!!'
+// Disable rate limiting in tests (empty string = no Redis connection)
+process.env.UPSTASH_REDIS_REST_URL = ''
+process.env.UPSTASH_REDIS_REST_TOKEN = ''
+
 // Suppress console errors during tests (optional)
 // Uncomment if you want cleaner test output
 // const originalError = console.error
