@@ -66,7 +66,7 @@ export function LandingFooter() {
             <span className="text-sm sm:text-base leading-none">{emoji}</span>
             <span>in california</span>
             <span className="mx-1 sm:mx-2">&middot;</span>
-            <a href="https://github.com/tec-design/owlette/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
+            <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
               AGPL-3.0
             </a>
           </p>
