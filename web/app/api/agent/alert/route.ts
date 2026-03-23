@@ -217,16 +217,22 @@ export const POST = withRateLimit(
       }).catch(console.error);
 
       // Trigger autonomous Cortex investigation (non-blocking, process events only)
+      // Skip if local Cortex is running — it handles investigation via IPC events
       if (isProcessEvent) {
-        triggerAutonomousCortex(db, {
-          siteId,
-          machineId,
-          machineName: machineId,
-          eventType: resolvedEventType,
-          processName: processName || '',
-          errorMessage: errorMessage || '',
-          agentVersion: agentVersion || '',
-        }).catch(err => console.error('[agent/alert] Cortex trigger failed:', err));
+        const localCortexRunning = await isLocalCortexRunning(db, siteId, machineId);
+        if (localCortexRunning) {
+          console.log(`[agent/alert] Local Cortex is running on ${machineId} — skipping server-side investigation`);
+        } else {
+          triggerAutonomousCortex(db, {
+            siteId,
+            machineId,
+            machineName: machineId,
+            eventType: resolvedEventType,
+            processName: processName || '',
+            errorMessage: errorMessage || '',
+            agentVersion: agentVersion || '',
+          }).catch(err => console.error('[agent/alert] Cortex trigger failed:', err));
+        }
       }
 
       return NextResponse.json({ success: true, emailSent: true, recipients: recipients.length });
@@ -237,6 +243,40 @@ export const POST = withRateLimit(
   },
   { strategy: 'agentAlert', identifier: 'ip' }
 );
+
+/**
+ * Check if local Cortex is running on a machine (fresh heartbeat within 30s).
+ */
+async function isLocalCortexRunning(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  machineId: string,
+): Promise<boolean> {
+  try {
+    const machineDoc = await db
+      .collection('sites')
+      .doc(siteId)
+      .collection('machines')
+      .doc(machineId)
+      .get();
+
+    if (!machineDoc.exists) return false;
+
+    const cortexStatus = machineDoc.data()?.cortexStatus;
+    if (!cortexStatus?.online) return false;
+
+    const lastHeartbeat = cortexStatus.lastHeartbeat;
+    if (!lastHeartbeat) return false;
+
+    const heartbeatTime = lastHeartbeat.toDate
+      ? lastHeartbeat.toDate().getTime()
+      : new Date(lastHeartbeat).getTime();
+
+    return Date.now() - heartbeatTime < 30_000;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Trigger autonomous Cortex investigation for a process event.
