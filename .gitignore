@@ -25,6 +25,7 @@ agent/.venv/
 .idea/
 .claude/settings.local.json
 .claude/session-edits.json
+.claude/.env.local
 .claude/memory/
 .claude/plans/
 *.swp

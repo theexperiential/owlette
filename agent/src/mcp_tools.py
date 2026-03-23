@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_ALLOWED_COMMANDS = [
     'ipconfig', 'systeminfo', 'hostname', 'whoami', 'tasklist',
     'netstat', 'ping', 'tracert', 'nslookup', 'dir', 'type',
-    'echo', 'set', 'ver', 'wmic', 'sc', 'net', 'reg',
+    'echo', 'set', 'ver', 'wmic', 'sc', 'net', 'reg', 'nvidia-smi',
     'Get-Process', 'Get-Service', 'Get-EventLog', 'Get-WinEvent',
     'Get-NetAdapter', 'Get-NetIPAddress', 'Get-Disk', 'Get-Volume',
     'Get-ComputerInfo', 'Get-HotFix', 'Test-Connection',
@@ -93,9 +93,26 @@ def _get_system_info(params, config):
 
     metrics = shared_utils.get_system_metrics()
 
+    # Get NVIDIA driver version via pynvml (already a dependency for GPU temps)
+    gpu_driver_version = 'N/A'
+    try:
+        from pynvml import nvmlInit, nvmlSystemGetDriverVersion, nvmlShutdown
+        nvmlInit()
+        gpu_driver_version = nvmlSystemGetDriverVersion()
+        nvmlShutdown()
+    except Exception:
+        pass
+
+    # platform.release() returns "10" on Windows 11 (NT 10.0 build >= 22000)
+    os_release = platform.release()
+    if platform.system() == 'Windows' and os_release == '10':
+        build = platform.version().split('.')[-1] if platform.version() else '0'
+        if build.isdigit() and int(build) >= 22000:
+            os_release = '11'
+
     return {
         'hostname': socket.gethostname(),
-        'os': f"{platform.system()} {platform.release()}",
+        'os': f"{platform.system()} {os_release}",
         'os_version': platform.version(),
         'architecture': platform.machine(),
         'cpu_model': metrics.get('cpu', {}).get('model', 'Unknown'),
@@ -108,7 +125,8 @@ def _get_system_info(params, config):
         'disk_used_gb': metrics.get('disk', {}).get('used_gb', 0),
         'disk_total_gb': metrics.get('disk', {}).get('total_gb', 0),
         'disk_percent': metrics.get('disk', {}).get('percent', 0),
-        'gpu_model': metrics.get('gpu', {}).get('model', 'N/A'),
+        'gpu_model': metrics.get('gpu', {}).get('name', 'N/A'),
+        'gpu_driver_version': gpu_driver_version,
         'gpu_usage_percent': metrics.get('gpu', {}).get('usage_percent', 0),
         'gpu_vram_used_gb': metrics.get('gpu', {}).get('vram_used_gb', 0),
         'gpu_vram_total_gb': metrics.get('gpu', {}).get('vram_total_gb', 0),
