@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Pencil, Trash2, Check, X, Plus, Copy } from 'lucide-react';
 import { toast } from 'sonner';
-import { COMMON_TIMEZONES } from '@/lib/timeUtils';
+import { TimezoneSelect } from '@/components/TimezoneSelect';
 
 interface Site {
   id: string;
@@ -175,25 +175,12 @@ export function ManageSitesDialog({
                         <Label htmlFor={`timezone-${site.id}`} className="text-muted-foreground text-sm">
                           timezone
                         </Label>
-                        <Select value={editingTimezone} onValueChange={setEditingTimezone}>
-                          <SelectTrigger
-                            id={`timezone-${site.id}`}
-                            className="border-border bg-accent text-white"
-                          >
-                            <SelectValue placeholder="select timezone" />
-                          </SelectTrigger>
-                          <SelectContent className="border-border bg-secondary max-h-60">
-                            {COMMON_TIMEZONES.map((tz) => (
-                              <SelectItem
-                                key={tz.value}
-                                value={tz.value}
-                                className="text-white hover:bg-muted cursor-pointer"
-                              >
-                                {tz.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <TimezoneSelect
+                          id={`timezone-${site.id}`}
+                          value={editingTimezone}
+                          onValueChange={setEditingTimezone}
+                          className="border-border bg-accent text-white"
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor={`timeformat-${site.id}`} className="text-muted-foreground text-sm">

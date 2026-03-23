@@ -13,7 +13,8 @@ import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, Loader2, User
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { PasskeyManager } from '@/components/PasskeyManager';
-import { COMMON_TIMEZONES, getBrowserTimezone } from '@/lib/timeUtils';
+import { getBrowserTimezone } from '@/lib/timeUtils';
+import { TimezoneSelect } from '@/components/TimezoneSelect';
 
 type SettingsSection = 'profile' | 'preferences' | 'notifications' | 'cortex' | 'security' | 'api' | 'danger';
 
@@ -367,22 +368,13 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
 
                   <div className="space-y-2">
                     <Label htmlFor="timezone" className="text-white">timezone</Label>
-                    <Select
+                    <TimezoneSelect
+                      id="timezone"
                       value={timezone}
                       onValueChange={(value: string) => setTimezone(value)}
                       disabled={loading}
-                    >
-                      <SelectTrigger id="timezone" className="border-border bg-background text-white hover:bg-secondary w-72">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="border-border bg-secondary text-white max-h-[300px]">
-                        {COMMON_TIMEZONES.map((tz) => (
-                          <SelectItem key={tz.value} value={tz.value} className="cursor-pointer hover:bg-muted">
-                            {tz.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      className="border-border bg-background text-white hover:bg-secondary w-72"
+                    />
                   </div>
 
                   <div className="space-y-2">

@@ -212,3 +212,91 @@ export function isValidTimezone(timezone: string): boolean {
     return false;
   }
 }
+
+/**
+ * Timezone option for the searchable timezone picker
+ */
+export interface TimezoneOption {
+  value: string;
+  label: string;
+  offset: number;
+  offsetLabel: string;
+  region: string;
+}
+
+/**
+ * Get the current UTC offset for a timezone
+ */
+export function getTimezoneOffset(timezone: string): { offset: number; offsetLabel: string } {
+  try {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'shortOffset',
+    });
+    const parts = formatter.formatToParts(now);
+    const tzPart = parts.find((p) => p.type === 'timeZoneName')?.value || 'UTC';
+
+    // Parse "GMT+2", "GMT-5:30", "GMT+5:45", "GMT" etc.
+    if (tzPart === 'GMT' || tzPart === 'UTC') {
+      return { offset: 0, offsetLabel: 'UTC+00:00' };
+    }
+
+    const match = tzPart.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+    if (match) {
+      const sign = match[1] === '+' ? 1 : -1;
+      const hours = parseInt(match[2], 10);
+      const minutes = parseInt(match[3] || '0', 10);
+      const offset = sign * (hours * 60 + minutes);
+      const offsetLabel = `UTC${match[1]}${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+      return { offset, offsetLabel };
+    }
+
+    return { offset: 0, offsetLabel: 'UTC+00:00' };
+  } catch {
+    return { offset: 0, offsetLabel: 'UTC+00:00' };
+  }
+}
+
+/**
+ * Format an IANA timezone ID as a readable label
+ * e.g., "America/New_York" → "America / New York"
+ */
+export function formatTimezoneLabel(timezone: string): string {
+  if (timezone === 'UTC') return 'UTC';
+  return timezone.replace(/_/g, ' ').replace(/\//g, ' / ');
+}
+
+let cachedTimezones: TimezoneOption[] | null = null;
+
+/**
+ * Get all IANA timezones with labels and UTC offsets.
+ * Uses Intl.supportedValuesOf (browser-native), cached after first call.
+ * Falls back to COMMON_TIMEZONES if the API is unavailable.
+ */
+export function getAllTimezones(): TimezoneOption[] {
+  if (cachedTimezones) return cachedTimezones;
+
+  let tzIds: string[];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tzIds = (Intl as any).supportedValuesOf('timeZone');
+  } catch {
+    // Fallback for SSR or old browsers
+    cachedTimezones = COMMON_TIMEZONES.map((tz) => {
+      const { offset, offsetLabel } = getTimezoneOffset(tz.value);
+      const region = tz.value.includes('/') ? tz.value.split('/')[0] : 'Other';
+      return { value: tz.value, label: formatTimezoneLabel(tz.value), offset, offsetLabel, region };
+    });
+    return cachedTimezones;
+  }
+
+  cachedTimezones = tzIds.map((tz) => {
+    const { offset, offsetLabel } = getTimezoneOffset(tz);
+    const region = tz.includes('/') ? tz.split('/')[0] : 'Other';
+    return { value: tz, label: formatTimezoneLabel(tz), offset, offsetLabel, region };
+  });
+
+  cachedTimezones.sort((a, b) => a.offset - b.offset || a.label.localeCompare(b.label));
+  return cachedTimezones;
+}
