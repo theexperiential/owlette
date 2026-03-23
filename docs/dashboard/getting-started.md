@@ -18,6 +18,10 @@ This guide walks you through your first experience with the Owlette dashboard â€
 2. Select your Google account
 3. You're automatically registered and logged in
 
+### Passkey (Passwordless)
+
+If you've registered a passkey, click **"Sign in with passkey"** on the login page. Authenticate with your device's biometric (Touch ID, Windows Hello, or phone) â€” no password or 2FA code needed.
+
 ---
 
 ## Set Up Two-Factor Authentication

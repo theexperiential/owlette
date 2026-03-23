@@ -8,7 +8,7 @@ Get your first machine monitored in under 5 minutes.
 
 1. Go to [owlette.app](https://owlette.app)
 2. Click **Register** and create an account with email/password or Google sign-in
-3. Optionally set up **two-factor authentication** when prompted (recommended for security)
+3. Optionally set up **two-factor authentication** or register a **passkey** for fast biometric login
 
 ---
 

@@ -2,7 +2,7 @@
 
 All notable changes to Owlette are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
-For the full version management workflow, see [Version Management](version-management.md).
+For the full version management workflow, see [Version Management](internal/version-management.md).
 
 ---
 

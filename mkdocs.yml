@@ -7,8 +7,8 @@ repo_name: Owlette
 theme:
   name: material
   font:
-    text: Open Sans
-    code: Roboto Mono
+    text: Inter
+    code: JetBrains Mono
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -96,6 +96,7 @@ nav:
       - System Presets: dashboard/admin/system-presets.md
       - Token Management: dashboard/admin/token-management.md
       - Email Alerts: dashboard/admin/email-alerts.md
+      - Webhooks: dashboard/admin/webhooks.md
   - Architecture: architecture.md
   - Troubleshooting: troubleshooting.md
   - Changelog: changelog.md

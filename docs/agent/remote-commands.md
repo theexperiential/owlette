@@ -29,7 +29,8 @@ Dashboard                      Firestore                         Agent
 | `restart_process` | Kill and restart a process | `{process_name: string}` |
 | `kill_process` | Terminate a process | `{process_name: string}` |
 | `start_process` | Start a stopped process | `{process_name: string}` |
-| `toggle_autolaunch` | Toggle autolaunch setting | `{process_name: string}` |
+| `set_launch_mode` | Set launch mode (off/always/scheduled) | `{process_name, mode, schedules?}` |
+| `capture_screenshot` | Capture desktop screenshot | `{monitor: number}` (0=all, 1=primary, etc.) |
 
 ### Configuration
 
@@ -63,7 +64,10 @@ Dashboard                      Firestore                         Agent
 
 | Command | Description | Data Payload |
 |---------|-------------|--------------|
-| `mcp_tool_call` | Execute an MCP tool | `{tool_name, arguments, chat_id}` |
+| `mcp_tool_call` | Execute a Cortex tool | `{tool_name, arguments, chat_id}` |
+
+!!! info "Cortex tool reference"
+    See the [Cortex Tools Reference](../reference/cortex-tools.md) for the complete list of 24 tools with parameters, tiers, and allowed commands.
 
 ---
 

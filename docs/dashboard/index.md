@@ -43,6 +43,6 @@ The Owlette web dashboard is a Next.js application that provides real-time monit
 - [**Process Management**](process-management.md) — Add, edit, and control processes
 - [**Deployments**](deployments.md) — Remote software installation
 - [**Project Distribution**](project-distribution.md) — ZIP file distribution
-- [**Cortex**](cortex.md) — AI chat interface
+- [**Cortex**](cortex.md) — AI chat interface + autonomous crash investigation
 - [**Activity Logs**](activity-logs.md) — Event monitoring
 - [**Admin Panel**](admin/index.md) — User, installer, and token management

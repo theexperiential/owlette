@@ -94,14 +94,27 @@ Start a stopped process (same as restart for stopped processes).
 
 ---
 
-### toggle_autolaunch
+### set_launch_mode
 
-Toggle the autolaunch setting on/off.
+Set the launch mode for a process: off, always, or scheduled.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | `"toggle_autolaunch"` | |
+| `type` | `"set_launch_mode"` | |
 | `process_name` | string | Must match a configured process name |
+| `mode` | string | `"off"`, `"always"`, or `"scheduled"` |
+| `schedules` | array | Schedule blocks (required when mode is `"scheduled"`) |
+
+---
+
+### capture_screenshot
+
+Capture a screenshot of the machine's desktop.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `"capture_screenshot"` | |
+| `monitor` | number | `0` = all monitors (default), `1` = primary, `2` = second, etc. |
 
 ---
 

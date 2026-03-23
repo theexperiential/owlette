@@ -33,7 +33,7 @@ Owlette is three things working together:
 
     ---
 
-    An AI-powered chat interface that connects to your machines through natural language. Query system info, restart processes, run commands, and troubleshoot issues — all through conversation with 19 specialized tools.
+    An AI-powered chat interface that connects to your machines through natural language. Query system info, restart processes, capture screenshots, and troubleshoot issues — all through conversation with 24 specialized tools. Autonomous mode auto-investigates crashes without human intervention.
 
     [:octicons-arrow-right-24: Meet Cortex](dashboard/cortex.md)
 
@@ -51,7 +51,8 @@ Owlette is three things working together:
 | :material-folder-sync: | **Distribute project files** | Sync ZIP archives across your fleet using your own file hosting |
 | :material-chat: | **Talk to your machines** | Use Cortex AI to query, control, and troubleshoot via natural language |
 | :material-shield-account: | **Manage users and roles** | Admin panel for user management, site assignment, and access control |
-| :material-bell: | **Get alerted** | Email notifications when machines go offline or processes crash |
+| :material-bell: | **Get alerted** | Email and webhook notifications when machines go offline or processes crash |
+| :material-camera: | **Capture screenshots** | Take remote screenshots of machine displays from the dashboard or Cortex |
 | :material-update: | **Update agents remotely** | Push agent updates to all machines from the dashboard |
 
 ---
@@ -66,7 +67,10 @@ Owlette is three things working together:
 | :material-wifi-off: | **Offline Resilient** | Agents continue monitoring locally when disconnected, auto-sync when reconnected |
 | :material-chart-line: | **Historical Metrics** | 24-hour, 7-day, and 30-day metric charts with sparkline previews |
 | :material-cog: | **System Presets** | Save and apply process configurations across machines |
+| :material-calendar-clock: | **Process Scheduling** | Schedule processes to run during specific time windows (days + hours) |
+| :material-key: | **Passkey Login** | Passwordless authentication via biometrics or device PIN (WebAuthn/FIDO2) |
 | :material-two-factor-authentication: | **2FA Support** | TOTP-based two-factor authentication with backup codes |
+| :material-webhook: | **Webhooks** | Send event notifications to external systems via HTTPS webhooks with HMAC signing |
 
 ---
 
