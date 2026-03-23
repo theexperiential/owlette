@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
+import { ApiAuthError, requireAdminOrIdToken } from '@/lib/apiAuth.server';
 import { getAdminDb, getAdminStorage } from '@/lib/firebase-admin';
 import logger from '@/lib/logger';
 
@@ -23,7 +23,7 @@ const SIGNED_URL_EXPIRY_MINUTES = 15;
 export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
-      const userId = await requireAdmin(request);
+      const userId = await requireAdminOrIdToken(request);
       const body = await request.json();
       const { version, fileName, contentType, releaseNotes, setAsLatest } = body;
 
@@ -108,7 +108,7 @@ export const POST = withRateLimit(
 export const PUT = withRateLimit(
   async (request: NextRequest) => {
     try {
-      await requireAdmin(request);
+      await requireAdminOrIdToken(request);
       const body = await request.json();
       const { uploadId, checksum_sha256 } = body;
 
