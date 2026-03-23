@@ -72,6 +72,7 @@ interface AuthContextType {
   isAdmin: boolean;
   userSites: string[]; // Sites the user has access to
   lastSiteId: string | null; // Last active site (synced to Firestore)
+  lastMachineIds: Record<string, string>; // Last active machine per site (synced to Firestore)
   requiresMfaSetup: boolean; // Whether user needs to complete 2FA setup
   passkeyEnrolled: boolean; // Whether user has registered passkeys
   userPreferences: UserPreferences; // User preferences (temperature unit, etc.)
@@ -83,6 +84,7 @@ interface AuthContextType {
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   updateUserPreferences: (preferences: Partial<UserPreferences>, options?: { silent?: boolean }) => Promise<void>;
   updateLastSite: (siteId: string) => void;
+  updateLastMachine: (siteId: string, machineId: string) => void;
   deleteAccount: (password: string) => Promise<void>;
 }
 
@@ -93,6 +95,7 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   userSites: [],
   lastSiteId: null,
+  lastMachineIds: {},
   requiresMfaSetup: false,
   passkeyEnrolled: false,
   userPreferences: { temperatureUnit: 'C', timezone: 'UTC', healthAlerts: true, processAlerts: true, alertCcEmails: [], statsExpanded: true, processesExpanded: true },
@@ -104,6 +107,7 @@ const AuthContext = createContext<AuthContextType>({
   updatePassword: async () => {},
   updateUserPreferences: async () => {},
   updateLastSite: () => {},
+  updateLastMachine: () => {},
   deleteAccount: async () => {},
 });
 
@@ -124,6 +128,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [passkeyEnrolled, setPasskeyEnrolled] = useState(false);
   const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), healthAlerts: true, processAlerts: true, alertCcEmails: [], statsExpanded: true, processesExpanded: true });
   const [lastSiteId, setLastSiteId] = useState<string | null>(null);
+  const [lastMachineIds, setLastMachineIds] = useState<Record<string, string>>({});
 
   // Helper function to send user creation notification
   const sendUserCreatedNotification = async (
@@ -213,6 +218,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setRequiresMfaSetup(userData.requiresMfaSetup || false);
                 setPasskeyEnrolled(userData.passkeyEnrolled || false);
                 setLastSiteId(userData.lastSiteId || null);
+                setLastMachineIds(userData.lastMachineIds || {});
 
                 // Load user preferences (with defaults if missing)
                 const preferences = userData.preferences || {};
@@ -521,6 +527,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateLastMachine = (siteId: string, machineId: string) => {
+    setLastMachineIds((prev) => ({ ...prev, [siteId]: machineId }));
+    if (auth?.currentUser && db) {
+      const userDocRef = doc(db, 'users', auth.currentUser.uid);
+      setDoc(userDocRef, { lastMachineIds: { [siteId]: machineId } }, { merge: true }).catch((err) =>
+        console.error('Failed to save lastMachineId:', err)
+      );
+    }
+  };
+
   const updatePassword = async (currentPassword: string, newPassword: string) => {
     try {
       if (!auth?.currentUser) {
@@ -684,6 +700,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isAdmin,
     userSites,
     lastSiteId,
+    lastMachineIds,
     requiresMfaSetup,
     passkeyEnrolled,
     userPreferences,
@@ -695,8 +712,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     updatePassword,
     updateUserPreferences,
     updateLastSite,
+    updateLastMachine,
     deleteAccount,
-  }), [user, loading, role, isAdmin, userSites, lastSiteId, requiresMfaSetup, passkeyEnrolled, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updatePassword, updateUserPreferences, updateLastSite, deleteAccount]);
+  }), [user, loading, role, isAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, passkeyEnrolled, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updatePassword, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

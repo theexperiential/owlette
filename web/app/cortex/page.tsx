@@ -17,7 +17,7 @@ import { MachineSelector, SITE_TARGET_ID } from './components/MachineSelector';
 
 export default function CortexPage() {
   const router = useRouter();
-  const { user, userSites, isAdmin, loading: authLoading, lastSiteId, updateLastSite } = useAuth();
+  const { user, userSites, isAdmin, loading: authLoading, lastSiteId, lastMachineIds, updateLastSite, updateLastMachine } = useAuth();
   const { sites, loading: sitesLoading } = useSites(user?.uid, userSites, isAdmin);
 
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
@@ -32,19 +32,28 @@ export default function CortexPage() {
   useEffect(() => {
     if (sites.length > 0 && !currentSiteId) {
       const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
-      if (savedSite && sites.some((s) => s.id === savedSite)) {
-        setCurrentSiteId(savedSite);
-      } else {
-        setCurrentSiteId(sites[0].id);
-      }
+      const siteId = savedSite && sites.some((s) => s.id === savedSite) ? savedSite : sites[0].id;
+      setCurrentSiteId(siteId);
+      if (lastMachineIds[siteId]) setSelectedMachineId(lastMachineIds[siteId]);
     }
-  }, [sites, currentSiteId, lastSiteId]);
+  }, [sites, currentSiteId, lastSiteId, lastMachineIds]);
 
   const handleSiteChange = (siteId: string) => {
     setCurrentSiteId(siteId);
-    setSelectedMachineId(SITE_TARGET_ID);
+    setSelectedMachineId(lastMachineIds[siteId] || SITE_TARGET_ID);
     updateLastSite(siteId);
   };
+
+  // Reset to "All Machines" if the saved machine no longer exists on this site
+  useEffect(() => {
+    if (
+      selectedMachineId !== SITE_TARGET_ID &&
+      machines.length > 0 &&
+      !machines.some((m) => m.machineId === selectedMachineId)
+    ) {
+      setSelectedMachineId(SITE_TARGET_ID);
+    }
+  }, [machines, selectedMachineId]);
 
   const isSiteMode = selectedMachineId === SITE_TARGET_ID;
   const selectedMachine = !isSiteMode ? machines.find((m) => m.machineId === selectedMachineId) : null;
@@ -186,6 +195,7 @@ export default function CortexPage() {
               selectedMachineId={selectedMachineId}
               onSelect={(id) => {
                 setSelectedMachineId(id);
+                updateLastMachine(currentSiteId, id);
                 chat.startNewChat();
               }}
             />
