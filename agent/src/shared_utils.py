@@ -368,7 +368,10 @@ def ensure_data_directories():
         get_data_path('config'),
         get_data_path('logs'),
         get_data_path('cache'),
-        get_data_path('tmp')
+        get_data_path('tmp'),
+        get_data_path('ipc/cortex_commands'),
+        get_data_path('ipc/cortex_results'),
+        get_data_path('ipc/cortex_events'),
     ]
 
     try:
@@ -466,6 +469,26 @@ def is_script_running(script_name):
 # PATHS - Now using ProgramData for proper Windows service data storage
 CONFIG_PATH = get_data_path('config/config.json')
 RESULT_FILE_PATH = get_data_path('tmp/app_states.json')
+
+# Cortex (local AI agent) paths
+CORTEX_PID_PATH = get_data_path('tmp/cortex.pid')
+CORTEX_IPC_CMD_DIR = get_data_path('ipc/cortex_commands')
+CORTEX_IPC_RESULT_DIR = get_data_path('ipc/cortex_results')
+CORTEX_IPC_EVENTS_DIR = get_data_path('ipc/cortex_events')
+
+
+def is_cortex_enabled(config=None):
+    """Check if Cortex is enabled in config.
+
+    Args:
+        config: Optional config dict. If None, reads from disk.
+
+    Returns:
+        True if cortex.enabled is truthy.
+    """
+    if config is None:
+        config = read_config()
+    return bool(config.get('cortex', {}).get('enabled', False))
 
 # LOGGING
 # Get log level from config

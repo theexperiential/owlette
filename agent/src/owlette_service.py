@@ -147,6 +147,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.is_alive = True
         self._restart_exit_code = 0
         self.tray_icon_pid = None
+        self.cortex_pid = None
         self.relaunch_attempts = {} # Restart attempts for each process
         self.first_start = True # First start of this service
         self.last_started = {} # Last time a process was started
@@ -518,6 +519,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.close_owlette_windows()
 
         self.terminate_tray_icon()
+        self.terminate_cortex()
 
         # Write final status (service stopped) for tray icon
         self._write_service_status(running=False)
@@ -739,6 +741,225 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.debug("Could not launch tray icon (no user session?)")
             return False
 
+    # ─── Cortex Process Management ──────────────────────────────────────
+
+    def _is_cortex_alive(self):
+        """Check if the Cortex process is still running using tracked PID."""
+        if self.cortex_pid:
+            try:
+                proc = psutil.Process(self.cortex_pid)
+                if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+            self.cortex_pid = None
+
+        # Fallback: check PID file written by Cortex itself
+        pid_path = shared_utils.CORTEX_PID_PATH
+        if os.path.exists(pid_path):
+            try:
+                with open(pid_path, 'r') as f:
+                    pid = int(f.read().strip())
+                proc = psutil.Process(pid)
+                if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+                    self.cortex_pid = pid
+                    return True
+            except (ValueError, psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                pass
+
+        return False
+
+    def _try_launch_cortex(self):
+        """Launch the Cortex process with cooldown. Mirrors _try_launch_tray() pattern.
+        Returns True if launched (or already running), False if skipped/failed."""
+        # Check if enabled in config
+        if not shared_utils.is_cortex_enabled():
+            return False
+
+        # Already running?
+        if self._is_cortex_alive():
+            return True
+
+        # Cooldown
+        now = time.time()
+        elapsed = now - self._cortex_last_launch_time
+        if elapsed < self._cortex_launch_cooldown:
+            return False
+
+        # Try to launch
+        if self.launch_python_script_as_user('owlette_cortex.py'):
+            self._cortex_last_launch_time = now
+            logging.info("Cortex process launched")
+            return True
+        else:
+            logging.debug("Could not launch Cortex (no user session?)")
+            return False
+
+    def terminate_cortex(self):
+        """Terminate the Cortex process if running."""
+        if self.cortex_pid:
+            try:
+                psutil.Process(self.cortex_pid).terminate()
+                logging.info(f"Cortex process terminated (PID {self.cortex_pid})")
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+            except Exception as e:
+                logging.error(f"Error terminating Cortex: {e}")
+            self.cortex_pid = None
+
+    def _process_cortex_ipc_commands(self):
+        """Process IPC command files from Cortex (Tier 2 tools).
+
+        Scans ipc/cortex_commands/ for JSON files, executes the tool,
+        writes result to ipc/cortex_results/.
+        """
+        cmd_dir = shared_utils.CORTEX_IPC_CMD_DIR
+        result_dir = shared_utils.CORTEX_IPC_RESULT_DIR
+
+        if not os.path.isdir(cmd_dir):
+            return
+
+        try:
+            files = [f for f in os.listdir(cmd_dir) if f.endswith('.json')]
+        except OSError:
+            return
+
+        for filename in files:
+            cmd_path = os.path.join(cmd_dir, filename)
+            try:
+                with open(cmd_path, 'r', encoding='utf-8') as f:
+                    cmd = json.load(f)
+
+                cmd_id = cmd.get('id', filename.replace('.json', ''))
+                tool_name = cmd.get('tool_name', '')
+                tool_params = cmd.get('tool_params', {})
+
+                logging.debug(f"Processing Cortex IPC command: {cmd_id} ({tool_name})")
+
+                # Execute the tool via the existing command system
+                result = self._execute_cortex_command(tool_name, tool_params)
+
+                # Write result
+                os.makedirs(result_dir, exist_ok=True)
+                result_path = os.path.join(result_dir, f"{cmd_id}.json")
+                tmp_path = result_path + '.tmp'
+                with open(tmp_path, 'w', encoding='utf-8') as f:
+                    json.dump({'id': cmd_id, 'result': result}, f)
+                os.replace(tmp_path, result_path)
+
+                # Remove processed command
+                os.remove(cmd_path)
+                logging.debug(f"Cortex IPC command completed: {cmd_id}")
+
+            except Exception as e:
+                logging.error(f"Error processing Cortex IPC command {filename}: {e}")
+                # Remove corrupt command to prevent infinite retry
+                try:
+                    os.remove(cmd_path)
+                except OSError:
+                    pass
+
+    def _execute_cortex_command(self, tool_name, tool_params):
+        """Execute a Cortex IPC tool command using existing service logic.
+
+        Maps Tier 2 tool names to the service's existing command handlers.
+        """
+        process_name = tool_params.get('process_name', '')
+
+        if tool_name == 'restart_process':
+            return self._handle_cortex_process_command('restart_process', process_name)
+        elif tool_name == 'kill_process':
+            return self._handle_cortex_process_command('kill_process', process_name)
+        elif tool_name == 'start_process':
+            return self._handle_cortex_process_command('restart_process', process_name)
+        elif tool_name == 'set_launch_mode':
+            mode = tool_params.get('mode', 'off')
+            schedules = tool_params.get('schedules')
+            return self._handle_cortex_set_launch_mode(process_name, mode, schedules)
+        else:
+            return {'error': f'Unknown Cortex IPC tool: {tool_name}'}
+
+    def _handle_cortex_process_command(self, command_type, process_name):
+        """Handle a process restart/kill/start command from Cortex IPC."""
+        config = shared_utils.read_config()
+        processes = config.get('processes', [])
+
+        # Find the process
+        target = None
+        for proc in processes:
+            if proc.get('name', '').lower() == process_name.lower():
+                target = proc
+                break
+
+        if not target:
+            return {'error': f'Process not found: {process_name}'}
+
+        try:
+            if command_type == 'kill_process':
+                shared_utils.graceful_terminate(target)
+                return {'status': 'completed', 'result': f'Process {process_name} terminated'}
+            else:
+                # restart_process (also used for start)
+                shared_utils.graceful_terminate(target)
+                time.sleep(1)
+                # The main loop will re-launch the process if autolaunch/launch_mode is set
+                return {'status': 'completed', 'result': f'Process {process_name} restarted'}
+        except Exception as e:
+            return {'status': 'failed', 'error': str(e)}
+
+    def _handle_cortex_set_launch_mode(self, process_name, mode, schedules=None):
+        """Handle a set_launch_mode command from Cortex IPC."""
+        config = shared_utils.read_config()
+        processes = config.get('processes', [])
+
+        for proc in processes:
+            if proc.get('name', '').lower() == process_name.lower():
+                proc['launch_mode'] = mode
+                if mode == 'scheduled' and schedules:
+                    proc['schedules'] = schedules
+                shared_utils.write_config(config)
+                return {'status': 'completed', 'result': f'Launch mode set to {mode} for {process_name}'}
+
+        return {'error': f'Process not found: {process_name}'}
+
+    def _write_cortex_event(self, process_name, error_message, event_type):
+        """Write an IPC event file for Cortex autonomous investigation.
+
+        Args:
+            process_name: Name of the affected process.
+            error_message: Description of what happened.
+            event_type: 'process_crash' or 'process_start_failed'.
+        """
+        if not shared_utils.is_cortex_enabled():
+            return
+
+        events_dir = shared_utils.CORTEX_IPC_EVENTS_DIR
+        os.makedirs(events_dir, exist_ok=True)
+
+        event_id = f"evt_{int(time.time()*1000)}_{process_name}"
+        event_path = os.path.join(events_dir, f"{event_id}.json")
+
+        event = {
+            'id': event_id,
+            'processName': process_name,
+            'errorMessage': error_message,
+            'eventType': event_type,
+            'machineId': socket.gethostname(),
+            'machineName': socket.gethostname(),
+            'timestamp': time.time(),
+        }
+
+        try:
+            tmp_path = event_path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(event, f)
+            os.replace(tmp_path, event_path)
+            logging.info(f"Cortex event written: {event_id} ({event_type}: {process_name})")
+        except Exception as e:
+            logging.error(f"Failed to write Cortex event: {e}")
+
+    # ─── End Cortex ───────────────────────────────────────────────────────
+
     def _find_running_process_by_exe(self, exe_path, file_path=None):
         """Find a running process by its executable path.
 
@@ -813,6 +1034,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         except Exception as e:
             logging.warning(f"Could not obtain console user token: {e}")
+            # Keep the cached token if we have one — it may still be valid
+            # even though we can't get a fresh one (privilege issues after startup)
+            if self.console_user_token:
+                logging.debug("Falling back to cached user token from startup")
+                return True
             self.console_session_id = None
             self.console_user_token = None
             self.environment = None
@@ -855,6 +1081,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 si)
             if 'owlette_tray.py' in script_name:
                 self.tray_icon_pid = pid
+            elif 'owlette_cortex.py' in script_name:
+                self.cortex_pid = pid
             return True
         except Exception as e:
             logging.error(f"Failed to start process: {e}")
@@ -1267,6 +1495,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     self.firebase_client.send_process_alert(
                         process_name, f'Failed to kill and restart PID {pid}: {str(e)}', 'process_crash'
                     )
+                self._write_cortex_event(process_name, f'Failed to kill and restart PID {pid}: {str(e)}', 'process_crash')
                 return None
 
     # Attempt to launch the process if not running
@@ -1317,6 +1546,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         self.firebase_client.send_process_alert(
                             Util.get_process_name(process), str(e), 'process_start_failed'
                         )
+                    self._write_cortex_event(Util.get_process_name(process), str(e), 'process_start_failed')
                     return None
 
                 # Only update tracking if we got a valid PID
@@ -1504,6 +1734,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             self.firebase_client.send_process_alert(
                                 process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash'
                             )
+                        self._write_cortex_event(process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash')
                     else:
                         logging.debug(f"Process {last_pid} was manually killed - skipping crash log")
 
@@ -2537,6 +2768,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
             elif cmd_type == 'dismiss_reboot_pending':
                 return self._handle_dismiss_reboot_pending(cmd_data)
 
+            elif cmd_type == 'provision_cortex_key':
+                return self._handle_provision_cortex_key(cmd_data)
+
             else:
                 logging.warning(f"Unknown command type: {cmd_type}")
                 return f"Unknown command type: {cmd_type}"
@@ -2642,6 +2876,35 @@ class OwletteService(win32serviceutil.ServiceFramework):
             return f"Reboot pending dismissed, relaunch counters reset for {process_name}"
         except Exception as e:
             return f"Failed to dismiss reboot pending: {str(e)}"
+
+    def _handle_provision_cortex_key(self, command_data):
+        """Encrypt and store the Cortex LLM API key in config.json."""
+        try:
+            api_key = command_data.get('api_key', '')
+            provider = command_data.get('provider', 'anthropic')
+
+            if not api_key:
+                return "Error: No API key provided"
+
+            # Encrypt with the same machine-specific Fernet key used by SecureStorage
+            from secure_storage import get_storage
+            storage = get_storage()
+            encrypted = storage._fernet.encrypt(api_key.encode('utf-8')).decode('utf-8')
+
+            # Store in config
+            config = shared_utils.read_config()
+            if 'cortex' not in config:
+                config['cortex'] = {}
+            config['cortex']['apiKeyEncrypted'] = encrypted
+            config['cortex']['provider'] = provider
+            config['cortex']['enabled'] = True
+            shared_utils.write_config(config)
+
+            logging.info(f"Cortex API key provisioned (provider={provider})")
+            return "Cortex API key provisioned successfully"
+        except Exception as e:
+            logging.error(f"Failed to provision Cortex key: {e}")
+            return f"Error: {str(e)}"
 
     def _try_user_session_tool(self, tool_name, tool_params):
         """Handle MCP tools that require user-session execution.
@@ -2951,6 +3214,10 @@ print(f'monitors={{len(sct.monitors) - 1}}')
         self._tray_last_launch_time = 0
         self._tray_launch_cooldown = 30  # seconds between launch attempts
 
+        # Cortex (local AI agent) launch tracking
+        self._cortex_last_launch_time = 0
+        self._cortex_launch_cooldown = 30
+
         # Launch tray icon EARLY - before Firebase init which can take several seconds
         # This gives the user immediate visual feedback that the service is starting
         self._try_launch_tray()
@@ -3093,6 +3360,12 @@ print(f'monitors={{len(sct.monitors) - 1}}')
 
                 # Ensure tray icon is running (with cooldown to avoid crash-relaunch thrashing)
                 self._try_launch_tray()
+
+                # Ensure Cortex is running (if enabled)
+                self._try_launch_cortex()
+
+                # Process Cortex IPC commands (Tier 2 tool calls)
+                self._process_cortex_ipc_commands()
 
                 # Get the current time
                 self.current_time = datetime.datetime.now()
