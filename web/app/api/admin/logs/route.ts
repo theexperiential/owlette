@@ -95,5 +95,5 @@ export const GET = withRateLimit(
       return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
     }
   },
-  { strategy: 'user', identifier: 'ip' }
+  { strategy: 'api', identifier: 'ip' }
 );

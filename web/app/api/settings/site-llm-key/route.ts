@@ -72,7 +72,7 @@ export const POST = withRateLimit(
       return NextResponse.json({ error: message }, { status });
     }
   },
-  { strategy: 'user', identifier: 'ip' }
+  { strategy: 'api', identifier: 'ip' }
 );
 
 export const GET = withRateLimit(
@@ -112,7 +112,7 @@ export const GET = withRateLimit(
       return NextResponse.json({ error: message }, { status });
     }
   },
-  { strategy: 'user', identifier: 'ip' }
+  { strategy: 'api', identifier: 'ip' }
 );
 
 export const DELETE = withRateLimit(
@@ -142,5 +142,5 @@ export const DELETE = withRateLimit(
       return NextResponse.json({ error: message }, { status });
     }
   },
-  { strategy: 'user', identifier: 'ip' }
+  { strategy: 'api', identifier: 'ip' }
 );

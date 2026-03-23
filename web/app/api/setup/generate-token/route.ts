@@ -72,6 +72,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     );
   }
 }, {
-  strategy: 'user',
+  strategy: 'api',
   identifier: 'ip',
 });
