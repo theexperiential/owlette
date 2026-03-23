@@ -259,6 +259,12 @@ copy /Y VERSION build\installer_package\agent\ >nul
 echo Copying agent source code...
 xcopy /E /I /Y src\* build\installer_package\agent\src\ >nul
 
+:: Copy Cortex constitution (Agent SDK loads via setting_sources=["project"])
+if exist CLAUDE.md (
+    echo Copying CLAUDE.md for Cortex...
+    copy /Y CLAUDE.md build\installer_package\agent\ >nul
+)
+
 :: Note: Config template not needed - configure_site.py creates config in ProgramData during installation
 
 :: Copy NSSM
