@@ -16,7 +16,7 @@ class TestProcessLifecycle:
 
     process_id = None
 
-    def test_01_create_process(self, api_client, site_id, machine_id, process_cleanup):
+    def test_01_create_process(self, api_client, site_id, machine_id):
         """POST creates a new process."""
         resp = api_client.post("/api/admin/processes", json={
             "siteId": site_id,
@@ -31,7 +31,8 @@ class TestProcessLifecycle:
         assert data["success"] is True
         assert "processId" in data
         TestProcessLifecycle.process_id = data["processId"]
-        process_cleanup.append(data["processId"])
+        # Don't use process_cleanup here — test_06 handles deletion.
+        # process_cleanup is function-scoped and would delete immediately after this test.
 
     def test_02_list_processes_contains_created(self, api_client, site_id, machine_id):
         """GET lists processes including the one we just created."""
@@ -89,7 +90,7 @@ class TestProcessLifecycle:
         )
         assert resp.status_code == 200
 
-    def test_06_delete_process(self, api_client, site_id, machine_id, process_cleanup):
+    def test_06_delete_process(self, api_client, site_id, machine_id):
         """DELETE removes the process."""
         assert TestProcessLifecycle.process_id is not None
         resp = api_client.delete(
@@ -98,9 +99,6 @@ class TestProcessLifecycle:
         )
         assert resp.status_code == 200
         assert resp.json()["success"] is True
-        # Remove from cleanup since we already deleted
-        if TestProcessLifecycle.process_id in process_cleanup:
-            process_cleanup.remove(TestProcessLifecycle.process_id)
 
     def test_07_verify_deleted(self, api_client, site_id, machine_id):
         """GET confirms the process is no longer listed."""
