@@ -76,10 +76,30 @@ export const POST = withRateLimit(
         return target;
       });
 
-      await deploymentRef.update({
+      // Recalculate deployment-level status if all targets are now terminal
+      const targetTerminalStatuses = ['completed', 'failed', 'cancelled', 'uninstalled'];
+      const allTerminal = updatedTargets.every((t: any) =>
+        targetTerminalStatuses.includes(t.status)
+      );
+
+      const updatePayload: Record<string, unknown> = {
         targets: updatedTargets,
         updatedAt: Date.now(),
-      });
+      };
+
+      if (allTerminal) {
+        const statuses = new Set(updatedTargets.map((t: any) => t.status));
+        if (statuses.size === 1 && statuses.has('cancelled')) {
+          updatePayload.status = 'cancelled';
+        } else if (statuses.size === 1 && statuses.has('completed')) {
+          updatePayload.status = 'completed';
+        } else {
+          updatePayload.status = 'partial';
+        }
+        updatePayload.completedAt = Date.now();
+      }
+
+      await deploymentRef.update(updatePayload);
 
       logger.info(`Deployment ${deploymentId} cancelled for machine ${machineId}`, {
         context: 'admin/deployments',

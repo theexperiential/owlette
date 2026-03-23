@@ -68,7 +68,7 @@ export const GET = withRateLimit(
   { strategy: 'api', identifier: 'ip' }
 );
 
-const TERMINAL_STATUSES = ['completed', 'failed', 'partial', 'uninstalled'];
+const TERMINAL_STATUSES = ['completed', 'failed', 'partial', 'cancelled', 'uninstalled'];
 
 /**
  * DELETE /api/admin/deployments/{deploymentId}?siteId=xxx

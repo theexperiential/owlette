@@ -108,7 +108,7 @@ describe('DELETE /api/admin/deployments/[deploymentId]', () => {
     mocks.requireAdmin.mockResolvedValue({ userId: 'test-admin' });
   });
 
-  const terminalStatuses = ['completed', 'failed', 'partial', 'uninstalled'];
+  const terminalStatuses = ['completed', 'failed', 'partial', 'cancelled', 'uninstalled'];
 
   for (const status of terminalStatuses) {
     it(`allows deletion when status is "${status}"`, async () => {
