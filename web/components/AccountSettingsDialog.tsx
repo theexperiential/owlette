@@ -264,7 +264,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         </VisuallyHidden>
         <div className="flex flex-col sm:flex-row sm:min-h-[480px] min-h-0 max-h-[85dvh]">
           {/* Mobile: horizontal scrollable tabs */}
-          <nav className="sm:hidden flex overflow-x-auto border-b border-border bg-background/50 p-1.5 gap-1 flex-shrink-0">
+          <nav className="sm:hidden flex overflow-x-auto border-b border-border bg-card/50 p-1.5 gap-1 flex-shrink-0">
             {SECTIONS.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
@@ -284,7 +284,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
           </nav>
 
           {/* Desktop: vertical sidebar */}
-          <nav className="hidden sm:flex w-48 border-r border-border bg-background/50 p-2 flex-col gap-0.5 flex-shrink-0">
+          <nav className="hidden sm:flex w-48 border-r border-border bg-card/50 p-2 flex-col gap-0.5 flex-shrink-0">
             <div className="px-3 py-2.5 mb-1">
               <h2 className="text-sm font-semibold text-white">settings</h2>
             </div>
@@ -404,7 +404,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                     <p className="text-xs text-muted-foreground mt-1">configure email alerts for machine and process events</p>
                   </div>
 
-                  <div className="flex items-center justify-between rounded-md border border-border bg-background/50 p-4">
+                  <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
                     <div className="space-y-0.5">
                       <Label htmlFor="healthAlerts" className="text-white">machine offline alerts</Label>
                       <p className="text-xs text-muted-foreground">receive email alerts when machines go offline</p>
@@ -417,7 +417,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                     />
                   </div>
 
-                  <div className="flex items-center justify-between rounded-md border border-border bg-background/50 p-4">
+                  <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
                     <div className="space-y-0.5">
                       <Label htmlFor="processAlerts" className="text-white">process crash alerts</Label>
                       <p className="text-xs text-muted-foreground">receive email alerts when monitored processes crash or fail to start</p>
@@ -430,7 +430,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                     />
                   </div>
 
-                  <div className="rounded-md border border-border bg-background/50 p-4 space-y-3">
+                  <div className="rounded-md border border-border bg-card/50 p-4 space-y-3">
                     <div className="space-y-0.5">
                       <Label className="text-white">alert email</Label>
                       <p className="text-xs text-muted-foreground">
@@ -503,7 +503,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                     </p>
                   </div>
 
-                  <div className="space-y-4 rounded-md border border-border bg-background/50 p-4">
+                  <div className="space-y-4 rounded-md border border-border bg-card/50 p-4">
                     <div className="space-y-2">
                       <Label htmlFor="llmProvider" className="text-white">provider</Label>
                       <Select
@@ -623,7 +623,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                     <p className="text-xs text-muted-foreground mt-1">authentication and access control</p>
                   </div>
 
-                  <div className="flex items-center justify-between rounded-md border border-border bg-background/50 p-4">
+                  <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
                     <div>
                       <p className="text-sm text-white">two-factor authentication</p>
                       <p className="text-xs text-muted-foreground">add an extra layer of security to your account</p>
@@ -664,7 +664,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                     </div>
 
                     {showPasswordSection && (
-                      <div className="space-y-3 rounded-md border border-border bg-background/50 p-4">
+                      <div className="space-y-3 rounded-md border border-border bg-card/50 p-4">
                         <div className="space-y-2">
                           <Label htmlFor="currentPassword" className="text-white">current password</Label>
                           <div className="relative">
@@ -793,7 +793,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                   )}
 
                   {/* Create new key */}
-                  <div className="rounded-md border border-border bg-background/50 p-4 space-y-3">
+                  <div className="rounded-md border border-border bg-card/50 p-4 space-y-3">
                     <div className="flex items-end gap-2">
                       <div className="flex-1 space-y-2">
                         <Label htmlFor="apiKeyName" className="text-white">key name</Label>
@@ -849,7 +849,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       <Label className="text-white">active keys</Label>
                       <div className="space-y-2">
                         {apiKeys.map((k) => (
-                          <div key={k.id} className="flex items-center justify-between rounded-md border border-border bg-background/50 px-4 py-3">
+                          <div key={k.id} className="flex items-center justify-between rounded-md border border-border bg-card/50 px-4 py-3">
                             <div className="space-y-0.5 min-w-0">
                               <p className="text-sm text-white truncate">{k.name}</p>
                               <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -924,7 +924,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                   )}
 
                   {/* Usage example */}
-                  <div className="rounded-md border border-border bg-background/50 p-4 space-y-2">
+                  <div className="rounded-md border border-border bg-card/50 p-4 space-y-2">
                     <p className="text-xs text-muted-foreground font-medium">usage</p>
                     <code className="block text-[11px] bg-background rounded px-3 py-2 text-muted-foreground font-mono whitespace-pre-wrap">
                       {`curl "https://owlette.app/api/admin/machines?siteId=SITE_ID&api_key=owk_..."`}

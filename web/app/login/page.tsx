@@ -187,7 +187,7 @@ function LoginForm() {
           <div className="space-y-1 text-center">
             <CardTitle className="text-2xl font-bold text-foreground">owlette</CardTitle>
             <CardDescription className="text-muted-foreground">
-              always watching.
+              attention is all you need
             </CardDescription>
           </div>
         </CardHeader>
@@ -298,7 +298,7 @@ export default function LoginPage() {
             <div className="space-y-1 text-center">
               <CardTitle className="text-2xl font-bold text-foreground">owlette</CardTitle>
               <CardDescription className="text-muted-foreground">
-                always watching.
+                attention is all you need
               </CardDescription>
             </div>
           </CardHeader>

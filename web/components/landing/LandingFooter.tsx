@@ -30,13 +30,13 @@ export function LandingFooter() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
         <div className="flex flex-col md:flex-row justify-between items-center gap-6 sm:gap-8">
           {/* Logo and tagline */}
-          <div className="flex flex-col items-center md:items-start gap-2 sm:gap-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0">
             <Link href="/" className="flex items-center gap-1.5">
-              <OwletteEyeIcon size={24} />
+              <OwletteEyeIcon size={24} className="translate-y-[1px]" />
               <span className="text-base sm:text-lg font-semibold translate-y-[1px]">owlette</span>
             </Link>
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              attention is all you need.
+            <p className="text-xs sm:text-sm text-muted-foreground ml-[calc(24px+0.375rem)] sm:ml-0">
+              attention is all you need
             </p>
           </div>
 
