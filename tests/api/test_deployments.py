@@ -4,10 +4,13 @@ Deployment Integration Tests
 Tests the full deployment API lifecycle using real-world installer URLs
 representing common installer types (NSIS, Inno Setup, MSI-wrapped EXE, etc.).
 
-Lifecycle: create → list → detail → cancel → verify-cancelled → delete.
-Validation tests for error cases.
+TestDeploymentLifecycle: API CRUD flow (create → list → detail → cancel → delete).
+TestDeploymentE2E: Actually deploys software and waits for the agent to finish.
+TestDeploymentValidation: Error cases and input validation.
 """
 
+import os
+import time
 import pytest
 
 
@@ -55,6 +58,62 @@ INSTALLERS = {
     },
 }
 
+# Terminal statuses — deployment is done (success or failure)
+TERMINAL_STATUSES = {"completed", "failed", "cancelled", "partial", "uninstalled"}
+
+# Per-target terminal statuses
+TARGET_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "uninstalled"}
+
+
+def poll_deployment_target(
+    api_client, site_id, deployment_id, machine_id, timeout=300, interval=5,
+):
+    """Poll a deployment until the target machine reaches a terminal status.
+
+    Returns the target dict on success, raises AssertionError on timeout.
+    """
+    deadline = time.time() + timeout
+    last_status = None
+
+    while time.time() < deadline:
+        resp = api_client.get(
+            f"/api/admin/deployments/{deployment_id}",
+            params={"siteId": site_id},
+        )
+        assert resp.status_code == 200, f"Poll failed: {resp.status_code} {resp.text}"
+
+        deployment = resp.json()["deployment"]
+        target = next(
+            (t for t in deployment["targets"] if t["machineId"] == machine_id),
+            None,
+        )
+        assert target is not None, f"Machine {machine_id} not in targets"
+
+        last_status = target["status"]
+        if last_status in TARGET_TERMINAL_STATUSES:
+            return target
+
+        time.sleep(interval)
+
+    pytest.fail(
+        f"Deployment {deployment_id} timed out after {timeout}s — "
+        f"target {machine_id} stuck at '{last_status}'"
+    )
+
+
+# ---------------------------------------------------------------------------
+#  Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def deploy_timeout():
+    """Timeout (seconds) for waiting on agent to complete a deployment."""
+    return int(os.environ.get("OWLETTE_DEPLOY_TIMEOUT", "300"))
+
+
+# ---------------------------------------------------------------------------
+#  TestDeploymentLifecycle — API CRUD (no agent interaction)
+# ---------------------------------------------------------------------------
 
 @pytest.mark.api
 @pytest.mark.integration
@@ -62,8 +121,9 @@ INSTALLERS = {
 class TestDeploymentLifecycle:
     """Full deployment lifecycle: create → list → detail → cancel → delete.
 
-    Uses a real NSIS installer URL (7-Zip) to validate the complete flow.
-    The cleanup fixture ensures the deployment is removed even if a test fails.
+    Uses a real NSIS installer URL to validate the complete API flow.
+    Deliberately cancels before the agent finishes — this tests the API,
+    not the agent's installer execution.
     """
 
     deployment_id: str | None = None
@@ -100,7 +160,6 @@ class TestDeploymentLifecycle:
         ids = [d["id"] for d in data["deployments"]]
         assert self.deployment_id in ids
 
-        # Verify the deployment data matches what we created
         deployment = next(d for d in data["deployments"] if d["id"] == self.deployment_id)
         assert deployment["installer_name"] == INSTALLERS["nsis"]["installer_name"]
         assert deployment["status"] in ("pending", "in_progress")
@@ -165,7 +224,6 @@ class TestDeploymentLifecycle:
             f"/api/admin/deployments/{self.deployment_id}",
             params={"siteId": site_id},
         )
-        # cancelled is terminal, so this should succeed
         assert resp.status_code == 200, f"Delete failed ({resp.status_code}): {resp.text}"
         assert resp.json()["success"] is True
 
@@ -179,6 +237,63 @@ class TestDeploymentLifecycle:
         assert resp.status_code == 404
 
 
+# ---------------------------------------------------------------------------
+#  TestDeploymentE2E — Actually installs software and waits for completion
+# ---------------------------------------------------------------------------
+
+@pytest.mark.api
+@pytest.mark.integration
+@pytest.mark.destructive
+class TestDeploymentE2E:
+    """End-to-end deployment tests — creates real deployments and waits
+    for the agent to download, install, and report back.
+
+    Each parametrized test deploys one installer type to the target machine,
+    polls until the agent reports a terminal status, then verifies success.
+
+    Timeout: OWLETTE_DEPLOY_TIMEOUT env var (default 300s / 5 min).
+    """
+
+    @pytest.mark.parametrize("installer_key,installer", list(INSTALLERS.items()))
+    def test_deploy_and_wait(
+        self, api_client, site_id, machine_id, deployment_cleanup,
+        deploy_timeout, installer_key, installer,
+    ):
+        """Deploy {installer_key} and wait for agent to complete installation."""
+        # --- Create deployment ---
+        resp = api_client.post("/api/admin/deployments", json={
+            "siteId": site_id,
+            "name": installer["name"],
+            "installer_name": installer["installer_name"],
+            "installer_url": installer["installer_url"],
+            "silent_flags": installer["silent_flags"],
+            "verify_path": installer.get("verify_path"),
+            "machineIds": [machine_id],
+        })
+        assert resp.status_code == 200, (
+            f"Failed to create {installer_key} deployment: {resp.text}"
+        )
+
+        deployment_id = resp.json()["deploymentId"]
+        deployment_cleanup.append((deployment_id, [machine_id]))
+
+        # --- Wait for agent to finish ---
+        target = poll_deployment_target(
+            api_client, site_id, deployment_id, machine_id,
+            timeout=deploy_timeout,
+        )
+
+        # --- Verify result ---
+        assert target["status"] == "completed", (
+            f"{installer_key} deployment finished with status '{target['status']}' "
+            f"(expected 'completed')"
+        )
+
+
+# ---------------------------------------------------------------------------
+#  TestMultiMachineDeployment
+# ---------------------------------------------------------------------------
+
 @pytest.mark.api
 @pytest.mark.integration
 @pytest.mark.destructive
@@ -186,7 +301,6 @@ class TestMultiMachineDeployment:
     """Test deployment targeting multiple machines.
 
     Verifies that cancelling one target does not affect the others.
-    Uses Inno Setup installer (VLC) for variety.
 
     NOTE: Requires OWLETTE_MACHINE_ID_2 env var for a second machine.
     If not set, the test is skipped.
@@ -196,13 +310,11 @@ class TestMultiMachineDeployment:
 
     @pytest.fixture(autouse=True)
     def _require_second_machine(self, request):
-        import os
         if not os.environ.get("OWLETTE_MACHINE_ID_2"):
             pytest.skip("OWLETTE_MACHINE_ID_2 not set — skipping multi-machine tests")
 
     @pytest.fixture
     def machine_id_2(self):
-        import os
         return os.environ["OWLETTE_MACHINE_ID_2"]
 
     def test_01_create_multi_target(self, api_client, site_id, machine_id, machine_id_2, deployment_cleanup):
@@ -263,49 +375,9 @@ class TestMultiMachineDeployment:
         assert t2["status"] != "cancelled"  # still pending/in_progress
 
 
-@pytest.mark.api
-@pytest.mark.integration
-class TestDeploymentInstallerTypes:
-    """Verify deployment creation works with each major installer type.
-
-    These tests only validate the API accepts the deployment — they don't
-    wait for the agent to actually download/install (that's an E2E concern).
-    """
-
-    @pytest.mark.parametrize("installer_key,installer", list(INSTALLERS.items()))
-    def test_create_with_installer_type(
-        self, api_client, site_id, machine_id, deployment_cleanup, installer_key, installer
-    ):
-        """Create deployment with {installer_key} installer type."""
-        resp = api_client.post("/api/admin/deployments", json={
-            "siteId": site_id,
-            "name": f"Test: {installer['name']}",
-            "installer_name": installer["installer_name"],
-            "installer_url": installer["installer_url"],
-            "silent_flags": installer["silent_flags"],
-            "verify_path": installer.get("verify_path"),
-            "machineIds": [machine_id],
-        })
-        assert resp.status_code == 200, (
-            f"Failed to create {installer_key} deployment: {resp.text}"
-        )
-
-        data = resp.json()
-        assert data["success"] is True
-        assert data["deploymentId"].startswith("deploy-")
-        deployment_cleanup.append((data["deploymentId"], [machine_id]))
-
-        # Verify the deployment is retrievable with correct data
-        detail_resp = api_client.get(
-            f"/api/admin/deployments/{data['deploymentId']}",
-            params={"siteId": site_id},
-        )
-        assert detail_resp.status_code == 200
-        deployment = detail_resp.json()["deployment"]
-        assert deployment["installer_name"] == installer["installer_name"]
-        assert deployment["installer_url"] == installer["installer_url"]
-        assert deployment["silent_flags"] == installer["silent_flags"]
-
+# ---------------------------------------------------------------------------
+#  TestDeploymentValidation — Error cases, no agent interaction
+# ---------------------------------------------------------------------------
 
 @pytest.mark.api
 @pytest.mark.integration

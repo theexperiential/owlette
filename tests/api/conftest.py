@@ -37,37 +37,50 @@ def deployment_cleanup(api_client, site_id, machine_id):
     """Cleanup registry for deployments created during tests.
 
     Append (deployment_id, machine_ids) tuples to this list.
-    Teardown cancels all non-terminal targets first, then deletes.
+    Teardown checks each target's status — only cancels non-terminal targets,
+    leaves completed/failed ones alone — then deletes the deployment record.
     """
+    import logging
+    log = logging.getLogger(__name__)
+
     created: list[tuple[str, list[str]]] = []
     yield created
+
+    target_terminal = {"completed", "failed", "cancelled", "uninstalled"}
+
     for did, machine_ids in reversed(created):
         try:
-            # Cancel all targets so the deployment reaches a terminal state.
-            # Without this, DELETE returns 409 and the deployment is orphaned.
-            for mid in machine_ids:
-                try:
-                    api_client.post(
-                        f"/api/admin/deployments/{did}/cancel",
-                        json={
-                            "siteId": site_id,
-                            "machineId": mid,
-                            "installer_name": "__cleanup__",
-                        },
-                    )
-                except Exception:
-                    pass
+            # Check current deployment state before touching it
+            resp = api_client.get(
+                f"/api/admin/deployments/{did}",
+                params={"siteId": site_id},
+            )
+            if resp.status_code == 404:
+                continue  # Already deleted (e.g. by the test itself)
 
-            # Now delete — deployment should be in a terminal state
+            if resp.status_code == 200:
+                targets = resp.json().get("deployment", {}).get("targets", [])
+                # Only cancel targets that are still in-flight
+                for t in targets:
+                    if t.get("status") not in target_terminal:
+                        try:
+                            api_client.post(
+                                f"/api/admin/deployments/{did}/cancel",
+                                json={
+                                    "siteId": site_id,
+                                    "machineId": t["machineId"],
+                                    "installer_name": "__cleanup__",
+                                },
+                            )
+                        except Exception:
+                            pass
+
+            # Now delete the deployment record
             resp = api_client.delete(
                 f"/api/admin/deployments/{did}",
                 params={"siteId": site_id},
             )
-            # If still non-terminal (race condition), log but don't fail
             if resp.status_code == 409:
-                import logging
-                logging.getLogger(__name__).warning(
-                    f"Could not delete deployment {did}: still non-terminal"
-                )
+                log.warning(f"Could not delete deployment {did}: still non-terminal")
         except Exception:
             pass  # Best-effort cleanup

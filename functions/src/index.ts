@@ -1,7 +1,9 @@
 /**
  * Owlette Cloud Functions
  *
- * Functions for metrics history aggregation and data management.
+ * - Metrics history aggregation
+ * - Deployment status tracking (command completion → deployment doc updates)
+ * - Stale deployment sweeper (catches agent crashes / timeouts)
  */
 
 import * as admin from 'firebase-admin';
@@ -11,3 +13,5 @@ admin.initializeApp();
 
 // Export all functions
 export { onMetricsWrite } from './metricsHistory';
+export { onCommandCompleted } from './deploymentStatus';
+export { sweepStaleDeployments } from './deploymentSweeper';
