@@ -34,7 +34,7 @@ Right-clicking the tray icon shows:
 The tray icon communicates with the service through an **IPC status file**:
 
 ```
-C:\ProgramData\Owlette\agent\config\ipc_status.json
+C:\ProgramData\Owlette\tmp\service_status.json
 ```
 
 The service writes status updates to this file, and the tray reads it periodically (every 60 seconds) to display current state.
@@ -48,7 +48,12 @@ The service writes status updates to this file, and the tray reads it periodical
   "firebase_state": "CONNECTED",
   "site_id": "my-site",
   "machine_id": "DESKTOP-ABC123",
-  "agent_version": "2.1.8"
+  "agent_version": "2.3.1",
+  "health": {
+    "status": "healthy",
+    "last_check": "2026-03-24T10:00:00",
+    "details": {}
+  }
 }
 ```
 

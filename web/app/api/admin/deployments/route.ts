@@ -100,6 +100,22 @@ export const POST = withRateLimit(
         );
       }
 
+      // Validate installer_url is a valid HTTPS URL
+      try {
+        const parsedUrl = new URL(installer_url);
+        if (parsedUrl.protocol !== 'https:') {
+          return NextResponse.json(
+            { error: 'installer_url must use HTTPS protocol' },
+            { status: 400 }
+          );
+        }
+      } catch {
+        return NextResponse.json(
+          { error: 'installer_url must be a valid URL' },
+          { status: 400 }
+        );
+      }
+
       await requireAdminWithSiteAccess(request, siteId);
 
       const db = getAdminDb();

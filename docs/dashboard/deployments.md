@@ -25,7 +25,7 @@ The deployment system allows you to:
 | Field | Required | Description |
 |-------|----------|-------------|
 | **Name** | Yes | Descriptive name (e.g., "TouchDesigner 2025") |
-| **Installer URL** | Yes | Direct download link to the `.exe` installer |
+| **Installer URL** | Yes | Direct HTTPS download link to the `.exe` installer |
 | **Silent Flags** | Yes | Flags for unattended installation |
 | **Verify Path** | No | File path to check after installation |
 | **Save as Template** | No | Save configuration for reuse |
@@ -63,6 +63,19 @@ The dashboard shows real-time status for each machine:
 | **Completed** | Installation successful |
 | **Failed** | Installation failed (shows error) |
 | **Cancelled** | Deployment was cancelled |
+| **Uninstalled** | Software was uninstalled from this machine |
+
+Overall deployment status is calculated automatically:
+
+| Overall Status | Meaning |
+|----------------|---------|
+| **Pending** | All targets still pending |
+| **In Progress** | At least one target downloading or installing |
+| **Completed** | All targets completed |
+| **Failed** | All non-cancelled targets failed |
+| **Partial** | Mix of completed and failed targets |
+| **Cancelled** | All targets cancelled |
+| **Uninstalled** | All targets uninstalled |
 
 ---
 
@@ -82,12 +95,12 @@ Save frequently-used configurations:
 To cancel an in-progress deployment:
 
 1. Find the deployment in the deployments list
-2. Click **Cancel**
+2. Click **Cancel** next to the target machine
 3. Machines that haven't started will skip the deployment
-4. Machines currently downloading will attempt to stop
+4. Machines currently downloading or installing will be stopped (the agent terminates the installer process tree)
 
 !!! note
-    Installations that have already begun executing cannot be cancelled — the installer must complete or fail on its own.
+    Only targets in `pending`, `downloading`, or `installing` state can be cancelled. Targets that have already completed, failed, or been uninstalled cannot be cancelled.
 
 ---
 
@@ -139,11 +152,20 @@ Dashboard creates deployment record in Firestore
 
 The default installation timeout is 40 minutes. Very large installers on slow connections may need the agent-side timeout adjusted in `installer_utils.py`.
 
+!!! info "Automatic timeout cleanup"
+    Firebase Cloud Functions automatically mark stale deployments as failed:
+
+    - **Pending** targets that haven't started after **15 minutes** are marked failed
+    - **Downloading/Installing** targets stuck for over **30 minutes** are marked failed
+
+    This prevents deployments from appearing stuck indefinitely if a machine goes offline mid-deployment.
+
 ---
 
 ## Security
 
 - Only deploy from **trusted sources** — the system does not verify installer signatures
-- Always use **HTTPS URLs** for downloads
+- **HTTPS URLs are required** — the API rejects HTTP, `file://`, and other non-HTTPS protocols
+- Optional **SHA256 checksum verification** — the agent supports verifying downloaded files against a SHA256 hash when provided via the command payload (not currently exposed in the dashboard UI)
 - The agent runs as **SYSTEM** — installed software has full administrative access
 - Pre-test installers before mass deployment

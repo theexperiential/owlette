@@ -2347,12 +2347,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                     # Optional: Verify installation
                     if verify_path:
+                        time.sleep(3)  # Allow filesystem to settle after install
                         if installer_utils.verify_installation(verify_path):
-                            result_msg = f"Installation completed successfully. Verified at {verify_path}"
+                            if exit_code == 3010:
+                                result_msg = f"Installation completed successfully (reboot required). Verified at {verify_path}"
+                            else:
+                                result_msg = f"Installation completed successfully. Verified at {verify_path}"
                         else:
-                            result_msg = f"Installation completed (exit code 0) but verification failed - {verify_path} not found"
+                            return f"Error: Installation completed (exit code {exit_code}) but verification failed - {verify_path} not found. The installer may have shown a dialog or requires different silent flags."
                     else:
-                        result_msg = f"Installation completed successfully (exit code {exit_code})"
+                        if exit_code == 3010:
+                            result_msg = f"Installation completed successfully (reboot required)"
+                        else:
+                            result_msg = f"Installation completed successfully (exit code {exit_code})"
 
                     logging.info(result_msg)
 
@@ -3592,7 +3599,7 @@ print(f'monitors={{len(sct.monitors) - 1}}')
                                                     action='process_killed',
                                                     level='info',
                                                     process_name=process.get('name'),
-                                                    details='Stopped by schedule (outside active window)'
+                                                    details=f'Stopped by schedule (outside active window) - PID {last_pid}'
                                                 )
                                             # Clear tracking so we don't keep trying to stop
                                             if process_id in self.last_started:

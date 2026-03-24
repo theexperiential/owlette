@@ -76,6 +76,8 @@ export function ScreenshotDialog({
             }
             setIsCapturing(false);
             setError(null);
+            // New capture arrived — deselect historical so latest is shown + highlighted
+            setSelectedHistorical(null);
           }
           return data.lastScreenshot;
         });
@@ -234,6 +236,7 @@ export function ScreenshotDialog({
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
+      second: '2-digit',
       hour12: true,
     });
   };
@@ -263,8 +266,8 @@ export function ScreenshotDialog({
       </div>
     )}
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-card border-border max-w-[96vw] w-[96vw] p-0 gap-0">
-        <div className="flex h-[90vh] max-h-[900px]">
+      <DialogContent showCloseButton={false} className="bg-card border-border w-[calc(100vw-2rem)] sm:max-w-none max-w-none p-0 gap-0 h-[calc(100vh-4rem)]">
+        <div className="flex h-full overflow-hidden">
 
           {/* Collapsible left sidebar — history */}
           {showHistory && (
@@ -305,9 +308,9 @@ export function ScreenshotDialog({
                   <p className="text-xs text-muted-foreground p-3">no history yet</p>
                 ) : (
                   <div className="py-1">
-                    {historyScreenshots.map((hs) => {
+                    {historyScreenshots.map((hs, index) => {
                       const isSelected = selectedHistorical?.id === hs.id;
-                      const isLatest = !selectedHistorical && screenshot && hs.timestamp === screenshot.timestamp;
+                      const isLatest = !selectedHistorical && index === 0;
                       const isDeleting = deletingId === hs.id;
                       return (
                         <div
@@ -366,7 +369,7 @@ export function ScreenshotDialog({
           {/* Main content — screenshot display */}
           <div className="flex-1 flex flex-col min-w-0">
             {/* Header */}
-            <DialogHeader className="px-4 py-3 border-b border-border flex-shrink-0">
+            <DialogHeader className="px-4 py-2 border-b border-border flex-shrink-0">
               <DialogTitle className="flex items-center gap-2">
                 {!showHistory && (
                   <Button
@@ -386,10 +389,18 @@ export function ScreenshotDialog({
                     (viewing {formatTimestamp(selectedHistorical.timestamp)})
                   </span>
                 )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground ml-auto"
+                  onClick={() => onOpenChange(false)}
+                >
+                  <XIcon className="h-4 w-4" />
+                </Button>
               </DialogTitle>
             </DialogHeader>
 
-            {/* Screenshot display — flex-1 fills remaining space for widescreen layout */}
+            {/* Screenshot display */}
             <div className="flex-1 relative bg-black/30 flex items-center justify-center overflow-hidden min-h-0">
               {isCapturing && (
                 <div className="flex flex-col items-center gap-3 py-12 text-muted-foreground">
@@ -416,7 +427,7 @@ export function ScreenshotDialog({
                 <img
                   src={displayedScreenshot.url}
                   alt={`Screenshot of ${machineName}`}
-                  className="w-full h-full object-contain cursor-pointer"
+                  className="absolute inset-0 w-full h-full object-contain cursor-pointer"
                   onClick={() => setFullscreen(true)}
                 />
               )}
@@ -427,7 +438,7 @@ export function ScreenshotDialog({
               <div className="text-xs text-muted-foreground">
                 {displayedScreenshot && (
                   <>
-                    captured {formatRelativeTime(displayedScreenshot.timestamp / 1000)} ({displayedScreenshot.sizeKB}KB)
+                    captured {formatTimestamp(displayedScreenshot.timestamp)} ({displayedScreenshot.sizeKB}KB)
                   </>
                 )}
                 <span className="ml-2 text-muted-foreground/60">

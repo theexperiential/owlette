@@ -6,18 +6,49 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
-## [Unreleased]
+## [2.3.1] - 2026-03-24
+
+### Changed
+- Version bump for documentation audit and accuracy pass
+
+---
+
+## [2.3.0] - 2026-03-22
 
 ### Added
-- **Passkey Authentication (WebAuthn)** — Passwordless login using biometrics or device PIN via the Web Authentication API
-  - "Sign in with passkey" button on login page (auto-hidden if browser doesn't support WebAuthn)
-  - Passkey registration UI on 2FA setup page and via PasskeyManager component
-  - Passkey management: list, rename, and delete registered passkeys
+- **Cortex AI Chat** — AI-powered chat interface with 24 specialized tools across three tiers for machine management via natural language
+  - Tier 1 (read-only): system info, process lists, logs, metrics, network, disk
+  - Tier 2 (process management): restart, kill, start, set launch mode, screenshot
+  - Tier 3 (privileged): run commands/scripts, read/write files, reboot/shutdown
+  - Autonomous mode: AI auto-investigates process crashes with configurable directives
+  - Escalation system: emails admins when Cortex can't resolve an issue
+  - Per-user and per-site LLM key management (encrypted at rest)
+- **Passkey Authentication (WebAuthn)** — Passwordless login using biometrics or device PIN
+  - Discoverable credentials (no email needed to start login)
   - Passkey login skips 2FA entirely (passkey IS the second factor)
   - Clone detection via signature counter validation
-  - Discoverable credentials (no email needed to start login)
-  - New API routes: `/api/passkeys/register/options`, `/api/passkeys/register/verify`, `/api/passkeys/authenticate/options`, `/api/passkeys/authenticate/verify`, `/api/passkeys/list`, `/api/passkeys/[credentialId]`
-  - New Firestore collections: `users/{userId}/passkeys/`, `webauthn_challenges/`
+  - Management UI: list, rename, and delete registered passkeys
+- **Webhook Notifications** — Configurable webhooks for process events, machine status changes, and deployment updates
+- **Process Scheduling** — Schedule processes to run during specific time windows with launch modes (off, always, scheduled)
+  - Schedule presets for reuse across processes
+  - Admin schedule management page
+- **Screenshot Capture** — Remote desktop screenshots with multi-monitor support
+- **Health Probes** — Agent-side health monitoring with configurable checks
+- **Server-Side Deployment Status** — Firebase Cloud Functions for automatic deployment status tracking
+  - Firestore trigger updates deployment status on command completion
+  - Scheduled sweeper marks stale deployments as failed (15 min pending, 30 min active)
+- **Software Inventory** — Agent reports installed software to Firestore
+- **Admin Webhook Management** — Dashboard page for configuring site webhooks
+- **Admin Schedule Presets** — Dashboard page for managing schedule presets
+- **MkDocs Documentation** — Complete documentation rewrite with MkDocs Material theme
+
+### Changed
+- Agent monitoring loop interval reduced from 10s to 5s
+- Deployment system now uses Firebase Cloud Functions for status aggregation
+- Process launch mode replaces simple autolaunch toggle (`set_launch_mode` replaces `toggle_autolaunch`)
+
+### Removed
+- `owlette_updater.py` — self-update logic moved into main service command handler
 
 ---
 

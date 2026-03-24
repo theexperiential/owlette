@@ -10,7 +10,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { collection, query, orderBy, limit, getDocs, where, startAfter, Query, DocumentData, Timestamp, onSnapshot, writeBatch, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
-import { ChevronLeft, ChevronRight, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -44,6 +44,9 @@ const ACTION_TYPES = [
   { value: 'process_crash', label: 'process crashed' },
   { value: 'process_start_failed', label: 'start failed' },
   { value: 'command_executed', label: 'command executed' },
+  { value: 'deployment_completed', label: 'deployment completed' },
+  { value: 'deployment_failed', label: 'deployment failed' },
+  { value: 'deployment_cancelled', label: 'deployment cancelled' },
 ];
 
 // Level badges styling
@@ -96,6 +99,9 @@ export default function LogsPage() {
 
   // Account settings dialog
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
+
+  // Expanded log row
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
   // Redirect if not logged in
   useEffect(() => {
@@ -585,38 +591,70 @@ export default function LogsPage() {
                 no logs found for this site
               </div>
             ) : (
-              logs.map((log) => (
-                <div
-                  key={log.id}
-                  className="px-4 py-3 hover:bg-muted/50 transition-colors border-b border-border last:border-b-0"
-                >
-                  <div className="flex items-center justify-between gap-4 text-sm">
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="w-[52px] flex-shrink-0">{getLevelBadge(log.level)}</div>
-                      <span className="text-foreground font-medium whitespace-nowrap w-[140px] flex-shrink-0">
-                        {formatAction(log.action)}
-                      </span>
-                      <span className="text-muted-foreground">•</span>
-                      <span className="text-foreground whitespace-nowrap">{log.machineName}</span>
-                      {log.processName && (
-                        <>
-                          <span className="text-muted-foreground">•</span>
-                          <span className="text-foreground whitespace-nowrap">{log.processName}</span>
-                        </>
-                      )}
-                      {log.details && (
-                        <>
-                          <span className="text-muted-foreground">•</span>
-                          <span className="text-muted-foreground truncate">{log.details}</span>
-                        </>
-                      )}
+              logs.map((log) => {
+                const isExpanded = expandedLogId === log.id;
+                return (
+                  <div
+                    key={log.id}
+                    className={`group/row px-4 py-3 hover:bg-muted/50 transition-colors border-b border-border last:border-b-0 ${isExpanded ? 'bg-muted/30' : ''}`}
+                  >
+                    <div className="flex items-center justify-between gap-4 text-sm">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                          className="group/expand flex items-center gap-3 cursor-pointer hover:opacity-80 flex-shrink-0"
+                        >
+                          <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
+                          <div className="w-[52px] flex-shrink-0">{getLevelBadge(log.level)}</div>
+                          <span className="text-foreground font-medium whitespace-nowrap w-[140px] flex-shrink-0 text-left">
+                            {formatAction(log.action)}
+                          </span>
+                        </button>
+                        <span className="text-muted-foreground">•</span>
+                        <span className="text-foreground whitespace-nowrap">{log.machineName}</span>
+                        {log.processName && (
+                          <>
+                            <span className="text-muted-foreground">•</span>
+                            <span className="text-foreground whitespace-nowrap">{log.processName}</span>
+                          </>
+                        )}
+                        {!isExpanded && log.details && (
+                          <>
+                            <span className="text-muted-foreground">•</span>
+                            <span className="text-muted-foreground truncate">{log.details}</span>
+                          </>
+                        )}
+                      </div>
+                      <div className="text-muted-foreground whitespace-nowrap text-xs">
+                        {log.timestamp?.toDate().toLocaleString()}
+                      </div>
                     </div>
-                    <div className="text-muted-foreground whitespace-nowrap text-xs">
-                      {log.timestamp?.toDate().toLocaleString()}
-                    </div>
+                    {isExpanded && (
+                      <div className="mt-3 pt-3 border-t border-border/50 text-sm flex gap-6">
+                        <div className="flex-shrink-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 self-start">
+                          <span className="text-muted-foreground">machine id</span>
+                          <span className="text-foreground text-xs font-mono">{log.machineId}</span>
+                          {log.userId && (
+                            <>
+                              <span className="text-muted-foreground">user</span>
+                              <span className="text-foreground text-xs font-mono">{log.userId}</span>
+                            </>
+                          )}
+                          <span className="text-muted-foreground">timestamp</span>
+                          <span className="text-foreground">{log.timestamp?.toDate().toLocaleString()}</span>
+                        </div>
+                        {log.details && (
+                          <div className="flex-1 min-w-0 border-l border-border/50 pl-6">
+                            <span className="text-muted-foreground text-xs">details</span>
+                            <p className="text-foreground mt-1 whitespace-pre-wrap break-words select-text">{log.details}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </Card>

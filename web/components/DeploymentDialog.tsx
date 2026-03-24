@@ -7,13 +7,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Download, Loader2, Pencil, Trash2 } from 'lucide-react';
+import { Download, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useMachines } from '@/hooks/useFirestore';
 import { DeploymentTemplate, Deployment } from '@/hooks/useDeployments';
 import { Badge } from '@/components/ui/badge';
 import { useSystemPresets } from '@/hooks/useSystemPresets';
-import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 import { SelectGroup, SelectLabel } from '@/components/ui/select';
 
 interface DeploymentDialogProps {
@@ -27,11 +26,9 @@ interface DeploymentDialogProps {
   onDeleteTemplate: (templateId: string) => Promise<void>;
 }
 
-// Helper function to truncate text in the middle, preserving start and end
-const truncateMiddle = (text: string, startChars: number = 12, endChars: number = 12, maxLength: number = 28): string => {
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, startChars)}...${text.slice(-endChars)}`;
-};
+// Prefix constants for the unified select value
+const PRESET_PREFIX = 'preset:';
+const TEMPLATE_PREFIX = 'template:';
 
 export default function DeploymentDialog({
   open,
@@ -45,7 +42,6 @@ export default function DeploymentDialog({
 }: DeploymentDialogProps) {
   const { machines } = useMachines(siteId);
   const { presets, categories } = useSystemPresets();
-  const { version: latestInstallerVersion, downloadUrl: latestInstallerUrl } = useInstallerVersion();
 
   const [deploymentName, setDeploymentName] = useState('');
   const [installerName, setInstallerName] = useState('');
@@ -55,13 +51,38 @@ export default function DeploymentDialog({
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(new Set());
   const [saveAsTemplate, setSaveAsTemplate] = useState(false);
   const [deploying, setDeploying] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('');
-  const [editingTemplate, setEditingTemplate] = useState<string>('');  // ID of template being edited
-  const [selectedPreset, setSelectedPreset] = useState<string>('');  // ID of selected system preset
+  const [selectedItem, setSelectedItem] = useState<string>('');  // 'preset:id' or 'template:id'
+  const [editingTemplate, setEditingTemplate] = useState<string>('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
+
+  // Derive selection type from the unified selectedItem
+  const isTemplateSelected = selectedItem.startsWith(TEMPLATE_PREFIX);
+  const selectedTemplateId = isTemplateSelected ? selectedItem.slice(TEMPLATE_PREFIX.length) : '';
+
+  // Filter out Owlette Agent presets from the library
+  const filteredPresets = presets.filter(p => !p.is_owlette_agent);
+  const filteredCategories = categories.filter(cat =>
+    filteredPresets.some(p => p.category === cat)
+  );
+
+  const hasItems = filteredPresets.length > 0 || templates.length > 0;
+
+  // Get display name for the selected item
+  const getSelectedLabel = (): string => {
+    if (!selectedItem) return '';
+    if (selectedItem.startsWith(PRESET_PREFIX)) {
+      const id = selectedItem.slice(PRESET_PREFIX.length);
+      return filteredPresets.find(p => p.id === id)?.name || '';
+    }
+    if (selectedItem.startsWith(TEMPLATE_PREFIX)) {
+      const id = selectedItem.slice(TEMPLATE_PREFIX.length);
+      return templates.find(t => t.id === id)?.name || '';
+    }
+    return '';
+  };
 
   // Reset form when modal opens
   useEffect(() => {
@@ -73,75 +94,52 @@ export default function DeploymentDialog({
       setVerifyPath('');
       setSelectedMachines(new Set());
       setSaveAsTemplate(false);
-      setSelectedTemplate('');
+      setSelectedItem('');
       setEditingTemplate('');
-      setSelectedPreset('');
     }
   }, [open]);
 
-  const handleTemplateSelect = (templateId: string) => {
-    if (templateId === 'none') {
-      setSelectedTemplate('');
+  const handleItemSelect = (value: string) => {
+    if (value === 'none') {
+      setSelectedItem('');
       setEditingTemplate('');
       return;
     }
 
-    const template = templates.find(t => t.id === templateId);
-    if (template) {
-      setSelectedTemplate(templateId);
-      setDeploymentName(template.name);
-      setInstallerName(template.installer_name);
-      setInstallerUrl(template.installer_url);
-      setSilentFlags(template.silent_flags);
-      setVerifyPath(template.verify_path || '');
-      setEditingTemplate('');
+    setSelectedItem(value);
+    setEditingTemplate('');
+    setSaveAsTemplate(false);
 
-      // Clear preset selection when template is selected
-      setSelectedPreset('');
-    }
-  };
-
-  const handlePresetSelect = (presetId: string) => {
-    if (presetId === 'none') {
-      setSelectedPreset('');
-      return;
-    }
-
-    const preset = presets.find(p => p.id === presetId);
-    if (preset) {
-      setSelectedPreset(presetId);
-
-      // Populate form with preset data
-      if (preset.is_owlette_agent) {
-        // Special handling for Owlette Agent preset - fetch latest from installer_metadata
-        setDeploymentName(`Update Owlette to v${latestInstallerVersion || 'latest'}`);
-        setInstallerName(preset.installer_name);
-        setInstallerUrl(latestInstallerUrl || ''); // Dynamic URL from installer_metadata
-      } else {
-        // Standard preset
+    if (value.startsWith(PRESET_PREFIX)) {
+      const presetId = value.slice(PRESET_PREFIX.length);
+      const preset = filteredPresets.find(p => p.id === presetId);
+      if (preset) {
         setDeploymentName(`Deploy ${preset.software_name}`);
         setInstallerName(preset.installer_name);
         setInstallerUrl(preset.installer_url);
+        setSilentFlags(preset.silent_flags);
+        setVerifyPath(preset.verify_path || '');
       }
-
-      setSilentFlags(preset.silent_flags);
-      setVerifyPath(preset.verify_path || '');
-
-      // Clear template selection when preset is selected
-      setSelectedTemplate('');
-      setEditingTemplate('');
+    } else if (value.startsWith(TEMPLATE_PREFIX)) {
+      const templateId = value.slice(TEMPLATE_PREFIX.length);
+      const template = templates.find(t => t.id === templateId);
+      if (template) {
+        setDeploymentName(template.name);
+        setInstallerName(template.installer_name);
+        setInstallerUrl(template.installer_url);
+        setSilentFlags(template.silent_flags);
+        setVerifyPath(template.verify_path || '');
+      }
     }
   };
 
   const handleEditTemplate = () => {
-    if (selectedTemplate) {
-      if (editingTemplate === selectedTemplate) {
-        // Toggle off - cancel editing
+    if (selectedTemplateId) {
+      if (editingTemplate === selectedTemplateId) {
         setEditingTemplate('');
         toast.info('Edit mode cancelled');
       } else {
-        // Toggle on - start editing
-        setEditingTemplate(selectedTemplate);
+        setEditingTemplate(selectedTemplateId);
         setSaveAsTemplate(false);
         toast.info('Edit the template fields below and deploy to save changes');
       }
@@ -149,19 +147,18 @@ export default function DeploymentDialog({
   };
 
   const handleDeleteTemplate = () => {
-    if (!selectedTemplate) return;
+    if (!selectedTemplateId) return;
     setShowDeleteConfirm(true);
   };
 
   const confirmDeleteTemplate = async () => {
-    if (!selectedTemplate) return;
+    if (!selectedTemplateId) return;
 
     try {
-      await onDeleteTemplate(selectedTemplate);
+      await onDeleteTemplate(selectedTemplateId);
       toast.success('Template deleted successfully');
 
-      // Clear form
-      setSelectedTemplate('');
+      setSelectedItem('');
       setEditingTemplate('');
       setDeploymentName('');
       setInstallerName('');
@@ -198,7 +195,6 @@ export default function DeploymentDialog({
   };
 
   const handleDeploy = async () => {
-    // Validation
     if (!deploymentName.trim()) {
       toast.error('Please provide a deployment name');
       return;
@@ -214,7 +210,6 @@ export default function DeploymentDialog({
       return;
     }
 
-    // Validate URL format
     try {
       new URL(installerUrl);
     } catch (e) {
@@ -258,24 +253,17 @@ export default function DeploymentDialog({
         toast.success('Template saved successfully!');
       }
 
-      // Check if this is an Owlette update deployment
-      const selectedPresetData = selectedPreset ? presets.find(p => p.id === selectedPreset) : null;
-      const isOwletteUpdate = selectedPresetData?.is_owlette_agent || false;
-
-      // Build deployment object, excluding undefined fields
+      // Build deployment object
       const deploymentData: any = {
         name: deploymentName,
         installer_name: installerName,
         installer_url: installerUrl,
         silent_flags: silentFlags,
-        targets: [],  // Will be filled by the hook
+        targets: [],
       };
 
-      // Only add optional fields if they have values (Firestore doesn't accept undefined)
       if (verifyPath?.trim()) deploymentData.verify_path = verifyPath.trim();
-      if (isOwletteUpdate) deploymentData.is_owlette_update = true;
 
-      // Create deployment
       const deploymentId = await onCreateDeployment(
         deploymentData,
         Array.from(selectedMachines)
@@ -283,7 +271,6 @@ export default function DeploymentDialog({
 
       toast.success(`Deployment started! Installing on ${selectedMachines.size} machine${selectedMachines.size > 1 ? 's' : ''}`);
 
-      // Reset form
       setDeploymentName('');
       setInstallerName('');
       setInstallerUrl('');
@@ -291,7 +278,7 @@ export default function DeploymentDialog({
       setVerifyPath('');
       setSelectedMachines(new Set());
       setSaveAsTemplate(false);
-      setSelectedTemplate('');
+      setSelectedItem('');
 
       onOpenChange(false);
     } catch (error: any) {
@@ -313,129 +300,93 @@ export default function DeploymentDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4 pr-2">
-          {/* Template Selections - Side by Side */}
-          {(templates.length > 0 || presets.length > 0) && (
-            <div className="flex gap-4">
-              {/* Template Library - Left */}
-              {presets.length > 0 && (
-                <div className="flex-1 space-y-2">
-                  <Label htmlFor="system-preset" className="text-white">template library</Label>
-                  <Select value={selectedPreset} onValueChange={handlePresetSelect}>
-                    <SelectTrigger className="border-border bg-background text-white overflow-hidden">
-                      {selectedPreset ? (
-                        <span className="truncate">
-                          {truncateMiddle(presets.find(p => p.id === selectedPreset)?.name || '')}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">select a template...</span>
-                      )}
-                    </SelectTrigger>
-                    <SelectContent className="border-border bg-secondary">
-                      <SelectItem value="none" className="text-white focus:bg-accent focus:text-white">
-                        none
-                      </SelectItem>
-                      {categories.map(category => {
-                        const categoryPresets = presets.filter(p => p.category === category);
-                        if (categoryPresets.length === 0) return null;
+          {/* Unified Template Selector */}
+          {hasItems && (
+            <div className="space-y-2">
+              <Label htmlFor="template-select" className="text-white">template</Label>
+              <div className="flex gap-2">
+                <Select value={selectedItem} onValueChange={handleItemSelect}>
+                  <SelectTrigger className="border-border bg-background text-white flex-1 overflow-hidden">
+                    {selectedItem ? (
+                      <span className="truncate">{getSelectedLabel()}</span>
+                    ) : (
+                      <span className="text-muted-foreground">start from a template...</span>
+                    )}
+                  </SelectTrigger>
+                  <SelectContent className="border-border bg-secondary">
+                    <SelectItem value="none" className="text-white focus:bg-accent focus:text-white">
+                      none
+                    </SelectItem>
+                    {/* Library presets by category */}
+                    {filteredCategories.map(category => {
+                      const categoryPresets = filteredPresets.filter(p => p.category === category);
+                      if (categoryPresets.length === 0) return null;
 
-                        return (
-                          <SelectGroup key={category}>
-                            <SelectLabel className="text-muted-foreground">{category}</SelectLabel>
-                            {categoryPresets.map(preset => (
-                              <SelectItem
-                                key={preset.id}
-                                value={preset.id}
-                                className="text-white focus:bg-accent focus:text-white"
-                              >
-                                <span className="flex items-center gap-2">
-                                  {preset.icon && <span>{preset.icon}</span>}
-                                  <span>{preset.name}</span>
-                                  {preset.is_owlette_agent && (
-                                    <Badge variant="outline" className="ml-2 border-accent-cyan/50 text-accent-cyan text-xs">
-                                      Auto
-                                    </Badge>
-                                  )}
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    admin-curated software catalog (TouchDesigner, VLC, Owlette Agent, etc.)
-                  </p>
-                </div>
-              )}
-
-              {/* My Templates - Right */}
-              {templates.length > 0 && (
-                <div className="flex-1 space-y-2">
-                  <Label htmlFor="template" className="text-white">my templates</Label>
-                  <div className="flex gap-2">
-                    <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
-                      <SelectTrigger className="border-border bg-background text-white flex-1 overflow-hidden">
-                        {selectedTemplate ? (
-                          <span className="truncate">
-                            {/* Use more relaxed truncation when Template Library isn't shown (full width available) */}
-                            {presets.length > 0
-                              ? truncateMiddle(templates.find(t => t.id === selectedTemplate)?.name || '', 7, 8, 20)
-                              : truncateMiddle(templates.find(t => t.id === selectedTemplate)?.name || '')}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">select a template...</span>
-                        )}
-                      </SelectTrigger>
-                      <SelectContent className="border-border bg-secondary">
-                        <SelectItem value="none" className="text-white focus:bg-accent focus:text-white">
-                          none
-                        </SelectItem>
+                      return (
+                        <SelectGroup key={category}>
+                          <SelectLabel className="text-muted-foreground">{category}</SelectLabel>
+                          {categoryPresets.map(preset => (
+                            <SelectItem
+                              key={preset.id}
+                              value={`${PRESET_PREFIX}${preset.id}`}
+                              className="text-white focus:bg-accent focus:text-white"
+                            >
+                              <span className="flex items-center gap-2">
+                                {preset.icon && <span>{preset.icon}</span>}
+                                <span>{preset.name}</span>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      );
+                    })}
+                    {/* User saved templates */}
+                    {templates.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel className="text-muted-foreground">Saved</SelectLabel>
                         {templates.map((template) => (
                           <SelectItem
                             key={template.id}
-                            value={template.id}
+                            value={`${TEMPLATE_PREFIX}${template.id}`}
                             className="text-white focus:bg-accent focus:text-white"
                           >
                             {template.name}
                           </SelectItem>
                         ))}
-                      </SelectContent>
-                    </Select>
-                    {selectedTemplate && (
-                      <>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={handleEditTemplate}
-                          className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer"
-                          title="Edit template"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={handleDeleteTemplate}
-                          className="border-border bg-background text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
-                          title="Delete template"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </>
+                      </SelectGroup>
                     )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    your custom deployment templates
-                  </p>
-                  {editingTemplate && (
-                    <div className="flex items-center gap-2 p-2 bg-accent-cyan/10 border border-accent-cyan/30 rounded text-sm">
-                      <Pencil className="h-3 w-3 text-accent-cyan" />
-                      <span className="text-accent-cyan">Editing template - changes will be saved when you deploy</span>
-                    </div>
-                  )}
+                  </SelectContent>
+                </Select>
+                {/* Edit/Delete buttons for saved templates */}
+                {isTemplateSelected && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={handleEditTemplate}
+                      className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer"
+                      title="Edit template"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={handleDeleteTemplate}
+                      className="border-border bg-background text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
+                      title="Delete template"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </>
+                )}
+              </div>
+              {editingTemplate && (
+                <div className="flex items-center gap-2 p-2 bg-accent-cyan/10 border border-accent-cyan/30 rounded text-sm">
+                  <Pencil className="h-3 w-3 text-accent-cyan" />
+                  <span className="text-accent-cyan">Editing template - changes will be saved when you deploy</span>
                 </div>
               )}
             </div>
@@ -558,18 +509,20 @@ export default function DeploymentDialog({
             </div>
           </div>
 
-          {/* Save as Template */}
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="save-template"
-              checked={saveAsTemplate}
-              onCheckedChange={(checked) => setSaveAsTemplate(checked as boolean)}
-              className="cursor-pointer"
-            />
-            <Label htmlFor="save-template" className="text-white cursor-pointer">
-              save as template for future deployments
-            </Label>
-          </div>
+          {/* Save as Template - only show when NOT using a saved template */}
+          {!isTemplateSelected && (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="save-template"
+                checked={saveAsTemplate}
+                onCheckedChange={(checked) => setSaveAsTemplate(checked as boolean)}
+                className="cursor-pointer"
+              />
+              <Label htmlFor="save-template" className="text-white cursor-pointer">
+                save as template for future deployments
+              </Label>
+            </div>
+          )}
         </div>
 
         <DialogFooter>
@@ -607,7 +560,7 @@ export default function DeploymentDialog({
           <DialogHeader>
             <DialogTitle className="text-white">delete template</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              delete template "{templates.find(t => t.id === selectedTemplate)?.name}"? this cannot be undone.
+              delete template &ldquo;{templates.find(t => t.id === selectedTemplateId)?.name}&rdquo;? this cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2">

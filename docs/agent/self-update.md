@@ -6,7 +6,7 @@ The Owlette agent can update itself remotely — no physical access to the machi
 
 ## How It Works
 
-The self-update process is managed by `owlette_updater.py`, a bootstrap script that:
+The self-update is handled directly by the service's command handler in `owlette_service.py`:
 
 1. **Receives** the `update_owlette` command from Firestore
 2. **Downloads** the new installer to a temp directory

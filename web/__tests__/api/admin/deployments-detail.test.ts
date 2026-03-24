@@ -1,5 +1,6 @@
 /** @jest-environment node */
 
+import { ApiAuthError } from '@/lib/apiAuth.server';
 import {
   mocks,
   mockDbFactory,
@@ -97,6 +98,13 @@ describe('GET /api/admin/deployments/[deploymentId]', () => {
     expect(deployment.verify_path).toBeUndefined();
     expect(deployment.completedAt).toBeUndefined();
   });
+
+  it('returns 401 when unauthorized', async () => {
+    mocks.requireAdmin.mockRejectedValueOnce(new ApiAuthError(401, 'Unauthorized'));
+    const req = createMockRequest('/api/admin/deployments/deploy-123?siteId=site1');
+    const res = await GET(req);
+    expect(res.status).toBe(401);
+  });
 });
 
 /* ========================================================================== */
@@ -154,5 +162,14 @@ describe('DELETE /api/admin/deployments/[deploymentId]', () => {
     });
     const res = await DELETE(req);
     expect(res.status).toBe(400);
+  });
+
+  it('returns 401 when unauthorized', async () => {
+    mocks.requireAdmin.mockRejectedValueOnce(new ApiAuthError(401, 'Unauthorized'));
+    const req = createMockRequest('/api/admin/deployments/deploy-123?siteId=site1', {
+      method: 'DELETE',
+    });
+    const res = await DELETE(req);
+    expect(res.status).toBe(401);
   });
 });

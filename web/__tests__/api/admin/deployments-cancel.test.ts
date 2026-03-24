@@ -205,4 +205,82 @@ describe('POST /api/admin/deployments/[deploymentId]/cancel', () => {
     expect(res.status).toBe(404);
     expect((await res.json()).error).toContain('not found');
   });
+
+  it('returns 400 when machineId is not a target of the deployment', async () => {
+    mocks.get.mockResolvedValueOnce(
+      docSnapshot('deploy-100', {
+        targets: [
+          { machineId: 'machine-1', status: 'in_progress' },
+        ],
+        status: 'in_progress',
+      })
+    );
+
+    const req = createMockRequest(
+      '/api/admin/deployments/deploy-100/cancel',
+      {
+        method: 'POST',
+        body: {
+          siteId: 'site1',
+          machineId: 'machine-999',
+          installer_name: 'setup.exe',
+        },
+      }
+    );
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('not a target');
+  });
+
+  it('returns 409 when target is already completed', async () => {
+    mocks.get.mockResolvedValueOnce(
+      docSnapshot('deploy-100', {
+        targets: [
+          { machineId: 'machine-1', status: 'completed' },
+        ],
+        status: 'completed',
+      })
+    );
+
+    const req = createMockRequest(
+      '/api/admin/deployments/deploy-100/cancel',
+      {
+        method: 'POST',
+        body: {
+          siteId: 'site1',
+          machineId: 'machine-1',
+          installer_name: 'setup.exe',
+        },
+      }
+    );
+    const res = await POST(req);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('completed');
+  });
+
+  it('returns 409 when target is already cancelled', async () => {
+    mocks.get.mockResolvedValueOnce(
+      docSnapshot('deploy-100', {
+        targets: [
+          { machineId: 'machine-1', status: 'cancelled' },
+        ],
+        status: 'cancelled',
+      })
+    );
+
+    const req = createMockRequest(
+      '/api/admin/deployments/deploy-100/cancel',
+      {
+        method: 'POST',
+        body: {
+          siteId: 'site1',
+          machineId: 'machine-1',
+          installer_name: 'setup.exe',
+        },
+      }
+    );
+    const res = await POST(req);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('cancelled');
+  });
 });

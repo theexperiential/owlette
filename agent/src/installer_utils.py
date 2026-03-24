@@ -239,6 +239,9 @@ def execute_installer(
 
         if exit_code == 0:
             return True, exit_code, ""
+        elif exit_code == 3010:
+            logging.info("Installer returned 3010 (reboot required) — treating as success")
+            return True, exit_code, ""
         else:
             error_msg = f"Installer failed with exit code {exit_code}"
             if stderr:

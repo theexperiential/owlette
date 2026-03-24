@@ -8,7 +8,7 @@ The Owlette agent is a Python Windows service that runs in the background, monit
 
 | Function | Frequency | Description |
 |----------|-----------|-------------|
-| **Process monitoring** | Every 10s | Checks if configured processes are running, detects crashes and stalls |
+| **Process monitoring** | Every 5s | Checks if configured processes are running, detects crashes and stalls |
 | **Auto-restart** | On crash | Restarts crashed processes using Task Scheduler or CreateProcessAsUser |
 | **Heartbeat** | Every 30s | Marks the machine as online in Firestore |
 | **Metrics** | Every 60s | Reports CPU, memory, disk, and GPU usage |
@@ -31,6 +31,9 @@ NSSM (Service Manager)
               │     └── connection_manager.py (State Machine)
               ├── shared_utils.py (Config, Logging, Metrics)
               ├── installer_utils.py (Remote Deployment)
+              ├── health_probe.py (Health Monitoring)
+              ├── process_launcher.py (Process Launch Strategy)
+              ├── session_exec.py (User Session Execution)
               └── project_utils.py (Project Distribution)
 
 owlette_gui.py (Configuration GUI — separate process)
@@ -50,7 +53,7 @@ owlette_tray.py (System Tray Icon — separate process)
 5. Launch system tray icon as user process
 6. Enter main loop
 
-### Main Loop (every 10 seconds)
+### Main Loop (every 5 seconds)
 
 1. Check all configured processes — detect crashes, stalls, exits
 2. Auto-restart any crashed processes (if autolaunch enabled)

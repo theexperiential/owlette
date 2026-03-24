@@ -109,6 +109,8 @@ export const DELETE = withRateLimit(
         );
       }
 
+      // TODO: clean up orphaned command documents for this deployment
+      // (pending + completed commands in each target machine's subcollection)
       await deploymentRef.delete();
 
       logger.info(`Deployment deleted: ${deploymentId}`, { context: 'admin/deployments' });

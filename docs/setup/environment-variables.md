@@ -38,7 +38,8 @@ Set the entire JSON content as a single environment variable. Railway supports m
 
 | Variable | Format | Description |
 |----------|--------|-------------|
-| `SECRET_COOKIE_PASSWORD` | 32+ character string | Encryption key for iron-session HTTPOnly cookies |
+| `SESSION_SECRET` | 32+ character string | Encryption key for iron-session HTTPOnly cookies |
+| `MFA_ENCRYPTION_KEY` | 32+ character string | Encryption key for 2FA secrets stored in Firestore |
 
 Generate a secure password:
 
@@ -128,7 +129,8 @@ NEXT_PUBLIC_FIREBASE_APP_ID=...
 FIREBASE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
 
 # Session
-SECRET_COOKIE_PASSWORD=your-32-char-secret
+SESSION_SECRET=your-32-char-secret
+MFA_ENCRYPTION_KEY=your-32-char-mfa-key
 ```
 
 ### Full Configuration
@@ -146,7 +148,8 @@ NEXT_PUBLIC_FIREBASE_APP_ID=...
 FIREBASE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
 
 # Session
-SECRET_COOKIE_PASSWORD=your-32-char-secret
+SESSION_SECRET=your-32-char-secret
+MFA_ENCRYPTION_KEY=your-32-char-mfa-key
 
 # Email
 RESEND_API_KEY=re_...
@@ -170,5 +173,5 @@ CORTEX_INTERNAL_SECRET=your-64-char-hex
 - **Never commit** `.env.local` to git
 - **Use Railway's Variables tab** — values are encrypted at rest
 - **`NEXT_PUBLIC_*` prefix** means the value is exposed to the browser — only use for Firebase client config
-- **Rotate secrets periodically** — especially `SECRET_COOKIE_PASSWORD` and `CRON_SECRET`
+- **Rotate secrets periodically** — especially `SESSION_SECRET` and `CRON_SECRET`
 - **Separate environments** — use different Firebase projects for dev and production

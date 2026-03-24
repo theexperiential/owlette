@@ -1,6 +1,6 @@
 # REST API Reference
 
-All HTTP endpoints exposed by the Owlette web dashboard. 46 route files under `web/app/api/`, producing **~60 distinct method+path combinations**.
+All HTTP endpoints exposed by the Owlette web dashboard. 51 route files under `web/app/api/`, producing **~65 distinct method+path combinations**.
 
 ---
 
@@ -12,8 +12,9 @@ All HTTP endpoints exposed by the Owlette web dashboard. 46 route files under `w
 - [Agent Authentication APIs](#agent-authentication-apis) (3 endpoints)
 - [Agent Alert API](#agent-alert-api) (1 endpoint)
 - [Agent Screenshot API](#agent-screenshot-api) (1 endpoint)
-- [Admin Machine APIs](#admin-machine-apis) (2 endpoints)
-- [Admin Command API](#admin-command-api) (1 endpoint)
+- [Admin Machine APIs](#admin-machine-apis) (3 endpoints)
+- [Admin Command APIs](#admin-command-apis) (2 endpoints)
+- [Admin Software Inventory API](#admin-software-inventory-api) (1 endpoint)
 - [Admin Process APIs](#admin-process-apis) (5 endpoints)
 - [Admin Deployment APIs](#admin-deployment-apis) (5 endpoints)
 - [Admin Installer APIs](#admin-installer-apis) (4 endpoints)
@@ -24,7 +25,7 @@ All HTTP endpoints exposed by the Owlette web dashboard. 46 route files under `w
 - [Admin Webhook APIs](#admin-webhook-apis) (4 endpoints)
 - [Admin API Key APIs](#admin-api-key-apis) (3 endpoints)
 - [Setup API](#setup-api) (1 endpoint)
-- [Cortex APIs](#cortex-apis) (2 endpoints)
+- [Cortex APIs](#cortex-apis) (4 endpoints)
 - [LLM Settings APIs](#llm-settings-apis) (6 endpoints)
 - [Utility APIs](#utility-apis) (4 endpoints)
 
@@ -600,7 +601,30 @@ Returns detailed machine info including metrics, processes, health, and agent ve
 
 ---
 
-## Admin Command API
+### Trigger Agent Self-Update
+
+Sends an `update_owlette` command to a machine to trigger a self-update.
+
+| | |
+|---|---|
+| **Method** | `POST` |
+| **URL** | `/api/admin/machines/update` |
+| **Auth** | Session cookie (admin) |
+
+**Request Body:**
+
+```json
+{
+  "siteId": "nyc-office",
+  "machineId": "DESKTOP-ABC123",
+  "version": "2.3.1",
+  "installer_url": "https://firebasestorage.googleapis.com/.../Owlette-Installer-v2.3.1.exe"
+}
+```
+
+---
+
+## Admin Command APIs
 
 ### Send Command
 
@@ -626,6 +650,32 @@ Send a command to a machine via Firestore.
 ```
 
 When `wait: true`, polls for completion and returns the result. Timeout: 30-120 seconds.
+
+---
+
+### Clear Commands
+
+Clears pending commands for a machine.
+
+| | |
+|---|---|
+| **Method** | `DELETE` |
+| **URL** | `/api/admin/commands/clear?siteId=xxx&machineId=xxx` |
+| **Auth** | Session cookie (admin) |
+
+---
+
+## Admin Software Inventory API
+
+### Get Software Inventory
+
+Returns the installed software list for a machine.
+
+| | |
+|---|---|
+| **Method** | `GET` |
+| **URL** | `/api/admin/software-inventory?siteId=xxx&machineId=xxx` |
+| **Auth** | Session cookie (admin) |
 
 ---
 
@@ -798,11 +848,11 @@ Returns deployments for a site, ordered by creation date.
 {
   "deployments": [
     {
-      "id": "dep_abc123",
+      "id": "deploy-1699564800000",
       "name": "TouchDesigner 2023",
       "installer_name": "TouchDesigner_099_2023.exe",
       "status": "completed",
-      "createdAt": "2026-03-20T10:00:00Z"
+      "createdAt": 1699564800000
     }
   ]
 }
@@ -834,11 +884,23 @@ Creates a new deployment targeting specified machines.
 }
 ```
 
+!!! note
+    `installer_url` must be a valid HTTPS URL. HTTP, `file://`, and other protocols are rejected.
+
 **Response (200):**
 
 ```json
 {
-  "deploymentId": "dep_abc123"
+  "success": true,
+  "deploymentId": "deploy-1699564800000"
+}
+```
+
+**Error (400) — Invalid URL:**
+
+```json
+{
+  "error": "installer_url must use HTTPS protocol"
 }
 ```
 
@@ -858,12 +920,20 @@ Returns full deployment details including per-machine status.
 
 ```json
 {
-  "id": "dep_abc123",
-  "name": "TouchDesigner 2023",
-  "status": "in_progress",
-  "machines": {
-    "DESKTOP-ABC123": { "status": "completed", "completedAt": "2026-03-20T10:05:00Z" },
-    "DESKTOP-DEF456": { "status": "downloading", "progress": 45 }
+  "success": true,
+  "deployment": {
+    "id": "deploy-1699564800000",
+    "name": "TouchDesigner 2023",
+    "installer_name": "TouchDesigner_099_2023.exe",
+    "installer_url": "https://storage.googleapis.com/.../TouchDesigner_099_2023.exe",
+    "silent_flags": "/VERYSILENT /NORESTART",
+    "verify_path": "C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe",
+    "status": "in_progress",
+    "createdAt": 1699564800000,
+    "targets": [
+      { "machineId": "DESKTOP-ABC123", "status": "completed", "completedAt": 1699564850000 },
+      { "machineId": "DESKTOP-DEF456", "status": "downloading", "progress": 45 }
+    ]
   }
 }
 ```
@@ -872,7 +942,7 @@ Returns full deployment details including per-machine status.
 
 ### Delete Deployment
 
-Deletes a deployment record. Only allowed for deployments in terminal states (completed, failed, cancelled).
+Deletes a deployment record. Only allowed for deployments in terminal states (completed, failed, partial, cancelled, uninstalled).
 
 | | |
 |---|---|
@@ -892,7 +962,7 @@ Deletes a deployment record. Only allowed for deployments in terminal states (co
 
 ### Cancel Deployment
 
-Cancels a running deployment for a specific machine.
+Cancels a running deployment for a specific machine. The target must exist in the deployment and be in a cancellable state (`pending`, `downloading`, or `installing`).
 
 | | |
 |---|---|
@@ -914,7 +984,24 @@ Cancels a running deployment for a specific machine.
 
 ```json
 {
-  "success": true
+  "success": true,
+  "commandId": "cancel_1699564850000_DESKTOP_ABC123"
+}
+```
+
+**Error (400) — Machine not a target:**
+
+```json
+{
+  "error": "Machine DESKTOP-XYZ is not a target of this deployment"
+}
+```
+
+**Error (409) — Target already in terminal state:**
+
+```json
+{
+  "error": "Cannot cancel target in \"completed\" state"
 }
 ```
 
@@ -1456,6 +1543,67 @@ Internal endpoint for autonomous AI-driven event investigation. Called by the sy
 ```
 
 Fire-and-forget. The background investigation runs asynchronously after the response is returned.
+
+---
+
+### Provision Cortex Key
+
+Provisions an LLM API key to a machine's local Cortex agent. Writes a command to Firestore and polls for completion.
+
+| | |
+|---|---|
+| **Method** | `POST` |
+| **URL** | `/api/cortex/provision-key` |
+| **Auth** | Session cookie (user with site access) |
+
+**Request Body:**
+
+```json
+{
+  "siteId": "nyc-office",
+  "machineId": "DESKTOP-ABC123",
+  "apiKey": "sk-ant-...",
+  "provider": "anthropic"
+}
+```
+
+**Response (200):**
+
+```json
+{
+  "success": true
+}
+```
+
+**Error (504) — Timeout:**
+
+```json
+{
+  "error": "Key provisioning timed out — machine may be offline"
+}
+```
+
+---
+
+### Process Escalations
+
+Processes pending Cortex escalation flags and sends escalation emails to site admins. Called periodically by cron or triggered internally.
+
+| | |
+|---|---|
+| **Method** | `POST` or `GET` |
+| **URL** | `/api/cortex/escalation` |
+| **Auth** | `x-cortex-secret` header (POST) or `Authorization: Bearer {CRON_SECRET}` (GET) |
+
+**Response (200):**
+
+```json
+{
+  "success": true,
+  "processed": 2,
+  "errors": 0
+}
+```
 
 ---
 

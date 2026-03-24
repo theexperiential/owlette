@@ -1,6 +1,6 @@
 # Process Monitoring
 
-The agent monitors configured processes every 10 seconds, detecting crashes, stalls, and exits. When a process goes down, the agent automatically restarts it (if autolaunch is enabled).
+The agent monitors configured processes every 5 seconds, detecting crashes, stalls, and exits. When a process goes down, the agent automatically restarts it (if autolaunch is enabled).
 
 ---
 
@@ -130,8 +130,8 @@ Each process has a configurable `relaunch_attempts` limit (default: 5). When the
 3. The user can dismiss the prompt or allow the reboot
 4. The relaunch counter resets after a successful process start or manual intervention
 
-!!! tip "Email alerts"
-    If email alerts are configured, the agent sends a **process crash alert** email when a process crashes, including the process name, machine name, and error details.
+!!! tip "Crash alerts"
+    When a process crashes, the agent reports the event to the web dashboard via the alert API. If email alerts are configured for the site, the dashboard sends a **process crash alert** email including the process name, machine name, and error details. Webhooks are also triggered if configured.
 
 ---
 
@@ -148,8 +148,8 @@ Every 60 seconds, the agent collects and reports:
 | **CPU Model** | Registry/psutil | CPU model name (e.g., "Intel Core i9-9900X") |
 | **Processes** | Per-process | Status, PID, uptime for each configured process |
 
-GPU monitoring uses:
+GPU monitoring uses a fallback chain:
 
-- **NVIDIA GPUs**: nvidia-ml-py (NVML) for load and temperature
+- **NVIDIA GPUs**: GPUtil or pynvml (NVML) for load and temperature
 - **Other GPUs**: WinTmp/LibreHardwareMonitor for basic metrics
 - **No GPU**: Gracefully returns 0

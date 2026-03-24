@@ -686,6 +686,20 @@ class FirebaseClient:
                 else:
                     self._mark_command_completed(cmd_id, result, deployment_id, cmd_type)
 
+                # Log deployment lifecycle events to site logs for audit trail
+                deployment_cmd_types = ('install_software', 'uninstall_software', 'update_owlette')
+                if cmd_type in deployment_cmd_types and deployment_id:
+                    software_name = cmd_data.get('installer_name') or cmd_data.get('software_name') or cmd_type
+                    if cmd_type == 'cancel_installation':
+                        self.log_event('deployment_cancelled', 'warning', software_name,
+                                       f"Deployment {deployment_id} cancelled: {result}")
+                    elif is_error:
+                        self.log_event('deployment_failed', 'error', software_name,
+                                       f"Deployment {deployment_id} failed: {result}")
+                    else:
+                        self.log_event('deployment_completed', 'info', software_name,
+                                       f"Deployment {deployment_id}: {result}")
+
                 # Immediate metrics push so web dashboard sees state change instantly
                 try:
                     metrics = shared_utils.get_system_metrics()
@@ -699,6 +713,13 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Error processing command {cmd_id}: {e}")
             self._mark_command_failed(cmd_id, str(e), cmd_data.get('deployment_id'), cmd_data.get('type'))
+            # Log deployment failure from unhandled exception
+            cmd_type = cmd_data.get('type')
+            dep_id = cmd_data.get('deployment_id')
+            if cmd_type in ('install_software', 'uninstall_software', 'update_owlette') and dep_id:
+                software_name = cmd_data.get('installer_name') or cmd_data.get('software_name') or cmd_type
+                self.log_event('deployment_failed', 'error', software_name,
+                               f"Deployment {dep_id} failed: {e}")
 
     def update_command_progress(self, cmd_id: str, status: str, deployment_id: Optional[str] = None, progress: Optional[int] = None):
         """

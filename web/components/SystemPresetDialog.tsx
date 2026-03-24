@@ -11,7 +11,6 @@ import { Loader2, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSystemPresets, type SystemPreset } from '@/hooks/useSystemPresets';
 import { useAuth } from '@/contexts/AuthContext';
-import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 import { serverTimestamp } from 'firebase/firestore';
 
 /**
@@ -25,7 +24,6 @@ import { serverTimestamp } from 'firebase/firestore';
  * - Edit existing preset (preset prop provided)
  * - Form validation
  * - Category selection
- * - Special handling for Owlette Agent preset
  */
 interface SystemPresetDialogProps {
   open: boolean;
@@ -40,8 +38,6 @@ export default function SystemPresetDialog({
 }: SystemPresetDialogProps) {
   const { createPreset, updatePreset } = useSystemPresets();
   const { user } = useAuth();
-  const { version: latestInstallerVersion, downloadUrl: latestInstallerUrl, isLoading: installerLoading } = useInstallerVersion();
-
   // Form state
   const [name, setName] = useState('');
   const [softwareName, setSoftwareName] = useState('');
@@ -52,11 +48,11 @@ export default function SystemPresetDialog({
   const [installerUrl, setInstallerUrl] = useState('');
   const [silentFlags, setSilentFlags] = useState('/VERYSILENT /NORESTART /SUPPRESSMSGBOXES');
   const [verifyPath, setVerifyPath] = useState('');
-  const [isOwletteAgent, setIsOwletteAgent] = useState(false);
   const [timeoutSeconds, setTimeoutSeconds] = useState(600);
   const [order, setOrder] = useState(100);
 
   const [saving, setSaving] = useState(false);
+  const [fetchingTd, setFetchingTd] = useState(false);
 
   const isEditMode = preset !== null;
 
@@ -72,7 +68,6 @@ export default function SystemPresetDialog({
       setInstallerUrl(preset.installer_url);
       setSilentFlags(preset.silent_flags);
       setVerifyPath(preset.verify_path || '');
-      setIsOwletteAgent(preset.is_owlette_agent);
       setTimeoutSeconds(preset.timeout_seconds || 600);
       setOrder(preset.order);
     } else {
@@ -86,37 +81,44 @@ export default function SystemPresetDialog({
       setInstallerUrl('');
       setSilentFlags('/VERYSILENT /NORESTART /SUPPRESSMSGBOXES');
       setVerifyPath('');
-      setIsOwletteAgent(false);
       setTimeoutSeconds(600);
       setOrder(100);
     }
   }, [preset, open]);
 
-  // Auto-fill Owlette Agent preset
-  const handleAutoFillOwlette = () => {
-    if (!latestInstallerUrl || !latestInstallerVersion) {
-      toast.error('Installer Not Available', {
-        description: 'No Owlette installer found. Please upload one in Admin > Installers first.',
+  const handleAutoFillTd = async () => {
+    setFetchingTd(true);
+    try {
+      const res = await fetch('/api/admin/fetch-td-version');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: 'Failed to fetch' }));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+
+      const { latest } = await res.json();
+
+      setName(`TouchDesigner ${latest.version} (Full)`);
+      setSoftwareName('TouchDesigner');
+      setCategory('Creative Software');
+      setDescription(`TouchDesigner ${latest.version} full installer`);
+      setIcon('');
+      setInstallerName(`TouchDesigner.${latest.version}.exe`);
+      setInstallerUrl(latest.full_installer_url);
+      setSilentFlags('/VERYSILENT /SP- /NORESTART /SUPPRESSMSGBOXES');
+      setVerifyPath('C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe');
+      setTimeoutSeconds(1200);
+      setOrder(10);
+
+      toast.success('Auto-filled', {
+        description: `TouchDesigner ${latest.version} ready to save.`,
       });
-      return;
+    } catch (err: any) {
+      toast.error('Failed to fetch TD version', {
+        description: err.message || 'Could not reach derivative.ca',
+      });
+    } finally {
+      setFetchingTd(false);
     }
-
-    setName(`Owlette Agent v${latestInstallerVersion}`);
-    setSoftwareName('Owlette Agent');
-    setCategory('System');
-    setDescription('Remote process management and monitoring agent for Windows');
-    setIcon('🦉');
-    setInstallerName('OwletteInstaller.exe');
-    setInstallerUrl(latestInstallerUrl);
-    setSilentFlags('/VERYSILENT /NORESTART /SUPPRESSMSGBOXES');
-    setVerifyPath('C:\\Program Files\\Owlette\\OwletteService.exe');
-    setIsOwletteAgent(true);
-    setTimeoutSeconds(300);
-    setOrder(1);
-
-    toast.success('Auto-filled', {
-      description: `Owlette Agent v${latestInstallerVersion} preset ready to save.`,
-    });
   };
 
   const handleSave = async () => {
@@ -143,7 +145,7 @@ export default function SystemPresetDialog({
     }
     if (!installerUrl.trim()) {
       toast.error('Installer URL required', {
-        description: 'Please enter a download URL or use the auto-fill button for Owlette Agent.',
+        description: 'Please enter a direct download URL for the installer.',
       });
       return;
     }
@@ -159,7 +161,7 @@ export default function SystemPresetDialog({
         installer_name: installerName,
         installer_url: installerUrl,
         silent_flags: silentFlags,
-        is_owlette_agent: isOwletteAgent,
+        is_owlette_agent: false,
         timeout_seconds: timeoutSeconds,
         order,
       };
@@ -219,25 +221,25 @@ export default function SystemPresetDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Quick Fill Button - Only show when creating new preset */}
+        {/* Auto-fill TouchDesigner - Only show when creating new preset */}
         {!isEditMode && (
           <div className="pb-4 border-b border-border">
             <Button
               type="button"
               variant="outline"
-              onClick={handleAutoFillOwlette}
-              disabled={installerLoading || !latestInstallerUrl}
+              onClick={handleAutoFillTd}
+              disabled={fetchingTd}
               className="w-full border-accent-cyan/50 bg-accent-cyan/10 text-accent-cyan hover:bg-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
             >
-              <Sparkles className="mr-2 h-4 w-4" />
-              {installerLoading
-                ? 'Loading...'
-                : latestInstallerUrl
-                ? `Auto-fill Owlette Agent v${latestInstallerVersion || '...'}`
-                : 'No Owlette Installer Available'}
+              {fetchingTd ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="mr-2 h-4 w-4" />
+              )}
+              {fetchingTd ? 'Fetching latest version...' : 'Auto-fill latest TouchDesigner'}
             </Button>
             <p className="text-xs text-muted-foreground text-center mt-2">
-              automatically populate all fields for Owlette agent deployment
+              fetches the latest version from derivative.ca
             </p>
           </div>
         )}

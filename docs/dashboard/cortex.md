@@ -6,13 +6,13 @@ Cortex is an AI-powered chat interface that lets you interact with your machines
 
 ## Overview
 
-Cortex connects an LLM (Claude or OpenAI) to your machines via 19 specialized tools organized into three tiers:
+Cortex connects an LLM (Claude or OpenAI) to your machines via 24 specialized tools organized into three tiers:
 
 | Tier | Type | Approval | Tools |
 |------|------|----------|-------|
 | **Tier 1** | Read-only | Auto-approved | 10 tools — system info, process lists, logs, metrics |
-| **Tier 2** | Process management | Auto-approved | 4 tools — restart, kill, start, toggle autolaunch |
-| **Tier 3** | Privileged | Requires confirmation | 5 tools — run commands, read/write files, list directories |
+| **Tier 2** | Process management | Auto-approved | 5 tools — restart, kill, start, set launch mode, screenshot |
+| **Tier 3** | Privileged | Requires confirmation | 9 tools — run commands/scripts, read/write files, reboot/shutdown |
 
 ---
 
@@ -105,7 +105,8 @@ These wrap existing Owlette commands:
 | `restart_process` | Restart an Owlette-configured process |
 | `kill_process` | Kill/stop a process |
 | `start_process` | Start a stopped process |
-| `toggle_autolaunch` | Toggle autolaunch on/off |
+| `set_launch_mode` | Set launch mode (off, always, scheduled) |
+| `capture_screenshot` | Capture a screenshot of the machine's desktop |
 
 ### Tier 3: Privileged (Requires Confirmation)
 
@@ -115,9 +116,13 @@ These tools require you to click **Confirm** before execution:
 |------|-------------|
 | `run_command` | Execute a shell command (allowlist enforced) |
 | `run_powershell` | Execute a PowerShell command (allowlist enforced) |
+| `run_python` | Execute a Python script on the machine |
 | `read_file` | Read a file on the machine (max 100KB) |
 | `write_file` | Write content to a file |
 | `list_directory` | List directory contents with file sizes and dates |
+| `reboot_machine` | Reboot the Windows machine |
+| `shutdown_machine` | Shut down the Windows machine |
+| `cancel_reboot` | Cancel a scheduled reboot or shutdown |
 
 !!! info "Full tool reference"
     See [Cortex Tools Reference](../reference/cortex-tools.md) for complete parameter documentation and allowed command lists.

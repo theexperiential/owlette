@@ -46,6 +46,29 @@ export const POST = withRateLimit(
         );
       }
 
+      const deploymentData = deploymentSnap.data()!;
+
+      // Verify machine is a target in this deployment
+      const target = (deploymentData.targets || []).find(
+        (t: any) => t.machineId === machineId
+      );
+
+      if (!target) {
+        return NextResponse.json(
+          { error: `Machine ${machineId} is not a target of this deployment` },
+          { status: 400 }
+        );
+      }
+
+      // Verify target is in a cancellable state
+      const nonCancellableStatuses = ['completed', 'failed', 'cancelled', 'uninstalled'];
+      if (nonCancellableStatuses.includes(target.status)) {
+        return NextResponse.json(
+          { error: `Cannot cancel target in "${target.status}" state` },
+          { status: 409 }
+        );
+      }
+
       // Send cancel_installation command (mirrors cancelDeployment in useDeployments.ts)
       const sanitizedMachineId = machineId.replace(/-/g, '_');
       const commandId = `cancel_${Date.now()}_${sanitizedMachineId}`;
@@ -62,9 +85,6 @@ export const POST = withRateLimit(
           timestamp: Date.now(),
         },
       }, { merge: true });
-
-      // Update target status to 'cancelled' in deployment doc
-      const deploymentData = deploymentSnap.data()!;
       const updatedTargets = (deploymentData.targets || []).map((target: any) => {
         if (target.machineId === machineId) {
           return {

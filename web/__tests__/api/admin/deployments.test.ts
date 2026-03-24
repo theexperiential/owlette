@@ -127,6 +127,14 @@ describe('GET /api/admin/deployments', () => {
     expect(d.targets).toEqual([]);
     expect(d.status).toBe('pending');
   });
+
+  it('returns 500 when Firestore query fails', async () => {
+    mocks.collectionGet.mockRejectedValueOnce(new Error('Firestore read error'));
+    const req = createMockRequest('/api/admin/deployments?siteId=site1');
+    const res = await GET(req);
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toContain('Firestore read error');
+  });
 });
 
 /* ========================================================================== */
@@ -244,5 +252,46 @@ describe('POST /api/admin/deployments', () => {
     });
     const res = await POST(req);
     expect(res.status).toBe(401);
+  });
+
+  it('returns 400 when installer_url is not HTTPS', async () => {
+    const req = createMockRequest('/api/admin/deployments', {
+      method: 'POST',
+      body: { ...validBody, installer_url: 'http://example.com/setup.exe' },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('HTTPS');
+  });
+
+  it('returns 400 when installer_url is not a valid URL', async () => {
+    const req = createMockRequest('/api/admin/deployments', {
+      method: 'POST',
+      body: { ...validBody, installer_url: 'not-a-url' },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('valid URL');
+  });
+
+  it('returns 400 when installer_url uses file:// protocol', async () => {
+    const req = createMockRequest('/api/admin/deployments', {
+      method: 'POST',
+      body: { ...validBody, installer_url: 'file:///C:/malicious.exe' },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('HTTPS');
+  });
+
+  it('returns 500 when Firestore write fails', async () => {
+    mocks.set.mockRejectedValueOnce(new Error('Firestore unavailable'));
+    const req = createMockRequest('/api/admin/deployments', {
+      method: 'POST',
+      body: validBody,
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toContain('Firestore unavailable');
   });
 });
