@@ -49,15 +49,15 @@ INSTALLERS = {
         "installer_url": "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.1/npp.8.7.1.Installer.x64.exe",
         "silent_flags": "/S",
         "verify_path": "C:/Program Files/Notepad++/notepad++.exe",
-        "search_name": "Notepad++",
+        "search_name": "Notepad++ (64-bit",
     },
     "msi_native": {
-        "name": "Python 3.13 (MSI)",
-        "installer_name": "python-3.13.2-amd64.exe",
-        "installer_url": "https://www.python.org/ftp/python/3.13.2/python-3.13.2-amd64.exe",
+        "name": "Python 3.11 (MSI)",
+        "installer_name": "python-3.11.12-amd64.exe",
+        "installer_url": "https://www.python.org/ftp/python/3.11.12/python-3.11.12-amd64.exe",
         "silent_flags": "/quiet InstallAllUsers=1 PrependPath=0",
-        "verify_path": "C:/Program Files/Python313/python.exe",
-        "search_name": "Python 3.13",
+        "verify_path": "C:/Program Files/Python311/python.exe",
+        "search_name": "Python 3.11",
     },
 }
 
