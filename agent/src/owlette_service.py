@@ -21,6 +21,7 @@ import win32profile
 import win32ts
 import win32con
 import win32gui
+import win32security
 import servicemanager
 import logging
 import psutil
@@ -995,13 +996,149 @@ class OwletteService(win32serviceutil.ServiceFramework):
             pass
         return None
 
+    def _enable_privileges(self):
+        """Enable critical privileges in the service process token.
+
+        LocalSystem has SE_TCB_PRIVILEGE assigned but it may not be enabled
+        in the inherited token (e.g. when NSSM spawns the Python child process).
+        WTSQueryUserToken requires it to be enabled. We also enable
+        SeAssignPrimaryTokenPrivilege and SeIncreaseQuotaPrivilege which
+        CreateProcessAsUser needs.
+        """
+        privileges_to_enable = [
+            'SeTcbPrivilege',               # Required by WTSQueryUserToken
+            'SeAssignPrimaryTokenPrivilege', # Required by CreateProcessAsUser
+            'SeIncreaseQuotaPrivilege',      # Required by CreateProcessAsUser
+        ]
+
+        try:
+            import ctypes
+            process_token = win32security.OpenProcessToken(
+                win32process.GetCurrentProcess(),
+                win32security.TOKEN_ADJUST_PRIVILEGES | win32security.TOKEN_QUERY
+            )
+
+            enabled = []
+            failed = []
+            for priv_name in privileges_to_enable:
+                try:
+                    luid = win32security.LookupPrivilegeValue('', priv_name)
+                    win32security.AdjustTokenPrivileges(
+                        process_token, False,
+                        [(luid, win32security.SE_PRIVILEGE_ENABLED)]
+                    )
+                    # AdjustTokenPrivileges returns success even if privilege not held —
+                    # must check GetLastError for ERROR_NOT_ALL_ASSIGNED (1300)
+                    if ctypes.windll.kernel32.GetLastError() == 1300:
+                        failed.append(priv_name)
+                    else:
+                        enabled.append(priv_name)
+                except Exception as e:
+                    failed.append(f"{priv_name} ({e})")
+
+            process_token.Close()
+
+            if enabled:
+                logging.info(f"Privileges enabled: {', '.join(enabled)}")
+            if failed:
+                logging.warning(f"Privileges NOT available (will use fallback): {', '.join(failed)}")
+
+        except Exception as e:
+            logging.warning(f"Could not adjust process privileges: {e}")
+
+    def _get_token_from_user_process(self, session_id):
+        """Obtain a user token by duplicating from a process in the target session.
+
+        Fallback for when WTSQueryUserToken fails (error 1314). Opens an
+        existing user-session process (explorer.exe preferred), duplicates
+        its token as a primary token, and returns it with the environment block.
+
+        This does NOT require SE_TCB_PRIVILEGE — LocalSystem can open any
+        process token via PROCESS_QUERY_INFORMATION.
+
+        Returns:
+            (token, environment) on success, (None, None) on failure.
+        """
+        import ctypes
+
+        PROCESS_QUERY_INFORMATION = 0x0400
+
+        # Candidates in order of preference — explorer.exe has the richest
+        # desktop context; dwm.exe runs even on locked/minimal sessions.
+        candidates = ['explorer.exe', 'sihost.exe', 'taskhostw.exe', 'dwm.exe']
+
+        for candidate_name in candidates:
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    if not proc.info['name'] or proc.info['name'].lower() != candidate_name:
+                        continue
+
+                    pid = proc.info['pid']
+
+                    # Check if this process is in the target session
+                    proc_session_id = ctypes.c_ulong(0)
+                    if not ctypes.windll.kernel32.ProcessIdToSessionId(
+                        pid, ctypes.byref(proc_session_id)
+                    ):
+                        continue
+                    if proc_session_id.value != session_id:
+                        continue
+
+                    # Open the process
+                    proc_handle = ctypes.windll.kernel32.OpenProcess(
+                        PROCESS_QUERY_INFORMATION, False, pid
+                    )
+                    if not proc_handle:
+                        continue
+
+                    try:
+                        # Open the process token
+                        token = win32security.OpenProcessToken(
+                            proc_handle,
+                            win32security.TOKEN_DUPLICATE | win32security.TOKEN_QUERY
+                        )
+
+                        # Duplicate as primary token for CreateProcessAsUser
+                        dup_token = win32security.DuplicateTokenEx(
+                            token,
+                            win32security.TOKEN_ALL_ACCESS,
+                            None,  # SECURITY_ATTRIBUTES
+                            win32security.SecurityImpersonation,
+                            win32security.TokenPrimary
+                        )
+                        token.Close()
+
+                        # Create environment block from the duplicated token
+                        environment = win32profile.CreateEnvironmentBlock(dup_token, False)
+
+                        logging.info(
+                            f"Obtained user token from {candidate_name} "
+                            f"(PID {pid}, session {session_id})"
+                        )
+                        return dup_token, environment
+
+                    finally:
+                        ctypes.windll.kernel32.CloseHandle(proc_handle)
+
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                except Exception as e:
+                    logging.debug(
+                        f"Failed to get token from {candidate_name} "
+                        f"PID {proc.info.get('pid', '?')}: {e}"
+                    )
+                    continue
+
+        logging.warning(f"Could not obtain token from any user process in session {session_id}")
+        return None, None
+
     def _refresh_user_token(self):
         """Re-obtain the console user token, session ID, and environment block.
 
-        Called before each process launch to ensure we have a fresh token for the
-        current interactive session. This handles user logout/login, RDP disconnect,
-        and fast user switching — scenarios where the token obtained at service startup
-        becomes stale and points to a dead or wrong session.
+        Uses a three-tier approach:
+        1. WTSQueryUserToken (standard API, requires SE_TCB_PRIVILEGE)
+        2. Token cloning from explorer.exe (fallback, no SE_TCB needed)
+        3. Cached token from previous successful call (last resort)
         """
         try:
             session_id = win32ts.WTSGetActiveConsoleSessionId()
@@ -1012,10 +1149,36 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self.environment = None
                 return False
 
-            token = win32ts.WTSQueryUserToken(session_id)
-            environment = win32profile.CreateEnvironmentBlock(token, False)
+            # Tier 1: WTSQueryUserToken (standard path)
+            token = None
+            environment = None
+            try:
+                token = win32ts.WTSQueryUserToken(session_id)
+                environment = win32profile.CreateEnvironmentBlock(token, False)
+            except Exception as e:
+                error_code = getattr(e, 'winerror', 0)
+                if error_code == 1314:
+                    logging.debug("WTSQueryUserToken failed (error 1314) — trying token cloning")
+                else:
+                    logging.debug(f"WTSQueryUserToken failed: {e} — trying token cloning")
+                token = None
+                environment = None
 
-            # Close old token handle to avoid leaking logon sessions
+            # Tier 2: Clone token from explorer.exe (fallback)
+            if token is None:
+                token, environment = self._get_token_from_user_process(session_id)
+
+            # Tier 3: Use cached token (last resort)
+            if token is None:
+                if self.console_user_token:
+                    logging.debug("Falling back to cached user token")
+                    return True
+                self.console_session_id = None
+                self.console_user_token = None
+                self.environment = None
+                return False
+
+            # Success — update cached token
             if self.console_user_token and self.console_user_token != token:
                 try:
                     self.console_user_token.Close()
@@ -1034,10 +1197,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         except Exception as e:
             logging.warning(f"Could not obtain console user token: {e}")
-            # Keep the cached token if we have one — it may still be valid
-            # even though we can't get a fresh one (privilege issues after startup)
             if self.console_user_token:
-                logging.debug("Falling back to cached user token from startup")
+                logging.debug("Falling back to cached user token")
                 return True
             self.console_session_id = None
             self.console_user_token = None
@@ -2499,9 +2660,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                 logging.debug(f"Complete uninstall command: {complete_command_str}")
 
-                # Parse command string into list to avoid shell injection
+                # Parse command string into list to avoid shell injection.
+                # Use posix=True so shlex strips surrounding quotes from paths
+                # like '"C:\Program Files\App\Uninstall.exe"' — without this,
+                # subprocess.Popen fails with Access Denied on quoted paths.
                 try:
-                    complete_command = shlex.split(complete_command_str, posix=False)
+                    complete_command = shlex.split(complete_command_str, posix=True)
                 except ValueError as e:
                     return f"Error: Invalid uninstall command format: {e}"
 
@@ -3202,6 +3366,10 @@ print(f'monitors={{len(sct.monitors) - 1}}')
         self.startup_info = win32process.STARTUPINFO()
         self.startup_info.dwFlags = win32process.STARTF_USESHOWWINDOW
 
+        # Enable critical privileges before first token acquisition.
+        # LocalSystem has these assigned but NSSM child process may inherit them disabled.
+        self._enable_privileges()
+
         # Initial user token acquisition. This is refreshed before each process launch
         # via _refresh_user_token() to handle session changes (logout/login, RDP, user switch).
         self.console_session_id = None
@@ -3279,8 +3447,14 @@ print(f'monitors={{len(sct.monitors) - 1}}')
                         try:
                             if status == 'completed':
                                 self.firebase_client._mark_command_completed(cmd_id, result_msg, deployment_id, 'update_owlette')
+                                if deployment_id:
+                                    self.firebase_client.log_event('deployment_completed', 'info', 'Owlette Update',
+                                                                   f"Deployment {deployment_id}: {result_msg}")
                             else:
                                 self.firebase_client._mark_command_failed(cmd_id, result_msg, deployment_id, 'update_owlette')
+                                if deployment_id:
+                                    self.firebase_client.log_event('deployment_failed', 'error', 'Owlette Update',
+                                                                   f"Deployment {deployment_id} failed: {result_msg}")
                             logging.info(f"Update command {cmd_id} marked as {status} in Firestore")
                         except Exception as e:
                             logging.warning(f"Failed to report update completion to Firestore: {e}")
