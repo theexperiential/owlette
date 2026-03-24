@@ -36,11 +36,11 @@ INSTALLERS = {
         "verify_path": "C:/Program Files/VideoLAN/VLC/vlc.exe",
     },
     "inno_setup": {
-        "name": "WinSCP (Inno Setup)",
-        "installer_name": "WinSCP-6.3.6-Setup.exe",
-        "installer_url": "https://winscp.net/download/WinSCP-6.3.6-Setup.exe/download",
-        "silent_flags": "/VERYSILENT /NORESTART /SP- /NOCANCEL",
-        "verify_path": "C:/Program Files (x86)/WinSCP/WinSCP.exe",
+        "name": "ShareX (Inno Setup)",
+        "installer_name": "ShareX-17.0.0-setup.exe",
+        "installer_url": "https://github.com/ShareX/ShareX/releases/download/v17.0.0/ShareX-17.0.0-setup.exe",
+        "silent_flags": "/VERYSILENT /NORESTART /SP- /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS /NOCANCEL",
+        "verify_path": "C:/Program Files/ShareX/ShareX.exe",
     },
     "portable_exe": {
         "name": "Notepad++ (NSIS)",
@@ -50,11 +50,11 @@ INSTALLERS = {
         "verify_path": "C:/Program Files/Notepad++/notepad++.exe",
     },
     "msi_native": {
-        "name": "Python 3.12 (MSI)",
-        "installer_name": "python-3.12.8-amd64.exe",
-        "installer_url": "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe",
-        "silent_flags": "/quiet InstallAllUsers=1 PrependPath=1",
-        "verify_path": "C:/Program Files/Python312/python.exe",
+        "name": "Python 3.13 (MSI)",
+        "installer_name": "python-3.13.2-amd64.exe",
+        "installer_url": "https://www.python.org/ftp/python/3.13.2/python-3.13.2-amd64.exe",
+        "silent_flags": "/quiet InstallAllUsers=1 PrependPath=0",
+        "verify_path": "C:/Program Files/Python313/python.exe",
     },
 }
 
