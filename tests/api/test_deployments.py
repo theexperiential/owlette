@@ -5,7 +5,8 @@ Tests the full deployment API lifecycle using real-world installer URLs
 representing common installer types (NSIS, Inno Setup, MSI-wrapped EXE, etc.).
 
 TestDeploymentLifecycle: API CRUD flow (create → list → detail → cancel → delete).
-TestDeploymentE2E: Actually deploys software and waits for the agent to finish.
+TestDeploymentE2E: Install → verify → uninstall for each installer type.
+TestTouchDesignerDeployment: Deploy latest 3 TD versions (web + full installers).
 TestDeploymentValidation: Error cases and input validation.
 """
 
@@ -16,9 +17,6 @@ import pytest
 
 # ---------------------------------------------------------------------------
 #  Real-world installer test data
-#
-#  Each entry represents a common installer type that Owlette deployments
-#  would handle in production. URLs point to genuine public releases.
 # ---------------------------------------------------------------------------
 INSTALLERS = {
     "nsis": {
@@ -27,6 +25,7 @@ INSTALLERS = {
         "installer_url": "https://www.7-zip.org/a/7z2408-x64.exe",
         "silent_flags": "/S",
         "verify_path": "C:/Program Files/7-Zip/7z.exe",
+        "search_name": "7-Zip",
     },
     "nsis_large": {
         "name": "VLC Media Player (NSIS)",
@@ -34,6 +33,7 @@ INSTALLERS = {
         "installer_url": "https://get.videolan.org/vlc/3.0.21/win64/vlc-3.0.21-win64.exe",
         "silent_flags": "/L=1033 /S",
         "verify_path": "C:/Program Files/VideoLAN/VLC/vlc.exe",
+        "search_name": "VLC",
     },
     "inno_setup": {
         "name": "ShareX (Inno Setup)",
@@ -41,6 +41,7 @@ INSTALLERS = {
         "installer_url": "https://github.com/ShareX/ShareX/releases/download/v17.0.0/ShareX-17.0.0-setup.exe",
         "silent_flags": "/VERYSILENT /NORESTART /SP- /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS /NOCANCEL",
         "verify_path": "C:/Program Files/ShareX/ShareX.exe",
+        "search_name": "ShareX",
     },
     "portable_exe": {
         "name": "Notepad++ (NSIS)",
@@ -48,6 +49,7 @@ INSTALLERS = {
         "installer_url": "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.1/npp.8.7.1.Installer.x64.exe",
         "silent_flags": "/S",
         "verify_path": "C:/Program Files/Notepad++/notepad++.exe",
+        "search_name": "Notepad++",
     },
     "msi_native": {
         "name": "Python 3.13 (MSI)",
@@ -55,23 +57,40 @@ INSTALLERS = {
         "installer_url": "https://www.python.org/ftp/python/3.13.2/python-3.13.2-amd64.exe",
         "silent_flags": "/quiet InstallAllUsers=1 PrependPath=0",
         "verify_path": "C:/Program Files/Python313/python.exe",
+        "search_name": "Python 3.13",
     },
 }
 
-# Terminal statuses — deployment is done (success or failure)
-TERMINAL_STATUSES = {"completed", "failed", "cancelled", "partial", "uninstalled"}
+# TouchDesigner versions — latest 3 builds, both web and full installers
+TD_VERSIONS = [
+    {"build": "32460", "date": "2026-03-09"},
+    {"build": "32280", "date": "2026-01-20"},
+    {"build": "32050", "date": "2025-12-10"},
+]
+TD_SILENT_FLAGS = "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS"
+TD_VERIFY_PATH = "C:/Program Files/Derivative/TouchDesigner/bin/TouchDesigner.exe"
 
 # Per-target terminal statuses
 TARGET_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "uninstalled"}
 
 
+# ---------------------------------------------------------------------------
+#  Helpers
+# ---------------------------------------------------------------------------
+
 def poll_deployment_target(
     api_client, site_id, deployment_id, machine_id, timeout=600, interval=10,
+    expected_statuses=None,
 ):
     """Poll a deployment until the target machine reaches a terminal status.
 
+    Args:
+        expected_statuses: If set, only return when status is one of these.
+            Otherwise returns on any terminal status.
+
     Returns the target dict on success, raises AssertionError on timeout.
     """
+    wait_for = expected_statuses or TARGET_TERMINAL_STATUSES
     deadline = time.time() + timeout
     last_status = None
 
@@ -90,7 +109,7 @@ def poll_deployment_target(
         assert target is not None, f"Machine {machine_id} not in targets"
 
         last_status = target["status"]
-        if last_status in TARGET_TERMINAL_STATUSES:
+        if last_status in wait_for:
             return target
 
         time.sleep(interval)
@@ -101,6 +120,43 @@ def poll_deployment_target(
     )
 
 
+def lookup_software(api_client, site_id, machine_id, search_name):
+    """Look up installed software from the agent's registry sync.
+
+    Returns the first matching software entry, or None.
+    """
+    resp = api_client.get(
+        "/api/admin/software-inventory",
+        params={"siteId": site_id, "machineId": machine_id, "search": search_name},
+    )
+    if resp.status_code != 200:
+        return None
+
+    software = resp.json().get("software", [])
+    return software[0] if software else None
+
+
+def send_uninstall(api_client, site_id, machine_id, software_entry, deployment_id):
+    """Send an uninstall_software command via the commands/send endpoint.
+
+    Returns the command ID.
+    """
+    resp = api_client.post("/api/admin/commands/send", json={
+        "siteId": site_id,
+        "machineId": machine_id,
+        "command": "uninstall_software",
+        "data": {
+            "software_name": software_entry["name"],
+            "uninstall_command": software_entry["uninstall_command"],
+            "installer_type": software_entry.get("installer_type", "custom"),
+            "verify_paths": [software_entry.get("install_location", "")],
+            "deployment_id": deployment_id,
+        },
+    })
+    assert resp.status_code == 200, f"Uninstall command failed: {resp.text}"
+    return resp.json()["commandId"]
+
+
 # ---------------------------------------------------------------------------
 #  Fixtures
 # ---------------------------------------------------------------------------
@@ -109,6 +165,12 @@ def poll_deployment_target(
 def deploy_timeout():
     """Timeout (seconds) for waiting on agent to complete a deployment."""
     return int(os.environ.get("OWLETTE_DEPLOY_TIMEOUT", "600"))
+
+
+@pytest.fixture
+def td_deploy_timeout():
+    """Timeout (seconds) for TouchDesigner deployments (large downloads)."""
+    return int(os.environ.get("OWLETTE_TD_DEPLOY_TIMEOUT", "1200"))
 
 
 # ---------------------------------------------------------------------------
@@ -238,29 +300,31 @@ class TestDeploymentLifecycle:
 
 
 # ---------------------------------------------------------------------------
-#  TestDeploymentE2E — Actually installs software and waits for completion
+#  TestDeploymentE2E — Install → Verify → Uninstall
 # ---------------------------------------------------------------------------
 
 @pytest.mark.api
 @pytest.mark.integration
 @pytest.mark.destructive
 class TestDeploymentE2E:
-    """End-to-end deployment tests — creates real deployments and waits
-    for the agent to download, install, and report back.
+    """End-to-end deployment tests — installs software, verifies completion,
+    then uninstalls and verifies removal.
 
-    Each parametrized test deploys one installer type to the target machine,
-    polls until the agent reports a terminal status, then verifies success.
-
-    Timeout: OWLETTE_DEPLOY_TIMEOUT env var (default 300s / 5 min).
+    Flow per installer:
+    1. Create deployment → poll for 'completed'
+    2. Query software inventory to get uninstall command
+    3. Send uninstall_software command
+    4. Poll for 'uninstalled' status
+    5. Leave deployment visible in dashboard
     """
 
     @pytest.mark.parametrize("installer_key,installer", list(INSTALLERS.items()))
-    def test_deploy_and_wait(
+    def test_install_and_uninstall(
         self, api_client, site_id, machine_id, deployment_cleanup,
         deploy_timeout, installer_key, installer,
     ):
-        """Deploy {installer_key} and wait for agent to complete installation."""
-        # --- Create deployment ---
+        """Install {installer_key}, verify, then uninstall."""
+        # --- Phase 1: Install ---
         resp = api_client.post("/api/admin/deployments", json={
             "siteId": site_id,
             "name": installer["name"],
@@ -275,22 +339,111 @@ class TestDeploymentE2E:
         )
 
         deployment_id = resp.json()["deploymentId"]
-        # Register for cleanup in case of failure — removed on success
         deployment_cleanup.append((deployment_id, [machine_id]))
 
-        # --- Wait for agent to finish ---
+        # --- Phase 2: Wait for install to complete ---
         target = poll_deployment_target(
             api_client, site_id, deployment_id, machine_id,
             timeout=deploy_timeout,
         )
-
-        # --- Verify result ---
         assert target["status"] == "completed", (
-            f"{installer_key} deployment finished with status '{target['status']}' "
-            f"(expected 'completed')"
+            f"{installer_key} install finished with status '{target['status']}'"
         )
 
-        # Success — remove from cleanup so it stays visible in the dashboard
+        # --- Phase 3: Look up uninstall command from software inventory ---
+        # Wait a moment for the agent to sync inventory after install
+        time.sleep(5)
+
+        software = lookup_software(
+            api_client, site_id, machine_id, installer["search_name"]
+        )
+        assert software is not None, (
+            f"Could not find '{installer['search_name']}' in software inventory "
+            f"after install — agent may not have synced yet"
+        )
+        assert software.get("uninstall_command"), (
+            f"No uninstall_command found for '{software['name']}'"
+        )
+
+        # --- Phase 4: Send uninstall command ---
+        send_uninstall(api_client, site_id, machine_id, software, deployment_id)
+
+        # --- Phase 5: Wait for uninstall to complete ---
+        target = poll_deployment_target(
+            api_client, site_id, deployment_id, machine_id,
+            timeout=deploy_timeout,
+            expected_statuses={"uninstalled", "failed"},
+        )
+        assert target["status"] == "uninstalled", (
+            f"{installer_key} uninstall finished with status '{target['status']}'"
+        )
+
+        # Success — remove from cleanup, keep visible in dashboard
+        deployment_cleanup.remove((deployment_id, [machine_id]))
+
+
+# ---------------------------------------------------------------------------
+#  TestTouchDesignerDeployment — Deploy latest 3 TD versions
+# ---------------------------------------------------------------------------
+
+@pytest.mark.api
+@pytest.mark.integration
+@pytest.mark.destructive
+@pytest.mark.slow
+class TestTouchDesignerDeployment:
+    """Deploy the latest 3 TouchDesigner versions using both web and full
+    installers to validate all installer types work.
+
+    Each version is installed and kept — not uninstalled.
+    These are large downloads (671MB web, 2.7GB full) so tests are marked
+    slow and have a 20-minute timeout.
+    """
+
+    @pytest.mark.parametrize("version", TD_VERSIONS, ids=[v["build"] for v in TD_VERSIONS])
+    @pytest.mark.parametrize("installer_type", ["web", "full"])
+    def test_deploy_touchdesigner(
+        self, api_client, site_id, machine_id, deployment_cleanup,
+        td_deploy_timeout, version, installer_type,
+    ):
+        """Deploy TouchDesigner {version[build]} ({installer_type} installer)."""
+        build = version["build"]
+
+        if installer_type == "web":
+            url = f"https://download.derivative.ca/TouchDesignerWebInstaller.2025.{build}.exe"
+            name = f"TouchDesigner 2025.{build} (Web)"
+            installer_name = f"TouchDesignerWebInstaller.2025.{build}.exe"
+        else:
+            url = f"https://download.derivative.ca/TouchDesigner.2025.{build}.exe"
+            name = f"TouchDesigner 2025.{build} (Full)"
+            installer_name = f"TouchDesigner.2025.{build}.exe"
+
+        # --- Create deployment ---
+        resp = api_client.post("/api/admin/deployments", json={
+            "siteId": site_id,
+            "name": name,
+            "installer_name": installer_name,
+            "installer_url": url,
+            "silent_flags": TD_SILENT_FLAGS,
+            "verify_path": TD_VERIFY_PATH,
+            "machineIds": [machine_id],
+        })
+        assert resp.status_code == 200, (
+            f"Failed to create TD {build} ({installer_type}) deployment: {resp.text}"
+        )
+
+        deployment_id = resp.json()["deploymentId"]
+        deployment_cleanup.append((deployment_id, [machine_id]))
+
+        # --- Wait for install to complete ---
+        target = poll_deployment_target(
+            api_client, site_id, deployment_id, machine_id,
+            timeout=td_deploy_timeout,
+        )
+        assert target["status"] == "completed", (
+            f"TD {build} ({installer_type}) finished with status '{target['status']}'"
+        )
+
+        # Keep installed — remove from cleanup
         deployment_cleanup.remove((deployment_id, [machine_id]))
 
 
