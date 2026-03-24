@@ -275,6 +275,7 @@ class TestDeploymentE2E:
         )
 
         deployment_id = resp.json()["deploymentId"]
+        # Register for cleanup in case of failure — removed on success
         deployment_cleanup.append((deployment_id, [machine_id]))
 
         # --- Wait for agent to finish ---
@@ -288,6 +289,9 @@ class TestDeploymentE2E:
             f"{installer_key} deployment finished with status '{target['status']}' "
             f"(expected 'completed')"
         )
+
+        # Success — remove from cleanup so it stays visible in the dashboard
+        deployment_cleanup.remove((deployment_id, [machine_id]))
 
 
 # ---------------------------------------------------------------------------
