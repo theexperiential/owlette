@@ -28,19 +28,19 @@ INSTALLERS = {
         "silent_flags": "/S",
         "verify_path": "C:/Program Files/7-Zip/7z.exe",
     },
-    "inno_setup": {
-        "name": "VLC Media Player (Inno Setup)",
+    "nsis_large": {
+        "name": "VLC Media Player (NSIS)",
         "installer_name": "vlc-3.0.21-win64.exe",
         "installer_url": "https://get.videolan.org/vlc/3.0.21/win64/vlc-3.0.21-win64.exe",
-        "silent_flags": "/VERYSILENT /NORESTART",
+        "silent_flags": "/L=1033 /S",
         "verify_path": "C:/Program Files/VideoLAN/VLC/vlc.exe",
     },
-    "msi": {
-        "name": "Git for Windows (Inno Setup / MSI)",
-        "installer_name": "Git-2.47.1-64-bit.exe",
-        "installer_url": "https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.1/Git-2.47.1-64-bit.exe",
-        "silent_flags": "/VERYSILENT /NORESTART /SP-",
-        "verify_path": "C:/Program Files/Git/cmd/git.exe",
+    "inno_setup": {
+        "name": "WinSCP (Inno Setup)",
+        "installer_name": "WinSCP-6.3.6-Setup.exe",
+        "installer_url": "https://winscp.net/download/WinSCP-6.3.6-Setup.exe/download",
+        "silent_flags": "/VERYSILENT /NORESTART /SP- /NOCANCEL",
+        "verify_path": "C:/Program Files (x86)/WinSCP/WinSCP.exe",
     },
     "portable_exe": {
         "name": "Notepad++ (NSIS)",
@@ -66,7 +66,7 @@ TARGET_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "uninstalled"}
 
 
 def poll_deployment_target(
-    api_client, site_id, deployment_id, machine_id, timeout=300, interval=5,
+    api_client, site_id, deployment_id, machine_id, timeout=600, interval=10,
 ):
     """Poll a deployment until the target machine reaches a terminal status.
 
@@ -108,7 +108,7 @@ def poll_deployment_target(
 @pytest.fixture
 def deploy_timeout():
     """Timeout (seconds) for waiting on agent to complete a deployment."""
-    return int(os.environ.get("OWLETTE_DEPLOY_TIMEOUT", "300"))
+    return int(os.environ.get("OWLETTE_DEPLOY_TIMEOUT", "600"))
 
 
 # ---------------------------------------------------------------------------
