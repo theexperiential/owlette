@@ -53,8 +53,8 @@ INSTALLERS = {
     },
     "msi_native": {
         "name": "Python 3.11 (MSI)",
-        "installer_name": "python-3.11.12-amd64.exe",
-        "installer_url": "https://www.python.org/ftp/python/3.11.12/python-3.11.12-amd64.exe",
+        "installer_name": "python-3.11.9-amd64.exe",
+        "installer_url": "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe",
         "silent_flags": "/quiet InstallAllUsers=1 PrependPath=0",
         "verify_path": "C:/Program Files/Python311/python.exe",
         "search_name": "Python 3.11",
