@@ -178,5 +178,5 @@ export const POST = withRateLimit(
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
   },
-  { strategy: 'agentAlert', identifier: 'ip' }
+  { strategy: 'api', identifier: 'ip' }
 );

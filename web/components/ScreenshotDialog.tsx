@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Camera, Loader2, RefreshCw, AlertTriangle, Download, ClipboardCopy, Check, Maximize2, X as XIcon, History } from 'lucide-react';
+import { Camera, Loader2, RefreshCw, AlertTriangle, Download, ClipboardCopy, Check, Maximize2, X as XIcon, PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -13,6 +15,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { formatRelativeTime } from '@/lib/timeUtils';
 import { useScreenshotHistory, ScreenshotRecord } from '@/hooks/useScreenshotHistory';
+import { toast } from 'sonner';
 
 interface ScreenshotDialogProps {
   open: boolean;
@@ -22,7 +25,6 @@ interface ScreenshotDialogProps {
   siteId: string;
   isOnline: boolean;
   onCaptureScreenshot: () => Promise<void>;
-  /** Pre-loaded screenshot from machine document */
   lastScreenshot?: {
     url: string;
     timestamp: number;
@@ -45,15 +47,17 @@ export function ScreenshotDialog({
   const [screenshot, setScreenshot] = useState(initialScreenshot);
   const [copied, setCopied] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
+  const [showHistory, setShowHistory] = useState(true);
   const [selectedHistorical, setSelectedHistorical] = useState<ScreenshotRecord | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [clearingAll, setClearingAll] = useState(false);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
   const captureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { screenshots: historyScreenshots, loading: historyLoading } = useScreenshotHistory(
-    siteId, machineId, open && showHistory
+    siteId, machineId, open
   );
 
-  // The currently displayed screenshot (historical selection or latest)
   const displayedScreenshot = selectedHistorical || screenshot;
 
   // Listen for screenshot updates in real-time
@@ -65,7 +69,6 @@ export function ScreenshotDialog({
       const data = snapshot.data();
       if (data?.lastScreenshot?.url) {
         setScreenshot((prev) => {
-          // Only clear capturing state if this is a NEW screenshot
           if (!prev || data.lastScreenshot.timestamp !== prev.timestamp) {
             if (captureTimeoutRef.current) {
               clearTimeout(captureTimeoutRef.current);
@@ -88,26 +91,28 @@ export function ScreenshotDialog({
     };
   }, [open, siteId, machineId]);
 
-  // Update from prop when dialog opens
   useEffect(() => {
     if (open && initialScreenshot) {
       setScreenshot(initialScreenshot);
+    }
+    if (open) {
+      setSelectedHistorical(null);
     }
   }, [open, initialScreenshot]);
 
   const handleCapture = useCallback(async () => {
     setIsCapturing(true);
     setError(null);
+    setSelectedHistorical(null);
 
     try {
       await onCaptureScreenshot();
 
-      // Set a timeout — if no screenshot arrives in 20s, show error
       if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
       captureTimeoutRef.current = setTimeout(() => {
         captureTimeoutRef.current = null;
         setIsCapturing(false);
-        setError('Screenshot timed out — the machine may be running headless or the GUI is not running.');
+        setError('Screenshot timed out — the machine may be offline or running headless with no active user session.');
       }, 20000);
     } catch (err: any) {
       setIsCapturing(false);
@@ -127,7 +132,6 @@ export function ScreenshotDialog({
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      // Fallback: open in new tab
       window.open(displayedScreenshot.url, '_blank');
     }
   }, [displayedScreenshot, machineName]);
@@ -161,6 +165,51 @@ export function ScreenshotDialog({
     }
   }, [displayedScreenshot]);
 
+  const handleDeleteScreenshot = useCallback(async (screenshotId: string) => {
+    setDeletingId(screenshotId);
+    try {
+      const res = await fetch(
+        `/api/admin/screenshots?siteId=${siteId}&machineId=${machineId}&screenshotId=${screenshotId}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to delete');
+      }
+      // If we were viewing the deleted screenshot, go back to latest
+      if (selectedHistorical?.id === screenshotId) {
+        setSelectedHistorical(null);
+      }
+      toast.success('Screenshot deleted');
+    } catch (err: any) {
+      toast.error('Failed to delete screenshot', { description: err.message });
+    } finally {
+      setDeletingId(null);
+    }
+  }, [siteId, machineId, selectedHistorical]);
+
+  const handleClearAll = useCallback(async () => {
+    setClearingAll(true);
+    try {
+      const res = await fetch(
+        `/api/admin/screenshots?siteId=${siteId}&machineId=${machineId}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to clear');
+      }
+      const data = await res.json();
+      setSelectedHistorical(null);
+      setScreenshot(undefined);
+      toast.success(`Cleared ${data.deleted} screenshot${data.deleted === 1 ? '' : 's'}`);
+    } catch (err: any) {
+      toast.error('Failed to clear history', { description: err.message });
+    } finally {
+      setClearingAll(false);
+    }
+  }, [siteId, machineId]);
+
   // Close fullscreen on Escape key
   useEffect(() => {
     if (!fullscreen) return;
@@ -177,6 +226,17 @@ export function ScreenshotDialog({
       handleCapture();
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const formatTimestamp = (ts: number) => {
+    const d = new Date(ts);
+    return d.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  };
 
   return (
     <>
@@ -203,174 +263,258 @@ export function ScreenshotDialog({
       </div>
     )}
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-card border-border max-w-4xl w-[90vw]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Camera className="h-5 w-5" />
-            screenshot — {machineName}
-          </DialogTitle>
-        </DialogHeader>
+      <DialogContent className="bg-card border-border max-w-[96vw] w-[96vw] p-0 gap-0">
+        <div className="flex h-[90vh] max-h-[900px]">
 
-        <div className="space-y-3">
-          {/* Screenshot display */}
-          <div className="relative bg-black/50 rounded-lg overflow-hidden min-h-[200px] flex items-center justify-center">
-            {isCapturing && (
-              <div className="flex flex-col items-center gap-3 py-12 text-muted-foreground">
-                <Loader2 className="h-8 w-8 animate-spin" />
-                <p>capturing screenshot...</p>
+          {/* Collapsible left sidebar — history */}
+          {showHistory && (
+            <div className="w-52 flex-shrink-0 border-r border-border flex flex-col">
+              <div className="px-3 py-3 border-b border-border flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">history</span>
+                <div className="flex items-center gap-1">
+                  {historyScreenshots.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground hover:text-red-400"
+                      onClick={() => setConfirmClearAll(true)}
+                      disabled={clearingAll}
+                      title="Clear all history"
+                    >
+                      {clearingAll ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-muted-foreground"
+                    onClick={() => setShowHistory(false)}
+                    title="Hide history"
+                  >
+                    <PanelLeftClose className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               </div>
-            )}
-
-            {!isCapturing && error && (
-              <div className="flex flex-col items-center gap-3 py-12 text-muted-foreground">
-                <AlertTriangle className="h-8 w-8 text-amber-400" />
-                <p className="text-sm text-center max-w-md">{error}</p>
-              </div>
-            )}
-
-            {!isCapturing && !error && !screenshot && (
-              <div className="flex flex-col items-center gap-3 py-12 text-muted-foreground">
-                <Camera className="h-8 w-8" />
-                <p>no screenshot available</p>
-              </div>
-            )}
-
-            {displayedScreenshot && !isCapturing && (
-              <>
-                {selectedHistorical && (
-                  <div className="absolute top-2 left-2 z-10 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                    viewing history — {new Date(selectedHistorical.timestamp).toLocaleString()}
+              <div className="flex-1 overflow-y-auto">
+                {historyLoading ? (
+                  <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    loading...
+                  </div>
+                ) : historyScreenshots.length === 0 ? (
+                  <p className="text-xs text-muted-foreground p-3">no history yet</p>
+                ) : (
+                  <div className="py-1">
+                    {historyScreenshots.map((hs) => {
+                      const isSelected = selectedHistorical?.id === hs.id;
+                      const isLatest = !selectedHistorical && screenshot && hs.timestamp === screenshot.timestamp;
+                      const isDeleting = deletingId === hs.id;
+                      return (
+                        <div
+                          key={hs.id}
+                          className={`group flex items-center transition-colors ${
+                            isSelected || isLatest
+                              ? 'bg-primary/10 border-l-2 border-primary'
+                              : 'border-l-2 border-transparent hover:bg-muted/50'
+                          }`}
+                        >
+                          <button
+                            className={`flex-1 text-left px-3 py-2 text-xs min-w-0 ${
+                              isSelected || isLatest ? 'text-primary' : 'text-muted-foreground'
+                            }`}
+                            onClick={() => setSelectedHistorical(isLatest ? null : hs)}
+                          >
+                            <div className="font-medium truncate">{formatTimestamp(hs.timestamp)}</div>
+                            <div className="text-[10px] mt-0.5 opacity-70">
+                              {formatRelativeTime(hs.timestamp / 1000)} · {hs.sizeKB}KB
+                            </div>
+                          </button>
+                          <button
+                            className="opacity-0 group-hover:opacity-100 p-1.5 mr-1 text-muted-foreground hover:text-red-400 transition-opacity"
+                            onClick={(e) => { e.stopPropagation(); handleDeleteScreenshot(hs.id); }}
+                            disabled={isDeleting}
+                            title="Delete screenshot"
+                          >
+                            {isDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
-                <img
-                  src={displayedScreenshot.url}
-                  alt={`Screenshot of ${machineName}`}
-                  className="w-full h-auto max-h-[70vh] object-contain cursor-pointer"
-                  onClick={() => setFullscreen(true)}
-                />
-              </>
-            )}
-          </div>
-
-          {/* History gallery strip */}
-          {showHistory && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground font-medium">history</span>
-                {selectedHistorical && (
-                  <button
-                    className="text-xs text-primary hover:underline"
-                    onClick={() => setSelectedHistorical(null)}
-                  >
-                    back to latest
-                  </button>
-                )}
               </div>
-              {historyLoading ? (
-                <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  loading history...
-                </div>
-              ) : historyScreenshots.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-2">no history yet</p>
-              ) : (
-                <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin">
-                  {historyScreenshots.map((hs) => (
-                    <button
-                      key={hs.id}
-                      className={`flex-shrink-0 rounded overflow-hidden border-2 transition-colors ${
-                        selectedHistorical?.id === hs.id
-                          ? 'border-primary'
-                          : 'border-transparent hover:border-muted-foreground/40'
-                      }`}
-                      onClick={() => setSelectedHistorical(hs)}
-                    >
-                      <img
-                        src={hs.url}
-                        alt={`Screenshot ${new Date(hs.timestamp).toLocaleString()}`}
-                        className="h-16 w-auto object-cover"
-                        loading="lazy"
-                      />
-                      <div className="text-[10px] text-muted-foreground px-1 py-0.5 text-center truncate max-w-[120px]">
-                        {formatRelativeTime(hs.timestamp / 1000)}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
+              {/* Capture button at bottom of sidebar */}
+              <div className="p-2 border-t border-border">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCapture}
+                  disabled={isCapturing || !isOnline}
+                  className="w-full bg-secondary border-border hover:bg-accent"
+                >
+                  {isCapturing ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Camera className="h-4 w-4 mr-2" />
+                  )}
+                  {isCapturing ? 'capturing...' : 'capture'}
+                </Button>
+              </div>
             </div>
           )}
 
-          {/* Footer info + action buttons */}
-          <div className="flex items-center justify-between">
-            <div className="text-xs text-muted-foreground">
-              {displayedScreenshot && (
-                <>
-                  captured {formatRelativeTime(displayedScreenshot.timestamp / 1000)} ({displayedScreenshot.sizeKB}KB)
-                </>
-              )}
-              <span className="ml-2 text-muted-foreground/60">
-                screenshots may contain sensitive content
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              {displayedScreenshot && (
-                <>
+          {/* Main content — screenshot display */}
+          <div className="flex-1 flex flex-col min-w-0">
+            {/* Header */}
+            <DialogHeader className="px-4 py-3 border-b border-border flex-shrink-0">
+              <DialogTitle className="flex items-center gap-2">
+                {!showHistory && (
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
-                    onClick={handleDownload}
-                    title="Download screenshot"
+                    className="h-7 w-7 text-muted-foreground"
+                    onClick={() => setShowHistory(true)}
+                    title="Show history"
                   >
-                    <Download className="h-4 w-4" />
+                    <PanelLeftOpen className="h-4 w-4" />
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={handleCopy}
-                    title="Copy to clipboard"
-                  >
-                    {copied ? <Check className="h-4 w-4 text-green-500" /> : <ClipboardCopy className="h-4 w-4" />}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => setFullscreen(true)}
-                    title="Fullscreen"
-                  >
-                    <Maximize2 className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className={`h-8 w-8 ${showHistory ? 'text-primary' : ''}`}
-                    onClick={() => { setShowHistory(!showHistory); if (showHistory) setSelectedHistorical(null); }}
-                    title="Screenshot history"
-                  >
-                    <History className="h-4 w-4" />
-                  </Button>
-                </>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCapture}
-                disabled={isCapturing || !isOnline}
-                className="bg-secondary border-border hover:bg-accent ml-1"
-              >
-                {isCapturing ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4 mr-2" />
                 )}
-                {isCapturing ? 'capturing...' : 'refresh'}
-              </Button>
+                <Camera className="h-5 w-5" />
+                screenshot — {machineName}
+                {selectedHistorical && (
+                  <span className="text-xs font-normal text-muted-foreground ml-2">
+                    (viewing {formatTimestamp(selectedHistorical.timestamp)})
+                  </span>
+                )}
+              </DialogTitle>
+            </DialogHeader>
+
+            {/* Screenshot display — flex-1 fills remaining space for widescreen layout */}
+            <div className="flex-1 relative bg-black/30 flex items-center justify-center overflow-hidden min-h-0">
+              {isCapturing && (
+                <div className="flex flex-col items-center gap-3 py-12 text-muted-foreground">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                  <p>capturing screenshot...</p>
+                </div>
+              )}
+
+              {!isCapturing && error && (
+                <div className="flex flex-col items-center gap-3 py-12 text-muted-foreground">
+                  <AlertTriangle className="h-8 w-8 text-amber-400" />
+                  <p className="text-sm text-center max-w-md">{error}</p>
+                </div>
+              )}
+
+              {!isCapturing && !error && !displayedScreenshot && (
+                <div className="flex flex-col items-center gap-3 py-12 text-muted-foreground">
+                  <Camera className="h-8 w-8" />
+                  <p>no screenshot available</p>
+                </div>
+              )}
+
+              {displayedScreenshot && !isCapturing && (
+                <img
+                  src={displayedScreenshot.url}
+                  alt={`Screenshot of ${machineName}`}
+                  className="w-full h-full object-contain cursor-pointer"
+                  onClick={() => setFullscreen(true)}
+                />
+              )}
+            </div>
+
+            {/* Footer — info + action buttons */}
+            <div className="flex items-center justify-between px-4 py-2 border-t border-border flex-shrink-0">
+              <div className="text-xs text-muted-foreground">
+                {displayedScreenshot && (
+                  <>
+                    captured {formatRelativeTime(displayedScreenshot.timestamp / 1000)} ({displayedScreenshot.sizeKB}KB)
+                  </>
+                )}
+                <span className="ml-2 text-muted-foreground/60">
+                  screenshots may contain sensitive content
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                {displayedScreenshot && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={handleDownload}
+                      title="Download screenshot"
+                    >
+                      <Download className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={handleCopy}
+                      title="Copy to clipboard"
+                    >
+                      {copied ? <Check className="h-4 w-4 text-green-500" /> : <ClipboardCopy className="h-4 w-4" />}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setFullscreen(true)}
+                      title="Fullscreen"
+                    >
+                      <Maximize2 className="h-4 w-4" />
+                    </Button>
+                  </>
+                )}
+                {!showHistory && !isCapturing && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCapture}
+                    disabled={isCapturing || !isOnline}
+                    className="bg-secondary border-border hover:bg-accent ml-1"
+                  >
+                    <Camera className="h-4 w-4 mr-2" />
+                    capture
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
+
         </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* Clear all confirmation dialog */}
+    <Dialog open={confirmClearAll} onOpenChange={setConfirmClearAll}>
+      <DialogContent className="bg-card border-border max-w-sm">
+        <DialogHeader>
+          <DialogTitle>clear screenshot history?</DialogTitle>
+          <DialogDescription className="text-muted-foreground">
+            this will permanently delete {historyScreenshots.length} screenshot{historyScreenshots.length === 1 ? '' : 's'} from storage.
+            this action cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => setConfirmClearAll(false)}
+            className="bg-secondary border-border hover:bg-accent"
+          >
+            cancel
+          </Button>
+          <Button
+            onClick={async () => {
+              setConfirmClearAll(false);
+              await handleClearAll();
+            }}
+            disabled={clearingAll}
+            className="bg-red-600 hover:bg-red-700"
+          >
+            {clearingAll ? 'clearing...' : 'clear all'}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
     </>

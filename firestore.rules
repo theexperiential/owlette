@@ -155,6 +155,14 @@ service cloud.firestore {
           allow delete: if canAccessSite(siteId); // Authenticated users can delete commands
         }
 
+        // Screenshot History Subcollection
+        // Server-side API writes history entries (admin SDK bypasses rules)
+        // Web dashboard reads to display screenshot history gallery
+        match /screenshots/{screenshotId} {
+          allow read: if canAccessSite(siteId) ||
+                         isServiceAccount();
+        }
+
         // Installed Software Inventory Subcollection
         // Agents write software inventory data
         // Web dashboard reads to display installed software
