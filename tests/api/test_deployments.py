@@ -191,7 +191,7 @@ class TestDeploymentLifecycle:
     not the agent's installer execution.
     """
 
-    deployment_id: str | None = None
+    deployment_id = None  # type: Optional[str]
 
     def test_01_create_deployment(self, api_client, site_id, machine_id, deployment_cleanup):
         """POST creates a deployment with correct structure."""
@@ -466,7 +466,7 @@ class TestMultiMachineDeployment:
     If not set, the test is skipped.
     """
 
-    deployment_id: str | None = None
+    deployment_id = None  # type: Optional[str]
 
     @pytest.fixture(autouse=True)
     def _require_second_machine(self, request):
