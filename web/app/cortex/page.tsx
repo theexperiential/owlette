@@ -248,6 +248,9 @@ export default function CortexPage() {
               chat.handleSend();
             }}
             onStop={chat.stop}
+            pendingImages={chat.pendingImages}
+            onPasteImage={chat.handlePasteImage}
+            onRemoveImage={chat.removePendingImage}
           />
         </main>
       </div>

@@ -7,9 +7,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Download, Loader2, Pencil, Trash2 } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Download, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useMachines } from '@/hooks/useFirestore';
+import { useMachines, Process } from '@/hooks/useFirestore';
 import { DeploymentTemplate, Deployment } from '@/hooks/useDeployments';
 import { Badge } from '@/components/ui/badge';
 import { useSystemPresets } from '@/hooks/useSystemPresets';
@@ -54,6 +54,9 @@ export default function DeploymentDialog({
   const [selectedItem, setSelectedItem] = useState<string>('');  // 'preset:id' or 'template:id'
   const [editingTemplate, setEditingTemplate] = useState<string>('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showCloseProcesses, setShowCloseProcesses] = useState(false);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [additionalProcesses, setAdditionalProcesses] = useState('');
 
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
@@ -96,6 +99,9 @@ export default function DeploymentDialog({
       setSaveAsTemplate(false);
       setSelectedItem('');
       setEditingTemplate('');
+      setShowCloseProcesses(false);
+      setSelectedProjectIds(new Set());
+      setAdditionalProcesses('');
     }
   }, [open]);
 
@@ -119,6 +125,12 @@ export default function DeploymentDialog({
         setInstallerUrl(preset.installer_url);
         setSilentFlags(preset.silent_flags);
         setVerifyPath(preset.verify_path || '');
+        if (preset.close_processes?.length) {
+          setAdditionalProcesses(preset.close_processes.join(', '));
+          setShowCloseProcesses(true);
+        } else {
+          setAdditionalProcesses('');
+        }
       }
     } else if (value.startsWith(TEMPLATE_PREFIX)) {
       const templateId = value.slice(TEMPLATE_PREFIX.length);
@@ -129,6 +141,12 @@ export default function DeploymentDialog({
         setInstallerUrl(template.installer_url);
         setSilentFlags(template.silent_flags);
         setVerifyPath(template.verify_path || '');
+        if (template.close_processes?.length) {
+          setAdditionalProcesses(template.close_processes.join(', '));
+          setShowCloseProcesses(true);
+        } else {
+          setAdditionalProcesses('');
+        }
       }
     }
   };
@@ -225,6 +243,24 @@ export default function DeploymentDialog({
     setDeploying(true);
 
     try {
+      // Build close_processes list for template saving (before deployment object)
+      const templateCloseProcesses: string[] = [];
+      const additionalNamesForTemplate = additionalProcesses.split(',').map(s => s.trim()).filter(Boolean);
+      // For templates, only save the free-text process names (managed project IDs are machine-specific)
+      machines
+        .filter(m => selectedMachines.has(m.machineId))
+        .forEach(machine => {
+          (machine.processes || []).forEach((proc: Process) => {
+            if (selectedProjectIds.has(proc.id)) {
+              const exeName = proc.exe_path?.split(/[/\\]/).pop() || '';
+              if (exeName && !templateCloseProcesses.includes(exeName)) templateCloseProcesses.push(exeName);
+            }
+          });
+        });
+      additionalNamesForTemplate.forEach(name => {
+        if (!templateCloseProcesses.includes(name)) templateCloseProcesses.push(name);
+      });
+
       // Update existing template if in edit mode
       if (editingTemplate) {
         const templateData: any = {
@@ -234,6 +270,7 @@ export default function DeploymentDialog({
           silent_flags: silentFlags,
         };
         if (verifyPath?.trim()) templateData.verify_path = verifyPath.trim();
+        if (templateCloseProcesses.length > 0) templateData.close_processes = templateCloseProcesses;
 
         await onUpdateTemplate(editingTemplate, templateData);
         toast.success('Template updated successfully!');
@@ -248,6 +285,7 @@ export default function DeploymentDialog({
           silent_flags: silentFlags,
         };
         if (verifyPath?.trim()) templateData.verify_path = verifyPath.trim();
+        if (templateCloseProcesses.length > 0) templateData.close_processes = templateCloseProcesses;
 
         await onCreateTemplate(templateData);
         toast.success('Template saved successfully!');
@@ -264,6 +302,32 @@ export default function DeploymentDialog({
 
       if (verifyPath?.trim()) deploymentData.verify_path = verifyPath.trim();
 
+      // Build close_processes and suppress_projects from UI selections
+      const closeProcesses: string[] = [];
+      const suppressProjects: string[] = [];
+
+      // Add exe names from selected managed projects
+      machines
+        .filter(m => selectedMachines.has(m.machineId))
+        .forEach(machine => {
+          (machine.processes || []).forEach((proc: Process) => {
+            if (selectedProjectIds.has(proc.id)) {
+              if (!suppressProjects.includes(proc.id)) suppressProjects.push(proc.id);
+              const exeName = proc.exe_path?.split(/[/\\]/).pop() || '';
+              if (exeName && !closeProcesses.includes(exeName)) closeProcesses.push(exeName);
+            }
+          });
+        });
+
+      // Add free-text process names
+      const additionalNames = additionalProcesses.split(',').map(s => s.trim()).filter(Boolean);
+      additionalNames.forEach(name => {
+        if (!closeProcesses.includes(name)) closeProcesses.push(name);
+      });
+
+      if (closeProcesses.length > 0) deploymentData.close_processes = closeProcesses;
+      if (suppressProjects.length > 0) deploymentData.suppress_projects = suppressProjects;
+
       const deploymentId = await onCreateDeployment(
         deploymentData,
         Array.from(selectedMachines)
@@ -279,6 +343,9 @@ export default function DeploymentDialog({
       setSelectedMachines(new Set());
       setSaveAsTemplate(false);
       setSelectedItem('');
+      setSelectedProjectIds(new Set());
+      setAdditionalProcesses('');
+      setShowCloseProcesses(false);
 
       onOpenChange(false);
     } catch (error: any) {
@@ -454,6 +521,145 @@ export default function DeploymentDialog({
               className="border-border bg-background text-white"
             />
             <p className="text-xs text-muted-foreground">path to verify after installation completes</p>
+          </div>
+
+          {/* Close Running Processes (collapsible) */}
+          <div className="space-y-2">
+            <button
+              type="button"
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-white transition-colors"
+              onClick={() => setShowCloseProcesses(!showCloseProcesses)}
+            >
+              {showCloseProcesses ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              close running processes before install
+              {(selectedProjectIds.size > 0 || additionalProcesses.trim()) && (
+                <Badge className="bg-amber-600 text-xs ml-1">active</Badge>
+              )}
+            </button>
+
+            {showCloseProcesses && (
+              <div className="space-y-3 pl-5">
+                {/* Managed projects from selected machines */}
+                {(() => {
+                  // Collect unique processes across selected machines
+                  const managedProcesses: { id: string; name: string; exeName: string; machineIds: string[] }[] = [];
+                  const seenNames = new Set<string>();
+
+                  machines
+                    .filter(m => selectedMachines.has(m.machineId))
+                    .forEach(machine => {
+                      (machine.processes || []).forEach((proc: Process) => {
+                        const exeName = proc.exe_path?.split(/[/\\]/).pop() || '';
+                        const key = `${proc.name}-${exeName}`;
+                        if (!seenNames.has(key)) {
+                          seenNames.add(key);
+                          managedProcesses.push({
+                            id: proc.id,
+                            name: proc.name,
+                            exeName,
+                            machineIds: [machine.machineId],
+                          });
+                        } else {
+                          const existing = managedProcesses.find(p => `${p.name}-${p.exeName}` === key);
+                          if (existing) existing.machineIds.push(machine.machineId);
+                        }
+                      });
+                    });
+
+                  if (managedProcesses.length === 0 && selectedMachines.size === 0) {
+                    return (
+                      <p className="text-xs text-muted-foreground">select target machines to see managed processes</p>
+                    );
+                  }
+
+                  if (managedProcesses.length === 0) {
+                    return (
+                      <p className="text-xs text-muted-foreground">no managed processes on selected machines</p>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">managed processes</Label>
+                      {managedProcesses.map(proc => (
+                        <div
+                          key={proc.id}
+                          className="flex items-center gap-2 cursor-pointer"
+                          onClick={() => {
+                            const newSet = new Set(selectedProjectIds);
+                            if (newSet.has(proc.id)) {
+                              newSet.delete(proc.id);
+                            } else {
+                              newSet.add(proc.id);
+                            }
+                            setSelectedProjectIds(newSet);
+                          }}
+                        >
+                          <Checkbox
+                            checked={selectedProjectIds.has(proc.id)}
+                            onCheckedChange={() => {
+                              const newSet = new Set(selectedProjectIds);
+                              if (newSet.has(proc.id)) {
+                                newSet.delete(proc.id);
+                              } else {
+                                newSet.add(proc.id);
+                              }
+                              setSelectedProjectIds(newSet);
+                            }}
+                            className="cursor-pointer"
+                          />
+                          <span className="text-white text-sm">{proc.name}</span>
+                          <span className="text-muted-foreground text-xs">({proc.exeName})</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* Additional process names (free text) */}
+                <div className="space-y-1">
+                  <Label htmlFor="additional-processes" className="text-xs text-muted-foreground">additional process names</Label>
+                  <Input
+                    id="additional-processes"
+                    placeholder="e.g., msiexec.exe, CodeMeter.exe"
+                    value={additionalProcesses}
+                    onChange={(e) => setAdditionalProcesses(e.target.value)}
+                    className="border-border bg-background text-white text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">comma-separated exe names for non-managed processes</p>
+                </div>
+
+                {/* Warning banner */}
+                {(selectedProjectIds.size > 0 || additionalProcesses.trim()) && (() => {
+                  const allProcessNames: string[] = [];
+                  machines
+                    .filter(m => selectedMachines.has(m.machineId))
+                    .forEach(machine => {
+                      (machine.processes || []).forEach((proc: Process) => {
+                        if (selectedProjectIds.has(proc.id)) {
+                          const exeName = proc.exe_path?.split(/[/\\]/).pop() || proc.name;
+                          if (!allProcessNames.includes(exeName)) allProcessNames.push(exeName);
+                        }
+                      });
+                    });
+                  const additionalNames = additionalProcesses.split(',').map(s => s.trim()).filter(Boolean);
+                  additionalNames.forEach(n => { if (!allProcessNames.includes(n)) allProcessNames.push(n); });
+
+                  return (
+                    <div className="flex items-start gap-2 p-2 bg-amber-900/30 border border-amber-600/40 rounded text-sm">
+                      <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+                      <div className="text-amber-200">
+                        <span className="font-medium">The following processes will be closed on target machines before installation: </span>
+                        <span>{allProcessNames.join(', ')}</span>
+                        {selectedProjectIds.size > 0 && (
+                          <span className="block text-xs text-amber-300/70 mt-1">Managed processes will restart automatically after installation.</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
 
           {/* Target Machines */}

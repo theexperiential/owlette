@@ -155,6 +155,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.results = {} # App process response esults
         self.current_time = datetime.datetime.now()
         self.active_installations = {} # Track active installer processes for cancellation
+        self.install_locks = {}  # {process_config_id: deployment_id} - suppress relaunch during install
         self.manual_overrides = {} # Processes manually started outside their schedule window
         self._cached_site_timezone = None  # Cached from firebase_client
 
@@ -1205,6 +1206,61 @@ class OwletteService(win32serviceutil.ServiceFramework):
             self.environment = None
             return False
 
+    def _get_elevated_install_token(self):
+        """Get an elevated token that runs on the user's desktop.
+
+        Duplicates the service's own SYSTEM token and sets its session ID
+        to the active console session.  This gives the installer full admin
+        privileges while running on the user's desktop (not Session 0),
+        so sub-installers that need a desktop won't hang.
+
+        Returns:
+            (token, environment) or (None, None) if no console session.
+        """
+        try:
+            import ctypes
+            import win32api
+
+            session_id = win32ts.WTSGetActiveConsoleSessionId()
+            if session_id == 0xFFFFFFFF:
+                logging.warning("No active console session for elevated install")
+                return None, None
+
+            # Get the service's own (SYSTEM) process token
+            proc_handle = win32api.GetCurrentProcess()
+            service_token = win32security.OpenProcessToken(
+                proc_handle,
+                win32security.TOKEN_DUPLICATE | win32security.TOKEN_QUERY
+            )
+
+            # Duplicate as primary token with full access
+            elevated_token = win32security.DuplicateTokenEx(
+                ExistingToken=service_token,
+                DesiredAccess=win32security.TOKEN_ALL_ACCESS,
+                ImpersonationLevel=win32security.SecurityImpersonation,
+                TokenType=win32security.TokenPrimary,
+                TokenAttributes=None,
+            )
+            service_token.Close()
+
+            # Set the session ID so the process runs on the user's desktop
+            ctypes.windll.advapi32.SetTokenInformation(
+                int(elevated_token),
+                12,  # TokenSessionId
+                ctypes.byref(ctypes.c_ulong(session_id)),
+                ctypes.sizeof(ctypes.c_ulong),
+            )
+
+            # Create environment block for the user session
+            environment = win32profile.CreateEnvironmentBlock(elevated_token, False)
+
+            logging.info(f"Created elevated install token for session {session_id}")
+            return elevated_token, environment
+
+        except Exception as e:
+            logging.error(f"Failed to create elevated install token: {e}")
+            return None, None
+
     # Start a python script as a user
     def launch_python_script_as_user(self, script_name, args=None):
         try:
@@ -1793,6 +1849,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
     # Main process handler
     def handle_process(self, process):
         process_list_id = process['id']
+
+        # Skip processing entirely if this process is locked for an active deployment
+        if process_list_id in self.install_locks:
+            logging.debug(f"Skipping '{process.get('name')}' - install lock active (deployment: {self.install_locks[process_list_id]})")
+            return
+
         last_info = self.last_started.get(process_list_id, {})
         last_pid = last_info.get('pid')
 
@@ -2145,6 +2207,74 @@ class OwletteService(win32serviceutil.ServiceFramework):
         except Exception as e:
             logging.error(f"Error handling config update: {e}")
 
+    def _terminate_processes_for_install(self, close_processes, suppress_projects, deployment_id, cmd_id):
+        """Gracefully terminate processes and set install locks before a deployment.
+
+        Args:
+            close_processes: List of exe names to kill (e.g., ["TouchDesigner.exe"])
+            suppress_projects: List of Owlette project config IDs to lock from relaunching
+            deployment_id: Deployment ID for logging and lock tracking
+            cmd_id: Command ID for progress reporting
+
+        Returns:
+            List of project config IDs that were locked (for cleanup in finally block)
+        """
+        locked_project_ids = []
+
+        # Report status so dashboard shows what's happening
+        if self.firebase_client:
+            self.firebase_client.update_command_progress(cmd_id, 'closing_processes', deployment_id)
+
+        # Lock managed projects and terminate their tracked processes
+        config = shared_utils.read_config()
+        config_processes = config.get('processes', []) if config else []
+
+        for project_id in suppress_projects:
+            self.install_locks[project_id] = deployment_id
+            locked_project_ids.append(project_id)
+            logging.info(f"Install lock set for project {project_id} (deployment: {deployment_id})")
+
+            # Find and terminate the managed process
+            last_info = self.last_started.get(project_id, {})
+            pid = last_info.get('pid')
+            if pid:
+                process_name = next((p.get('name', '?') for p in config_processes if p.get('id') == project_id), '?')
+                logging.info(f"Terminating managed process '{process_name}' (PID {pid}) for deployment")
+                try:
+                    shared_utils.graceful_terminate(pid)
+                    shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client, process_id=project_id)
+                except Exception as e:
+                    logging.warning(f"Failed to terminate managed process PID {pid}: {e}")
+                # Clear tracking so handle_process doesn't see a stale PID after lock release
+                if project_id in self.last_started:
+                    del self.last_started[project_id]
+
+        # Kill any additional processes by exe name (unmanaged or extra)
+        for exe_name in close_processes:
+            try:
+                for proc in psutil.process_iter(['name', 'pid']):
+                    try:
+                        if proc.info['name'] and proc.info['name'].lower() == exe_name.lower():
+                            logging.info(f"Terminating process '{exe_name}' (PID {proc.info['pid']}) for deployment")
+                            shared_utils.graceful_terminate(proc.info['pid'])
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+            except Exception as e:
+                logging.warning(f"Error scanning for process '{exe_name}': {e}")
+
+        # Wait for file handles to release after process termination
+        if close_processes or any(self.last_started.get(pid) for pid in suppress_projects):
+            time.sleep(2)
+
+        killed_summary = []
+        if suppress_projects:
+            killed_summary.append(f"{len(suppress_projects)} managed project(s) locked")
+        if close_processes:
+            killed_summary.append(f"scanned for {', '.join(close_processes)}")
+        logging.info(f"Pre-install process termination complete: {'; '.join(killed_summary)}")
+
+        return locked_project_ids
+
     # Handle commands from Firebase
     # Command rate limiting: tracks last execution time per command type
     _command_rate_limits = {}
@@ -2299,6 +2429,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 if expected_sha256:
                     logging.debug(f"Checksum verification enabled: {expected_sha256[:16]}...")
 
+                # Pre-install: terminate conflicting processes and lock managed projects
+                close_processes = cmd_data.get('close_processes', [])
+                suppress_projects = cmd_data.get('suppress_projects', [])
+                locked_project_ids = []
+
+                if close_processes or suppress_projects:
+                    locked_project_ids = self._terminate_processes_for_install(
+                        close_processes, suppress_projects, deployment_id, cmd_id
+                    )
+
                 # Get temporary path for installer
                 temp_installer_path = installer_utils.get_temp_installer_path(installer_name)
 
@@ -2332,14 +2472,23 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     if self.firebase_client:
                         self.firebase_client.update_command_progress(cmd_id, 'installing', deployment_id)
 
-                    # Execute installer and wait for completion
+                    # Get an elevated token for the user's desktop session.
+                    # Session 0 (SYSTEM) causes sub-installers (CodeMeter, VC++ redists)
+                    # to hang because there's no desktop for UI.
+                    install_token, install_env = self._get_elevated_install_token()
+                    if not install_token:
+                        return "Error: No interactive user session available for installation. A user must be logged in."
+
+                    # Execute installer in user session with elevation
                     logging.info("Executing installer with silent flags")
                     success, exit_code, error_msg = installer_utils.execute_installer(
                         temp_installer_path,
                         silent_flags,
                         installer_name,
                         self.active_installations,
-                        timeout_seconds
+                        timeout_seconds,
+                        user_token=install_token,
+                        environment=install_env,
                     )
 
                     if not success:
@@ -2374,6 +2523,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     return result_msg
 
                 finally:
+                    # Release install locks so service loop can relaunch managed processes
+                    for project_id in locked_project_ids:
+                        self.install_locks.pop(project_id, None)
+                        logging.info(f"Released install lock for project {project_id}")
                     # Always cleanup the temporary installer file
                     try:
                         installer_utils.cleanup_installer(temp_installer_path, force=True)

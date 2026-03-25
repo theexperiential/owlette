@@ -112,7 +112,7 @@ export default function ProjectsPage() {
   const selectedDistribution = distributions.find(d => d.id === selectedDistributionId);
 
   return (
-    <div className="min-h-screen pb-8">
+    <div className="relative min-h-screen pb-8">
       {/* Header */}
       <PageHeader
         currentPage="distribute projects"
@@ -149,9 +149,6 @@ export default function ProjectsPage() {
         onCreateSite={createSite}
         onSiteCreated={(siteId) => setCurrentSiteId(siteId)}
       />
-
-      {/* Subtle top glow for readability */}
-      <div className="pointer-events-none fixed inset-x-0 top-14 h-48 z-0" style={{ background: 'linear-gradient(to bottom, oklch(0.20 0.03 250 / 0.7), transparent)' }} />
 
       {/* Main content */}
       <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">

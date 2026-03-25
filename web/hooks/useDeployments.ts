@@ -11,12 +11,13 @@ export interface DeploymentTemplate {
   installer_url: string;
   silent_flags: string;
   verify_path?: string;
+  close_processes?: string[];
   createdAt: number;
 }
 
 export interface DeploymentTarget {
   machineId: string;
-  status: 'pending' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled' | 'uninstalled';
+  status: 'pending' | 'closing_processes' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled' | 'uninstalled';
   progress?: number;
   error?: string;
   completedAt?: number;
@@ -31,6 +32,8 @@ export interface Deployment {
   installer_url: string;
   silent_flags: string;
   verify_path?: string;
+  close_processes?: string[];
+  suppress_projects?: string[];
   targets: DeploymentTarget[];
   createdAt: number;
   completedAt?: number;
@@ -66,6 +69,7 @@ export function useDeploymentTemplates(siteId: string) {
               installer_url: data.installer_url || '',
               silent_flags: data.silent_flags || '',
               verify_path: data.verify_path,
+              close_processes: data.close_processes,
               createdAt: data.createdAt || Date.now(),
             });
           });
@@ -127,6 +131,8 @@ export function useDeployments(siteId: string) {
   const [error, setError] = useState<string | null>(null);
   // Track processed commands across renders to prevent infinite loops
   const processedCommandsRef = useRef<Set<string>>(new Set());
+  // Skip commands completed before this hook mounted (prevents re-processing old history)
+  const mountTimeRef = useRef<number>(Date.now());
 
   useEffect(() => {
     if (!db || !siteId) {
@@ -198,6 +204,7 @@ export function useDeployments(siteId: string) {
         deployment.targets.forEach(target => {
           // Only track targets with active status (not completed, failed, cancelled, or uninstalled)
           if (target.status === 'pending' ||
+              target.status === 'closing_processes' ||
               target.status === 'downloading' ||
               target.status === 'installing') {
             machineIds.add(target.machineId);
@@ -229,6 +236,22 @@ export function useDeployments(siteId: string) {
 
             if (processedCommands.has(commandId) && isTerminalState) {
               continue;
+            }
+
+            // Skip commands completed before this hook mounted — they're already
+            // reflected in the deployment docs and don't need re-processing.
+            if (isTerminalState && command.completedAt) {
+              const completedMs = typeof command.completedAt === 'number'
+                ? command.completedAt
+                : command.completedAt?.seconds
+                  ? command.completedAt.seconds * 1000
+                  : command.completedAt?._seconds
+                    ? command.completedAt._seconds * 1000
+                    : 0;
+              if (completedMs > 0 && completedMs < mountTimeRef.current) {
+                processedCommands.add(commandId);
+                continue;
+              }
             }
 
             if (command.deployment_id) {
@@ -348,7 +371,7 @@ export function useDeployments(siteId: string) {
                   const remainingTargets = updatedTargets.filter(t => t.status !== 'cancelled');
                   const allCompleted = remainingTargets.length > 0 && remainingTargets.every(t => t.status === 'completed');
                   const anyFailed = remainingTargets.some(t => t.status === 'failed');
-                  const anyInProgress = remainingTargets.some(t => t.status === 'pending' || t.status === 'downloading' || t.status === 'installing');
+                  const anyInProgress = remainingTargets.some(t => t.status === 'pending' || t.status === 'closing_processes' || t.status === 'downloading' || t.status === 'installing');
 
                   let newStatus = deployment.status;
                   if (remainingTargets.length === 0) {
@@ -372,13 +395,13 @@ export function useDeployments(siteId: string) {
                   }, { merge: true });
 
                   console.log(`[useDeployments] Deployment ${command.deployment_id} updated successfully`);
-                } else if (command.status === 'downloading' || command.status === 'installing') {
-                  // Handle intermediate states (downloading, installing)
+                } else if (command.status === 'closing_processes' || command.status === 'downloading' || command.status === 'installing') {
+                  // Handle intermediate states (closing_processes, downloading, installing)
                   const updatedTargets = deployment.targets.map(target =>
                     target.machineId === machineId
                       ? {
                           ...target,
-                          status: command.status as 'downloading' | 'installing',
+                          status: command.status as 'closing_processes' | 'downloading' | 'installing',
                           ...(command.progress !== undefined ? { progress: command.progress } : {})
                         }
                       : target
@@ -449,9 +472,15 @@ export function useDeployments(siteId: string) {
       status: 'pending',
     };
 
-    // Only include verify_path if it's provided
+    // Only include optional fields if provided
     if (deployment.verify_path) {
       deploymentData.verify_path = deployment.verify_path;
+    }
+    if (deployment.close_processes?.length) {
+      deploymentData.close_processes = deployment.close_processes;
+    }
+    if (deployment.suppress_projects?.length) {
+      deploymentData.suppress_projects = deployment.suppress_projects;
     }
 
     console.log('[createDeployment] Creating deployment document...', { deploymentId, deploymentData });
@@ -477,9 +506,16 @@ export function useDeployments(siteId: string) {
         status: 'pending',
       };
 
-      // Only include verify_path if it's provided
+      // Only include optional fields if provided
       if (deployment.verify_path) {
         commandData.verify_path = deployment.verify_path;
+      }
+      if (deployment.close_processes?.length) {
+        commandData.close_processes = deployment.close_processes;
+      }
+      if (deployment.suppress_projects?.length) {
+        // Filter suppress_projects to only include IDs that exist on this specific machine
+        commandData.suppress_projects = deployment.suppress_projects;
       }
 
       console.log('[createDeployment] Writing command to machine:', { machineId, commandId, commandPath: `sites/${siteId}/machines/${machineId}/commands/pending` });
@@ -576,6 +612,7 @@ export function useDeployments(siteId: string) {
 
         // Check if target status is active (not completed, failed, or cancelled)
         return target.status === 'pending' ||
+               target.status === 'closing_processes' ||
                target.status === 'downloading' ||
                target.status === 'installing';
       });

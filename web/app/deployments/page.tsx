@@ -1,12 +1,11 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
 import { useDeploymentManager } from '@/hooks/useDeployments';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -22,6 +21,211 @@ import ConfirmDialog from '@/components/ConfirmDialog';
 import { UpdateOwletteButton } from '@/components/UpdateOwletteButton';
 import { useUninstall } from '@/hooks/useUninstall';
 import { toast } from 'sonner';
+
+function getStatusIcon(status: string) {
+  switch (status) {
+    case 'completed':
+      return <CheckCircle2 className="h-5 w-5 text-green-500" />;
+    case 'uninstalled':
+      return <Trash2 className="h-5 w-5 text-purple-500" />;
+    case 'failed':
+      return <XCircle className="h-5 w-5 text-red-500" />;
+    case 'cancelled':
+      return <XCircle className="h-5 w-5 text-orange-500" />;
+    case 'in_progress':
+      return <Loader2 className="h-5 w-5 text-accent-cyan animate-spin" />;
+    case 'partial':
+      return <Clock className="h-5 w-5 text-yellow-500" />;
+    default:
+      return <Clock className="h-5 w-5 text-muted-foreground" />;
+  }
+}
+
+const statusColors: Record<string, string> = {
+  completed: 'bg-green-600 hover:bg-green-700',
+  uninstalled: 'bg-purple-600 hover:bg-purple-700',
+  failed: 'bg-red-600 hover:bg-red-700',
+  cancelled: 'bg-orange-600 hover:bg-orange-700',
+  in_progress: 'bg-accent-cyan hover:bg-accent-cyan-hover',
+  partial: 'bg-yellow-600 hover:bg-yellow-700',
+  pending: 'bg-muted hover:bg-muted',
+  closing_processes: 'bg-amber-600 hover:bg-amber-700',
+  downloading: 'bg-cyan-600 hover:bg-cyan-700',
+  installing: 'bg-purple-600 hover:bg-purple-700',
+};
+
+function getStatusBadge(status: string, error?: string) {
+  const badge = (
+    <Badge className={`select-none ${statusColors[status] || statusColors.pending}`}>
+      {status.replace('_', ' ')}
+    </Badge>
+  );
+
+  if (error && (status === 'failed' || status === 'partial')) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {badge}
+        </TooltipTrigger>
+        <TooltipContent className="max-w-md whitespace-pre-wrap">
+          <p className="text-sm">{error}</p>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return badge;
+}
+
+const DeploymentRow = React.memo(function DeploymentRow({
+  deployment,
+  isSelected,
+  onToggle,
+  onRetry,
+  onUninstall,
+  onDelete,
+  onCancel,
+}: {
+  deployment: any;
+  isSelected: boolean;
+  onToggle: (id: string) => void;
+  onRetry: (deployment: any) => void;
+  onUninstall: (deployment: any) => void;
+  onDelete: (id: string) => void;
+  onCancel: (deploymentId: string, machineId: string, installerName: string) => void;
+}) {
+  const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed' && t.error);
+  const errorMessages = failedTargets.map((t: any) => `${t.machineId}: ${t.error}`).join('\n');
+
+  return (
+    <div>
+      <div
+        className="flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer"
+        onClick={() => {
+          const selection = window.getSelection();
+          if (selection && selection.toString().length > 0) return;
+          onToggle(deployment.id);
+        }}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          {getStatusIcon(deployment.status)}
+          <div className="min-w-0">
+            <span className="text-foreground font-medium select-text">{deployment.name}</span>
+            <p className="text-xs text-muted-foreground select-text truncate">{deployment.installer_name}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="w-[90px] flex justify-end">
+            {getStatusBadge(deployment.status, errorMessages || undefined)}
+          </div>
+          <span className="text-xs text-muted-foreground hidden sm:block w-[150px] text-right">
+            {new Date(deployment.createdAt).toLocaleString()}
+          </span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={(e) => e.stopPropagation()}
+                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+              >
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="border-border bg-secondary">
+              {deployment.targets.some((t: any) => t.status === 'failed') && (
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRetry(deployment);
+                  }}
+                  className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  retry failed
+                </DropdownMenuItem>
+              )}
+              {deployment.status !== 'uninstalled' && (
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUninstall(deployment);
+                  }}
+                  className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  uninstall software
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(deployment.id);
+                }}
+                className="text-red-400 focus:bg-red-950/30 focus:text-red-400 cursor-pointer"
+              >
+                <X className="h-4 w-4 mr-2" />
+                delete record
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      {isSelected && (
+        <div className="border-t border-border">
+          <div className="mx-4 my-3 rounded-lg border border-border bg-background p-4 space-y-4">
+            <div className="grid gap-2 text-sm">
+              <div className="flex gap-2">
+                <span className="text-muted-foreground flex-shrink-0 w-24">installer url</span>
+                <span className="text-foreground select-text break-all">{deployment.installer_url}</span>
+              </div>
+              {deployment.silent_flags && (
+                <div className="flex gap-2">
+                  <span className="text-muted-foreground flex-shrink-0 w-24">silent flags</span>
+                  <span className="text-foreground select-text break-all font-mono text-xs leading-relaxed">{deployment.silent_flags}</span>
+                </div>
+              )}
+              {deployment.verify_path && (
+                <div className="flex gap-2">
+                  <span className="text-muted-foreground flex-shrink-0 w-24">verify path</span>
+                  <span className="text-foreground select-text break-all">{deployment.verify_path}</span>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">targets ({deployment.targets.length})</h4>
+              <div className="space-y-1.5">
+                {deployment.targets.map((target: any) => (
+                  <div key={target.machineId} className="flex items-center justify-between py-1.5 px-3 rounded border border-border/40 bg-background/50">
+                    <span className="text-foreground text-sm select-text">{target.machineId}</span>
+                    <div className="flex items-center gap-2">
+                      {target.progress !== undefined && (target.status === 'downloading' || target.status === 'installing') && (
+                        <span className="text-xs text-muted-foreground">{target.progress}%</span>
+                      )}
+                      {getStatusBadge(target.status, target.error)}
+                      {(target.status === 'pending' || target.status === 'closing_processes' || target.status === 'downloading' || target.status === 'installing') && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onCancel(deployment.id, target.machineId, deployment.installer_name)}
+                          className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
 
 export default function DeploymentsPage() {
   const { user, loading: authLoading, signOut, userSites, isAdmin, lastSiteId, updateLastSite } = useAuth();
@@ -77,9 +281,8 @@ export default function DeploymentsPage() {
     }
   };
 
-  const handleRetryDeployment = async (deployment: any) => {
+  const handleRetryDeployment = useCallback(async (deployment: any) => {
     try {
-      // Find all failed targets
       const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed');
 
       if (failedTargets.length === 0) {
@@ -87,7 +290,6 @@ export default function DeploymentsPage() {
         return;
       }
 
-      // Create a new deployment with the same parameters but only for failed machines
       const machineIds = failedTargets.map((t: any) => t.machineId);
 
       await createDeployment({
@@ -96,7 +298,7 @@ export default function DeploymentsPage() {
         installer_url: deployment.installer_url,
         silent_flags: deployment.silent_flags,
         verify_path: deployment.verify_path,
-        targets: [], // Will be initialized by createDeployment
+        targets: [],
       }, machineIds);
 
       toast.success(`retrying deployment for ${failedTargets.length} failed machine(s)`);
@@ -104,7 +306,7 @@ export default function DeploymentsPage() {
       console.error('Failed to retry deployment:', error);
       toast.error(error.message || 'failed to retry deployment');
     }
-  };
+  }, [createDeployment]);
 
   // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
   useEffect(() => {
@@ -122,6 +324,29 @@ export default function DeploymentsPage() {
     setCurrentSiteId(siteId);
     updateLastSite(siteId);
   };
+
+  const handleToggleDeployment = useCallback((id: string) => {
+    setSelectedDeploymentId(prev => prev === id ? null : id);
+  }, []);
+
+  const handleUninstallFromRow = useCallback((deployment: any) => {
+    setInitialSoftwareName(deployment.installer_name);
+    setUninstallDeploymentId(deployment.id);
+    setUninstallDialogOpen(true);
+  }, []);
+
+  const handleDeleteFromRow = useCallback((id: string) => {
+    setDeploymentToDelete(id);
+    setDeleteDialogOpen(true);
+  }, []);
+
+  const handleCancelTarget = useCallback(async (deploymentId: string, machineId: string, installerName: string) => {
+    try {
+      await cancelDeployment(deploymentId, machineId, installerName);
+    } catch (error: any) {
+      console.error('Failed to cancel deployment:', error);
+    }
+  }, [cancelDeployment]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -141,66 +366,9 @@ export default function DeploymentsPage() {
     return null;
   }
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return <CheckCircle2 className="h-5 w-5 text-green-500" />;
-      case 'uninstalled':
-        return <Trash2 className="h-5 w-5 text-purple-500" />;
-      case 'failed':
-        return <XCircle className="h-5 w-5 text-red-500" />;
-      case 'cancelled':
-        return <XCircle className="h-5 w-5 text-orange-500" />;
-      case 'in_progress':
-        return <Loader2 className="h-5 w-5 text-accent-cyan animate-spin" />;
-      case 'partial':
-        return <Clock className="h-5 w-5 text-yellow-500" />;
-      default:
-        return <Clock className="h-5 w-5 text-muted-foreground" />;
-    }
-  };
-
-  const getStatusBadge = (status: string, error?: string) => {
-    const colors: Record<string, string> = {
-      completed: 'bg-green-600 hover:bg-green-700',
-      uninstalled: 'bg-purple-600 hover:bg-purple-700',
-      failed: 'bg-red-600 hover:bg-red-700',
-      cancelled: 'bg-orange-600 hover:bg-orange-700',
-      in_progress: 'bg-accent-cyan hover:bg-accent-cyan-hover',
-      partial: 'bg-yellow-600 hover:bg-yellow-700',
-      pending: 'bg-muted hover:bg-muted',
-      downloading: 'bg-cyan-600 hover:bg-cyan-700',
-      installing: 'bg-purple-600 hover:bg-purple-700',
-    };
-
-    const badge = (
-      <Badge className={`select-none ${colors[status] || colors.pending}`}>
-        {status.replace('_', ' ')}
-      </Badge>
-    );
-
-    // Wrap in tooltip if there's an error message
-    if (error && (status === 'failed' || status === 'partial')) {
-      return (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            {badge}
-          </TooltipTrigger>
-          <TooltipContent className="max-w-md whitespace-pre-wrap">
-            <p className="text-sm">{error}</p>
-          </TooltipContent>
-        </Tooltip>
-      );
-    }
-
-    return badge;
-  };
-
-  const selectedDeployment = deployments.find(d => d.id === selectedDeploymentId);
-
   return (
     <TooltipProvider delayDuration={200}>
-    <div className="min-h-screen pb-8">
+    <div className="relative min-h-screen pb-8">
       {/* Header */}
       <PageHeader
         currentPage="deploy software"
@@ -238,9 +406,6 @@ export default function DeploymentsPage() {
         onSiteCreated={(siteId) => setCurrentSiteId(siteId)}
       />
 
-      {/* Subtle top glow for readability */}
-      <div className="pointer-events-none fixed inset-x-0 top-14 h-48 z-0" style={{ background: 'linear-gradient(to bottom, oklch(0.20 0.03 250 / 0.7), transparent)' }} />
-
       {/* Main content */}
       <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
         {/* Dialogs */}
@@ -276,18 +441,22 @@ export default function DeploymentsPage() {
         />
 
         {/* Section header with inline stats */}
+        {(() => {
+          const statsLoading = deploymentsLoading || templatesLoading || !currentSiteId;
+          const inProgressCount = deployments.filter(d => d.status === 'in_progress').length;
+          return (
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-center gap-6 md:gap-8">
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">deployments</h2>
 
             <div className="flex items-center gap-6 md:gap-8">
               <div className="flex items-center gap-2.5">
-                <div className={`rounded-md p-1.5 ${deployments.length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
+                <div className={`rounded-md p-1.5 ${!statsLoading && deployments.length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
                   <Package className="h-4 w-4" />
                 </div>
                 <div>
                   <div className="flex items-baseline gap-0.5">
-                    <span className="text-xl font-bold text-foreground">{deployments.length}</span>
+                    <span className="text-xl font-bold text-foreground">{statsLoading ? '--' : deployments.length}</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground leading-tight">total</p>
                 </div>
@@ -296,12 +465,12 @@ export default function DeploymentsPage() {
               <div className="h-8 w-px bg-border" />
 
               <div className="flex items-center gap-2.5">
-                <div className={`rounded-md p-1.5 ${deployments.filter(d => d.status === 'in_progress').length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
+                <div className={`rounded-md p-1.5 ${!statsLoading && inProgressCount > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
                   <PlayCircle className="h-4 w-4" />
                 </div>
                 <div>
                   <div className="flex items-baseline gap-0.5">
-                    <span className={`text-xl font-bold ${deployments.filter(d => d.status === 'in_progress').length > 0 ? 'text-accent-cyan' : 'text-foreground'}`}>{deployments.filter(d => d.status === 'in_progress').length}</span>
+                    <span className={`text-xl font-bold ${!statsLoading && inProgressCount > 0 ? 'text-accent-cyan' : 'text-foreground'}`}>{statsLoading ? '--' : inProgressCount}</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground leading-tight">in progress</p>
                 </div>
@@ -315,7 +484,7 @@ export default function DeploymentsPage() {
                 </div>
                 <div>
                   <div className="flex items-baseline gap-0.5">
-                    <span className="text-xl font-bold text-foreground">{templates.length}</span>
+                    <span className="text-xl font-bold text-foreground">{statsLoading ? '--' : templates.length}</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground leading-tight">templates</p>
                 </div>
@@ -334,6 +503,8 @@ export default function DeploymentsPage() {
             </Button>
           </div>
         </div>
+          );
+        })()}
 
         {/* Deployments List */}
         <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
@@ -358,145 +529,16 @@ export default function DeploymentsPage() {
           ) : (
             <div className="divide-y divide-border">
               {deployments.map((deployment) => (
-                <div key={deployment.id}>
-                  <div
-                    className="flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer"
-                    onClick={() => {
-                      const selection = window.getSelection();
-                      if (selection && selection.toString().length > 0) return;
-                      setSelectedDeploymentId(deployment.id === selectedDeploymentId ? null : deployment.id);
-                    }}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      {getStatusIcon(deployment.status)}
-                      <div className="min-w-0">
-                        <span className="text-foreground font-medium select-text">{deployment.name}</span>
-                        <p className="text-xs text-muted-foreground select-text truncate">{deployment.installer_name}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      <div className="w-[90px] flex justify-end">
-                        {(() => {
-                          const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed' && t.error);
-                          const errorMessages = failedTargets.map((t: any) => `${t.machineId}: ${t.error}`).join('\n');
-                          return getStatusBadge(deployment.status, errorMessages || undefined);
-                        })()}
-                      </div>
-                      <span className="text-xs text-muted-foreground hidden sm:block w-[150px] text-right">
-                        {new Date(deployment.createdAt).toLocaleString()}
-                      </span>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={(e) => e.stopPropagation()}
-                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
-                          >
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="border-border bg-secondary">
-                          {deployment.targets.some((t: any) => t.status === 'failed') && (
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleRetryDeployment(deployment);
-                              }}
-                              className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
-                            >
-                              <RefreshCw className="h-4 w-4 mr-2" />
-                              retry failed
-                            </DropdownMenuItem>
-                          )}
-                          {deployment.status !== 'uninstalled' && (
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setInitialSoftwareName(deployment.installer_name);
-                                setUninstallDeploymentId(deployment.id);
-                                setUninstallDialogOpen(true);
-                              }}
-                              className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              uninstall software
-                            </DropdownMenuItem>
-                          )}
-                          <DropdownMenuItem
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeploymentToDelete(deployment.id);
-                              setDeleteDialogOpen(true);
-                            }}
-                            className="text-red-400 focus:bg-red-950/30 focus:text-red-400 cursor-pointer"
-                          >
-                            <X className="h-4 w-4 mr-2" />
-                            delete record
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </div>
-
-                  {selectedDeploymentId === deployment.id && (
-                    <div className="border-t border-border">
-                      <div className="mx-4 my-3 rounded-lg border border-border bg-background p-4 space-y-4">
-                        <div className="grid gap-2 text-sm">
-                          <div className="flex gap-2">
-                            <span className="text-muted-foreground flex-shrink-0 w-24">installer url</span>
-                            <span className="text-foreground select-text break-all">{deployment.installer_url}</span>
-                          </div>
-                          {deployment.silent_flags && (
-                            <div className="flex gap-2">
-                              <span className="text-muted-foreground flex-shrink-0 w-24">silent flags</span>
-                              <span className="text-foreground select-text break-all font-mono text-xs leading-relaxed">{deployment.silent_flags}</span>
-                            </div>
-                          )}
-                          {deployment.verify_path && (
-                            <div className="flex gap-2">
-                              <span className="text-muted-foreground flex-shrink-0 w-24">verify path</span>
-                              <span className="text-foreground select-text break-all">{deployment.verify_path}</span>
-                            </div>
-                          )}
-                        </div>
-
-                        <div>
-                          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">targets ({deployment.targets.length})</h4>
-                          <div className="space-y-1.5">
-                            {deployment.targets.map((target) => (
-                              <div key={target.machineId} className="flex items-center justify-between py-1.5 px-3 rounded border border-border/40 bg-background/50">
-                                <span className="text-foreground text-sm select-text">{target.machineId}</span>
-                                <div className="flex items-center gap-2">
-                                  {target.progress !== undefined && (target.status === 'downloading' || target.status === 'installing') && (
-                                    <span className="text-xs text-muted-foreground">{target.progress}%</span>
-                                  )}
-                                  {getStatusBadge(target.status, target.error)}
-                                  {(target.status === 'pending' || target.status === 'downloading' || target.status === 'installing') && (
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      onClick={async () => {
-                                        try {
-                                          await cancelDeployment(deployment.id, target.machineId, deployment.installer_name);
-                                        } catch (error: any) {
-                                          console.error('Failed to cancel deployment:', error);
-                                        }
-                                      }}
-                                      className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
-                                    >
-                                      <X className="h-4 w-4" />
-                                    </Button>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <DeploymentRow
+                  key={deployment.id}
+                  deployment={deployment}
+                  isSelected={selectedDeploymentId === deployment.id}
+                  onToggle={handleToggleDeployment}
+                  onRetry={handleRetryDeployment}
+                  onUninstall={handleUninstallFromRow}
+                  onDelete={handleDeleteFromRow}
+                  onCancel={handleCancelTarget}
+                />
               ))}
             </div>
           )}

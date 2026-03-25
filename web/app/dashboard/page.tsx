@@ -540,7 +540,7 @@ export default function DashboardPage() {
   const currentSite = sites.find(s => s.id === currentSiteId);
 
   return (
-    <div className="min-h-screen pb-24">
+    <div className="relative min-h-screen pb-24">
       {/* Header */}
       <PageHeader
         currentPage="dashboard"
@@ -581,9 +581,6 @@ export default function DashboardPage() {
       />
 
       {/* Main content */}
-      {/* Subtle top glow for readability over dot grid */}
-      <div className="pointer-events-none fixed inset-x-0 top-14 h-48 z-0" style={{ background: 'linear-gradient(to bottom, oklch(0.20 0.03 250 / 0.7), transparent)' }} />
-
       <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex-1">
@@ -1202,6 +1199,7 @@ export default function DashboardPage() {
           isOnline={screenshotTarget.isOnline}
           onCaptureScreenshot={() => captureScreenshot(screenshotTarget.machineId)}
           lastScreenshot={machines.find(m => m.machineId === screenshotTarget.machineId)?.lastScreenshot}
+          hasActiveDeployment={checkMachineHasActiveDeployment(screenshotTarget.machineId)}
         />
       )}
     </div>

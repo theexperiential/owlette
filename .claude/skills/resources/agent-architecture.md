@@ -362,6 +362,20 @@ Flow:
 
 ---
 
+## Known Limitations
+
+### Command Processing Blocks During Installs
+
+`handle_firebase_command` processes commands synchronously. Long-running commands like `install_software` and `uninstall_software` block the command callback for the duration of the download + install (can be minutes). During this time, no other commands (screenshots, reboots, process management, MCP tools) can be processed.
+
+**Impact**: Screenshot capture, reboot, and other commands time out if a software deployment is in progress.
+
+**User-facing mitigation**: The ScreenshotDialog detects active deployments via `checkMachineHasActiveDeployment` and shows a specific error message explaining why the capture failed.
+
+**Future fix**: Run `install_software` / `uninstall_software` in a background thread with immediate "started" status, then update completion via Firestore. Requires careful handling of concurrent installs and commands that conflict with active installs (e.g., reboot during install).
+
+---
+
 ## Critical Maintenance Rules
 
 ### Do's

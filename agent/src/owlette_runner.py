@@ -141,6 +141,7 @@ if __name__ == '__main__':
             self.results = {}
             self.current_time = datetime.datetime.now()
             self.active_installations = {}
+            self.install_locks = {}
             self.manual_overrides = {}
 
             # Initialize Firebase client

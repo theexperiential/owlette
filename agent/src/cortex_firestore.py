@@ -65,12 +65,17 @@ class CortexFirestore:
             if doc.get('status') != 'pending':
                 return None
 
-            return {
+            result: Dict[str, Any] = {
                 'content': doc.get('pendingMessage', ''),
                 'chatId': doc.get('chatId', ''),
                 'messages': doc.get('messages', []),
                 'machineName': doc.get('machineName', self.machine_id),
             }
+            # Include image URLs if present (pasted screenshots from web UI)
+            images = doc.get('images')
+            if images:
+                result['images'] = images
+            return result
         except Exception as e:
             logger.debug(f"Error polling for messages: {e}")
             return None

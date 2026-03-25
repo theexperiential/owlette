@@ -20,6 +20,7 @@ Uses centralized ConnectionManager for robust reconnection handling with:
 - Thread supervision and watchdog
 """
 
+import queue
 import threading
 import time
 import json
@@ -109,6 +110,17 @@ class FirebaseClient:
         # =================================================================
         self.command_callback: Optional[Callable] = None
         self.config_update_callback: Optional[Callable] = None
+
+        # =================================================================
+        # Slow-command queue (installs, uninstalls, updates — serialised)
+        # =================================================================
+        self._slow_command_queue: queue.Queue = queue.Queue()
+        self._slow_command_worker = threading.Thread(
+            target=self._slow_command_worker_loop,
+            name="slow-cmd-worker",
+            daemon=True,
+        )
+        self._slow_command_worker.start()
 
         # =================================================================
         # Cached config for offline mode
@@ -497,12 +509,20 @@ class FirebaseClient:
 
         try:
             commands_path = f"sites/{self.site_id}/machines/{self.machine_id}/commands/pending"
+            seen_commands: set = set()
 
             def on_commands_changed(commands_data):
-                """Handle commands document changes."""
+                """Handle commands document changes, skipping already-processed commands."""
                 if commands_data:
                     for cmd_id, cmd_data in commands_data.items():
+                        if cmd_id in seen_commands:
+                            continue
+                        seen_commands.add(cmd_id)
                         self._process_command(cmd_id, cmd_data)
+
+                    # Prune seen set: remove IDs no longer in pending doc
+                    gone = seen_commands - set(commands_data.keys())
+                    seen_commands.difference_update(gone)
 
             # Start listener with tight polling (2-5s) for fast command pickup
             self.db.listen_to_document(
@@ -666,8 +686,33 @@ class FirebaseClient:
             self.logger.error(f"Error uploading metrics: {e}")
             self.connection_manager.report_error(e, "Metrics upload")
 
+    # Command types that execute fast (< 30s) and can run concurrently
+    _FAST_COMMAND_TYPES = frozenset({'mcp_tool_call', 'capture_screenshot'})
+
     def _process_command(self, cmd_id: str, cmd_data: Dict[str, Any]):
-        """Process a command received from Firestore."""
+        """Dispatch a command to the appropriate execution lane.
+
+        All commands run in threads so the polling callback is never blocked.
+        Fast commands (tool calls, screenshots) each get their own thread.
+        Slow commands (installs, uninstalls, updates) are serialised via a
+        single worker thread to prevent concurrent installs.
+        """
+        cmd_type = cmd_data.get('type')
+
+        if cmd_type in self._FAST_COMMAND_TYPES:
+            t = threading.Thread(
+                target=self._execute_command,
+                args=(cmd_id, cmd_data),
+                name=f"fast-cmd-{cmd_id[:20]}",
+                daemon=True,
+            )
+            t.start()
+        else:
+            # Slow commands go onto a serialised queue
+            self._slow_command_queue.put((cmd_id, cmd_data))
+
+    def _execute_command(self, cmd_id: str, cmd_data: Dict[str, Any]):
+        """Execute a command and write the result to Firestore."""
         try:
             cmd_type = cmd_data.get('type')
             self.logger.info(f"Processing command: {cmd_id} - Type: {cmd_type}")
@@ -720,6 +765,17 @@ class FirebaseClient:
                 software_name = cmd_data.get('installer_name') or cmd_data.get('software_name') or cmd_type
                 self.log_event('deployment_failed', 'error', software_name,
                                f"Deployment {dep_id} failed: {e}")
+
+    def _slow_command_worker_loop(self):
+        """Drain the slow-command queue one at a time (serialised installs)."""
+        while True:
+            try:
+                cmd_id, cmd_data = self._slow_command_queue.get()
+                self._execute_command(cmd_id, cmd_data)
+            except Exception as e:
+                self.logger.error(f"Slow command worker error: {e}")
+            finally:
+                self._slow_command_queue.task_done()
 
     def update_command_progress(self, cmd_id: str, status: str, deployment_id: Optional[str] = None, progress: Optional[int] = None):
         """

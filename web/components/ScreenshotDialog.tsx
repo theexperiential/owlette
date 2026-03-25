@@ -30,6 +30,7 @@ interface ScreenshotDialogProps {
     timestamp: number;
     sizeKB: number;
   };
+  hasActiveDeployment?: boolean;
 }
 
 export function ScreenshotDialog({
@@ -41,6 +42,7 @@ export function ScreenshotDialog({
   isOnline,
   onCaptureScreenshot,
   lastScreenshot: initialScreenshot,
+  hasActiveDeployment,
 }: ScreenshotDialogProps) {
   const [isCapturing, setIsCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +116,11 @@ export function ScreenshotDialog({
       captureTimeoutRef.current = setTimeout(() => {
         captureTimeoutRef.current = null;
         setIsCapturing(false);
-        setError('Screenshot timed out — the machine may be offline or running headless with no active user session.');
+        setError(
+          hasActiveDeployment
+            ? 'Screenshot timed out — a software deployment is in progress on this machine. The agent cannot process other commands until the installation completes.'
+            : 'Screenshot timed out — the machine may be offline or running headless with no active user session.'
+        );
       }, 20000);
     } catch (err: any) {
       setIsCapturing(false);

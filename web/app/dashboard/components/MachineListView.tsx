@@ -49,7 +49,7 @@ export const MemoizedTableHeader = memo(() => {
         <TableHead className="text-foreground w-[100px] hidden lg:table-cell">disk</TableHead>
         <TableHead className="text-foreground w-[200px] hidden lg:table-cell">gpu</TableHead>
         <TableHead className="text-foreground w-[150px] hidden md:table-cell">last heartbeat</TableHead>
-        <TableHead className="text-foreground w-8"></TableHead>
+        <TableHead className="text-foreground w-10"></TableHead>
       </TableRow>
     </TableHeader>
   );
@@ -279,7 +279,7 @@ export function MachineRow({
             {heartbeat.display}
           </span>
         </TableCell>
-        <TableCell className="w-8 p-2" onClick={(e) => e.stopPropagation()}>
+        <TableCell className="w-10 p-2" onClick={(e) => e.stopPropagation()}>
           <MachineContextMenu
             machineId={machine.machineId}
             machineName={machine.machineId}

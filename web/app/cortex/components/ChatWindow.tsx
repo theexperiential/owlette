@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { type UIMessage } from 'ai';
-import { Brain, User, KeyRound } from 'lucide-react';
+import { Brain, User, KeyRound, X } from 'lucide-react';
 import { ToolCallCard } from './ToolCallCard';
 
 interface ChatWindowProps {
@@ -14,10 +14,21 @@ interface ChatWindowProps {
 
 export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
+
+  // Close lightbox on Escape
+  useEffect(() => {
+    if (!expandedImage) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpandedImage(null);
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [expandedImage]);
 
   if (messages.length === 0) {
     return (
@@ -64,6 +75,29 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
 
   return (
     <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      {/* Lightbox overlay */}
+      {expandedImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 cursor-pointer"
+          onClick={() => setExpandedImage(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setExpandedImage(null)}
+            className="absolute top-4 right-4 h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors cursor-pointer"
+          >
+            <X className="h-5 w-5 text-white" />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={expandedImage}
+            alt="Expanded image"
+            className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+
       {messages.map((message) => (
         <div key={message.id} className="flex gap-3 max-w-3xl mx-auto">
           {/* Avatar */}
@@ -85,7 +119,7 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
               {message.role === 'user' ? 'you' : 'cortex'}
             </div>
 
-            {/* Render parts (text + tool calls) */}
+            {/* Render parts (text + images + tool calls) */}
             {message.parts.map((part, i) => {
               if (part.type === 'text') {
                 return (
@@ -98,13 +132,33 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
                 );
               }
 
-              if (part.type.startsWith('tool-')) {
-                // v6: tool parts are typed as tool-invocation, tool-result, etc.
+              if (part.type === 'file') {
+                const filePart = part as { type: 'file'; mediaType?: string; url?: string };
+                if (filePart.mediaType?.startsWith('image/') && filePart.url) {
+                  return (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      key={i}
+                      src={filePart.url}
+                      alt="Pasted image"
+                      className="max-w-sm rounded-lg border border-border my-1 cursor-pointer hover:opacity-90 transition-opacity"
+                      loading="lazy"
+                      onClick={() => setExpandedImage(filePart.url!)}
+                    />
+                  );
+                }
+                return null;
+              }
+
+              if (part.type.startsWith('tool-') || part.type === 'dynamic-tool') {
+                // v6: static tool parts have type 'tool-{name}', dynamic ones have type 'dynamic-tool' with toolName
                 const toolPart = part as { type: string; toolName?: string; toolCallId?: string; args?: unknown; input?: unknown; output?: unknown; state?: string };
-                const toolName = toolPart.toolName || 'unknown';
+                const toolName = toolPart.type === 'dynamic-tool'
+                  ? (toolPart.toolName || 'unknown')
+                  : toolPart.type.slice(5); // strip 'tool-' prefix
                 const args = (toolPart.args || toolPart.input || {}) as Record<string, unknown>;
                 const result = toolPart.output;
-                const hasResult = toolPart.state === 'result' || result !== undefined;
+                const hasResult = toolPart.state === 'output-available' || toolPart.state === 'output-error' || toolPart.state === 'result' || result !== undefined;
 
                 return (
                   <ToolCallCard

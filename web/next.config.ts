@@ -44,7 +44,7 @@ const nextConfig: NextConfig = {
               "default-src 'self'",
               "script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com https://*.gstatic.com", // Google OAuth requires inline scripts
               "style-src 'self' 'unsafe-inline'", // Tailwind CSS requires unsafe-inline
-              "img-src 'self' data: https:",
+              "img-src 'self' data: blob: https:",
               "font-src 'self' data:",
               "connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com", // Firebase endpoints + Google OAuth
               "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com", // Allow Google OAuth popup and Firebase auth

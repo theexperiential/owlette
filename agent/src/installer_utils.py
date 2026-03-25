@@ -129,28 +129,61 @@ def download_file(
     return False, ""
 
 
+def _kill_process_tree(pid: int) -> None:
+    """Kill a process and all its children."""
+    try:
+        parent = psutil.Process(pid)
+        children = parent.children(recursive=True)
+
+        for child in children:
+            try:
+                logging.warning(f"Killing child process: {child.name()} (PID: {child.pid})")
+                child.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        parent.kill()
+        logging.warning(f"Killed installer process tree (parent PID: {pid}, {len(children)} children)")
+
+        gone, alive = psutil.wait_procs([parent] + children, timeout=3)
+        for proc in alive:
+            try:
+                proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    except psutil.NoSuchProcess:
+        pass
+    except Exception as e:
+        logging.error(f"Error killing process tree: {e}")
+
+
 def execute_installer(
     installer_path: str,
     flags: str = "",
     installer_name: str = "",
-    active_processes: Optional[Dict[str, subprocess.Popen]] = None,
-    timeout_seconds: int = 1200
+    active_processes: Optional[Dict[str, int]] = None,
+    timeout_seconds: int = 1200,
+    user_token=None,
+    environment=None,
 ) -> tuple[bool, int, str]:
     """
     Execute an installer with silent flags.
+
+    Launches in the user's desktop session via CreateProcessAsUser when
+    user_token is provided.  Falls back to subprocess.Popen (Session 0)
+    when user_token is None.
 
     Args:
         installer_path: Path to the installer executable
         flags: Silent installation flags (e.g., "/VERYSILENT /DIR=C:\\Program")
         installer_name: Name of the installer (for tracking cancellable processes)
-        active_processes: Dictionary to track active installations (for cancellation)
-        timeout_seconds: Maximum time to wait for installation (default: 600 seconds / 10 minutes)
+        active_processes: Dictionary mapping installer names to PIDs (for cancellation)
+        timeout_seconds: Maximum time to wait for installation
+        user_token: Win32 user token for CreateProcessAsUser (from _refresh_user_token)
+        environment: Environment block for the user session (from CreateEnvironmentBlock)
 
     Returns:
         Tuple of (success, exit_code, error_message)
-        - success: True if exit code was 0, False otherwise
-        - exit_code: The installer's exit code
-        - error_message: Error message if failed, empty string otherwise
     """
     try:
         if not os.path.exists(installer_path):
@@ -158,98 +191,152 @@ def execute_installer(
             logging.error(error_msg)
             return False, -1, error_msg
 
-        # Build command as a string — Windows handles argument parsing natively.
-        # Using a list + shlex.split corrupts paths containing \t, \n, etc.
+        # Build command as a string — Windows CreateProcess handles arg parsing natively.
         command = f'"{installer_path}"'
         if flags:
             command = f'{command} {flags}'
 
         logging.info(f"Executing installer: {command}")
 
-        # Use Popen instead of run so we can track and cancel the process
-        process = subprocess.Popen(
-            command,
-            shell=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-
-        # Track process for potential cancellation
-        if active_processes is not None and installer_name:
-            active_processes[installer_name] = process
-            logging.debug(f"Tracking installer process: {installer_name} (PID: {process.pid})")
-
-        # Wait for installation to complete (configurable timeout)
-        try:
-            stdout, stderr = process.communicate(timeout=timeout_seconds)
-            exit_code = process.returncode
-        except subprocess.TimeoutExpired:
-            # Kill the process tree (parent + all children)
-            try:
-                import psutil
-                parent = psutil.Process(process.pid)
-                children = parent.children(recursive=True)
-
-                # Kill children first, then parent
-                for child in children:
-                    try:
-                        logging.warning(f"Killing child process: {child.name()} (PID: {child.pid})")
-                        child.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-
-                parent.kill()
-                logging.warning(f"Killed installer process tree (parent PID: {process.pid}, {len(children)} children)")
-
-                # Wait for processes to fully terminate
-                gone, alive = psutil.wait_procs([parent] + children, timeout=3)
-                for proc in alive:
-                    try:
-                        proc.kill()  # Force kill if still alive
-                    except:
-                        pass
-
-            except ImportError:
-                # Fallback if psutil not available
-                process.kill()
-                logging.warning("psutil not available, using basic process.kill()")
-            except Exception as kill_error:
-                logging.error(f"Error killing process tree: {kill_error}")
-                process.kill()  # Fallback to basic kill
-
-            if active_processes and installer_name in active_processes:
-                del active_processes[installer_name]
-
-            error_msg = f"Installer execution timeout (exceeded {timeout_seconds} seconds)"
-            logging.error(error_msg)
-            return False, -1, error_msg
-
-        # Remove from active processes once complete
-        if active_processes and installer_name in active_processes:
-            del active_processes[installer_name]
-
-        logging.debug(f"Installer exit code: {exit_code}")
-
-        if exit_code == 0:
-            return True, exit_code, ""
-        elif exit_code == 3010:
-            logging.info("Installer returned 3010 (reboot required) — treating as success")
-            return True, exit_code, ""
+        if user_token is not None:
+            return _execute_as_user(
+                command, user_token, environment,
+                installer_name, active_processes, timeout_seconds,
+            )
         else:
-            error_msg = f"Installer failed with exit code {exit_code}"
-            if stderr:
-                error_msg += f": {stderr}"
-            logging.error(error_msg)
-            return False, exit_code, error_msg
+            return _execute_as_system(
+                command, installer_name, active_processes, timeout_seconds,
+            )
 
     except Exception as e:
-        # Clean up tracking if error occurs
         if active_processes and installer_name in active_processes:
             del active_processes[installer_name]
         error_msg = f"Unexpected error executing installer: {e}"
         logging.error(error_msg)
         return False, -1, error_msg
+
+
+def _execute_as_user(
+    command: str,
+    user_token,
+    environment,
+    installer_name: str,
+    active_processes: Optional[Dict[str, int]],
+    timeout_seconds: int,
+) -> tuple[bool, int, str]:
+    """Run installer in the user's desktop session via CreateProcessAsUser."""
+    import win32process
+    import win32event
+    import win32api
+    import win32con
+
+    si = win32process.STARTUPINFO()
+    si.dwFlags = win32process.STARTF_USESHOWWINDOW
+    # SW_SHOWMINNOACTIVE: window starts minimized but NOT hidden.
+    # SW_HIDE causes invisible dialogs that block forever when an installer
+    # spawns an unexpected prompt (e.g. TD's "directory exists" dialog).
+    si.wShowWindow = win32con.SW_SHOWMINNOACTIVE
+    si.lpDesktop = "WinSta0\\Default"
+
+    logging.info("Launching installer in user session (CreateProcessAsUser)")
+
+    h_process, h_thread, pid, _tid = win32process.CreateProcessAsUser(
+        user_token,
+        None,           # Application name
+        command,        # Command line
+        None, None,     # Security attributes
+        0,              # Inherit handles
+        win32con.NORMAL_PRIORITY_CLASS,
+        environment,
+        None,           # Current directory
+        si,
+    )
+    win32api.CloseHandle(h_thread)
+
+    logging.info(f"Installer launched in user session (PID: {pid})")
+
+    # Track for cancellation
+    if active_processes is not None and installer_name:
+        active_processes[installer_name] = pid
+
+    # Wait for completion or timeout
+    timeout_ms = timeout_seconds * 1000
+    result = win32event.WaitForSingleObject(h_process, timeout_ms)
+
+    if result == win32event.WAIT_TIMEOUT:
+        logging.error(f"Installer timed out after {timeout_seconds}s (PID: {pid})")
+        _kill_process_tree(pid)
+        win32api.CloseHandle(h_process)
+        if active_processes and installer_name in active_processes:
+            del active_processes[installer_name]
+        return False, -1, f"Installer execution timeout (exceeded {timeout_seconds} seconds)"
+
+    exit_code = win32process.GetExitCodeProcess(h_process)
+    win32api.CloseHandle(h_process)
+
+    if active_processes and installer_name in active_processes:
+        del active_processes[installer_name]
+
+    logging.debug(f"Installer exit code: {exit_code}")
+
+    if exit_code == 0:
+        return True, exit_code, ""
+    elif exit_code == 3010:
+        logging.info("Installer returned 3010 (reboot required) — treating as success")
+        return True, exit_code, ""
+    else:
+        error_msg = f"Installer failed with exit code {exit_code}"
+        logging.error(error_msg)
+        return False, exit_code, error_msg
+
+
+def _execute_as_system(
+    command: str,
+    installer_name: str,
+    active_processes: Optional[Dict[str, int]],
+    timeout_seconds: int,
+) -> tuple[bool, int, str]:
+    """Run installer in Session 0 via subprocess (fallback when no user session)."""
+    process = subprocess.Popen(
+        command,
+        shell=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    pid = process.pid
+    if active_processes is not None and installer_name:
+        active_processes[installer_name] = pid
+        logging.debug(f"Tracking installer process: {installer_name} (PID: {pid})")
+
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        exit_code = process.returncode
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(pid)
+        if active_processes and installer_name in active_processes:
+            del active_processes[installer_name]
+        error_msg = f"Installer execution timeout (exceeded {timeout_seconds} seconds)"
+        logging.error(error_msg)
+        return False, -1, error_msg
+
+    if active_processes and installer_name in active_processes:
+        del active_processes[installer_name]
+
+    logging.debug(f"Installer exit code: {exit_code}")
+
+    if exit_code == 0:
+        return True, exit_code, ""
+    elif exit_code == 3010:
+        logging.info("Installer returned 3010 (reboot required) — treating as success")
+        return True, exit_code, ""
+    else:
+        error_msg = f"Installer failed with exit code {exit_code}"
+        if stderr:
+            error_msg += f": {stderr}"
+        logging.error(error_msg)
+        return False, exit_code, error_msg
 
 
 def verify_checksum(file_path: str, expected_sha256: str) -> bool:
@@ -397,13 +484,13 @@ def cleanup_installer(installer_path: str, force: bool = False) -> bool:
         return False
 
 
-def cancel_installation(installer_name: str, active_processes: Dict[str, subprocess.Popen]) -> tuple[bool, str]:
+def cancel_installation(installer_name: str, active_processes: Dict[str, int]) -> tuple[bool, str]:
     """
-    Cancel an active installation by killing the installer process.
+    Cancel an active installation by killing the installer process tree.
 
     Args:
         installer_name: Name of the installer being cancelled
-        active_processes: Dictionary mapping installer names to Popen processes
+        active_processes: Dictionary mapping installer names to PIDs
 
     Returns:
         Tuple of (success, message)
@@ -412,37 +499,13 @@ def cancel_installation(installer_name: str, active_processes: Dict[str, subproc
         if installer_name not in active_processes:
             return False, f"No active installation found for {installer_name}"
 
-        process = active_processes[installer_name]
+        pid = active_processes[installer_name]
+        logging.debug(f"Cancelling installation: {installer_name} (PID: {pid})")
 
-        # Kill the installer process
-        logging.debug(f"Cancelling installation: {installer_name} (PID: {process.pid})")
+        _kill_process_tree(pid)
 
-        # Try graceful termination first
-        try:
-            parent = psutil.Process(process.pid)
-            # Kill all child processes too
-            children = parent.children(recursive=True)
-            for child in children:
-                logging.debug(f"Terminating child process: {child.pid}")
-                child.terminate()
-            parent.terminate()
-
-            # Wait up to 3 seconds for termination
-            gone, alive = psutil.wait_procs([parent] + children, timeout=3)
-
-            # Force kill if still alive
-            for p in alive:
-                logging.warning(f"Force killing process: {p.pid}")
-                p.kill()
-
-        except psutil.NoSuchProcess:
-            # Process already terminated
-            pass
-
-        # Remove from active processes
         del active_processes[installer_name]
 
-        # Cleanup installer file
         installer_path = get_temp_installer_path(installer_name)
         cleanup_installer(installer_path)
 

@@ -213,9 +213,29 @@ async def handle_chat_message(
 
     chat_id = message.get('chatId', '')
     user_content = message.get('content', '')
+    images = message.get('images', [])
     machine_name = message.get('machineName', socket.gethostname())
 
-    logger.info(f"Processing chat message: chatId={chat_id}, len={len(user_content)}")
+    logger.info(f"Processing chat message: chatId={chat_id}, len={len(user_content)}, images={len(images)}")
+
+    # Build multimodal content if images are present
+    # The Agent SDK's query() accepts str for text, but for multimodal we need
+    # to send structured content blocks via the streaming message format
+    if images:
+        content_blocks = []
+        if user_content:
+            content_blocks.append({"type": "text", "text": user_content})
+        for img in images:
+            url = img.get("url", "")
+            media_type = img.get("mediaType", "image/jpeg")
+            if url:
+                content_blocks.append({
+                    "type": "image",
+                    "source": {"type": "url", "url": url, "media_type": media_type},
+                })
+        multimodal_content = content_blocks if content_blocks else user_content
+    else:
+        multimodal_content = None
 
     start_time = time.time()
     full_response = ''
@@ -223,7 +243,18 @@ async def handle_chat_message(
 
     try:
         async with ClaudeSDKClient(options=options) as client:
-            await client.query(user_content)
+            if multimodal_content is not None:
+                # Send as structured message for multimodal (images + text)
+                async def _image_message():
+                    yield {
+                        "type": "user",
+                        "message": {"role": "user", "content": multimodal_content},
+                        "parent_tool_use_id": None,
+                        "session_id": "default",
+                    }
+                await client.query(_image_message())
+            else:
+                await client.query(user_content)
 
             async for msg in client.receive_response():
                 if isinstance(msg, AssistantMessage):

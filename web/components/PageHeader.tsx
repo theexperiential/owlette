@@ -40,6 +40,7 @@ export function PageHeader({
   const currentSiteName = sites.find(s => s.id === currentSiteId)?.name ?? 'Select site';
 
   return (
+    <>
     <header className="border-b border-border bg-background">
       <div className="mx-auto flex h-14 max-w-screen-2xl items-center justify-between px-2 md:px-3">
         {/* Left: Logo + Breadcrumb navigation */}
@@ -207,5 +208,8 @@ export function PageHeader({
         </div>
       </div>
     </header>
+    {/* Subtle top glow for readability over dot grid */}
+    <div className="pointer-events-none absolute inset-x-0 top-14 h-48 z-0" style={{ background: 'linear-gradient(to bottom, oklch(0.20 0.03 250 / 0.7), transparent)' }} />
+    </>
   );
 }

@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
       machineName,
       chatId,
     } = body as {
-      messages: ModelMessage[];
+      messages: ModelMessage[];  // content can be string or Array<TextPart | ImagePart>
       siteId: string;
       machineId: string;
       machineName: string;
@@ -166,11 +166,34 @@ async function handleLocalCortex(
     .collection('cortex')
     .doc('active-chat');
 
-  // Extract user message text
+  // Extract user message text and images
   const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
-  const userText = lastUserMsg
-    ? (lastUserMsg as { content?: string }).content || ''
-    : '';
+  const msgContent = (lastUserMsg as { content?: unknown })?.content;
+
+  let userText = '';
+  const images: Array<{ url: string; mediaType: string }> = [];
+
+  if (typeof msgContent === 'string') {
+    userText = msgContent;
+  } else if (Array.isArray(msgContent)) {
+    for (const block of msgContent) {
+      if (block.type === 'text') userText += block.text || '';
+      if (block.type === 'image' && block.image) {
+        images.push({ url: String(block.image), mediaType: block.mediaType || 'image/jpeg' });
+      }
+    }
+  }
+
+  // Serialize messages for Firestore (flatten multimodal to text for history)
+  const serializedMessages = messages.map((m) => {
+    const c = (m as { content?: unknown }).content;
+    if (typeof c === 'string') return { role: m.role, content: c };
+    if (Array.isArray(c)) {
+      const text = c.filter((b: { type: string }) => b.type === 'text').map((b: { text?: string }) => b.text || '').join('');
+      return { role: m.role, content: text };
+    }
+    return { role: m.role, content: '' };
+  });
 
   // Write pending message for local Cortex to pick up
   await activeChatRef.set(
@@ -178,10 +201,8 @@ async function handleLocalCortex(
       pendingMessage: userText,
       chatId,
       machineName: machineName || machineId,
-      messages: messages.map((m) => ({
-        role: m.role,
-        content: (m as { content?: string }).content || '',
-      })),
+      messages: serializedMessages,
+      ...(images.length > 0 ? { images } : {}),
       status: 'pending',
       response: { content: '', complete: false, parts: [] },
       updatedAt: new Date(),
