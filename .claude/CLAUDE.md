@@ -59,6 +59,39 @@ Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules
 
 **IMPORTANT: Always version up BEFORE building the installer.** Bump with `node scripts/sync-versions.js X.Y.Z` and commit BEFORE running `build_installer_full.bat` — the installer bakes the version into the exe filename and binary.
 
+**Agent Installer Release** (build + upload to Firebase):
+```bash
+# 1. Bump version, commit, push
+node scripts/sync-versions.js X.Y.Z
+git add -A && git commit -m "chore: bump version to X.Y.Z" && git push origin dev
+
+# 2. Build installer (~5 min)
+cd agent && powershell -Command "& './build_installer_full.bat'"
+# Output: agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
+
+# 3. Compute checksum
+sha256sum agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
+
+# 4. Upload via API (3-step: request URL → upload binary → finalize)
+API_KEY=$(grep OWLETTE_API_KEY .claude/.env.local | cut -d= -f2)
+BASE_URL="https://dev.owlette.app"  # or https://owlette.app for prod
+
+# Step 1: Get signed upload URL
+curl -s -X POST "$BASE_URL/api/admin/installer/upload" \
+  -H "Content-Type: application/json" -H "x-api-key: $API_KEY" \
+  -d '{"version":"X.Y.Z","fileName":"Owlette-Installer-vX.Y.Z.exe","releaseNotes":"...","setAsLatest":true}'
+# → returns uploadUrl, uploadId
+
+# Step 2: Upload binary to signed URL
+curl -X PUT "$UPLOAD_URL" -H "Content-Type: application/octet-stream" \
+  --data-binary @agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
+
+# Step 3: Finalize (verifies file, writes installer_metadata, sets as latest)
+curl -s -X PUT "$BASE_URL/api/admin/installer/upload" \
+  -H "Content-Type: application/json" -H "x-api-key: $API_KEY" \
+  -d '{"uploadId":"<from step 1>","checksum_sha256":"<from step 3>"}'
+```
+
 ---
 
 ## Don'ts / Guardrails
