@@ -158,6 +158,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.install_locks = {}  # {process_config_id: deployment_id} - suppress relaunch during install
         self.manual_overrides = {} # Processes manually started outside their schedule window
         self._cached_site_timezone = None  # Cached from firebase_client
+        self._last_scheduled_reboot_time = None  # Tracks when we last triggered a scheduled reboot
+        self._reboot_schedule_counter = 0  # Check reboot schedule every ~60s (6 iterations)
+        self._live_view_active = False
+        self._live_view_stop_time = 0
 
         # Initialize Firebase client
         self.firebase_client = None
@@ -878,6 +882,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
             mode = tool_params.get('mode', 'off')
             schedules = tool_params.get('schedules')
             return self._handle_cortex_set_launch_mode(process_name, mode, schedules)
+        elif tool_name == 'capture_screenshot':
+            return self._handle_capture_screenshot({
+                'monitor': tool_params.get('monitor', 0),
+            })
         else:
             return {'error': f'Unknown Cortex IPC tool: {tool_name}'}
 
@@ -1947,12 +1955,21 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # Only log crash if it wasn't manually killed
                     if not was_manually_killed:
                         process_name = Util.get_process_name(process)
+
+                        # Best-effort screenshot capture before relaunch
+                        crash_screenshot_url = None
+                        try:
+                            crash_screenshot_url = self._capture_crash_screenshot()
+                        except Exception:
+                            pass
+
                         if self.firebase_client and self.firebase_client.is_connected():
                             self.firebase_client.log_event(
                                 action='process_crash',
                                 level='error',
                                 process_name=process_name,
-                                details=f'Process stopped unexpectedly (PID {last_pid} no longer running)'
+                                details=f'Process stopped unexpectedly (PID {last_pid} no longer running)',
+                                screenshot_url=crash_screenshot_url
                             )
                             self.firebase_client.send_process_alert(
                                 process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash'
@@ -3078,7 +3095,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 return _json.dumps(result)
 
             elif cmd_type == 'capture_screenshot':
-                return self._handle_capture_screenshot(cmd_data)
+                result = self._handle_capture_screenshot(cmd_data)
+                # Dashboard UI expects a string result, not the full dict
+                if isinstance(result, dict):
+                    return result.get('message') or result.get('error', str(result))
+                return result
 
             elif cmd_type == 'reboot_machine':
                 return self._handle_reboot_machine(cmd_data)
@@ -3095,6 +3116,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
             elif cmd_type == 'provision_cortex_key':
                 return self._handle_provision_cortex_key(cmd_data)
 
+            elif cmd_type == 'start_live_view':
+                return self._handle_start_live_view(cmd_data)
+
+            elif cmd_type == 'stop_live_view':
+                return self._handle_stop_live_view(cmd_data)
+
             else:
                 logging.warning(f"Unknown command type: {cmd_type}")
                 return f"Unknown command type: {cmd_type}"
@@ -3103,6 +3130,69 @@ class OwletteService(win32serviceutil.ServiceFramework):
             error_msg = f"Error executing command {cmd_type}: {e}"
             logging.error(error_msg)
             return error_msg
+
+    def _check_scheduled_reboot(self):
+        """Check if a scheduled reboot should be triggered.
+
+        Conditions:
+        1. Firebase is connected
+        2. rebootSchedule.enabled is True
+        3. Current time is within a schedule window
+        4. Machine uptime > 30 minutes (avoid reboot loops after fresh boot)
+        5. Haven't already triggered a reboot in this schedule window
+        """
+        if not self.firebase_client or not self.firebase_client.is_connected():
+            return
+
+        try:
+            reboot_schedule = self.firebase_client.get_reboot_schedule()
+            if not reboot_schedule or not reboot_schedule.get('enabled'):
+                return
+
+            schedules = reboot_schedule.get('schedules')
+            if not schedules:
+                return
+
+            # Check if current time is within the schedule window
+            if not shared_utils.is_within_schedule(schedules, self._cached_site_timezone):
+                return
+
+            # Check machine uptime > 30 minutes to avoid reboot loops
+            uptime_seconds = time.time() - psutil.boot_time()
+            if uptime_seconds < 1800:  # 30 minutes
+                logging.debug("Scheduled reboot skipped: machine uptime < 30 minutes")
+                return
+
+            # Check if we already triggered a reboot in this schedule window
+            now = datetime.datetime.now()
+            if self._last_scheduled_reboot_time:
+                # If the last reboot trigger was less than 2 hours ago, skip
+                # This prevents re-triggering within the same schedule window
+                elapsed = (now - self._last_scheduled_reboot_time).total_seconds()
+                if elapsed < 7200:  # 2 hours
+                    return
+
+            # All conditions met — trigger the reboot
+            self._last_scheduled_reboot_time = now
+            logging.info("Scheduled reboot triggered — all conditions met")
+
+            self.firebase_client.log_event(
+                action='scheduled_reboot',
+                level='warning',
+                details='Scheduled reboot initiated by reboot schedule'
+            )
+
+            self.firebase_client.set_machine_flag('rebooting', True)
+
+            import subprocess
+            subprocess.run(
+                ['shutdown', '/r', '/t', '30', '/c', 'Owlette scheduled reboot'],
+                check=True
+            )
+            logging.info("Scheduled reboot command issued (30-second delay)")
+
+        except Exception as e:
+            logging.error(f"Scheduled reboot check failed: {e}")
 
     def _handle_reboot_machine(self, command_data):
         """Handle remote reboot command."""
@@ -3279,7 +3369,91 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 'error': result.get('error'),
             }
 
+        if tool_name == 'capture_screenshot':
+            result = self._handle_capture_screenshot({
+                'monitor': tool_params.get('monitor', 0),
+            })
+            if isinstance(result, dict):
+                # Strip base64 before Firestore serialization (1MB doc limit)
+                return {k: v for k, v in result.items() if k != 'base64'}
+            return result
+
         return None  # Not a user-session tool, fall through
+
+    def _capture_crash_screenshot(self):
+        """Best-effort screenshot capture on process crash. Returns URL or None.
+
+        Uses the same capture pipeline as _handle_capture_screenshot but with
+        lower quality settings for speed, and never blocks the relaunch path.
+        """
+        try:
+            import base64
+            capture_code = """
+import mss
+import io
+import os
+from mss.tools import to_png
+
+with mss.mss() as sct:
+    screenshot = sct.grab(sct.monitors[0])
+    png_bytes = to_png(screenshot.rgb, screenshot.size)
+
+try:
+    from PIL import Image
+    img = Image.open(io.BytesIO(png_bytes))
+    max_width = 1920
+    if img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+    buffer = io.BytesIO()
+    img.save(buffer, format='JPEG', quality=60)
+    jpeg_bytes = buffer.getvalue()
+except ImportError:
+    jpeg_bytes = png_bytes
+
+out_path = os.path.join(output_dir, 'screenshot.jpg')
+with open(out_path, 'wb') as f:
+    f.write(jpeg_bytes)
+"""
+            result = self.execute_in_user_session('python', capture_code, timeout=8)
+
+            if result.get('error') or 'screenshot.jpg' not in result.get('files', []):
+                logging.debug("Crash screenshot capture failed — proceeding with relaunch")
+                return None
+
+            ipc_dir = shared_utils.get_data_path('ipc')
+            results_base = os.path.join(ipc_dir, 'results')
+            screenshot_path = None
+            for d in sorted(os.listdir(results_base), reverse=True):
+                candidate = os.path.join(results_base, d, 'screenshot.jpg')
+                if os.path.exists(candidate):
+                    screenshot_path = candidate
+                    break
+
+            if not screenshot_path:
+                return None
+
+            with open(screenshot_path, 'rb') as f:
+                jpeg_bytes = f.read()
+
+            screenshot_b64 = base64.b64encode(jpeg_bytes).decode('ascii')
+
+            # Cleanup result directory
+            try:
+                import shutil
+                shutil.rmtree(os.path.dirname(screenshot_path), ignore_errors=True)
+            except Exception:
+                pass
+
+            upload_result = self._upload_screenshot(screenshot_b64)
+            url = upload_result.get('url', '') if upload_result else ''
+            if url:
+                logging.info(f"Crash screenshot captured: {len(jpeg_bytes) // 1024}KB")
+            return url or None
+
+        except Exception as e:
+            logging.debug(f"Crash screenshot failed: {e}")
+            return None
 
     def _handle_capture_screenshot(self, command_data):
         """Handle screenshot capture via user-session execution."""
@@ -3323,11 +3497,11 @@ print(f'monitors={{len(sct.monitors) - 1}}')
             result = self.execute_in_user_session('python', capture_code, timeout=20)
 
             if result.get('error'):
-                return f"Error: Screenshot failed: {result['error']}"
+                return {'error': f"Screenshot failed: {result['error']}"}
 
             if 'screenshot.jpg' not in result.get('files', []):
                 stderr = result.get('stderr', '')
-                return f"Error: Screenshot capture failed{': ' + stderr if stderr else ''}"
+                return {'error': f"Screenshot capture failed{': ' + stderr if stderr else ''}"}
 
             # Read the captured screenshot
             # Find the output dir from the result files
@@ -3343,7 +3517,7 @@ print(f'monitors={{len(sct.monitors) - 1}}')
                     break
 
             if not screenshot_path:
-                return "Error: Screenshot file not found after capture"
+                return {'error': 'Screenshot file not found after capture'}
 
             with open(screenshot_path, 'rb') as f:
                 jpeg_bytes = f.read()
@@ -3372,13 +3546,20 @@ print(f'monitors={{len(sct.monitors) - 1}}')
 
             url = upload_result.get('url', '') if upload_result else ''
             monitor_label = f'monitor {monitor}' if monitor > 0 else 'all monitors'
-            result_msg = f"Screenshot captured ({monitor_label}, {size_kb:.0f}KB)"
+            message = f"Screenshot captured ({monitor_label}, {size_kb:.0f}KB)"
             if url:
-                result_msg += f" — URL: {url}"
-            return result_msg
+                message += f" — URL: {url}"
+
+            return {
+                'message': message,
+                'url': url,
+                'base64': screenshot_b64,
+                'size_kb': round(size_kb, 1),
+                'monitor': monitor,
+            }
 
         except Exception as e:
-            return f"Error: Screenshot failed: {str(e)}"
+            return {'error': f"Screenshot failed: {str(e)}"}
 
     def _upload_screenshot(self, screenshot_b64):
         """Upload screenshot base64 to web API for storage in Firebase Storage.
@@ -3410,6 +3591,141 @@ print(f'monitors={{len(sct.monitors) - 1}}')
         except Exception as e:
             logging.warning(f"Screenshot upload failed: {e}")
             return None
+
+    def _handle_start_live_view(self, command_data):
+        """Start periodic screenshot capture for live view."""
+        try:
+            interval = command_data.get('interval', 10)
+            interval = max(5, min(60, int(interval)))
+            duration = command_data.get('duration', 600)
+            duration = max(60, min(1800, int(duration)))
+
+            if self._live_view_active:
+                return "Live view already active"
+
+            self._live_view_active = True
+            self._live_view_stop_time = time.time() + duration
+
+            # Set Firestore flag
+            if self.firebase_client and self.firebase_client.is_connected():
+                self.firebase_client.set_machine_flag('liveView', {
+                    'active': True,
+                    'interval': interval,
+                    'startedAt': time.time(),
+                    'expiresAt': self._live_view_stop_time,
+                })
+
+            # Start background daemon thread
+            thread = threading.Thread(
+                target=self._live_view_loop,
+                args=(interval,),
+                daemon=True,
+                name='LiveViewLoop',
+            )
+            thread.start()
+
+            logging.info(f"Live view started: interval={interval}s, duration={duration}s")
+            return f"Live view started (interval: {interval}s, duration: {duration}s)"
+
+        except Exception as e:
+            self._live_view_active = False
+            return f"Error starting live view: {e}"
+
+    def _handle_stop_live_view(self, command_data):
+        """Stop the live view screenshot loop."""
+        self._live_view_active = False
+
+        if self.firebase_client and self.firebase_client.is_connected():
+            self.firebase_client.set_machine_flag('liveView', {'active': False})
+
+        logging.info("Live view stopped")
+        return "Live view stopped"
+
+    def _live_view_loop(self, interval):
+        """Background loop that captures and uploads screenshots periodically."""
+        try:
+            import base64
+
+            logging.info(f"Live view loop started (interval={interval}s)")
+
+            while self._live_view_active and time.time() < self._live_view_stop_time:
+                try:
+                    # Low-quality capture for live view
+                    capture_code = """
+import mss
+import io
+import os
+from mss.tools import to_png
+
+with mss.mss() as sct:
+    screenshot = sct.grab(sct.monitors[0])
+    png_bytes = to_png(screenshot.rgb, screenshot.size)
+
+try:
+    from PIL import Image
+    img = Image.open(io.BytesIO(png_bytes))
+    max_width = 1280
+    if img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+    buffer = io.BytesIO()
+    img.save(buffer, format='JPEG', quality=50)
+    jpeg_bytes = buffer.getvalue()
+except ImportError:
+    jpeg_bytes = png_bytes
+
+out_path = os.path.join(output_dir, 'screenshot.jpg')
+with open(out_path, 'wb') as f:
+    f.write(jpeg_bytes)
+"""
+                    result = self.execute_in_user_session('python', capture_code, timeout=10)
+
+                    if result.get('error') or 'screenshot.jpg' not in result.get('files', []):
+                        logging.debug(f"Live view capture failed: {result.get('error', 'no screenshot file')}")
+                    else:
+                        # Read and upload the screenshot
+                        ipc_dir = shared_utils.get_data_path('ipc')
+                        results_base = os.path.join(ipc_dir, 'results')
+                        screenshot_path = None
+                        for d in sorted(os.listdir(results_base), reverse=True):
+                            candidate = os.path.join(results_base, d, 'screenshot.jpg')
+                            if os.path.exists(candidate):
+                                screenshot_path = candidate
+                                break
+
+                        if screenshot_path:
+                            with open(screenshot_path, 'rb') as f:
+                                jpeg_bytes = f.read()
+
+                            screenshot_b64 = base64.b64encode(jpeg_bytes).decode('ascii')
+
+                            # Cleanup result directory
+                            try:
+                                import shutil
+                                shutil.rmtree(os.path.dirname(screenshot_path), ignore_errors=True)
+                            except Exception:
+                                pass
+
+                            self._upload_screenshot(screenshot_b64)
+
+                except Exception as e:
+                    logging.warning(f"Live view capture error: {e}")
+
+                # Sleep in small increments so we can stop promptly
+                sleep_end = time.time() + interval
+                while self._live_view_active and time.time() < sleep_end and time.time() < self._live_view_stop_time:
+                    time.sleep(1)
+
+        except Exception as e:
+            logging.error(f"Live view loop crashed: {e}")
+        finally:
+            self._live_view_active = False
+            if self.firebase_client and self.firebase_client.is_connected():
+                try:
+                    self.firebase_client.set_machine_flag('liveView', {'active': False})
+                except Exception:
+                    pass
+            logging.info("Live view loop ended")
 
     def _check_update_status(self):
         """
@@ -3760,6 +4076,12 @@ print(f'monitors={{len(sct.monitors) - 1}}')
                                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                                         pass
                     # mode == 'off': skip entirely
+
+                # Scheduled reboot check (every ~60 seconds to avoid hammering Firestore)
+                self._reboot_schedule_counter += 1
+                if self._reboot_schedule_counter >= 6:
+                    self._reboot_schedule_counter = 0
+                    self._check_scheduled_reboot()
 
                 if self.first_start:
                     logging.info('Owlette initialized')

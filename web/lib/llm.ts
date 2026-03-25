@@ -126,7 +126,8 @@ RULES:
    - ISSUE: what happened
    - INVESTIGATION: what you found
    - ACTION: what you did
-   - OUTCOME: resolved / escalated / needs attention`;
+   - OUTCOME: resolved / escalated / needs attention
+6. VISUAL VERIFICATION — after restarting a display or media process, capture a screenshot to verify visual recovery. Report what you see. Skip for non-display services.`;
 }
 
 /**

@@ -34,6 +34,35 @@ export interface McpToolDefinition {
 
 const tier1Tools: McpToolDefinition[] = [
   {
+    name: 'get_site_logs',
+    description: 'Get activity logs across all machines in the site. Useful for finding errors, crashes, and events across the fleet.',
+    tier: 1,
+    parameters: {
+      type: 'object',
+      properties: {
+        level: {
+          type: 'string',
+          description: 'Filter by log level (optional).',
+          enum: ['error', 'warning', 'info'],
+        },
+        hours: {
+          type: 'number',
+          description: 'Look back this many hours (default: 24).',
+          default: 24,
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of logs to return (default: 50).',
+          default: 50,
+        },
+        action: {
+          type: 'string',
+          description: 'Filter by action type, e.g. process_crash, agent_started (optional).',
+        },
+      },
+    },
+  },
+  {
     name: 'get_system_info',
     description: 'Get comprehensive system information: hostname, OS (with correct Windows 10/11 detection), CPU model and usage, memory (used/total GB), disk (used/total GB), GPU model, GPU driver version, VRAM (used/total GB), GPU load %, system uptime, and agent version. Use this as the first step for any hardware or system questions.',
     tier: 1,
@@ -266,7 +295,7 @@ const tier2Tools: McpToolDefinition[] = [
   },
   {
     name: 'capture_screenshot',
-    description: 'Capture a screenshot of the remote machine\'s desktop. Returns a URL to the captured image in Firebase Storage. Use monitor=0 for all displays combined, or monitor=1, 2, etc. for a specific display.',
+    description: 'Capture a screenshot of the remote machine\'s desktop. Returns the captured image for you to analyze visually — use this to see what is actually on screen. Use when the operator reports visual issues (frozen screen, black screen, wrong content, display glitches), asks what is currently on screen, or after restarting a display/media process to verify visual recovery. Do not capture screenshots for pure backend or service issues where the display is irrelevant. Use monitor=0 for all displays combined, or monitor=1, 2, etc. for a specific display.',
     tier: 2,
     parameters: {
       type: 'object',
@@ -389,6 +418,30 @@ const tier3Tools: McpToolDefinition[] = [
     },
   },
   {
+    name: 'execute_script',
+    description: 'Execute a PowerShell script on the remote machine with no command restrictions. Use for installing software, running diagnostics, stress tests, managing services, editing the registry, configuring the system, or any other administration task. Returns stdout, stderr, and exit code.',
+    tier: 3,
+    parameters: {
+      type: 'object',
+      properties: {
+        script: {
+          type: 'string',
+          description: 'The PowerShell script to execute. Can be multi-line.',
+        },
+        timeout_seconds: {
+          type: 'number',
+          description: 'Timeout in seconds (default: 120). Set higher for long operations like software installs.',
+          default: 120,
+        },
+        working_directory: {
+          type: 'string',
+          description: 'Optional working directory for script execution.',
+        },
+      },
+      required: ['script'],
+    },
+  },
+  {
     name: 'reboot_machine',
     description: 'Reboot the remote machine. Schedules a reboot with a 30-second delay so running processes can be saved. Can be cancelled within the countdown window.',
     tier: 3,
@@ -468,5 +521,4 @@ export const EXISTING_COMMAND_MAPPINGS: Record<string, string> = {
   reboot_machine: 'reboot_machine',
   shutdown_machine: 'shutdown_machine',
   cancel_reboot: 'cancel_reboot',
-  capture_screenshot: 'capture_screenshot',
 };

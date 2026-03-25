@@ -14,6 +14,9 @@ import {
 } from '@/lib/mcp-tools';
 import type { LlmConfig } from '@/lib/llm';
 
+/** Tools that are executed server-side (query Firestore directly, not relayed to agent). */
+const SERVER_SIDE_TOOLS = new Set(['get_site_logs']);
+
 export const COMMAND_POLL_INTERVAL_MS = 1500;
 export const COMMAND_TIMEOUT_MS = 30000;
 
@@ -180,6 +183,13 @@ export async function executeToolOnAgent(
 ): Promise<unknown> {
   const commandId = `mcp_${Date.now()}_${toolName}`;
 
+  // Use tool-provided timeout if available, otherwise default
+  const toolTimeout = typeof toolParams.timeout_seconds === 'number'
+    ? toolParams.timeout_seconds * 1000
+    : COMMAND_TIMEOUT_MS;
+  // Add buffer for agent-side overhead (startup, serialization)
+  const pollTimeoutMs = toolTimeout + 10000;
+
   const pendingRef = db
     .collection('sites')
     .doc(siteId)
@@ -197,7 +207,7 @@ export async function executeToolOnAgent(
         chat_id: chatId,
         timestamp: Date.now(),
         status: 'pending',
-        timeout_seconds: COMMAND_TIMEOUT_MS / 1000,
+        timeout_seconds: toolTimeout / 1000,
       },
     },
     { merge: true }
@@ -213,7 +223,7 @@ export async function executeToolOnAgent(
 
   const startTime = Date.now();
 
-  while (Date.now() - startTime < COMMAND_TIMEOUT_MS) {
+  while (Date.now() - startTime < pollTimeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, COMMAND_POLL_INTERVAL_MS));
 
     const completedDoc = await completedRef.get();
@@ -250,7 +260,7 @@ export async function executeToolOnAgent(
     // Best effort cleanup
   }
 
-  return { error: `Tool '${toolName}' timed out after ${COMMAND_TIMEOUT_MS / 1000} seconds. The machine may be slow to respond or offline.` };
+  return { error: `Tool '${toolName}' timed out after ${Math.round(pollTimeoutMs / 1000)} seconds. The machine may be slow to respond or offline.` };
 }
 
 /**
@@ -316,6 +326,85 @@ export async function executeExistingCommand(
 }
 
 /**
+ * Execute the get_site_logs tool server-side by querying Firestore directly.
+ */
+/**
+ * Execute the get_site_logs tool server-side by querying Firestore directly.
+ *
+ * Fetches more than needed and filters in-memory for level/action to avoid
+ * requiring composite indexes for every filter combination.
+ */
+async function executeSiteLogs(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  params: Record<string, unknown>
+): Promise<unknown> {
+  const level = params.level as string | undefined;
+  const hours = typeof params.hours === 'number' ? params.hours : 24;
+  const limit = typeof params.limit === 'number' ? Math.min(params.limit, 200) : 50;
+  const action = params.action as string | undefined;
+
+  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+  // Only filter by timestamp in Firestore (avoids composite index requirements).
+  // Apply level/action filters in-memory.
+  const fetchLimit = (level || action) ? limit * 4 : limit;
+
+  const logsQuery = db
+    .collection('sites')
+    .doc(siteId)
+    .collection('logs')
+    .where('timestamp', '>=', cutoff)
+    .orderBy('timestamp', 'desc')
+    .limit(Math.min(fetchLimit, 500));
+
+  const snapshot = await logsQuery.get();
+
+  let logs = snapshot.docs.map((doc) => {
+    const data = doc.data();
+    const ts = data.timestamp?.toDate
+      ? data.timestamp.toDate().toISOString()
+      : data.timestamp;
+    return {
+      timestamp: ts,
+      machine: data.machineId || data.machine || 'unknown',
+      action: data.action || '',
+      level: data.level || 'info',
+      process: data.processName || data.process || '',
+      details: data.details || '',
+    };
+  });
+
+  if (level) {
+    logs = logs.filter((l) => l.level === level);
+  }
+  if (action) {
+    logs = logs.filter((l) => l.action === action);
+  }
+
+  logs = logs.slice(0, limit);
+
+  return { logs, count: logs.length, hours, siteId };
+}
+
+/**
+ * Execute a server-side tool (not relayed to agent).
+ */
+async function executeServerSideTool(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  toolName: string,
+  params: Record<string, unknown>
+): Promise<unknown> {
+  switch (toolName) {
+    case 'get_site_logs':
+      return executeSiteLogs(db, siteId, params);
+    default:
+      return { error: `Unknown server-side tool: ${toolName}` };
+  }
+}
+
+/**
  * Build AI SDK tools with execute functions that relay to agents.
  * In site mode, tool calls fan out to all online machines and aggregate results.
  */
@@ -335,10 +424,15 @@ export function buildExecutableTools(
     const toolName = def.name;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tools[toolName] = tool<any, any>({
+    const toolConfig: any = {
       description: def.description,
       inputSchema: jsonSchema(def.parameters as Record<string, unknown>),
-      execute: async (params) => {
+      execute: async (params: unknown) => {
+        // Server-side tools run directly on the web server (no agent relay)
+        if (SERVER_SIDE_TOOLS.has(toolName)) {
+          return executeServerSideTool(db, siteId, toolName, params as Record<string, unknown>);
+        }
+
         if (siteMode) {
           const results = await Promise.all(
             onlineMachines.map(async (mid) => {
@@ -368,7 +462,32 @@ export function buildExecutableTools(
 
         return executeToolOnAgent(db, siteId, machineId, toolName, params as Record<string, unknown>, chatId);
       },
-    });
+    };
+
+    // For capture_screenshot: inject the image as a vision content block
+    // so the LLM can see and analyze the screenshot, not just get a URL string
+    if (toolName === 'capture_screenshot') {
+      toolConfig.toModelOutput = ({ output }: { output: unknown }) => {
+        const result = output as Record<string, unknown> | null;
+        const url = result?.url as string | undefined;
+        const message = (result?.message as string) || (result?.error as string) || 'Screenshot captured';
+
+        if (url) {
+          return {
+            type: 'content' as const,
+            value: [
+              { type: 'text' as const, text: message },
+              { type: 'image-url' as const, url },
+            ],
+          };
+        }
+        // No URL (error case) — return text only
+        return { type: 'text' as const, value: message };
+      };
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tools[toolName] = tool<any, any>(toolConfig);
   }
 
   return tools;

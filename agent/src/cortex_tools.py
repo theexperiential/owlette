@@ -118,6 +118,12 @@ def _execute_via_ipc_sync(tool_name: str, params: dict) -> dict:
     return _format_result(result)
 
 
+def _execute_via_ipc_sync_raw(tool_name: str, params: dict) -> dict:
+    """Execute a tool via IPC and return the raw result dict (no MCP formatting)."""
+    cmd_id = _write_ipc_command(tool_name, params)
+    return _poll_ipc_result(cmd_id)
+
+
 async def _execute_direct(tool_name: str, params: dict, config: dict) -> dict:
     """Execute a tool directly — runs in a thread to avoid blocking the event loop."""
     return await asyncio.to_thread(_execute_direct_sync, tool_name, params, config)
@@ -239,7 +245,38 @@ def _make_tier2_tools() -> list:
     async def set_launch_mode(args: dict[str, Any]) -> dict[str, Any]:
         return await _execute_via_ipc('set_launch_mode', args)
 
-    return [restart_process, kill_process, start_process, set_launch_mode]
+    @tool("capture_screenshot",
+          "Capture a screenshot of this machine's desktop. Returns the captured "
+          "image for you to analyze visually — use this to see what is actually "
+          "on screen. Use when the operator reports visual issues (frozen screen, "
+          "black screen, wrong content, display glitches), asks what is currently "
+          "on screen, or after restarting a display/media process to verify visual "
+          "recovery. Do not capture screenshots for pure backend or service issues "
+          "where the display is irrelevant. Use monitor=0 for all displays "
+          "combined (default), or monitor=1, 2, etc. for a specific display.",
+          {"monitor": int})
+    async def capture_screenshot(args: dict[str, Any]) -> dict[str, Any]:
+        result = await asyncio.to_thread(
+            _execute_via_ipc_sync_raw, 'capture_screenshot', args
+        )
+        # Build MCP content with image block if base64 is available
+        content = []
+        if result.get('error'):
+            content.append({"type": "text", "text": result['error']})
+        else:
+            message = result.get('message', 'Screenshot captured')
+            content.append({"type": "text", "text": message})
+            b64 = result.get('base64')
+            if b64:
+                content.append({
+                    "type": "image",
+                    "data": b64,
+                    "mimeType": "image/jpeg",
+                })
+        return {"content": content}
+
+    return [restart_process, kill_process, start_process, set_launch_mode,
+            capture_screenshot]
 
 
 # ─── Tier 3: Privileged Tools (direct execution) ────────────────────────────
@@ -260,6 +297,16 @@ def _make_tier3_tools(config: dict) -> list:
     async def run_powershell(args: dict[str, Any]) -> dict[str, Any]:
         return await _execute_direct('run_powershell', args, config)
 
+    @tool("execute_script",
+          "Execute a PowerShell script on this machine with NO command restrictions. "
+          "Use for: installing software (winget, choco), running diagnostics/stress tests, "
+          "managing Windows services, editing the registry, configuring network/firewall, "
+          "downloading files, managing scheduled tasks, or ANY system administration task. "
+          "Scripts run in the user session. Set timeout_seconds for long operations.",
+          {"script": str, "timeout_seconds": int, "working_directory": str})
+    async def execute_script(args: dict[str, Any]) -> dict[str, Any]:
+        return await _execute_direct('execute_script', args, config)
+
     @tool("read_file",
           "Read the contents of a file (max 100KB).",
           {"path": str})
@@ -278,7 +325,7 @@ def _make_tier3_tools(config: dict) -> list:
     async def list_directory(args: dict[str, Any]) -> dict[str, Any]:
         return await _execute_direct('list_directory', args, config)
 
-    return [run_command, run_powershell, read_file, write_file, list_directory]
+    return [run_command, run_powershell, execute_script, read_file, write_file, list_directory]
 
 
 # ─── Server Factory ──────────────────────────────────────────────────────────

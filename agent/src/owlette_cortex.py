@@ -313,7 +313,10 @@ def build_autonomous_prompt(event: Dict[str, Any], config: dict) -> str:
         f'   - ISSUE: what happened\n'
         f'   - INVESTIGATION: what you found\n'
         f'   - ACTION: what you did\n'
-        f'   - OUTCOME: resolved / escalated / needs attention'
+        f'   - OUTCOME: resolved / escalated / needs attention\n'
+        f'6. VISUAL VERIFICATION — after restarting a display or media process, '
+        f'capture a screenshot to verify visual recovery. Report what you see. '
+        f'Skip for non-display services.'
     )
 
 
