@@ -400,18 +400,24 @@ service cloud.firestore {
 
     match /chats/{chatId} {
       // AI chat conversations
-      // Users can only access their own chats
+      // Users can read their own chats OR autonomous chats for sites they have access to
       allow read: if isAuthenticated() &&
-                     resource.data.userId == request.auth.uid;
+                     (resource.data.userId == request.auth.uid ||
+                      (resource.data.source == 'autonomous' &&
+                       canAccessSite(resource.data.siteId)));
       allow create: if isAuthenticated();
       allow update, delete: if isAuthenticated() &&
                                resource.data.userId == request.auth.uid;
 
       match /messages/{messageId} {
         // Chat messages within a conversation
-        // Access controlled by parent chat ownership
-        allow read, write: if isAuthenticated() &&
-                              get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid;
+        // Access controlled by parent chat ownership OR autonomous chat site access
+        allow read: if isAuthenticated() &&
+                       (get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid ||
+                        (get(/databases/$(database)/documents/chats/$(chatId)).data.source == 'autonomous' &&
+                         canAccessSite(get(/databases/$(database)/documents/chats/$(chatId)).data.siteId)));
+        allow write: if isAuthenticated() &&
+                        get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid;
       }
     }
 
