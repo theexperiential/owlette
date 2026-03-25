@@ -3477,12 +3477,12 @@ with mss.mss() as sct:
 try:
     from PIL import Image
     img = Image.open(io.BytesIO(png_bytes))
-    max_width = 3840
+    max_width = 7680
     if img.width > max_width:
         ratio = max_width / img.width
         img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
     buffer = io.BytesIO()
-    img.save(buffer, format='JPEG', quality=80)
+    img.save(buffer, format='JPEG', quality=72)
     jpeg_bytes = buffer.getvalue()
 except ImportError:
     jpeg_bytes = png_bytes
