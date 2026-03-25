@@ -4,7 +4,6 @@ Installer utilities for downloading and executing software installers.
 
 import os
 import logging
-import shlex
 import subprocess
 import tempfile
 import requests
@@ -159,16 +158,11 @@ def execute_installer(
             logging.error(error_msg)
             return False, -1, error_msg
 
-        # Build command as list to avoid shell injection
-        command = [installer_path]
+        # Build command as a string — Windows handles argument parsing natively.
+        # Using a list + shlex.split corrupts paths containing \t, \n, etc.
+        command = f'"{installer_path}"'
         if flags:
-            # Use shlex.split to safely parse flags into a list
-            try:
-                command.extend(shlex.split(flags, posix=False))
-            except ValueError as e:
-                error_msg = f"Invalid installer flags: {e}"
-                logging.error(error_msg)
-                return False, -1, error_msg
+            command = f'{command} {flags}'
 
         logging.info(f"Executing installer: {command}")
 
