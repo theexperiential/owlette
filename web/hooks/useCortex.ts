@@ -18,12 +18,16 @@ import {
   setDoc,
   deleteDoc,
   getDoc,
+  getDocs,
   query,
   where,
   orderBy,
   limit,
+  startAfter,
   serverTimestamp,
   onSnapshot,
+  type QueryDocumentSnapshot,
+  type DocumentData,
 } from 'firebase/firestore';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
@@ -41,9 +45,12 @@ export interface ChatConversation {
   machineName: string | null;
   source?: 'user' | 'autonomous';
   autonomousSummary?: string | null;
+  category?: string;
   createdAt: Date;
   updatedAt: Date;
 }
+
+const PAGE_SIZE = 20;
 
 interface UseChatOptions {
   siteId: string;
@@ -58,6 +65,16 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [inputValue, setInputValue] = useState('');
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+
+  // Pagination state
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMoreUser, setHasMoreUser] = useState(false);
+  const [hasMoreAuto, setHasMoreAuto] = useState(false);
+  const lastUserDocRef = useRef<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const lastAutoDocRef = useRef<QueryDocumentSnapshot<DocumentData> | null>(null);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Use refs so the transport closure always reads the latest values
   const siteIdRef = useRef(siteId);
@@ -128,11 +145,17 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
           const chatRef = doc(db, 'chats', chatId);
           const firstUserMsg = chat.messages.find((m) => m.role === 'user');
           const firstTextPart = firstUserMsg?.parts?.find((p) => p.type === 'text');
-          const title = firstTextPart && 'text' in firstTextPart
-            ? (firstTextPart as { text: string }).text.slice(0, 100)
-            : 'New conversation';
+          const userMessage = firstTextPart && 'text' in firstTextPart
+            ? (firstTextPart as { text: string }).text
+            : '';
 
           const isSiteMode = machineId === SITE_TARGET_ID;
+          const isNewConversation = chat.messages.length <= 2;
+
+          // For new conversations, use truncated message as placeholder until LLM generates title
+          const title = isNewConversation
+            ? (userMessage.slice(0, 100) || 'new conversation')
+            : undefined; // Don't overwrite LLM-generated title on subsequent messages
 
           // Serialize messages for Firestore storage
           const serializedMessages = chat.messages.map((m) => ({
@@ -149,13 +172,22 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
               targetType: isSiteMode ? 'site' : 'machine',
               targetMachineId: isSiteMode ? null : machineId,
               machineName: isSiteMode ? 'All Machines' : machineName,
-              title,
+              ...(title ? { title } : {}),
               messages: serializedMessages,
               updatedAt: serverTimestamp(),
-              ...(chat.messages.length <= 2 ? { createdAt: serverTimestamp() } : {}),
+              ...(isNewConversation ? { createdAt: serverTimestamp() } : {}),
             },
             { merge: true }
           );
+
+          // Auto-title + categorize new conversations (fire-and-forget)
+          if (isNewConversation && userMessage) {
+            fetch('/api/cortex/categorize', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chatId, message: userMessage, siteId }),
+            }).catch(() => { /* silent — best-effort */ });
+          }
         } catch (error) {
           console.error('Failed to persist chat:', error);
         }
@@ -177,7 +209,7 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
       chatsRef,
       where('userId', '==', user.uid),
       orderBy('updatedAt', 'desc'),
-      limit(50)
+      limit(PAGE_SIZE)
     );
 
     // Autonomous chats for this site (no userId, source === 'autonomous')
@@ -186,7 +218,7 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
       where('source', '==', 'autonomous'),
       where('siteId', '==', siteId),
       orderBy('updatedAt', 'desc'),
-      limit(20)
+      limit(PAGE_SIZE)
     ) : null;
 
     let userConvos: ChatConversation[] = [];
@@ -215,13 +247,14 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
       if (data.siteId !== siteId) return null;
       return {
         id: docSnap.id,
-        title: data.title || 'New conversation',
+        title: data.title || 'new conversation',
         siteId: data.siteId,
         targetType: data.targetType || 'machine',
         targetMachineId: data.targetMachineId || null,
         machineName: data.machineName || null,
         source: data.source || 'user',
         autonomousSummary: data.autonomousSummary || null,
+        category: data.category || undefined,
         createdAt: data.createdAt?.toDate?.() || new Date(),
         updatedAt: data.updatedAt?.toDate?.() || new Date(),
       };
@@ -231,6 +264,10 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
       userQuery,
       (snapshot) => {
         userConvos = snapshot.docs.map(parseConvo).filter((c): c is ChatConversation => c !== null);
+        // Track cursor and hasMore for pagination
+        const docs = snapshot.docs;
+        lastUserDocRef.current = docs.length > 0 ? docs[docs.length - 1] : null;
+        setHasMoreUser(docs.length === PAGE_SIZE);
         userLoaded = true;
         mergeAndSet();
       },
@@ -247,6 +284,9 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
         autoQuery,
         (snapshot) => {
           autoConvos = snapshot.docs.map(parseConvo).filter((c): c is ChatConversation => c !== null);
+          const docs = snapshot.docs;
+          lastAutoDocRef.current = docs.length > 0 ? docs[docs.length - 1] : null;
+          setHasMoreAuto(docs.length === PAGE_SIZE);
           autoLoaded = true;
           mergeAndSet();
         },
@@ -264,30 +304,131 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
     };
   }, [user, siteId]);
 
-  const startNewChat = useCallback(() => {
+  const startNewChat = useCallback((overrides?: { machineId?: string; machineName?: string }) => {
     const newId = generateChatId();
     setChatId(newId);
     chat.setMessages([]);
     setInputValue('');
     setPendingImages([]);
 
-    // Add optimistic entry to sidebar, removing any previous empty "New conversation" entries
-    const isSiteMode = machineIdRef.current === SITE_TARGET_ID;
+    // Use overrides if provided (handles race condition when machine selector changes in same handler)
+    const effectiveMachineId = overrides?.machineId ?? machineIdRef.current;
+    const effectiveMachineName = overrides?.machineName ?? machineNameRef.current;
+    const isSiteMode = effectiveMachineId === SITE_TARGET_ID;
+
+    // Add optimistic entry to sidebar, removing any previous empty "new conversation" entries
     setConversations((prev) => [
       {
         id: newId,
-        title: 'New conversation',
+        title: 'new conversation',
         siteId: siteIdRef.current,
         targetType: isSiteMode ? 'site' : 'machine',
-        targetMachineId: isSiteMode ? null : machineIdRef.current,
-        machineName: isSiteMode ? 'All Machines' : machineNameRef.current,
+        targetMachineId: isSiteMode ? null : effectiveMachineId,
+        machineName: isSiteMode ? 'All Machines' : effectiveMachineName,
         source: 'user',
         createdAt: new Date(),
         updatedAt: new Date(),
       },
-      ...prev.filter((c) => c.title !== 'New conversation'),
+      ...prev.filter((c) => c.title !== 'new conversation'),
     ]);
   }, [chat]);
+
+  const loadMoreConversations = useCallback(async () => {
+    if (loadingMore || !user || !db) return;
+    if (!hasMoreUser && !hasMoreAuto) return;
+
+    setLoadingMore(true);
+    try {
+      const chatsRef = collection(db, 'chats');
+      const newConvos: ChatConversation[] = [];
+
+      // Load more user conversations
+      if (hasMoreUser && lastUserDocRef.current) {
+        const moreUserQuery = query(
+          chatsRef,
+          where('userId', '==', user.uid),
+          orderBy('updatedAt', 'desc'),
+          startAfter(lastUserDocRef.current),
+          limit(PAGE_SIZE)
+        );
+        const snapshot = await getDocs(moreUserQuery);
+        for (const docSnap of snapshot.docs) {
+          const data = docSnap.data();
+          if (data && data.siteId === siteId) {
+            newConvos.push({
+              id: docSnap.id,
+              title: data.title || 'new conversation',
+              siteId: data.siteId,
+              targetType: data.targetType || 'machine',
+              targetMachineId: data.targetMachineId || null,
+              machineName: data.machineName || null,
+              source: data.source || 'user',
+              autonomousSummary: data.autonomousSummary || null,
+              category: data.category || undefined,
+              createdAt: data.createdAt?.toDate?.() || new Date(),
+              updatedAt: data.updatedAt?.toDate?.() || new Date(),
+            });
+          }
+        }
+        lastUserDocRef.current = snapshot.docs.length > 0
+          ? snapshot.docs[snapshot.docs.length - 1]
+          : null;
+        setHasMoreUser(snapshot.docs.length === PAGE_SIZE);
+      }
+
+      // Load more autonomous conversations
+      if (hasMoreAuto && lastAutoDocRef.current && siteId) {
+        const moreAutoQuery = query(
+          chatsRef,
+          where('source', '==', 'autonomous'),
+          where('siteId', '==', siteId),
+          orderBy('updatedAt', 'desc'),
+          startAfter(lastAutoDocRef.current),
+          limit(PAGE_SIZE)
+        );
+        const snapshot = await getDocs(moreAutoQuery);
+        for (const docSnap of snapshot.docs) {
+          const data = docSnap.data();
+          if (data) {
+            newConvos.push({
+              id: docSnap.id,
+              title: data.title || 'new conversation',
+              siteId: data.siteId,
+              targetType: data.targetType || 'machine',
+              targetMachineId: data.targetMachineId || null,
+              machineName: data.machineName || null,
+              source: data.source || 'user',
+              autonomousSummary: data.autonomousSummary || null,
+              category: data.category || undefined,
+              createdAt: data.createdAt?.toDate?.() || new Date(),
+              updatedAt: data.updatedAt?.toDate?.() || new Date(),
+            });
+          }
+        }
+        lastAutoDocRef.current = snapshot.docs.length > 0
+          ? snapshot.docs[snapshot.docs.length - 1]
+          : null;
+        setHasMoreAuto(snapshot.docs.length === PAGE_SIZE);
+      }
+
+      // Append and deduplicate
+      if (newConvos.length > 0) {
+        setConversations((prev) => {
+          const seen = new Set(prev.map((c) => c.id));
+          const unique = newConvos.filter((c) => !seen.has(c.id));
+          const merged = [...prev, ...unique];
+          merged.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+          return merged;
+        });
+      }
+    } catch (error) {
+      console.error('Failed to load more conversations:', error);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, user, siteId, hasMoreUser, hasMoreAuto]);
+
+  const hasMoreConversations = hasMoreUser || hasMoreAuto;
 
   const loadChat = useCallback(
     async (conversationId: string) => {
@@ -315,9 +456,9 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
 
   const deleteChat = useCallback(
     async (conversationId: string) => {
-      // Check if this is an unpersisted "New conversation" (no messages sent yet)
+      // Check if this is an unpersisted "new conversation" (no messages sent yet)
       const isEmptyNew = conversations.find(
-        (c) => c.id === conversationId && c.title === 'New conversation'
+        (c) => c.id === conversationId && c.title === 'new conversation'
       );
 
       // Remove from local list immediately (handles both persisted and optimistic entries)
@@ -325,7 +466,7 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
 
       if (conversationId === chatId) {
         if (isEmptyNew) {
-          // Deleted an empty "New conversation" — reset state without creating another one
+          // Deleted an empty "new conversation" — reset state without creating another one
           const newId = generateChatId();
           setChatId(newId);
           chat.setMessages([]);
@@ -345,6 +486,28 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
       }
     },
     [chatId, conversations, startNewChat, chat]
+  );
+
+  const renameChat = useCallback(
+    async (conversationId: string, newTitle: string) => {
+      const trimmed = newTitle.trim();
+      if (!trimmed) return;
+
+      // Update locally immediately
+      setConversations((prev) =>
+        prev.map((c) => (c.id === conversationId ? { ...c, title: trimmed } : c))
+      );
+
+      // Persist to Firestore
+      if (db) {
+        try {
+          await setDoc(doc(db, 'chats', conversationId), { title: trimmed }, { merge: true });
+        } catch (error) {
+          console.error('Failed to rename chat:', error);
+        }
+      }
+    },
+    []
   );
 
   const handleSend = useCallback(() => {
@@ -408,6 +571,13 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
 
   const isLoading = chat.status === 'streaming' || chat.status === 'submitted';
 
+  // Compute displayed conversations (filtered by search if active)
+  const displayedConversations = useMemo(() => {
+    if (!searchQuery.trim()) return conversations;
+    const lower = searchQuery.toLowerCase();
+    return conversations.filter((c) => c.title.toLowerCase().includes(lower));
+  }, [conversations, searchQuery]);
+
   return {
     // Messages
     messages: chat.messages,
@@ -429,11 +599,21 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
 
     // Conversation management
     chatId,
-    conversations,
+    conversations: displayedConversations,
     loadingConversations,
     startNewChat,
     loadChat,
     deleteChat,
+    renameChat,
+
+    // Pagination
+    hasMoreConversations,
+    loadingMore,
+    loadMoreConversations,
+
+    // Search
+    searchQuery,
+    setSearchQuery,
   };
 }
 

@@ -1,9 +1,12 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { type UIMessage } from 'ai';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Brain, User, KeyRound, X } from 'lucide-react';
 import { ToolCallCard } from './ToolCallCard';
+import { getRandomSuggestions } from '../data/suggestedQuestions';
 
 interface ChatWindowProps {
   messages: UIMessage[];
@@ -14,10 +17,23 @@ interface ChatWindowProps {
 
 export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isUserScrolledUp = useRef(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
+  const suggestions = useMemo(() => getRandomSuggestions(4), []);
+
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    // "Near bottom" = within 100px of the bottom edge
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+    isUserScrolledUp.current = !nearBottom;
+  };
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!isUserScrolledUp.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages, isLoading]);
 
   // Close lightbox on Escape
@@ -35,21 +51,16 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center max-w-md px-4">
           <Brain className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-foreground mb-2">cortex</h3>
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-2">cortex</h2>
           <p className="text-sm text-muted-foreground">
             debug, diagnose, and manage your remote machines.
             i can run commands, check configs, and investigate issues you can't see from the dashboard.
           </p>
 
           <div className="mt-4 grid grid-cols-2 gap-2">
-              {[
-                'when was the last time this PC was restarted?',
-                'which nvidia driver version is installed?',
-                'what does our network config look like?',
-                'run a cpu and memory stability test',
-              ].map((suggestion) => (
+              {suggestions.map((suggestion) => (
                 <button
-                  key={suggestion}
+                  key={suggestion.text}
                   className="text-xs text-left px-3 py-2 rounded-md border border-border bg-secondary hover:bg-accent transition-colors text-muted-foreground cursor-pointer"
                   onClick={() => {
                     const input = document.querySelector<HTMLTextAreaElement>('[data-chat-input]');
@@ -58,13 +69,13 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
                         window.HTMLTextAreaElement.prototype,
                         'value'
                       )?.set;
-                      nativeInputValueSetter?.call(input, suggestion);
+                      nativeInputValueSetter?.call(input, suggestion.text);
                       input.dispatchEvent(new Event('input', { bubbles: true }));
                       input.focus();
                     }
                   }}
                 >
-                  {suggestion}
+                  {suggestion.text}
                 </button>
               ))}
             </div>
@@ -74,7 +85,7 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+    <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
       {/* Lightbox overlay */}
       {expandedImage && (
         <div
@@ -125,9 +136,11 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
                 return (
                   <div
                     key={i}
-                    className="text-sm text-foreground whitespace-pre-wrap break-words prose prose-invert prose-sm max-w-none"
+                    className="cortex-markdown text-sm text-foreground prose prose-invert prose-sm max-w-none prose-code:before:content-none prose-code:after:content-none"
                   >
-                    {part.text}
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {part.text}
+                    </ReactMarkdown>
                   </div>
                 );
               }
@@ -179,8 +192,8 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
 
       {/* Loading indicator */}
       {isLoading && messages[messages.length - 1]?.role === 'user' && (
-        <div className="flex gap-3 max-w-3xl mx-auto">
-          <div className="flex-shrink-0 mt-1">
+        <div className="flex items-center gap-3 max-w-3xl mx-auto">
+          <div className="flex-shrink-0">
             <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
               <Brain className="h-4 w-4 text-foreground" />
             </div>

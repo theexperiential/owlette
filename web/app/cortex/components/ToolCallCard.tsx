@@ -15,7 +15,7 @@ export function ToolCallCard({ toolName, args, result, isLoading }: ToolCallCard
   const [expanded, setExpanded] = useState(false);
   const toolDef = getToolByName(toolName);
 
-  const hasError = result != null && typeof result === 'object' && 'error' in (result as Record<string, unknown>);
+  const hasError = result != null && typeof result === 'object' && !!(result as Record<string, unknown>).error;
   const tierLabel = toolDef ? `Tier ${toolDef.tier}` : '';
 
   return (

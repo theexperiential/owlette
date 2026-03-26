@@ -73,7 +73,7 @@ const tier1Tools: McpToolDefinition[] = [
   },
   {
     name: 'get_process_list',
-    description: 'Get all Owlette-configured processes with their current status, PID, autolaunch setting, and whether they are running.',
+    description: 'Get all Owlette-configured processes with their current status, PID, launch mode, executable path (exe_path), file path / command arguments (file_path), working directory (cwd), and whether they are running.',
     tier: 1,
     parameters: {
       type: 'object',
@@ -97,6 +97,15 @@ const tier1Tools: McpToolDefinition[] = [
           default: 50,
         },
       },
+    },
+  },
+  {
+    name: 'get_gpu_processes',
+    description: 'Get per-process GPU memory (VRAM) usage via Windows Performance Counters (same data source as Task Manager). Shows dedicated and shared GPU memory per process, sorted by usage. Works cross-vendor (NVIDIA, AMD, Intel) and for all GPU APIs (DirectX, OpenGL, CUDA, Vulkan). Use this when asked about VRAM usage, GPU memory, or which process is using the most GPU memory.',
+    tier: 1,
+    parameters: {
+      type: 'object',
+      properties: {},
     },
   },
   {
@@ -145,7 +154,7 @@ const tier1Tools: McpToolDefinition[] = [
   },
   {
     name: 'get_service_status',
-    description: 'Get the status of a Windows service by name (running, stopped, paused, etc.).',
+    description: 'Get the status and start type of a Windows service. IMPORTANT: Many Windows services (e.g., wuauserv/Windows Update, BITS) are demand-start — they start when needed and stop when idle. For these services, "stopped" is the normal idle state and does NOT mean disabled. Check the returned start_type field: "demand_start" means stopped-is-normal, "disabled" means truly off, "automatic" means should be running.',
     tier: 1,
     parameters: {
       type: 'object',
@@ -315,7 +324,7 @@ const tier2Tools: McpToolDefinition[] = [
 const tier3Tools: McpToolDefinition[] = [
   {
     name: 'run_command',
-    description: 'Execute a shell command on the remote machine. The command must start with an allowed command (e.g., ipconfig, systeminfo, tasklist, nvidia-smi). Use nvidia-smi for advanced GPU diagnostics: Mosaic topology, detailed driver info, process-level VRAM usage, ECC status. Returns stdout, stderr, and exit code. Set user_session=true to run in the logged-in user\'s desktop session (needed for GUI/display access).',
+    description: 'Execute a shell command on the remote machine. The command must start with an allowed command (e.g., ipconfig, systeminfo, tasklist, nvidia-smi, dxdiag). Use nvidia-smi for advanced GPU diagnostics: Mosaic topology, detailed driver info, process-level VRAM usage, ECC status. Use dxdiag for DirectX diagnostics. Returns stdout, stderr, and exit code. Set user_session=true to run in the logged-in user\'s desktop session (needed for GUI/display access).',
     tier: 3,
     parameters: {
       type: 'object',

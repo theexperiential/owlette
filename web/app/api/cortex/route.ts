@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import { requireSession } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { createModel, buildSystemPrompt } from '@/lib/llm';
+import { createModel, buildSystemPrompt, type ProcessSummary } from '@/lib/llm';
 import { getToolsByTier } from '@/lib/mcp-tools';
 import {
   resolveLlmConfig,
@@ -25,6 +25,40 @@ import {
 } from '@/lib/cortex-utils.server';
 
 const SITE_TARGET_ID = '__site__';
+
+/**
+ * Fetch process configurations from Firestore for system prompt context.
+ */
+async function fetchProcessSummaries(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  machineId: string,
+): Promise<ProcessSummary[]> {
+  try {
+    const configDoc = await db
+      .collection('config')
+      .doc(siteId)
+      .collection('machines')
+      .doc(machineId)
+      .get();
+
+    if (!configDoc.exists) return [];
+
+    const data = configDoc.data();
+    const processes = data?.processes;
+    if (!Array.isArray(processes)) return [];
+
+    return processes.map((p: Record<string, unknown>) => ({
+      name: (p.name as string) || 'Unknown',
+      launch_mode: (p.launch_mode as string) || (p.autolaunch ? 'always' : 'off'),
+      exe_path: (p.exe_path as string) || (p.path as string) || '',
+      ...(p.file_path ? { file_path: p.file_path as string } : {}),
+      ...(p.cwd ? { cwd: p.cwd as string } : {}),
+    }));
+  } catch {
+    return [];
+  }
+}
 
 /** Cortex heartbeat is "fresh" if within this many milliseconds. */
 const HEARTBEAT_STALE_MS = 30_000;
@@ -306,9 +340,12 @@ async function handleServerSideLLM(
   messages: ModelMessage[],
   chatId: string,
 ): Promise<Response> {
-  const llmConfig = await resolveLlmConfig(db, userId, siteId);
+  const [llmConfig, processes] = await Promise.all([
+    resolveLlmConfig(db, userId, siteId),
+    fetchProcessSummaries(db, siteId, machineId),
+  ]);
 
-  const toolDefs = getToolsByTier(2);
+  const toolDefs = getToolsByTier(3);
   const executableTools = buildExecutableTools(
     db, siteId, machineId, chatId, toolDefs,
     false, [],
@@ -318,7 +355,7 @@ async function handleServerSideLLM(
 
   const result = streamText({
     model,
-    system: buildSystemPrompt(machineName || machineId),
+    system: buildSystemPrompt(machineName || machineId, false, processes),
     messages,
     tools: executableTools,
     stopWhen: stepCountIs(10),
@@ -348,7 +385,7 @@ async function handleSiteWideMode(
 
   const llmConfig = await resolveLlmConfig(db, userId, siteId);
 
-  const toolDefs = getToolsByTier(2);
+  const toolDefs = getToolsByTier(3);
   const executableTools = buildExecutableTools(
     db, siteId, SITE_TARGET_ID, chatId, toolDefs,
     true, onlineMachines,
