@@ -277,7 +277,15 @@ export default function WebhookSettingsDialog({ siteId, open, onOpenChange }: We
                           onCheckedChange={() => handleToggle(webhook)}
                         />
                         <div className="min-w-0">
-                          <p className="font-medium text-foreground truncate">{webhook.name}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium text-foreground truncate">{webhook.name}</p>
+                            {webhook.url.includes('hooks.slack.com') && (
+                              <Badge className="bg-[#4A154B]/20 text-[#E01E5A] border-[#4A154B]/40 text-xs flex-shrink-0">Slack</Badge>
+                            )}
+                            {webhook.url.includes('discord.com/api/webhooks') && (
+                              <Badge className="bg-[#5865F2]/20 text-[#5865F2] border-[#5865F2]/40 text-xs flex-shrink-0">Discord</Badge>
+                            )}
+                          </div>
                           <p className="text-xs text-muted-foreground truncate font-mono">{webhook.url}</p>
                         </div>
                       </div>
@@ -415,6 +423,16 @@ export default function WebhookSettingsDialog({ siteId, open, onOpenChange }: We
                         onChange={(e) => setNewUrl(e.target.value)}
                         className="bg-background border-border"
                       />
+                      {newUrl.includes('hooks.slack.com') && (
+                        <Badge className="bg-[#4A154B]/20 text-[#E01E5A] border-[#4A154B]/40 text-xs">
+                          Slack detected — payload will be auto-formatted
+                        </Badge>
+                      )}
+                      {newUrl.includes('discord.com/api/webhooks') && (
+                        <Badge className="bg-[#5865F2]/20 text-[#5865F2] border-[#5865F2]/40 text-xs">
+                          Discord detected — payload will be auto-formatted
+                        </Badge>
+                      )}
                     </div>
 
                     <div className="space-y-2">

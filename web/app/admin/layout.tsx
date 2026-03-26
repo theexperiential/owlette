@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import RequireAdmin from '@/components/RequireAdmin';
-import { Shield, Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook, Clock } from 'lucide-react';
+import { Shield, Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook, Clock, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -53,16 +53,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       description: 'Manage schedule presets',
     },
     {
+      name: 'Alerts',
+      href: '/admin/alerts',
+      icon: Bell,
+      description: 'Threshold-based metric alerts',
+    },
+    {
       name: 'Webhooks',
       href: '/admin/webhooks',
       icon: Webhook,
       description: 'Configure webhook notifications',
     },
     {
-      name: 'Email Test',
-      href: '/admin/test-email',
+      name: 'Email',
+      href: '/admin/email',
       icon: Mail,
-      description: 'Test email notifications',
+      description: 'Email configuration & testing',
     },
   ];
 

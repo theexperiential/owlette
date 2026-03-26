@@ -1,13 +1,43 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
+import { CheckCircle2, XCircle, Send, Loader2 } from 'lucide-react';
 
-export default function TestEmailPage() {
+interface EmailConfig {
+  provider: string;
+  fromEmail: string;
+  adminEmail: string | null;
+  environment: string;
+  apiKeyConfigured: boolean;
+  adminEmailConfigured: boolean;
+}
+
+export default function EmailPage() {
+  const [config, setConfig] = useState<EmailConfig | null>(null);
+  const [configLoading, setConfigLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [lastResult, setLastResult] = useState<any>(null);
+
+  useEffect(() => {
+    fetchConfig();
+  }, []);
+
+  const fetchConfig = async () => {
+    try {
+      const response = await fetch('/api/admin/email/config');
+      if (response.ok) {
+        setConfig(await response.json());
+      }
+    } catch {
+      // Config fetch failed — page still usable
+    } finally {
+      setConfigLoading(false);
+    }
+  };
 
   const sendTestEmail = async () => {
     setIsSending(true);
@@ -16,9 +46,7 @@ export default function TestEmailPage() {
     try {
       const response = await fetch('/api/test-email', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
       });
 
       const data = await response.json();
@@ -27,136 +55,151 @@ export default function TestEmailPage() {
         toast.success('Test email sent successfully!', {
           description: `Email sent to ${data.to}`,
         });
-        setLastResult({
-          success: true,
-          ...data,
-        });
+        setLastResult({ success: true, ...data });
       } else {
         toast.error('Failed to send test email', {
           description: data.error || 'Unknown error',
         });
-        setLastResult({
-          success: false,
-          error: data.error,
-          details: data.details,
-        });
+        setLastResult({ success: false, error: data.error, details: data.details });
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      toast.error('Failed to send test email', {
-        description: errorMessage,
-      });
-      setLastResult({
-        success: false,
-        error: 'Request failed',
-        details: errorMessage,
-      });
+      toast.error('Failed to send test email', { description: errorMessage });
+      setLastResult({ success: false, error: 'Request failed', details: errorMessage });
     } finally {
       setIsSending(false);
     }
   };
 
   return (
-    <div className="p-6 lg:p-10 max-w-screen-2xl mx-auto space-y-6">
+    <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Email Test</h1>
-        <p className="text-muted-foreground mt-2">
-          Test your Resend email configuration and verify email delivery
+        <h1 className="text-2xl font-bold text-foreground">Email</h1>
+        <p className="text-muted-foreground mt-1">
+          Email notification configuration and testing
         </p>
       </div>
 
+      {/* Configuration */}
       <Card>
         <CardHeader>
-          <CardTitle>Send Test Email</CardTitle>
+          <CardTitle>Configuration</CardTitle>
           <CardDescription>
-            Click the button below to send a test email to your configured admin email address.
+            Current email provider settings and status
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {configLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-5 bg-muted rounded animate-pulse w-64" />
+              ))}
+            </div>
+          ) : config ? (
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 text-sm">
+              <div>
+                <dt className="text-muted-foreground font-medium">Provider</dt>
+                <dd className="mt-1 flex items-center gap-2">
+                  {config.provider}
+                  <Badge
+                    variant={config.apiKeyConfigured ? 'default' : 'destructive'}
+                    className={config.apiKeyConfigured ? 'bg-emerald-600 hover:bg-emerald-600' : ''}
+                  >
+                    {config.apiKeyConfigured ? 'Connected' : 'Not configured'}
+                  </Badge>
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground font-medium">Environment</dt>
+                <dd className="mt-1">{config.environment}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground font-medium">From Address</dt>
+                <dd className="mt-1 font-mono text-xs">{config.fromEmail}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground font-medium">Admin Email</dt>
+                <dd className="mt-1 flex items-center gap-2">
+                  {config.adminEmailConfigured ? (
+                    <span className="font-mono text-xs">{config.adminEmail}</span>
+                  ) : (
+                    <span className="text-destructive">Not configured</span>
+                  )}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="text-sm text-destructive">Failed to load email configuration</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Test Email */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Test Email</CardTitle>
+          <CardDescription>
+            Send a test email to verify your configuration is working
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <Button
             onClick={sendTestEmail}
             disabled={isSending}
-            className="w-full sm:w-auto bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
           >
-            {isSending ? 'Sending...' : 'Send Test Email'}
+            {isSending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Sending...
+              </>
+            ) : (
+              <>
+                <Send className="h-4 w-4" />
+                Send Test Email
+              </>
+            )}
           </Button>
 
           {lastResult && (
             <div className={`p-4 rounded-lg border ${
               lastResult.success
-                ? 'bg-green-50 border-green-200 dark:bg-green-950 dark:border-green-900'
-                : 'bg-red-50 border-red-200 dark:bg-red-950 dark:border-red-900'
+                ? 'bg-emerald-950/50 border-emerald-800'
+                : 'bg-red-950/50 border-red-800'
             }`}>
-              <h3 className={`font-semibold mb-2 ${
-                lastResult.success ? 'text-green-900 dark:text-green-100' : 'text-red-900 dark:text-red-100'
-              }`}>
-                {lastResult.success ? 'Success!' : 'Error'}
-              </h3>
-              <div className="space-y-2 text-sm">
+              <div className="flex items-center gap-2 mb-2">
+                {lastResult.success ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-red-400" />
+                )}
+                <span className={`font-semibold text-sm ${
+                  lastResult.success ? 'text-emerald-300' : 'text-red-300'
+                }`}>
+                  {lastResult.success ? 'Email sent successfully' : 'Failed to send email'}
+                </span>
+              </div>
+              <div className="space-y-1 text-sm text-muted-foreground">
                 {lastResult.success ? (
                   <>
-                    <p><strong>Email ID:</strong> {lastResult.emailId}</p>
-                    <p><strong>From:</strong> {lastResult.from}</p>
-                    <p><strong>To:</strong> {lastResult.to}</p>
-                    <p><strong>Environment:</strong> {lastResult.environment}</p>
-                    <p><strong>Timestamp:</strong> {lastResult.timestamp}</p>
-                    <p className="text-green-700 dark:text-green-300 mt-3">
-                      Check your inbox at <strong>{lastResult.to}</strong> for the test email.
-                    </p>
+                    <p>Sent to <span className="text-foreground font-medium">{lastResult.to}</span></p>
+                    <p>Email ID: <span className="font-mono text-xs">{lastResult.emailId}</span></p>
                   </>
                 ) : (
                   <>
-                    <p><strong>Error:</strong> {lastResult.error}</p>
+                    <p>{lastResult.error}</p>
                     {lastResult.details && (
-                      <div className="mt-2">
-                        <strong>Details:</strong>
-                        <pre className="mt-1 p-2 bg-red-100 dark:bg-red-900 rounded text-xs overflow-x-auto">
-                          {JSON.stringify(lastResult.details, null, 2)}
-                        </pre>
-                      </div>
+                      <pre className="mt-1 p-2 bg-red-950 rounded text-xs overflow-x-auto">
+                        {typeof lastResult.details === 'string'
+                          ? lastResult.details
+                          : JSON.stringify(lastResult.details, null, 2)}
+                      </pre>
                     )}
                   </>
                 )}
               </div>
             </div>
           )}
-
-          <div className="pt-4 border-t">
-            <h4 className="font-semibold mb-2">Configuration Details</h4>
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
-              <div>
-                <dt className="font-medium text-muted-foreground">Environment:</dt>
-                <dd className="mt-1">
-                  {process.env.NODE_ENV === 'production' ? 'Production' : 'Development'}
-                </dd>
-              </div>
-              <div>
-                <dt className="font-medium text-muted-foreground">API Key Status:</dt>
-                <dd className="mt-1">
-                  {process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ? '✓ Configured' : '✗ Not configured'}
-                </dd>
-              </div>
-            </dl>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>What happens when you click "Send Test Email"?</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <p>The test will:</p>
-          <ol className="list-decimal list-inside space-y-1 ml-4">
-            <li>Verify your Resend API key is configured</li>
-            <li>Verify your admin email is configured</li>
-            <li>Send a test email to your admin email address</li>
-            <li>Display the result with detailed information</li>
-          </ol>
-          <p className="mt-4 text-muted-foreground">
-            If successful, you should receive an email within a few seconds.
-            Check your spam folder if you don't see it in your inbox.
-          </p>
         </CardContent>
       </Card>
     </div>
