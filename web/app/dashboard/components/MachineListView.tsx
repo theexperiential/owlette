@@ -24,7 +24,17 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog, Settings2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatScheduleSummary } from '@/components/ScheduleEditor';
 import { BLOCK_COLORS } from '@/lib/scheduleDefaults';
@@ -32,6 +42,7 @@ import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUt
 import { formatStorageRange } from '@/lib/storageUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime } from '@/lib/timeUtils';
+import { formatThroughput, getPrimaryNic } from '@/lib/networkUtils';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
 import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
@@ -44,11 +55,12 @@ export const MemoizedTableHeader = memo(() => {
         <TableHead className="text-foreground w-8"></TableHead>
         <TableHead className="text-foreground w-[100px]">hostname</TableHead>
         <TableHead className="text-foreground w-[72px]">status</TableHead>
-        <TableHead className="text-foreground w-[160px] hidden sm:table-cell">cpu</TableHead>
-        <TableHead className="text-foreground w-[120px] hidden sm:table-cell">memory</TableHead>
-        <TableHead className="text-foreground w-[100px] hidden lg:table-cell">disk</TableHead>
-        <TableHead className="text-foreground w-[200px] hidden lg:table-cell">gpu</TableHead>
-        <TableHead className="text-foreground w-[150px] hidden md:table-cell">last heartbeat</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[160px] sm:overflow-visible sm:!px-2">cpu</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[120px] sm:overflow-visible sm:!px-2">memory</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[100px] lg:overflow-visible lg:!px-2">disk</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[200px] lg:overflow-visible lg:!px-2">gpu</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 xl:w-[130px] xl:overflow-visible xl:!px-2">network</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 md:w-[150px] md:overflow-visible md:!px-2">last heartbeat</TableHead>
         <TableHead className="text-foreground w-10"></TableHead>
       </TableRow>
     </TableHeader>
@@ -95,6 +107,7 @@ interface MachineRowProps {
   onReboot?: () => Promise<void>;
   onShutdown?: () => Promise<void>;
   onScreenshot?: () => void;
+  onLiveView?: () => void;
 }
 
 export function MachineRow({
@@ -116,6 +129,7 @@ export function MachineRow({
   onReboot,
   onShutdown,
   onScreenshot,
+  onLiveView,
 }: MachineRowProps) {
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
@@ -163,7 +177,7 @@ export function MachineRow({
         </TableCell>
         {/* CPU with Sparkline */}
         <TableCell
-          className="text-white p-0 w-[160px] overflow-hidden hidden sm:table-cell"
+          className="text-white p-0 w-0 sm:w-[160px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('cpu'); }}
         >
           <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
@@ -192,7 +206,7 @@ export function MachineRow({
         </TableCell>
         {/* Memory with Sparkline */}
         <TableCell
-          className="text-white p-0 w-[120px] overflow-hidden hidden sm:table-cell"
+          className="text-white p-0 w-0 sm:w-[120px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('memory'); }}
         >
           <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
@@ -214,7 +228,7 @@ export function MachineRow({
         </TableCell>
         {/* Disk with Sparkline */}
         <TableCell
-          className="text-white p-0 w-[100px] overflow-hidden hidden lg:table-cell"
+          className="text-white p-0 w-0 lg:w-[100px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('disk'); }}
         >
           <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
@@ -236,7 +250,7 @@ export function MachineRow({
         </TableCell>
         {/* GPU with Sparkline */}
         <TableCell
-          className="text-white p-0 w-[200px] overflow-hidden hidden lg:table-cell"
+          className="text-white p-0 w-0 lg:w-[200px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('gpu'); }}
         >
           <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
@@ -270,7 +284,42 @@ export function MachineRow({
             </div>
           </div>
         </TableCell>
-        <TableCell className="w-[150px] overflow-hidden p-2 hidden md:table-cell">
+        {/* Network */}
+        <TableCell
+          className="text-white p-0 w-0 xl:w-[130px] overflow-hidden"
+          onClick={(e) => {
+            e.stopPropagation();
+            const primary = machine.metrics?.network?.interfaces
+              ? getPrimaryNic(machine.metrics.network.interfaces)
+              : null;
+            if (primary) onMetricClick?.(`${primary.name}_tx_util` as MetricType);
+          }}
+        >
+          {(() => {
+            const interfaces = machine.metrics?.network?.interfaces;
+            if (!interfaces) return <span className="text-muted-foreground text-xs p-2">-</span>;
+            const primary = getPrimaryNic(interfaces);
+            if (!primary) return <span className="text-muted-foreground text-xs p-2">-</span>;
+            const maxUtil = Math.max(primary.data.tx_util, primary.data.rx_util);
+            return (
+              <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
+                <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(maxUtil)}`} />
+                <div className="p-2 pl-2.5">
+                  <div className="text-xs text-muted-foreground truncate" title={`${primary.name} (${primary.data.link_speed} Mbps)`}>
+                    {primary.name}
+                  </div>
+                  <div className="text-xs font-medium">
+                    <span className="text-orange-400">TX {formatThroughput(primary.data.tx_bps)}</span>
+                  </div>
+                  <div className="text-xs font-medium">
+                    <span className="text-green-400">RX {formatThroughput(primary.data.rx_bps)}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </TableCell>
+        <TableCell className="w-0 md:w-[150px] overflow-hidden p-0 md:p-2">
           <span
             className={`text-xs flex items-center gap-1 cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
             title={heartbeat.tooltip}
@@ -290,6 +339,8 @@ export function MachineRow({
             onReboot={onReboot}
             onShutdown={onShutdown}
             onScreenshot={onScreenshot}
+            onLiveView={onLiveView}
+            rebootSchedule={machine.rebootSchedule}
           />
         </TableCell>
       </TableRow>
@@ -297,7 +348,7 @@ export function MachineRow({
       {/* Expanded Process Details Row */}
       {isExpanded && (
         <TableRow key={`${machine.machineId}-processes`} className="border-border">
-          <TableCell colSpan={9} className="p-0">
+          <TableCell colSpan={10} className="p-0 overflow-hidden">
             <div className="pr-4 relative" style={{ paddingLeft: '12px', paddingTop: '8px', paddingBottom: '8px' }}>
               {machine.processes && machine.processes.length > 0 ? (
                 <>
@@ -322,7 +373,7 @@ export function MachineRow({
                           <div className="absolute h-px bg-border/50" style={{ left: '4px', top: '50%', width: '12px' }} />
                           </div>
                           {/* Process card */}
-                          <div className="flex-1 flex items-center justify-between p-3 rounded border border-border/50">
+                          <div className="flex-1 min-w-0 flex items-center justify-between p-3 rounded border border-border/50">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
                               <Cog className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
@@ -331,8 +382,8 @@ export function MachineRow({
                                 {(!machine.online ? 'unknown' : process.status === 'LAUNCH_FAILED' ? 'failed' : process.status).toLowerCase()}
                               </Badge>
                             </div>
-                            <div className="flex items-center gap-3 text-xs text-muted-foreground select-text">
-                              {process.pid && <span>PID: {process.pid}</span>}
+                            <div className="flex items-center gap-3 text-xs text-muted-foreground select-text min-w-0">
+                              {process.pid && <span className="flex-shrink-0">PID: {process.pid}</span>}
                               <span className="truncate" title={process.exe_path}>{process.exe_path}</span>
                             </div>
                             {((process._optimisticLaunchMode ?? process.launch_mode) === 'scheduled') && (process._optimisticSchedules ?? process.schedules) && (process._optimisticSchedules ?? process.schedules)!.length > 0 && (
@@ -354,76 +405,142 @@ export function MachineRow({
                               </div>
                             )}
                           </div>
-                          <div className="flex items-center gap-3 ml-4 flex-shrink-0">
-                            {(() => {
-                              const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
-                              const isScheduled = currentMode === 'scheduled';
-                              return (
-                                <div className="flex items-stretch rounded-md overflow-hidden border border-border h-8">
-                                  {(['off', 'always', 'scheduled'] as const).map((mode) => {
-                                    const isActive = currentMode === mode;
-                                    const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
-                                    const activeColors = {
-                                      off: 'bg-muted text-foreground',
-                                      always: 'bg-emerald-600 text-white',
-                                      scheduled: 'bg-blue-600 text-white',
-                                    };
+                          {(() => {
+                            const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
+                            const isScheduled = currentMode === 'scheduled';
+                            return (
+                              <>
+                                {/* Desktop controls (lg+) */}
+                                <div className="hidden lg:flex items-center gap-3 ml-4 flex-shrink-0">
+                                  <div className="flex items-stretch rounded-md overflow-hidden border border-border h-8">
+                                    {(['off', 'always', 'scheduled'] as const).map((mode) => {
+                                      const isActive = currentMode === mode;
+                                      const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+                                      const activeColors = {
+                                        off: 'bg-muted text-foreground',
+                                        always: 'bg-emerald-600 text-white',
+                                        scheduled: 'bg-blue-600 text-white',
+                                      };
 
-                                    if (mode === 'scheduled' && isScheduled) {
-                                      // Split button: text + gear icon
+                                      if (mode === 'scheduled' && isScheduled) {
+                                        return (
+                                          <span key={mode} className="flex items-stretch bg-blue-600 text-white">
+                                            <button
+                                              onClick={() => {}}
+                                              className="px-3 text-xs font-medium cursor-default"
+                                            >
+                                              {labels[mode]}
+                                            </button>
+                                            <span className="w-px bg-blue-400/50" />
+                                            <button
+                                              onClick={() => onConfigureSchedule?.(process)}
+                                              className="px-1.5 hover:bg-blue-500 transition-colors cursor-pointer flex items-center"
+                                              title="Configure schedule"
+                                            >
+                                              <Settings2 className="h-3.5 w-3.5" />
+                                            </button>
+                                          </span>
+                                        );
+                                      }
+
                                       return (
-                                        <span key={mode} className="flex items-stretch bg-blue-600 text-white">
-                                          <button
-                                            onClick={() => {}} // Already active, no-op
-                                            className="px-3 text-xs font-medium cursor-default"
-                                          >
-                                            {labels[mode]}
-                                          </button>
-                                          <span className="w-px bg-blue-400/50" />
-                                          <button
-                                            onClick={() => onConfigureSchedule?.(process)}
-                                            className="px-1.5 hover:bg-blue-500 transition-colors cursor-pointer flex items-center"
-                                            title="Configure schedule"
-                                          >
-                                            <Settings2 className="h-3.5 w-3.5" />
-                                          </button>
-                                        </span>
+                                        <button
+                                          key={mode}
+                                          onClick={() => onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
+                                          className={`px-3 text-xs font-medium transition-all duration-500 cursor-pointer ${isActive ? activeColors[mode] : 'bg-card text-muted-foreground hover:bg-muted/50'}`}
+                                        >
+                                          {labels[mode]}
+                                        </button>
                                       );
-                                    }
-
-                                    return (
-                                      <button
-                                        key={mode}
-                                        onClick={() => onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
-                                        className={`px-3 text-xs font-medium transition-all duration-500 cursor-pointer ${isActive ? activeColors[mode] : 'bg-card text-muted-foreground hover:bg-muted/50'}`}
-                                      >
-                                        {labels[mode]}
-                                      </button>
-                                    );
-                                  })}
+                                    })}
+                                  </div>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => onEditProcess(process)}
+                                    className="bg-card border-border text-foreground hover:bg-muted hover:border-border hover:text-white cursor-pointer"
+                                  >
+                                    <Pencil className="h-3 w-3 mr-1" />
+                                    edit
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => onKillProcess(process.id, process.name)}
+                                    className="bg-card border-border text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                                    disabled={process.status !== 'RUNNING'}
+                                  >
+                                    <Square className="h-3 w-3 mr-1" />
+                                    kill
+                                  </Button>
                                 </div>
-                              );
-                            })()}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => onEditProcess(process)}
-                              className="bg-card border-border text-foreground hover:bg-muted hover:border-border hover:text-white cursor-pointer"
-                            >
-                              <Pencil className="h-3 w-3 mr-1" />
-                              edit
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => onKillProcess(process.id, process.name)}
-                              className="bg-card border-border text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
-                              disabled={process.status !== 'RUNNING'}
-                            >
-                              <Square className="h-3 w-3 mr-1" />
-                              kill
-                            </Button>
-                          </div>
+                                {/* Compact controls (<lg) */}
+                                <div className="flex lg:hidden items-center gap-2 ml-2 flex-shrink-0">
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="bg-card border-border text-muted-foreground hover:bg-muted hover:text-white cursor-pointer h-8 w-8 p-0"
+                                      >
+                                        <MoreVertical className="h-4 w-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="border-border bg-secondary w-52">
+                                      <DropdownMenuLabel className="text-muted-foreground text-xs">
+                                        launch mode
+                                      </DropdownMenuLabel>
+                                      <DropdownMenuRadioGroup
+                                        value={currentMode}
+                                        onValueChange={(value) => {
+                                          if (value !== currentMode) {
+                                            onSetLaunchMode(process.id, process.name, value as LaunchMode, process.exe_path);
+                                          }
+                                        }}
+                                      >
+                                        <DropdownMenuRadioItem value="off" className="cursor-pointer">
+                                          Off
+                                        </DropdownMenuRadioItem>
+                                        <DropdownMenuRadioItem value="always" className="text-emerald-400 cursor-pointer">
+                                          Always On
+                                        </DropdownMenuRadioItem>
+                                        <DropdownMenuRadioItem value="scheduled" className="text-blue-400 cursor-pointer">
+                                          Scheduled
+                                        </DropdownMenuRadioItem>
+                                      </DropdownMenuRadioGroup>
+                                      {isScheduled && (
+                                        <DropdownMenuItem
+                                          onClick={() => onConfigureSchedule?.(process)}
+                                          className="text-blue-400 focus:bg-blue-950/30 focus:text-blue-300 cursor-pointer pl-8"
+                                        >
+                                          <Settings2 className="mr-2 h-3.5 w-3.5" />
+                                          configure schedule
+                                        </DropdownMenuItem>
+                                      )}
+                                      <DropdownMenuSeparator className="bg-accent" />
+                                      <DropdownMenuItem
+                                        onClick={() => onEditProcess(process)}
+                                        className="cursor-pointer"
+                                      >
+                                        <Pencil className="mr-2 h-3.5 w-3.5" />
+                                        edit process
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => onKillProcess(process.id, process.name)}
+                                    className="bg-card border-border text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
+                                    disabled={process.status !== 'RUNNING'}
+                                    title="kill"
+                                  >
+                                    <Square className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
                     ))}

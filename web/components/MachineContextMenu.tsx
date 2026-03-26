@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { MoreVertical, Trash2, KeyRound, RotateCcw, Power, Camera } from 'lucide-react';
+import { MoreVertical, Trash2, KeyRound, RotateCcw, Power, Camera, Settings2, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -19,6 +19,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import RebootScheduleDialog from '@/components/RebootScheduleDialog';
+import type { ScheduleBlock } from '@/hooks/useFirestore';
 
 interface MachineContextMenuProps {
   machineId: string;
@@ -30,6 +32,11 @@ interface MachineContextMenuProps {
   onReboot?: () => Promise<void>;
   onShutdown?: () => Promise<void>;
   onScreenshot?: () => void;
+  onLiveView?: () => void;
+  rebootSchedule?: {
+    enabled: boolean;
+    schedules: ScheduleBlock[];
+  };
 }
 
 export function MachineContextMenu({
@@ -42,12 +49,15 @@ export function MachineContextMenu({
   onReboot,
   onShutdown,
   onScreenshot,
+  onLiveView,
+  rebootSchedule,
 }: MachineContextMenuProps) {
   const [showRevokeDialog, setShowRevokeDialog] = useState(false);
   const [showRebootDialog, setShowRebootDialog] = useState(false);
   const [showShutdownDialog, setShowShutdownDialog] = useState(false);
   const [isRevoking, setIsRevoking] = useState(false);
   const [isSendingCommand, setIsSendingCommand] = useState(false);
+  const [showRebootScheduleDialog, setShowRebootScheduleDialog] = useState(false);
 
   const handleRevokeToken = async () => {
     setIsRevoking(true);
@@ -128,16 +138,28 @@ export function MachineContextMenu({
         <DropdownMenuContent align="end" className="border-border bg-secondary w-48">
           {isAdmin && isOnline && (
             <>
-              <DropdownMenuItem
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowRebootDialog(true);
-                }}
-                className="text-cyan-400 focus:bg-cyan-950/30 focus:text-cyan-300 cursor-pointer"
-              >
-                <RotateCcw className="mr-2 h-4 w-4" />
-                reboot machine
-              </DropdownMenuItem>
+              <div className="flex items-center justify-between px-2 py-1.5 text-sm text-cyan-400 rounded-sm hover:bg-cyan-950/30 hover:text-cyan-300">
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowRebootDialog(true);
+                  }}
+                  className="flex-1 p-0 text-cyan-400 focus:bg-transparent focus:text-cyan-300 cursor-pointer"
+                >
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  reboot machine
+                </DropdownMenuItem>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowRebootScheduleDialog(true);
+                  }}
+                  className="ml-2 p-0.5 rounded hover:bg-cyan-950/50 transition-colors cursor-pointer"
+                  title="schedule reboots"
+                >
+                  <Settings2 className="h-3.5 w-3.5 text-muted-foreground hover:text-cyan-300 transition-colors" />
+                </button>
+              </div>
               <DropdownMenuItem
                 onClick={(e) => {
                   e.stopPropagation();
@@ -157,6 +179,16 @@ export function MachineContextMenu({
               >
                 <Camera className="mr-2 h-4 w-4" />
                 screenshot
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onLiveView?.();
+                }}
+                className="text-emerald-400 focus:bg-emerald-950/30 focus:text-emerald-300 cursor-pointer"
+              >
+                <Eye className="mr-2 h-4 w-4" />
+                live view
               </DropdownMenuItem>
               <DropdownMenuSeparator className="bg-accent" />
             </>
@@ -271,6 +303,16 @@ export function MachineContextMenu({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Reboot Schedule Dialog */}
+      <RebootScheduleDialog
+        siteId={siteId}
+        machineId={machineId}
+        machineName={machineName}
+        open={showRebootScheduleDialog}
+        onOpenChange={setShowRebootScheduleDialog}
+        currentSchedule={rebootSchedule}
+      />
     </>
   );
 }

@@ -28,6 +28,7 @@ import DownloadButton from '@/components/DownloadButton';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { RemoveMachineDialog } from '@/components/RemoveMachineDialog';
 import { ScreenshotDialog } from '@/components/ScreenshotDialog';
+import { LiveViewModal } from '@/components/LiveViewModal';
 import { PageHeader } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
@@ -116,7 +117,7 @@ export default function DashboardPage() {
     schedules: null,
   });
 
-  const { machines, loading: machinesLoading, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot } = useMachines(currentSiteId);
+  const { machines, loading: machinesLoading, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView } = useMachines(currentSiteId);
   const { presets: schedulePresets, createPreset, deletePreset: deleteSchedulePreset, updatePreset: updateSchedulePreset } = useSchedulePresets(currentSiteId);
   const { checkMachineHasActiveDeployment } = useDeployments(currentSiteId);
   const { removeMachineFromSite, removing: isRemovingMachine } = useMachineOperations(currentSiteId);
@@ -132,6 +133,10 @@ export default function DashboardPage() {
   // Screenshot Dialog state
   const [screenshotDialogOpen, setScreenshotDialogOpen] = useState(false);
   const [screenshotTarget, setScreenshotTarget] = useState<{ machineId: string; machineName: string; isOnline: boolean } | null>(null);
+
+  // Live View Modal state
+  const [liveViewOpen, setLiveViewOpen] = useState(false);
+  const [liveViewTarget, setLiveViewTarget] = useState<{ machineId: string; machineName: string } | null>(null);
 
   // Metrics Detail Panel state (replaces top stats cards when active)
   const [detailPanel, setDetailPanel] = useState<DetailPanelState | null>(null);
@@ -707,6 +712,10 @@ export default function DashboardPage() {
                     setScreenshotTarget({ machineId, machineName: machineId, isOnline: m?.online ?? false });
                     setScreenshotDialogOpen(true);
                   }}
+                  onLiveView={(machineId) => {
+                    setLiveViewTarget({ machineId, machineName: machineId });
+                    setLiveViewOpen(true);
+                  }}
                 />
               </div>
             )}
@@ -742,6 +751,10 @@ export default function DashboardPage() {
                         onScreenshot={() => {
                           setScreenshotTarget({ machineId: machine.machineId, machineName: machine.machineId, isOnline: machine.online });
                           setScreenshotDialogOpen(true);
+                        }}
+                        onLiveView={() => {
+                          setLiveViewTarget({ machineId: machine.machineId, machineName: machine.machineId });
+                          setLiveViewOpen(true);
                         }}
                       />
                     ))}
@@ -1200,6 +1213,19 @@ export default function DashboardPage() {
           onCaptureScreenshot={() => captureScreenshot(screenshotTarget.machineId)}
           lastScreenshot={machines.find(m => m.machineId === screenshotTarget.machineId)?.lastScreenshot}
           hasActiveDeployment={checkMachineHasActiveDeployment(screenshotTarget.machineId)}
+        />
+      )}
+
+      {/* Live View Modal */}
+      {liveViewTarget && (
+        <LiveViewModal
+          open={liveViewOpen}
+          onOpenChange={setLiveViewOpen}
+          siteId={currentSiteId}
+          machineId={liveViewTarget.machineId}
+          machineName={liveViewTarget.machineName}
+          onStartLiveView={startLiveView}
+          onStopLiveView={stopLiveView}
         />
       )}
     </div>

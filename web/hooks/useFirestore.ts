@@ -59,16 +59,38 @@ export interface Machine {
     reason: string | null;
     timestamp: number | null;
   };
+  rebootSchedule?: {
+    enabled: boolean;
+    schedules: ScheduleBlock[];
+  };
   lastScreenshot?: {
     url: string;       // Firebase Storage public URL
     timestamp: number;
     sizeKB: number;
+  };
+  liveView?: {
+    active: boolean;
+    interval?: number;
+    startedAt?: number;
+    expiresAt?: number;
   };
   metrics?: {
     cpu: { name?: string; percent: number; unit: string; temperature?: number };
     memory: { percent: number; total_gb: number; used_gb: number; unit: string };
     disk: { percent: number; total_gb: number; used_gb: number; unit: string };
     gpu?: { name: string; usage_percent: number; vram_total_gb: number; vram_used_gb: number; unit: string; temperature?: number };
+    network?: {
+      interfaces?: Record<string, {
+        tx_bps: number;
+        rx_bps: number;
+        tx_util: number;
+        rx_util: number;
+        link_speed: number;
+      }>;
+      gateway_ip?: string | null;
+      latency_ms?: number | null;
+      packet_loss_pct?: number | null;
+    };
     processes?: Record<string, string>;
   };
   processes?: Process[];
@@ -500,6 +522,7 @@ export function useMachines(siteId: string) {
                 lastHeartbeat,
                 online: isOnline,
                 agent_version: data.agent_version,  // Agent version for update detection
+                rebootSchedule: data.rebootSchedule,
                 metrics,
                 processes,
               });
@@ -949,5 +972,13 @@ export function useMachines(siteId: string) {
     await sendMachineCommand(machineId, 'capture_screenshot');
   };
 
-  return { machines, loading, error, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot };
+  const startLiveView = async (machineId: string, interval: number = 10, duration: number = 600) => {
+    await sendMachineCommand(machineId, 'start_live_view', { interval, duration });
+  };
+
+  const stopLiveView = async (machineId: string) => {
+    await sendMachineCommand(machineId, 'stop_live_view');
+  };
+
+  return { machines, loading, error, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView };
 }

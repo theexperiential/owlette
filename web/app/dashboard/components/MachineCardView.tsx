@@ -27,6 +27,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass, getUsageRingClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime } from '@/lib/timeUtils';
+import { formatThroughput, getPrimaryNic } from '@/lib/networkUtils';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
 import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
@@ -52,6 +53,7 @@ interface MachineCardViewProps {
   onCancelReboot?: (machineId: string) => Promise<void>;
   onDismissRebootPending?: (machineId: string, processName: string) => Promise<void>;
   onScreenshot?: (machineId: string) => void;
+  onLiveView?: (machineId: string) => void;
 }
 
 /**
@@ -81,6 +83,7 @@ interface MachineCardProps {
   onCancelReboot?: () => Promise<void>;
   onDismissRebootPending?: (processName: string) => Promise<void>;
   onScreenshot?: () => void;
+  onLiveView?: () => void;
 }
 
 function MachineCard({
@@ -106,6 +109,7 @@ function MachineCard({
   onCancelReboot,
   onDismissRebootPending,
   onScreenshot,
+  onLiveView,
 }: MachineCardProps) {
   // Fetch sparkline data for this machine
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
@@ -161,6 +165,8 @@ function MachineCard({
               onReboot={onReboot}
               onShutdown={onShutdown}
               onScreenshot={onScreenshot}
+              onLiveView={onLiveView}
+              rebootSchedule={machine.rebootSchedule}
             />
           </div>
         </div>
@@ -244,6 +250,20 @@ function MachineCard({
                         </span>
                       </>
                     )}
+                    {machine.metrics.network?.latency_ms != null && (
+                      <>
+                        <span className="text-border">|</span>
+                        <span className="tabular-nums">ping <span className={`font-medium ${
+                          machine.metrics.network.latency_ms > 100 ? 'text-red-400' :
+                          machine.metrics.network.latency_ms > 50 ? 'text-yellow-400' :
+                          'text-foreground'
+                        }`}>{Math.round(machine.metrics.network.latency_ms)}ms</span>
+                          {(machine.metrics.network.packet_loss_pct ?? 0) > 0 && (
+                            <span className="ml-1 text-red-400">{machine.metrics.network.packet_loss_pct}% loss</span>
+                          )}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               </Button>
@@ -274,7 +294,7 @@ function MachineCard({
               {/* Content */}
               <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-sm font-medium text-muted-foreground">CPU</span>
+                  <span className="text-sm font-medium text-muted-foreground">cpu</span>
                   <span className="text-xs text-muted-foreground truncate hidden sm:block" title={machine.metrics.cpu.name || 'Unknown'}>
                     {machine.metrics.cpu.name || 'Unknown'}
                   </span>
@@ -305,7 +325,7 @@ function MachineCard({
             {/* Content */}
             <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
               <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-muted-foreground">Memory</span>
+                <span className="text-sm font-medium text-muted-foreground">memory</span>
                 {machine.metrics.memory?.used_gb !== undefined && machine.metrics.memory?.total_gb !== undefined && (
                   <span className="text-xs text-muted-foreground hidden sm:block">
                     {machine.metrics.memory.used_gb.toFixed(1)} / {machine.metrics.memory.total_gb.toFixed(1)} GB
@@ -330,7 +350,7 @@ function MachineCard({
             {/* Content */}
             <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
               <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-muted-foreground">Disk</span>
+                <span className="text-sm font-medium text-muted-foreground">disk</span>
                 {machine.metrics.disk?.used_gb !== undefined && machine.metrics.disk?.total_gb !== undefined && (
                   <span className="text-xs text-muted-foreground hidden sm:block">
                     {machine.metrics.disk.used_gb.toFixed(1)} / {machine.metrics.disk.total_gb.toFixed(1)} GB
@@ -358,7 +378,7 @@ function MachineCard({
               {/* Content */}
               <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-sm font-medium text-muted-foreground">GPU</span>
+                  <span className="text-sm font-medium text-muted-foreground">gpu</span>
                   <span className="text-xs text-muted-foreground truncate hidden sm:block" title={machine.metrics.gpu.name}>
                     {machine.metrics.gpu.name}
                   </span>
@@ -379,6 +399,35 @@ function MachineCard({
               </div>
             </div>
           )}
+
+          {/* Network Metric */}
+          {(() => {
+            const interfaces = machine.metrics?.network?.interfaces;
+            if (!interfaces) return null;
+            const primary = getPrimaryNic(interfaces);
+            if (!primary) return null;
+            const maxUtil = Math.max(primary.data.tx_util, primary.data.rx_util);
+            return (
+              <div
+                className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(maxUtil)}`}
+                onClick={onMetricClick ? () => onMetricClick(`${primary.name}_tx_util` as MetricType) : undefined}
+              >
+                <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(maxUtil)}`} />
+                <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-sm font-medium text-muted-foreground">network</span>
+                    <span className="text-xs text-muted-foreground truncate hidden sm:block" title={`${primary.name} (${primary.data.link_speed} Mbps)`}>
+                      {primary.name}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <span className="text-xs font-medium text-orange-400">TX {formatThroughput(primary.data.tx_bps)}</span>
+                    <span className="text-xs font-medium text-green-400">RX {formatThroughput(primary.data.rx_bps)}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </CardContent>
           </CollapsibleContent>
         </Collapsible>
@@ -580,6 +629,7 @@ export function MachineCardView({
   onCancelReboot,
   onDismissRebootPending,
   onScreenshot,
+  onLiveView,
 }: MachineCardViewProps) {
   const { userPreferences, isAdmin } = useAuth();
 
@@ -612,6 +662,7 @@ export function MachineCardView({
           onCancelReboot={onCancelReboot ? () => onCancelReboot(machine.machineId) : undefined}
           onDismissRebootPending={onDismissRebootPending ? (processName) => onDismissRebootPending(machine.machineId, processName) : undefined}
           onScreenshot={onScreenshot ? () => onScreenshot(machine.machineId) : undefined}
+          onLiveView={onLiveView ? () => onLiveView(machine.machineId) : undefined}
         />
       ))}
     </div>
