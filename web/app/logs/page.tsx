@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
@@ -10,7 +10,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { collection, query, orderBy, limit, getDocs, where, startAfter, Query, DocumentData, Timestamp, onSnapshot, writeBatch, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
-import { ChevronDown, ChevronLeft, ChevronRight, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle } from 'lucide-react';
+import { ChevronDown, ChevronsUpDown, ChevronsDownUp, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle, Camera } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,9 +30,87 @@ interface LogEvent {
   processName?: string;
   details?: string;
   userId?: string;
+  screenshotUrl?: string;
 }
 
 const LOGS_PER_PAGE = 50;
+
+// Date range presets
+type DatePreset = 'all' | 'last_hour' | 'last_24h' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'this_week' | 'this_month' | 'last_month' | 'custom';
+
+const DATE_PRESETS: { value: DatePreset; label: string }[] = [
+  { value: 'all', label: 'all time' },
+  { value: 'last_hour', label: 'last hour' },
+  { value: 'last_24h', label: 'last 24 hours' },
+  { value: 'today', label: 'today' },
+  { value: 'yesterday', label: 'yesterday' },
+  { value: 'last_7', label: 'last 7 days' },
+  { value: 'last_30', label: 'last 30 days' },
+  { value: 'this_week', label: 'this week' },
+  { value: 'this_month', label: 'this month' },
+  { value: 'last_month', label: 'last month' },
+  { value: 'custom', label: 'custom range' },
+];
+
+function getDateRange(preset: DatePreset, customFrom?: string, customTo?: string): { from: Date | null; to: Date | null } {
+  const now = new Date();
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+
+  switch (preset) {
+    case 'all':
+      return { from: null, to: null };
+    case 'last_hour': {
+      const d = new Date(now);
+      d.setHours(d.getHours() - 1);
+      return { from: d, to: now };
+    }
+    case 'last_24h': {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 1);
+      return { from: d, to: now };
+    }
+    case 'today':
+      return { from: startOfDay(now), to: endOfDay(now) };
+    case 'yesterday': {
+      const y = new Date(now);
+      y.setDate(y.getDate() - 1);
+      return { from: startOfDay(y), to: endOfDay(y) };
+    }
+    case 'last_7': {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 7);
+      return { from: startOfDay(d), to: endOfDay(now) };
+    }
+    case 'last_30': {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 30);
+      return { from: startOfDay(d), to: endOfDay(now) };
+    }
+    case 'this_week': {
+      const d = new Date(now);
+      const day = d.getDay();
+      // Monday as start of week
+      const diff = day === 0 ? 6 : day - 1;
+      d.setDate(d.getDate() - diff);
+      return { from: startOfDay(d), to: endOfDay(now) };
+    }
+    case 'this_month':
+      return { from: new Date(now.getFullYear(), now.getMonth(), 1), to: endOfDay(now) };
+    case 'last_month': {
+      const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const to = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+      return { from, to };
+    }
+    case 'custom': {
+      const from = customFrom ? startOfDay(new Date(customFrom + 'T00:00:00')) : null;
+      const to = customTo ? endOfDay(new Date(customTo + 'T00:00:00')) : null;
+      return { from, to };
+    }
+    default:
+      return { from: null, to: null };
+  }
+}
 
 // Action type labels for filtering
 const ACTION_TYPES = [
@@ -47,6 +125,7 @@ const ACTION_TYPES = [
   { value: 'deployment_completed', label: 'deployment completed' },
   { value: 'deployment_failed', label: 'deployment failed' },
   { value: 'deployment_cancelled', label: 'deployment cancelled' },
+  { value: 'scheduled_reboot', label: 'scheduled reboot' },
 ];
 
 // Level badges styling
@@ -78,19 +157,20 @@ export default function LogsPage() {
   const [logs, setLogs] = useState<LogEvent[]>([]);
   const [logsLoading, setLogsLoading] = useState(true);
   const [lastDoc, setLastDoc] = useState<DocumentData | null>(null);
-  const [firstDoc, setFirstDoc] = useState<DocumentData | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
-  const [hasPrevious, setHasPrevious] = useState(false);
 
   // Filters
   const [filterAction, setFilterAction] = useState<string>('all');
   const [filterMachine, setFilterMachine] = useState<string>('all');
   const [filterLevel, setFilterLevel] = useState<string>('all');
+  const [filterDatePreset, setFilterDatePreset] = useState<DatePreset>('all');
+  const [filterDateFrom, setFilterDateFrom] = useState<string>('');
+  const [filterDateTo, setFilterDateTo] = useState<string>('');
   const [showFilters, setShowFilters] = useState(false);
 
   // Clear logs confirmation dialog
   const [showClearDialog, setShowClearDialog] = useState(false);
+  const [screenshotModalUrl, setScreenshotModalUrl] = useState<string | null>(null);
   const [isClearing, setIsClearing] = useState(false);
 
   // Site management dialogs
@@ -100,8 +180,34 @@ export default function LogsPage() {
   // Account settings dialog
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
 
-  // Expanded log row
-  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  // Expanded log rows (multi-expand)
+  const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(new Set());
+
+  // Infinite scroll
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+
+  const toggleLogExpanded = useCallback((logId: string) => {
+    setExpandedLogIds(prev => {
+      const next = new Set(prev);
+      if (next.has(logId)) {
+        next.delete(logId);
+      } else {
+        next.add(logId);
+      }
+      return next;
+    });
+  }, []);
+
+  const allExpanded = logs.length > 0 && expandedLogIds.size === logs.length;
+
+  const toggleAllExpanded = useCallback(() => {
+    if (allExpanded) {
+      setExpandedLogIds(new Set());
+    } else {
+      setExpandedLogIds(new Set(logs.map(l => l.id)));
+    }
+  }, [allExpanded, logs]);
 
   // Redirect if not logged in
   useEffect(() => {
@@ -127,21 +233,26 @@ export default function LogsPage() {
     updateLastSite(siteId);
   };
 
-  // Real-time logs listener when on first page
+  // Real-time logs listener for initial batch
   useEffect(() => {
-    if (!currentSiteId || !db || currentPage !== 1) return;
+    if (!currentSiteId || !db) return;
 
     setLogsLoading(true);
+    setExpandedLogIds(new Set());
 
-    // Check if any filters are active
-    const hasFilters = filterAction !== 'all' || filterMachine !== 'all' || filterLevel !== 'all';
+    // Compute date range from preset
+    const dateRange = getDateRange(filterDatePreset, filterDateFrom, filterDateTo);
+
+    // Check if any non-date filters are active (date filters use orderBy-compatible where clauses)
+    const hasNonDateFilters = filterAction !== 'all' || filterMachine !== 'all' || filterLevel !== 'all';
 
     // Build query with filters
     const logsRef = collection(db, 'sites', currentSiteId, 'logs');
     let q: Query;
 
-    // Only use orderBy when no filters are active (to avoid needing composite indexes)
-    if (hasFilters) {
+    // Always use orderBy('timestamp', 'desc') — date range filters are compatible with it.
+    // Only skip orderBy when non-date filters are active without a composite index.
+    if (hasNonDateFilters) {
       q = query(logsRef, limit(LOGS_PER_PAGE + 1));
     } else {
       q = query(logsRef, orderBy('timestamp', 'desc'), limit(LOGS_PER_PAGE + 1));
@@ -157,6 +268,16 @@ export default function LogsPage() {
     if (filterLevel !== 'all') {
       q = query(q, where('level', '==', filterLevel));
     }
+    // Date range filters — applied client-side when non-date filters are active (no composite index),
+    // or via Firestore where clauses when only date filters are active
+    if (!hasNonDateFilters) {
+      if (dateRange.from) {
+        q = query(q, where('timestamp', '>=', Timestamp.fromDate(dateRange.from)));
+      }
+      if (dateRange.to) {
+        q = query(q, where('timestamp', '<=', Timestamp.fromDate(dateRange.to)));
+      }
+    }
 
     // Set up real-time listener
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -165,9 +286,19 @@ export default function LogsPage() {
         ...doc.data()
       } as LogEvent));
 
-      // Sort client-side by timestamp if filters are active
-      if (hasFilters) {
+      // Sort client-side by timestamp if non-date filters are active
+      if (hasNonDateFilters) {
         docsData.sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis());
+      }
+
+      // Apply date range client-side when non-date filters are active
+      if (hasNonDateFilters && (dateRange.from || dateRange.to)) {
+        docsData = docsData.filter(log => {
+          const ts = log.timestamp.toMillis();
+          if (dateRange.from && ts < dateRange.from.getTime()) return false;
+          if (dateRange.to && ts > dateRange.to.getTime()) return false;
+          return true;
+        });
       }
 
       // Check if there are more pages
@@ -179,13 +310,11 @@ export default function LogsPage() {
 
       setLogs(displayLogs);
 
-      // Set pagination markers
+      // Set pagination marker for infinite scroll
       if (displayLogs.length > 0) {
-        setFirstDoc(snapshot.docs[0]);
         setLastDoc(snapshot.docs[Math.min(LOGS_PER_PAGE - 1, snapshot.docs.length - 1)]);
       }
 
-      setHasPrevious(false);
       setLogsLoading(false);
     }, (error) => {
       console.error('Error in logs listener:', error);
@@ -194,124 +323,72 @@ export default function LogsPage() {
 
     // Cleanup listener on unmount or when dependencies change
     return () => unsubscribe();
-  }, [currentSiteId, filterAction, filterMachine, filterLevel, currentPage]);
+  }, [currentSiteId, filterAction, filterMachine, filterLevel, filterDatePreset, filterDateFrom, filterDateTo]);
 
-  const fetchLogs = async (direction: 'next' | 'prev' | 'reset' = 'reset') => {
-    if (!currentSiteId || !db) return;
+  // Infinite scroll — load more logs
+  const loadMore = useCallback(async () => {
+    if (!currentSiteId || !db || !lastDoc || !hasMore || isFetchingMore) return;
 
-    setLogsLoading(true);
+    setIsFetchingMore(true);
 
     try {
+      const dateRange = getDateRange(filterDatePreset, filterDateFrom, filterDateTo);
       const logsRef = collection(db, 'sites', currentSiteId, 'logs');
+      let q = query(logsRef, orderBy('timestamp', 'desc'), startAfter(lastDoc), limit(LOGS_PER_PAGE + 1));
 
-      // Check if any filters are active
-      const hasFilters = filterAction !== 'all' || filterMachine !== 'all' || filterLevel !== 'all';
-
-      // Build query with filters
-      let q: Query;
-
-      if (hasFilters) {
-        // When filters are active, don't use orderBy to avoid composite index requirements
-        // We'll sort client-side instead
-        q = query(logsRef, limit(100)); // Fetch up to 100 filtered logs (no pagination)
-      } else {
-        // When no filters, use orderBy for proper Firestore pagination
-        q = query(logsRef, orderBy('timestamp', 'desc'));
-      }
-
-      // Apply filters
-      if (filterAction !== 'all') {
-        q = query(q, where('action', '==', filterAction));
-      }
-      if (filterMachine !== 'all') {
-        q = query(q, where('machineId', '==', filterMachine));
-      }
-      if (filterLevel !== 'all') {
-        q = query(q, where('level', '==', filterLevel));
-      }
-
-      // Add pagination (only when no filters - requires orderBy)
-      if (!hasFilters) {
-        if (direction === 'next' && lastDoc) {
-          q = query(q, startAfter(lastDoc), limit(LOGS_PER_PAGE + 1));
-        } else if (direction === 'prev' && firstDoc) {
-          // For previous page, we need to reverse the order
-          q = query(logsRef, orderBy('timestamp', 'asc'));
-          if (filterAction !== 'all') q = query(q, where('action', '==', filterAction));
-          if (filterMachine !== 'all') q = query(q, where('machineId', '==', filterMachine));
-          if (filterLevel !== 'all') q = query(q, where('level', '==', filterLevel));
-          q = query(q, startAfter(firstDoc), limit(LOGS_PER_PAGE + 1));
-        } else {
-          q = query(q, limit(LOGS_PER_PAGE + 1));
-        }
-      }
+      if (filterAction !== 'all') q = query(q, where('action', '==', filterAction));
+      if (filterMachine !== 'all') q = query(q, where('machineId', '==', filterMachine));
+      if (filterLevel !== 'all') q = query(q, where('level', '==', filterLevel));
+      if (dateRange.from) q = query(q, where('timestamp', '>=', Timestamp.fromDate(dateRange.from)));
+      if (dateRange.to) q = query(q, where('timestamp', '<=', Timestamp.fromDate(dateRange.to)));
 
       const snapshot = await getDocs(q);
-      let docsData = snapshot.docs.map(doc => ({
+      const docsData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       } as LogEvent));
 
-      // Sort client-side if filters are active
-      if (hasFilters) {
-        docsData.sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis());
-        // When filters are active, show all results on one page (no pagination)
-        setLogs(docsData);
-        setHasMore(false);
-        setHasPrevious(false);
-        setCurrentPage(1);
-      } else {
-        // Handle reverse order for previous page (non-filtered pagination)
-        if (direction === 'prev') {
-          docsData.reverse();
-        }
+      const hasMoreData = docsData.length > LOGS_PER_PAGE;
+      setHasMore(hasMoreData);
 
-        // Check if there are more pages
-        const hasMoreData = docsData.length > LOGS_PER_PAGE;
-        setHasMore(hasMoreData);
+      const newLogs = hasMoreData ? docsData.slice(0, LOGS_PER_PAGE) : docsData;
 
-        // Remove the extra document used for pagination check
-        const displayLogs = hasMoreData ? docsData.slice(0, LOGS_PER_PAGE) : docsData;
-        setLogs(displayLogs);
-
-        // Set pagination markers
-        if (displayLogs.length > 0) {
-          setFirstDoc(snapshot.docs[0]);
-          setLastDoc(snapshot.docs[Math.min(LOGS_PER_PAGE - 1, snapshot.docs.length - 1)]);
-        }
-
-        // Update page navigation
-        if (direction === 'next') {
-          setCurrentPage(prev => prev + 1);
-          setHasPrevious(true);
-        } else if (direction === 'prev') {
-          setCurrentPage(prev => Math.max(1, prev - 1));
-          setHasPrevious(currentPage > 2);
-        } else {
-          setCurrentPage(1);
-          setHasPrevious(false);
-        }
+      if (newLogs.length > 0) {
+        setLogs(prev => [...prev, ...newLogs]);
+        setLastDoc(snapshot.docs[Math.min(LOGS_PER_PAGE - 1, snapshot.docs.length - 1)]);
       }
-
     } catch (error) {
-      console.error('Error fetching logs:', error);
+      console.error('Error loading more logs:', error);
     } finally {
-      setLogsLoading(false);
+      setIsFetchingMore(false);
     }
-  };
+  }, [currentSiteId, lastDoc, hasMore, isFetchingMore, filterAction, filterMachine, filterLevel, filterDatePreset, filterDateFrom, filterDateTo]);
 
-  const handleNextPage = () => {
-    fetchLogs('next');
-  };
+  // IntersectionObserver for infinite scroll sentinel
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
 
-  const handlePrevPage = () => {
-    fetchLogs('prev');
-  };
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !isFetchingMore) {
+          loadMore();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, isFetchingMore, loadMore]);
 
   const resetFilters = () => {
     setFilterAction('all');
     setFilterMachine('all');
     setFilterLevel('all');
+    setFilterDatePreset('all');
+    setFilterDateFrom('');
+    setFilterDateTo('');
   };
 
   const handleClearLogs = async () => {
@@ -371,10 +448,8 @@ export default function LogsPage() {
 
       console.log(`Deleted ${snapshot.docs.length} log entries`);
 
-      // Reset to first page after clearing
-      setCurrentPage(1);
-      setHasPrevious(false);
-      fetchLogs('reset');
+      // Logs will refresh via the real-time listener
+      setLogs([]);
 
     } catch (error) {
       console.error('Error clearing logs:', error);
@@ -489,6 +564,17 @@ export default function LogsPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
+            {logs.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={toggleAllExpanded}
+                className="hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                title={allExpanded ? 'collapse all' : 'expand all'}
+                size="icon"
+              >
+                {allExpanded ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />}
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={() => setShowFilters(!showFilters)}
@@ -512,7 +598,7 @@ export default function LogsPage() {
         {/* Filters */}
         {showFilters && (
           <Card className="p-4 bg-card border-border mb-6">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div>
                 <Label className="text-foreground text-sm mb-2">action type</Label>
                 <Select value={filterAction} onValueChange={setFilterAction}>
@@ -562,6 +648,22 @@ export default function LogsPage() {
               </div>
 
               <div>
+                <Label className="text-foreground text-sm mb-2">date range</Label>
+                <Select value={filterDatePreset} onValueChange={(v) => setFilterDatePreset(v as DatePreset)}>
+                  <SelectTrigger className="bg-muted border-border">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DATE_PRESETS.map(preset => (
+                      <SelectItem key={preset.value} value={preset.value}>
+                        {preset.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
                 <Label className="text-foreground text-sm mb-2">&nbsp;</Label>
                 <Button
                   variant="outline"
@@ -573,6 +675,30 @@ export default function LogsPage() {
                 </Button>
               </div>
             </div>
+
+            {/* Custom date range inputs */}
+            {filterDatePreset === 'custom' && (
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-4 pt-4 border-t border-border/50">
+                <div>
+                  <Label className="text-foreground text-sm mb-2">from</Label>
+                  <Input
+                    type="date"
+                    value={filterDateFrom}
+                    onChange={(e) => setFilterDateFrom(e.target.value)}
+                    className="bg-muted border-border"
+                  />
+                </div>
+                <div>
+                  <Label className="text-foreground text-sm mb-2">to</Label>
+                  <Input
+                    type="date"
+                    value={filterDateTo}
+                    onChange={(e) => setFilterDateTo(e.target.value)}
+                    className="bg-muted border-border"
+                  />
+                </div>
+              </div>
+            )}
           </Card>
         )}
 
@@ -589,7 +715,7 @@ export default function LogsPage() {
               </div>
             ) : (
               logs.map((log) => {
-                const isExpanded = expandedLogId === log.id;
+                const isExpanded = expandedLogIds.has(log.id);
                 return (
                   <div
                     key={log.id}
@@ -599,7 +725,7 @@ export default function LogsPage() {
                       <div className="flex items-center gap-3 flex-1 min-w-0">
                         <button
                           type="button"
-                          onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                          onClick={() => toggleLogExpanded(log.id)}
                           className="group/expand flex items-center gap-3 cursor-pointer hover:opacity-80 flex-shrink-0"
                         >
                           <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
@@ -614,6 +740,12 @@ export default function LogsPage() {
                           <>
                             <span className="text-muted-foreground">•</span>
                             <span className="text-foreground whitespace-nowrap">{log.processName}</span>
+                          </>
+                        )}
+                        {!isExpanded && log.screenshotUrl && (
+                          <>
+                            <span className="text-muted-foreground">•</span>
+                            <Camera className="w-3 h-3 text-muted-foreground" />
                           </>
                         )}
                         {!isExpanded && log.details && (
@@ -647,6 +779,18 @@ export default function LogsPage() {
                             <p className="text-foreground mt-1 whitespace-pre-wrap break-words select-text">{log.details}</p>
                           </div>
                         )}
+                        {log.screenshotUrl && (
+                          <div className="flex-shrink-0 border-l border-border/50 pl-6">
+                            <span className="text-muted-foreground text-xs">crash screenshot</span>
+                            <button onClick={() => setScreenshotModalUrl(log.screenshotUrl!)} className="block mt-1">
+                              <img
+                                src={log.screenshotUrl}
+                                alt="Crash screenshot"
+                                className="rounded border border-border/50 max-w-[200px] max-h-[120px] object-cover hover:opacity-80 transition-opacity cursor-pointer"
+                              />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -656,35 +800,36 @@ export default function LogsPage() {
           </div>
         </Card>
 
-        {/* Pagination */}
-        {!logsLoading && logs.length > 0 && (
-          <div className="flex items-center justify-between mt-6">
-            <div className="text-sm text-muted-foreground">
-              page {currentPage}
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={handlePrevPage}
-                disabled={!hasPrevious}
-                className="gap-2"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                previous
-              </Button>
-              <Button
-                variant="outline"
-                onClick={handleNextPage}
-                disabled={!hasMore}
-                className="gap-2"
-              >
-                next
-                <ChevronRight className="w-4 h-4" />
-              </Button>
-            </div>
+        {/* Infinite scroll sentinel */}
+        <div ref={sentinelRef} className="h-1" />
+        {isFetchingMore && (
+          <div className="py-4 text-center text-sm text-muted-foreground">
+            loading more...
           </div>
         )}
       </main>
+
+      {/* Screenshot Modal */}
+      {screenshotModalUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 cursor-pointer"
+          onClick={() => setScreenshotModalUrl(null)}
+          onKeyDown={(e) => e.key === 'Escape' && setScreenshotModalUrl(null)}
+        >
+          <img
+            src={screenshotModalUrl}
+            alt="Crash screenshot"
+            className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setScreenshotModalUrl(null)}
+            className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+      )}
 
       {/* Clear Logs Confirmation Dialog */}
       <ConfirmDialog

@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ChevronDown, Settings, LogOut, Shield, Check } from 'lucide-react';
+import { ChevronDown, Settings, LogOut, Shield, Check, LayoutDashboard, Brain, Rocket, FolderSync, ScrollText } from 'lucide-react';
 import { getUserInitials, getUserShortName, getUserFirstName } from '@/lib/userUtils';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 
@@ -47,7 +47,7 @@ export function PageHeader({
         <nav className="flex items-center gap-1.5 min-w-0">
           {/* App Logo */}
           <div className="flex items-center gap-1.5 flex-shrink-0 mr-1">
-            <OwletteEyeIcon size={24} />
+            <OwletteEyeIcon size={24} className="translate-y-[1px]" />
             <span className="text-base font-semibold text-foreground hidden md:block translate-y-[1px]">owlette</span>
           </div>
 
@@ -95,7 +95,12 @@ export function PageHeader({
           {/* Page Selector */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer">
+              <button className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer">
+                {(() => {
+                  const pageIcons: Record<string, React.ElementType> = { dashboard: LayoutDashboard, cortex: Brain, 'deploy software': Rocket, 'distribute projects': FolderSync, logs: ScrollText };
+                  const PageIcon = pageIcons[currentPage.toLowerCase()];
+                  return PageIcon ? <PageIcon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground translate-y-[0.5px]" /> : null;
+                })()}
                 <span className="hidden sm:inline lowercase">{currentPage}</span>
                 <span className="sm:hidden lowercase">{currentPage.toLowerCase() === 'dashboard' ? 'dashboard' : currentPage.toLowerCase() === 'deploy software' ? 'deploy' : currentPage.toLowerCase() === 'logs' ? 'logs' : currentPage.toLowerCase() === 'cortex' ? 'cortex' : 'projects'}</span>
                 <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
@@ -104,48 +109,63 @@ export function PageHeader({
             <DropdownMenuContent align="start" className="border-border bg-secondary w-72">
               <DropdownMenuItem
                 onClick={() => router.push('/dashboard')}
-                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
+                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex items-start gap-3"
               >
-                <span className="font-medium">dashboard</span>
-                <span className="text-xs text-muted-foreground font-normal">
-                  monitor machines and manage processes
-                </span>
+                <LayoutDashboard className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-medium">dashboard</span>
+                  <span className="text-xs text-muted-foreground font-normal">
+                    monitor machines and manage processes
+                  </span>
+                </div>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => router.push('/cortex')}
-                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
+                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex items-start gap-3"
               >
-                <span className="font-medium">cortex</span>
-                <span className="text-xs text-muted-foreground font-normal">
-                  conversational fleet management
-                </span>
+                <Brain className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-medium">cortex</span>
+                  <span className="text-xs text-muted-foreground font-normal">
+                    conversational fleet management
+                  </span>
+                </div>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => router.push('/deployments')}
-                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
+                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex items-start gap-3"
               >
-                <span className="font-medium">deploy software</span>
-                <span className="text-xs text-muted-foreground font-normal">
-                  install software across machines
-                </span>
+                <Rocket className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-medium">deploy software</span>
+                  <span className="text-xs text-muted-foreground font-normal">
+                    install software across machines
+                  </span>
+                </div>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => router.push('/projects')}
-                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
+                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex items-start gap-3"
               >
-                <span className="font-medium">distribute projects</span>
-                <span className="text-xs text-muted-foreground font-normal">
-                  share projects and files to machines
-                </span>
+                <FolderSync className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-medium">distribute projects</span>
+                  <span className="text-xs text-muted-foreground font-normal">
+                    share projects and files to machines
+                  </span>
+                </div>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => router.push('/logs')}
-                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex flex-col items-start gap-0.5"
+                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex items-start gap-3"
               >
-                <span className="font-medium">logs</span>
-                <span className="text-xs text-muted-foreground font-normal">
-                  monitor events and system activities
-                </span>
+                <ScrollText className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-medium">logs</span>
+                  <span className="text-xs text-muted-foreground font-normal">
+                    monitor events and system activities
+                  </span>
+                </div>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

@@ -4,6 +4,16 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        // CORS headers for public API endpoints (API key auth, not cookie-based)
+        source: '/api/admin/:path*',
+        headers: [
+          { key: 'Access-Control-Allow-Origin', value: '*' },
+          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, PATCH, DELETE, OPTIONS' },
+          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, x-api-key, Authorization' },
+          { key: 'Access-Control-Max-Age', value: '86400' },
+        ],
+      },
+      {
         // Apply security headers to all routes
         source: '/:path*',
         headers: [
@@ -27,7 +37,7 @@ const nextConfig: NextConfig = {
             // Control which browser features and APIs can be used
             // Disable potentially dangerous features
             key: 'Permissions-Policy',
-            value: 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+            value: 'camera=(), microphone=(), geolocation=()',
           },
           {
             // Enable browser's XSS filter (legacy, but doesn't hurt)

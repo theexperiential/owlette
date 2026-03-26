@@ -18,6 +18,27 @@ import { TimezoneSelect } from '@/components/TimezoneSelect';
 
 type SettingsSection = 'profile' | 'preferences' | 'notifications' | 'cortex' | 'security' | 'api' | 'danger';
 
+const AVAILABLE_MODELS: Record<'anthropic' | 'openai', { id: string; name: string }[]> = {
+  anthropic: [
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+    { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
+    { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
+    { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
+    { id: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
+    { id: 'claude-sonnet-4-0', name: 'Claude Sonnet 4' },
+    { id: 'claude-opus-4-0', name: 'Claude Opus 4' },
+  ],
+  openai: [
+    { id: 'gpt-4.1', name: 'GPT-4.1' },
+    { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' },
+    { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano' },
+    { id: 'gpt-4o', name: 'GPT-4o' },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
+    { id: 'o3', name: 'o3' },
+    { id: 'o4-mini', name: 'o4 Mini' },
+  ],
+};
+
 const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[] = [
   { id: 'profile', label: 'profile', icon: User },
   { id: 'preferences', label: 'preferences', icon: Bell },
@@ -73,6 +94,8 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [llmConfigured, setLlmConfigured] = useState(false);
   const [llmSaving, setLlmSaving] = useState(false);
   const [showLlmKey, setShowLlmKey] = useState(false);
+  const [llmModels, setLlmModels] = useState<{ id: string; name: string }[]>([]);
+  const [llmModelsLoading, setLlmModelsLoading] = useState(false);
 
   // API key state
   const [apiKeys, setApiKeys] = useState<ApiKeyEntry[]>([]);
@@ -87,6 +110,21 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
+
+  // Fetch available models from provider API
+  const fetchLlmModels = async (provider: string) => {
+    setLlmModelsLoading(true);
+    try {
+      const res = await fetch(`/api/settings/llm-models?provider=${provider}`);
+      if (res.ok) {
+        const data = await res.json();
+        setLlmModels(data.models || []);
+      }
+    } catch {
+      // Fall back to hardcoded list (already in state)
+    }
+    setLlmModelsLoading(false);
+  };
 
   // Navigate to initial section when dialog opens
   useEffect(() => {
@@ -123,6 +161,9 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
           setLlmConfigured(data.configured || false);
           if (data.provider) setLlmProvider(data.provider);
           if (data.model) setLlmModel(data.model);
+          if (data.configured) {
+            fetchLlmModels(data.provider || 'anthropic');
+          }
         })
         .catch(() => {});
 
@@ -511,6 +552,8 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                         onValueChange={(value: 'anthropic' | 'openai') => {
                           setLlmProvider(value);
                           setLlmModel('');
+                          setLlmModels([]);
+                          if (llmConfigured) fetchLlmModels(value);
                         }}
                         disabled={llmSaving}
                       >
@@ -522,6 +565,38 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                           <SelectItem value="openai" className="cursor-pointer hover:bg-muted">OpenAI</SelectItem>
                         </SelectContent>
                       </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="llmModel" className="text-white">model</Label>
+                      {(() => {
+                        const models = llmModels.length > 0 ? llmModels : AVAILABLE_MODELS[llmProvider];
+                        const defaultModel = models[0]?.id || '';
+                        return (
+                          <Select
+                            value={llmModel || defaultModel}
+                            onValueChange={setLlmModel}
+                            disabled={llmSaving || llmModelsLoading}
+                          >
+                            <SelectTrigger id="llmModel" className="border-border bg-background text-white hover:bg-secondary w-64">
+                              {llmModelsLoading ? (
+                                <span className="flex items-center gap-2 text-muted-foreground">
+                                  <Loader2 className="h-3 w-3 animate-spin" /> loading models…
+                                </span>
+                              ) : (
+                                <SelectValue />
+                              )}
+                            </SelectTrigger>
+                            <SelectContent className="border-border bg-secondary text-white max-h-64">
+                              {models.map((m) => (
+                                <SelectItem key={m.id} value={m.id} className="cursor-pointer hover:bg-muted">
+                                  {m.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        );
+                      })()}
                     </div>
 
                     <div className="space-y-2">
@@ -566,13 +641,14 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                               body: JSON.stringify({
                                 provider: llmProvider,
                                 apiKey: llmApiKey,
-                                model: llmModel || undefined,
+                                model: llmModel || (llmModels.length > 0 ? llmModels[0].id : AVAILABLE_MODELS[llmProvider][0].id),
                               }),
                             });
                             if (res.ok) {
                               setLlmConfigured(true);
                               setLlmApiKey('');
                               toast.success('API key saved');
+                              fetchLlmModels(llmProvider);
                             } else {
                               const err = await res.json().catch(() => ({}));
                               toast.error(err.error || 'Failed to save API key');

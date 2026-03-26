@@ -22,6 +22,26 @@ import { getBrowserTimezone } from '@/lib/timeUtils';
 import { toast } from 'sonner';
 import { clearMfaSession } from '@/lib/mfaSession';
 
+// Shallow-compare two arrays by value (for string arrays like userSites)
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+// Shallow-compare two flat objects (for lastMachineIds)
+function shallowEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
 // Helper functions for server-side session management
 const createSessionCookie = async (userId: string, idToken: string): Promise<void> => {
   try {
@@ -211,18 +231,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             async (docSnap) => {
               if (docSnap.exists()) {
                 const userData = docSnap.data();
-                console.log('✅ User document updated, role:', userData.role);
-                console.log('📋 User sites array:', userData.sites);
-                setRole(userData.role || 'user');
-                setUserSites(userData.sites || []);
-                setRequiresMfaSetup(userData.requiresMfaSetup || false);
-                setPasskeyEnrolled(userData.passkeyEnrolled || false);
-                setLastSiteId(userData.lastSiteId || null);
-                setLastMachineIds(userData.lastMachineIds || {});
+                const newRole = userData.role || 'user';
+                const newSites: string[] = userData.sites || [];
+                const newRequiresMfa = userData.requiresMfaSetup || false;
+                const newPasskeyEnrolled = userData.passkeyEnrolled || false;
+                const newLastSiteId = userData.lastSiteId || null;
+                const newLastMachineIds: Record<string, string> = userData.lastMachineIds || {};
+
+                // Only update state when values actually change to avoid unnecessary re-renders
+                setRole(prev => prev === newRole ? prev : newRole);
+                setUserSites(prev => arraysEqual(prev, newSites) ? prev : newSites);
+                setRequiresMfaSetup(prev => prev === newRequiresMfa ? prev : newRequiresMfa);
+                setPasskeyEnrolled(prev => prev === newPasskeyEnrolled ? prev : newPasskeyEnrolled);
+                setLastSiteId(prev => prev === newLastSiteId ? prev : newLastSiteId);
+                setLastMachineIds(prev => shallowEqual(prev, newLastMachineIds) ? prev : newLastMachineIds);
 
                 // Load user preferences (with defaults if missing)
                 const preferences = userData.preferences || {};
-                setUserPreferences({
+                const newPrefs: UserPreferences = {
                   temperatureUnit: preferences.temperatureUnit || 'C',
                   timezone: preferences.timezone || getBrowserTimezone(),
                   healthAlerts: preferences.healthAlerts !== false, // Default: true
@@ -230,6 +256,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   alertCcEmails: preferences.alertCcEmails || [], // Default: []
                   statsExpanded: preferences.statsExpanded ?? true, // Default: expanded
                   processesExpanded: preferences.processesExpanded ?? true, // Default: expanded
+                };
+                setUserPreferences(prev => {
+                  if (
+                    prev.temperatureUnit === newPrefs.temperatureUnit &&
+                    prev.timezone === newPrefs.timezone &&
+                    prev.healthAlerts === newPrefs.healthAlerts &&
+                    prev.processAlerts === newPrefs.processAlerts &&
+                    prev.statsExpanded === newPrefs.statsExpanded &&
+                    prev.processesExpanded === newPrefs.processesExpanded &&
+                    arraysEqual(prev.alertCcEmails, newPrefs.alertCcEmails)
+                  ) return prev;
+                  return newPrefs;
                 });
 
                 setLoading(false);
