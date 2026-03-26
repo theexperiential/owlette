@@ -37,6 +37,7 @@ import { MetricsDetailPanel, type MetricType } from '@/components/charts';
 import ScheduleEditor from '@/components/ScheduleEditor';
 import { MachineCardView } from './components/MachineCardView';
 import { MachineRow, MemoizedTableHeader as ListViewTableHeader } from './components/MachineListView';
+import { AddMachineButton } from './components/AddMachineButton';
 import type { Process } from '@/hooks/useFirestore';
 
 type ViewType = 'card' | 'list';
@@ -663,24 +664,32 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <h3 className="text-lg md:text-xl font-bold text-foreground">machines</h3>
 
-              {/* View Toggle */}
-              <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleViewChange('card')}
-                  className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
-                >
-                  <LayoutGrid className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleViewChange('list')}
-                  className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
-                >
-                  <List className="h-4 w-4" />
-                </Button>
+              <div className="flex items-center gap-2">
+                {/* Add Machine Button */}
+                <AddMachineButton
+                  currentSiteId={currentSiteId}
+                  currentSiteName={currentSite?.name}
+                />
+
+                {/* View Toggle */}
+                <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleViewChange('card')}
+                    className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                  >
+                    <LayoutGrid className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleViewChange('list')}
+                    className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                  >
+                    <List className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -1093,7 +1102,7 @@ export default function DashboardPage() {
               <Button
                 variant="outline"
                 onClick={() => setProcessDialogOpen(false)}
-                className="border-border bg-muted text-foreground hover:bg-input hover:text-foreground cursor-pointer"
+                className="border-border bg-muted text-foreground hover:bg-accent/50 hover:border-foreground/20 hover:text-white cursor-pointer"
               >
                 cancel
               </Button>
@@ -1121,7 +1130,7 @@ export default function DashboardPage() {
             <Button
               variant="outline"
               onClick={() => setDeleteConfirmOpen(false)}
-              className="border-border bg-muted text-foreground hover:bg-input hover:text-foreground cursor-pointer"
+              className="border-border bg-muted text-foreground hover:bg-accent/50 hover:border-foreground/20 hover:text-white cursor-pointer"
             >
               cancel
             </Button>

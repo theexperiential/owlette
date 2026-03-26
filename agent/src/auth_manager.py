@@ -224,6 +224,118 @@ class AuthManager:
             logger.error(f"Unexpected error during token exchange: {e}")
             raise AuthenticationError(f"Unexpected error: {e}")
 
+    def request_device_code(self) -> dict:
+        """
+        Request a new device code (pairing phrase) from the server.
+
+        Returns:
+            dict with keys: pairPhrase, deviceCode, verificationUri, qrUrl, expiresIn, interval
+
+        Raises:
+            AuthenticationError: If request fails
+        """
+        try:
+            url = f"{self.api_base}/agent/auth/device-code"
+            response = requests.post(
+                url,
+                json={
+                    'machineId': self.machine_id,
+                    'version': shared_utils.APP_VERSION,
+                },
+                timeout=30,
+            )
+
+            if response.status_code != 200:
+                try:
+                    error_msg = response.json().get('error', 'Unknown error')
+                except (ValueError, json.JSONDecodeError):
+                    error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                raise AuthenticationError(f"Device code request failed: {error_msg}")
+
+            return response.json()
+
+        except requests.exceptions.RequestException as e:
+            raise AuthenticationError(f"Network error requesting device code: {e}")
+
+    def poll_device_code(self, device_code: str, interval: int = 5, timeout: int = 600) -> bool:
+        """
+        Poll the server for device code authorization.
+
+        Blocks until authorized, expired, or timeout. Designed to be called
+        from configure_site.py during installation.
+
+        Args:
+            device_code: Opaque device code from request_device_code()
+            interval: Polling interval in seconds (from server response)
+            timeout: Maximum time to poll in seconds
+
+        Returns:
+            True if authorized and tokens stored successfully
+
+        Raises:
+            AuthenticationError: If polling fails or code expires
+        """
+        url = f"{self.api_base}/agent/auth/device-code/poll"
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            try:
+                response = requests.post(
+                    url,
+                    json={'deviceCode': device_code},
+                    timeout=15,
+                )
+
+                if response.status_code == 202:
+                    # Still pending — wait and retry
+                    time.sleep(interval)
+                    continue
+
+                if response.status_code == 200:
+                    # Authorized — extract and store tokens
+                    data = response.json()
+                    access_token = data.get('accessToken')
+                    refresh_token = data.get('refreshToken')
+                    expires_in = data.get('expiresIn', 3600)
+                    site_id = data.get('siteId')
+
+                    if not access_token or not refresh_token or not site_id:
+                        raise AuthenticationError("Invalid response (missing tokens)")
+
+                    expiry_timestamp = time.time() + expires_in
+
+                    # Store tokens securely (same as exchange_registration_code)
+                    success_refresh = self.storage.save_refresh_token(refresh_token)
+                    success_access = self.storage.save_access_token(access_token, expiry_timestamp)
+                    success_site = self.storage.save_site_id(site_id)
+
+                    if not success_refresh or not success_access or not success_site:
+                        raise AuthenticationError("Failed to save tokens to encrypted file")
+
+                    self._access_token = access_token
+                    self._token_expiry = expiry_timestamp
+                    self._site_id = site_id
+
+                    logger.info(f"Device code authorized: site={site_id}")
+                    return True
+
+                if response.status_code == 410:
+                    raise AuthenticationError("Pairing phrase expired. Please try again.")
+
+                # Other errors
+                try:
+                    error_msg = response.json().get('error', 'Unknown error')
+                except (ValueError, json.JSONDecodeError):
+                    error_msg = f"HTTP {response.status_code}"
+                raise AuthenticationError(f"Device code poll failed: {error_msg}")
+
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Network error during poll (retrying): {e}")
+                time.sleep(interval)
+                continue
+
+        raise AuthenticationError("Timed out waiting for authorization")
+
     def refresh_access_token(self) -> bool:
         """
         Refresh expired access token using refresh token.

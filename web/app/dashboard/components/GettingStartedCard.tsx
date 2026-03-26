@@ -95,7 +95,7 @@ export function GettingStartedCard({
           </div>
         )}
 
-        {/* Steps 2-5: Only shown after site is created */}
+        {/* Steps: Only shown after site is created */}
         {sites.length > 0 && (
           <>
             <div className="rounded-lg border border-border bg-background p-4">
@@ -126,19 +126,22 @@ export function GettingStartedCard({
             <div className="rounded-lg border border-border bg-background p-4">
               <h3 className="font-semibold text-white">Step 2: Run the Installer</h3>
               <p className="text-sm text-muted-foreground">
-                On that machine, double-click the installer - it will automatically open a browser for authentication
+                A QR code and pairing phrase will appear. Scan the QR code with your phone, or enter the phrase on this dashboard using the <strong className="text-white">+ add machine</strong> button.
               </p>
             </div>
             <div className="rounded-lg border border-border bg-background p-4">
-              <h3 className="font-semibold text-white">Step 3: Authorize Agent</h3>
+              <h3 className="font-semibold text-white">Step 3: Authorize</h3>
               <p className="text-sm text-muted-foreground">
-                Log in and authorize the agent for site <span className="font-mono text-accent-cyan">{currentSiteId}</span>
+                Select site <span className="font-mono text-accent-cyan">{currentSiteId}</span> and tap authorize. The machine will appear on your dashboard within seconds.
               </p>
             </div>
             <div className="rounded-lg border border-border bg-background p-4">
-              <h3 className="font-semibold text-white">Step 4: Done!</h3>
+              <h3 className="font-semibold text-white">Bulk Deploy?</h3>
               <p className="text-sm text-muted-foreground">
-                The installer completes automatically and that machine will appear above within seconds
+                Use the <strong className="text-white">+ add machine</strong> button → &quot;generate code&quot; tab to get a pre-authorized phrase. Then run:
+                <code className="block mt-2 px-3 py-2 bg-muted rounded text-xs font-mono text-foreground">
+                  Owlette-Installer.exe /ADD=your-phrase-here /SILENT
+                </code>
               </p>
             </div>
           </>

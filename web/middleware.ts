@@ -18,7 +18,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Define protected routes
-  const protectedPaths = ['/dashboard', '/deployments', '/admin', '/projects', '/setup'];
+  const protectedPaths = ['/dashboard', '/deployments', '/admin', '/projects', '/setup', '/add'];
 
   // Define public routes (no auth required)
   const publicPaths = ['/', '/login', '/register'];

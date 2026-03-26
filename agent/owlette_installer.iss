@@ -6,28 +6,33 @@
 ;
 ; AUTHENTICATION:
 ; ---------------
-; This installer uses OAuth custom token authentication (no service accounts).
-; During installation, the user is prompted to authenticate via their browser.
-; The agent receives OAuth tokens which are encrypted and stored in
-; C:\ProgramData\Owlette\.tokens.enc (machine-specific encryption key).
+; This installer uses device code / QR pairing authentication.
+; The agent displays a 3-word pairing phrase and QR code. The user
+; authorizes from their phone, the dashboard, or via /ADD= for bulk deploy.
+; Tokens are encrypted in C:\ProgramData\Owlette\.tokens.enc.
 ;
-; OAUTH FLOW:
-; -----------
-; 1. Installer runs configure_site.py (opens browser to owlette.app/setup)
-; 2. User logs in and selects/creates a site
-; 3. Web backend generates registration code (single-use, 24h expiry)
-; 4. Browser sends callback to http://localhost:8765 with site_id + code
-; 5. configure_site.py exchanges code for access token + refresh token
-; 6. Tokens encrypted and stored in C:\ProgramData\Owlette\.tokens.enc (not in config files)
-; 7. Agent uses tokens to authenticate with Firestore REST API
+; PAIRING FLOW:
+; -------------
+; Method 1 (QR Code - interactive):
+;   1. Installer runs configure_site.py (displays QR code + pairing phrase)
+;   2. User scans QR with phone → owlette.app/add → selects site → authorizes
+;   3. Agent polls for authorization, receives tokens
+;
+; Method 2 (Dashboard - manual):
+;   1. Installer displays pairing phrase (e.g., "silver-compass-drift")
+;   2. User enters phrase on dashboard → "+" button → "Enter Code"
+;
+; Method 3 (Silent - bulk deploy):
+;   1. Admin generates phrase on dashboard → "+" button → "Generate Code"
+;   2. Run: Owlette-Installer.exe /ADD=silver-compass-drift /SILENT
 ;
 ; SECURITY:
 ; ---------
-; - No service accounts required (eliminated firebase-credentials.json)
-; - Tokens are user-scoped (tied to user's account)
-; - Tokens can be revoked via web dashboard ("Remove Machine" button)
+; - No browser login required on target machine
+; - Pairing phrases: 3 words, 10-minute expiry, single-use
+; - Tokens can be revoked via web dashboard
 ; - Access token: 1 hour expiry (auto-refreshes)
-; - Refresh token: 30 days expiry (stored encrypted)
+; - Refresh token: never expires (admin-revocable, stored encrypted)
 ;
 ; BUILD PARAMETERS:
 ; -----------------
@@ -145,14 +150,14 @@ Name: "{userstartup}\Owlette Tray"; Filename: "{app}\python\pythonw.exe"; Parame
 ; so we need BOTH path exclusions (for the DLL) and process exclusions (for Python loading the driver)
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue"""; StatusMsg: "Configuring Windows Defender exclusion..."; Flags: runhidden waituntilterminated
 
-; Step 1: Configure site (browser-based OAuth flow) - RUNS FIRST
-; Pass server URL based on /SERVER= command-line parameter
-; Usage: Owlette-Installer-v2.0.0.exe              (uses owlette.app, default)
-;        Owlette-Installer-v2.0.0.exe /SERVER=prod (uses owlette.app)
-;        Owlette-Installer-v2.0.0.exe /SERVER=dev  (uses dev.owlette.app for testing)
+; Step 1: Configure site (device code / QR pairing flow) - RUNS FIRST
+; Usage: Owlette-Installer.exe                                 (interactive: shows QR code)
+;        Owlette-Installer.exe /ADD=silver-compass-drift       (silent: pre-authorized phrase)
+;        Owlette-Installer.exe /SERVER=dev                     (use dev environment)
+;        Owlette-Installer.exe /ADD=silver-compass-drift /SILENT (fully silent bulk deploy)
 ;
 ; Skip if config already exists (upgrade scenario — config/tokens preserved in place)
-Filename: "{app}\python\python.exe"; Parameters: """{app}\agent\src\configure_site.py"" --url ""{code:GetServerEnvironment}"""; Description: "Configure Owlette site"; StatusMsg: "Opening browser for site configuration..."; Flags: waituntilterminated; Check: ShouldConfigureSite
+Filename: "{app}\python\python.exe"; Parameters: """{app}\agent\src\configure_site.py"" {code:GetConfigureArgs}"; Description: "Configure Owlette site"; StatusMsg: "Pairing with Owlette..."; Flags: waituntilterminated; Check: ShouldConfigureSite
 
 ; Step 2: Install and start the Windows service - RUNS SECOND (only after configuration completes)
 Filename: "{app}\scripts\install.bat"; Parameters: "--silent"; Description: "Install Owlette service"; StatusMsg: "Installing Owlette service..."; Flags: runhidden waituntilterminated
@@ -173,18 +178,39 @@ var
   ServiceWasStopped: Boolean;
   InstallSucceeded: Boolean;
 
+function GetConfigureArgs(Param: String): String;
+var
+  ServerParam: String;
+  AddPhrase: String;
+  ApiUrl: String;
+begin
+  // Determine API base URL from /SERVER= parameter
+  ServerParam := ExpandConstant('{param:SERVER|prod}');
+  if ServerParam = 'dev' then
+    ApiUrl := 'https://dev.owlette.app/api'
+  else
+    ApiUrl := 'https://owlette.app/api';
+
+  Result := '--url "' + ApiUrl + '"';
+
+  // Check for /ADD= parameter (pre-authorized pairing phrase for silent install)
+  AddPhrase := ExpandConstant('{param:ADD|}');
+  if AddPhrase <> '' then
+    Result := Result + ' --add "' + AddPhrase + '"';
+
+  Log('Configure args: ' + Result);
+end;
+
+// Legacy function kept for backward compatibility
 function GetServerEnvironment(Param: String): String;
 var
   ServerParam: String;
 begin
-  // Get SERVER parameter from command line (e.g., /SERVER=prod or /SERVER=dev)
-  ServerParam := ExpandConstant('{param:SERVER|prod}');  // Default to 'prod'
-
+  ServerParam := ExpandConstant('{param:SERVER|prod}');
   if ServerParam = 'dev' then
     Result := 'https://dev.owlette.app/setup'
   else
-    Result := 'https://owlette.app/setup';  // Default to production
-
+    Result := 'https://owlette.app/setup';
   Log('Server environment: ' + ServerParam + ' -> ' + Result);
 end;
 
