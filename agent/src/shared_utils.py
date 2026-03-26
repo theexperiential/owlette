@@ -274,6 +274,219 @@ def get_gpu_temperatures():
     # All methods failed
     return []
 
+
+# Network monitoring state for delta calculation
+_prev_net_counters: dict = {}
+_prev_net_time: float = 0.0
+
+
+def get_network_metrics():
+    """
+    Get per-NIC network throughput metrics.
+
+    Computes TX/RX bytes/sec by calculating deltas between consecutive calls.
+    First call returns zeros (no previous baseline to compare against).
+
+    Returns:
+        dict: {
+            'interfaces': {
+                'Ethernet': {
+                    'tx_bps': int,       # TX bytes per second
+                    'rx_bps': int,       # RX bytes per second
+                    'tx_util': float,    # TX as % of link speed (0-100)
+                    'rx_util': float,    # RX as % of link speed (0-100)
+                    'link_speed': int,   # NIC link speed in Mbps
+                },
+                ...
+            }
+        }
+    """
+    global _prev_net_counters, _prev_net_time
+
+    result = {'interfaces': {}}
+    now = time.time()
+
+    try:
+        # Get current counters and NIC stats
+        counters = psutil.net_io_counters(pernic=True)
+        nic_stats = psutil.net_if_stats()
+
+        if not _prev_net_counters or _prev_net_time == 0.0:
+            # First call — store baseline, return zeros
+            _prev_net_counters = {
+                name: {'sent': c.bytes_sent, 'recv': c.bytes_recv}
+                for name, c in counters.items()
+            }
+            _prev_net_time = now
+            return result
+
+        elapsed = now - _prev_net_time
+        if elapsed <= 0:
+            return result
+
+        for name, c in counters.items():
+            # Skip interfaces that are down
+            stats = nic_stats.get(name)
+            if not stats or not stats.isup:
+                continue
+
+            # Skip loopback-like interfaces (no link speed or name contains "Loopback")
+            if stats.speed == 0 or 'loopback' in name.lower():
+                continue
+
+            prev = _prev_net_counters.get(name)
+            if not prev:
+                continue
+
+            # Compute deltas (clamp negative to 0 for counter resets)
+            tx_delta = max(0, c.bytes_sent - prev['sent'])
+            rx_delta = max(0, c.bytes_recv - prev['recv'])
+
+            tx_bps = int(tx_delta / elapsed)
+            rx_bps = int(rx_delta / elapsed)
+
+            # Skip NICs with zero traffic
+            if tx_bps == 0 and rx_bps == 0:
+                continue
+
+            # Compute utilization % relative to link speed
+            link_speed_mbps = stats.speed  # Mbps
+            link_speed_bps = link_speed_mbps * 1_000_000 / 8  # Convert to bytes/sec
+
+            if link_speed_bps > 0:
+                tx_util = round(min((tx_bps / link_speed_bps) * 100, 100.0), 1)
+                rx_util = round(min((rx_bps / link_speed_bps) * 100, 100.0), 1)
+            else:
+                tx_util = 0.0
+                rx_util = 0.0
+
+            result['interfaces'][name] = {
+                'tx_bps': tx_bps,
+                'rx_bps': rx_bps,
+                'tx_util': tx_util,
+                'rx_util': rx_util,
+                'link_speed': link_speed_mbps,
+            }
+
+        # Update stored state for next call
+        _prev_net_counters = {
+            name: {'sent': c.bytes_sent, 'recv': c.bytes_recv}
+            for name, c in counters.items()
+        }
+        _prev_net_time = now
+
+    except Exception as e:
+        logging.error(f"Error collecting network metrics: {e}")
+
+    return result
+
+
+# --- Network quality (ping-based) ---
+_cached_gateway: str = ''
+_cached_gateway_time: float = 0.0
+_cached_ping_result: dict = {}
+_ping_thread_running: bool = False
+
+
+def _detect_default_gateway() -> str:
+    """Detect default gateway IP via ipconfig."""
+    global _cached_gateway, _cached_gateway_time
+    now = time.time()
+    # Cache gateway for 5 minutes
+    if _cached_gateway and now - _cached_gateway_time < 300:
+        return _cached_gateway
+    try:
+        output = subprocess.check_output(
+            ['ipconfig'], text=True, timeout=5, creationflags=0x08000000
+        )
+        for line in output.splitlines():
+            if 'Default Gateway' in line:
+                parts = line.split(':')
+                if len(parts) >= 2:
+                    ip = parts[-1].strip()
+                    if ip and not ip.startswith('fe80'):  # skip IPv6 link-local
+                        _cached_gateway = ip
+                        _cached_gateway_time = now
+                        return ip
+    except Exception:
+        pass
+    return ''
+
+
+def _run_ping(target: str) -> dict:
+    """Run ping and parse results. Returns {latency_ms, packet_loss_pct}."""
+    try:
+        output = subprocess.check_output(
+            ['ping', '-n', '4', '-w', '1000', target],
+            text=True, timeout=10, creationflags=0x08000000
+        )
+        # Parse packet loss: "(0% loss)" or "(25% loss)"
+        packet_loss = 100.0
+        for line in output.splitlines():
+            if '% loss' in line or '% lost' in line:
+                import re
+                m = re.search(r'\((\d+)%', line)
+                if m:
+                    packet_loss = float(m.group(1))
+                break
+
+        # Parse average latency: "Average = 5ms"
+        latency = -1.0
+        for line in output.splitlines():
+            if 'Average' in line or 'average' in line:
+                import re
+                m = re.search(r'(\d+)ms', line)
+                if m:
+                    latency = float(m.group(1))
+                break
+
+        return {
+            'latency_ms': latency if latency >= 0 else None,
+            'packet_loss_pct': packet_loss
+        }
+    except subprocess.TimeoutExpired:
+        return {'latency_ms': None, 'packet_loss_pct': 100.0}
+    except Exception:
+        return {'latency_ms': None, 'packet_loss_pct': None}
+
+
+def _ping_background():
+    """Background thread that runs ping and caches result."""
+    global _cached_ping_result, _ping_thread_running
+    try:
+        gateway = _detect_default_gateway()
+        if not gateway:
+            _cached_ping_result = {'gateway_ip': None, 'latency_ms': None, 'packet_loss_pct': None}
+            return
+        result = _run_ping(gateway)
+        _cached_ping_result = {
+            'gateway_ip': gateway,
+            'latency_ms': result.get('latency_ms'),
+            'packet_loss_pct': result.get('packet_loss_pct'),
+        }
+    except Exception as e:
+        logging.debug(f"Network quality ping failed: {e}")
+        _cached_ping_result = {'gateway_ip': None, 'latency_ms': None, 'packet_loss_pct': None}
+    finally:
+        _ping_thread_running = False
+
+
+def get_network_quality() -> dict:
+    """Get network quality metrics (latency + packet loss via ping to gateway).
+
+    Runs ping in a background thread to avoid blocking the metrics loop (~4s for 4 pings).
+    Returns cached result from previous ping cycle.
+    """
+    global _ping_thread_running
+    if not _ping_thread_running:
+        _ping_thread_running = True
+        t = threading.Thread(target=_ping_background, daemon=True)
+        t.start()
+    return dict(_cached_ping_result) if _cached_ping_result else {
+        'gateway_ip': None, 'latency_ms': None, 'packet_loss_pct': None
+    }
+
+
 def get_path(filename=None):
     """
     Get path relative to the currently executing script (installation directory).
@@ -1421,6 +1634,7 @@ def get_system_metrics_with_config(config, skip_gpu=False):
                 'unit': 'GB'
             },
             'gpu': gpu_metrics,
+            'network': {**get_network_metrics(), **get_network_quality()},
             'processes': processes_data
         }
     except Exception as e:
@@ -1430,5 +1644,6 @@ def get_system_metrics_with_config(config, skip_gpu=False):
             'memory': {'used_gb': 0, 'total_gb': 0, 'percent': 0, 'unit': 'GB'},
             'disk': {'used_gb': 0, 'total_gb': 0, 'percent': 0, 'unit': 'GB'},
             'gpu': {'name': 'N/A', 'usage_percent': 0, 'vram_used_gb': 0, 'vram_total_gb': 0, 'unit': 'GB'},
+            'network': {'interfaces': {}, 'gateway_ip': None, 'latency_ms': None, 'packet_loss_pct': None},
             'processes': {}
         }

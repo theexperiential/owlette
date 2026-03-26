@@ -158,6 +158,12 @@ def _make_tier1_tools(config: dict) -> list:
     async def get_running_processes(args: dict[str, Any]) -> dict[str, Any]:
         return await _execute_direct('get_running_processes', args, config)
 
+    @tool("get_gpu_processes",
+          "Get per-process GPU memory (VRAM) usage — dedicated and shared, sorted by usage. Cross-vendor (NVIDIA, AMD, Intel). Uses Windows Performance Counters (same source as Task Manager).",
+          {})
+    async def get_gpu_processes(args: dict[str, Any]) -> dict[str, Any]:
+        return await _execute_direct('get_gpu_processes', args, config)
+
     @tool("get_network_info",
           "Get network interfaces with IP addresses, netmasks, and link status.",
           {})

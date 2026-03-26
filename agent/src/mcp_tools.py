@@ -11,10 +11,12 @@ No new dependencies — uses existing psutil, subprocess, platform, socket, etc.
 import logging
 import os
 import platform
+import re
 import socket
 import subprocess
 import time
 import json
+from datetime import datetime
 
 import psutil
 
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_ALLOWED_COMMANDS = [
     'ipconfig', 'systeminfo', 'hostname', 'whoami', 'tasklist',
     'netstat', 'ping', 'tracert', 'nslookup', 'dir', 'type',
-    'echo', 'set', 'ver', 'wmic', 'sc', 'net', 'reg', 'nvidia-smi',
+    'echo', 'set', 'ver', 'wmic', 'sc', 'net', 'reg', 'nvidia-smi', 'dxdiag',
     'Get-Process', 'Get-Service', 'Get-EventLog', 'Get-WinEvent',
     'Get-NetAdapter', 'Get-NetIPAddress', 'Get-Disk', 'Get-Volume',
     'Get-ComputerInfo', 'Get-HotFix', 'Test-Connection',
@@ -56,6 +58,7 @@ def execute_tool(tool_name, tool_params, config=None):
         'get_system_info': _get_system_info,
         'get_process_list': _get_process_list,
         'get_running_processes': _get_running_processes,
+        'get_gpu_processes': _get_gpu_processes,
         'get_network_info': _get_network_info,
         'get_disk_usage': _get_disk_usage,
         'get_event_logs': _get_event_logs,
@@ -65,6 +68,7 @@ def execute_tool(tool_name, tool_params, config=None):
         'get_agent_health': _get_agent_health,
         'run_command': _run_command,
         'run_powershell': _run_powershell,
+        'execute_script': _execute_script,
         'read_file': _read_file,
         'write_file': _write_file,
         'list_directory': _list_directory,
@@ -173,7 +177,9 @@ def _get_process_list(params, config):
         result.append({
             'name': proc_name,
             'id': proc_id,
-            'path': proc.get('path', ''),
+            'exe_path': proc.get('exe_path', proc.get('path', '')),
+            'file_path': proc.get('file_path', ''),
+            'cwd': proc.get('cwd', ''),
             'autolaunch': autolaunch,
             'launch_mode': launch_mode,
             'schedules': schedules,
@@ -214,6 +220,146 @@ def _get_running_processes(params, config):
     processes = processes[:limit]
 
     return {'processes': processes, 'count': len(processes), 'total_running': len(list(psutil.process_iter()))}
+
+
+def _get_gpu_processes(params, config):
+    """Get per-process GPU memory (VRAM) usage via Windows Performance Counters.
+
+    Uses the \\GPU Process Memory(*)\\ counters (same data source as Task Manager).
+    This is the only reliable method on Windows WDDM — nvidia-smi and pynvml both
+    return [N/A] or 0 for DirectX/OpenGL graphics processes. Works cross-vendor
+    (NVIDIA, AMD, Intel).
+
+    GPU-level totals (model, total/used VRAM) are enriched via pynvml if available.
+    """
+    # Step 1: Query Windows Performance Counters via PowerShell
+    ps_script = (
+        "$d = (Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage' -EA SilentlyContinue).CounterSamples;"
+        "$s = (Get-Counter '\\GPU Process Memory(*)\\Shared Usage' -EA SilentlyContinue).CounterSamples;"
+        "$r = @{dedicated=@(); shared=@()};"
+        "foreach ($x in $d) { $r.dedicated += @{i=$x.InstanceName; v=$x.CookedValue} };"
+        "foreach ($x in $s) { $r.shared += @{i=$x.InstanceName; v=$x.CookedValue} };"
+        "$r | ConvertTo-Json -Depth 3 -Compress"
+    )
+
+    try:
+        result = subprocess.run(
+            ['powershell', '-NoProfile', '-Command', ps_script],
+            capture_output=True, text=True, timeout=15,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return {'error': f'GPU Performance Counters unavailable: {result.stderr.strip() or "no output"}'}
+
+        data = json.loads(result.stdout)
+    except subprocess.TimeoutExpired:
+        return {'error': 'GPU Performance Counter query timed out.'}
+    except (json.JSONDecodeError, Exception) as e:
+        return {'error': f'Failed to parse GPU counter data: {e}'}
+
+    # Step 2: Parse PIDs and aggregate per-process
+    pid_pattern = re.compile(r'pid_(\d+)_')
+    per_pid = {}  # pid -> {dedicated_bytes, shared_bytes}
+
+    for entry in data.get('dedicated', []):
+        match = pid_pattern.search(entry.get('i', ''))
+        if not match:
+            continue
+        pid = int(match.group(1))
+        per_pid.setdefault(pid, {'dedicated_bytes': 0, 'shared_bytes': 0})
+        per_pid[pid]['dedicated_bytes'] += entry.get('v', 0)
+
+    for entry in data.get('shared', []):
+        match = pid_pattern.search(entry.get('i', ''))
+        if not match:
+            continue
+        pid = int(match.group(1))
+        per_pid.setdefault(pid, {'dedicated_bytes': 0, 'shared_bytes': 0})
+        per_pid[pid]['shared_bytes'] += entry.get('v', 0)
+
+    # Step 3: Resolve process names and build result list
+    processes = []
+    for pid, mem in per_pid.items():
+        dedicated_mb = round(mem['dedicated_bytes'] / (1024 * 1024), 1)
+        shared_mb = round(mem['shared_bytes'] / (1024 * 1024), 1)
+
+        # Skip processes with negligible GPU memory (< 1 MB dedicated)
+        if dedicated_mb < 1 and shared_mb < 1:
+            continue
+
+        proc_name = 'Unknown'
+        try:
+            proc_name = psutil.Process(pid).name()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+        processes.append({
+            'pid': pid,
+            'name': proc_name,
+            'dedicated_gpu_mb': dedicated_mb,
+            'shared_gpu_mb': shared_mb,
+        })
+
+    processes.sort(key=lambda p: p['dedicated_gpu_mb'], reverse=True)
+
+    # Step 4: Enrich with GPU-level totals from pynvml (NVIDIA) or GPUtil
+    gpu_info = _get_gpu_totals()
+
+    return {
+        'processes': processes,
+        'process_count': len(processes),
+        'gpu': gpu_info,
+    }
+
+
+def _get_gpu_totals():
+    """Get GPU-level summary (model, total/used VRAM) from pynvml or GPUtil."""
+    # Try pynvml first (more detailed)
+    try:
+        from pynvml import (
+            nvmlInit, nvmlShutdown, nvmlDeviceGetCount,
+            nvmlDeviceGetHandleByIndex, nvmlDeviceGetName,
+            nvmlDeviceGetMemoryInfo,
+        )
+        nvmlInit()
+        gpu_count = nvmlDeviceGetCount()
+        gpus = []
+        for i in range(gpu_count):
+            handle = nvmlDeviceGetHandleByIndex(i)
+            name = nvmlDeviceGetName(handle)
+            if isinstance(name, bytes):
+                name = name.decode('utf-8')
+            mem = nvmlDeviceGetMemoryInfo(handle)
+            gpus.append({
+                'index': i,
+                'name': name,
+                'vram_total_mb': round(mem.total / (1024 * 1024)),
+                'vram_used_mb': round(mem.used / (1024 * 1024)),
+                'vram_free_mb': round(mem.free / (1024 * 1024)),
+            })
+        nvmlShutdown()
+        return {'gpus': gpus, 'source': 'pynvml'}
+    except Exception:
+        pass
+
+    # Fallback to GPUtil
+    try:
+        import GPUtil
+        gpus_list = GPUtil.getGPUs()
+        gpus = []
+        for g in gpus_list:
+            gpus.append({
+                'index': g.id,
+                'name': g.name,
+                'vram_total_mb': round(g.memoryTotal),
+                'vram_used_mb': round(g.memoryUsed),
+                'vram_free_mb': round(g.memoryFree),
+            })
+        return {'gpus': gpus, 'source': 'GPUtil'}
+    except Exception:
+        pass
+
+    return {'gpus': [], 'source': 'unavailable'}
 
 
 def _get_network_info(params, config):
@@ -298,13 +444,46 @@ def _get_event_logs(params, config):
             events = [events]
 
         formatted = []
+        now = datetime.now()
         for evt in events[:max_events]:
-            formatted.append({
-                'time': evt.get('TimeGenerated', ''),
+            raw_time = evt.get('TimeGenerated', '')
+            timestamp = raw_time
+            time_ago = ''
+            # Parse PowerShell /Date(...)/ format into readable timestamp + relative time
+            if isinstance(raw_time, str) and '/Date(' in raw_time:
+                try:
+                    ms = int(raw_time.split('(')[1].split(')')[0])
+                    dt = datetime.fromtimestamp(ms / 1000)
+                    timestamp = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    delta = now - dt
+                    if delta.days > 365:
+                        years = delta.days // 365
+                        time_ago = f'{years} year{"s" if years != 1 else ""} ago'
+                    elif delta.days > 30:
+                        months = delta.days // 30
+                        time_ago = f'{months} month{"s" if months != 1 else ""} ago'
+                    elif delta.days > 0:
+                        time_ago = f'{delta.days} day{"s" if delta.days != 1 else ""} ago'
+                    elif delta.seconds >= 3600:
+                        hours = delta.seconds // 3600
+                        time_ago = f'{hours} hour{"s" if hours != 1 else ""} ago'
+                    elif delta.seconds >= 60:
+                        mins = delta.seconds // 60
+                        time_ago = f'{mins} minute{"s" if mins != 1 else ""} ago'
+                    else:
+                        time_ago = 'just now'
+                except (ValueError, IndexError):
+                    pass  # Keep raw timestamp if parsing fails
+
+            entry = {
+                'time': timestamp,
                 'level': evt.get('EntryType', ''),
                 'source': evt.get('Source', ''),
                 'message': (evt.get('Message', '') or '')[:500],
-            })
+            }
+            if time_ago:
+                entry['time_ago'] = time_ago
+            formatted.append(entry)
 
         return {'log_name': log_name, 'events': formatted, 'count': len(formatted)}
 
@@ -315,7 +494,7 @@ def _get_event_logs(params, config):
 
 
 def _get_service_status(params, config):
-    """Get Windows service status by name."""
+    """Get Windows service status by name, including start type for proper interpretation."""
     service_name = params.get('service_name')
     if not service_name:
         return {'error': 'service_name parameter is required'}
@@ -335,12 +514,47 @@ def _get_service_status(params, config):
             win32service.SERVICE_PAUSED: 'paused',
         }
 
-        return {
+        # Query the service start type for proper context
+        start_type = 'unknown'
+        try:
+            scm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
+            try:
+                svc = win32service.OpenService(scm, service_name, win32service.SERVICE_QUERY_CONFIG)
+                try:
+                    cfg = win32service.QueryServiceConfig(svc)
+                    start_type_map = {
+                        win32service.SERVICE_AUTO_START: 'automatic',
+                        win32service.SERVICE_BOOT_START: 'boot',
+                        win32service.SERVICE_DEMAND_START: 'demand_start',
+                        win32service.SERVICE_DISABLED: 'disabled',
+                        win32service.SERVICE_SYSTEM_START: 'system',
+                    }
+                    start_type = start_type_map.get(cfg[1], 'unknown')
+                finally:
+                    win32service.CloseServiceHandle(svc)
+            finally:
+                win32service.CloseServiceHandle(scm)
+        except Exception:
+            pass  # Non-critical — status is still valid without start type
+
+        result = {
             'service_name': service_name,
             'status': state_map.get(status[1], 'unknown'),
+            'start_type': start_type,
             'service_type': status[0],
             'current_state': status[1],
         }
+
+        # Add interpretive note for demand-start services that are stopped (normal idle state)
+        if result['status'] == 'stopped' and start_type == 'demand_start':
+            result['note'] = (
+                'This is a demand-start service — it starts only when needed and stops when idle. '
+                'A "stopped" status is normal and does NOT mean the service is disabled or broken. '
+                'For Windows Update (wuauserv), "stopped" means no update check or install is '
+                'currently in progress; updates are still enabled unless the start type is "disabled".'
+            )
+
+        return result
     except Exception as e:
         return {'error': f'Failed to query service {service_name}: {e}'}
 
@@ -506,6 +720,58 @@ def _run_powershell(params, config):
         return {'error': f'PowerShell command timed out after {SUBPROCESS_TIMEOUT} seconds'}
 
 
+def _execute_script(params, config):
+    """Execute a PowerShell script with no command restrictions.
+
+    Uses Popen with a job object so the entire process tree (including
+    child processes spawned by Start-Job, Start-Process, etc.) is killed
+    on timeout instead of leaving orphans.
+    """
+    script = params.get('script', '').strip()
+    if not script:
+        return {'error': 'script parameter is required'}
+
+    timeout = params.get('timeout_seconds', 120)
+    cwd = params.get('working_directory', None)
+
+    if cwd and not os.path.isdir(cwd):
+        return {'error': f'Working directory not found: {cwd}'}
+
+    proc = subprocess.Popen(
+        ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        cwd=cwd,
+        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+    )
+
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+
+        return {
+            'script': script[:500],
+            'exit_code': proc.returncode,
+            'stdout': stdout[:MAX_OUTPUT_SIZE],
+            'stderr': stderr[:MAX_OUTPUT_SIZE],
+            'timed_out': False,
+        }
+    except subprocess.TimeoutExpired:
+        # Kill the entire process tree, not just the root
+        _kill_process_tree(proc.pid)
+        # Drain any remaining output
+        stdout, stderr = proc.communicate(timeout=5)
+
+        return {
+            'script': script[:500],
+            'stdout': (stdout or '')[:MAX_OUTPUT_SIZE],
+            'stderr': (stderr or '')[:MAX_OUTPUT_SIZE],
+            'error': f'Script timed out after {timeout} seconds — all child processes have been terminated',
+            'timed_out': True,
+        }
+    except Exception:
+        _kill_process_tree(proc.pid)
+        raise
+
+
 def _read_file(params, config):
     """Read file contents with size limit."""
     file_path = params.get('path', '').strip()
@@ -599,6 +865,26 @@ def _list_directory(params, config):
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _kill_process_tree(pid):
+    """Kill a process and all its descendants using psutil."""
+    try:
+        parent = psutil.Process(pid)
+        children = parent.children(recursive=True)
+        # Kill children first (bottom-up), then the parent
+        for child in reversed(children):
+            try:
+                child.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        parent.kill()
+        # Wait briefly for processes to actually terminate
+        psutil.wait_procs(children + [parent], timeout=5)
+    except psutil.NoSuchProcess:
+        pass  # Already dead
+    except Exception as e:
+        logger.warning(f"Failed to kill process tree (PID {pid}): {e}")
 
 
 def _get_allowed_commands(config):

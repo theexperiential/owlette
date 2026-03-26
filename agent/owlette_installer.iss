@@ -113,8 +113,9 @@ Source: "build\installer_package\tools\*"; DestDir: "{app}\tools"; Flags: ignore
 ; Scripts
 Source: "build\installer_package\scripts\*"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
-; README and documentation
+; README, documentation, and Cortex constitution
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "CLAUDE.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]

@@ -678,6 +678,7 @@ class FirebaseClient:
                 'metrics.memory': metrics.get('memory', {}),
                 'metrics.disk': metrics.get('disk', {}),
                 'metrics.gpu': metrics.get('gpu', {}),
+                'metrics.network': metrics.get('network', {}),
                 'metrics.timestamp': SERVER_TIMESTAMP,
                 'metrics.processes': processes_data
             })
@@ -1146,11 +1147,30 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to clear reboot pending: {e}")
 
+    def get_reboot_schedule(self):
+        """Read the rebootSchedule field from the machine document.
+
+        Returns:
+            dict with 'enabled' and 'schedules' keys, or None if not set.
+        """
+        if not self.connected or not self.db:
+            return None
+
+        try:
+            machine_path = f"sites/{self.site_id}/machines/{self.machine_id}"
+            machine_doc = self.db.get_document(machine_path)
+            if machine_doc:
+                return machine_doc.get('rebootSchedule')
+            return None
+        except Exception as e:
+            self.logger.debug(f"Could not read reboot schedule: {e}")
+            return None
+
     # =========================================================================
     # Event Logging
     # =========================================================================
 
-    def log_event(self, action: str, level: str, process_name: str = None, details: str = None, user_id: str = None):
+    def log_event(self, action: str, level: str, process_name: str = None, details: str = None, user_id: str = None, **kwargs):
         """
         Log a process event to Firestore for dashboard monitoring.
         Non-blocking - failures are silently ignored to prevent logging from crashing the app.
@@ -1183,6 +1203,8 @@ class FirebaseClient:
                 event_data['details'] = details
             if user_id:
                 event_data['userId'] = user_id
+            if kwargs.get('screenshot_url'):
+                event_data['screenshotUrl'] = kwargs['screenshot_url']
 
             import uuid
             doc_id = str(uuid.uuid4())

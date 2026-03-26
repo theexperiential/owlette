@@ -143,6 +143,12 @@ if __name__ == '__main__':
             self.active_installations = {}
             self.install_locks = {}
             self.manual_overrides = {}
+            self._cached_site_timezone = None
+            self._last_scheduled_reboot_time = None
+            self._reboot_schedule_counter = 0
+            self._live_view_active = False
+            self._live_view_stop_time = 0
+            self.cortex_pid = None
 
             # Initialize Firebase client
             self.firebase_client = None

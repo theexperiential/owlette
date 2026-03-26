@@ -3085,11 +3085,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 import json as _json
                 user_session_result = self._try_user_session_tool(tool_name, tool_params)
                 if user_session_result is not None:
+                    self._log_cortex_tool(tool_name, tool_params, user_session_result)
                     return _json.dumps(user_session_result)
 
                 import mcp_tools
                 config = shared_utils.read_config()
                 result = mcp_tools.execute_tool(tool_name, tool_params, config)
+
+                self._log_cortex_tool(tool_name, tool_params, result)
 
                 # MCP tool results are dicts — serialize to JSON string for Firestore
                 return _json.dumps(result)
@@ -3454,6 +3457,49 @@ with open(out_path, 'wb') as f:
         except Exception as e:
             logging.debug(f"Crash screenshot failed: {e}")
             return None
+
+    # Tier 3 tools that warrant site-log entries on success
+    _TIER3_TOOLS = frozenset([
+        'run_command', 'run_powershell', 'execute_script', 'run_python',
+        'write_file', 'reboot_machine', 'shutdown_machine',
+    ])
+
+    def _log_cortex_tool(self, tool_name, tool_params, result):
+        """Log Cortex tool calls to site logs — always on error, Tier 3 on success."""
+        try:
+            has_error = isinstance(result, dict) and 'error' in result
+            if has_error:
+                detail_parts = [f'Tool {tool_name} failed']
+                error_msg = result['error']
+                detail_parts.append(error_msg)
+                self.firebase_client.log_event(
+                    action='command_executed',
+                    level='error',
+                    details=' — '.join(detail_parts),
+                )
+            elif tool_name in self._TIER3_TOOLS:
+                # Log privileged tool executions for audit trail
+                detail = f'Cortex: {tool_name}'
+                if tool_name in ('run_command', 'run_powershell') and 'command' in tool_params:
+                    cmd = tool_params['command']
+                    if len(cmd) > 100:
+                        cmd = cmd[:100] + '...'
+                    detail += f' — {cmd}'
+                elif tool_name == 'execute_script' and 'script' in tool_params:
+                    script = tool_params['script']
+                    first_line = script.split('\n', 1)[0]
+                    if len(first_line) > 100:
+                        first_line = first_line[:100] + '...'
+                    detail += f' — {first_line}'
+                elif tool_name == 'write_file' and 'path' in tool_params:
+                    detail += f' — {tool_params["path"]}'
+                self.firebase_client.log_event(
+                    action='command_executed',
+                    level='info',
+                    details=detail,
+                )
+        except Exception as e:
+            logging.debug(f"Failed to log Cortex tool event: {e}")
 
     def _handle_capture_screenshot(self, command_data):
         """Handle screenshot capture via user-session execution."""
