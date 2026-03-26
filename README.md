@@ -6,7 +6,7 @@
 
 ### _Cloud-Connected Process Management & Remote Deployment System_
 
-**Version 2.3.1** - A modern, cloud-connected process management system for Windows that combines:
+**Version 2.4.0** - A modern, cloud-connected process management system for Windows that combines:
 
 - **Windows Service** - Monitors and auto-restarts applications
 - **Web Dashboard** - Real-time monitoring and control from anywhere
