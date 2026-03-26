@@ -18,6 +18,17 @@ import { db } from '@/lib/firebase';
 import type { TimeRange } from '@/components/charts';
 
 /**
+ * Per-NIC sample in history (abbreviated keys)
+ */
+interface NicSample {
+  i: string;   // interface name
+  tx: number;  // TX bytes/sec
+  rx: number;  // RX bytes/sec
+  tu: number;  // TX utilization % of link speed
+  ru: number;  // RX utilization % of link speed
+}
+
+/**
  * Raw sample from Firestore (abbreviated keys)
  */
 export interface MetricsSample {
@@ -28,10 +39,12 @@ export interface MetricsSample {
   g?: number;  // gpu percent (optional)
   ct?: number; // cpu temperature (optional)
   gt?: number; // gpu temperature (optional)
+  n?: NicSample[]; // per-NIC network metrics (optional)
 }
 
 /**
  * Chart-ready data point (expanded keys, millisecond timestamps)
+ * Network fields are dynamic: e.g., Ethernet_tx, Ethernet_rx, Ethernet_tx_util, Ethernet_rx_util
  */
 export interface ChartDataPoint {
   time: number;     // timestamp in milliseconds
@@ -41,6 +54,7 @@ export interface ChartDataPoint {
   gpu?: number | null;
   cpuTemp?: number | null;
   gpuTemp?: number | null;
+  [key: string]: number | null | undefined; // dynamic network keys
 }
 
 interface UseHistoricalMetricsResult {
@@ -220,7 +234,7 @@ export function useHistoricalMetrics(
         // Filter samples within time range and convert to chart format
         for (const sample of samples as MetricsSample[]) {
           if (sample.t >= startTimestamp) {
-            allSamples.push({
+            const point: ChartDataPoint = {
               time: sample.t * 1000, // Convert to milliseconds
               cpu: sample.c,
               memory: sample.m,
@@ -228,7 +242,19 @@ export function useHistoricalMetrics(
               gpu: sample.g,
               cpuTemp: sample.ct,
               gpuTemp: sample.gt,
-            });
+            };
+
+            // Expand per-NIC network data into flat chart keys
+            if (sample.n) {
+              for (const nic of sample.n) {
+                point[`${nic.i}_tx`] = nic.tx;
+                point[`${nic.i}_rx`] = nic.rx;
+                point[`${nic.i}_tx_util`] = nic.tu;
+                point[`${nic.i}_rx_util`] = nic.ru;
+              }
+            }
+
+            allSamples.push(point);
           }
         }
       });
