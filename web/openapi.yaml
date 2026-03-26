@@ -1,0 +1,1500 @@
+openapi: 3.1.0
+info:
+  title: Owlette API
+  version: 2.3.1
+  description: |
+    The Owlette API lets you programmatically manage your fleet of Windows machines,
+    deploy software, monitor processes, execute tools, and integrate with external systems
+    via webhooks.
+
+    ## Authentication
+
+    All API requests require authentication via an **API key**. You can create API keys
+    from the Owlette dashboard under **Settings → API Keys**, or via the
+    [Create API Key](#tag/API-Keys/operation/createApiKey) endpoint.
+
+    Include your API key in every request using one of these methods:
+
+    - **Header** (recommended): `x-api-key: owk_your_key_here`
+    - **Query parameter**: `?api_key=owk_your_key_here`
+
+    API keys are scoped to your user account and inherit your site access permissions.
+
+    ## Rate Limiting
+
+    All endpoints are rate-limited. When you exceed the limit, you'll receive a `429 Too Many Requests`
+    response with a `Retry-After` header indicating how long to wait.
+
+    Default limit: **300 requests/hour** per API key.
+
+    Response headers on every request:
+    - `X-RateLimit-Limit` — Maximum requests per window
+    - `X-RateLimit-Remaining` — Requests remaining in current window
+    - `X-RateLimit-Reset` — Unix timestamp when the window resets
+
+    ## Errors
+
+    All errors return a JSON object with an `error` field:
+
+    ```json
+    { "error": "Description of what went wrong" }
+    ```
+
+    Common HTTP status codes:
+    | Code | Meaning |
+    |------|---------|
+    | 400  | Bad request — missing or invalid parameters |
+    | 401  | Unauthorized — missing or invalid API key |
+    | 403  | Forbidden — no access to this site or resource |
+    | 404  | Not found |
+    | 409  | Conflict — resource is in an incompatible state |
+    | 429  | Rate limit exceeded |
+    | 500  | Internal server error |
+
+    ## Base URLs
+
+    | Environment | URL |
+    |-------------|-----|
+    | Production  | `https://owlette.app` |
+    | Development | `https://dev.owlette.app` |
+  license:
+    name: AGPL-3.0
+    url: https://www.gnu.org/licenses/agpl-3.0.html
+  contact:
+    name: Owlette Support
+
+servers:
+  - url: https://owlette.app
+    description: Production
+  - url: https://dev.owlette.app
+    description: Development
+
+security:
+  - apiKey: []
+
+tags:
+  - name: Sites
+    description: List sites accessible to your account
+  - name: Machines
+    description: Monitor and manage machines in your fleet
+  - name: Processes
+    description: Configure and control monitored processes
+  - name: Commands
+    description: Send commands to machines (restart, reboot, etc.)
+  - name: Deployments
+    description: Deploy software to machines
+  - name: Webhooks
+    description: Subscribe to events via HTTP callbacks
+  - name: API Keys
+    description: Manage your API keys
+  - name: Logs
+    description: Query activity logs
+  - name: Screenshots
+    description: Manage machine screenshots
+  - name: Software Inventory
+    description: Query installed software on machines
+  - name: Installer
+    description: Agent installer version information
+  - name: Tools
+    description: Execute MCP tools on machines
+  - name: Cortex
+    description: AI-powered chat and tool execution
+
+paths:
+  # ──────────────────────────────────────────────────────────────────────
+  # Sites
+  # ──────────────────────────────────────────────────────────────────────
+  /api/admin/sites:
+    get:
+      operationId: listSites
+      tags: [Sites]
+      summary: List sites
+      description: Returns all sites accessible to the authenticated user.
+      responses:
+        '200':
+          description: List of sites
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sites:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Site'
+              example:
+                sites:
+                  - id: nyc-office
+                    name: NYC Office
+                    machineCount: 5
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Machines
+  # ──────────────────────────────────────────────────────────────────────
+  /api/admin/machines:
+    get:
+      operationId: listMachines
+      tags: [Machines]
+      summary: List machines
+      description: Returns all machines in a site with online status.
+      parameters:
+        - $ref: '#/components/parameters/SiteIdQuery'
+      responses:
+        '200':
+          description: List of machines
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  machines:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Machine'
+              example:
+                machines:
+                  - id: DESKTOP-ABC123
+                    name: DESKTOP-ABC123
+                    online: true
+                    lastHeartbeat: "2026-03-21T10:30:00Z"
+                    agentVersion: "2.3.1"
+                    os: Windows 11 Pro
+
+  /api/admin/machines/status:
+    get:
+      operationId: getMachineStatus
+      tags: [Machines]
+      summary: Get machine status
+      description: Returns detailed machine info including metrics, processes, health, and agent version.
+      parameters:
+        - $ref: '#/components/parameters/SiteIdQuery'
+        - $ref: '#/components/parameters/MachineIdQuery'
+      responses:
+        '200':
+          description: Detailed machine status
+
+  /api/admin/machines/update:
+    post:
+      operationId: triggerAgentUpdate
+      tags: [Machines]
+      summary: Trigger agent self-update
+      description: Sends an `update_owlette` command to a machine to trigger a self-update to a specified version.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId, machineId, version, installer_url]
+              properties:
+                siteId:
+                  type: string
+                machineId:
+                  type: string
+                version:
+                  type: string
+                  description: Target agent version
+                  example: "2.3.1"
+                installer_url:
+                  type: string
+                  format: uri
+                  description: HTTPS URL to the installer EXE
+            example:
+              siteId: nyc-office
+              machineId: DESKTOP-ABC123
+              version: "2.3.1"
+              installer_url: "https://firebasestorage.googleapis.com/.../Owlette-Installer-v2.3.1.exe"
+      responses:
+        '200':
+          description: Update command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Commands
+  # ──────────────────────────────────────────────────────────────────────
+  /api/admin/commands/send:
+    post:
+      operationId: sendCommand
+      tags: [Commands]
+      summary: Send command to machine
+      description: |
+        Sends a command to a machine via Firestore. When `wait: true`, polls for completion
+        and returns the result inline.
+
+        **Available commands:** `restart_process`, `kill_process`, `start_process`,
+        `reboot_machine`, `shutdown_machine`, `update_owlette`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId, machineId, command]
+              properties:
+                siteId:
+                  type: string
+                machineId:
+                  type: string
+                command:
+                  type: string
+                  enum: [restart_process, kill_process, start_process, reboot_machine, shutdown_machine, update_owlette]
+                data:
+                  type: object
+                  description: 'Command-specific parameters (e.g. {"process_name": "TouchDesigner"})'
+                wait:
+                  type: boolean
+                  default: true
+                  description: If true, poll for completion and return the result
+                timeout:
+                  type: integer
+                  minimum: 30
+                  maximum: 120
+                  default: 30
+                  description: Poll timeout in seconds (only used when `wait` is true)
+            example:
+              siteId: nyc-office
+              machineId: DESKTOP-ABC123
+              command: restart_process
+              data:
+                process_name: TouchDesigner
+              wait: true
+              timeout: 30
+      responses:
+        '200':
+          description: Command sent (or completed if `wait` was true)
+
+  /api/admin/commands/clear:
+    delete:
+      operationId: clearCommands
+      tags: [Commands]
+      summary: Clear pending commands
+      description: Clears all pending commands for a machine.
+      parameters:
+        - $ref: '#/components/parameters/SiteIdQuery'
+        - $ref: '#/components/parameters/MachineIdQuery'
+      responses:
+        '200':
+          description: Commands cleared
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Processes
+  # ──────────────────────────────────────────────────────────────────────
+  /api/admin/processes:
+    get:
+      operationId: listProcesses
+      tags: [Processes]
+      summary: List processes
+      description: Returns all configured processes for a machine, including live status.
+      parameters:
+        - $ref: '#/components/parameters/SiteIdQuery'
+        - $ref: '#/components/parameters/MachineIdQuery'
+      responses:
+        '200':
+          description: List of processes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  processes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Process'
+              example:
+                processes:
+                  - id: proc_abc123
+                    name: TouchDesigner
+                    exe_path: "C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe"
+                    launch_mode: always
+                    status: running
+
+    post:
+      operationId: createProcess
+      tags: [Processes]
+      summary: Add process
+      description: Adds a new monitored process configuration for a machine.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId, machineId, name, exe_path]
+              properties:
+                siteId:
+                  type: string
+                machineId:
+                  type: string
+                name:
+                  type: string
+                  description: Display name of the process
+                exe_path:
+                  type: string
+                  description: Full path to the executable on the target machine
+            example:
+              siteId: nyc-office
+              machineId: DESKTOP-ABC123
+              name: TouchDesigner
+              exe_path: "C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe"
+      responses:
+        '200':
+          description: Process created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  processId:
+                    type: string
+              example:
+                processId: proc_abc123
+
+  /api/admin/processes/{processId}:
+    patch:
+      operationId: updateProcess
+      tags: [Processes]
+      summary: Update process
+      description: Updates fields on an existing process configuration.
+      parameters:
+        - $ref: '#/components/parameters/ProcessIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId, machineId]
+              properties:
+                siteId:
+                  type: string
+                machineId:
+                  type: string
+                name:
+                  type: string
+                exe_path:
+                  type: string
+            example:
+              siteId: nyc-office
+              machineId: DESKTOP-ABC123
+              name: TouchDesigner Updated
+              exe_path: "C:\\Program Files\\Derivative\\TouchDesigner099\\bin\\TouchDesigner099.exe"
+      responses:
+        '200':
+          description: Process updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+    delete:
+      operationId: deleteProcess
+      tags: [Processes]
+      summary: Delete process
+      description: Removes a process configuration from a machine.
+      parameters:
+        - $ref: '#/components/parameters/ProcessIdPath'
+        - $ref: '#/components/parameters/SiteIdQuery'
+        - $ref: '#/components/parameters/MachineIdQuery'
+      responses:
+        '200':
+          description: Process deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  /api/admin/processes/{processId}/launch-mode:
+    patch:
+      operationId: updateLaunchMode
+      tags: [Processes]
+      summary: Update launch mode
+      description: |
+        Sets the launch mode and optional schedule for a process.
+
+        **Launch modes:**
+        - `off` — Process is not managed
+        - `always` — Process is kept running at all times
+        - `scheduled` — Process runs on a schedule
+      parameters:
+        - $ref: '#/components/parameters/ProcessIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId, machineId, mode]
+              properties:
+                siteId:
+                  type: string
+                machineId:
+                  type: string
+                mode:
+                  type: string
+                  enum: [off, always, scheduled]
+                schedules:
+                  type: array
+                  description: Required when `mode` is `scheduled`
+                  items:
+                    $ref: '#/components/schemas/Schedule'
+            example:
+              siteId: nyc-office
+              machineId: DESKTOP-ABC123
+              mode: scheduled
+              schedules:
+                - days: [mon, tue, wed, thu, fri]
+                  startTime: "08:00"
+                  endTime: "18:00"
+      responses:
+        '200':
+          description: Launch mode updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Deployments
+  # ──────────────────────────────────────────────────────────────────────
+  /api/admin/deployments:
+    get:
+      operationId: listDeployments
+      tags: [Deployments]
+      summary: List deployments
+      description: Returns deployments for a site, ordered by creation date (newest first).
+      parameters:
+        - $ref: '#/components/parameters/SiteIdQuery'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+          description: Maximum number of deployments to return
+      responses:
+        '200':
+          description: List of deployments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deployments:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DeploymentSummary'
+              example:
+                deployments:
+                  - id: deploy-1699564800000
+                    name: TouchDesigner 2023
+                    installer_name: TouchDesigner_099_2023.exe
+                    status: completed
+                    createdAt: 1699564800000
+
+    post:
+      operationId: createDeployment
+      tags: [Deployments]
+      summary: Create deployment
+      description: |
+        Creates a new software deployment targeting specified machines.
+        The `installer_url` must use HTTPS.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId, name, installer_name, installer_url, machineIds]
+              properties:
+                siteId:
+                  type: string
+                name:
+                  type: string
+                  description: Display name for the deployment
+                installer_name:
+                  type: string
+                  description: Filename of the installer
+                installer_url:
+                  type: string
+                  format: uri
+                  description: HTTPS URL to download the installer
+                silent_flags:
+                  type: string
+                  description: Silent install command-line flags
+                  example: "/VERYSILENT /NORESTART"
+                verify_path:
+                  type: string
+                  description: Path to verify after installation
+                machineIds:
+                  type: array
+                  items:
+                    type: string
+                  description: Target machine IDs
+            example:
+              siteId: nyc-office
+              name: TouchDesigner 2023
+              installer_name: TouchDesigner_099_2023.exe
+              installer_url: "https://storage.googleapis.com/.../TouchDesigner_099_2023.exe"
+              silent_flags: "/VERYSILENT /NORESTART"
+              verify_path: "C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe"
+              machineIds: [DESKTOP-ABC123, DESKTOP-DEF456]
+      responses:
+        '200':
+          description: Deployment created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  deploymentId:
+                    type: string
+              example:
+                success: true
+                deploymentId: deploy-1699564800000
+        '400':
+          description: Invalid request (e.g. non-HTTPS URL)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/admin/deployments/{deploymentId}:
+    get:
+      operationId: getDeployment
+      tags: [Deployments]
+      summary: Get deployment details
+      description: Returns full deployment details including per-machine status.
+      parameters:
+        - $ref: '#/components/parameters/DeploymentIdPath'
+        - $ref: '#/components/parameters/SiteIdQuery'
+      responses:
+        '200':
+          description: Deployment details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  deployment:
+                    $ref: '#/components/schemas/Deployment'
+              example:
+                success: true
+                deployment:
+                  id: deploy-1699564800000
+                  name: TouchDesigner 2023
+                  installer_name: TouchDesigner_099_2023.exe
+                  installer_url: "https://storage.googleapis.com/.../TouchDesigner_099_2023.exe"
+                  silent_flags: "/VERYSILENT /NORESTART"
+                  verify_path: "C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe"
+                  status: in_progress
+                  createdAt: 1699564800000
+                  targets:
+                    - machineId: DESKTOP-ABC123
+                      status: completed
+                      completedAt: 1699564850000
+                    - machineId: DESKTOP-DEF456
+                      status: downloading
+                      progress: 45
+
+    delete:
+      operationId: deleteDeployment
+      tags: [Deployments]
+      summary: Delete deployment
+      description: |
+        Deletes a deployment record. Only allowed for deployments in terminal states
+        (`completed`, `failed`, `partial`, `cancelled`, `uninstalled`).
+      parameters:
+        - $ref: '#/components/parameters/DeploymentIdPath'
+        - $ref: '#/components/parameters/SiteIdQuery'
+      responses:
+        '200':
+          description: Deployment deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  /api/admin/deployments/{deploymentId}/cancel:
+    post:
+      operationId: cancelDeployment
+      tags: [Deployments]
+      summary: Cancel deployment for a machine
+      description: |
+        Cancels a running deployment for a specific machine. The target must be in a
+        cancellable state (`pending`, `downloading`, or `installing`).
+      parameters:
+        - $ref: '#/components/parameters/DeploymentIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId, machineId, installer_name]
+              properties:
+                siteId:
+                  type: string
+                machineId:
+                  type: string
+                installer_name:
+                  type: string
+            example:
+              siteId: nyc-office
+              machineId: DESKTOP-ABC123
+              installer_name: TouchDesigner_099_2023.exe
+      responses:
+        '200':
+          description: Cancellation command sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  commandId:
+                    type: string
+        '400':
+          description: Machine is not a target of this deployment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Target is already in a terminal state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Webhooks
+  # ──────────────────────────────────────────────────────────────────────
+  /api/admin/webhooks:
+    get:
+      operationId: listWebhooks
+      tags: [Webhooks]
+      summary: List webhooks
+      description: Returns all configured webhooks for a site.
+      parameters:
+        - $ref: '#/components/parameters/SiteIdQuery'
+      responses:
+        '200':
+          description: List of webhooks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhooks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Webhook'
+              example:
+                webhooks:
+                  - id: wh_abc123
+                    name: Slack Alerts
+                    url: "https://hooks.slack.com/services/..."
+                    events: [process_crash, machine_offline]
+                    createdAt: "2026-03-20T10:00:00Z"
+
+    post:
+      operationId: createWebhook
+      tags: [Webhooks]
+      summary: Create webhook
+      description: |
+        Registers a new webhook endpoint for a site. Returns an HMAC `secret`
+        for verifying payload signatures — this secret is shown **once** at creation time.
+
+        **Available events:** `process_crash`, `machine_offline`, `connection_failure`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId, name, url, events]
+              properties:
+                siteId:
+                  type: string
+                name:
+                  type: string
+                  description: Display name for the webhook
+                url:
+                  type: string
+                  format: uri
+                  description: HTTPS endpoint URL to receive webhook payloads
+                events:
+                  type: array
+                  items:
+                    type: string
+                    enum: [process_crash, machine_offline, connection_failure]
+            example:
+              siteId: nyc-office
+              name: Slack Alerts
+              url: "https://hooks.slack.com/services/T00/B00/xxx"
+              events: [process_crash, machine_offline]
+      responses:
+        '200':
+          description: Webhook created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhookId:
+                    type: string
+                  secret:
+                    type: string
+                    description: HMAC secret for verifying payloads (shown once)
+              example:
+                webhookId: wh_abc123
+                secret: "whsec_..."
+
+    delete:
+      operationId: deleteWebhook
+      tags: [Webhooks]
+      summary: Delete webhook
+      description: Removes a webhook configuration.
+      parameters:
+        - $ref: '#/components/parameters/SiteIdQuery'
+        - name: webhookId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Webhook deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  /api/webhooks/test:
+    post:
+      operationId: testWebhook
+      tags: [Webhooks]
+      summary: Test webhook
+      description: Sends a test payload to a configured webhook to verify connectivity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [webhookId, siteId]
+              properties:
+                webhookId:
+                  type: string
+                siteId:
+                  type: string
+            example:
+              webhookId: wh_abc123
+              siteId: nyc-office
+      responses:
+        '200':
+          description: Test payload sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  status:
+                    type: integer
+                    description: HTTP status code returned by the webhook endpoint
+              example:
+                success: true
+                status: 200
+
+  # ──────────────────────────────────────────────────────────────────────
+  # API Keys
+  # ──────────────────────────────────────────────────────────────────────
+  /api/admin/keys:
+    get:
+      operationId: listApiKeys
+      tags: [API Keys]
+      summary: List API keys
+      description: Returns metadata for all API keys belonging to the authenticated user. Raw keys are never returned.
+      responses:
+        '200':
+          description: List of API keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApiKeyMetadata'
+              example:
+                keys:
+                  - id: key_abc123
+                    name: CI/CD Pipeline
+                    keyPrefix: "owk_abc1...."
+                    createdAt: "2026-03-20T10:00:00Z"
+                    lastUsedAt: "2026-03-21T14:30:00Z"
+
+  /api/admin/keys/create:
+    post:
+      operationId: createApiKey
+      tags: [API Keys]
+      summary: Create API key
+      description: |
+        Generates a new API key. The full key is returned **once** at creation time
+        and cannot be retrieved again — store it securely.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: A descriptive name for the key
+            example:
+              name: CI/CD Pipeline
+      responses:
+        '200':
+          description: API key created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key:
+                    type: string
+                    description: The full API key (shown once)
+                  keyId:
+                    type: string
+              example:
+                key: "owk_abc123def456ghi789..."
+                keyId: key_abc123
+
+  /api/admin/keys/revoke:
+    delete:
+      operationId: revokeApiKey
+      tags: [API Keys]
+      summary: Revoke API key
+      description: Permanently revokes an API key. This action cannot be undone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keyId]
+              properties:
+                keyId:
+                  type: string
+            example:
+              keyId: key_abc123
+      responses:
+        '200':
+          description: API key revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Logs
+  # ──────────────────────────────────────────────────────────────────────
+  /api/admin/logs:
+    get:
+      operationId: getLogs
+      tags: [Logs]
+      summary: Get activity logs
+      description: Returns activity logs for a site with optional filters.
+      parameters:
+        - $ref: '#/components/parameters/SiteIdQuery'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+          description: Maximum number of log entries to return
+        - name: action
+          in: query
+          schema:
+            type: string
+          description: Filter by action type (e.g. `process_crashed`, `machine_offline`)
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum: [info, warn, error]
+          description: Filter by log level
+        - name: machineId
+          in: query
+          schema:
+            type: string
+          description: Filter by machine ID
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Only return logs after this timestamp (ISO 8601)
+      responses:
+        '200':
+          description: Activity logs
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Screenshots
+  # ──────────────────────────────────────────────────────────────────────
+  /api/admin/screenshots:
+    delete:
+      operationId: deleteScreenshots
+      tags: [Screenshots]
+      summary: Delete screenshots
+      description: |
+        Deletes screenshot history for a machine. If `screenshotId` is provided,
+        deletes only that screenshot. Otherwise deletes all screenshot history.
+      parameters:
+        - $ref: '#/components/parameters/SiteIdQuery'
+        - $ref: '#/components/parameters/MachineIdQuery'
+        - name: screenshotId
+          in: query
+          schema:
+            type: string
+          description: Delete a single screenshot by ID. If omitted, deletes all history.
+      responses:
+        '200':
+          description: Screenshots deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  deleted:
+                    type: integer
+                    description: Number of screenshots deleted
+              example:
+                success: true
+                deleted: 5
+        '404':
+          description: Screenshot not found (when `screenshotId` is provided)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Software Inventory
+  # ──────────────────────────────────────────────────────────────────────
+  /api/admin/software-inventory:
+    get:
+      operationId: getSoftwareInventory
+      tags: [Software Inventory]
+      summary: Get installed software
+      description: Returns the installed software list for a machine.
+      parameters:
+        - $ref: '#/components/parameters/SiteIdQuery'
+        - $ref: '#/components/parameters/MachineIdQuery'
+      responses:
+        '200':
+          description: Installed software list
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Installer
+  # ──────────────────────────────────────────────────────────────────────
+  /api/admin/installer/latest:
+    get:
+      operationId: getLatestInstaller
+      tags: [Installer]
+      summary: Get latest installer
+      description: Returns metadata for the latest available agent installer.
+      responses:
+        '200':
+          description: Latest installer metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallerVersion'
+              example:
+                version: "2.3.1"
+                fileName: Owlette-Installer-v2.3.1.exe
+                downloadUrl: "https://storage.googleapis.com/..."
+                releaseNotes: Bug fixes and performance improvements
+                uploadedAt: "2026-03-20T10:00:00Z"
+
+  /api/admin/installer/versions:
+    get:
+      operationId: listInstallerVersions
+      tags: [Installer]
+      summary: List installer versions
+      description: Returns all available installer versions.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+          description: Maximum number of versions to return
+      responses:
+        '200':
+          description: List of installer versions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/InstallerVersion'
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Tools
+  # ──────────────────────────────────────────────────────────────────────
+  /api/admin/tools:
+    get:
+      operationId: listTools
+      tags: [Tools]
+      summary: List MCP tools
+      description: |
+        Returns all available MCP tools with their schemas.
+        Use the `tier` parameter to filter by maximum tool tier.
+      parameters:
+        - name: tier
+          in: query
+          schema:
+            type: integer
+            enum: [1, 2, 3]
+            default: 3
+          description: |
+            Maximum tier to include. Tier 1 = read-only, Tier 2 = actions, Tier 3 = advanced.
+      responses:
+        '200':
+          description: List of available tools
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/McpTool'
+                  count:
+                    type: integer
+              example:
+                tools:
+                  - name: get_system_info
+                    description: Returns system information (CPU, memory, disk, OS)
+                    tier: 1
+                    parameters:
+                      type: object
+                      properties: {}
+                      required: []
+                count: 15
+
+  /api/admin/tools/execute:
+    post:
+      operationId: executeTool
+      tags: [Tools]
+      summary: Execute MCP tool
+      description: |
+        Executes an MCP tool on a target machine. The tool name must be registered
+        in the tool registry. When `wait: true` (default), polls for the result.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId, machineId, tool]
+              properties:
+                siteId:
+                  type: string
+                machineId:
+                  type: string
+                tool:
+                  type: string
+                  description: Tool name (must exist in the tool registry)
+                params:
+                  type: object
+                  description: Tool parameters (validated against the tool's schema)
+                  default: {}
+                wait:
+                  type: boolean
+                  default: true
+                  description: If true, poll for completion and return the result
+                timeout:
+                  type: integer
+                  minimum: 1
+                  maximum: 120
+                  default: 30
+                  description: Poll timeout in seconds
+            example:
+              siteId: nyc-office
+              machineId: DESKTOP-ABC123
+              tool: get_system_info
+              params: {}
+              wait: true
+              timeout: 30
+      responses:
+        '200':
+          description: Tool executed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  commandId:
+                    type: string
+                  tool:
+                    type: string
+                  tier:
+                    type: integer
+                  result:
+                    type: object
+                    description: Tool result (only present when `wait` is true and tool completed)
+                  status:
+                    type: string
+                    description: '"timeout" if the tool did not complete within the timeout period'
+        '400':
+          description: Unknown tool or missing required parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Cortex
+  # ──────────────────────────────────────────────────────────────────────
+  /api/cortex:
+    post:
+      operationId: cortexChat
+      tags: [Cortex]
+      summary: Chat with Cortex
+      description: |
+        Streaming chat endpoint with AI-powered tool execution. Cortex can inspect
+        machines, run diagnostics, restart processes, and more — all through natural
+        language.
+
+        **Modes:**
+        - **Single-machine mode**: Set `machineId` to a specific machine ID. If a local
+          Cortex agent is running on that machine, it handles the request locally.
+        - **Site-wide mode**: Set `machineId` to `__site__` to query across all machines
+          in the site using server-side LLM.
+
+        The response is streamed via **Server-Sent Events (SSE)** using the Vercel AI SDK
+        protocol. Each event contains either text chunks or tool call/result data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages, siteId, chatId]
+              properties:
+                messages:
+                  type: array
+                  description: Conversation history in OpenAI-compatible format
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role:
+                        type: string
+                        enum: [user, assistant, system]
+                      content:
+                        description: Message content (string or array of text/image parts)
+                siteId:
+                  type: string
+                machineId:
+                  type: string
+                  description: Target machine ID, or `__site__` for site-wide mode
+                machineName:
+                  type: string
+                  description: Display name of the target machine
+                chatId:
+                  type: string
+                  description: Unique chat session ID
+            example:
+              messages:
+                - role: user
+                  content: "How's the system doing?"
+              siteId: nyc-office
+              machineId: DESKTOP-ABC123
+              machineName: Gallery PC 1
+              chatId: chat-123
+      responses:
+        '200':
+          description: SSE stream with AI response
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-Sent Events stream (Vercel AI SDK protocol)
+        '400':
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+# ════════════════════════════════════════════════════════════════════════
+# Components
+# ════════════════════════════════════════════════════════════════════════
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      name: x-api-key
+      in: header
+      description: |
+        API key prefixed with `owk_`. Create keys from the dashboard or
+        via the Create API Key endpoint.
+
+  parameters:
+    SiteIdQuery:
+      name: siteId
+      in: query
+      required: true
+      schema:
+        type: string
+      description: The site ID
+
+    MachineIdQuery:
+      name: machineId
+      in: query
+      required: true
+      schema:
+        type: string
+      description: The machine ID
+
+    ProcessIdPath:
+      name: processId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The process configuration ID
+
+    DeploymentIdPath:
+      name: deploymentId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The deployment ID
+
+  schemas:
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      example:
+        error: Description of what went wrong
+
+    Site:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        machineCount:
+          type: integer
+
+    Machine:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        online:
+          type: boolean
+        lastHeartbeat:
+          type: string
+          format: date-time
+        agentVersion:
+          type: string
+        os:
+          type: string
+
+    Process:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        exe_path:
+          type: string
+        launch_mode:
+          type: string
+          enum: [off, always, scheduled]
+        status:
+          type: string
+
+    Schedule:
+      type: object
+      properties:
+        days:
+          type: array
+          items:
+            type: string
+            enum: [mon, tue, wed, thu, fri, sat, sun]
+        startTime:
+          type: string
+          description: 24-hour time (HH:MM)
+          example: "08:00"
+        endTime:
+          type: string
+          description: 24-hour time (HH:MM)
+          example: "18:00"
+
+    DeploymentSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        installer_name:
+          type: string
+        status:
+          type: string
+          enum: [pending, in_progress, completed, failed, partial, cancelled, uninstalled]
+        createdAt:
+          type: integer
+          description: Unix timestamp in milliseconds
+
+    Deployment:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        installer_name:
+          type: string
+        installer_url:
+          type: string
+          format: uri
+        silent_flags:
+          type: string
+        verify_path:
+          type: string
+        status:
+          type: string
+          enum: [pending, in_progress, completed, failed, partial, cancelled, uninstalled]
+        createdAt:
+          type: integer
+          description: Unix timestamp in milliseconds
+        targets:
+          type: array
+          items:
+            type: object
+            properties:
+              machineId:
+                type: string
+              status:
+                type: string
+              progress:
+                type: integer
+                description: Download progress percentage (0-100)
+              completedAt:
+                type: integer
+                description: Unix timestamp in milliseconds
+
+    Webhook:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+            enum: [process_crash, machine_offline, connection_failure]
+        createdAt:
+          type: string
+          format: date-time
+
+    ApiKeyMetadata:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        keyPrefix:
+          type: string
+          description: First few characters of the key for identification
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+
+    InstallerVersion:
+      type: object
+      properties:
+        version:
+          type: string
+        fileName:
+          type: string
+        downloadUrl:
+          type: string
+          format: uri
+        releaseNotes:
+          type: string
+        isLatest:
+          type: boolean
+        uploadedAt:
+          type: string
+          format: date-time
+
+    McpTool:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        tier:
+          type: integer
+          enum: [1, 2, 3]
+          description: "1 = read-only, 2 = actions, 3 = advanced"
+        parameters:
+          type: object
+          description: JSON Schema for tool parameters

@@ -1,5 +1,10 @@
 # REST API Reference
 
+> **Note:** This document has been superseded by the interactive API documentation at
+> [`/docs/api`](https://owlette.app/docs/api) (or `localhost:3000/docs/api` in development).
+> The interactive docs are powered by OpenAPI 3.1 and include a "Try It" panel for testing
+> endpoints live. This file is retained as a reference but may become stale.
+
 All HTTP endpoints exposed by the Owlette web dashboard. 51 route files under `web/app/api/`, producing **~65 distinct method+path combinations**.
 
 ---
