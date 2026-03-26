@@ -158,6 +158,12 @@ export default function InstallerVersionsPage() {
               </div>
             </div>
             <div className="text-right">
+              <p className="text-sm text-muted-foreground">Uploaded</p>
+              <p className="text-lg text-foreground font-medium">
+                {formatDate(latestVersion.release_date)}
+              </p>
+            </div>
+            <div className="text-right">
               <p className="text-sm text-muted-foreground">File Size</p>
               <p className="text-lg text-foreground font-medium">
                 {formatFileSize(latestVersion.file_size)}
