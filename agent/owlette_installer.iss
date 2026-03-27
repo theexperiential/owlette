@@ -151,17 +151,9 @@ Name: "{userstartup}\Owlette Tray"; Filename: "{app}\python\pythonw.exe"; Parame
 ; so we need BOTH path exclusions (for the DLL) and process exclusions (for Python loading the driver)
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue"""; StatusMsg: "Configuring Windows Defender exclusion..."; Flags: runhidden waituntilterminated
 
-; Step 1: Configure site (device code / QR pairing flow) - RUNS FIRST
-; Usage: Owlette-Installer.exe                                 (interactive: shows QR code)
-;        Owlette-Installer.exe /ADD=silver-compass-drift       (silent: pre-authorized phrase)
-;        Owlette-Installer.exe /SERVER=dev                     (use dev environment)
-;        Owlette-Installer.exe /ADD=silver-compass-drift /SILENT (fully silent bulk deploy)
-;
-; Skip if config already exists (upgrade scenario — config/tokens preserved in place)
-Filename: "{app}\python\python.exe"; Parameters: """{app}\agent\src\configure_site.py"" {code:GetConfigureArgs}"; Description: "Configure Owlette site"; StatusMsg: "Pairing with Owlette..."; Flags: waituntilterminated; Check: ShouldConfigureSite
-
-; Step 2: Install and start the Windows service - RUNS SECOND (only after configuration completes)
-Filename: "{app}\scripts\install.bat"; Parameters: "--silent"; Description: "Install Owlette service"; StatusMsg: "Installing Owlette service..."; Flags: runhidden waituntilterminated
+; Steps 1-2 (pairing + service install) are handled in [Code] CurStepChanged()
+; to support exit code checking and conditional execution.
+; See RunPairingAndInstallService() below.
 
 ; Note: Tray icon launches automatically on login via startup folder (see [Icons] section above)
 ; No need to launch it here - it will start on next login or can be launched manually from Start Menu
@@ -178,6 +170,7 @@ Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remo
 var
   ServiceWasStopped: Boolean;
   InstallSucceeded: Boolean;
+  PairingSucceeded: Boolean;
 
 function GetConfigureArgs(Param: String): String;
 var
@@ -258,11 +251,48 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+  PythonExe: String;
+  ConfigArgs: String;
+  InstallBat: String;
 begin
   if CurStep = ssPostInstall then
   begin
     InstallSucceeded := True;
-    Log('Owlette installation completed successfully');
+    PairingSucceeded := True;  // Assume success (upgrade scenario skips pairing)
+
+    // Step 1: Run pairing flow (if needed)
+    if ShouldConfigureSite() then
+    begin
+      PythonExe := ExpandConstant('{app}\python\python.exe');
+      ConfigArgs := '"' + ExpandConstant('{app}\agent\src\configure_site.py') + '" ' + GetConfigureArgs('');
+
+      Log('Running pairing: ' + PythonExe + ' ' + ConfigArgs);
+      WizardForm.StatusLabel.Caption := 'Pairing with Owlette...';
+
+      Exec(PythonExe, ConfigArgs, '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
+      Log('Pairing exit code: ' + IntToStr(ResultCode));
+
+      if ResultCode <> 0 then
+      begin
+        PairingSucceeded := False;
+        Log('Pairing failed - skipping service install');
+        MsgBox('Agent pairing was not completed. The Owlette service will not start until you run the pairing flow again.' + #13#10 + #13#10 + 'You can re-pair by running:' + #13#10 + 'C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\configure_site.py', mbInformation, MB_OK);
+      end;
+    end;
+
+    // Step 2: Install service (only if pairing succeeded or was skipped)
+    if PairingSucceeded then
+    begin
+      InstallBat := ExpandConstant('{app}\scripts\install.bat');
+      WizardForm.StatusLabel.Caption := 'Installing Owlette service...';
+      Log('Installing service: ' + InstallBat);
+      Exec(InstallBat, '--silent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Log('Service install exit code: ' + IntToStr(ResultCode));
+    end;
+
+    Log('Owlette installation completed' + ' (pairing: ' + IntToStr(Ord(PairingSucceeded)) + ')');
     Log('User data stored in: ' + ExpandConstant('{commonappdata}\Owlette'));
   end;
 end;

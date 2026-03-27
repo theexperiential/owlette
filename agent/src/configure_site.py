@@ -41,6 +41,39 @@ CONFIG_PATH = Path(shared_utils.get_data_path('config/config.json'))
 # Default timeout for polling (10 minutes, matching server-side expiry)
 TIMEOUT_SECONDS = 600
 
+# ANSI color codes (Windows 10+ supports these natively)
+CYAN = '\033[96m'
+GREEN = '\033[92m'
+RED = '\033[91m'
+DIM = '\033[2m'
+BOLD = '\033[1m'
+RESET = '\033[0m'
+
+
+def _enable_ansi_colors():
+    """Enable ANSI escape code processing on Windows."""
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            # Enable ENABLE_VIRTUAL_TERMINAL_PROCESSING
+            kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+        except Exception:
+            pass
+
+
+def _open_browser(url: str) -> bool:
+    """Open URL in browser without spawning visible console windows."""
+    try:
+        if sys.platform == 'win32':
+            os.startfile(url)
+            return True
+        else:
+            import webbrowser
+            return webbrowser.open(url)
+    except Exception:
+        return False
+
 
 def _generate_qr_ascii(url: str) -> str:
     """
@@ -166,10 +199,11 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
     api_base = api_base or default_api_base
 
     if show_prompts:
-        print("=" * 60)
-        print("Owlette Site Configuration")
-        print("=" * 60)
-        print(f"  API: {api_base}")
+        _enable_ansi_colors()
+        print(f"{DIM}{'=' * 60}{RESET}")
+        print(f"{BOLD}owlette site configuration{RESET}")
+        print(f"{DIM}{'=' * 60}{RESET}")
+        print(f"  {DIM}api: {api_base}{RESET}")
         print()
 
     # Check if already configured
@@ -178,9 +212,9 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
             with open(CONFIG_PATH, 'r') as f:
                 config = json.load(f)
                 if config.get('firebase', {}).get('enabled') and config.get('firebase', {}).get('site_id'):
-                    print(f"Already configured with site: {config['firebase']['site_id']}")
+                    print(f"  already configured with site: {CYAN}{config['firebase']['site_id']}{RESET}")
                     print()
-                    response = input("Reconfigure? (y/N): ").strip().lower()
+                    response = input("  reconfigure? (y/N): ").strip().lower()
                     if response != 'y':
                         return (False, "User cancelled reconfiguration", None)
         except Exception:
@@ -285,11 +319,11 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                         if show_prompts:
                             print()
                             print()
-                            print("=" * 60)
-                            print("Configuration Complete!")
-                            print("=" * 60)
-                            print(f"  Site ID: {site_id}")
-                            print(f"  Config: {CONFIG_PATH}")
+                            print(f"{DIM}{'=' * 60}{RESET}")
+                            print(f"  {GREEN}{BOLD}configuration complete!{RESET}")
+                            print(f"{DIM}{'=' * 60}{RESET}")
+                            print(f"  site: {CYAN}{site_id}{RESET}")
+                            print(f"  {DIM}config: {CONFIG_PATH}{RESET}")
                             print()
 
                         return (True, "Configuration successful", site_id)
@@ -314,7 +348,7 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
         else:
             # Interactive mode: request device code and display QR
             if show_prompts:
-                print("Requesting pairing code from server...")
+                print(f"  {DIM}requesting pairing code from server...{RESET}")
                 print()
 
             device_data = auth_manager.request_device_code()
@@ -333,18 +367,25 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                     print(qr_ascii)
                     print()
 
-                print("=" * 60)
+                print(f"{DIM}{'=' * 60}{RESET}")
                 print()
-                print(f"  Pairing phrase:  {pair_phrase}")
+                print(f"  pairing phrase:  {BOLD}{CYAN}{pair_phrase}{RESET}")
                 print()
-                print(f"  Scan the QR code above, or visit:")
-                print(f"  {verification_uri}")
+                print(f"  {DIM}scan the QR code above, or visit:{RESET}")
+                print(f"  {CYAN}{verification_uri}{RESET}")
                 print()
-                print(f"  Expires in {expires_in // 60} minutes")
+                print(f"  {DIM}expires in {expires_in // 60} minutes{RESET}")
                 print()
-                print("=" * 60)
+                print(f"{DIM}{'=' * 60}{RESET}")
                 print()
-                print("Waiting for authorization...")
+
+                # Auto-open browser with phrase pre-filled
+                if _open_browser(qr_url):
+                    print(f"  {DIM}browser opened — select a site and authorize{RESET}")
+                else:
+                    print(f"  {DIM}couldn't open browser — visit the url above manually{RESET}")
+                print()
+                print(f"  waiting for authorization...")
 
             # Poll for authorization
             success = auth_manager.poll_device_code(
@@ -361,11 +402,11 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
 
                 if show_prompts:
                     print()
-                    print("=" * 60)
-                    print("Configuration Complete!")
-                    print("=" * 60)
-                    print(f"  Site ID: {site_id}")
-                    print(f"  Config: {CONFIG_PATH}")
+                    print(f"{DIM}{'=' * 60}{RESET}")
+                    print(f"  {GREEN}{BOLD}configuration complete!{RESET}")
+                    print(f"{DIM}{'=' * 60}{RESET}")
+                    print(f"  site: {CYAN}{site_id}{RESET}")
+                    print(f"  {DIM}config: {CONFIG_PATH}{RESET}")
                     print()
 
                 return (True, "Configuration successful", site_id)
@@ -376,17 +417,17 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
         error_msg = str(e)
         if show_prompts:
             print()
-            print("=" * 60)
-            print("Configuration Failed")
-            print("=" * 60)
-            print(f"  Error: {error_msg}")
+            print(f"{DIM}{'=' * 60}{RESET}")
+            print(f"  {RED}{BOLD}configuration failed{RESET}")
+            print(f"{DIM}{'=' * 60}{RESET}")
+            print(f"  {RED}{error_msg}{RESET}")
             print()
         return (False, error_msg, None)
 
     except KeyboardInterrupt:
         if show_prompts:
             print()
-            print("Cancelled by user")
+            print(f"  {DIM}cancelled by user{RESET}")
         return (False, "Cancelled by user", None)
 
     except Exception as e:
