@@ -53,14 +53,15 @@
 #ifndef MyAppVersion
   #define MyAppVersion GetEnv("OWLETTE_VERSION")
   #if MyAppVersion == ""
-    #define MyAppVersion "2.0.3"
-    #pragma message "WARNING: Using fallback version 2.0.3 - VERSION file not found or OWLETTE_VERSION not set"
+    #define MyAppVersion "2.4.0"
+    #pragma message "WARNING: Using fallback version 2.4.0 - VERSION file not found or OWLETTE_VERSION not set"
   #endif
 #endif
 
 #define MyAppName "Owlette"
-#define MyAppPublisher "Owlette Project"
-#define MyAppURL "https://github.com/yourusername/owlette"
+#define MyAppPublisher "The Experiential Company"
+#define MyAppURL "https://owlette.app"
+#define MyAppRepoURL "https://github.com/theexperiential/owlette"
 #define MyAppExeName "pythonw.exe"
 
 [Setup]
