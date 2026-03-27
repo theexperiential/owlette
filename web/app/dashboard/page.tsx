@@ -1102,7 +1102,7 @@ export default function DashboardPage() {
               <Button
                 variant="outline"
                 onClick={() => setProcessDialogOpen(false)}
-                className="border-border bg-muted text-foreground hover:bg-accent/50 hover:border-foreground/20 hover:text-white cursor-pointer"
+                className="border-border bg-muted text-foreground hover:bg-accent hover:border-foreground/30 hover:text-white cursor-pointer"
               >
                 cancel
               </Button>
@@ -1130,7 +1130,7 @@ export default function DashboardPage() {
             <Button
               variant="outline"
               onClick={() => setDeleteConfirmOpen(false)}
-              className="border-border bg-muted text-foreground hover:bg-accent/50 hover:border-foreground/20 hover:text-white cursor-pointer"
+              className="border-border bg-muted text-foreground hover:bg-accent hover:border-foreground/30 hover:text-white cursor-pointer"
             >
               cancel
             </Button>

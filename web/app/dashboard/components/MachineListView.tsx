@@ -165,10 +165,10 @@ export function MachineRow({
         </TableCell>
         <TableCell className="w-[72px] p-2">
           <Badge className={`text-xs select-none ${
-            machine.rebooting ? 'bg-amber-600 hover:bg-amber-700' :
-            machine.shuttingDown ? 'bg-amber-600 hover:bg-amber-700' :
-            machine.online ? 'bg-green-600 hover:bg-green-700' :
-            'bg-red-600 hover:bg-red-700'
+            machine.rebooting ? 'bg-amber-600' :
+            machine.shuttingDown ? 'bg-amber-600' :
+            machine.online ? 'bg-green-600' :
+            'bg-red-600'
           }`}>
             {machine.rebooting ? 'rebooting...' :
              machine.shuttingDown ? 'shutting down...' :
@@ -378,7 +378,7 @@ export function MachineRow({
                             <div className="flex items-center gap-2 mb-1">
                               <Cog className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                               <span className="text-white font-medium truncate select-text">{process.name}</span>
-                              <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted hover:bg-muted' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-600 text-slate-200' : process.status === 'LAUNCH_FAILED' || process.status === 'STOPPED' || process.status === 'KILLED' ? 'bg-red-600 hover:bg-red-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
+                              <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted' : process.status === 'RUNNING' ? 'bg-green-600' : process.status === 'INACTIVE' ? 'bg-slate-600 text-slate-200' : process.status === 'LAUNCH_FAILED' || process.status === 'STOPPED' || process.status === 'KILLED' ? 'bg-red-600' : 'bg-yellow-600'}`}>
                                 {(!machine.online ? 'unknown' : process.status === 'LAUNCH_FAILED' ? 'failed' : process.status).toLowerCase()}
                               </Badge>
                             </div>
@@ -458,7 +458,7 @@ export function MachineRow({
                                     variant="outline"
                                     size="sm"
                                     onClick={() => onEditProcess(process)}
-                                    className="bg-card border-border text-foreground hover:bg-muted hover:border-border hover:text-white cursor-pointer"
+                                    className="bg-card border-border text-foreground hover:bg-muted hover:border-foreground/40 cursor-pointer"
                                   >
                                     <Pencil className="h-3 w-3 mr-1" />
                                     edit
@@ -467,7 +467,7 @@ export function MachineRow({
                                     variant="outline"
                                     size="sm"
                                     onClick={() => onKillProcess(process.id, process.name)}
-                                    className="bg-card border-border text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="bg-card border-border text-red-400 hover:bg-red-950 hover:border-red-700 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                                     disabled={process.status !== 'RUNNING'}
                                   >
                                     <Square className="h-3 w-3 mr-1" />
@@ -531,7 +531,7 @@ export function MachineRow({
                                     variant="outline"
                                     size="sm"
                                     onClick={() => onKillProcess(process.id, process.name)}
-                                    className="bg-card border-border text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
+                                    className="bg-card border-border text-red-400 hover:bg-red-950 hover:border-red-700 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
                                     disabled={process.status !== 'RUNNING'}
                                     title="kill"
                                   >
@@ -551,7 +551,7 @@ export function MachineRow({
                       variant="outline"
                       size="sm"
                       onClick={onCreateProcess}
-                      className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/15 hover:border-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
+                      className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
                     >
                       <Plus className="h-3 w-3 mr-1" />
                       new process
@@ -565,7 +565,7 @@ export function MachineRow({
                     variant="outline"
                     size="sm"
                     onClick={onCreateProcess}
-                    className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/15 hover:border-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
+                    className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
                   >
                     <Plus className="h-3 w-3 mr-1" />
                     new process

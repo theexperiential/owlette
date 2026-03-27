@@ -261,7 +261,7 @@ export function ProcessDialog({
             <Button
               variant="outline"
               onClick={onClose}
-              className="border-border bg-card text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
+              className="border-border bg-card text-foreground hover:bg-accent hover:border-foreground/30 hover:text-white cursor-pointer"
             >
               cancel
             </Button>
