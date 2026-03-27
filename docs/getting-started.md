@@ -34,11 +34,12 @@ Sites organize your machines — think of them as locations, departments, or pro
 
 1. Run the installer **as Administrator** on your target machine
 2. Follow the setup wizard
-3. After installation, the agent GUI opens — click **"Join Site"**
-4. Your browser opens the Owlette dashboard for OAuth authentication
-5. Log in (if not already) and authorize the agent
-6. The agent receives secure OAuth credentials automatically — no codes to copy
-7. Done — the agent starts monitoring immediately
+3. A console window displays a **pairing phrase** (3 random words) and your browser opens automatically
+4. Select a site and click **"Authorize"**
+5. The agent receives credentials and connects — done
+
+!!! tip "Bulk deployment"
+    For deploying to many machines, use the `/ADD=` flag with a pre-authorized phrase from the dashboard. See [Installation → Silent Install](agent/installation.md#method-2-silent-install-with-add-bulk-deployment).
 
 ---
 

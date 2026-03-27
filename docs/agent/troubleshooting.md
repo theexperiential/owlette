@@ -84,14 +84,15 @@ python owlette_service.py debug
 
 **Fix**:
 
-1. Re-run the registration process:
-    - Generate a new registration code from the dashboard
-    - Open the GUI → Click "Join Site"
-    - Enter the new code
-2. Or delete the encrypted token file and re-register:
+1. Delete the token file and re-pair:
     ```
-    del C:\ProgramData\Owlette\agent\config\.tokens.enc
+    del C:\ProgramData\Owlette\.tokens.enc
     ```
+2. Run the pairing flow:
+    ```
+    C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\configure_site.py
+    ```
+3. Authorize on the web page that opens, then restart the service
 
 ---
 

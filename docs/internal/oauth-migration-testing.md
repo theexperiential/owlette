@@ -1,8 +1,17 @@
 # OAuth Authentication Migration - Testing Guide
 
+!!! warning "Deprecated"
+    This document is from the v2.1.0 OAuth browser flow, which was **replaced in v2.4.1** with the device code / QR pairing flow. The browser-based OAuth, localhost:8765 callback, and Windows Credential Manager references below are no longer accurate.
+
+    **Current auth flow:** See [Agent Installation](../agent/installation.md#how-pairing-works).
+
+    **Current token storage:** `.tokens.enc` (Fernet-encrypted, machine-bound key), not Windows Credential Manager.
+
+    **Current installer flags:** `/ADD=phrase` for silent pairing, `/SERVER=dev` for dev environment.
+
 **Version:** 2.1.0
 **Last Updated:** 2025-11-03
-**Status:** Ready for Testing
+**Status:** Archived (replaced by device code pairing in v2.4.1)
 
 ---
 

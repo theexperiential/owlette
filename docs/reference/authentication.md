@@ -43,25 +43,31 @@ Sessions use [iron-session](https://github.com/vvo/iron-session) — encrypted, 
 
 ---
 
-## Agent Authentication (OAuth)
+## Agent Authentication (Device Code Pairing)
 
-Agents authenticate using a custom two-token system that avoids storing Firebase service account keys on client machines.
+Agents authenticate using a device code flow with a two-token system. No Firebase service account keys are stored on client machines.
 
-### Registration Flow
+### Pairing Flow
 
 ```
-1. Admin generates registration code (POST /api/agent/generate-installer)
-   └── Code stored in agent_tokens/{code} with 24h expiry
+1. Agent requests pairing phrase (POST /api/agent/auth/device-code)
+   └── Server generates 3-word phrase (e.g., "silver-compass-drift")
+       stored in device_codes/{phrase} with 10-minute expiry
 
-2. Agent exchanges code for tokens (POST /api/agent/auth/exchange)
+2. User authorizes (POST /api/agent/auth/device-code/authorize)
+   ├── Via browser auto-opened on the machine (owlette.app/add)
+   ├── Via dashboard "+" button → "Enter Code" tab
+   └── Via /ADD=phrase installer flag (pre-authorized, no interaction)
+
+3. Agent polls for authorization (POST /api/agent/auth/device-code/poll)
    ├── Server creates Firebase custom token with claims:
    │     {role: "agent", site_id: "...", machine_id: "..."}
    ├── Server exchanges custom token for ID token (Firebase Auth REST)
    ├── Server generates refresh token (random, hashed in Firestore)
-   └── Returns: customToken + idToken + refreshToken
+   └── Returns: accessToken + refreshToken + siteId
 
-3. Agent stores tokens
-   ├── ID token: used for Firestore REST API calls (1-hour expiry)
+4. Agent stores tokens
+   ├── Access token: used for Firestore REST API calls (1-hour expiry)
    └── Refresh token: encrypted locally with Fernet AES (machine-bound key)
 ```
 
@@ -88,7 +94,7 @@ Agent detects token nearing expiry (~5 min before)
 | **Refresh token in Firestore** | Stored as SHA-256 hash (not plaintext) |
 | **ID token lifetime** | 1 hour (Firebase custom token) |
 | **Machine binding** | Refresh validates `machineId` matches — prevents token theft |
-| **Token collections** | `agent_tokens` and `agent_refresh_tokens` are server-side only (no client access) |
+| **Token collections** | `device_codes`, `agent_tokens`, and `agent_refresh_tokens` are server-side only (no client access) |
 
 ### Custom Token Claims
 

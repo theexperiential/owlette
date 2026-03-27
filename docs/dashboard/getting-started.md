@@ -55,9 +55,9 @@ You're automatically assigned as the owner with full access.
 
 1. Download the agent installer (download button in the dashboard header)
 2. Run the installer on your target Windows machine
-3. After installation, click **"Join Site"** in the agent GUI
-4. Your browser opens the dashboard — log in and authorize the agent
-5. OAuth credentials are exchanged automatically — the agent starts syncing
+3. A pairing phrase appears and your browser opens to the authorization page
+4. Select a site and click **"Authorize"**
+5. The agent receives credentials and starts syncing
 
 Within 30 seconds, the machine appears in your dashboard:
 

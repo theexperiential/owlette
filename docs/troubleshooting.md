@@ -55,11 +55,11 @@ Cross-cutting troubleshooting guide for common issues across the entire Owlette 
 
 The encrypted token file is missing or unreadable.
 
-**Fix**: Re-register the agent:
+**Fix**: Re-pair the agent:
 
-1. Generate a new registration code from the dashboard
-2. Open the agent GUI → Click "Join Site"
-3. Enter the new registration code
+1. Delete the token file: `del C:\ProgramData\Owlette\.tokens.enc`
+2. Run the pairing flow: `C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\configure_site.py`
+3. Authorize on the web page that opens, then restart the service
 
 ### Token refresh failing
 
