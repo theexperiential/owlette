@@ -40,8 +40,8 @@ function buildAlertEmail(
     <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">agent alert</h2>
     <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">an error was detected on an owlette agent.</p>
     ${emailDataTable([
-      { label: 'machine', value: machineId },
       { label: 'site', value: siteId },
+      { label: 'machine', value: machineId },
       { label: 'error code', value: errorCode },
       { label: 'message', value: errorMessage },
       { label: 'agent version', value: agentVersion },
@@ -54,6 +54,7 @@ function buildAlertEmail(
 }
 
 function buildProcessAlertEmail(
+  siteId: string,
   machineId: string,
   processName: string,
   errorMessage: string,
@@ -65,6 +66,7 @@ function buildProcessAlertEmail(
     <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">process ${eventLabel}: ${processName}</h2>
     <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a monitored process has ${eventLabel} on one of your machines.</p>
     ${emailDataTable([
+      { label: 'site', value: siteId },
       { label: 'machine', value: machineId },
       { label: 'process', value: processName },
       { label: 'event', value: eventLabel },
@@ -179,7 +181,7 @@ export const POST = withRateLimit(
       if (isProcessEvent) {
         const eventLabel = resolvedEventType === 'process_start_failed' ? 'failed to start' : 'crashed';
         subject = `[${ENV_LABEL}] Process ${eventLabel}: ${processName} on ${machineId}`;
-        html = buildProcessAlertEmail(machineId, processName, errorMessage || '', agentVersion || '', resolvedEventType);
+        html = buildProcessAlertEmail(siteId, machineId, processName, errorMessage || '', agentVersion || '', resolvedEventType);
       } else {
         subject = `[${ENV_LABEL}] [ALERT] Owlette agent error on ${machineId}`;
         html = buildAlertEmail(siteId, machineId, errorCode, errorMessage || '', agentVersion || '');

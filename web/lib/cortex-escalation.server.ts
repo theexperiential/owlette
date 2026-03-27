@@ -34,7 +34,7 @@ export async function escalate(
   }
 
   const subject = `[${ENV_LABEL}] Cortex Escalation: ${processName} on ${machineName}`;
-  const html = buildEscalationEmail(machineName, processName, cortexResponse, eventId);
+  const html = buildEscalationEmail(siteId, machineName, processName, cortexResponse, eventId);
 
   const result = await resend.emails.send({
     from: FROM_EMAIL,
@@ -54,6 +54,7 @@ export async function escalate(
 }
 
 function buildEscalationEmail(
+  siteId: string,
   machineName: string,
   processName: string,
   cortexResponse: string,
@@ -76,6 +77,7 @@ function buildEscalationEmail(
     <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">owlette cortex investigated an issue autonomously but was unable to resolve it. human attention is needed.</p>
 
     ${emailDataTable([
+      { label: 'site', value: siteId },
       { label: 'machine', value: machineName },
       { label: 'process', value: processName },
       { label: 'event id', value: eventId },

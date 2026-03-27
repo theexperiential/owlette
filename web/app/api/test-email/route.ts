@@ -45,6 +45,7 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">process crashed: TouchDesigner</h2>
         <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a monitored process has crashed on one of your machines.</p>
         ${emailDataTable([
+          { label: 'site', value: 'downtown-gallery' },
           { label: 'machine', value: 'LOBBY-PC-01' },
           { label: 'process', value: 'TouchDesigner' },
           { label: 'event', value: 'crashed' },
@@ -66,6 +67,7 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">process failed to start: Resolume Arena</h2>
         <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a monitored process has failed to start on one of your machines.</p>
         ${emailDataTable([
+          { label: 'site', value: 'main-stage' },
           { label: 'machine', value: 'STAGE-PC-03' },
           { label: 'process', value: 'Resolume Arena' },
           { label: 'event', value: 'failed to start' },
@@ -87,8 +89,8 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">agent alert</h2>
         <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">an error was detected on an owlette agent.</p>
         ${emailDataTable([
-          { label: 'machine', value: 'KIOSK-02' },
           { label: 'site', value: 'downtown-gallery' },
+          { label: 'machine', value: 'KIOSK-02' },
           { label: 'error code', value: 'CONN_TIMEOUT' },
           { label: 'message', value: 'Failed to reach Firestore after 5 retries' },
           { label: 'agent version', value: '2.4.1' },
@@ -111,6 +113,7 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         <h2 style="color:${color};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">threshold alert: high CPU usage</h2>
         <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a metric threshold has been breached on one of your machines.</p>
         ${emailDataTable([
+          { label: 'site', value: 'render-farm' },
           { label: 'machine', value: 'RENDER-NODE-01' },
           { label: 'rule', value: 'High CPU Usage' },
           { label: 'metric', value: metricLabel },
@@ -177,6 +180,7 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         <h2 style="color:${EMAIL_COLORS.amber};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">cortex escalation: TouchDesigner</h2>
         <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">owlette cortex investigated an issue autonomously but was unable to resolve it. human attention is needed.</p>
         ${emailDataTable([
+          { label: 'site', value: 'downtown-gallery' },
           { label: 'machine', value: 'LOBBY-PC-01' },
           { label: 'process', value: 'TouchDesigner' },
           { label: 'event id', value: 'evt_abc123def456' },
@@ -196,26 +200,24 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
     }
 
     case 'welcome': {
+      const linkStyle = `color:${EMAIL_COLORS.cyan};text-decoration:none;font-weight:600;`;
       const content = `
         <h2 style="color:${EMAIL_COLORS.cyan};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">welcome to owlette</h2>
         <p style="margin:0 0 8px;">hi Demo User,</p>
-        <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">thanks for signing up. owlette is your cloud-connected process management system for managing Windows machines remotely.</p>
-        <h3 style="color:${EMAIL_COLORS.cyan};margin:0 0 12px;font-size:15px;font-weight:600;text-transform:lowercase;">getting started</h3>
+        <p style="margin:0 0 24px;color:${EMAIL_COLORS.muted};">thanks for signing up. owlette is your cloud-connected process management system for managing Windows machines remotely.</p>
+        <h3 style="color:${EMAIL_COLORS.cyan};margin:0 0 14px;font-size:15px;font-weight:600;text-transform:lowercase;">getting started</h3>
         <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
           <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
-            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">1.</span> create your first site in the dashboard
+            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">1.</span> create your first site in the <a href="https://owlette.app/dashboard" style="${linkStyle}">dashboard</a>
           </td></tr>
           <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
-            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">2.</span> download and install the owlette agent on your machines
+            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">2.</span> <a href="https://owlette.app/download" style="${linkStyle}">download</a> and install the owlette agent on your machines
           </td></tr>
           <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
-            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">3.</span> configure processes to monitor
-          </td></tr>
-          <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
-            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">4.</span> start managing your machines remotely
+            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">3.</span> <a href="https://theexperiential.github.io/owlette/agent/process-monitoring/" style="${linkStyle}">configure processes</a> to monitor
           </td></tr>
         </table>
-        <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};">if you have any questions, feel free to reach out to our support team.</p>
+        <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">need help? check the <a href="https://theexperiential.github.io/owlette/" style="${linkStyle}">docs</a> or reach out to our support team.</p>
       `;
       return {
         subject: 'welcome to owlette',

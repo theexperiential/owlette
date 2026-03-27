@@ -69,6 +69,7 @@ export async function POST(request: NextRequest) {
           const severityLabel = severity.toUpperCase();
           const subject = `[${ENV_LABEL}] [${severityLabel}] ${ruleName} — ${machineId}`;
           const html = buildThresholdAlertEmail({
+            siteId,
             machineId,
             ruleName,
             metric,
@@ -137,6 +138,7 @@ export async function POST(request: NextRequest) {
 /* ------------------------------------------------------------------ */
 
 function buildThresholdAlertEmail(params: {
+  siteId: string;
   machineId: string;
   ruleName: string;
   metric: string;
@@ -145,7 +147,7 @@ function buildThresholdAlertEmail(params: {
   operator: string;
   severity: string;
 }): string {
-  const { machineId, ruleName, metric, value, threshold, operator, severity } = params;
+  const { siteId, machineId, ruleName, metric, value, threshold, operator, severity } = params;
   const color = SEVERITY_COLORS[severity] || SEVERITY_COLORS.warning;
   const metricLabel = METRIC_LABELS[metric] || metric;
 
@@ -153,6 +155,7 @@ function buildThresholdAlertEmail(params: {
     <h2 style="color:${color};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">threshold alert: ${ruleName}</h2>
     <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a metric threshold has been breached on one of your machines.</p>
     ${emailDataTable([
+      { label: 'site', value: siteId },
       { label: 'machine', value: machineId },
       { label: 'rule', value: ruleName },
       { label: 'metric', value: metricLabel },

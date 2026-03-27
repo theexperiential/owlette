@@ -79,28 +79,26 @@ export async function POST(request: NextRequest) {
     // Optional welcome email to user
     let welcomeEmailResult = null;
     if (process.env.SEND_WELCOME_EMAIL === 'true') {
+      const linkStyle = `color:${EMAIL_COLORS.cyan};text-decoration:none;font-weight:600;`;
       const welcomeContent = `
         <h2 style="color:${EMAIL_COLORS.cyan};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">welcome to owlette</h2>
         <p style="margin:0 0 8px;">hi ${payload.displayName},</p>
-        <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">thanks for signing up. owlette is your cloud-connected process management system for managing Windows machines remotely.</p>
+        <p style="margin:0 0 24px;color:${EMAIL_COLORS.muted};">thanks for signing up. owlette is your cloud-connected process management system for managing Windows machines remotely.</p>
 
-        <h3 style="color:${EMAIL_COLORS.cyan};margin:0 0 12px;font-size:15px;font-weight:600;text-transform:lowercase;">getting started</h3>
+        <h3 style="color:${EMAIL_COLORS.cyan};margin:0 0 14px;font-size:15px;font-weight:600;text-transform:lowercase;">getting started</h3>
         <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
           <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
-            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">1.</span> create your first site in the dashboard
+            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">1.</span> create your first site in the <a href="https://owlette.app/dashboard" style="${linkStyle}">dashboard</a>
           </td></tr>
           <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
-            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">2.</span> download and install the owlette agent on your machines
+            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">2.</span> <a href="https://owlette.app/download" style="${linkStyle}">download</a> and install the owlette agent on your machines
           </td></tr>
           <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
-            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">3.</span> configure processes to monitor
-          </td></tr>
-          <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
-            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">4.</span> start managing your machines remotely
+            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">3.</span> <a href="https://theexperiential.github.io/owlette/agent/process-monitoring/" style="${linkStyle}">configure processes</a> to monitor
           </td></tr>
         </table>
 
-        <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};">if you have any questions, feel free to reach out to our support team.</p>
+        <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">need help? check the <a href="https://theexperiential.github.io/owlette/" style="${linkStyle}">docs</a> or reach out to our support team.</p>
       `;
 
       welcomeEmailResult = await resendClient.emails.send({

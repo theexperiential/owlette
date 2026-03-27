@@ -31,6 +31,7 @@ const SUPPORTED_EVENTS = ['process_crash', 'machine_offline', 'connection_failur
 
 function buildSimulatedAlertEmail(
   event: string,
+  siteName: string,
   machineId: string,
   machineName: string,
   processName: string | undefined,
@@ -51,6 +52,7 @@ function buildSimulatedAlertEmail(
   };
 
   const rows = [
+    { label: 'site', value: siteName },
     { label: 'machine', value: `${machineName} (${machineId})` },
     ...(processName ? [{ label: 'process', value: processName }] : []),
     { label: 'error', value: errorMessage },
@@ -140,6 +142,7 @@ export const POST = withRateLimit(
       // Build and send email
       const { subject, html } = buildSimulatedAlertEmail(
         event,
+        siteName,
         machineId,
         machineName,
         processName,
