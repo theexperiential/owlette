@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
-import { CheckCircle2, XCircle, Send, Loader2 } from 'lucide-react';
+import { CheckCircle2, XCircle, Send, Loader2, ChevronDown } from 'lucide-react';
 
 interface EmailConfig {
   provider: string;
@@ -16,11 +16,24 @@ interface EmailConfig {
   adminEmailConfigured: boolean;
 }
 
+const EMAIL_TEMPLATES = [
+  { id: 'test', label: 'test email', description: 'generic config verification' },
+  { id: 'process_crash', label: 'process crashed', description: 'monitored process stopped unexpectedly' },
+  { id: 'process_start_failed', label: 'process failed to start', description: 'monitored process could not be launched' },
+  { id: 'agent_alert', label: 'agent connection failure', description: 'agent lost connection to cloud' },
+  { id: 'threshold_alert', label: 'threshold alert', description: 'metric breached a configured threshold' },
+  { id: 'machines_offline', label: 'machines offline', description: 'stale heartbeat detected by health check' },
+  { id: 'cortex_escalation', label: 'cortex escalation', description: 'autonomous investigation could not resolve issue' },
+  { id: 'welcome', label: 'welcome email', description: 'sent to new users on signup' },
+  { id: 'user_signup', label: 'admin signup notification', description: 'admin notified of new user registration' },
+] as const;
+
 export default function EmailPage() {
   const [config, setConfig] = useState<EmailConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [lastResult, setLastResult] = useState<any>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState('test');
 
   useEffect(() => {
     fetchConfig();
@@ -47,13 +60,15 @@ export default function EmailPage() {
       const response = await fetch('/api/test-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ template: selectedTemplate }),
       });
 
       const data = await response.json();
 
       if (response.ok && data.success) {
+        const templateLabel = EMAIL_TEMPLATES.find(t => t.id === selectedTemplate)?.label || selectedTemplate;
         toast.success('Test email sent successfully!', {
-          description: `Email sent to ${data.to}`,
+          description: `"${templateLabel}" sent to ${data.to}`,
         });
         setLastResult({ success: true, ...data });
       } else {
@@ -70,6 +85,8 @@ export default function EmailPage() {
       setIsSending(false);
     }
   };
+
+  const currentTemplate = EMAIL_TEMPLATES.find(t => t.id === selectedTemplate);
 
   return (
     <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-6">
@@ -139,10 +156,35 @@ export default function EmailPage() {
         <CardHeader>
           <CardTitle>Test Email</CardTitle>
           <CardDescription>
-            Send a test email to verify your configuration is working
+            Send a test email to preview any notification template with sample data
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Template selector */}
+          <div className="space-y-2">
+            <label htmlFor="template-select" className="text-sm font-medium text-muted-foreground">
+              Template
+            </label>
+            <div className="relative w-full max-w-md">
+              <select
+                id="template-select"
+                value={selectedTemplate}
+                onChange={(e) => setSelectedTemplate(e.target.value)}
+                className="w-full appearance-none rounded-md border border-border bg-background px-3 py-2 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent-cyan/50 focus:border-accent-cyan cursor-pointer"
+              >
+                {EMAIL_TEMPLATES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            </div>
+            {currentTemplate && (
+              <p className="text-xs text-muted-foreground">{currentTemplate.description}</p>
+            )}
+          </div>
+
           <Button
             onClick={sendTestEmail}
             disabled={isSending}
@@ -182,6 +224,7 @@ export default function EmailPage() {
               <div className="space-y-1 text-sm text-muted-foreground">
                 {lastResult.success ? (
                   <>
+                    <p>Template: <span className="text-foreground font-medium">{EMAIL_TEMPLATES.find(t => t.id === lastResult.template)?.label || lastResult.template}</span></p>
                     <p>Sent to <span className="text-foreground font-medium">{lastResult.to}</span></p>
                     <p>Email ID: <span className="font-mono text-xs">{lastResult.emailId}</span></p>
                   </>

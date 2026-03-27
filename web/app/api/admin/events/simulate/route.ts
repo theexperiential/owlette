@@ -3,6 +3,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
 import { getSiteAlertEmailsWithCc } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
+import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@/lib/emailTemplates.server';
 import { fireWebhooks } from '@/lib/webhookSender.server';
 import logger from '@/lib/logger';
 
@@ -35,63 +36,38 @@ function buildSimulatedAlertEmail(
   processName: string | undefined,
   errorMessage: string
 ): { subject: string; html: string } {
-  const timestamp = new Date().toLocaleString();
+  const simBadge = `<span style="display:inline-block;background:${EMAIL_COLORS.amber};color:${EMAIL_COLORS.bodyBg};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;margin-left:8px;vertical-align:middle;">SIMULATED</span>`;
 
-  if (event === 'process_crash') {
-    return {
-      subject: `[${ENV_LABEL}] [SIMULATED] Process crashed: ${processName} on ${machineName}`,
-      html: `
-        <h2 style="color:#d32f2f;">⚠️ [SIMULATED] Process Crashed: ${processName}</h2>
-        <p>A simulated process crash event was triggered via the Admin API.</p>
-        <table style="border-collapse:collapse;width:100%;max-width:500px;">
-          <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Machine</td><td style="padding:6px;">${machineName} (${machineId})</td></tr>
-          <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Process</td><td style="padding:6px;">${processName}</td></tr>
-          <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Error</td><td style="padding:6px;">${errorMessage}</td></tr>
-          <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Time</td><td style="padding:6px;">${timestamp}</td></tr>
-          <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Environment</td><td style="padding:6px;">${ENV_LABEL}</td></tr>
-        </table>
-        <p style="margin-top:16px;color:#666;">This is a simulated event — no real process was affected.</p>
-        <hr>
-        <p style="color:#666;font-size:12px;">This is an automated alert from Owlette (simulated).</p>
-      `,
-    };
-  }
+  const eventTitles: Record<string, string> = {
+    process_crash: `process crashed: ${processName}`,
+    machine_offline: `machine offline: ${machineName}`,
+    connection_failure: 'connection failure',
+  };
 
-  if (event === 'machine_offline') {
-    return {
-      subject: `[${ENV_LABEL}] [SIMULATED] Machine offline: ${machineName}`,
-      html: `
-        <h2 style="color:#d32f2f;">⚠️ [SIMULATED] Machine Offline: ${machineName}</h2>
-        <p>A simulated machine offline event was triggered via the Admin API.</p>
-        <table style="border-collapse:collapse;width:100%;max-width:500px;">
-          <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Machine</td><td style="padding:6px;">${machineName} (${machineId})</td></tr>
-          <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Error</td><td style="padding:6px;">${errorMessage}</td></tr>
-          <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Time</td><td style="padding:6px;">${timestamp}</td></tr>
-          <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Environment</td><td style="padding:6px;">${ENV_LABEL}</td></tr>
-        </table>
-        <p style="margin-top:16px;color:#666;">This is a simulated event — no real machine was affected.</p>
-        <hr>
-        <p style="color:#666;font-size:12px;">This is an automated alert from Owlette (simulated).</p>
-      `,
-    };
-  }
+  const eventSubjects: Record<string, string> = {
+    process_crash: `[${ENV_LABEL}] [SIMULATED] process crashed: ${processName} on ${machineName}`,
+    machine_offline: `[${ENV_LABEL}] [SIMULATED] machine offline: ${machineName}`,
+    connection_failure: `[${ENV_LABEL}] [SIMULATED] connection failure on ${machineName}`,
+  };
 
-  // connection_failure
+  const rows = [
+    { label: 'machine', value: `${machineName} (${machineId})` },
+    ...(processName ? [{ label: 'process', value: processName }] : []),
+    { label: 'error', value: errorMessage },
+    { label: 'time', value: emailTimestamp() },
+    { label: 'environment', value: ENV_LABEL },
+  ];
+
+  const content = `
+    <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">${eventTitles[event] || event} ${simBadge}</h2>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a simulated ${event.replace(/_/g, ' ')} event was triggered via the admin API.</p>
+    ${emailDataTable(rows)}
+    <p style="margin:20px 0 0;color:${EMAIL_COLORS.amber};font-size:13px;">this is a simulated event — no real resources were affected.</p>
+  `;
+
   return {
-    subject: `[${ENV_LABEL}] [SIMULATED] Connection failure on ${machineName}`,
-    html: `
-      <h2 style="color:#d32f2f;">⚠️ [SIMULATED] Connection Failure</h2>
-      <p>A simulated connection failure event was triggered via the Admin API.</p>
-      <table style="border-collapse:collapse;width:100%;max-width:500px;">
-        <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Machine</td><td style="padding:6px;">${machineName} (${machineId})</td></tr>
-        <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Error</td><td style="padding:6px;">${errorMessage}</td></tr>
-        <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Time</td><td style="padding:6px;">${timestamp}</td></tr>
-        <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Environment</td><td style="padding:6px;">${ENV_LABEL}</td></tr>
-      </table>
-      <p style="margin-top:16px;color:#666;">This is a simulated event — no real machine was affected.</p>
-      <hr>
-      <p style="color:#666;font-size:12px;">This is an automated alert from Owlette (simulated).</p>
-    `,
+    subject: eventSubjects[event] || `[${ENV_LABEL}] [SIMULATED] ${event} on ${machineName}`,
+    html: wrapEmailLayout(content),
   };
 }
 

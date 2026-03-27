@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertEmailsWithCc } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
+import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@/lib/emailTemplates.server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { checkRateLimit, processAlertRateLimit } from '@/lib/rateLimit';
 import { fireWebhooks } from '@/lib/webhookSender.server';
@@ -35,23 +36,21 @@ function buildAlertEmail(
   errorMessage: string,
   agentVersion: string
 ): string {
-  const timestamp = new Date().toLocaleString();
-  return `
-    <h2 style="color:#d32f2f;">⚠️ Owlette Agent Alert</h2>
-    <p>An error was detected on an Owlette agent.</p>
-    <table style="border-collapse:collapse;width:100%;max-width:500px;">
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Machine</td><td style="padding:6px;">${machineId}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Site</td><td style="padding:6px;">${siteId}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Error Code</td><td style="padding:6px;">${errorCode}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Message</td><td style="padding:6px;">${errorMessage}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Agent Version</td><td style="padding:6px;">${agentVersion}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Time</td><td style="padding:6px;">${timestamp}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Environment</td><td style="padding:6px;">${ENV_LABEL}</td></tr>
-    </table>
-    <p style="margin-top:16px;">Please check the machine and service logs for more details.</p>
-    <hr>
-    <p style="color:#666;font-size:12px;">This is an automated alert from Owlette.</p>
+  const content = `
+    <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">agent alert</h2>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">an error was detected on an owlette agent.</p>
+    ${emailDataTable([
+      { label: 'machine', value: machineId },
+      { label: 'site', value: siteId },
+      { label: 'error code', value: errorCode },
+      { label: 'message', value: errorMessage },
+      { label: 'agent version', value: agentVersion },
+      { label: 'time', value: emailTimestamp() },
+      { label: 'environment', value: ENV_LABEL },
+    ])}
+    <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check the machine and service logs for more details.</p>
   `;
+  return wrapEmailLayout(content);
 }
 
 function buildProcessAlertEmail(
@@ -61,24 +60,22 @@ function buildProcessAlertEmail(
   agentVersion: string,
   eventType: string
 ): string {
-  const timestamp = new Date().toLocaleString();
-  const eventLabel = eventType === 'process_start_failed' ? 'Failed to Start' : 'Crashed';
-  return `
-    <h2 style="color:#d32f2f;">⚠️ Process ${eventLabel}: ${processName}</h2>
-    <p>A monitored process has ${eventLabel.toLowerCase()} on one of your machines.</p>
-    <table style="border-collapse:collapse;width:100%;max-width:500px;">
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Machine</td><td style="padding:6px;">${machineId}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Process</td><td style="padding:6px;">${processName}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Event</td><td style="padding:6px;">${eventLabel}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Error</td><td style="padding:6px;">${errorMessage}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Agent Version</td><td style="padding:6px;">${agentVersion}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Time</td><td style="padding:6px;">${timestamp}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Environment</td><td style="padding:6px;">${ENV_LABEL}</td></tr>
-    </table>
-    <p style="margin-top:16px;">Please check the machine and service logs for more details.</p>
-    <hr>
-    <p style="color:#666;font-size:12px;">This is an automated alert from Owlette.</p>
+  const eventLabel = eventType === 'process_start_failed' ? 'failed to start' : 'crashed';
+  const content = `
+    <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">process ${eventLabel}: ${processName}</h2>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a monitored process has ${eventLabel} on one of your machines.</p>
+    ${emailDataTable([
+      { label: 'machine', value: machineId },
+      { label: 'process', value: processName },
+      { label: 'event', value: eventLabel },
+      { label: 'error', value: errorMessage },
+      { label: 'agent version', value: agentVersion },
+      { label: 'time', value: emailTimestamp() },
+      { label: 'environment', value: ENV_LABEL },
+    ])}
+    <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check the machine and service logs for more details.</p>
   `;
+  return wrapEmailLayout(content, { preheader: `process ${eventLabel}: ${processName} on ${machineId}` });
 }
 
 export const POST = withRateLimit(

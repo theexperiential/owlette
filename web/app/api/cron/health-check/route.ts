@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertRecipients } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
+import { wrapEmailLayout, EMAIL_COLORS } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { fireWebhooks } from '@/lib/webhookSender.server';
 
@@ -41,37 +42,32 @@ function buildOfflineEmail(siteId: string, alerts: OfflineAlert[], unsubscribeUr
     .map(
       (a) => `
       <tr>
-        <td style="padding:6px;background:#f5f5f5;">${a.machineId}</td>
-        <td style="padding:6px;">${a.heartbeatAgeMinutes} minute(s) ago</td>
+        <td style="padding:10px 14px;color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.machineId}</td>
+        <td style="padding:10px 14px;color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.heartbeatAgeMinutes} minute(s) ago</td>
       </tr>`
     )
     .join('');
 
-  const unsubscribeHtml = unsubscribeUrl
-    ? `<a href="${unsubscribeUrl}" style="color:#888;text-decoration:underline;">Unsubscribe</a> &nbsp;|&nbsp; `
-    : '';
-
-  return `
-    <h2 style="color:#d32f2f;">Owlette Machines Offline</h2>
-    <p>${alerts.length} machine(s) in site <strong>${siteId}</strong> appear to be offline.</p>
-    <table style="border-collapse:collapse;width:100%;max-width:500px;">
+  const content = `
+    <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">machines offline</h2>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} machine(s) in site <strong style="color:${EMAIL_COLORS.text};">${siteId}</strong> appear to be offline.</p>
+    <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
       <thead>
         <tr>
-          <th style="padding:6px;text-align:left;background:#e0e0e0;">Machine</th>
-          <th style="padding:6px;text-align:left;background:#e0e0e0;">Last Seen</th>
+          <th style="padding:10px 14px;text-align:left;background:${EMAIL_COLORS.altRow};color:${EMAIL_COLORS.muted};font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid ${EMAIL_COLORS.border};">machine</th>
+          <th style="padding:10px 14px;text-align:left;background:${EMAIL_COLORS.altRow};color:${EMAIL_COLORS.muted};font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid ${EMAIL_COLORS.border};">last seen</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
-    <p style="margin-top:16px;">
-      Please check each machine and verify that the Owlette service is running.
-    </p>
-    <hr>
-    <p style="color:#666;font-size:12px;">
-      ${unsubscribeHtml}Environment: ${ENV_LABEL} &nbsp;|&nbsp;
-      Alerts are sent at most once per hour per machine.
-    </p>
+    <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check each machine and verify that the owlette service is running.</p>
+    <p style="margin:8px 0 0;color:${EMAIL_COLORS.border};font-size:11px;">alerts are sent at most once per hour per machine.</p>
   `;
+
+  return wrapEmailLayout(content, {
+    unsubscribeUrl,
+    preheader: `${alerts.length} machine(s) offline in ${siteId}`,
+  });
 }
 
 export async function GET(request: NextRequest) {

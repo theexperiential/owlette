@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertEmailsWithCc } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
+import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, SEVERITY_COLORS, METRIC_LABELS } from '@/lib/emailTemplates.server';
 import { fireWebhooks } from '@/lib/webhookSender.server';
 
 /**
@@ -135,23 +136,6 @@ export async function POST(request: NextRequest) {
 /*  Email template                                                     */
 /* ------------------------------------------------------------------ */
 
-const SEVERITY_COLORS: Record<string, string> = {
-  info: '#2196F3',
-  warning: '#FF9800',
-  critical: '#d32f2f',
-};
-
-const METRIC_LABELS: Record<string, string> = {
-  cpu_percent: 'CPU Usage (%)',
-  memory_percent: 'Memory Usage (%)',
-  disk_percent: 'Disk Usage (%)',
-  gpu_percent: 'GPU Usage (%)',
-  cpu_temp: 'CPU Temperature (°C)',
-  gpu_temp: 'GPU Temperature (°C)',
-  network_latency: 'Network Latency (ms)',
-  network_packet_loss: 'Packet Loss (%)',
-};
-
 function buildThresholdAlertEmail(params: {
   machineId: string;
   ruleName: string;
@@ -162,25 +146,23 @@ function buildThresholdAlertEmail(params: {
   severity: string;
 }): string {
   const { machineId, ruleName, metric, value, threshold, operator, severity } = params;
-  const timestamp = new Date().toLocaleString();
   const color = SEVERITY_COLORS[severity] || SEVERITY_COLORS.warning;
   const metricLabel = METRIC_LABELS[metric] || metric;
 
-  return `
-    <h2 style="color:${color};">⚠️ Threshold Alert: ${ruleName}</h2>
-    <p>A metric threshold has been breached on one of your machines.</p>
-    <table style="border-collapse:collapse;width:100%;max-width:500px;">
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Machine</td><td style="padding:6px;">${machineId}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Rule</td><td style="padding:6px;">${ruleName}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Metric</td><td style="padding:6px;">${metricLabel}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Condition</td><td style="padding:6px;">${metricLabel} ${operator} ${threshold}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Current Value</td><td style="padding:6px;color:${color};font-weight:bold;">${value}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Severity</td><td style="padding:6px;">${severity.toUpperCase()}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Time</td><td style="padding:6px;">${timestamp}</td></tr>
-      <tr><td style="padding:6px;font-weight:bold;background:#f5f5f5;">Environment</td><td style="padding:6px;">${ENV_LABEL}</td></tr>
-    </table>
-    <p style="margin-top:16px;">Please check the machine and service metrics for more details.</p>
-    <hr>
-    <p style="color:#666;font-size:12px;">This is an automated threshold alert from Owlette.</p>
+  const content = `
+    <h2 style="color:${color};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">threshold alert: ${ruleName}</h2>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a metric threshold has been breached on one of your machines.</p>
+    ${emailDataTable([
+      { label: 'machine', value: machineId },
+      { label: 'rule', value: ruleName },
+      { label: 'metric', value: metricLabel },
+      { label: 'condition', value: `${metricLabel} ${operator} ${threshold}` },
+      { label: 'current value', value: String(value), highlight: color },
+      { label: 'severity', value: severity.toUpperCase(), highlight: color },
+      { label: 'time', value: emailTimestamp() },
+      { label: 'environment', value: ENV_LABEL },
+    ])}
+    <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check the machine and service metrics for more details.</p>
   `;
+  return wrapEmailLayout(content, { preheader: `${severity.toUpperCase()}: ${ruleName} on ${machineId}` });
 }

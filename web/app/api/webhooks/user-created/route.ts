@@ -1,26 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Resend } from 'resend';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { ApiAuthError, requireSessionOrIdToken } from '@/lib/apiAuth.server';
-
-// Lazy initialization to avoid build-time errors when env var is missing
-let resend: Resend | null = null;
-function getResend() {
-  if (!resend && process.env.RESEND_API_KEY) {
-    resend = new Resend(process.env.RESEND_API_KEY);
-  }
-  return resend;
-}
-
-// Environment detection
-const isProduction = process.env.NODE_ENV === 'production' &&
-                     !process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.includes('dev');
+import { getResend, FROM_EMAIL, ENV_LABEL, isProduction } from '@/lib/resendClient.server';
+import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@/lib/emailTemplates.server';
 
 const ADMIN_EMAIL = isProduction
   ? process.env.ADMIN_EMAIL_PROD
   : process.env.ADMIN_EMAIL_DEV;
-
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
 
 interface UserCreatedPayload {
   email: string;
@@ -33,10 +19,8 @@ export async function POST(request: NextRequest) {
   try {
     const sessionUserId = await requireSessionOrIdToken(request);
 
-    // Parse request body
     const payload: UserCreatedPayload = await request.json();
 
-    // Validate required fields
     if (!payload.email || !payload.displayName || !payload.authMethod) {
       return NextResponse.json(
         { error: 'Missing required fields' },
@@ -55,8 +39,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if Resend is configured
-    if (!process.env.RESEND_API_KEY) {
+    const resendClient = getResend();
+    if (!resendClient) {
       console.error('RESEND_API_KEY not configured');
       return NextResponse.json(
         { error: 'Email service not configured' },
@@ -72,65 +56,58 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const envLabel = isProduction ? 'PRODUCTION' : 'DEVELOPMENT';
+    // Admin notification email
+    const adminContent = `
+      <h2 style="color:${EMAIL_COLORS.cyan};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">new user registration</h2>
+      <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a new user has signed up on owlette.</p>
+      ${emailDataTable([
+        { label: 'name', value: payload.displayName },
+        { label: 'email', value: payload.email },
+        { label: 'sign-in method', value: payload.authMethod === 'google' ? 'Google OAuth' : 'Email/Password' },
+        { label: 'registered at', value: emailTimestamp(new Date(payload.createdAt)) },
+        { label: 'environment', value: ENV_LABEL },
+      ])}
+    `;
 
-    const resendClient = getResend();
-    if (!resendClient) {
-      console.error('Resend client not available');
-      return NextResponse.json(
-        { error: 'Email service not available' },
-        { status: 500 }
-      );
-    }
-
-    // Send admin notification email
     const adminEmailResult = await resendClient.emails.send({
       from: FROM_EMAIL,
       to: ADMIN_EMAIL,
-      subject: `[${envLabel}] New Owlette User Signup`,
-      html: `
-        <h2>New User Registration</h2>
-        <p>A new user has signed up on Owlette ${envLabel}.</p>
-        <ul>
-          <li><strong>Name:</strong> ${payload.displayName}</li>
-          <li><strong>Email:</strong> ${payload.email}</li>
-          <li><strong>Sign-in Method:</strong> ${payload.authMethod === 'google' ? 'Google OAuth' : 'Email/Password'}</li>
-          <li><strong>Registered At:</strong> ${new Date(payload.createdAt).toLocaleString()}</li>
-          <li><strong>Environment:</strong> ${envLabel}</li>
-        </ul>
-        <hr>
-        <p style="color: #666; font-size: 12px;">
-          This is an automated notification from Owlette.
-        </p>
-      `,
+      subject: `[${ENV_LABEL}] new owlette user signup`,
+      html: wrapEmailLayout(adminContent),
     });
 
-    // Optionally send welcome email to user
+    // Optional welcome email to user
     let welcomeEmailResult = null;
     if (process.env.SEND_WELCOME_EMAIL === 'true') {
+      const welcomeContent = `
+        <h2 style="color:${EMAIL_COLORS.cyan};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">welcome to owlette</h2>
+        <p style="margin:0 0 8px;">hi ${payload.displayName},</p>
+        <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">thanks for signing up. owlette is your cloud-connected process management system for managing Windows machines remotely.</p>
+
+        <h3 style="color:${EMAIL_COLORS.cyan};margin:0 0 12px;font-size:15px;font-weight:600;text-transform:lowercase;">getting started</h3>
+        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+          <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
+            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">1.</span> create your first site in the dashboard
+          </td></tr>
+          <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
+            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">2.</span> download and install the owlette agent on your machines
+          </td></tr>
+          <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
+            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">3.</span> configure processes to monitor
+          </td></tr>
+          <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
+            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">4.</span> start managing your machines remotely
+          </td></tr>
+        </table>
+
+        <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};">if you have any questions, feel free to reach out to our support team.</p>
+      `;
+
       welcomeEmailResult = await resendClient.emails.send({
         from: FROM_EMAIL,
         to: payload.email,
-        subject: 'Welcome to Owlette',
-        html: `
-          <h2>Welcome to Owlette!</h2>
-          <p>Hi ${payload.displayName},</p>
-          <p>Thank you for signing up for Owlette. We're excited to have you on board!</p>
-          <p>Owlette is your cloud-connected process management system for managing Windows machines remotely.</p>
-          <h3>Getting Started</h3>
-          <ol>
-            <li>Create your first site in the dashboard</li>
-            <li>Download and install the Owlette agent on your Windows machines</li>
-            <li>Configure processes to monitor</li>
-            <li>Start managing your machines remotely!</li>
-          </ol>
-          <p>If you have any questions, feel free to reach out to our support team.</p>
-          <p>Happy monitoring!</p>
-          <hr>
-          <p style="color: #666; font-size: 12px;">
-            Owlette - Always Watching
-          </p>
-        `,
+        subject: 'welcome to owlette',
+        html: wrapEmailLayout(welcomeContent),
       });
     }
 
@@ -138,7 +115,7 @@ export async function POST(request: NextRequest) {
       success: true,
       adminEmailSent: !!adminEmailResult.data,
       welcomeEmailSent: !!welcomeEmailResult?.data,
-      environment: envLabel,
+      environment: ENV_LABEL,
     });
 
   } catch (error) {
