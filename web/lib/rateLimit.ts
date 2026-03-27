@@ -31,6 +31,9 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
   );
 }
 
+// Environment detection for dev-aware rate limits
+const isDevEnv = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.includes('-dev');
+
 // Rate limiting strategies for different endpoints
 
 /**
@@ -47,13 +50,14 @@ export const authRateLimit = redis
   : null;
 
 /**
- * Rate limiter for token exchange operations
- * Allows 20 requests per hour per IP (supports re-auth of multiple machines)
+ * Rate limiter for token exchange / device code operations
+ * Prod: 60/hr (supports bulk deployment of many machines from one IP)
+ * Dev: 200/hr (allows rapid iteration during testing)
  */
 export const tokenExchangeRateLimit = redis
   ? new Ratelimit({
       redis,
-      limiter: Ratelimit.slidingWindow(20, '1 h'),
+      limiter: Ratelimit.slidingWindow(isDevEnv ? 200 : 60, '1 h'),
       prefix: 'token-exchange',
       analytics: true,
     })
@@ -61,12 +65,13 @@ export const tokenExchangeRateLimit = redis
 
 /**
  * Token refresh rate limiter (more lenient)
- * Allows 20 refreshes per hour per IP
+ * Allows 120 refreshes per hour per IP (agents refresh every hour,
+ * so 120 supports ~120 machines behind one NAT)
  */
 export const tokenRefreshRateLimit = redis
   ? new Ratelimit({
       redis,
-      limiter: Ratelimit.slidingWindow(20, '1 h'),
+      limiter: Ratelimit.slidingWindow(120, '1 h'),
       prefix: 'token-refresh',
       analytics: true,
     })
@@ -103,7 +108,6 @@ export const agentAlertRateLimit = redis
  * Prod: 5 uploads per hour per IP (prevent storage abuse)
  * Dev: 30 per hour (allows iterating without hitting walls)
  */
-const isDevEnv = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.includes('-dev');
 export const uploadRateLimit = redis
   ? new Ratelimit({
       redis,

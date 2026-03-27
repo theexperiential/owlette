@@ -460,6 +460,12 @@ def main():
         return 0
     else:
         print("Please try running the installer again.")
+        # Pause so the user can read the error before the window closes
+        if not args.add:  # Don't pause in silent /ADD= mode
+            try:
+                input("Press Enter to continue...")
+            except (EOFError, KeyboardInterrupt):
+                pass
         return 1
 
 
