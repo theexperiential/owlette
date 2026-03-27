@@ -75,37 +75,6 @@ def _open_browser(url: str) -> bool:
         return False
 
 
-def _generate_qr_ascii(url: str) -> str:
-    """
-    Generate ASCII QR code for the given URL.
-    Uses the qrcode library if available, otherwise returns empty string.
-    """
-    try:
-        import qrcode
-        qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_L,
-            box_size=1,
-            border=1,
-        )
-        qr.add_data(url)
-        qr.make(fit=True)
-
-        # Build ASCII representation using block characters
-        lines = []
-        matrix = qr.get_matrix()
-        for row in matrix:
-            line = ''
-            for cell in row:
-                line += '\u2588\u2588' if cell else '  '
-            lines.append(line)
-        return '\n'.join(lines)
-    except ImportError:
-        return ''
-    except Exception:
-        return ''
-
-
 def _determine_environment(url_hint: str = '') -> tuple:
     """
     Determine environment (dev/prod) from URL hint or existing config.
@@ -361,17 +330,11 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
             expires_in = device_data.get('expiresIn', 600)
 
             if show_prompts:
-                # Display QR code
-                qr_ascii = _generate_qr_ascii(qr_url)
-                if qr_ascii:
-                    print(qr_ascii)
-                    print()
-
                 print(f"{DIM}{'=' * 60}{RESET}")
                 print()
                 print(f"  pairing phrase:  {BOLD}{CYAN}{pair_phrase}{RESET}")
                 print()
-                print(f"  {DIM}scan the QR code above, or visit:{RESET}")
+                print(f"  {DIM}authorize this machine at:{RESET}")
                 print(f"  {CYAN}{verification_uri}{RESET}")
                 print()
                 print(f"  {DIM}expires in {expires_in // 60} minutes{RESET}")
