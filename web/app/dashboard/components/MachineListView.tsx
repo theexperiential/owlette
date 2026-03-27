@@ -381,10 +381,16 @@ export function MachineRow({
                               <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted' : process.status === 'RUNNING' ? 'bg-green-600' : process.status === 'INACTIVE' ? 'bg-slate-600 text-slate-200' : process.status === 'LAUNCH_FAILED' || process.status === 'STOPPED' || process.status === 'KILLED' ? 'bg-red-600' : 'bg-yellow-600'}`}>
                                 {(!machine.online ? 'unknown' : process.status === 'LAUNCH_FAILED' ? 'failed' : process.status).toLowerCase()}
                               </Badge>
+                              {process.pid && <span className="text-xs text-muted-foreground flex-shrink-0 select-text">PID: {process.pid}</span>}
                             </div>
-                            <div className="flex items-center gap-3 text-xs text-muted-foreground select-text min-w-0">
-                              {process.pid && <span className="flex-shrink-0">PID: {process.pid}</span>}
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground select-text min-w-0">
                               <span className="truncate" title={process.exe_path}>{process.exe_path}</span>
+                              {process.file_path && (
+                                <>
+                                  <span className="flex-shrink-0 text-muted-foreground/70">›</span>
+                                  <span className="truncate" title={process.file_path}>{process.file_path}</span>
+                                </>
+                              )}
                             </div>
                             {((process._optimisticLaunchMode ?? process.launch_mode) === 'scheduled') && (process._optimisticSchedules ?? process.schedules) && (process._optimisticSchedules ?? process.schedules)!.length > 0 && (
                               <div className="flex items-center gap-1.5 text-[11px] mt-0.5">
