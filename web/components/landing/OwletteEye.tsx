@@ -12,7 +12,7 @@ export function OwletteEye({ size = 400, className = '', animated = false }: Owl
       width={size}
       height={size}
       viewBox="0 0 200 200"
-      className={className}
+      className={`${className} ${animated ? 'animate-eye-ignite' : ''}`}
       xmlns="http://www.w3.org/2000/svg"
     >
       <defs>

@@ -222,6 +222,16 @@
     font-family: var(--font-geist);
   }
 
+  /* Eye ignition — fast fade up, then slow warm to full brightness */
+  @keyframes eye-ignite {
+    0%   { opacity: 0; filter: brightness(0.1); }
+    15%  { opacity: 1; filter: brightness(0.3); }
+    100% { opacity: 1; filter: brightness(1); }
+  }
+  .animate-eye-ignite {
+    animation: eye-ignite 3.5s ease-out forwards;
+  }
+
   /* Hero typography - Mission Control aesthetic with fluid scaling */
   .hero-headline {
     font-family: var(--font-geist);
