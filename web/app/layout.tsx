@@ -16,6 +16,10 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const siteUrl = process.env.RAILWAY_PUBLIC_DOMAIN
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+  : 'https://owlette.app';
+
 export const metadata: Metadata = {
   title: "owlette — attention is all you need",
   description: "owlette gives your machines the attention they need — so you don't have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.",
@@ -27,7 +31,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "owlette — attention is all you need",
     description: "owlette gives your machines the attention they need — so you don't have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.",
-    url: "https://owlette.app",
+    url: siteUrl,
     siteName: "owlette",
     images: [
       {
@@ -46,7 +50,7 @@ export const metadata: Metadata = {
     description: "owlette gives your machines the attention they need — so you don't have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.",
     images: ['/og-image.png'],
   },
-  metadataBase: new URL('https://owlette.app'),
+  metadataBase: new URL(siteUrl),
   manifest: '/manifest.json',
   other: {
     'theme-color': '#0a0f1a',
