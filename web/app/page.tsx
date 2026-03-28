@@ -1,6 +1,7 @@
 import {
   LandingHeader,
   HeroSection,
+  ValuePropSection,
   UseCaseSection,
   FeatureGrid,
   CTASection,
@@ -9,10 +10,13 @@ import {
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen relative">
+      {/* Page-wide dot grid background */}
+      <div className="fixed inset-0 dot-grid opacity-30 pointer-events-none" />
       <LandingHeader />
       <main>
         <HeroSection />
+        <ValuePropSection />
         <UseCaseSection />
         <FeatureGrid />
         <CTASection />

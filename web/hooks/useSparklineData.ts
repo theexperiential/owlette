@@ -13,6 +13,7 @@
 import { useState, useEffect } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { useDemoContext } from '@/contexts/DemoContext';
 import type { SparklineDataPoint, MetricColor } from '@/components/charts';
 
 type SparklineMetricType = 'cpu' | 'memory' | 'disk' | 'gpu';
@@ -131,9 +132,17 @@ export function useAllSparklineData(
   siteId: string | null,
   machineId: string | null
 ): AllSparklineState {
-  const [state, setState] = useState<AllSparklineState>(EMPTY_SPARKLINE_STATE);
+  const demo = useDemoContext();
+  const [state, setState] = useState<AllSparklineState>(
+    demo && machineId ? { ...demo.getSparklineData(machineId) } : EMPTY_SPARKLINE_STATE
+  );
 
   useEffect(() => {
+    if (demo && machineId) {
+      setState({ ...demo.getSparklineData(machineId) });
+      return;
+    }
+
     if (!db || !siteId || !machineId) {
       setState(prev => prev.loading ? { ...prev, loading: false } : prev);
       return;
@@ -189,7 +198,7 @@ export function useAllSparklineData(
     );
 
     return () => unsubscribe();
-  }, [siteId, machineId]);
+  }, [siteId, machineId, demo]);
 
   return state;
 }

@@ -1,12 +1,13 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ChevronDown, Settings, LogOut, Shield, Check, LayoutDashboard, Brain, Rocket, FolderSync, ScrollText } from 'lucide-react';
+import { ArrowRight, ChevronDown, Settings, LogOut, Shield, Check, LayoutDashboard, Brain, Rocket, FolderSync, ScrollText } from 'lucide-react';
 import { getUserInitials, getUserShortName, getUserFirstName } from '@/lib/userUtils';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 
@@ -23,6 +24,7 @@ interface PageHeaderProps {
   onManageSites?: () => void;
   actionButton?: React.ReactNode;
   onAccountSettings?: () => void;
+  disableNav?: boolean;
 }
 
 export function PageHeader({
@@ -33,6 +35,7 @@ export function PageHeader({
   onManageSites,
   actionButton,
   onAccountSettings,
+  disableNav,
 }: PageHeaderProps) {
   const router = useRouter();
   const { user, signOut, isAdmin } = useAuth();
@@ -57,7 +60,7 @@ export function PageHeader({
               <span className="text-muted-foreground/60 text-lg select-none">/</span>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer truncate max-w-[140px] md:max-w-[200px]">
+                  <button className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer truncate max-w-[200px] md:max-w-[320px]">
                     <span className="truncate">{currentSiteName}</span>
                     <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
                   </button>
@@ -93,6 +96,16 @@ export function PageHeader({
           <span className="text-muted-foreground/60 text-lg select-none">/</span>
 
           {/* Page Selector */}
+          {disableNav ? (
+            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground px-1.5 py-1">
+              {(() => {
+                const pageIcons: Record<string, React.ElementType> = { dashboard: LayoutDashboard, cortex: Brain, 'deploy software': Rocket, 'distribute projects': FolderSync, logs: ScrollText };
+                const PageIcon = pageIcons[currentPage.toLowerCase()];
+                return PageIcon ? <PageIcon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground translate-y-[0.5px]" /> : null;
+              })()}
+              <span className="lowercase">{currentPage}</span>
+            </span>
+          ) : (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer">
@@ -169,13 +182,26 @@ export function PageHeader({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          )}
         </nav>
 
         {/* Right: Actions + User */}
         <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
           {actionButton}
 
-          {/* User Menu */}
+          {disableNav ? (
+            /* Demo mode: show sign in + get started instead of user menu */
+            <div className="flex items-center gap-2">
+              <Link href="/login" className="text-sm text-muted-foreground hover:text-foreground transition-colors px-2 py-1">
+                sign in
+              </Link>
+              <Link href="/register" className="inline-flex items-center gap-1.5 text-sm bg-accent-cyan hover:bg-accent-cyan-hover text-background font-semibold px-4 py-1.5 rounded-md transition-colors group">
+                get started
+                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+              </Link>
+            </div>
+          ) : (
+          /* User Menu */
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="inline-flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-secondary transition-colors cursor-pointer">
@@ -225,6 +251,7 @@ export function PageHeader({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          )}
         </div>
       </div>
     </header>

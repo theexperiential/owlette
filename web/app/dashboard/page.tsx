@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Copy, Pencil, Trash2, Download, Monitor, Wifi, Cog, Settings2 } from 'lucide-react';
+import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, ChevronsUpDown, ChevronsDownUp, Square, Copy, Pencil, Trash2, Download, Monitor, Wifi, Cog, Settings2 } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -122,6 +122,16 @@ export default function DashboardPage() {
   const { presets: schedulePresets, createPreset, deletePreset: deleteSchedulePreset, updatePreset: updateSchedulePreset } = useSchedulePresets(currentSiteId);
   const { checkMachineHasActiveDeployment } = useDeployments(currentSiteId);
   const { removeMachineFromSite, removing: isRemovingMachine } = useMachineOperations(currentSiteId);
+
+  // Per-row expand state for list view
+  const [expandedMachineIds, setExpandedMachineIds] = useState<Set<string>>(() => new Set());
+
+  // Sync expanded set when machines change (expand new machines if global pref is expanded)
+  useEffect(() => {
+    if (userPreferences.processesExpanded) {
+      setExpandedMachineIds(new Set(machines.map(m => m.machineId)));
+    }
+  }, [machines.length, userPreferences.processesExpanded]);
 
   // Remove Machine Dialog state
   const [removeMachineDialogOpen, setRemoveMachineDialogOpen] = useState(false);
@@ -297,6 +307,29 @@ export default function DashboardPage() {
   const toggleProcessesExpanded = useCallback(() => {
     updateUserPreferences({ processesExpanded: !userPreferences.processesExpanded }, { silent: true });
   }, [userPreferences.processesExpanded, updateUserPreferences]);
+
+  // Global expand/collapse all (both stats + processes)
+  const allExpanded = expandedMachineIds.size === machines.length && machines.length > 0;
+
+  const toggleAllExpanded = useCallback(() => {
+    if (allExpanded) {
+      setExpandedMachineIds(new Set());
+      updateUserPreferences({ statsExpanded: false, processesExpanded: false }, { silent: true });
+    } else {
+      setExpandedMachineIds(new Set(machines.map(m => m.machineId)));
+      updateUserPreferences({ statsExpanded: true, processesExpanded: true }, { silent: true });
+    }
+  }, [allExpanded, machines, updateUserPreferences]);
+
+  // Per-machine expand toggle for list view
+  const toggleMachineExpanded = useCallback((machineId: string) => {
+    setExpandedMachineIds(prev => {
+      const next = new Set(prev);
+      if (next.has(machineId)) next.delete(machineId);
+      else next.add(machineId);
+      return next;
+    });
+  }, []);
 
   const handleRowClick = (_machineId: string, canExpand: boolean) => {
     // Don't toggle if user is selecting text
@@ -671,8 +704,18 @@ export default function DashboardPage() {
                   currentSiteName={currentSite?.name}
                 />
 
-                {/* View Toggle */}
+                {/* Expand/Collapse All + View Toggle */}
                 <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={toggleAllExpanded}
+                    className="cursor-pointer text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    title={allExpanded ? 'collapse all' : 'expand all'}
+                  >
+                    {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
+                  </Button>
+                  <div className="h-4 w-px bg-border" />
                   <Button
                     variant="ghost"
                     size="sm"
@@ -739,13 +782,13 @@ export default function DashboardPage() {
                       <MachineRow
                         key={machine.machineId}
                         machine={machine}
-                        isExpanded={userPreferences.processesExpanded}
+                        isExpanded={expandedMachineIds.has(machine.machineId)}
                         currentSiteId={currentSiteId}
                         siteTimezone={currentSite?.timezone || 'UTC'}
                         siteTimeFormat={currentSite?.timeFormat || '12h'}
                         userPreferences={userPreferences}
                         isAdmin={isAdmin}
-                        onToggleExpanded={toggleProcessesExpanded}
+                        onToggleExpanded={() => toggleMachineExpanded(machine.machineId)}
                         onEditProcess={(process) => openEditProcessDialog(machine.machineId, process)}
                         onCreateProcess={() => openCreateProcessDialog(machine.machineId)}
                         onKillProcess={(processId, processName) => handleKillProcess(machine.machineId, processId, processName)}
@@ -891,12 +934,12 @@ export default function DashboardPage() {
         <DialogContent className="border-border bg-muted text-foreground max-w-3xl">
           <DialogHeader>
             <DialogTitle className="text-foreground">
-              {processDialogMode === 'create' ? 'new process' : 'edit process'}
+              {processDialogMode === 'create' ? 'add process' : 'edit process'}
 
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
               {processDialogMode === 'create'
-                ? 'create a new process configuration'
+                ? 'add a process to this machine'
                 : 'update process configuration'}
             </DialogDescription>
           </DialogHeader>

@@ -1,10 +1,39 @@
+'use client';
+
+import { useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { InteractiveBackground } from './InteractiveBackground';
 import { OwletteEye } from './OwletteEye';
 import { RotatingWord } from './RotatingWord';
 
+const prefixWords = ['monitor', 'deploy software to', 'ask questions to', 'take a vacation from', 'remotely control'];
+const suffixWords = [
+  'computers',
+  'media servers',
+  'interactive installations',
+  'interactive exhibits',
+  'kiosks',
+  'digital signage',
+  'TouchDesigner PCs',
+  'Unreal Engine nodes',
+  'Node.js servers',
+];
+
+/** Fisher-Yates shuffle (returns new array) */
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 export function HeroSection() {
+  const [shuffledPrefixes] = useState(() => shuffle(prefixWords));
+  const [shuffledSuffixes] = useState(() => shuffle(suffixWords));
+
   return (
     <section className="relative h-[100dvh] grid grid-rows-[0fr_auto_0.6fr] pt-16 overflow-hidden">
       {/* Interactive mouse-reactive background */}
@@ -36,9 +65,11 @@ export function HeroSection() {
         </h1>
 
         {/* Subheadline */}
-        <p className="hero-subheadline max-w-xl mx-auto mb-8 sm:mb-10 min-h-[3.5em] flex items-start justify-center animate-in fade-in slide-in-from-bottom-6 duration-1000 delay-200">
+        <p className="hero-subheadline max-w-5xl mx-auto mb-8 sm:mb-10 min-h-[4.5em] flex items-start justify-center animate-in fade-in slide-in-from-bottom-6 duration-1000 delay-200">
           <span className="text-center">
-            <RotatingWord /> all of your machines.
+            <RotatingWord words={shuffledPrefixes} align="end" direction="up" />{' '}
+            all of your{' '}
+            <RotatingWord words={shuffledSuffixes} align="start" direction="down" delay={2000} />.
           </span>
         </p>
 
@@ -55,6 +86,7 @@ export function HeroSection() {
 
       {/* Bottom spacer */}
       <div />
+
     </section>
   );
 }

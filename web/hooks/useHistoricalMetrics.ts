@@ -15,6 +15,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { useDemoContext } from '@/contexts/DemoContext';
 import type { TimeRange } from '@/components/charts';
 
 /**
@@ -184,11 +185,18 @@ export function useHistoricalMetrics(
   machineId: string | null,
   timeRange: TimeRange
 ): UseHistoricalMetricsResult {
+  const demo = useDemoContext();
   const [data, setData] = useState<ChartDataPoint[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!demo);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
+    if (demo && machineId) {
+      setData(demo.getHistoricalData(machineId, timeRange));
+      setLoading(false);
+      return;
+    }
+
     if (!db || !siteId || !machineId) {
       setLoading(false);
       setData(null);
@@ -274,7 +282,7 @@ export function useHistoricalMetrics(
     } finally {
       setLoading(false);
     }
-  }, [siteId, machineId, timeRange]);
+  }, [siteId, machineId, timeRange, demo]);
 
   useEffect(() => {
     fetchData();

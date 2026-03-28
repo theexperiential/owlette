@@ -267,7 +267,7 @@ class OwletteConfigApp:
         # Add process button (in header, next to toggle)
         self.new_button = ctk.CTkButton(self.header_frame, text="\uff0b", command=self.new_process, width=30, height=30, fg_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_IMPORTANT_HOVER, text_color=shared_utils.BUTTON_IMPORTANT_TEXT, bg_color=shared_utils.FRAME_COLOR, corner_radius=15, font=("Segoe UI", 14))
         self.new_button.pack(side='right', padx=(0, 5))
-        _lazy_tooltip(self.new_button, message="add new process")
+        _lazy_tooltip(self.new_button, message="add process")
 
         # Create a Listbox to display the list of processes
         self.process_list = CTkListbox(self.master, command=self.on_select)
@@ -540,7 +540,7 @@ class OwletteConfigApp:
         _lazy_tooltip(self.visibility_menu, message=visibility_tip, **tooltip_opts)
         _lazy_tooltip(self.relaunch_attempts_label, message="Max restart attempts before giving up (0 = unlimited)", **tooltip_opts)
         _lazy_tooltip(self.relaunch_attempts_entry, message="Max restart attempts before giving up (0 = unlimited)", **tooltip_opts)
-        _lazy_tooltip(self.new_button, message="Add a new process", **tooltip_opts)
+        _lazy_tooltip(self.new_button, message="Add process", **tooltip_opts)
         _lazy_tooltip(self.details_toggle_button, message="Show/hide process details panel", **tooltip_opts)
         _lazy_tooltip(self.config_button, message="Open configuration file", **tooltip_opts)
         _lazy_tooltip(self.logs_button, message="Open log folder", **tooltip_opts)
@@ -735,7 +735,7 @@ class OwletteConfigApp:
         # Create new process with default values
         new_process = {
             'id': unique_id,
-            'name': 'New Process',
+            'name': 'Untitled Process',
             'exe_path': '',
             'file_path': '',
             'cwd': '',

@@ -8,7 +8,7 @@
  * - Tabular layout with sortable columns
  * - Expandable rows for process details
  * - Process controls (autolaunch, edit, kill)
- * - Create new process button
+ * - Create add process button
  * - Memoized table header for performance
  * - Sparkline charts behind metric cells
  *
@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
+import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
 import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical } from 'lucide-react';
 import {
@@ -51,16 +52,16 @@ import type { MetricType } from '@/components/charts';
 export const MemoizedTableHeader = memo(() => {
   return (
     <TableHeader className="sticky top-0 z-10 bg-background">
-      <TableRow className="border-border">
+      <TableRow className="border-border hover:bg-transparent">
         <TableHead className="text-foreground w-8"></TableHead>
-        <TableHead className="text-foreground w-[100px]">hostname</TableHead>
+        <TableHead className="text-foreground w-[140px]">hostname</TableHead>
         <TableHead className="text-foreground w-[72px]">status</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[160px] sm:overflow-visible sm:!px-2">cpu</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[120px] sm:overflow-visible sm:!px-2">memory</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[100px] lg:overflow-visible lg:!px-2">disk</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[200px] lg:overflow-visible lg:!px-2">gpu</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 xl:w-[130px] xl:overflow-visible xl:!px-2">network</TableHead>
-        <TableHead className="text-foreground w-0 overflow-hidden !px-0 md:w-[150px] md:overflow-visible md:!px-2">last heartbeat</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 md:w-[110px] md:overflow-visible md:!px-2">last heartbeat</TableHead>
         <TableHead className="text-foreground w-10"></TableHead>
       </TableRow>
     </TableHeader>
@@ -131,10 +132,13 @@ export function MachineRow({
   onScreenshot,
   onLiveView,
 }: MachineRowProps) {
+  const isDemo = !!useDemoContext();
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
   // Format heartbeat time with timezone and time format support
   const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, siteTimezone, siteTimeFormat);
+  const isStale = !machine.online || !!machine.rebooting;
+  const staleClass = isStale ? ' opacity-40' : '';
 
   const handleRowClick = () => {
     const selection = window.getSelection();
@@ -180,7 +184,7 @@ export function MachineRow({
           className="text-white p-0 w-0 sm:w-[160px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('cpu'); }}
         >
-          <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
+          <div className={`relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden${staleClass}`}>
             <div className="opacity-80">
               <SparklineChart data={sparklineData.cpu} color="cpu" height={52} loading={sparklineData.loading} />
             </div>
@@ -209,7 +213,7 @@ export function MachineRow({
           className="text-white p-0 w-0 sm:w-[120px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('memory'); }}
         >
-          <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
+          <div className={`relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden${staleClass}`}>
             <div className="opacity-80">
               <SparklineChart data={sparklineData.memory} color="memory" height={52} loading={sparklineData.loading} />
             </div>
@@ -231,7 +235,7 @@ export function MachineRow({
           className="text-white p-0 w-0 lg:w-[100px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('disk'); }}
         >
-          <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
+          <div className={`relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden${staleClass}`}>
             <div className="opacity-80">
               <SparklineChart data={sparklineData.disk} color="disk" height={52} loading={sparklineData.loading} />
             </div>
@@ -253,7 +257,7 @@ export function MachineRow({
           className="text-white p-0 w-0 lg:w-[200px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('gpu'); }}
         >
-          <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
+          <div className={`relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden${staleClass}`}>
             <div className="opacity-80">
               <SparklineChart data={sparklineData.gpu.length > 0 ? sparklineData.gpu : []} color="gpu" height={52} loading={sparklineData.loading} />
             </div>
@@ -302,7 +306,7 @@ export function MachineRow({
             if (!primary) return <span className="text-muted-foreground text-xs p-2">-</span>;
             const maxUtil = Math.max(primary.data.tx_util, primary.data.rx_util);
             return (
-              <div className="relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden">
+              <div className={`relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden${staleClass}`}>
                 <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(maxUtil)}`} />
                 <div className="p-2 pl-2.5">
                   <div className="text-xs text-muted-foreground truncate" title={`${primary.name} (${primary.data.link_speed} Mbps)`}>
@@ -329,19 +333,21 @@ export function MachineRow({
           </span>
         </TableCell>
         <TableCell className="w-10 p-2" onClick={(e) => e.stopPropagation()}>
-          <MachineContextMenu
-            machineId={machine.machineId}
-            machineName={machine.machineId}
-            siteId={currentSiteId}
-            isOnline={machine.online}
-            isAdmin={isAdmin}
-            onRemoveMachine={onRemoveMachine}
-            onReboot={onReboot}
-            onShutdown={onShutdown}
-            onScreenshot={onScreenshot}
-            onLiveView={onLiveView}
-            rebootSchedule={machine.rebootSchedule}
-          />
+          {!isDemo && (
+            <MachineContextMenu
+              machineId={machine.machineId}
+              machineName={machine.machineId}
+              siteId={currentSiteId}
+              isOnline={machine.online}
+              isAdmin={isAdmin}
+              onRemoveMachine={onRemoveMachine}
+              onReboot={onReboot}
+              onShutdown={onShutdown}
+              onScreenshot={onScreenshot}
+              onLiveView={onLiveView}
+              rebootSchedule={machine.rebootSchedule}
+            />
+          )}
         </TableCell>
       </TableRow>
 
@@ -551,7 +557,7 @@ export function MachineRow({
                       </div>
                     ))}
                   </div>
-                  {/* new process Button */}
+                  {/* add process Button */}
                   <div className="flex justify-center pt-3 ml-4">
                     <Button
                       variant="outline"
@@ -560,7 +566,7 @@ export function MachineRow({
                       className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
                     >
                       <Plus className="h-3 w-3 mr-1" />
-                      new process
+                      add process
                     </Button>
                   </div>
                 </>
@@ -574,7 +580,7 @@ export function MachineRow({
                     className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
                   >
                     <Plus className="h-3 w-3 mr-1" />
-                    new process
+                    add process
                   </Button>
                 </div>
               )}

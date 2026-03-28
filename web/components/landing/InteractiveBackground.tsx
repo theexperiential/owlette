@@ -77,15 +77,6 @@ export function InteractiveBackground() {
           }}
         />
 
-        {/* Static dot grid */}
-        <div className="absolute inset-0 dot-grid opacity-30" />
-
-        {/* Blueprint grid - subtle */}
-        <div className="absolute inset-0 blueprint-grid opacity-15" />
-        <div className="absolute inset-0 blueprint-grid-accent opacity-8" />
-
-        {/* Radial fade overlay */}
-        <div className="absolute inset-0 blueprint-fade" />
       </div>
     );
   }
@@ -119,41 +110,6 @@ export function InteractiveBackground() {
         }}
       />
 
-      {/* Dot grid - base layer (rendered twice: under and over the fade) */}
-      <div
-        className="absolute inset-0 dot-grid opacity-30"
-        style={{
-          transform: `translate3d(${offsetX * 0.02}px, ${offsetY * 0.02}px, 0)`,
-        }}
-      />
-
-      {/* Dot grid spotlight - brighter dots near mouse, responsive size */}
-      <div
-        className="absolute w-[min(800px,130vw)] h-[min(800px,130vw)] pointer-events-none"
-        style={{
-          left: `calc(${mousePos.x * 100}% - min(400px, 65vw))`,
-          top: `calc(${mousePos.y * 100}% - min(400px, 65vw))`,
-          maskImage: 'radial-gradient(circle, black 0%, transparent 60%)',
-          WebkitMaskImage: 'radial-gradient(circle, black 0%, transparent 60%)',
-        }}
-      >
-        <div className="absolute inset-0 dot-grid opacity-70" />
-      </div>
-
-      {/* Blueprint grid - subtle */}
-      <div className="absolute inset-0 blueprint-grid opacity-15" />
-      <div className="absolute inset-0 blueprint-grid-accent opacity-8" />
-
-      {/* Radial fade overlay */}
-      <div className="absolute inset-0 blueprint-fade" />
-
-      {/* Dot grid - top layer visible outside fade */}
-      <div
-        className="absolute inset-0 dot-grid opacity-50 pointer-events-none"
-        style={{
-          transform: `translate3d(${offsetX * 0.02}px, ${offsetY * 0.02}px, 0)`,
-        }}
-      />
     </div>
   );
 }

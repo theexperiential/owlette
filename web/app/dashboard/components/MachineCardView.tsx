@@ -9,18 +9,20 @@
  * - System metrics (CPU, Memory, Disk, GPU) with sparkline charts
  * - Expandable process list
  * - Process controls (autolaunch, edit, kill)
- * - Create new process button
+ * - Create add process button
  * - Click sparklines to open detail panel
  *
  * Used by: Dashboard page for card view display
  */
 
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
+import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
 import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, Settings2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -111,6 +113,15 @@ function MachineCard({
   onScreenshot,
   onLiveView,
 }: MachineCardProps) {
+  const isDemo = !!useDemoContext();
+  // Per-card expand state, synced from parent's global toggle
+  const [localStatsExpanded, setLocalStatsExpanded] = useState(statsExpanded);
+  const [localProcessesExpanded, setLocalProcessesExpanded] = useState(processesExpanded);
+
+  // Sync when parent global toggle changes
+  useEffect(() => { setLocalStatsExpanded(statsExpanded); }, [statsExpanded]);
+  useEffect(() => { setLocalProcessesExpanded(processesExpanded); }, [processesExpanded]);
+
   // Fetch sparkline data for this machine
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
@@ -155,19 +166,21 @@ function MachineCard({
               <Clock className="h-3 w-3" />
               {heartbeat.display}
             </span>
-            <MachineContextMenu
-              machineId={machine.machineId}
-              machineName={machine.machineId}
-              siteId={currentSiteId}
-              isOnline={machine.online}
-              isAdmin={isAdmin}
-              onRemoveMachine={onRemoveMachine}
-              onReboot={onReboot}
-              onShutdown={onShutdown}
-              onScreenshot={onScreenshot}
-              onLiveView={onLiveView}
-              rebootSchedule={machine.rebootSchedule}
-            />
+            {!isDemo && (
+              <MachineContextMenu
+                machineId={machine.machineId}
+                machineName={machine.machineId}
+                siteId={currentSiteId}
+                isOnline={machine.online}
+                isAdmin={isAdmin}
+                onRemoveMachine={onRemoveMachine}
+                onReboot={onReboot}
+                onShutdown={onShutdown}
+                onScreenshot={onScreenshot}
+                onLiveView={onLiveView}
+                rebootSchedule={machine.rebootSchedule}
+              />
+            )}
           </div>
         </div>
       </CardHeader>
@@ -218,8 +231,8 @@ function MachineCard({
       )}
 
       {machine.metrics && (
-        <Collapsible open={statsExpanded} onOpenChange={onToggleStats}>
-          {!statsExpanded && (
+        <Collapsible open={localStatsExpanded} onOpenChange={() => setLocalStatsExpanded(v => !v)}>
+          {!localStatsExpanded && (
             <CollapsibleTrigger asChild>
               <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
                 <div className="flex items-center gap-2 w-full select-none">
@@ -435,8 +448,8 @@ function MachineCard({
 
       {/* Expandable Process List */}
       {machine.processes && machine.processes.length > 0 && (
-        <Collapsible open={processesExpanded} onOpenChange={onToggleProcesses}>
-          {!processesExpanded && (
+        <Collapsible open={localProcessesExpanded} onOpenChange={() => setLocalProcessesExpanded(v => !v)}>
+          {!localProcessesExpanded && (
             <CollapsibleTrigger asChild>
               <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
                 <div className="flex items-center gap-2 w-full select-none">
@@ -573,7 +586,7 @@ function MachineCard({
                     </div>
                   ))}
                 </div>
-                {/* new process Button */}
+                {/* add process Button */}
                 <div className="flex justify-center pt-3 ml-3">
                   <Button
                     variant="outline"
@@ -582,7 +595,7 @@ function MachineCard({
                     className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
                   >
                     <Plus className="h-3 w-3 mr-1" />
-                    new process
+                    add process
                   </Button>
                 </div>
             </div>
@@ -590,7 +603,7 @@ function MachineCard({
         </Collapsible>
       )}
 
-      {/* new process button for machines with no processes */}
+      {/* add process button for machines with no processes */}
       {(!machine.processes || machine.processes.length === 0) && (
         <div className="border-t border-border p-4">
           <Button
@@ -600,7 +613,7 @@ function MachineCard({
             className="w-full bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
           >
             <Plus className="h-3 w-3 mr-1" />
-            new process
+            add process
           </Button>
         </div>
       )}

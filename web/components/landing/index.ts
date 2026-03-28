@@ -2,6 +2,7 @@ export { LandingHeader } from './LandingHeader';
 export { HeroSection } from './HeroSection';
 export { UseCaseSection } from './UseCaseSection';
 export { FeatureGrid } from './FeatureGrid';
+export { ValuePropSection } from './ValuePropSection';
 export { CTASection } from './CTASection';
 export { LandingFooter } from './LandingFooter';
 export { InteractiveBackground } from './InteractiveBackground';

@@ -59,11 +59,11 @@ export function ProcessDialog({
       <DialogContent className="border-border bg-card text-foreground max-w-3xl">
         <DialogHeader>
           <DialogTitle className="text-white">
-            {mode === 'create' ? 'new process' : 'edit process'}
+            {mode === 'create' ? 'add process' : 'edit process'}
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
             {mode === 'create'
-              ? 'create a new process configuration'
+              ? 'add a process to this machine'
               : 'update process configuration'}
           </DialogDescription>
         </DialogHeader>

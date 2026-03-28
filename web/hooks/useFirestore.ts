@@ -877,7 +877,7 @@ export function useMachines(siteId: string) {
 
       const newProcess = {
         id: newProcessId,
-        name: processData.name || 'New Process',
+        name: processData.name || 'Untitled Process',
         exe_path: processData.exe_path || '',
         file_path: processData.file_path || '',
         cwd: processData.cwd || '',

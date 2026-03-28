@@ -5,8 +5,6 @@ import { ArrowRight } from 'lucide-react';
 export function CTASection() {
   return (
     <section className="py-20 sm:py-32 px-4 sm:px-6 relative overflow-hidden">
-      {/* Subtle warm gradient */}
-      <div className="absolute inset-0 bg-gradient-to-t from-accent-warm/[0.03] via-transparent to-transparent" />
 
       <div className="relative z-10 max-w-2xl mx-auto text-center">
         <p className="text-sm text-accent-warm font-medium mb-4 tracking-wider uppercase">
