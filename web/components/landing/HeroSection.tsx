@@ -58,15 +58,15 @@ export function HeroSection() {
 
         {/* Headline */}
         <h1 className="hero-headline text-foreground mb-4 sm:mb-6 animate-in fade-in slide-in-from-bottom-4 duration-1000">
-          attention is all you need
+          attention<br className="sm:hidden" /> is all you need
         </h1>
 
         {/* Subheadline */}
-        <p className="hero-subheadline max-w-5xl mx-auto mb-8 sm:mb-10 min-h-[4.5em] flex items-start justify-center animate-in fade-in slide-in-from-bottom-6 duration-1000 delay-200">
+        <p className="hero-subheadline max-w-5xl mx-auto mb-8 sm:mb-10 h-[4.5em] sm:h-[3em] flex items-center justify-center overflow-hidden animate-in fade-in slide-in-from-bottom-6 duration-1000 delay-200">
           <span className="text-center">
             <RotatingWord words={shuffledPrefixes} align="end" direction="up" />{' '}
             all of your{' '}
-            <RotatingWord words={shuffledSuffixes} align="start" direction="down" delay={2000} />.
+            <RotatingWord words={shuffledSuffixes} align="start" direction="down" delay={2000} />
           </span>
         </p>
 
