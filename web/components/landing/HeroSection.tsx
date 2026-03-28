@@ -40,7 +40,7 @@ export function HeroSection() {
       <InteractiveBackground />
 
       {/* Content wrapper — headline pinned to vertical center, eye grows upward, CTA grows downward */}
-      <div className="relative z-10 w-full max-w-5xl mx-auto px-4 sm:px-6 text-center flex flex-col items-center flex-1 justify-center -mt-[10vh]">
+      <div className="relative z-10 w-full max-w-5xl mx-auto px-4 sm:px-6 text-center flex flex-col items-center flex-1 justify-center -mt-[18vh]">
         {/* The Eye */}
         <div className="relative flex items-center justify-center mb-6 sm:mb-8">
           <div
