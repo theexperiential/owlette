@@ -347,35 +347,24 @@ class OwletteConfigApp:
         self.footer_label.configure(cursor="hand2")
         self.footer_label.bind("<Button-1>", lambda _: self._open_tec_website())
 
-        # Right section: Config, Logs, Version
+        # Right section: Overflow menu + Version
         self.footer_right = ctk.CTkFrame(self.footer_frame, fg_color='transparent')
         self.footer_right.pack(side='right', padx=(0, 15), pady=4)
 
-        self.config_button = ctk.CTkButton(
-            self.footer_right,
-            text="config",
-            command=self.open_config,
-            width=70,
-            height=24,
-            fg_color=shared_utils.BUTTON_COLOR,
-            hover_color=shared_utils.BUTTON_HOVER_COLOR,
-            font=("", 11),
-            corner_radius=shared_utils.CORNER_RADIUS
-        )
-        self.config_button.pack(side='left', padx=(0, 5))
+        self._overflow_panel = None  # Track the floating panel
 
-        self.logs_button = ctk.CTkButton(
+        self.overflow_button = ctk.CTkButton(
             self.footer_right,
-            text="logs",
-            command=self.open_logs,
-            width=70,
+            text="···",
+            command=self._toggle_overflow_menu,
+            width=36,
             height=24,
             fg_color=shared_utils.BUTTON_COLOR,
             hover_color=shared_utils.BUTTON_HOVER_COLOR,
-            font=("", 11),
+            font=("", 14, "bold"),
             corner_radius=shared_utils.CORNER_RADIUS
         )
-        self.logs_button.pack(side='left', padx=(0, 10))
+        self.overflow_button.pack(side='left', padx=(0, 10))
 
         self.version_label = ctk.CTkLabel(self.footer_right, text=f"v{shared_utils.APP_VERSION} | AGPL-3.0", fg_color='transparent', text_color=shared_utils.TEXT_COLOR, font=("", 11))
         self.version_label.pack(side='left')
@@ -542,8 +531,7 @@ class OwletteConfigApp:
         _lazy_tooltip(self.relaunch_attempts_entry, message="Max restart attempts before giving up (0 = unlimited)", **tooltip_opts)
         _lazy_tooltip(self.new_button, message="Add process", **tooltip_opts)
         _lazy_tooltip(self.details_toggle_button, message="Show/hide process details panel", **tooltip_opts)
-        _lazy_tooltip(self.config_button, message="Open configuration file", **tooltip_opts)
-        _lazy_tooltip(self.logs_button, message="Open log folder", **tooltip_opts)
+        _lazy_tooltip(self.overflow_button, message="Config, logs, docs, feedback", **tooltip_opts)
         _lazy_tooltip(self.site_button, message="Join or leave a cloud site for remote management", **tooltip_opts)
 
         # Make columns stretchable
@@ -2058,6 +2046,121 @@ class OwletteConfigApp:
                 message=f"Failed to open logs folder:\n{str(e)}",
                 icon="cancel"
             )
+
+    # OVERFLOW MENU
+
+    def _toggle_overflow_menu(self):
+        """Toggle the floating overflow menu above the ··· button."""
+        if self._overflow_panel and self._overflow_panel.winfo_exists():
+            self._close_overflow_menu()
+            return
+
+        self._overflow_panel = ctk.CTkToplevel(self.master)
+        self._overflow_panel.overrideredirect(True)
+        self._overflow_panel.configure(fg_color=shared_utils.FRAME_COLOR)
+        self._overflow_panel.attributes('-topmost', True)
+
+        # Inner frame with border
+        inner = ctk.CTkFrame(
+            self._overflow_panel,
+            fg_color=shared_utils.FRAME_COLOR,
+            border_color=shared_utils.BORDER_COLOR,
+            border_width=1,
+            corner_radius=shared_utils.CORNER_RADIUS
+        )
+        inner.pack(fill='both', expand=True, padx=0, pady=0)
+
+        menu_items = [
+            ("config", self.open_config),
+            ("logs", self.open_logs),
+            ("docs", self._open_docs),
+            ("feedback / bug", self._open_feedback_dialog),
+        ]
+
+        pad = 6  # equal padding on all sides inside the border
+        for label, command in menu_items:
+            btn = ctk.CTkButton(
+                inner, text=label, anchor='w',
+                width=120, height=28,
+                fg_color='transparent',
+                hover_color=shared_utils.BUTTON_HOVER_COLOR,
+                text_color=shared_utils.TEXT_COLOR,
+                font=("", 11),
+                corner_radius=4,
+                command=lambda cmd=command: self._overflow_action(cmd)
+            )
+            btn.pack(fill='x', padx=pad, pady=(pad if label == menu_items[0][0] else 1, pad if label == menu_items[-1][0] else 1))
+
+        # Position above the ··· button
+        self.overflow_button.update_idletasks()
+        btn_x = self.overflow_button.winfo_rootx()
+        btn_y = self.overflow_button.winfo_rooty()
+        panel_height = len(menu_items) * 30 + pad * 2
+        panel_width = 128
+        x = btn_x + self.overflow_button.winfo_width() - panel_width
+        y = btn_y - panel_height - 4
+        self._overflow_panel.geometry(f"{panel_width}x{panel_height}+{x}+{y}")
+
+        # Auto-dismiss on click outside or focus loss
+        self._overflow_panel.bind('<FocusOut>', lambda e: self.master.after(100, self._close_overflow_menu_safe))
+        self.master.bind('<Button-1>', self._on_click_outside_overflow, add='+')
+
+    def _overflow_action(self, command):
+        """Execute a menu action and close the panel."""
+        self._close_overflow_menu()
+        command()
+
+    def _on_click_outside_overflow(self, event):
+        """Close overflow menu if click is outside it."""
+        if self._overflow_panel and self._overflow_panel.winfo_exists():
+            try:
+                mx, my = self._overflow_panel.winfo_rootx(), self._overflow_panel.winfo_rooty()
+                mw, mh = self._overflow_panel.winfo_width(), self._overflow_panel.winfo_height()
+                if not (mx <= event.x_root <= mx + mw and my <= event.y_root <= my + mh):
+                    self._close_overflow_menu()
+            except Exception:
+                pass
+
+    def _close_overflow_menu_safe(self):
+        """Close overflow menu if it exists and doesn't have focus."""
+        if self._overflow_panel and self._overflow_panel.winfo_exists():
+            try:
+                if self.master.focus_get() is None or not str(self.master.focus_get()).startswith(str(self._overflow_panel)):
+                    self._close_overflow_menu()
+            except Exception:
+                self._close_overflow_menu()
+
+    def _close_overflow_menu(self):
+        """Destroy the overflow menu panel."""
+        if self._overflow_panel and self._overflow_panel.winfo_exists():
+            self._overflow_panel.destroy()
+        self._overflow_panel = None
+        try:
+            self.master.unbind('<Button-1>')
+            # Re-bind the global right-click handler that may have been affected
+            self.master.bind_all("<Button-3>", self._on_global_right_click)
+        except Exception:
+            pass
+
+    def _open_docs(self):
+        """Open the Owlette documentation in the default browser."""
+        import webbrowser
+        webbrowser.open("https://theexperiential.github.io/owlette/")
+        logging.info("Opened documentation URL")
+
+    def _open_feedback_dialog(self):
+        """Spawn the feedback/bug report dialog."""
+        try:
+            pythonw = os.path.join(shared_utils.get_data_path('python'), 'pythonw.exe')
+            if not os.path.exists(pythonw):
+                pythonw = 'pythonw'  # fallback to PATH
+            subprocess.Popen(
+                [pythonw, shared_utils.get_path('report_issue.py')],
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
+            )
+            logging.info("Spawned feedback dialog")
+        except Exception as e:
+            logging.error(f"Failed to open feedback dialog: {e}")
 
     # SYSTEM/MISC
 

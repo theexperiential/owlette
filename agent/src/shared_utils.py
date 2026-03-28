@@ -64,7 +64,8 @@ STATUS_COLORS = {
 WINDOW_TITLES = {
     "owlette_gui": "owlette",
     "prompt_slack_config": "connect to slack",
-    "prompt_restart": "process repeatedly failing!"
+    "prompt_restart": "process repeatedly failing!",
+    "report_issue": "feedback"
 }
 SERVICE_NAME = 'OwletteService'
 
@@ -787,6 +788,20 @@ def cleanup_old_logs(max_age_days=90):
     except Exception as e:
         logging.error(f"Error during log cleanup: {e}")
         return 0
+
+def get_log_tail(log_name='service', lines=100):
+    """Read the last N lines from a log file. Returns empty string on failure."""
+    try:
+        log_path = get_data_path(f'logs/{log_name}.log')
+        if not os.path.exists(log_path):
+            return ''
+        with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+            all_lines = f.readlines()
+            return ''.join(all_lines[-lines:])
+    except Exception as e:
+        logging.warning(f"Failed to read log tail: {e}")
+        return ''
+
 
 # Initialize logging with a rotating file handler
 def initialize_logging(log_file_name, level=logging.INFO):
