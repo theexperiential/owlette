@@ -16,11 +16,14 @@ import customtkinter as ctk
 # Ensure agent src is on the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import requests
 import shared_utils
 from custom_messagebox import OwletteMessagebox as CTkMessagebox
+from auth_manager import AuthManager
 
 shared_utils.initialize_logging('report_issue')
 logger = logging.getLogger(__name__)
+
 
 
 def build_report_data(category: str, description: str) -> dict:
@@ -30,10 +33,10 @@ def build_report_data(category: str, description: str) -> dict:
     site_id = firebase_cfg.get('site_id', '')
     machine_id = firebase_cfg.get('machine_id', '')
 
-    # System info (best-effort)
+    # System info (best-effort, skip GPU to avoid nvidia-smi console flash)
     system_info = {}
     try:
-        system_info = shared_utils.get_system_info()
+        system_info = shared_utils.get_system_metrics(skip_gpu=True)
     except Exception as e:
         logger.warning(f"Failed to gather system info: {e}")
 
@@ -57,9 +60,6 @@ def build_report_data(category: str, description: str) -> dict:
 
 def submit_report(data: dict):
     """Submit the report via the web API (POST /api/bug-report)."""
-    import requests
-    from auth_manager import AuthManager
-
     config = shared_utils.read_config()
     firebase_cfg = config.get('firebase', {})
     api_base = firebase_cfg.get('api_base') or shared_utils.get_api_base_url()
@@ -106,7 +106,10 @@ def submit_report(data: dict):
     )
 
     if resp.status_code != 200:
-        error_msg = resp.json().get('error', resp.text) if resp.headers.get('content-type', '').startswith('application/json') else resp.text
+        try:
+            error_msg = resp.json().get('error', resp.text)
+        except Exception:
+            error_msg = resp.text
         raise RuntimeError(f"API returned {resp.status_code}: {error_msg}")
 
     logger.info(f"Bug report submitted via API: {resp.json().get('id', 'unknown')}")
@@ -200,6 +203,8 @@ class ReportIssueApp:
             text_color="#9ca3af", anchor='w'
         ).pack(fill='x', pady=(0, 4))
 
+        self.MAX_CHARS = 1000
+
         self.description_box = ctk.CTkTextbox(
             container, height=130,
             fg_color=shared_utils.FRAME_COLOR,
@@ -209,14 +214,28 @@ class ReportIssueApp:
             font=("", 12),
             corner_radius=shared_utils.CORNER_RADIUS
         )
-        self.description_box.pack(fill='x', pady=(0, 6))
+        self.description_box.pack(fill='x', pady=(0, 4))
 
-        # Info label
+        # Footer row: info label left, char counter right
+        desc_footer = ctk.CTkFrame(container, fg_color='transparent')
+        desc_footer.pack(fill='x', pady=(0, 12))
+
         ctk.CTkLabel(
-            container,
+            desc_footer,
             text="system info and recent logs will be attached automatically.",
             font=("", 10), text_color="#6b7280", anchor='w'
-        ).pack(fill='x', pady=(0, 12))
+        ).pack(side='left')
+
+        self.char_counter = ctk.CTkLabel(
+            desc_footer,
+            text=f"0 / {self.MAX_CHARS}",
+            font=("", 10), text_color="#6b7280", anchor='e'
+        )
+        self.char_counter.pack(side='right')
+
+        # Bind key events to update counter and enforce limit
+        self.description_box.bind('<KeyRelease>', self._update_char_counter)
+        self.description_box.bind('<<Paste>>', lambda e: self.root.after(10, self._update_char_counter))
 
         # Button row
         btn_frame = ctk.CTkFrame(container, fg_color='transparent')
@@ -242,6 +261,16 @@ class ReportIssueApp:
             command=self._on_submit
         )
         self.submit_btn.pack(side='right')
+
+    def _update_char_counter(self, event=None):
+        text = self.description_box.get("1.0", "end").strip()
+        count = len(text)
+        if count > self.MAX_CHARS:
+            # Trim to limit
+            self.description_box.delete(f"1.0+{self.MAX_CHARS}c", "end")
+            count = self.MAX_CHARS
+        color = "#ef4444" if count >= self.MAX_CHARS else "#6b7280"
+        self.char_counter.configure(text=f"{count} / {self.MAX_CHARS}", text_color=color)
 
     def _on_submit(self):
         description = self.description_box.get("1.0", "end").strip()
