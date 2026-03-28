@@ -7,7 +7,7 @@ import { InteractiveBackground } from './InteractiveBackground';
 import { OwletteEye } from './OwletteEye';
 import { RotatingWord } from './RotatingWord';
 
-const prefixWords = ['monitor', 'deploy software to', 'ask questions to', 'take a vacation from', 'remotely control'];
+const prefixWords = ['monitor', 'deploy software to', 'ask questions to', 'remotely control', 'manage'];
 const suffixWords = [
   'computers',
   'media servers',

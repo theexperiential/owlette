@@ -169,7 +169,7 @@ export default function CortexPage() {
   // Auth guard
   useEffect(() => {
     if (!authLoading && !user) {
-      router.push('/login');
+      router.push('/');
     }
   }, [user, authLoading, router]);
 

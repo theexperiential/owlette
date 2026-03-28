@@ -243,7 +243,10 @@ export function PageHeader({
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem
-                onClick={signOut}
+                onClick={async () => {
+                  await signOut();
+                  router.push('/');
+                }}
                 className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
               >
                 <LogOut className="mr-2 h-4 w-4" />

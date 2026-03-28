@@ -548,7 +548,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!loading && !user) {
-      router.push('/login');
+      router.push('/');
     }
   }, [user, loading, router]);
 

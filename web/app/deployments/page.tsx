@@ -350,7 +350,7 @@ export default function DeploymentsPage() {
 
   useEffect(() => {
     if (!authLoading && !user) {
-      router.push('/login');
+      router.push('/');
     }
   }, [user, authLoading, router]);
 

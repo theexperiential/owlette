@@ -212,7 +212,7 @@ export default function LogsPage() {
   // Redirect if not logged in
   useEffect(() => {
     if (!loading && !user) {
-      router.push('/login');
+      router.push('/');
     }
   }, [user, loading, router]);
 
