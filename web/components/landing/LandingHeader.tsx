@@ -33,6 +33,9 @@ export function LandingHeader() {
           ) : (
             <>
               <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
+                <Link href="/download">download</Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
                 <Link href="/login">sign in</Link>
               </Button>
               <Button asChild size="sm" className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium">
