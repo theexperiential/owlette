@@ -115,21 +115,29 @@ export const POST = withRateLimit(
         return NextResponse.json({ error: `Description must be ${maxDescLength} characters or less` }, { status: 400 });
       }
 
-      // Look up user email
+      // Detect source: agent submissions use "Owlette Agent" as browserUA
+      const ua = typeof browserUA === 'string' ? browserUA.slice(0, 500) : '';
+      const isAgent = ua.startsWith('Owlette Agent');
+      const source = isAgent ? 'agent' : 'web';
+
+      // Look up user email (agents don't have one — use browserUA as identifier)
       let userEmail = '';
-      try {
-        const adminAuth = getAdminAuth();
-        const userRecord = await adminAuth.getUser(userId);
-        userEmail = userRecord.email || '';
-      } catch {
-        // Non-critical — proceed without email
+      if (!isAgent) {
+        try {
+          const adminAuth = getAdminAuth();
+          const userRecord = await adminAuth.getUser(userId);
+          userEmail = userRecord.email || '';
+        } catch {
+          // Non-critical — proceed without email
+        }
       }
+      const fromLabel = userEmail || (isAgent ? ua : userId);
 
       const db = getAdminDb();
       const docRef = db.collection('bug_reports').doc();
 
       await docRef.set({
-        source: 'web',
+        source,
         category,
         title: title.trim(),
         description: description.trim(),
@@ -137,12 +145,12 @@ export const POST = withRateLimit(
         createdAt: new Date(),
         userId,
         userEmail,
-        browserUA: typeof browserUA === 'string' ? browserUA.slice(0, 500) : '',
+        browserUA: ua,
         pageUrl: typeof pageUrl === 'string' ? pageUrl.slice(0, 500) : '',
-        appVersion: process.env.npm_package_version || '2.4.1',
+        appVersion: process.env.npm_package_version || '2.4.2',
       });
 
-      console.log(`[bug-report] Submitted by ${userEmail || userId}: ${title.trim()}`);
+      console.log(`[bug-report] Submitted by ${fromLabel}: ${title.trim()}`);
 
       // Send email notification to admin (non-blocking)
       const resendClient = getResend();
@@ -156,8 +164,8 @@ export const POST = withRateLimit(
             category,
             title.trim(),
             description.trim(),
-            userEmail,
-            'web',
+            fromLabel,
+            source,
             typeof pageUrl === 'string' ? pageUrl : '',
           ),
         }).catch((err) => {

@@ -276,11 +276,12 @@ class ReportIssueApp:
         threading.Thread(target=do_submit, daemon=True).start()
 
     def _on_success(self):
-        CTkMessagebox(
+        msg = CTkMessagebox(
             master=self.root, title="report submitted",
             message="thank you for your feedback!",
             icon="check", width=400
         )
+        msg.get()  # wait for user to dismiss
         self.root.destroy()
 
     def _on_error(self, error_msg: str):

@@ -2149,17 +2149,16 @@ class OwletteConfigApp:
         logging.info("Opened documentation URL")
 
     def _open_feedback_dialog(self):
-        """Spawn the feedback/bug report dialog."""
+        """Spawn the feedback/bug report dialog using bundled pythonw."""
         try:
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = 0  # SW_HIDE
+            pythonw = os.path.join(shared_utils.get_data_path('python'), 'pythonw.exe')
+            if not os.path.exists(pythonw):
+                pythonw = 'pythonw'  # fall back to PATH
             subprocess.Popen(
-                ["pythonw", shared_utils.get_path('report_issue.py')],
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                startupinfo=si
+                [pythonw, shared_utils.get_path('report_issue.py')],
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
-            logging.info("Spawned feedback dialog")
+            logging.info(f"Spawned feedback dialog via {pythonw}")
         except Exception as e:
             logging.error(f"Failed to open feedback dialog: {e}")
 
