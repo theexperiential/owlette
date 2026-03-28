@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "owlette — attention is all you need",
-  description: "Cloud-connected Windows process management system for TouchDesigner, digital signage, and media servers. Remote monitoring, deployment, and control across your entire fleet.",
+  description: "owlette gives your machines the attention they need — so you don't have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.",
   icons: {
     icon: '/icon.svg',
     shortcut: '/icon.svg',
@@ -26,15 +26,15 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "owlette — attention is all you need",
-    description: "Cloud-connected Windows process management system for TouchDesigner, digital signage, and media servers. Remote monitoring, deployment, and control across your entire fleet.",
+    description: "owlette gives your machines the attention they need — so you don't have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.",
     url: "https://owlette.app",
     siteName: "owlette",
     images: [
       {
-        url: '/owlette-icon.png',
-        width: 1024,
-        height: 1024,
-        alt: 'owlette — attention is all you need',
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'owlette dashboard — fleet monitoring and control',
       },
     ],
     locale: 'en_US',
@@ -43,10 +43,14 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: "owlette — attention is all you need",
-    description: "Cloud-connected Windows process management system for TouchDesigner, digital signage, and media servers. Remote monitoring, deployment, and control across your entire fleet.",
-    images: ['/owlette-icon.png'],
+    description: "owlette gives your machines the attention they need — so you don't have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.",
+    images: ['/og-image.png'],
   },
   metadataBase: new URL('https://owlette.app'),
+  manifest: '/manifest.json',
+  other: {
+    'theme-color': '#0a0f1a',
+  },
 };
 
 export default function RootLayout({
