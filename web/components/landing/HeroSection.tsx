@@ -35,15 +35,12 @@ export function HeroSection() {
   const [shuffledSuffixes] = useState(() => shuffle(suffixWords));
 
   return (
-    <section className="relative h-[100dvh] grid grid-rows-[0fr_auto_0.6fr] pt-16 overflow-hidden">
+    <section className="relative h-[100dvh] flex flex-col pt-16 overflow-hidden">
       {/* Interactive mouse-reactive background */}
       <InteractiveBackground />
 
-      {/* Top spacer */}
-      <div />
-
-      {/* Center: Eye + Text + CTA — all vertically centered as one block */}
-      <div className="relative z-10 w-full max-w-5xl mx-auto px-4 sm:px-6 text-center flex flex-col items-center justify-center">
+      {/* Content wrapper — headline pinned to vertical center, eye grows upward, CTA grows downward */}
+      <div className="relative z-10 w-full max-w-5xl mx-auto px-4 sm:px-6 text-center flex flex-col items-center flex-1 justify-center -mt-[10vh]">
         {/* The Eye */}
         <div className="relative flex items-center justify-center mb-6 sm:mb-8">
           <div
@@ -83,9 +80,6 @@ export function HeroSection() {
           </Button>
         </div>
       </div>
-
-      {/* Bottom spacer */}
-      <div />
 
     </section>
   );
