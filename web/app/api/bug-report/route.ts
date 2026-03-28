@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
-import { requireSessionOrIdToken, ApiAuthError } from '@/lib/apiAuth.server';
+import { requireSession, ApiAuthError } from '@/lib/apiAuth.server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@/lib/emailTemplates.server';
@@ -73,7 +73,23 @@ function buildBugReportEmail(
 export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
-      const userId = await requireSessionOrIdToken(request);
+      // Auth: try session first, then Bearer token (supports both web users and agents)
+      let userId: string;
+      try {
+        userId = await requireSession(request);
+      } catch {
+        const authHeader = request.headers.get('authorization') || '';
+        const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+        if (!token) {
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+        try {
+          const decoded = await getAdminAuth().verifyIdToken(token);
+          userId = decoded.uid;
+        } catch {
+          return NextResponse.json({ error: 'Unauthorized: Invalid token' }, { status: 401 });
+        }
+      }
 
       const body = await request.json();
       const { title, category, description, browserUA, pageUrl } = body;
