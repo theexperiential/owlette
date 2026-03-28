@@ -110,8 +110,9 @@ export const POST = withRateLimit(
       if (!description || typeof description !== 'string' || description.trim().length === 0) {
         return NextResponse.json({ error: 'Description is required' }, { status: 400 });
       }
-      if (description.trim().length > 5000) {
-        return NextResponse.json({ error: 'Description must be 5000 characters or less' }, { status: 400 });
+      const maxDescLength = 50000; // allow long descriptions for agent log attachments
+      if (description.trim().length > maxDescLength) {
+        return NextResponse.json({ error: `Description must be ${maxDescLength} characters or less` }, { status: 400 });
       }
 
       // Look up user email

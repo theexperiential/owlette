@@ -2151,12 +2151,13 @@ class OwletteConfigApp:
     def _open_feedback_dialog(self):
         """Spawn the feedback/bug report dialog."""
         try:
-            pythonw = os.path.join(shared_utils.get_data_path('python'), 'pythonw.exe')
-            if not os.path.exists(pythonw):
-                pythonw = 'pythonw'  # fallback to PATH
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = 0  # SW_HIDE
             subprocess.Popen(
-                [pythonw, shared_utils.get_path('report_issue.py')],
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
+                ["pythonw", shared_utils.get_path('report_issue.py')],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                startupinfo=si
             )
             logging.info("Spawned feedback dialog")
         except Exception as e:

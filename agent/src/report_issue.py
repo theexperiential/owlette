@@ -94,6 +94,10 @@ def submit_report(data: dict):
     if extra_context:
         payload['description'] += ''.join(extra_context)
 
+    # Truncate to stay within API limit
+    if len(payload['description']) > 50000:
+        payload['description'] = payload['description'][:49950] + '\n\n[truncated]'
+
     resp = requests.post(
         f"{web_base}/api/bug-report",
         json=payload,
