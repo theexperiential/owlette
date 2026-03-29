@@ -55,7 +55,7 @@ export function LandingFooter() {
         </div>
 
         {/* Copyright */}
-        <div className="mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-border/30 text-center">
+        <div className="mt-8 sm:mt-12 pt-6 sm:pt-8 border-t border-border/30 text-center">
           <p className="text-xs sm:text-sm text-muted-foreground flex flex-wrap items-center justify-center gap-1">
             <span>&copy; 2026</span>
             <a href="https://tec.design" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">

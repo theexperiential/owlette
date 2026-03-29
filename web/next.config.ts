@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
+const isDev = process.env.NODE_ENV === 'development';
+
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ['http://100.64.45.42:3000'],
   async headers() {
     return [
       {
@@ -62,7 +65,7 @@ const nextConfig: NextConfig = {
               "base-uri 'self'",
               "form-action 'self'",
               "object-src 'none'", // Prevent plugin-based attacks (Flash, Java applets)
-              "upgrade-insecure-requests", // Force HTTPS for all resources
+              ...(isDev ? [] : ["upgrade-insecure-requests"]), // Force HTTPS for all resources (skip in dev for LAN access)
             ].join('; '),
           },
         ],

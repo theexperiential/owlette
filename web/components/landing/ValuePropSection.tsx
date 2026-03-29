@@ -1,33 +1,41 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { ArrowRight } from 'lucide-react';
 
 export function ValuePropSection() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [rotate, setRotate] = useState({ x: 8, y: 0 });
-  const [sheenPos, setSheenPos] = useState({ x: 50, y: 50 });
+  const tiltRef = useRef<HTMLAnchorElement>(null);
+  const sheenRef = useRef<HTMLDivElement>(null);
   const target = useRef({ x: 8, y: 0 });
   const current = useRef({ x: 8, y: 0 });
   const sheenTarget = useRef({ x: 50, y: 50 });
   const sheenCurrent = useRef({ x: 50, y: 50 });
   const raf = useRef<number | null>(null);
+  const isVisible = useRef(false);
 
   useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    // Only animate when the section is in the viewport
+    const observer = new IntersectionObserver(
+      ([entry]) => { isVisible.current = entry.isIntersecting; },
+      { threshold: 0 }
+    );
+    observer.observe(container);
+
     const handleMouseMove = (e: MouseEvent) => {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      // Normalize mouse position relative to container center (-1 to 1)
+      if (!isVisible.current) return;
+      const rect = container.getBoundingClientRect();
       const nx = (e.clientX - rect.left) / rect.width * 2 - 1;
       const ny = (e.clientY - rect.top) / rect.height * 2 - 1;
-      // Map to rotation: X tilts based on vertical mouse, Y based on horizontal
       target.current = {
-        x: 8 - ny * 6,   // 2deg to 14deg range
-        y: nx * 5,        // -5deg to 5deg range
+        x: 8 - ny * 6,
+        y: nx * 5,
       };
-      // Sheen follows mouse position as percentage
       sheenTarget.current = {
         x: ((e.clientX - rect.left) / rect.width) * 100,
         y: ((e.clientY - rect.top) / rect.height) * 100,
@@ -35,26 +43,36 @@ export function ValuePropSection() {
     };
 
     const animate = () => {
-      const factor = 0.06;
-      current.current = {
-        x: current.current.x + (target.current.x - current.current.x) * factor,
-        y: current.current.y + (target.current.y - current.current.y) * factor,
-      };
-      sheenCurrent.current = {
-        x: sheenCurrent.current.x + (sheenTarget.current.x - sheenCurrent.current.x) * factor,
-        y: sheenCurrent.current.y + (sheenTarget.current.y - sheenCurrent.current.y) * factor,
-      };
-      setRotate({ ...current.current });
-      setSheenPos({ ...sheenCurrent.current });
       raf.current = requestAnimationFrame(animate);
+      if (!isVisible.current) return;
+
+      const factor = 0.06;
+      const cur = current.current;
+      const tgt = target.current;
+      cur.x += (tgt.x - cur.x) * factor;
+      cur.y += (tgt.y - cur.y) * factor;
+
+      const sc = sheenCurrent.current;
+      const st = sheenTarget.current;
+      sc.x += (st.x - sc.x) * factor;
+      sc.y += (st.y - sc.y) * factor;
+
+      // Write directly to DOM — no React re-render
+      if (tiltRef.current) {
+        tiltRef.current.style.transform = `rotateX(${cur.x}deg) rotateY(${cur.y}deg)`;
+      }
+      if (sheenRef.current) {
+        sheenRef.current.style.background = `radial-gradient(ellipse 600px 400px at ${sc.x}% ${sc.y}%, rgba(255, 255, 255, 0.06) 0%, transparent 70%)`;
+      }
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mousemove', handleMouseMove, { passive: true });
     raf.current = requestAnimationFrame(animate);
 
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       if (raf.current) cancelAnimationFrame(raf.current);
+      observer.disconnect();
     };
   }, []);
 
@@ -63,11 +81,12 @@ export function ValuePropSection() {
       {/* Product screenshot with mouse-reactive 3D tilt */}
       <div ref={containerRef} className="max-w-6xl mx-auto mb-6 sm:mb-8" style={{ perspective: '1800px' }}>
         <Link
+          ref={tiltRef}
           href="/demo"
           target="_blank"
           className="block relative rounded-xl overflow-hidden cursor-pointer"
           style={{
-            transform: `rotateX(${rotate.x}deg) rotateY(${rotate.y}deg)`,
+            transform: `rotateX(8deg) rotateY(0deg)`,
             transformOrigin: 'center center',
             boxShadow: '0 80px 160px -30px rgba(0, 0, 0, 0.6), 0 40px 80px -20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05)',
             willChange: 'transform',
@@ -83,9 +102,10 @@ export function ValuePropSection() {
           />
           {/* Sheen overlay */}
           <div
+            ref={sheenRef}
             className="absolute inset-0 pointer-events-none"
             style={{
-              background: `radial-gradient(ellipse 600px 400px at ${sheenPos.x}% ${sheenPos.y}%, rgba(255, 255, 255, 0.06) 0%, transparent 70%)`,
+              background: `radial-gradient(ellipse 600px 400px at 50% 50%, rgba(255, 255, 255, 0.06) 0%, transparent 70%)`,
             }}
           />
         </Link>
