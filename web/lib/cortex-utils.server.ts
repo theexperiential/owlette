@@ -492,28 +492,38 @@ async function executeDeploySoftware(
   // ── Merge preset with explicit overrides ────────────────────────────────
   let installerUrl = (params.installer_url as string) || preset?.installer_url || '';
   let installerName = (params.installer_name as string) || preset?.installer_name || '';
-  const silentFlags = (params.silent_flags as string) || preset?.silent_flags || '';
+  let silentFlags = (params.silent_flags as string) || preset?.silent_flags || '';
   const verifyPath = (params.verify_path as string) || preset?.verify_path || '';
   const closeProcesses = (params.close_processes as string[]) || preset?.close_processes || [];
   const timeoutSeconds = timeoutMinutes * 60;
 
-  // ── TouchDesigner URL auto-resolve ──────────────────────────────────────
-  if (
-    version &&
-    softwareName.toLowerCase().includes('touchdesigner') &&
-    !params.installer_url // Only auto-resolve if user didn't explicitly provide a URL
-  ) {
-    installerUrl = `https://download.derivative.ca/TouchDesigner.${version}.exe`;
-    installerName = `TouchDesigner.${version}.exe`;
+  // ── TouchDesigner version-aware overrides ───────────────────────────────
+  const isTD = softwareName.toLowerCase().includes('touchdesigner');
+  if (version && isTD) {
+    // Auto-resolve URL if not explicitly provided
+    if (!params.installer_url) {
+      installerUrl = `https://download.derivative.ca/TouchDesigner.${version}.exe`;
+      installerName = `TouchDesigner.${version}.exe`;
+    }
+
+    // CRITICAL: Replace /DIR in silent flags to match the target version.
+    // Presets may have an old version path hardcoded — never install to wrong dir.
+    if (!params.silent_flags) {
+      const correctDir = `C:\\Program Files\\Derivative\\TouchDesigner.${version}`;
+      silentFlags = silentFlags.replace(
+        /\/DIR="[^"]*"/i,
+        `/DIR="${correctDir}"`
+      );
+      // If no /DIR was present, add it
+      if (!/\/DIR=/i.test(silentFlags)) {
+        silentFlags = `${silentFlags} /DIR="${correctDir}"`;
+      }
+    }
   }
 
-  // ── Also update verify_path for TouchDesigner if version is provided ────
+  // ── Resolve verify_path ─────────────────────────────────────────────────
   let resolvedVerifyPath = verifyPath;
-  if (
-    version &&
-    softwareName.toLowerCase().includes('touchdesigner') &&
-    !params.verify_path
-  ) {
+  if (version && isTD && !params.verify_path) {
     resolvedVerifyPath = `C:\\Program Files\\Derivative\\TouchDesigner.${version}`;
   }
 
