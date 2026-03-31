@@ -117,14 +117,10 @@ class FirebaseClient:
 
         # =================================================================
         # Slow-command queue (installs, uninstalls, updates — serialised)
+        # Worker thread is started in start() after self.running = True
         # =================================================================
         self._slow_command_queue: queue.Queue = queue.Queue(maxsize=50)
-        self._slow_command_worker = threading.Thread(
-            target=self._slow_command_worker_loop,
-            name="slow-cmd-worker",
-            daemon=True,
-        )
-        self._slow_command_worker.start()
+        self._slow_command_worker: Optional[threading.Thread] = None
 
         # =================================================================
         # Cached config for offline mode
@@ -328,6 +324,14 @@ class FirebaseClient:
             return
 
         self.running = True
+
+        # Start slow-command worker now that self.running is True
+        self._slow_command_worker = threading.Thread(
+            target=self._slow_command_worker_loop,
+            name="slow-cmd-worker",
+            daemon=True,
+        )
+        self._slow_command_worker.start()
 
         # Start watchdog for thread supervision
         self.connection_manager.start_watchdog()
