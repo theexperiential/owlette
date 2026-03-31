@@ -157,14 +157,29 @@ GUI-only files (e.g. `owlette_gui.py`) only need steps 1 + 3 (no service restart
 
 ---
 
-## Dev Docs (for large tasks)
+## Task Workflow (GSD-Inspired)
 
-1. `/dev-docs` — create strategic plan (use in plan mode)
-2. `/create-dev-docs` — generate task files in `dev/active/`
-3. `/update-dev-docs` — preserve progress before context compaction
-4. `/resume-dev-docs` — restore context in a new session
+For non-trivial features, use the wave-based planning and execution system. Each task runs in a fresh agent context to prevent context rot on long sessions.
 
-Skip for single-file tweaks or small fixes.
+### Planning
+- `/plan` — Research codebase → create wave-based plan → write task files to `dev/active/`
+
+### Execution (pick one)
+- `/execute` — Run next wave of tasks in **parallel** (each task gets a fresh agent context — prevents context rot)
+- `/next` — Execute the next single task in the current context (for smaller features or when you want to review each step)
+
+### Verification & Lifecycle
+- `/verify` — Check completed work against plan's success criteria + build check
+- `/save` — Save progress to dev docs before context compaction
+- `/resume` — Restore context in a new session from dev docs
+
+### Debugging
+- `/debug` — Scientific method debugging: observe → hypothesize → test → diagnose → fix → verify
+
+### Build
+- `/build-and-fix` — Build web + agent, fix all errors, repeat until clean
+
+Skip `/plan` for single-file tweaks or small fixes. Use `/debug` for any non-obvious bug.
 
 ---
 
