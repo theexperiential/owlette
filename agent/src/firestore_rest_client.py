@@ -515,7 +515,7 @@ class FirestoreRestClient:
         min_interval: float = 2.0,
         max_interval: float = 30.0,
         backoff_multiplier: float = 1.5
-    ) -> threading.Thread:
+    ) -> tuple:
         """
         Listen to document changes in real-time using adaptive polling.
 
@@ -530,8 +530,11 @@ class FirestoreRestClient:
             backoff_multiplier: Multiplier for interval increase when idle (default: 1.5)
 
         Returns:
-            Thread object (already started)
+            (thread, wake_event) — thread is already started; set wake_event to
+            interrupt the backoff sleep and force an immediate poll.
         """
+        wake_event = threading.Event()
+
         def poll_document():
             """Poll document for changes with exponential backoff."""
             # Use a sentinel value to detect first run (different from None which means "document doesn't exist")
@@ -580,9 +583,12 @@ class FirestoreRestClient:
                         # No change - increase interval (exponential backoff)
                         current_interval = min(current_interval * backoff_multiplier, max_interval)
 
-                    # Poll with current interval
+                    # Poll with current interval (wake_event.set() interrupts immediately)
                     logger.debug(f"Polling {path} - next check in {current_interval:.1f}s")
-                    time.sleep(current_interval)
+                    if wake_event.wait(current_interval):
+                        # Woken up externally — reset to fast polling
+                        wake_event.clear()
+                        current_interval = min_interval
 
                 except Exception as e:
                     consecutive_errors += 1
@@ -623,7 +629,7 @@ class FirestoreRestClient:
         thread = threading.Thread(target=poll_document, daemon=True)
         thread.start()
         logger.debug(f"Started listener for document: {path}")
-        return thread
+        return thread, wake_event
 
     def batch_write(self, writes: List[Dict[str, Any]]):
         """
