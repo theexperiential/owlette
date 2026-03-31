@@ -157,15 +157,18 @@ def _get_process_list(params, config):
         launch_mode = proc.get('launch_mode', 'always' if autolaunch else 'off')
         schedules = proc.get('schedules', None)
 
-        # Check runtime state
+        # Check runtime state (keyed by PID, matched by process id)
         state_info = {}
         if runtime_state:
             for key, val in runtime_state.items():
-                if isinstance(val, dict) and val.get('name') == proc_name:
+                if isinstance(val, dict) and val.get('id') == proc_id:
                     state_info = val
+                    state_info['_pid'] = key
                     break
 
-        pid = state_info.get('pid')
+        # PID is the dict key in app_states.json, stored as _pid during lookup
+        pid_str = state_info.get('_pid')
+        pid = int(pid_str) if pid_str else None
         is_running = False
         if pid:
             try:

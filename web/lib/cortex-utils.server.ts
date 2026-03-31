@@ -618,7 +618,7 @@ async function executeDeploySoftware(
     version: version || null,
     installer_url: installerUrl,
     target_machines: machineIds.length,
-    message: `Deployment started: ${version ? `${softwareName} ${version}` : softwareName} is being downloaded and installed on ${machineIds.length} machine${machineIds.length > 1 ? 's' : ''}. Track progress on the Deployments page.`,
+    message: `Deployment started: ${version ? `${softwareName} ${version}` : softwareName} is being downloaded and installed on ${machineIds.length} machine${machineIds.length > 1 ? 's' : ''}. Track progress on the [Deployments page](/deployments).`,
   };
 }
 

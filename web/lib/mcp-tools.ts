@@ -470,7 +470,7 @@ const tier3Tools: McpToolDefinition[] = [
   },
   {
     name: 'deploy_software',
-    description: 'Deploy and install software on this machine using the full deployment pipeline: download installer, verify checksum, run silent install, and post-install verification. Creates a tracked deployment visible on the Deployments page. IMPORTANT: Call get_system_presets first to find the correct preset for the software. For TouchDesigner, provide the version number (e.g. "2025.32280") and the download URL will be resolved automatically. If the user\'s request is ambiguous (missing version, unclear software, no matching preset), ASK the user to clarify — never guess. This is a long-running operation (5-40 minutes) — the tool returns immediately with a deployment ID while installation continues in the background.',
+    description: 'Deploy and install software on this machine using the full deployment pipeline: download installer, verify checksum, run silent install, and post-install verification. Creates a tracked deployment visible on the Deployments page. IMPORTANT: Call get_system_presets first to find the correct preset for the software. For TouchDesigner, provide the version number (e.g. "2025.32280") and the download URL will be resolved automatically. If the user\'s request is ambiguous (missing version, unclear software, no matching preset), ASK the user to clarify — never guess. This is a long-running operation (5-40 minutes) — the tool returns immediately with a deployment ID while installation continues in the background. Direct users to the [Deployments page](/deployments) to track progress.',
     tier: 3,
     parameters: {
       type: 'object',
