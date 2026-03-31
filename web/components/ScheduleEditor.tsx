@@ -43,6 +43,7 @@ function TimePicker({ value, onChange, compact }: TimePickerProps) {
   const { userPreferences } = useAuth();
   const use24h = (userPreferences.timeFormat || '12h') === '24h';
   const [open, setOpen] = useState(false);
+  const [openAbove, setOpenAbove] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   const [h, m] = value.split(':').map(Number);
@@ -57,6 +58,15 @@ function TimePicker({ value, onChange, compact }: TimePickerProps) {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
+
+  const handleToggle = () => {
+    if (!open && ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setOpenAbove(spaceBelow < 100);
+    }
+    setOpen(!open);
+  };
 
   const setHour12 = (newH12: number) => {
     const h24 = isPM ? (newH12 === 12 ? 12 : newH12 + 12) : (newH12 === 12 ? 0 : newH12);
@@ -82,13 +92,13 @@ function TimePicker({ value, onChange, compact }: TimePickerProps) {
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={handleToggle}
         className={`${btnSize} rounded-md border border-border bg-background text-foreground font-medium cursor-pointer hover:bg-muted transition-colors whitespace-nowrap`}
       >
         {formatTimeDisplay(value, use24h)}
       </button>
       {open && (
-        <div className="absolute z-50 mt-1 bg-card border border-border rounded-lg shadow-lg p-2 flex gap-1">
+        <div className={`absolute z-50 bg-card border border-border rounded-lg shadow-lg p-2 flex gap-1 ${openAbove ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
           {/* Hour column */}
           <div className="flex flex-col items-center gap-0.5">
             {use24h ? (
