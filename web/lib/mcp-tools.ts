@@ -472,11 +472,14 @@ const tier3Tools: McpToolDefinition[] = [
     name: 'deploy_software',
     description: `Deploy and install software on this machine using the full deployment pipeline: download installer, run silent install, verify installation, and track progress. Creates a tracked deployment visible on the Deployments page.
 
+CRITICAL — USER CONFIRMATION REQUIRED:
+Before calling this tool, you MUST present a summary of what will be installed and WAIT for the user to explicitly confirm. Do NOT proceed without their approval. Show them: software name, version, install path, parallel install status, and any processes that will be closed. This is a destructive operation that downloads and installs software on their machine — never auto-execute.
+
 WORKFLOW:
 1. Call get_system_presets first to find presets for the software. Presets provide installer URLs, silent flags, and other configuration.
-2. If no preset exists, you MUST have: installer_url, silent_flags, and software_name at minimum.
-3. Provide any overrides (version, URL, flags) — they take precedence over preset values.
-4. The tool returns immediately with a deployment ID. Installation runs in the background (5-40 min). Direct users to the [Deployments page](/deployments) to track progress.
+2. Gather all parameters and resolve any ambiguity by asking the user.
+3. Present a clear summary of the deployment plan and ASK "Should I proceed?" — wait for explicit confirmation.
+4. Only after the user confirms, call this tool. It returns immediately with a deployment ID. Installation runs in the background (5-40 min). Direct users to the [Deployments page](/deployments) to track progress.
 
 TOUCHDESIGNER SPECIFICS:
 - Provide the version number (e.g. "2025.32280") and the download URL is resolved automatically via https://download.derivative.ca/TouchDesigner.{version}.exe
