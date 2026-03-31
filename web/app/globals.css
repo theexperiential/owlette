@@ -386,3 +386,12 @@
   color: var(--foreground);
   font-weight: 600;
 }
+
+.cortex-markdown a {
+  color: var(--accent-cyan);
+  text-decoration: none;
+}
+
+.cortex-markdown a:hover {
+  text-decoration: underline;
+}
