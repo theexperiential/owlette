@@ -747,7 +747,7 @@ export default function DashboardPage() {
                   onToggleProcesses={toggleProcessesExpanded}
                   currentSiteId={currentSiteId}
                   siteTimezone={currentSite?.timezone}
-                  siteTimeFormat={currentSite?.timeFormat}
+                  siteTimeFormat={userPreferences.timeFormat || '12h'}
                   onEditProcess={openEditProcessDialog}
                   onCreateProcess={openCreateProcessDialog}
                   onKillProcess={handleKillProcess}
@@ -785,7 +785,7 @@ export default function DashboardPage() {
                         isExpanded={expandedMachineIds.has(machine.machineId)}
                         currentSiteId={currentSiteId}
                         siteTimezone={currentSite?.timezone || 'UTC'}
-                        siteTimeFormat={currentSite?.timeFormat || '12h'}
+                        siteTimeFormat={userPreferences.timeFormat || '12h'}
                         userPreferences={userPreferences}
                         isAdmin={isAdmin}
                         onToggleExpanded={() => toggleMachineExpanded(machine.machineId)}

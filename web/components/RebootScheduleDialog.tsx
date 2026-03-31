@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -43,7 +44,8 @@ interface RebootScheduleDialogProps {
 function getNextScheduledReboot(
   enabled: boolean,
   schedules: ScheduleBlock[],
-  timezone?: string
+  timezone?: string,
+  timeFormat: '12h' | '24h' = '12h'
 ): string {
   if (!enabled || schedules.length === 0) return 'none';
 
@@ -78,7 +80,7 @@ function getNextScheduledReboot(
   const next = upcoming[0];
 
   const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  const timeStr = next.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timeStr = next.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: timeFormat === '12h' });
   const isToday = next.toDateString() === now.toDateString();
   const isTomorrow = next.toDateString() === new Date(now.getTime() + 86400000).toDateString();
 
@@ -95,6 +97,7 @@ export default function RebootScheduleDialog({
   onOpenChange,
   currentSchedule,
 }: RebootScheduleDialogProps) {
+  const { userPreferences } = useAuth();
   const [enabled, setEnabled] = useState(false);
   const [days, setDays] = useState<string[]>(['sun']);
   const [startTime, setStartTime] = useState('03:00');
@@ -127,8 +130,8 @@ export default function RebootScheduleDialog({
     () =>
       getNextScheduledReboot(enabled, [
         { days, ranges: [{ start: startTime, stop: stopTime }] },
-      ]),
-    [enabled, days, startTime, stopTime]
+      ], undefined, userPreferences.timeFormat || '12h'),
+    [enabled, days, startTime, stopTime, userPreferences.timeFormat]
   );
 
   const toggleDay = (day: string) => {

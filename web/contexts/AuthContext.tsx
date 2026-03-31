@@ -78,6 +78,7 @@ type UserRole = 'user' | 'admin';
 export interface UserPreferences {
   temperatureUnit: 'C' | 'F'; // Default: 'C'
   timezone: string; // IANA timezone (e.g. 'America/New_York'). Default: browser-detected
+  timeFormat: '12h' | '24h'; // Time display format. Default: '12h'
   healthAlerts: boolean; // Receive email alerts when machines go offline. Default: true
   processAlerts: boolean; // Receive email alerts when processes crash or fail to start. Default: true
   alertCcEmails: string[]; // Additional CC recipients for alert emails. Default: []
@@ -118,7 +119,7 @@ const AuthContext = createContext<AuthContextType>({
   lastMachineIds: {},
   requiresMfaSetup: false,
   passkeyEnrolled: false,
-  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', healthAlerts: true, processAlerts: true, alertCcEmails: [], statsExpanded: true, processesExpanded: true },
+  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', healthAlerts: true, processAlerts: true, alertCcEmails: [], statsExpanded: true, processesExpanded: true },
   signIn: async () => {},
   signUp: async () => {},
   signInWithGoogle: async () => {},
@@ -146,7 +147,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
   const [passkeyEnrolled, setPasskeyEnrolled] = useState(false);
-  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), healthAlerts: true, processAlerts: true, alertCcEmails: [], statsExpanded: true, processesExpanded: true });
+  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', healthAlerts: true, processAlerts: true, alertCcEmails: [], statsExpanded: true, processesExpanded: true });
   const [lastSiteId, setLastSiteId] = useState<string | null>(null);
   const [lastMachineIds, setLastMachineIds] = useState<Record<string, string>>({});
 
@@ -251,6 +252,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 const newPrefs: UserPreferences = {
                   temperatureUnit: preferences.temperatureUnit || 'C',
                   timezone: preferences.timezone || getBrowserTimezone(),
+                  timeFormat: preferences.timeFormat || '12h',
                   healthAlerts: preferences.healthAlerts !== false, // Default: true
                   processAlerts: preferences.processAlerts !== false, // Default: true
                   alertCcEmails: preferences.alertCcEmails || [], // Default: []

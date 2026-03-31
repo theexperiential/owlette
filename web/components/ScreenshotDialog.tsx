@@ -14,6 +14,7 @@ import {
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { formatRelativeTime } from '@/lib/timeUtils';
+import { useAuth } from '@/contexts/AuthContext';
 import { useScreenshotHistory, ScreenshotRecord } from '@/hooks/useScreenshotHistory';
 import { toast } from 'sonner';
 
@@ -44,6 +45,7 @@ export function ScreenshotDialog({
   lastScreenshot: initialScreenshot,
   hasActiveDeployment,
 }: ScreenshotDialogProps) {
+  const { userPreferences } = useAuth();
   const [isCapturing, setIsCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [screenshot, setScreenshot] = useState(initialScreenshot);
@@ -243,7 +245,7 @@ export function ScreenshotDialog({
       hour: 'numeric',
       minute: '2-digit',
       second: '2-digit',
-      hour12: true,
+      hour12: (userPreferences.timeFormat || '12h') === '12h',
     });
   };
 

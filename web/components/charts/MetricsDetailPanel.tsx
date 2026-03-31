@@ -26,6 +26,7 @@ import { TimeRangeSelector, type TimeRange } from './TimeRangeSelector';
 import { ChartTooltip, metricConfig, isNetworkMetricKey, type MetricType } from './ChartTooltip';
 import { useHistoricalMetrics } from '@/hooks/useHistoricalMetrics';
 import { getNicColors, formatThroughput } from '@/lib/networkUtils';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 
 interface MetricsDetailPanelProps {
@@ -43,6 +44,7 @@ export function MetricsDetailPanel({
   initialMetric = 'cpu',
   onClose,
 }: MetricsDetailPanelProps) {
+  const { userPreferences } = useAuth();
   const [selectedMetrics, setSelectedMetrics] = useState<MetricType[]>([initialMetric]);
   const [selectedNics, setSelectedNics] = useState<string[]>([]);
   const [timeRange, setTimeRange] = useState<TimeRange>('1h');
@@ -109,21 +111,22 @@ export function MetricsDetailPanel({
     });
   };
 
+  const hour12 = (userPreferences.timeFormat || '12h') === '12h';
   const formatXAxisTick = (timestamp: number): string => {
     const date = new Date(timestamp);
     switch (timeRange) {
       case '1h':
       case '1d':
-        return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12 });
       case '1w':
-        return date.toLocaleDateString(undefined, { weekday: 'short', hour: '2-digit' });
+        return date.toLocaleDateString(undefined, { weekday: 'short', hour: '2-digit', hour12 });
       case '1m':
         return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       case '1y':
       case 'all':
         return date.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
       default:
-        return date.toLocaleTimeString();
+        return date.toLocaleTimeString(undefined, { hour12 });
     }
   };
 
@@ -368,7 +371,12 @@ export function MetricsDetailPanel({
                 />
                 {/* Hidden Y-axis for raw throughput lines (prevents them from blowing out the % scale) */}
                 <YAxis yAxisId="hidden" hide />
-                <Tooltip content={<ChartTooltip />} />
+                <Tooltip content={<ChartTooltip formatTime={(ts) => {
+                  const d = new Date(ts);
+                  const isToday = d.toDateString() === new Date().toDateString();
+                  if (isToday) return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12 });
+                  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12 });
+                }} />} />
                 {/* Baseline reference line to show full time range */}
                 <ReferenceLine y={0} stroke="oklch(0.35 0.08 250)" strokeDasharray="3 3" />
                 {activeLines.map((line) =>

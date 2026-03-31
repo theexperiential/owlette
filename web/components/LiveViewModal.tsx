@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/select';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface LiveViewModalProps {
   open: boolean;
@@ -38,6 +39,7 @@ export function LiveViewModal({
   onStartLiveView,
   onStopLiveView,
 }: LiveViewModalProps) {
+  const { userPreferences } = useAuth();
   const [interval, setInterval_] = useState(10);
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
@@ -278,7 +280,7 @@ export function LiveViewModal({
 
                 {screenshot && (
                   <span className="text-xs text-muted-foreground">
-                    last update: {new Date(screenshot.timestamp).toLocaleTimeString()}
+                    last update: {new Date(screenshot.timestamp).toLocaleTimeString(undefined, { hour12: (userPreferences.timeFormat || '12h') === '12h' })}
                   </span>
                 )}
               </div>
