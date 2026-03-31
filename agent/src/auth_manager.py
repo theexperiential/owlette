@@ -88,7 +88,7 @@ class AuthManager:
         # Retry/backoff state for token refresh
         self._last_refresh_attempt: Optional[float] = None
         self._refresh_backoff_seconds: float = 60  # Start with 1 minute
-        self._max_backoff_seconds: float = 3600  # Max 1 hour
+        self._max_backoff_seconds: float = 300  # Max 5 minutes
         self._consecutive_failures: int = 0  # Track consecutive failures
         self._backoff_logged: bool = False  # Track if we've logged backoff message
 
@@ -422,12 +422,14 @@ class AuthManager:
             self._access_token = access_token
             self._token_expiry = expiry_timestamp
 
+            # Only log at INFO when recovering from failures (state change)
+            was_failing = self._consecutive_failures > 0
+
             # Reset failure counters on success
             self._consecutive_failures = 0
             self._refresh_backoff_seconds = 60  # Reset backoff to 1 minute
 
-            # Only log at INFO when recovering from failures (state change)
-            if self._consecutive_failures > 0:
+            if was_failing:
                 logger.info(f"Token refresh recovered after failures, expires_in={expires_in}s")
             else:
                 logger.debug(f"Token refreshed successfully, expires_in={expires_in}s")

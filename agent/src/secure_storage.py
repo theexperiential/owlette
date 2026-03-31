@@ -132,35 +132,25 @@ class SecureStorage:
 
     def _save_data(self, data: dict) -> bool:
         """Encrypt and save token data to file."""
-        debug_log = Path(shared_utils.get_data_path('logs/oauth_debug.log'))
         try:
             # Ensure config directory exists
             self.config_dir.mkdir(parents=True, exist_ok=True)
-            with open(debug_log, 'a') as f:
-                f.write(f"\nToken Save Debug\n")
-                f.write(f"================\n")
-                f.write(f"Config dir: {self.config_dir}\n")
-                f.write(f"Token file: {self.token_file}\n")
+            logger.debug(f"Saving token data to {self.token_file}")
 
             # Clear hidden attribute if file exists (so we can overwrite it)
             if os.name == 'nt' and self.token_file.exists():
                 import ctypes
                 FILE_ATTRIBUTE_NORMAL = 0x80
                 ctypes.windll.kernel32.SetFileAttributesW(str(self.token_file), FILE_ATTRIBUTE_NORMAL)
-                with open(debug_log, 'a') as f:
-                    f.write(f"Cleared file attributes for overwrite\n")
 
             # Encrypt data
             json_data = json.dumps(data).encode('utf-8')
             encrypted_data = self._fernet.encrypt(json_data)
-            with open(debug_log, 'a') as f:
-                f.write(f"Data encrypted, size: {len(encrypted_data)} bytes\n")
+            logger.debug(f"Data encrypted, size: {len(encrypted_data)} bytes")
 
             # Write to file
             with open(self.token_file, 'wb') as f:
                 f.write(encrypted_data)
-            with open(debug_log, 'a') as f:
-                f.write(f"File written successfully\n")
 
             # Set file as hidden
             if os.name == 'nt':
@@ -169,18 +159,14 @@ class SecureStorage:
                 FILE_ATTRIBUTE_ARCHIVE = 0x20
                 # Use hidden + archive (keeps file writable for next time)
                 ctypes.windll.kernel32.SetFileAttributesW(str(self.token_file), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE)
-                with open(debug_log, 'a') as f:
-                    f.write(f"File attributes set to hidden\n")
 
+            logger.debug("Token data saved successfully")
             return True
 
         except Exception as e:
             logger.error(f"Failed to save token data: {e}")
             import traceback
-            with open(debug_log, 'a') as f:
-                f.write(f"\nERROR saving tokens:\n")
-                f.write(f"{str(e)}\n")
-                f.write(traceback.format_exc())
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
 
     def save_refresh_token(self, token: str) -> bool:

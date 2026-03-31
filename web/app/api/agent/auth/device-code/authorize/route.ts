@@ -52,138 +52,145 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const userId = await requireSession(request);
     await assertUserHasSiteAccess(userId, siteId);
 
-    // Look up device code
+    // Look up device code and authorize atomically using a transaction
+    // to prevent race conditions where two concurrent requests both read
+    // 'pending' and both authorize the same device code.
     const adminDb = getAdminDb();
     const docRef = adminDb.collection('device_codes').doc(pairPhrase);
-    const doc = await docRef.get();
 
-    if (!doc.exists) {
-      return NextResponse.json(
-        { error: 'Pairing phrase not found. It may have expired.' },
-        { status: 404 }
-      );
-    }
+    const result = await adminDb.runTransaction(async (transaction) => {
+      const doc = await transaction.get(docRef);
 
-    const data = doc.data()!;
-
-    // Check expiry
-    const expiresAt = data.expiresAt?.toMillis?.() || data.expiresAt?.getTime?.() || 0;
-    if (Date.now() > expiresAt) {
-      await docRef.update({ status: 'expired' });
-      return NextResponse.json(
-        { error: 'Pairing phrase has expired. Please generate a new one on the target machine.' },
-        { status: 404 }
-      );
-    }
-
-    // Check status
-    if (data.status !== 'pending') {
-      return NextResponse.json(
-        { error: 'This pairing phrase has already been used.' },
-        { status: 409 }
-      );
-    }
-
-    // Generate machine ID from the device code data, or use a placeholder
-    // for pre-authorized codes (generated from dashboard)
-    const machineId = data.machineId || `pending_${pairPhrase.replace(/-/g, '_')}`;
-
-    // Generate unique agent user ID (same pattern as exchange endpoint)
-    const agentUid = `agent_${siteId}_${machineId}`.replace(/[^a-zA-Z0-9_]/g, '_');
-
-    // Generate Firebase Custom Token with agent claims
-    const adminAuth = getAdminAuth();
-    const customToken = await adminAuth.createCustomToken(agentUid, {
-      role: 'agent',
-      site_id: siteId,
-      machine_id: machineId,
-      version: data.version || 'unknown',
-    });
-
-    // Exchange custom token for ID token via Firebase Auth REST API
-    const firebaseApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
-    if (!firebaseApiKey) {
-      throw new Error('Firebase API key not configured');
-    }
-
-    const authResponse = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${firebaseApiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+      if (!doc.exists) {
+        return { error: 'Pairing phrase not found. It may have expired.', status: 404 } as const;
       }
-    );
 
-    if (!authResponse.ok) {
-      const errorData = await authResponse.json();
-      throw new Error(`Failed to exchange custom token: ${errorData.error?.message || 'Unknown error'}`);
-    }
+      const data = doc.data()!;
 
-    // Set custom claims (must happen before the second token exchange)
-    await adminAuth.setCustomUserClaims(agentUid, {
-      role: 'agent',
-      site_id: siteId,
-      machine_id: machineId,
-      version: data.version || 'unknown',
-    });
-
-    // Create a new custom token and exchange again to get ID token WITH claims
-    const customTokenWithClaims = await adminAuth.createCustomToken(agentUid, {
-      role: 'agent',
-      site_id: siteId,
-      machine_id: machineId,
-      version: data.version || 'unknown',
-    });
-
-    const refreshAuthResponse = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${firebaseApiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: customTokenWithClaims, returnSecureToken: true }),
+      // Check expiry
+      const expiresAt = data.expiresAt?.toMillis?.() || data.expiresAt?.getTime?.() || 0;
+      if (Date.now() > expiresAt) {
+        transaction.update(docRef, { status: 'expired' });
+        return { error: 'Pairing phrase has expired. Please generate a new one on the target machine.', status: 404 } as const;
       }
-    );
 
-    if (!refreshAuthResponse.ok) {
-      const errorData = await refreshAuthResponse.json();
-      throw new Error(`Failed to refresh token with claims: ${errorData.error?.message || 'Unknown error'}`);
+      // Check status
+      if (data.status !== 'pending') {
+        return { error: 'This pairing phrase has already been used.', status: 409 } as const;
+      }
+
+      // Generate machine ID from the device code data, or use a placeholder
+      // for pre-authorized codes (generated from dashboard)
+      const machineId = data.machineId || `pending_${pairPhrase.replace(/-/g, '_')}`;
+
+      // Generate unique agent user ID (same pattern as exchange endpoint)
+      const agentUid = `agent_${siteId}_${machineId}`.replace(/[^a-zA-Z0-9_]/g, '_');
+
+      // Generate Firebase Custom Token with agent claims
+      const adminAuth = getAdminAuth();
+      const customToken = await adminAuth.createCustomToken(agentUid, {
+        role: 'agent',
+        site_id: siteId,
+        machine_id: machineId,
+        version: data.version || 'unknown',
+      });
+
+      // Exchange custom token for ID token via Firebase Auth REST API
+      const firebaseApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+      if (!firebaseApiKey) {
+        throw new Error('Firebase API key not configured');
+      }
+
+      const authResponse = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${firebaseApiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+        }
+      );
+
+      if (!authResponse.ok) {
+        const errorData = await authResponse.json();
+        throw new Error(`Failed to exchange custom token: ${errorData.error?.message || 'Unknown error'}`);
+      }
+
+      // Set custom claims (must happen before the second token exchange)
+      await adminAuth.setCustomUserClaims(agentUid, {
+        role: 'agent',
+        site_id: siteId,
+        machine_id: machineId,
+        version: data.version || 'unknown',
+      });
+
+      // Create a new custom token and exchange again to get ID token WITH claims
+      const customTokenWithClaims = await adminAuth.createCustomToken(agentUid, {
+        role: 'agent',
+        site_id: siteId,
+        machine_id: machineId,
+        version: data.version || 'unknown',
+      });
+
+      const refreshAuthResponse = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${firebaseApiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: customTokenWithClaims, returnSecureToken: true }),
+        }
+      );
+
+      if (!refreshAuthResponse.ok) {
+        const errorData = await refreshAuthResponse.json();
+        throw new Error(`Failed to refresh token with claims: ${errorData.error?.message || 'Unknown error'}`);
+      }
+
+      const refreshAuthData = await refreshAuthResponse.json();
+      const finalIdToken = refreshAuthData.idToken;
+
+      // Generate refresh token
+      const crypto = await import('crypto');
+      const refreshToken = crypto.randomBytes(64).toString('base64url');
+      const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+
+      // Store refresh token in Firestore (same schema as exchange endpoint)
+      // Note: writes to other documents within a transaction are atomic
+      const refreshTokenRef = adminDb.collection('agent_refresh_tokens').doc(refreshTokenHash);
+      transaction.set(refreshTokenRef, {
+        siteId,
+        machineId,
+        version: data.version || 'unknown',
+        createdBy: userId,
+        createdAt: FieldValue.serverTimestamp(),
+        lastUsed: FieldValue.serverTimestamp(),
+        agentUid,
+      });
+
+      // Update device code document with tokens and authorization info
+      transaction.update(docRef, {
+        status: 'authorized',
+        siteId,
+        authorizedBy: userId,
+        authorizedAt: FieldValue.serverTimestamp(),
+        accessToken: finalIdToken,
+        refreshToken,
+      });
+
+      logger.info(`Device code authorized: phrase=${pairPhrase}, site=${siteId}, machine=${machineId}, by=${userId}`);
+
+      return { success: true, machineId: data.machineId || null } as const;
+    });
+
+    if ('error' in result) {
+      return NextResponse.json(
+        { error: result.error },
+        { status: result.status }
+      );
     }
-
-    const refreshAuthData = await refreshAuthResponse.json();
-    const finalIdToken = refreshAuthData.idToken;
-
-    // Generate refresh token
-    const crypto = await import('crypto');
-    const refreshToken = crypto.randomBytes(64).toString('base64url');
-    const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-
-    // Store refresh token in Firestore (same schema as exchange endpoint)
-    await adminDb.collection('agent_refresh_tokens').doc(refreshTokenHash).set({
-      siteId,
-      machineId,
-      version: data.version || 'unknown',
-      createdBy: userId,
-      createdAt: FieldValue.serverTimestamp(),
-      lastUsed: FieldValue.serverTimestamp(),
-      agentUid,
-    });
-
-    // Update device code document with tokens and authorization info
-    await docRef.update({
-      status: 'authorized',
-      siteId,
-      authorizedBy: userId,
-      authorizedAt: FieldValue.serverTimestamp(),
-      accessToken: finalIdToken,
-      refreshToken,
-    });
-
-    logger.info(`Device code authorized: phrase=${pairPhrase}, site=${siteId}, machine=${machineId}, by=${userId}`);
 
     return NextResponse.json({
       success: true,
-      machineId: data.machineId || null,
+      machineId: result.machineId,
     });
   } catch (error: any) {
     if (error instanceof ApiAuthError) {

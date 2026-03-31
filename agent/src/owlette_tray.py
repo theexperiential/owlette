@@ -148,6 +148,7 @@ def check_service_running():
 
 # Function to read service status from IPC file
 _last_good_status = None  # Cache last successful read to ride through atomic-rename races
+_last_good_status_time = 0  # Timestamp of last successful read
 
 def read_service_status():
     """
@@ -161,7 +162,7 @@ def read_service_status():
     atomic rename), returns the last successfully read status to avoid
     false-positive "Starting" flickers in determine_status().
     """
-    global _last_good_status
+    global _last_good_status, _last_good_status_time
     try:
         status_path = shared_utils.get_data_path('tmp/service_status.json')
 
@@ -180,17 +181,18 @@ def read_service_status():
         with open(status_path, 'r') as f:
             status_data = json.load(f)
             _last_good_status = status_data
+            _last_good_status_time = time.time()
             return status_data
 
     except NameError as e:
         logging.error(f"[STATUS] NameError (json module not imported?): {e}")
         return None
     except (json.JSONDecodeError, PermissionError, OSError) as e:
-        # Transient failures during atomic rename — return cached status
-        if _last_good_status is not None:
+        # Transient failures during atomic rename — return cached status if fresh enough
+        if _last_good_status is not None and (time.time() - _last_good_status_time) < 60:
             logging.debug(f"[STATUS] Transient read error, using cached status: {e}")
             return _last_good_status
-        logging.error(f"[STATUS] Failed to read service status (no cache): {e}")
+        logging.error(f"[STATUS] Failed to read service status (no cache or cache too old): {e}")
         return None
     except Exception as e:
         logging.error(f"[STATUS] Failed to read service status: {e}", exc_info=True)

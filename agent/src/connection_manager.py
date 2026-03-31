@@ -166,6 +166,7 @@ class ConnectionManager:
         # =====================================================================
         self._reconnect_lock = threading.Lock()
         self._reconnect_in_progress = False
+        self._reconnect_thread: Optional[threading.Thread] = None
 
         # =====================================================================
         # Callbacks (injected by FirebaseClient)
@@ -487,6 +488,7 @@ class ConnectionManager:
             name="ConnectionManager-Reconnect"
         )
         thread.start()
+        self._reconnect_thread = thread
 
     def _reconnect_sequence(self, reason: str):
         """
@@ -646,11 +648,11 @@ class ConnectionManager:
         """
         for host, port in self.CONNECTIVITY_HOSTS:
             try:
-                sock = socket.create_connection(
+                with socket.create_connection(
                     (host, port),
                     timeout=self.CONNECTIVITY_TIMEOUT
-                )
-                sock.close()
+                ) as sock:
+                    pass
                 self.logger.debug(f"[INTERNET] Connectivity confirmed via {host}")
                 return True
             except OSError:
@@ -888,7 +890,11 @@ class ConnectionManager:
 
         # Wait for watchdog to stop
         if self._watchdog_thread and self._watchdog_thread.is_alive():
-            self._watchdog_thread.join(timeout=2.0)
+            self._watchdog_thread.join(timeout=5.0)
+
+        # Wait for any in-flight reconnect attempt
+        if self._reconnect_thread and self._reconnect_thread.is_alive():
+            self._reconnect_thread.join(timeout=5.0)
 
         self._set_state(ConnectionState.DISCONNECTED, "Shutdown complete")
         self.logger.info("[SHUTDOWN] Complete")

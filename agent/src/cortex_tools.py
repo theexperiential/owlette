@@ -39,9 +39,26 @@ IPC_TIMEOUT = 30  # seconds
 
 
 def _ensure_ipc_dirs():
-    """Ensure IPC directories exist."""
+    """Ensure IPC directories exist and clean up stale files."""
     os.makedirs(IPC_CMD_DIR, exist_ok=True)
     os.makedirs(IPC_RESULT_DIR, exist_ok=True)
+    _cleanup_stale_ipc_files()
+
+
+def _cleanup_stale_ipc_files():
+    """Remove IPC command and result files older than 120 seconds."""
+    cutoff = time.time() - 120
+    for ipc_dir in (IPC_CMD_DIR, IPC_RESULT_DIR):
+        try:
+            for filename in os.listdir(ipc_dir):
+                filepath = os.path.join(ipc_dir, filename)
+                try:
+                    if os.path.isfile(filepath) and os.path.getmtime(filepath) < cutoff:
+                        os.remove(filepath)
+                except OSError:
+                    pass
+        except OSError:
+            pass
 
 
 def _write_ipc_command(tool_name: str, tool_params: dict) -> str:

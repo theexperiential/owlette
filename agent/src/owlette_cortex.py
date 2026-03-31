@@ -171,6 +171,11 @@ class AutoGuardrails:
             logger.info("Guardrail: hourly event rate limit reached")
             return False
 
+        # Prune stale dedup entries to prevent unbounded growth
+        stale_keys = [k for k, t in self._recent_events.items() if now - t > DEDUP_COOLDOWN_SECONDS]
+        for k in stale_keys:
+            del self._recent_events[k]
+
         # Dedup (same machine + process within cooldown)
         dedup_key = f"{event.get('machineId', '')}:{event.get('processName', '')}"
         last_time = self._recent_events.get(dedup_key, 0)

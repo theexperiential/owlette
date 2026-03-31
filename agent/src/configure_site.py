@@ -27,6 +27,7 @@ Usage:
 """
 
 import json
+import logging
 import os
 import sys
 import time
@@ -102,9 +103,16 @@ def _save_config(site_id: str, environment: str, api_base: str, project_id: str)
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, 'r') as f:
-            config = json.load(f)
+        try:
+            with open(CONFIG_PATH, 'r') as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logging.warning(f"Config file corrupted or unreadable ({e}), starting fresh")
+            config = None
     else:
+        config = None
+
+    if config is None:
         config = {
             "_comment": "Owlette Configuration - Edit this file to add processes to monitor",
             "version": shared_utils.CONFIG_VERSION,
@@ -137,8 +145,11 @@ def _save_config(site_id: str, environment: str, api_base: str, project_id: str)
     if 'token' in config.get('firebase', {}):
         del config['firebase']['token']
 
-    with open(CONFIG_PATH, 'w') as f:
+    # Atomic write: write to temp file, then replace
+    tmp_path = CONFIG_PATH.with_suffix('.tmp')
+    with open(tmp_path, 'w') as f:
         json.dump(config, f, indent=2)
+    os.replace(tmp_path, CONFIG_PATH)
 
 
 def run_pairing_flow(api_base: str = None, add_phrase: str = None,

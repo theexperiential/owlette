@@ -33,6 +33,7 @@ Usage:
     firestore.listen_to_document('config/abc/machines/DESKTOP-001', callback)
 """
 
+import hashlib
 import requests
 import json
 import re
@@ -267,7 +268,8 @@ class FirestoreRestClient:
         response = self.session.post(
             url,
             json={'writes': [write_entry]},
-            headers=self._get_auth_headers()
+            headers=self._get_auth_headers(),
+            timeout=30
         )
         response.raise_for_status()
 
@@ -299,14 +301,18 @@ class FirestoreRestClient:
         """
         try:
             url = f"{self.base_url}/{path}"
-            response = self.session.get(url, headers=self._get_auth_headers())
+            response = self.session.get(url, headers=self._get_auth_headers(), timeout=30)
 
             if response.status_code == 404:
                 logger.debug(f"Document not found: {path}")
                 return None
 
             response.raise_for_status()
-            doc = response.json()
+            try:
+                doc = response.json()
+            except json.JSONDecodeError:
+                logger.error(f"Non-JSON response for {path} (status {response.status_code}): {response.text[:200]}")
+                raise
             return self._from_firestore_document(doc)
 
         except requests.exceptions.HTTPError as e:
@@ -363,7 +369,8 @@ class FirestoreRestClient:
                 response = self.session.patch(
                     url,
                     json=firestore_doc,
-                    headers=self._get_auth_headers()
+                    headers=self._get_auth_headers(),
+                    timeout=30
                 )
 
                 response.raise_for_status()
@@ -464,7 +471,8 @@ class FirestoreRestClient:
                 response = self.session.post(
                     url,
                     json={'writes': [write_entry]},
-                    headers=self._get_auth_headers()
+                    headers=self._get_auth_headers(),
+                    timeout=30
                 )
             else:
                 # No server timestamps — use existing PATCH logic
@@ -477,7 +485,8 @@ class FirestoreRestClient:
                     url,
                     json={'fields': firestore_fields},
                     params=params,
-                    headers=self._get_auth_headers()
+                    headers=self._get_auth_headers(),
+                    timeout=30
                 )
 
             response.raise_for_status()
@@ -496,7 +505,7 @@ class FirestoreRestClient:
         """
         try:
             url = f"{self.base_url}/{path}"
-            response = self.session.delete(url, headers=self._get_auth_headers())
+            response = self.session.delete(url, headers=self._get_auth_headers(), timeout=30)
 
             # 404 is OK for delete (already doesn't exist)
             if response.status_code not in [200, 204, 404]:
@@ -530,10 +539,12 @@ class FirestoreRestClient:
             backoff_multiplier: Multiplier for interval increase when idle (default: 1.5)
 
         Returns:
-            (thread, wake_event) — thread is already started; set wake_event to
-            interrupt the backoff sleep and force an immediate poll.
+            (thread, wake_event, stop_event) — thread is already started; set wake_event to
+            interrupt the backoff sleep and force an immediate poll; set stop_event to
+            terminate the polling loop.
         """
         wake_event = threading.Event()
+        stop_event = threading.Event()
 
         def poll_document():
             """Poll document for changes with exponential backoff."""
@@ -549,7 +560,7 @@ class FirestoreRestClient:
             consecutive_errors = 0
             last_error_type = None
 
-            while True:
+            while not stop_event.is_set():
                 try:
                     # Get current document (suppress logging - we handle it here)
                     current_data = self.get_document(path, _suppress_logging=True)
@@ -561,8 +572,6 @@ class FirestoreRestClient:
                     last_error_type = None
 
                     # Calculate hash for reliable comparison (handles dict ordering, float precision, etc.)
-                    import hashlib
-                    import json
                     if current_data is not None:
                         current_hash = hashlib.md5(json.dumps(current_data, sort_keys=True).encode()).hexdigest()
                     else:
@@ -585,12 +594,16 @@ class FirestoreRestClient:
 
                     # Poll with current interval (wake_event.set() interrupts immediately)
                     logger.debug(f"Polling {path} - next check in {current_interval:.1f}s")
+                    if stop_event.is_set():
+                        break
                     if wake_event.wait(current_interval):
                         # Woken up externally — reset to fast polling
                         wake_event.clear()
                         current_interval = min_interval
 
                 except Exception as e:
+                    if stop_event.is_set():
+                        break
                     consecutive_errors += 1
                     error_type = type(e).__name__
 
@@ -621,15 +634,17 @@ class FirestoreRestClient:
 
                     last_error_type = error_type
 
-                    # Back off on error - increase backoff for consecutive errors
+                    # Back off on error - interruptible via stop_event
                     error_backoff = min(5 * (1 + consecutive_errors // 10), 60)  # 5s to 60s max
-                    time.sleep(error_backoff)
+                    stop_event.wait(error_backoff)
                     current_interval = min_interval  # Reset interval after error
+
+            logger.debug(f"Listener stopped for document: {path}")
 
         thread = threading.Thread(target=poll_document, daemon=True)
         thread.start()
         logger.debug(f"Started listener for document: {path}")
-        return thread, wake_event
+        return thread, wake_event, stop_event
 
     def batch_write(self, writes: List[Dict[str, Any]]):
         """
@@ -697,7 +712,8 @@ class FirestoreRestClient:
             response = self.session.post(
                 url,
                 json={'writes': batch_writes},
-                headers=self._get_auth_headers()
+                headers=self._get_auth_headers(),
+                timeout=30
             )
 
             response.raise_for_status()
@@ -714,7 +730,7 @@ class FirestoreRestClient:
                     try:
                         error_details = e.response.json()
                         logger.debug(f"Firestore error details: {error_details}")
-                    except:
+                    except (json.JSONDecodeError, ValueError):
                         pass
             else:
                 # Log other errors at ERROR level
@@ -724,7 +740,7 @@ class FirestoreRestClient:
                     try:
                         error_details = e.response.json()
                         logger.error(f"Firestore error details: {error_details}")
-                    except:
+                    except (json.JSONDecodeError, ValueError):
                         logger.error(f"Response text: {e.response.text if hasattr(e.response, 'text') else 'N/A'}")
             raise
 
@@ -783,11 +799,16 @@ class CollectionReference:
 
             response = self.client.session.get(
                 url,
-                headers=self.client._get_auth_headers()
+                headers=self.client._get_auth_headers(),
+                timeout=30
             )
 
             response.raise_for_status()
-            data = response.json()
+            try:
+                data = response.json()
+            except json.JSONDecodeError:
+                logger.error(f"Non-JSON response listing documents (status {response.status_code}): {response.text[:200]}")
+                return
 
             # Parse documents from response
             documents = data.get('documents', [])
@@ -807,7 +828,7 @@ class CollectionReference:
 
         except Exception as e:
             logger.error(f"Error streaming collection {self.path}: {e}")
-            return
+            raise
 
 
 class DocumentReference:

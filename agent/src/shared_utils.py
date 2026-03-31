@@ -391,7 +391,7 @@ def get_network_metrics():
 _cached_gateway: str = ''
 _cached_gateway_time: float = 0.0
 _cached_ping_result: dict = {}
-_ping_thread_running: bool = False
+_ping_thread: threading.Thread = None
 
 
 def _detect_default_gateway() -> str:
@@ -458,7 +458,7 @@ def _run_ping(target: str) -> dict:
 
 def _ping_background():
     """Background thread that runs ping and caches result."""
-    global _cached_ping_result, _ping_thread_running
+    global _cached_ping_result
     try:
         gateway = _detect_default_gateway()
         if not gateway:
@@ -473,8 +473,6 @@ def _ping_background():
     except Exception as e:
         logging.debug(f"Network quality ping failed: {e}")
         _cached_ping_result = {'gateway_ip': None, 'latency_ms': None, 'packet_loss_pct': None}
-    finally:
-        _ping_thread_running = False
 
 
 def get_network_quality() -> dict:
@@ -483,11 +481,10 @@ def get_network_quality() -> dict:
     Runs ping in a background thread to avoid blocking the metrics loop (~4s for 4 pings).
     Returns cached result from previous ping cycle.
     """
-    global _ping_thread_running
-    if not _ping_thread_running:
-        _ping_thread_running = True
-        t = threading.Thread(target=_ping_background, daemon=True)
-        t.start()
+    global _ping_thread
+    if _ping_thread is None or not _ping_thread.is_alive():
+        _ping_thread = threading.Thread(target=_ping_background, daemon=True)
+        _ping_thread.start()
     return dict(_cached_ping_result) if _cached_ping_result else {
         'gateway_ip': None, 'latency_ms': None, 'packet_loss_pct': None
     }
@@ -612,8 +609,8 @@ def get_environment():
         config = read_config()
         if config:
             return config.get('environment', 'production')
-    except:
-        pass
+    except (json.JSONDecodeError, OSError, KeyError) as e:
+        logging.debug(f"Could not read environment from config: {e}")
     return 'production'
 
 def get_api_base_url(environment=None):

@@ -91,11 +91,7 @@ class Util:
     # Check if a Process ID (PID) is running
     @staticmethod
     def is_pid_running(pid):
-        try:
-            process = psutil.Process(pid)
-            return True
-        except psutil.NoSuchProcess:
-            return False
+        return psutil.pid_exists(pid)
 
     @staticmethod
     def get_process_name(process):
@@ -2051,6 +2047,43 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     del self.relaunch_attempts[name]
                 logging.info(f"[OK] Cleaned up {len(stale_names)} stale entries from relaunch_attempts tracking")
 
+            # Clean up install_locks for processes no longer in config
+            stale_locks = [pid for pid in self.install_locks.keys() if pid not in current_process_ids]
+            if stale_locks:
+                for pid in stale_locks:
+                    del self.install_locks[pid]
+                logging.info(f"[OK] Cleaned up {len(stale_locks)} stale entries from install_locks")
+
+            # Clean up active_installations for processes no longer in config
+            stale_installs = [pid for pid in self.active_installations.keys() if pid not in current_process_ids]
+            if stale_installs:
+                for pid in stale_installs:
+                    del self.active_installations[pid]
+                logging.info(f"[OK] Cleaned up {len(stale_installs)} stale entries from active_installations")
+
+            # Clean up manual_overrides for processes no longer in config
+            stale_overrides = [pid for pid in self.manual_overrides.keys() if pid not in current_process_ids]
+            if stale_overrides:
+                for pid in stale_overrides:
+                    del self.manual_overrides[pid]
+                logging.info(f"[OK] Cleaned up {len(stale_overrides)} stale entries from manual_overrides")
+
+            # Clean up _skip_launch_delay for processes no longer in config
+            stale_skips = self._skip_launch_delay - current_process_ids
+            if stale_skips:
+                self._skip_launch_delay -= stale_skips
+                logging.info(f"[OK] Cleaned up {len(stale_skips)} stale entries from _skip_launch_delay")
+
+            # Clean up app_states.json (results file) — remove PIDs that no longer exist
+            if self.results:
+                stale_pids = [pid_str for pid_str in self.results.keys()
+                              if not psutil.pid_exists(int(pid_str))]
+                if stale_pids:
+                    for pid_str in stale_pids:
+                        del self.results[pid_str]
+                    shared_utils.write_json_to_file(self.results, shared_utils.RESULT_FILE_PATH)
+                    logging.info(f"[OK] Cleaned up {len(stale_pids)} stale PID entries from app_states.json")
+
         except Exception as e:
             logging.error(f"Error cleaning up stale tracking data: {e}")
 
@@ -2811,7 +2844,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         logging.warning(f"Failed to create recovery watchdog (non-fatal): {recovery_err}")
 
                     # Clean up the installer scheduled task after 5 minutes
-                    subprocess.Popen(
+                    cleanup_proc = subprocess.Popen(
                         ['cmd', '/c',
                          f'powershell -NoProfile -Command "Start-Sleep 300" && '
                          f'schtasks /Delete /TN "{task_name}" /F && '
@@ -2821,6 +2854,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL
                     )
+                    del cleanup_proc  # Release Popen handle — process runs detached
 
                     logging.debug("Installer will handle service restart automatically")
                     logging.debug("Recovery watchdog will attempt restart if service doesn't come back")
@@ -2836,8 +2870,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     try:
                         if os.path.exists(update_marker_path):
                             os.remove(update_marker_path)
-                    except:
-                        pass
+                    except OSError as marker_err:
+                        logging.warning(f"Could not remove update marker: {marker_err}")
                     return error_msg
 
             elif cmd_type == 'cancel_installation':
@@ -3246,7 +3280,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             import subprocess
             subprocess.run(
                 ['shutdown', '/r', '/t', '30', '/c', 'Owlette scheduled reboot'],
-                check=True
+                check=True, timeout=15
             )
             logging.info("Scheduled reboot command issued (30-second delay)")
 
@@ -3269,7 +3303,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             import subprocess
             subprocess.run(
                 ['shutdown', '/r', '/t', '30', '/c', 'Owlette remote reboot requested'],
-                check=True
+                check=True, timeout=15
             )
 
             return "Reboot scheduled in 30 seconds"
@@ -3290,7 +3324,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             import subprocess
             subprocess.run(
                 ['shutdown', '/s', '/t', '30', '/c', 'Owlette remote shutdown requested'],
-                check=True
+                check=True, timeout=15
             )
 
             return "Shutdown scheduled in 30 seconds"
@@ -3301,7 +3335,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         """Cancel a pending reboot/shutdown."""
         try:
             import subprocess
-            subprocess.run(['shutdown', '/a'], check=True)
+            subprocess.run(['shutdown', '/a'], check=True, timeout=15)
 
             self.firebase_client.set_machine_flag('rebooting', False)
             self.firebase_client.set_machine_flag('shuttingDown', False)
@@ -3934,8 +3968,8 @@ with open(out_path, 'wb') as f:
                 if os.path.exists(update_marker_path):
                     os.remove(update_marker_path)
                     logging.info("Cleaned up unreadable update marker")
-            except:
-                pass
+            except OSError as marker_err:
+                logging.warning(f"Could not remove update marker during cleanup: {marker_err}")
 
     # Main main
     def main(self):
