@@ -84,7 +84,7 @@ export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
       const body = await request.json();
-      const { siteId, name, installer_name, installer_url, silent_flags, verify_path, machineIds } = body;
+      const { siteId, name, installer_name, installer_url, silent_flags, verify_path, parallel_install, machineIds } = body;
 
       if (!siteId || !name || !installer_name || !installer_url || !silent_flags) {
         return NextResponse.json(
@@ -142,6 +142,9 @@ export const POST = withRateLimit(
       if (verify_path) {
         deploymentData.verify_path = verify_path;
       }
+      if (parallel_install) {
+        deploymentData.parallel_install = true;
+      }
 
       await deploymentRef.set(deploymentData);
 
@@ -169,6 +172,9 @@ export const POST = withRateLimit(
 
         if (verify_path) {
           commandData.verify_path = verify_path;
+        }
+        if (parallel_install) {
+          commandData.parallel_install = true;
         }
 
         await pendingRef.set({ [commandId]: commandData }, { merge: true });

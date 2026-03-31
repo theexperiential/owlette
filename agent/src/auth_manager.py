@@ -164,11 +164,10 @@ class AuthManager:
             )
             logger.debug(f"Exchange response status: {response.status_code}")
 
-            # Log response to debug file
+            # Log response to debug file (omit body — may contain tokens)
             with open(debug_log, 'a') as f:
                 f.write(f"Response Status: {response.status_code}\n")
-                f.write(f"Response Headers: {dict(response.headers)}\n")
-                f.write(f"Response Body: {response.text[:500]}\n\n")
+                f.write(f"Response Headers: {dict(response.headers)}\n\n")
 
             if response.status_code != 200:
                 try:

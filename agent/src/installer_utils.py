@@ -10,7 +10,127 @@ import requests
 import psutil
 import hashlib
 import time
-from typing import Optional, Callable, Dict
+from typing import Optional, Callable, Dict, List
+
+
+def hide_registry_keys(software_name: str) -> List[dict]:
+    """
+    Temporarily hide existing uninstall registry keys for a software product.
+
+    Some installers (e.g. TouchDesigner) detect existing installations via
+    registry keys and force-uninstall them in silent mode. This function
+    renames those keys so the installer thinks no previous version exists,
+    enabling true side-by-side parallel installation.
+
+    Args:
+        software_name: Display name prefix to match (e.g. "TouchDesigner")
+
+    Returns:
+        List of dicts with 'original' and 'hidden' key names for restoration.
+    """
+    import winreg
+
+    uninstall_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+    hidden_keys = []
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, uninstall_path) as parent:
+            # Enumerate all subkeys and find matches
+            index = 0
+            keys_to_hide = []
+            while True:
+                try:
+                    subkey_name = winreg.EnumKey(parent, index)
+                    index += 1
+                except OSError:
+                    break
+
+                try:
+                    with winreg.OpenKey(parent, subkey_name) as subkey:
+                        display_name, _ = winreg.QueryValueEx(subkey, "DisplayName")
+                        if display_name and display_name.strip().startswith(software_name):
+                            keys_to_hide.append(subkey_name)
+                except (OSError, FileNotFoundError):
+                    continue
+
+        # Rename matching keys using reg.exe (winreg has no rename API)
+        for key_name in keys_to_hide:
+            hidden_name = f"_owlette_hidden_{key_name}"
+            full_path = f"HKLM\\{uninstall_path}\\{key_name}"
+            hidden_path = f"HKLM\\{uninstall_path}\\{hidden_name}"
+
+            # Copy key to hidden name, then delete original
+            result = subprocess.run(
+                ['reg', 'copy', full_path, hidden_path, '/s', '/f'],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode != 0:
+                logging.error(f"Failed to copy registry key {key_name}: {result.stderr}")
+                continue
+
+            result = subprocess.run(
+                ['reg', 'delete', full_path, '/f'],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode != 0:
+                logging.error(f"Failed to delete original registry key {key_name}: {result.stderr}")
+                # Try to clean up the copy
+                subprocess.run(['reg', 'delete', hidden_path, '/f'],
+                               capture_output=True, text=True, timeout=10)
+                continue
+
+            hidden_keys.append({'original': key_name, 'hidden': hidden_name})
+            logging.info(f"Hidden registry key: {key_name} -> {hidden_name}")
+
+        if hidden_keys:
+            logging.info(f"Hidden {len(hidden_keys)} existing '{software_name}' registry key(s)")
+        else:
+            logging.debug(f"No existing '{software_name}' registry keys found to hide")
+
+    except Exception as e:
+        logging.error(f"Error hiding registry keys for '{software_name}': {e}")
+
+    return hidden_keys
+
+
+def restore_registry_keys(hidden_keys: List[dict]) -> None:
+    """
+    Restore previously hidden registry keys after installation completes.
+
+    Args:
+        hidden_keys: List from hide_registry_keys() with 'original' and 'hidden' names.
+    """
+    uninstall_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+
+    for entry in hidden_keys:
+        original_name = entry['original']
+        hidden_name = entry['hidden']
+        original_path = f"HKLM\\{uninstall_path}\\{original_name}"
+        hidden_path = f"HKLM\\{uninstall_path}\\{hidden_name}"
+
+        try:
+            # Copy hidden key back to original name
+            result = subprocess.run(
+                ['reg', 'copy', hidden_path, original_path, '/s', '/f'],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode != 0:
+                logging.error(f"Failed to restore registry key {original_name}: {result.stderr}")
+                continue
+
+            # Delete the hidden copy
+            subprocess.run(
+                ['reg', 'delete', hidden_path, '/f'],
+                capture_output=True, text=True, timeout=10
+            )
+
+            logging.info(f"Restored registry key: {hidden_name} -> {original_name}")
+
+        except Exception as e:
+            logging.error(f"Error restoring registry key {original_name}: {e}")
+
+    if hidden_keys:
+        logging.info(f"Restored {len(hidden_keys)} registry key(s)")
 
 
 def download_file(

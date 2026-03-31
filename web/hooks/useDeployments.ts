@@ -12,6 +12,7 @@ export interface DeploymentTemplate {
   silent_flags: string;
   verify_path?: string;
   close_processes?: string[];
+  parallel_install?: boolean;
   createdAt: number;
 }
 
@@ -34,6 +35,7 @@ export interface Deployment {
   verify_path?: string;
   close_processes?: string[];
   suppress_projects?: string[];
+  parallel_install?: boolean;
   targets: DeploymentTarget[];
   createdAt: number;
   completedAt?: number;
@@ -70,6 +72,7 @@ export function useDeploymentTemplates(siteId: string) {
               silent_flags: data.silent_flags || '',
               verify_path: data.verify_path,
               close_processes: data.close_processes,
+              parallel_install: data.parallel_install,
               createdAt: data.createdAt || Date.now(),
             });
           });
@@ -482,6 +485,9 @@ export function useDeployments(siteId: string) {
     if (deployment.suppress_projects?.length) {
       deploymentData.suppress_projects = deployment.suppress_projects;
     }
+    if (deployment.parallel_install) {
+      deploymentData.parallel_install = true;
+    }
 
     console.log('[createDeployment] Creating deployment document...', { deploymentId, deploymentData });
     await setDoc(deploymentRef, deploymentData);
@@ -516,6 +522,9 @@ export function useDeployments(siteId: string) {
       if (deployment.suppress_projects?.length) {
         // Filter suppress_projects to only include IDs that exist on this specific machine
         commandData.suppress_projects = deployment.suppress_projects;
+      }
+      if (deployment.parallel_install) {
+        commandData.parallel_install = true;
       }
 
       console.log('[createDeployment] Writing command to machine:', { machineId, commandId, commandPath: `sites/${siteId}/machines/${machineId}/commands/pending` });

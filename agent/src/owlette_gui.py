@@ -858,7 +858,7 @@ class OwletteConfigApp:
 
         # Check if time to init is empty and set to default if so
         if not time_to_init:
-            relaunch_attempts = 60  # Default value
+            time_to_init = 60  # Default value
 
         # Write config
         if self.selected_process:
@@ -1226,7 +1226,7 @@ class OwletteConfigApp:
             self._update_scrollbar_visibility()
 
             # Reselect process list item after rebuild (if not editing an entry)
-            if self.selected_index is not None and current_focus == '.' or current_focus is None:
+            if self.selected_index is not None and (current_focus == '.' or current_focus is None):
                 try:
                     self.process_list.activate(self.selected_index)
                 except Exception as e:
@@ -1767,7 +1767,8 @@ class OwletteConfigApp:
                 # Service is stopped, so it won't recreate the document
                 if self.firebase_client and self.firebase_client.connected:
                     try:
-                        machine_ref = self.firebase_client.db.collection('sites').document(self.site_id)\
+                        site_id = self.config.get('firebase', {}).get('site_id', '')
+                        machine_ref = self.firebase_client.db.collection('sites').document(site_id)\
                             .collection('machines').document(self.firebase_client.machine_id)
 
                         # Delete the entire machine document

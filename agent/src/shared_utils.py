@@ -1204,7 +1204,7 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
                     if os.path.exists(temp_path):
                         try:
                             os.remove(temp_path)
-                        except:
+                        except Exception:
                             pass
 
             except Exception as e:
@@ -1212,7 +1212,7 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
                 if os.path.exists(temp_path):
                     try:
                         os.remove(temp_path)
-                    except:
+                    except Exception:
                         pass
                 logging.error(f"An error occurred while writing to the file: {e}")
                 break  # Exit retry loop on non-permission errors

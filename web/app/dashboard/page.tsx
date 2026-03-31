@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites, type LaunchMode, type ScheduleBlock } from '@/hooks/useFirestore';
@@ -492,10 +492,10 @@ export default function DashboardPage() {
     }
   };
 
-  // Load view preference from localStorage
-  useEffect(() => {
-    const savedView = localStorage.getItem('owlette_view_type') as ViewType;
-    if (savedView) {
+  // Read view preference from localStorage before first paint to avoid card→list flash
+  useLayoutEffect(() => {
+    const savedView = localStorage.getItem('owlette_view_type');
+    if (savedView === 'card' || savedView === 'list') {
       setViewType(savedView);
     }
   }, []);
@@ -579,7 +579,7 @@ export default function DashboardPage() {
   const currentSite = sites.find(s => s.id === currentSiteId);
 
   return (
-    <div className="relative min-h-screen pb-24">
+    <div className="relative min-h-screen pb-24 animate-in fade-in duration-300">
       {/* Header */}
       <PageHeader
         currentPage="dashboard"

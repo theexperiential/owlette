@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { AlertTriangle, ChevronDown, ChevronRight, Download, Loader2, Pencil, Trash2 } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Download, Loader2, Pencil, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useMachines, Process } from '@/hooks/useFirestore';
 import { DeploymentTemplate, Deployment } from '@/hooks/useDeployments';
@@ -49,20 +49,21 @@ export default function DeploymentDialog({
   const [silentFlags, setSilentFlags] = useState('');
   const [verifyPath, setVerifyPath] = useState('');
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(new Set());
-  const [saveAsTemplate, setSaveAsTemplate] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [selectedItem, setSelectedItem] = useState<string>('');  // 'preset:id' or 'template:id'
-  const [editingTemplate, setEditingTemplate] = useState<string>('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCloseProcesses, setShowCloseProcesses] = useState(false);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [additionalProcesses, setAdditionalProcesses] = useState('');
+  const [parallelInstall, setParallelInstall] = useState(false);
+  const [editingName, setEditingName] = useState(false);
 
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
 
   // Derive selection type from the unified selectedItem
   const isTemplateSelected = selectedItem.startsWith(TEMPLATE_PREFIX);
+  const isPresetSelected = selectedItem.startsWith(PRESET_PREFIX);
   const selectedTemplateId = isTemplateSelected ? selectedItem.slice(TEMPLATE_PREFIX.length) : '';
 
   // Filter out Owlette Agent presets from the library
@@ -96,25 +97,21 @@ export default function DeploymentDialog({
       setSilentFlags('');
       setVerifyPath('');
       setSelectedMachines(new Set());
-      setSaveAsTemplate(false);
       setSelectedItem('');
-      setEditingTemplate('');
       setShowCloseProcesses(false);
       setSelectedProjectIds(new Set());
       setAdditionalProcesses('');
+      setParallelInstall(false);
     }
   }, [open]);
 
   const handleItemSelect = (value: string) => {
     if (value === 'none') {
       setSelectedItem('');
-      setEditingTemplate('');
       return;
     }
 
     setSelectedItem(value);
-    setEditingTemplate('');
-    setSaveAsTemplate(false);
 
     if (value.startsWith(PRESET_PREFIX)) {
       const presetId = value.slice(PRESET_PREFIX.length);
@@ -125,6 +122,7 @@ export default function DeploymentDialog({
         setInstallerUrl(preset.installer_url);
         setSilentFlags(preset.silent_flags);
         setVerifyPath(preset.verify_path || '');
+        setParallelInstall(preset.parallel_install || false);
         if (preset.close_processes?.length) {
           setAdditionalProcesses(preset.close_processes.join(', '));
           setShowCloseProcesses(true);
@@ -141,6 +139,7 @@ export default function DeploymentDialog({
         setInstallerUrl(template.installer_url);
         setSilentFlags(template.silent_flags);
         setVerifyPath(template.verify_path || '');
+        setParallelInstall(template.parallel_install || false);
         if (template.close_processes?.length) {
           setAdditionalProcesses(template.close_processes.join(', '));
           setShowCloseProcesses(true);
@@ -151,16 +150,54 @@ export default function DeploymentDialog({
     }
   };
 
-  const handleEditTemplate = () => {
-    if (selectedTemplateId) {
-      if (editingTemplate === selectedTemplateId) {
-        setEditingTemplate('');
-        toast.info('Edit mode cancelled');
+  const handleSaveTemplate = async () => {
+    if (!deploymentName.trim()) {
+      // Switch to edit mode so user can type a name
+      setEditingName(true);
+      toast.error('Enter a name first');
+      return;
+    }
+
+    // Build close_processes for template
+    const templateCloseProcesses: string[] = [];
+    machines
+      .filter(m => selectedMachines.has(m.machineId))
+      .forEach(machine => {
+        (machine.processes || []).forEach((proc: Process) => {
+          if (selectedProjectIds.has(proc.id)) {
+            const exeName = proc.exe_path?.split(/[/\\]/).pop() || '';
+            if (exeName && !templateCloseProcesses.includes(exeName)) templateCloseProcesses.push(exeName);
+          }
+        });
+      });
+    const additionalNames = additionalProcesses.split(',').map(s => s.trim()).filter(Boolean);
+    additionalNames.forEach(name => {
+      if (!templateCloseProcesses.includes(name)) templateCloseProcesses.push(name);
+    });
+
+    const templateData: any = {
+      name: deploymentName,
+      installer_name: installerName,
+      installer_url: installerUrl,
+      silent_flags: silentFlags,
+      parallel_install: parallelInstall,
+    };
+    if (verifyPath?.trim()) templateData.verify_path = verifyPath.trim();
+    if (templateCloseProcesses.length > 0) templateData.close_processes = templateCloseProcesses;
+
+    try {
+      if (isTemplateSelected) {
+        // Update existing user-saved template
+        await onUpdateTemplate(selectedTemplateId, templateData);
+        toast.success('Template updated');
       } else {
-        setEditingTemplate(selectedTemplateId);
-        setSaveAsTemplate(false);
-        toast.info('Edit the template fields below and deploy to save changes');
+        // Save as new template (also covers system presets — never overwrite those)
+        const newId = await onCreateTemplate(templateData);
+        setSelectedItem(`${TEMPLATE_PREFIX}${newId}`);
+        toast.success('Saved as new template');
       }
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to save template');
     }
   };
 
@@ -177,7 +214,6 @@ export default function DeploymentDialog({
       toast.success('Template deleted successfully');
 
       setSelectedItem('');
-      setEditingTemplate('');
       setDeploymentName('');
       setInstallerName('');
       setInstallerUrl('');
@@ -213,13 +249,11 @@ export default function DeploymentDialog({
   };
 
   const handleDeploy = async () => {
-    if (!deploymentName.trim()) {
-      toast.error('Please provide a deployment name');
-      return;
-    }
+    // Auto-derive deployment name if not set
+    const effectiveName = deploymentName.trim() || getSelectedLabel() || installerName || 'Deployment';
 
     if (!installerName.trim()) {
-      toast.error('Please provide an installer name');
+      toast.error('Please provide an installer URL');
       return;
     }
 
@@ -243,60 +277,13 @@ export default function DeploymentDialog({
     setDeploying(true);
 
     try {
-      // Build close_processes list for template saving (before deployment object)
-      const templateCloseProcesses: string[] = [];
-      const additionalNamesForTemplate = additionalProcesses.split(',').map(s => s.trim()).filter(Boolean);
-      // For templates, only save the free-text process names (managed project IDs are machine-specific)
-      machines
-        .filter(m => selectedMachines.has(m.machineId))
-        .forEach(machine => {
-          (machine.processes || []).forEach((proc: Process) => {
-            if (selectedProjectIds.has(proc.id)) {
-              const exeName = proc.exe_path?.split(/[/\\]/).pop() || '';
-              if (exeName && !templateCloseProcesses.includes(exeName)) templateCloseProcesses.push(exeName);
-            }
-          });
-        });
-      additionalNamesForTemplate.forEach(name => {
-        if (!templateCloseProcesses.includes(name)) templateCloseProcesses.push(name);
-      });
-
-      // Update existing template if in edit mode
-      if (editingTemplate) {
-        const templateData: any = {
-          name: deploymentName,
-          installer_name: installerName,
-          installer_url: installerUrl,
-          silent_flags: silentFlags,
-        };
-        if (verifyPath?.trim()) templateData.verify_path = verifyPath.trim();
-        if (templateCloseProcesses.length > 0) templateData.close_processes = templateCloseProcesses;
-
-        await onUpdateTemplate(editingTemplate, templateData);
-        toast.success('Template updated successfully!');
-        setEditingTemplate('');
-      }
-      // Save as new template if requested
-      else if (saveAsTemplate) {
-        const templateData: any = {
-          name: deploymentName,
-          installer_name: installerName,
-          installer_url: installerUrl,
-          silent_flags: silentFlags,
-        };
-        if (verifyPath?.trim()) templateData.verify_path = verifyPath.trim();
-        if (templateCloseProcesses.length > 0) templateData.close_processes = templateCloseProcesses;
-
-        await onCreateTemplate(templateData);
-        toast.success('Template saved successfully!');
-      }
-
       // Build deployment object
       const deploymentData: any = {
-        name: deploymentName,
+        name: effectiveName,
         installer_name: installerName,
         installer_url: installerUrl,
         silent_flags: silentFlags,
+        parallel_install: parallelInstall,
         targets: [],
       };
 
@@ -340,8 +327,9 @@ export default function DeploymentDialog({
       setInstallerUrl('');
       setSilentFlags('');
       setVerifyPath('');
+      setParallelInstall(false);
+      setEditingName(false);
       setSelectedMachines(new Set());
-      setSaveAsTemplate(false);
       setSelectedItem('');
       setSelectedProjectIds(new Set());
       setAdditionalProcesses('');
@@ -367,17 +355,31 @@ export default function DeploymentDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4 pr-2">
-          {/* Unified Template Selector */}
-          {hasItems && (
-            <div className="space-y-2">
-              <Label htmlFor="template-select" className="text-white">template</Label>
-              <div className="flex gap-2">
-                <Select value={selectedItem} onValueChange={handleItemSelect}>
+          {/* Template — single row: dropdown/edit + pencil + save + trash */}
+          <div className="space-y-2">
+            <Label className="text-white">template</Label>
+            <div className="flex gap-2">
+              {editingName ? (
+                <Input
+                  placeholder="e.g., TouchDesigner 2025.32280"
+                  value={deploymentName}
+                  onChange={(e) => setDeploymentName(e.target.value)}
+                  className="border-border bg-background text-white flex-1"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setEditingName(false);
+                  }}
+                />
+              ) : (
+                <Select value={selectedItem} onValueChange={(value) => {
+                  handleItemSelect(value);
+                  setEditingName(false);
+                }}>
                   <SelectTrigger className="border-border bg-background text-white flex-1 overflow-hidden">
                     {selectedItem ? (
-                      <span className="truncate">{getSelectedLabel()}</span>
+                      <span className="truncate">{deploymentName || getSelectedLabel()}</span>
                     ) : (
-                      <span className="text-muted-foreground">start from a template...</span>
+                      <span className="text-muted-foreground">select or create template...</span>
                     )}
                   </SelectTrigger>
                   <SelectContent className="border-border bg-secondary">
@@ -424,64 +426,53 @@ export default function DeploymentDialog({
                     )}
                   </SelectContent>
                 </Select>
-                {/* Edit/Delete buttons for saved templates */}
-                {isTemplateSelected && (
-                  <>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={handleEditTemplate}
-                      className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer"
-                      title="Edit template"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
+              )}
+              {/* Action buttons — hidden for system presets */}
+              {!isPresetSelected && (
+                <>
+                  {/* Pencil: toggle edit name mode */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => {
+                      if (!editingName && !deploymentName) {
+                        setDeploymentName(getSelectedLabel());
+                      }
+                      setEditingName(!editingName);
+                    }}
+                    className={`border-border bg-background cursor-pointer shrink-0 ${editingName ? 'text-accent-cyan hover:bg-accent-cyan/20 hover:text-accent-cyan' : 'text-white hover:bg-muted hover:text-white'}`}
+                    title={editingName ? 'Back to dropdown' : 'Edit name'}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  {/* Save template */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={handleSaveTemplate}
+                    className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer shrink-0"
+                    title={isTemplateSelected ? 'Save changes to template' : 'Save as new template'}
+                  >
+                    <Save className="h-4 w-4" />
+                  </Button>
+                  {/* Delete template */}
+                  {isTemplateSelected && (
                     <Button
                       type="button"
                       variant="outline"
                       size="icon"
                       onClick={handleDeleteTemplate}
-                      className="border-border bg-background text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
+                      className="border-border bg-background text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer shrink-0"
                       title="Delete template"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
-                  </>
-                )}
-              </div>
-              {editingTemplate && (
-                <div className="flex items-center gap-2 p-2 bg-accent-cyan/10 border border-accent-cyan/30 rounded text-sm">
-                  <Pencil className="h-3 w-3 text-accent-cyan" />
-                  <span className="text-accent-cyan">Editing template - changes will be saved when you deploy</span>
-                </div>
+                  )}
+                </>
               )}
             </div>
-          )}
-
-          {/* Deployment Name */}
-          <div className="space-y-2">
-            <Label htmlFor="deployment-name" className="text-white">deployment name</Label>
-            <Input
-              id="deployment-name"
-              placeholder="e.g., TouchDesigner 2023.11760"
-              value={deploymentName}
-              onChange={(e) => setDeploymentName(e.target.value)}
-              className="border-border bg-background text-white"
-            />
-          </div>
-
-          {/* Installer Name */}
-          <div className="space-y-2">
-            <Label htmlFor="installer-name" className="text-white">installer filename</Label>
-            <Input
-              id="installer-name"
-              placeholder="e.g., TouchDesigner.exe"
-              value={installerName}
-              onChange={(e) => setInstallerName(e.target.value)}
-              className="border-border bg-background text-white"
-            />
-            <p className="text-xs text-muted-foreground">the filename to save the installer as</p>
           </div>
 
           {/* Installer URL */}
@@ -491,10 +482,20 @@ export default function DeploymentDialog({
               id="installer-url"
               placeholder="https://example.com/installer.exe"
               value={installerUrl}
-              onChange={(e) => setInstallerUrl(e.target.value)}
+              onChange={(e) => {
+                setInstallerUrl(e.target.value);
+                // Auto-derive installer filename from URL
+                try {
+                  const url = new URL(e.target.value);
+                  const filename = url.pathname.split('/').pop() || '';
+                  if (filename && filename.includes('.')) setInstallerName(filename);
+                } catch { /* ignore invalid URLs while typing */ }
+              }}
               className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-muted-foreground">direct download link to the installer</p>
+            {installerName && (
+              <p className="text-xs text-muted-foreground">filename: {installerName}</p>
+            )}
           </div>
 
           {/* Silent Flags */}
@@ -510,17 +511,22 @@ export default function DeploymentDialog({
             <p className="text-xs text-muted-foreground">command-line flags for silent installation</p>
           </div>
 
-          {/* Verify Path (Optional) */}
-          <div className="space-y-2">
-            <Label htmlFor="verify-path" className="text-white">verify path (optional)</Label>
-            <Input
-              id="verify-path"
-              placeholder='C:\\Program Files\\App\\app.exe'
-              value={verifyPath}
-              onChange={(e) => setVerifyPath(e.target.value)}
-              className="border-border bg-background text-white"
+          {/* Parallel Install */}
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="parallel-install"
+              checked={parallelInstall}
+              onCheckedChange={(checked) => setParallelInstall(checked as boolean)}
+              className="cursor-pointer"
             />
-            <p className="text-xs text-muted-foreground">path to verify after installation completes</p>
+            <div>
+              <Label htmlFor="parallel-install" className="text-white cursor-pointer">
+                parallel install (keep existing versions)
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                install alongside existing versions instead of replacing them
+              </p>
+            </div>
           </div>
 
           {/* Close Running Processes (collapsible) */}
@@ -715,20 +721,6 @@ export default function DeploymentDialog({
             </div>
           </div>
 
-          {/* Save as Template - only show when NOT using a saved template */}
-          {!isTemplateSelected && (
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="save-template"
-                checked={saveAsTemplate}
-                onCheckedChange={(checked) => setSaveAsTemplate(checked as boolean)}
-                className="cursor-pointer"
-              />
-              <Label htmlFor="save-template" className="text-white cursor-pointer">
-                save as template for future deployments
-              </Label>
-            </div>
-          )}
         </div>
 
         <DialogFooter>

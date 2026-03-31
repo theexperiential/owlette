@@ -822,14 +822,6 @@ class FirebaseClient:
             return
 
         try:
-            pending_ref = self.db.collection('sites').document(self.site_id)\
-                .collection('machines').document(self.machine_id)\
-                .collection('commands').document('pending')
-
-            pending_ref.update({
-                cmd_id: DELETE_FIELD
-            })
-
             completed_ref = self.db.collection('sites').document(self.site_id)\
                 .collection('machines').document(self.machine_id)\
                 .collection('commands').document('completed')
@@ -846,9 +838,19 @@ class FirebaseClient:
             if cmd_type:
                 completed_data['type'] = cmd_type
 
+            # Write to completed FIRST — if this fails, command stays in pending
+            # (safe to retry). The reverse order risks losing the command entirely.
             completed_ref.set({
                 cmd_id: completed_data
             }, merge=True)
+
+            pending_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('commands').document('pending')
+
+            pending_ref.update({
+                cmd_id: DELETE_FIELD
+            })
 
             self.logger.info(f"Command {cmd_id} marked as completed")
 
@@ -861,14 +863,6 @@ class FirebaseClient:
             return
 
         try:
-            pending_ref = self.db.collection('sites').document(self.site_id)\
-                .collection('machines').document(self.machine_id)\
-                .collection('commands').document('pending')
-
-            pending_ref.update({
-                cmd_id: DELETE_FIELD
-            })
-
             completed_ref = self.db.collection('sites').document(self.site_id)\
                 .collection('machines').document(self.machine_id)\
                 .collection('commands').document('completed')
@@ -885,9 +879,18 @@ class FirebaseClient:
             if cmd_type:
                 failed_data['type'] = cmd_type
 
+            # Write to completed FIRST — see _mark_command_completed for rationale
             completed_ref.set({
                 cmd_id: failed_data
             }, merge=True)
+
+            pending_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('commands').document('pending')
+
+            pending_ref.update({
+                cmd_id: DELETE_FIELD
+            })
 
             self.logger.error(f"Command {cmd_id} marked as failed: {error}")
 
@@ -900,14 +903,6 @@ class FirebaseClient:
             return
 
         try:
-            pending_ref = self.db.collection('sites').document(self.site_id)\
-                .collection('machines').document(self.machine_id)\
-                .collection('commands').document('pending')
-
-            pending_ref.update({
-                cmd_id: DELETE_FIELD
-            })
-
             completed_ref = self.db.collection('sites').document(self.site_id)\
                 .collection('machines').document(self.machine_id)\
                 .collection('commands').document('completed')
@@ -924,9 +919,18 @@ class FirebaseClient:
             if cmd_type:
                 cancelled_data['type'] = cmd_type
 
+            # Write to completed FIRST — see _mark_command_completed for rationale
             completed_ref.set({
                 cmd_id: cancelled_data
             }, merge=True)
+
+            pending_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('commands').document('pending')
+
+            pending_ref.update({
+                cmd_id: DELETE_FIELD
+            })
 
             self.logger.info(f"Command {cmd_id} marked as cancelled")
 

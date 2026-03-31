@@ -2460,13 +2460,24 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 installer_url = cmd_data.get('installer_url')
                 installer_name = cmd_data.get('installer_name', 'installer.exe')
                 silent_flags = cmd_data.get('silent_flags', '')
-                verify_path = cmd_data.get('verify_path')  # Optional verification path
+                verify_path = cmd_data.get('verify_path')  # Optional — auto-derived from /DIR if absent
                 timeout_seconds = cmd_data.get('timeout_seconds', 2400)  # Default: 40 minutes
                 expected_sha256 = cmd_data.get('sha256_checksum')  # Optional but recommended
                 deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
+                parallel_install = cmd_data.get('parallel_install', False)
 
                 if not installer_url:
                     return "Error: No installer URL provided"
+
+                # Auto-derive verify_path from /DIR flag if not explicitly provided
+                if not verify_path and silent_flags:
+                    import re
+                    dir_match = re.search(r'/DIR="([^"]+)"', silent_flags, re.IGNORECASE)
+                    if not dir_match:
+                        dir_match = re.search(r'/DIR=(\S+)', silent_flags, re.IGNORECASE)
+                    if dir_match:
+                        verify_path = dir_match.group(1)
+                        logging.debug(f"Auto-derived verify_path from /DIR: {verify_path}")
 
                 logging.info(f"Starting software installation: {installer_name}")
                 logging.debug(f"URL: {installer_url}")
@@ -2525,17 +2536,33 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     if not install_token:
                         return "Error: No interactive user session available for installation. A user must be logged in."
 
-                    # Execute installer in user session with elevation
-                    logging.info("Executing installer with silent flags")
-                    success, exit_code, error_msg = installer_utils.execute_installer(
-                        temp_installer_path,
-                        silent_flags,
-                        installer_name,
-                        self.active_installations,
-                        timeout_seconds,
-                        user_token=install_token,
-                        environment=install_env,
-                    )
+                    # Parallel install: hide existing registry keys so installer
+                    # can't detect and uninstall previous versions
+                    hidden_keys = []
+                    if parallel_install:
+                        # Derive software name from installer_name for registry matching
+                        # e.g. "TouchDesigner.2025.32280.exe" -> "TouchDesigner"
+                        software_name = installer_name.split('.')[0] if '.' in installer_name else installer_name
+                        logging.info(f"Parallel install enabled — hiding existing '{software_name}' registry keys")
+                        hidden_keys = installer_utils.hide_registry_keys(software_name)
+
+                    try:
+                        # Execute installer in user session with elevation
+                        logging.info("Executing installer with silent flags")
+                        success, exit_code, error_msg = installer_utils.execute_installer(
+                            temp_installer_path,
+                            silent_flags,
+                            installer_name,
+                            self.active_installations,
+                            timeout_seconds,
+                            user_token=install_token,
+                            environment=install_env,
+                        )
+                    finally:
+                        # ALWAYS restore registry keys, even if installer fails
+                        if hidden_keys:
+                            logging.info("Restoring hidden registry keys")
+                            installer_utils.restore_registry_keys(hidden_keys)
 
                     if not success:
                         return f"Error: Installation failed with exit code {exit_code}. {error_msg}"
