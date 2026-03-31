@@ -313,12 +313,21 @@ def get_network_metrics():
         nic_stats = psutil.net_if_stats()
 
         if not _prev_net_counters or _prev_net_time == 0.0:
-            # First call — store baseline, return zeros
+            # First call — store baseline, return zeros but include active NICs
             _prev_net_counters = {
                 name: {'sent': c.bytes_sent, 'recv': c.bytes_recv}
                 for name, c in counters.items()
             }
             _prev_net_time = now
+            # Populate interfaces with zeros so the web never sees an empty result
+            for name in counters:
+                stats = nic_stats.get(name)
+                if stats and stats.isup and stats.speed > 0 and 'loopback' not in name.lower():
+                    result['interfaces'][name] = {
+                        'tx_bps': 0, 'rx_bps': 0,
+                        'tx_util': 0.0, 'rx_util': 0.0,
+                        'link_speed': stats.speed,
+                    }
             return result
 
         elapsed = now - _prev_net_time
@@ -345,10 +354,6 @@ def get_network_metrics():
 
             tx_bps = int(tx_delta / elapsed)
             rx_bps = int(rx_delta / elapsed)
-
-            # Skip NICs with zero traffic
-            if tx_bps == 0 and rx_bps == 0:
-                continue
 
             # Compute utilization % relative to link speed
             link_speed_mbps = stats.speed  # Mbps

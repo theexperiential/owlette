@@ -878,6 +878,21 @@ class OwletteConfigApp:
 
             index = shared_utils.get_process_index(self.selected_process)
 
+            # For soft saves (FocusOut/Enter), skip if no form fields actually changed.
+            # This prevents uploading stale config to Firestore when focus shifts
+            # (e.g. after Firestore updates config.json but before GUI's 1s poll).
+            if is_soft_save:
+                proc = self.config['processes'][index]
+                form_vals = (name, exe_path, file_path, cwd, priority, visibility,
+                             str(time_delay), str(time_to_init), str(relaunch_attempts))
+                cfg_vals = (proc.get('name', ''), proc.get('exe_path', ''),
+                            proc.get('file_path', ''), proc.get('cwd', ''),
+                            proc.get('priority', 'Normal'), proc.get('visibility', 'Normal'),
+                            str(proc.get('time_delay', '0')), str(proc.get('time_to_init', '10')),
+                            str(proc.get('relaunch_attempts', '5')))
+                if form_vals == cfg_vals:
+                    return  # Nothing changed — don't save or upload
+
             self.config['processes'][index]['name'] = name
             self.config['processes'][index]['exe_path'] = exe_path
             self.config['processes'][index]['file_path'] = file_path

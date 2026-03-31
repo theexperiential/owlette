@@ -143,6 +143,7 @@ if __name__ == '__main__':
             self.active_installations = {}
             self.install_locks = {}
             self.manual_overrides = {}
+            self._skip_launch_delay = set()
             self._cached_site_timezone = None
             self._last_scheduled_reboot_time = None
             self._reboot_schedule_counter = 0

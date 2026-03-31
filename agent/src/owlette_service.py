@@ -157,6 +157,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.active_installations = {} # Track active installer processes for cancellation
         self.install_locks = {}  # {process_config_id: deployment_id} - suppress relaunch during install
         self.manual_overrides = {} # Processes manually started outside their schedule window
+        self._skip_launch_delay = set()  # Process IDs that should skip time_delay on next launch
         self._cached_site_timezone = None  # Cached from firebase_client
         self._last_scheduled_reboot_time = None  # Tracks when we last triggered a scheduled reboot
         self._reboot_schedule_counter = 0  # Check reboot schedule every ~60s (6 iterations)
@@ -1752,8 +1753,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
             last_time = last_info.get('time')
 
             if last_time is None or (last_time is not None and (self.current_time - last_time).total_seconds() >= (time_to_init or TIME_TO_INIT)):
-                # Delay starting of the app (if applicable)
-                time.sleep(delay)
+                # Skip delay on first launch (delay is for crash recovery spacing,
+                # not fresh starts) and on manual mode changes
+                if last_time is None or process_list_id in self._skip_launch_delay:
+                    self._skip_launch_delay.discard(process_list_id)
+                elif delay:
+                    time.sleep(delay)
 
                 # Attempt to start the process
                 try:
@@ -2005,6 +2010,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         logging.info(f"[OK] Adopted already-running '{Util.get_process_name(process)}' (PID {existing_pid})")
                         new_pid = None
                     else:
+                        # Clear stale tracking so handle_process_launch sees
+                        # last_time=None and skips time_delay (delay is for
+                        # crash recovery spacing, handled by time_to_init)
+                        self.last_started.pop(process_list_id, None)
                         # Launch the process again if it isn't running
                         new_pid = self.handle_process_launch(process)
         
@@ -2198,7 +2207,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             should_launch = new_mode == 'always' or shared_utils.is_within_schedule(new_proc.get('schedules'), self._cached_site_timezone)
                             if should_launch:
                                 logging.info(f"Launch mode set to {new_mode} for {new_proc.get('name')} - launching now")
+                                self._skip_launch_delay.add(new_proc.get('id'))
                                 self.last_started.pop(new_proc.get('id'), None)
+                                self.relaunch_attempts.pop(new_proc.get('name'), None)
                                 try:
                                     self.handle_process(new_proc)
                                 except Exception as e:
@@ -2371,7 +2382,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         if last_pid and Util.is_pid_running(last_pid):
                             shared_utils.graceful_terminate(last_pid)
                             # Update status and sync to Firebase immediately
-                            shared_utils.update_process_status_in_json(last_pid, 'STOPPED', self.firebase_client, process_id=process_list_id)
+                            shared_utils.update_process_status_in_json(last_pid, 'KILLED', self.firebase_client, process_id=process_list_id)
+                            # Clear tracked PID so the main loop won't detect a "crash" and relaunch
+                            if process_list_id in self.last_started:
+                                del self.last_started[process_list_id]
                             # Log process kill event (manual kill from dashboard)
                             if self.firebase_client and self.firebase_client.is_connected():
                                 self.firebase_client.log_event(
@@ -2405,8 +2419,23 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         # Always derive autolaunch for backward compat
                         process['autolaunch'] = process.get('launch_mode', 'off') != 'off'
                         shared_utils.save_config(config)
-                        logging.info(f"Launch mode for {process_name} set to {process['launch_mode']}")
-                        return f"Launch mode for {process_name} set to {process['launch_mode']}"
+                        new_mode = process['launch_mode']
+                        logging.info(f"Launch mode for {process_name} set to {new_mode}")
+
+                        # Immediate launch when mode switches to always/scheduled
+                        if new_mode in ('always', 'scheduled'):
+                            process_id = process.get('id')
+                            should_launch = new_mode == 'always' or shared_utils.is_within_schedule(process.get('schedules'), self._cached_site_timezone)
+                            if should_launch and process_id:
+                                self._skip_launch_delay.add(process_id)
+                                self.last_started.pop(process_id, None)
+                                self.relaunch_attempts.pop(process_name, None)
+                                try:
+                                    self.handle_process(process)
+                                except Exception as e:
+                                    logging.error(f"Failed to immediately launch {process_name}: {e}")
+
+                        return f"Launch mode for {process_name} set to {new_mode}"
                 return f"Process {process_name} not found in configuration"
 
             elif cmd_type == 'update_config':

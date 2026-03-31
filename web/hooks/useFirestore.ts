@@ -308,56 +308,55 @@ export function useMachines(siteId: string) {
   // This prevents the 10-second flicker on page load where status doc has stale values
   const configOverridesRef = useRef<Record<string, Record<string, { launch_mode?: string; schedules?: any; schedulePresetId?: string | null }>>>({});
 
-  // Fetch authoritative launch_mode/schedules from config docs on mount
-  // Config doc is source of truth — status doc may lag behind by 10-120s
+  // Real-time listener on config docs for authoritative launch_mode/schedules.
+  // Config doc is source of truth — status doc may lag behind by 10-120s.
+  // Using onSnapshot (not getDocs) so agent-originated changes propagate to the web.
   useEffect(() => {
     if (!db || !siteId) return;
-    (async () => {
-      try {
-        const configCol = collection(db, 'config', siteId, 'machines');
-        const configSnap = await getDocs(configCol);
-        const overrides: typeof configOverridesRef.current = {};
-        configSnap.forEach((docSnap) => {
-          const data = docSnap.data();
-          if (data.processes && Array.isArray(data.processes)) {
-            const processMap: Record<string, { launch_mode?: string; schedules?: any; schedulePresetId?: string | null }> = {};
-            for (const proc of data.processes) {
-              if (proc.id) {
-                processMap[proc.id] = {
-                  launch_mode: proc.launch_mode,
-                  schedules: proc.schedules,
-                  schedulePresetId: proc.schedulePresetId ?? null,
-                };
-              }
-            }
-            overrides[docSnap.id] = processMap;
-          }
-        });
-        configOverridesRef.current = overrides;
-
-        // Apply overrides to any already-loaded machines
-        setMachines(prev => prev.map(machine => {
-          const machineOverrides = overrides[machine.machineId];
-          if (!machineOverrides || !machine.processes) return machine;
-          return {
-            ...machine,
-            processes: machine.processes.map(p => {
-              const override = machineOverrides[p.id];
-              if (!override) return p;
-              return {
-                ...p,
-                launch_mode: (override.launch_mode || p.launch_mode) as LaunchMode,
-                schedules: override.schedules ?? p.schedules,
-                schedulePresetId: override.schedulePresetId,
+    const configCol = collection(db, 'config', siteId, 'machines');
+    const unsubConfig = onSnapshot(configCol, (snapshot) => {
+      const overrides: typeof configOverridesRef.current = {};
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data.processes && Array.isArray(data.processes)) {
+          const processMap: Record<string, { launch_mode?: string; schedules?: any; schedulePresetId?: string | null }> = {};
+          for (const proc of data.processes) {
+            if (proc.id) {
+              processMap[proc.id] = {
+                launch_mode: proc.launch_mode,
+                schedules: proc.schedules,
+                schedulePresetId: proc.schedulePresetId ?? null,
               };
-            }),
-          };
-        }));
-      } catch (e) {
-        // Non-critical — status doc values still work, just may lag
-        console.debug('Config override fetch skipped:', e);
-      }
-    })();
+            }
+          }
+          overrides[docSnap.id] = processMap;
+        }
+      });
+      configOverridesRef.current = overrides;
+
+      // Apply overrides to any already-loaded machines
+      setMachines(prev => prev.map(machine => {
+        const machineOverrides = overrides[machine.machineId];
+        if (!machineOverrides || !machine.processes) return machine;
+        return {
+          ...machine,
+          processes: machine.processes.map(p => {
+            const override = machineOverrides[p.id];
+            if (!override) return p;
+            return {
+              ...p,
+              launch_mode: (override.launch_mode || p.launch_mode) as LaunchMode,
+              schedules: override.schedules ?? p.schedules,
+              schedulePresetId: override.schedulePresetId,
+            };
+          }),
+        };
+      }));
+    }, (e) => {
+      // Non-critical — status doc values still work, just may lag
+      console.debug('Config override listener error:', e);
+    });
+    return () => unsubConfig();
   }, [siteId]);
 
   // Client-side heartbeat timeout checker
