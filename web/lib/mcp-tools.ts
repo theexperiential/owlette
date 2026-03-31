@@ -470,7 +470,39 @@ const tier3Tools: McpToolDefinition[] = [
   },
   {
     name: 'deploy_software',
-    description: 'Deploy and install software on this machine using the full deployment pipeline: download installer, verify checksum, run silent install, and post-install verification. Creates a tracked deployment visible on the Deployments page. IMPORTANT: Call get_system_presets first to find the correct preset for the software. For TouchDesigner, provide the version number (e.g. "2025.32280") and the download URL will be resolved automatically. If the user\'s request is ambiguous (missing version, unclear software, no matching preset), ASK the user to clarify — never guess. This is a long-running operation (5-40 minutes) — the tool returns immediately with a deployment ID while installation continues in the background. Direct users to the [Deployments page](/deployments) to track progress.',
+    description: `Deploy and install software on this machine using the full deployment pipeline: download installer, run silent install, verify installation, and track progress. Creates a tracked deployment visible on the Deployments page.
+
+WORKFLOW:
+1. Call get_system_presets first to find presets for the software. Presets provide installer URLs, silent flags, and other configuration.
+2. If no preset exists, you MUST have: installer_url, silent_flags, and software_name at minimum.
+3. Provide any overrides (version, URL, flags) — they take precedence over preset values.
+4. The tool returns immediately with a deployment ID. Installation runs in the background (5-40 min). Direct users to the [Deployments page](/deployments) to track progress.
+
+TOUCHDESIGNER SPECIFICS:
+- Provide the version number (e.g. "2025.32280") and the download URL is resolved automatically via https://download.derivative.ca/TouchDesigner.{version}.exe
+- ALWAYS use the FULL installer URL (not WebInstaller) — web installers require network access during install and may fail in restricted environments.
+- The /DIR flag in silent_flags is auto-updated to match the version: /DIR="C:\\Program Files\\Derivative\\TouchDesigner.{version}"
+- parallel_install is AUTOMATICALLY ENABLED for TouchDesigner. TD supports side-by-side builds and its installer will DESTRUCTIVELY UNINSTALL all existing TD versions in silent mode unless parallel_install is on. The agent hides existing installations from the registry so the installer cannot detect and remove them.
+- verify_path is auto-derived from /DIR — no need to specify it.
+
+PARALLEL INSTALL:
+- When enabled, the agent temporarily hides existing registry keys for the software so the installer cannot detect and uninstall previous versions. Keys are always restored after installation, even on failure.
+- Auto-enabled for TouchDesigner. For other software, ASK the user if they want to keep existing versions before enabling.
+- Only relevant for Inno Setup installers that auto-remove previous versions in silent mode.
+
+SILENT FLAGS:
+- These are command-line arguments passed to the installer for unattended installation. They vary by installer type.
+- Inno Setup (TouchDesigner, etc.): /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="install\\path"
+- NSIS: /S /D=install\\path
+- MSI: /quiet /norestart INSTALLDIR="install\\path"
+- If the user doesn't know the flags, check get_system_presets or ask them what installer technology the software uses.
+
+WHEN TO ASK THE USER:
+- Missing version number for version-specific software (e.g. TouchDesigner without a build number)
+- No matching system preset and no installer URL provided
+- Unclear whether to replace or install alongside existing versions (for non-TD software)
+- Silent flags unknown and no preset available
+- Never guess versions, URLs, or flags — always ask.`,
     tier: 3,
     parameters: {
       type: 'object',
@@ -493,20 +525,20 @@ const tier3Tools: McpToolDefinition[] = [
         },
         installer_name: {
           type: 'string',
-          description: 'Installer filename, e.g. "TouchDesigner.2025.32280.exe". Overrides the preset value.',
+          description: 'Installer filename, e.g. "TouchDesigner.2025.32280.exe". Auto-derived from URL if not provided.',
         },
         silent_flags: {
           type: 'string',
-          description: 'Silent installation flags, e.g. "/VERYSILENT /NORESTART". Overrides the preset value.',
-        },
-        verify_path: {
-          type: 'string',
-          description: 'Absolute path to verify after installation, e.g. "C:\\\\Program Files\\\\Derivative\\\\TouchDesigner.2025.32280". Overrides the preset value.',
+          description: 'Silent installation flags. See main description for format by installer type. Overrides preset value.',
         },
         close_processes: {
           type: 'array',
           description: 'Process names to terminate before installation, e.g. ["TouchDesigner.exe"]. Overrides the preset value.',
           items: { type: 'string' },
+        },
+        parallel_install: {
+          type: 'boolean',
+          description: 'Install alongside existing versions instead of replacing them. Automatically enabled for TouchDesigner. ASK the user before enabling this for other software.',
         },
         timeout_minutes: {
           type: 'number',

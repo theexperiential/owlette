@@ -499,6 +499,10 @@ async function executeDeploySoftware(
 
   // ── TouchDesigner version-aware overrides ───────────────────────────────
   const isTD = softwareName.toLowerCase().includes('touchdesigner');
+  // Auto-enable parallel install for TouchDesigner; explicit param overrides
+  const parallelInstall = params.parallel_install !== undefined
+    ? Boolean(params.parallel_install)
+    : (isTD || Boolean(preset?.parallel_install));
   if (version && isTD) {
     // Auto-resolve URL if not explicitly provided
     if (!params.installer_url) {
@@ -577,6 +581,9 @@ async function executeDeploySoftware(
   if (closeProcesses.length > 0) {
     deploymentData.close_processes = closeProcesses;
   }
+  if (parallelInstall) {
+    deploymentData.parallel_install = true;
+  }
 
   await deploymentRef.set(deploymentData);
 
@@ -611,6 +618,9 @@ async function executeDeploySoftware(
     }
     if (closeProcesses.length > 0) {
       commandData.close_processes = closeProcesses;
+    }
+    if (parallelInstall) {
+      commandData.parallel_install = true;
     }
 
     await pendingRef.set({ [commandId]: commandData }, { merge: true });
