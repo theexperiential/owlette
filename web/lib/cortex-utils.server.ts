@@ -15,7 +15,7 @@ import {
 import type { LlmConfig } from '@/lib/llm';
 
 /** Tools that are executed server-side (query Firestore directly, not relayed to agent). */
-const SERVER_SIDE_TOOLS = new Set(['get_site_logs']);
+const SERVER_SIDE_TOOLS = new Set(['get_site_logs', 'get_system_presets', 'deploy_software']);
 
 export const COMMAND_POLL_INTERVAL_MS = 1500;
 export const COMMAND_TIMEOUT_MS = 30000;
@@ -388,17 +388,257 @@ async function executeSiteLogs(
 }
 
 /**
+ * Execute the get_system_presets tool server-side by querying Firestore directly.
+ */
+async function executeGetSystemPresets(
+  db: FirebaseFirestore.Firestore,
+  params: Record<string, unknown>
+): Promise<unknown> {
+  const softwareNameFilter = params.software_name as string | undefined;
+  const categoryFilter = params.category as string | undefined;
+
+  const snapshot = await db.collection('system_presets').get();
+
+  let presets = snapshot.docs
+    .map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        name: data.name || '',
+        software_name: data.software_name || '',
+        category: data.category || '',
+        description: data.description || '',
+        installer_name: data.installer_name || '',
+        installer_url: data.installer_url || '',
+        silent_flags: data.silent_flags || '',
+        verify_path: data.verify_path || undefined,
+        close_processes: data.close_processes || [],
+        timeout_seconds: data.timeout_seconds || undefined,
+      };
+    })
+    // Exclude Owlette self-update presets
+    .filter((p) => !snapshot.docs.find((d) => d.id === p.id)?.data().is_owlette_agent);
+
+  if (softwareNameFilter) {
+    const filter = softwareNameFilter.toLowerCase();
+    presets = presets.filter(
+      (p) =>
+        p.software_name.toLowerCase().includes(filter) ||
+        p.name.toLowerCase().includes(filter)
+    );
+  }
+
+  if (categoryFilter) {
+    const filter = categoryFilter.toLowerCase();
+    presets = presets.filter((p) => p.category.toLowerCase().includes(filter));
+  }
+
+  return { presets, count: presets.length };
+}
+
+/**
+ * Execute the deploy_software tool server-side.
+ *
+ * Resolves preset + params, creates a deployment doc, and writes install_software
+ * commands to the target machines. Returns immediately — installation runs async.
+ */
+async function executeDeploySoftware(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  machineIds: string[],
+  params: Record<string, unknown>
+): Promise<unknown> {
+  const softwareName = params.software_name as string;
+  const version = params.version as string | undefined;
+  const presetId = params.preset_id as string | undefined;
+  const timeoutMinutes = typeof params.timeout_minutes === 'number' ? params.timeout_minutes : 40;
+
+  if (!softwareName) {
+    return { error: 'software_name is required' };
+  }
+
+  if (machineIds.length === 0) {
+    return { error: 'No target machines available. The machine may be offline.' };
+  }
+
+  // ── Resolve preset ──────────────────────────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let preset: Record<string, any> | null = null;
+
+  if (presetId) {
+    const presetDoc = await db.collection('system_presets').doc(presetId).get();
+    if (presetDoc.exists) {
+      preset = presetDoc.data()!;
+    } else {
+      return { error: `Preset '${presetId}' not found` };
+    }
+  } else {
+    // Find best match by software_name
+    const snapshot = await db.collection('system_presets').get();
+    const filter = softwareName.toLowerCase();
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      if (data.is_owlette_agent) continue;
+      if (
+        (data.software_name || '').toLowerCase().includes(filter) ||
+        (data.name || '').toLowerCase().includes(filter)
+      ) {
+        preset = { id: doc.id, ...data };
+        break;
+      }
+    }
+  }
+
+  // ── Merge preset with explicit overrides ────────────────────────────────
+  let installerUrl = (params.installer_url as string) || preset?.installer_url || '';
+  let installerName = (params.installer_name as string) || preset?.installer_name || '';
+  const silentFlags = (params.silent_flags as string) || preset?.silent_flags || '';
+  const verifyPath = (params.verify_path as string) || preset?.verify_path || '';
+  const closeProcesses = (params.close_processes as string[]) || preset?.close_processes || [];
+  const timeoutSeconds = timeoutMinutes * 60;
+
+  // ── TouchDesigner URL auto-resolve ──────────────────────────────────────
+  if (
+    version &&
+    softwareName.toLowerCase().includes('touchdesigner') &&
+    !params.installer_url // Only auto-resolve if user didn't explicitly provide a URL
+  ) {
+    installerUrl = `https://download.derivative.ca/TouchDesigner.${version}.exe`;
+    installerName = `TouchDesigner.${version}.exe`;
+  }
+
+  // ── Also update verify_path for TouchDesigner if version is provided ────
+  let resolvedVerifyPath = verifyPath;
+  if (
+    version &&
+    softwareName.toLowerCase().includes('touchdesigner') &&
+    !params.verify_path
+  ) {
+    resolvedVerifyPath = `C:\\Program Files\\Derivative\\TouchDesigner.${version}`;
+  }
+
+  // ── Validate ────────────────────────────────────────────────────────────
+  if (!installerUrl) {
+    return {
+      error: `No installer URL available for "${softwareName}". Provide an installer_url or ensure a matching system preset exists with the URL configured.`,
+    };
+  }
+  if (!installerUrl.startsWith('https://')) {
+    return { error: 'installer_url must use HTTPS for security' };
+  }
+  if (!installerName) {
+    // Derive from URL as fallback
+    installerName = installerUrl.split('/').pop() || 'installer.exe';
+  }
+  if (!silentFlags) {
+    return {
+      error: `No silent installation flags configured for "${softwareName}". Provide silent_flags or ensure the system preset has them configured.`,
+    };
+  }
+
+  // ── Create deployment doc (mirrors useDeployments.createDeployment) ─────
+  const deploymentId = `deploy-${Date.now()}`;
+  const deploymentRef = db
+    .collection('sites')
+    .doc(siteId)
+    .collection('deployments')
+    .doc(deploymentId);
+
+  const targets = machineIds.map((mid) => ({
+    machineId: mid,
+    status: 'pending',
+  }));
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const deploymentData: Record<string, any> = {
+    name: version ? `${softwareName} ${version}` : softwareName,
+    installer_name: installerName,
+    installer_url: installerUrl,
+    silent_flags: silentFlags,
+    targets,
+    createdAt: Date.now(),
+    status: 'pending',
+    source: 'cortex',
+  };
+
+  if (resolvedVerifyPath) {
+    deploymentData.verify_path = resolvedVerifyPath;
+  }
+  if (closeProcesses.length > 0) {
+    deploymentData.close_processes = closeProcesses;
+  }
+
+  await deploymentRef.set(deploymentData);
+
+  // ── Write install_software command to each machine ──────────────────────
+  const commandPromises = machineIds.map(async (mid) => {
+    const sanitizedDeploymentId = deploymentId.replace(/-/g, '_');
+    const sanitizedMachineId = mid.replace(/-/g, '_');
+    const commandId = `install_${sanitizedDeploymentId}_${sanitizedMachineId}_${Date.now()}`;
+
+    const pendingRef = db
+      .collection('sites')
+      .doc(siteId)
+      .collection('machines')
+      .doc(mid)
+      .collection('commands')
+      .doc('pending');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const commandData: Record<string, any> = {
+      type: 'install_software',
+      installer_url: installerUrl,
+      installer_name: installerName,
+      silent_flags: silentFlags,
+      deployment_id: deploymentId,
+      timestamp: Date.now(),
+      status: 'pending',
+      timeout_seconds: timeoutSeconds,
+    };
+
+    if (resolvedVerifyPath) {
+      commandData.verify_path = resolvedVerifyPath;
+    }
+    if (closeProcesses.length > 0) {
+      commandData.close_processes = closeProcesses;
+    }
+
+    await pendingRef.set({ [commandId]: commandData }, { merge: true });
+  });
+
+  await Promise.all(commandPromises);
+
+  // Update deployment status to in_progress
+  await deploymentRef.set({ status: 'in_progress' }, { merge: true });
+
+  return {
+    status: 'deployment_started',
+    deployment_id: deploymentId,
+    software_name: softwareName,
+    version: version || null,
+    installer_url: installerUrl,
+    target_machines: machineIds.length,
+    message: `Deployment started: ${version ? `${softwareName} ${version}` : softwareName} is being downloaded and installed on ${machineIds.length} machine${machineIds.length > 1 ? 's' : ''}. Track progress on the Deployments page.`,
+  };
+}
+
+/**
  * Execute a server-side tool (not relayed to agent).
  */
 async function executeServerSideTool(
   db: FirebaseFirestore.Firestore,
   siteId: string,
+  machineIds: string[],
   toolName: string,
   params: Record<string, unknown>
 ): Promise<unknown> {
   switch (toolName) {
     case 'get_site_logs':
       return executeSiteLogs(db, siteId, params);
+    case 'get_system_presets':
+      return executeGetSystemPresets(db, params);
+    case 'deploy_software':
+      return executeDeploySoftware(db, siteId, machineIds, params);
     default:
       return { error: `Unknown server-side tool: ${toolName}` };
   }
@@ -430,7 +670,9 @@ export function buildExecutableTools(
       execute: async (params: unknown) => {
         // Server-side tools run directly on the web server (no agent relay)
         if (SERVER_SIDE_TOOLS.has(toolName)) {
-          return executeServerSideTool(db, siteId, toolName, params as Record<string, unknown>);
+          // For deploy_software in site mode, target all online machines
+          const targetMachineIds = siteMode ? onlineMachines : [machineId];
+          return executeServerSideTool(db, siteId, targetMachineIds, toolName, params as Record<string, unknown>);
         }
 
         if (siteMode) {

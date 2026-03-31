@@ -205,6 +205,24 @@ const tier1Tools: McpToolDefinition[] = [
       properties: {},
     },
   },
+  {
+    name: 'get_system_presets',
+    description: 'Get available software deployment presets managed by the site admin. Returns installer URLs, silent install flags, verification paths, and other deployment parameters for software like TouchDesigner, Unreal Engine, media players, etc. Use this BEFORE deploy_software to find the correct preset and parameters for a software package.',
+    tier: 1,
+    parameters: {
+      type: 'object',
+      properties: {
+        software_name: {
+          type: 'string',
+          description: 'Filter presets by software name (case-insensitive partial match). E.g. "TouchDesigner", "Unreal".',
+        },
+        category: {
+          type: 'string',
+          description: 'Filter by category. E.g. "Creative Software", "Media Server", "Utilities".',
+        },
+      },
+    },
+  },
 ];
 
 // ─── Tier 2: Process Management ─────────────────────────────────────────────
@@ -448,6 +466,55 @@ const tier3Tools: McpToolDefinition[] = [
         },
       },
       required: ['script'],
+    },
+  },
+  {
+    name: 'deploy_software',
+    description: 'Deploy and install software on this machine using the full deployment pipeline: download installer, verify checksum, run silent install, and post-install verification. Creates a tracked deployment visible on the Deployments page. IMPORTANT: Call get_system_presets first to find the correct preset for the software. For TouchDesigner, provide the version number (e.g. "2025.32280") and the download URL will be resolved automatically. If the user\'s request is ambiguous (missing version, unclear software, no matching preset), ASK the user to clarify — never guess. This is a long-running operation (5-40 minutes) — the tool returns immediately with a deployment ID while installation continues in the background.',
+    tier: 3,
+    parameters: {
+      type: 'object',
+      properties: {
+        software_name: {
+          type: 'string',
+          description: 'Software name, e.g. "TouchDesigner", "Unreal Engine". Used to find a matching system preset if no preset_id is provided.',
+        },
+        version: {
+          type: 'string',
+          description: 'Software version, e.g. "2025.32280". For TouchDesigner, this constructs the download URL automatically.',
+        },
+        preset_id: {
+          type: 'string',
+          description: 'System preset ID to use as the base configuration. Get this from get_system_presets.',
+        },
+        installer_url: {
+          type: 'string',
+          description: 'Direct installer download URL (must be HTTPS). Overrides the preset URL if provided.',
+        },
+        installer_name: {
+          type: 'string',
+          description: 'Installer filename, e.g. "TouchDesigner.2025.32280.exe". Overrides the preset value.',
+        },
+        silent_flags: {
+          type: 'string',
+          description: 'Silent installation flags, e.g. "/VERYSILENT /NORESTART". Overrides the preset value.',
+        },
+        verify_path: {
+          type: 'string',
+          description: 'Absolute path to verify after installation, e.g. "C:\\\\Program Files\\\\Derivative\\\\TouchDesigner.2025.32280". Overrides the preset value.',
+        },
+        close_processes: {
+          type: 'array',
+          description: 'Process names to terminate before installation, e.g. ["TouchDesigner.exe"]. Overrides the preset value.',
+          items: { type: 'string' },
+        },
+        timeout_minutes: {
+          type: 'number',
+          description: 'Maximum installation time in minutes (default: 40).',
+          default: 40,
+        },
+      },
+      required: ['software_name'],
     },
   },
   {

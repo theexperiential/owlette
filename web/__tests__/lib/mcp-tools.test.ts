@@ -16,9 +16,11 @@ import {
 // If a tool is added/removed in mcp-tools.ts, this list must be updated.
 
 const EXPECTED_TIER1 = [
+  'get_site_logs',
   'get_system_info',
   'get_process_list',
   'get_running_processes',
+  'get_gpu_processes',
   'get_network_info',
   'get_disk_usage',
   'get_event_logs',
@@ -26,6 +28,7 @@ const EXPECTED_TIER1 = [
   'get_agent_config',
   'get_agent_logs',
   'get_agent_health',
+  'get_system_presets',
 ] as const;
 
 const EXPECTED_TIER2 = [
@@ -44,6 +47,7 @@ const EXPECTED_TIER3 = [
   'read_file',
   'write_file',
   'list_directory',
+  'deploy_software',
   'reboot_machine',
   'shutdown_machine',
   'cancel_reboot',
@@ -228,6 +232,11 @@ describe('mcp-tools: required parameters', () => {
     expect(tool.parameters.required).toContain('process_name');
   });
 
+  it('deploy_software requires software_name', () => {
+    const tool = getToolByName('deploy_software')!;
+    expect(tool.parameters.required).toContain('software_name');
+  });
+
   it('parameterless tools have no required fields', () => {
     const noParams = ['get_system_info', 'get_process_list', 'get_network_info', 'get_disk_usage', 'get_agent_config', 'get_agent_health', 'reboot_machine', 'shutdown_machine', 'cancel_reboot'];
     for (const name of noParams) {
@@ -271,6 +280,15 @@ describe('mcp-tools: agent parity', () => {
   it('service-level tools are tier 3', () => {
     for (const name of SERVICE_TOOLS) {
       expect(getToolByName(name)?.tier).toBe(3);
+    }
+  });
+
+  // Server-side tools (executed on web server, not relayed to agent)
+  const SERVER_SIDE_TOOLS = ['get_site_logs', 'get_system_presets', 'deploy_software'];
+
+  it('server-side tools have web definitions', () => {
+    for (const name of SERVER_SIDE_TOOLS) {
+      expect(getToolByName(name)).toBeDefined();
     }
   });
 });
