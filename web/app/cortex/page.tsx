@@ -44,12 +44,14 @@ function groupConversationsByCategory(
     (groups[label] ??= []).push(convo);
   }
 
-  // Sort groups: most conversations first, "General" always last
+  // Sort groups: most recently updated first, "General" always last
   return Object.entries(groups)
     .sort(([a, aConvos], [b, bConvos]) => {
       if (a === 'General') return 1;
       if (b === 'General') return -1;
-      return bConvos.length - aConvos.length;
+      const aLatest = Math.max(...aConvos.map((c) => c.updatedAt.getTime()));
+      const bLatest = Math.max(...bConvos.map((c) => c.updatedAt.getTime()));
+      return bLatest - aLatest;
     })
     .map(([label, convos]) => ({ label, conversations: convos }));
 }
@@ -126,11 +128,19 @@ export default function CortexPage() {
     if (categorizingAll || uncategorizedIds.length === 0) return;
     setCategorizingAll(true);
     try {
-      await fetch('/api/cortex/categorize', {
+      const res = await fetch('/api/cortex/categorize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatIds: uncategorizedIds, siteId: currentSiteId }),
       });
+      // Apply returned categories to local state (loadMore conversations
+      // aren't watched by the snapshot listener, so we patch them here)
+      if (res.ok) {
+        const { results } = await res.json() as { results: Record<string, string> };
+        if (results && Object.keys(results).length > 0) {
+          chat.updateConversationCategories(results);
+        }
+      }
     } catch {
       // silent
     } finally {
@@ -380,7 +390,7 @@ export default function CortexPage() {
                     <button
                       onClick={categorizeAll}
                       disabled={categorizingAll}
-                      className="text-[10px] text-accent-cyan/70 hover:text-accent-cyan transition-colors cursor-pointer disabled:opacity-50 inline-flex items-center gap-1"
+                      className="text-xs text-accent-cyan/70 hover:text-accent-cyan transition-colors cursor-pointer disabled:opacity-50 inline-flex items-center gap-1"
                     >
                       {categorizingAll ? (
                         <><Loader2 className="h-3 w-3 animate-spin" /> categorizing {uncategorizedIds.length}...</>

@@ -571,6 +571,13 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
 
   const isLoading = chat.status === 'streaming' || chat.status === 'submitted';
 
+  // Patch categories into local state (for conversations outside snapshot window)
+  const updateConversationCategories = useCallback((results: Record<string, string>) => {
+    setConversations((prev) =>
+      prev.map((c) => (results[c.id] ? { ...c, category: results[c.id] } : c))
+    );
+  }, []);
+
   // Compute displayed conversations (filtered by search if active)
   const displayedConversations = useMemo(() => {
     if (!searchQuery.trim()) return conversations;
@@ -610,6 +617,9 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
     hasMoreConversations,
     loadingMore,
     loadMoreConversations,
+
+    // Category management
+    updateConversationCategories,
 
     // Search
     searchQuery,

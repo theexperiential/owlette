@@ -63,13 +63,51 @@ export async function POST(request: NextRequest) {
           try {
             const chatDoc = await db.collection('chats').doc(chatId).get();
             const data = chatDoc.data();
-            if (!data?.title) return;
+
+            // Skip conversations with no meaningful title — need at least
+            // a real title (not "new conversation") or a first message to categorize
+            const title = data?.title;
+            if (!title || title === 'new conversation') {
+              // Try to read the first user message as fallback context
+              const messagesSnap = await db.collection('chats').doc(chatId)
+                .collection('messages')
+                .where('role', '==', 'user')
+                .orderBy('createdAt', 'asc')
+                .limit(1)
+                .get();
+              const firstMsg = messagesSnap.docs[0]?.data()?.content;
+              if (!firstMsg) {
+                console.log(`[Categorize] Skipping chat ${chatId}: no title or messages`);
+                return;
+              }
+
+              // Categorize + title from first message
+              const { text } = await generateText({
+                model,
+                prompt: `You manage IT/media-server systems. Given this user question, respond with exactly two lines:
+Line 1: A short title (max 6 words, no quotes) summarizing the topic
+Line 2: One category from: ${CATEGORIES.join(', ')}
+
+User question: "${typeof firstMsg === 'string' ? firstMsg.slice(0, 500) : JSON.stringify(firstMsg).slice(0, 500)}"
+
+Example response:
+CPU and memory stability check
+Performance`,
+              });
+
+              const lines = text.trim().split('\n').map((l) => l.trim()).filter(Boolean);
+              const newTitle = lines[0]?.slice(0, 80) || 'untitled';
+              const category = lines[1] ? parseCategory(lines[1]) : 'General';
+              await db.collection('chats').doc(chatId).update({ title: newTitle, category });
+              results[chatId] = category;
+              return;
+            }
 
             const { text } = await generateText({
               model,
               prompt: `Categorize this IT/media-server management conversation into exactly one of: ${CATEGORIES.join(', ')}.
 
-Title: "${data.title}"
+Title: "${title}"
 
 Reply with only the category name, nothing else.`,
             });
@@ -77,8 +115,8 @@ Reply with only the category name, nothing else.`,
             const category = parseCategory(text);
             await db.collection('chats').doc(chatId).update({ category });
             results[chatId] = category;
-          } catch {
-            // Skip failed individual categorizations
+          } catch (err) {
+            console.error(`[Categorize] Failed for chat ${chatId}:`, err);
           }
         });
         await Promise.all(promises);
