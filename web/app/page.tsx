@@ -1,12 +1,16 @@
+import dynamic from 'next/dynamic';
 import {
   LandingHeader,
   HeroSection,
   ValuePropSection,
-  UseCaseSection,
-  FeatureGrid,
   CTASection,
   LandingFooter,
 } from '@/components/landing';
+
+// Lazy-load below-fold sections to reduce initial JS bundle
+// Note: ValuePropSection stays static because it contains the LCP image (dashboard.png)
+const UseCaseSection = dynamic(() => import('@/components/landing/UseCaseSection').then(m => ({ default: m.UseCaseSection })));
+const FeatureGrid = dynamic(() => import('@/components/landing/FeatureGrid').then(m => ({ default: m.FeatureGrid })));
 
 const jsonLd = {
   '@context': 'https://schema.org',

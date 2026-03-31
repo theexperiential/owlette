@@ -2,12 +2,9 @@
 
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { useAuth } from '@/contexts/AuthContext';
 import { OwletteEyeIcon } from './OwletteEye';
 
 export function LandingHeader() {
-  const { user, loading } = useAuth();
-
   const scrollToTop = (e: React.MouseEvent) => {
     e.preventDefault();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -24,25 +21,15 @@ export function LandingHeader() {
 
         {/* Right side */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {loading ? (
-            <div className="w-20 h-9 bg-muted animate-pulse rounded-md" />
-          ) : user ? (
-            <Button asChild variant="default" size="sm" className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium">
-              <Link href="/dashboard">dashboard</Link>
-            </Button>
-          ) : (
-            <>
-              <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
-                <Link href="/download">download</Link>
-              </Button>
-              <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
-                <Link href="/login">sign in</Link>
-              </Button>
-              <Button asChild size="sm" className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium">
-                <Link href="/register">get started</Link>
-              </Button>
-            </>
-          )}
+          <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
+            <Link href="/download">download</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
+            <Link href="/login">sign in</Link>
+          </Button>
+          <Button asChild size="sm" className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium">
+            <Link href="/register">get started</Link>
+          </Button>
         </div>
       </div>
     </header>

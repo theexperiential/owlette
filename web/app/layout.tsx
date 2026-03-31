@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { LazyAuthProvider } from "@/components/LazyAuthProvider";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Footer } from "@/components/Footer";
@@ -112,11 +112,11 @@ export default function RootLayout({
 
 -->` }} style={{ display: 'none' }} />
         <ErrorBoundary>
-          <AuthProvider>
+          <LazyAuthProvider>
             {children}
             <Footer />
             <Toaster theme="dark" />
-          </AuthProvider>
+          </LazyAuthProvider>
         </ErrorBoundary>
       </body>
     </html>

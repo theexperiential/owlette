@@ -21,12 +21,6 @@ export function ValuePropSection() {
     if (!container) return;
 
     // Only animate when the section is in the viewport
-    const observer = new IntersectionObserver(
-      ([entry]) => { isVisible.current = entry.isIntersecting; },
-      { threshold: 0 }
-    );
-    observer.observe(container);
-
     const handleMouseMove = (e: MouseEvent) => {
       if (!isVisible.current) return;
       const rect = container.getBoundingClientRect();
@@ -43,8 +37,10 @@ export function ValuePropSection() {
     };
 
     const animate = () => {
-      raf.current = requestAnimationFrame(animate);
-      if (!isVisible.current) return;
+      if (!isVisible.current) {
+        raf.current = null;
+        return; // Stop RAF when not visible — restarted by IntersectionObserver
+      }
 
       const factor = 0.06;
       const cur = current.current;
@@ -64,7 +60,21 @@ export function ValuePropSection() {
       if (sheenRef.current) {
         sheenRef.current.style.background = `radial-gradient(ellipse 600px 400px at ${sc.x}% ${sc.y}%, rgba(255, 255, 255, 0.06) 0%, transparent 70%)`;
       }
+
+      raf.current = requestAnimationFrame(animate);
     };
+
+    // Only run RAF when section is in viewport
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        isVisible.current = entry.isIntersecting;
+        if (entry.isIntersecting && !raf.current) {
+          raf.current = requestAnimationFrame(animate);
+        }
+      },
+      { threshold: 0 }
+    );
+    observer.observe(container);
 
     window.addEventListener('mousemove', handleMouseMove, { passive: true });
     raf.current = requestAnimationFrame(animate);

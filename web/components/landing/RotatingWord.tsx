@@ -18,11 +18,17 @@ export function RotatingWord({ words, align = 'end', delay = 0, direction = 'up'
 
   const exitClass = direction === 'up' ? '-translate-y-2' : 'translate-y-2';
 
-  // Measure width of upcoming word using a hidden element
+  // Cache measured widths to avoid repeated layout thrashing
+  const widthCache = useRef<Map<number, number>>(new Map());
+
   const measureWord = useCallback((wordIndex: number) => {
+    const cached = widthCache.current.get(wordIndex);
+    if (cached !== undefined) return cached;
     if (hiddenRef.current) {
       hiddenRef.current.textContent = words[wordIndex];
-      return hiddenRef.current.offsetWidth;
+      const w = hiddenRef.current.offsetWidth;
+      widthCache.current.set(wordIndex, w);
+      return w;
     }
     return 0;
   }, [words]);

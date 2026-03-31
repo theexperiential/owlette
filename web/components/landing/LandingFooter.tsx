@@ -1,6 +1,3 @@
-'use client';
-
-import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { OwletteEyeIcon } from './OwletteEye';
 
@@ -18,12 +15,7 @@ const RANDOM_EMOJIS = [
 ];
 
 export function LandingFooter() {
-  const [emoji, setEmoji] = useState("❤️");
-
-  useEffect(() => {
-    const randomEmoji = RANDOM_EMOJIS[Math.floor(Math.random() * RANDOM_EMOJIS.length)];
-    setEmoji(randomEmoji);
-  }, []);
+  const emoji = RANDOM_EMOJIS[Math.floor(Math.random() * RANDOM_EMOJIS.length)];
 
   return (
     <footer className="border-t border-border/50 bg-card/30">
