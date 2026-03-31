@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, getDocs, runTransaction } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
 
@@ -628,17 +628,6 @@ export function useMachines(siteId: string) {
     });
 
     try {
-      // Write directly to config document (bypasses command queue for faster sync)
-      const configSnap = await getDoc(configRef);
-      if (!configSnap.exists()) {
-        throw new Error('Configuration not found');
-      }
-
-      const config = configSnap.data();
-      if (!config.processes || !Array.isArray(config.processes)) {
-        throw new Error('Invalid configuration structure');
-      }
-
       // Strip undefined values from schedule blocks (Firestore rejects undefined)
       const cleanSchedules = schedules?.map(b => {
         const clean: Record<string, unknown> = { days: b.days, ranges: b.ranges };
@@ -647,17 +636,31 @@ export function useMachines(siteId: string) {
         return clean;
       });
 
-      const updatedProcesses = config.processes.map((proc: any) =>
-        proc.name === processName ? {
-          ...proc,
-          launch_mode: mode,
-          autolaunch: mode !== 'off',
-          ...(cleanSchedules !== undefined ? { schedules: cleanSchedules } : {}),
-          ...(schedulePresetId !== undefined ? { schedulePresetId: schedulePresetId || null } : {}),
-        } : proc
-      );
+      // Use a transaction to prevent race conditions from rapid clicks
+      // (non-transactional read-modify-write can clobber concurrent changes)
+      await runTransaction(db, async (transaction) => {
+        const configSnap = await transaction.get(configRef);
+        if (!configSnap.exists()) {
+          throw new Error('Configuration not found');
+        }
 
-      await updateDoc(configRef, { processes: updatedProcesses });
+        const config = configSnap.data();
+        if (!config.processes || !Array.isArray(config.processes)) {
+          throw new Error('Invalid configuration structure');
+        }
+
+        const updatedProcesses = config.processes.map((proc: any) =>
+          proc.name === processName ? {
+            ...proc,
+            launch_mode: mode,
+            autolaunch: mode !== 'off',
+            ...(cleanSchedules !== undefined ? { schedules: cleanSchedules } : {}),
+            ...(schedulePresetId !== undefined ? { schedulePresetId: schedulePresetId || null } : {}),
+          } : proc
+        );
+
+        transaction.update(configRef, { processes: updatedProcesses });
+      });
       logger.firestore.write(configPath, undefined, 'update');
 
       // Mirror launch_mode + schedules to status doc for immediate UI visibility
@@ -677,6 +680,28 @@ export function useMachines(siteId: string) {
 
       logger.debug('Launch mode set via config system', { context: 'setLaunchMode' });
     } catch (error) {
+      // Roll back optimistic update on failure
+      setMachines(prevMachines =>
+        prevMachines.map(machine => {
+          if (machine.machineId === machineId) {
+            return {
+              ...machine,
+              processes: machine.processes?.map(process => {
+                if (process.id === processId) {
+                  const { _optimisticLaunchMode, _optimisticAutolaunch, _optimisticSchedules, _optimisticPresetId, ...rest } = process;
+                  return rest;
+                }
+                return process;
+              })
+            };
+          }
+          return machine;
+        })
+      );
+      // Clear config override so listener doesn't re-apply stale optimistic values
+      if (configOverridesRef.current[machineId]) {
+        delete configOverridesRef.current[machineId][processId];
+      }
       logger.firestore.error('Failed to set launch mode', error);
       throw error;
     }
@@ -694,27 +719,6 @@ export function useMachines(siteId: string) {
     });
 
     try {
-      logger.firestore.read(configPath);
-
-      const configSnap = await getDoc(configRef);
-      if (!configSnap.exists()) {
-        logger.error('Config document not found', { context: 'updateProcess', data: { configPath } });
-        throw new Error('Configuration not found');
-      }
-
-      const config = configSnap.data();
-
-      if (!config.processes || !Array.isArray(config.processes)) {
-        logger.error('Invalid config structure - no processes array', { context: 'updateProcess' });
-        throw new Error('Invalid configuration structure');
-      }
-
-      const targetProcess = config.processes.find((proc: any) => proc.id === processId);
-      if (!targetProcess) {
-        logger.error('Process not found in config', { context: 'updateProcess', data: { processId } });
-        throw new Error('Process not found');
-      }
-
       // Clean schedule blocks to strip undefined values (Firestore rejects undefined)
       const cleanedData = { ...updatedData };
       if (cleanedData.schedules) {
@@ -726,12 +730,27 @@ export function useMachines(siteId: string) {
         });
       }
 
-      const updatedProcesses = config.processes.map((proc: any) =>
-        proc.id === processId ? { ...proc, ...cleanedData } : proc
-      );
+      await runTransaction(db, async (transaction) => {
+        const configSnap = await transaction.get(configRef);
+        if (!configSnap.exists()) {
+          throw new Error('Configuration not found');
+        }
 
-      await updateDoc(configRef, {
-        processes: updatedProcesses
+        const config = configSnap.data();
+        if (!config.processes || !Array.isArray(config.processes)) {
+          throw new Error('Invalid configuration structure');
+        }
+
+        const targetProcess = config.processes.find((proc: any) => proc.id === processId);
+        if (!targetProcess) {
+          throw new Error('Process not found');
+        }
+
+        const updatedProcesses = config.processes.map((proc: any) =>
+          proc.id === processId ? { ...proc, ...cleanedData } : proc
+        );
+
+        transaction.update(configRef, { processes: updatedProcesses });
       });
 
       logger.firestore.write(configPath, undefined, 'update');
@@ -782,31 +801,24 @@ export function useMachines(siteId: string) {
     });
 
     try {
-      logger.firestore.read(configPath);
+      await runTransaction(db, async (transaction) => {
+        const configSnap = await transaction.get(configRef);
+        if (!configSnap.exists()) {
+          throw new Error('Configuration not found');
+        }
 
-      const configSnap = await getDoc(configRef);
-      if (!configSnap.exists()) {
-        logger.error('Config document not found', { context: 'deleteProcess', data: { configPath } });
-        throw new Error('Configuration not found');
-      }
+        const config = configSnap.data();
+        if (!config.processes || !Array.isArray(config.processes)) {
+          throw new Error('Invalid configuration structure');
+        }
 
-      const config = configSnap.data();
+        const targetProcess = config.processes.find((proc: any) => proc.id === processId);
+        if (!targetProcess) {
+          throw new Error('Process not found');
+        }
 
-      if (!config.processes || !Array.isArray(config.processes)) {
-        logger.error('Invalid config structure - no processes array', { context: 'deleteProcess' });
-        throw new Error('Invalid configuration structure');
-      }
-
-      const targetProcess = config.processes.find((proc: any) => proc.id === processId);
-      if (!targetProcess) {
-        logger.error('Process not found in config', { context: 'deleteProcess', data: { processId } });
-        throw new Error('Process not found');
-      }
-
-      const updatedProcesses = config.processes.filter((proc: any) => proc.id !== processId);
-
-      await updateDoc(configRef, {
-        processes: updatedProcesses
+        const updatedProcesses = config.processes.filter((proc: any) => proc.id !== processId);
+        transaction.update(configRef, { processes: updatedProcesses });
       });
 
       logger.firestore.write(configPath, undefined, 'delete');
@@ -857,21 +869,6 @@ export function useMachines(siteId: string) {
     });
 
     try {
-      logger.firestore.read(configPath);
-
-      const configSnap = await getDoc(configRef);
-      if (!configSnap.exists()) {
-        logger.error('Config document not found', { context: 'createProcess', data: { configPath } });
-        throw new Error('Configuration not found');
-      }
-
-      const config = configSnap.data();
-
-      if (!config.processes || !Array.isArray(config.processes)) {
-        logger.error('Invalid config structure - no processes array', { context: 'createProcess' });
-        throw new Error('Invalid configuration structure');
-      }
-
       const newProcessId = crypto.randomUUID();
 
       const newProcess = {
@@ -890,10 +887,19 @@ export function useMachines(siteId: string) {
         schedules: processData.schedules || null
       };
 
-      const updatedProcesses = [...config.processes, newProcess];
+      await runTransaction(db, async (transaction) => {
+        const configSnap = await transaction.get(configRef);
+        if (!configSnap.exists()) {
+          throw new Error('Configuration not found');
+        }
 
-      await updateDoc(configRef, {
-        processes: updatedProcesses
+        const config = configSnap.data();
+        if (!config.processes || !Array.isArray(config.processes)) {
+          throw new Error('Invalid configuration structure');
+        }
+
+        const updatedProcesses = [...config.processes, newProcess];
+        transaction.update(configRef, { processes: updatedProcesses });
       });
 
       logger.firestore.write(configPath, undefined, 'create');
