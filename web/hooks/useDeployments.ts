@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, getDocs, deleteDoc, deleteField, query, orderBy, limit, runTransaction } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, getDocs, deleteDoc, deleteField, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export interface DeploymentTemplate {
@@ -134,8 +134,6 @@ export function useDeployments(siteId: string) {
   const [error, setError] = useState<string | null>(null);
   // Track processed commands across renders to prevent infinite loops
   const processedCommandsRef = useRef<Set<string>>(new Set());
-  // Track retry counts for commands that fail — give up after 3 attempts
-  const commandRetriesRef = useRef<Map<string, number>>(new Map());
   // Skip commands completed before this hook mounted (prevents re-processing old history)
   const mountTimeRef = useRef<number>(Date.now());
 
@@ -263,156 +261,173 @@ export function useDeployments(siteId: string) {
               const deploymentRef = doc(db!, 'sites', siteId, 'deployments', command.deployment_id);
 
               try {
-                // Use transaction to prevent concurrent machine completions from
-                // overwriting each other's target status updates
-                const isIntermediate = await runTransaction(db!, async (transaction) => {
-                  const deploymentSnap = await transaction.get(deploymentRef);
-                  if (!deploymentSnap.exists()) {
-                    console.debug(`[useDeployments] Deployment ${command.deployment_id} not found`);
-                    return false;
-                  }
+                // Fetch the latest deployment document from Firestore (don't use stale local state)
+                const deploymentSnap = await getDoc(deploymentRef);
+                if (!deploymentSnap.exists()) {
+                  console.debug(`[useDeployments] Deployment ${command.deployment_id} not found`);
+                  continue;
+                }
 
-                  const deployment = {
-                    id: deploymentSnap.id,
-                    ...deploymentSnap.data()
-                  } as Deployment;
+                const deployment = {
+                  id: deploymentSnap.id,
+                  ...deploymentSnap.data()
+                } as Deployment;
 
-                  // Handle uninstall commands
-                  if (command.type === 'uninstall_software' && command.status === 'completed') {
-                    const updatedTargets = deployment.targets.map(target => {
-                      if (target.machineId === machineId) {
-                        return {
-                          ...target,
-                          status: 'uninstalled' as const,
-                          uninstalledAt: command.completedAt || Date.now()
-                        };
-                      }
-                      return target;
-                    });
-
-                    const allUninstalled = updatedTargets.every(t => t.status === 'uninstalled');
-                    const someUninstalled = updatedTargets.some(t => t.status === 'uninstalled');
-                    const newStatus = allUninstalled ? 'uninstalled' : (someUninstalled ? 'partial' : deployment.status);
-
-                    transaction.set(deploymentRef, {
-                      targets: updatedTargets,
-                      status: newStatus,
-                    }, { merge: true });
-                  } else if (command.status === 'completed') {
-                    const updatedTargets = deployment.targets.map(target => {
-                      if (target.machineId === machineId) {
-                        const { progress, error, ...rest } = target;
-                        return {
-                          ...rest,
-                          status: 'completed' as const,
-                          completedAt: command.completedAt || Date.now()
-                        };
-                      }
-                      return target;
-                    });
-
-                    const allCompleted = updatedTargets.every(t => t.status === 'completed');
-                    const anyFailed = updatedTargets.some(t => t.status === 'failed');
-                    const newStatus = allCompleted ? 'completed' : anyFailed ? 'partial' : 'in_progress';
-
-                    transaction.set(deploymentRef, {
-                      targets: updatedTargets,
-                      status: newStatus,
-                      ...(allCompleted ? { completedAt: Date.now() } : {}),
-                    }, { merge: true });
-                  } else if (command.status === 'failed') {
-                    const updatedTargets = deployment.targets.map(target => {
-                      if (target.machineId === machineId) {
-                        const { progress, ...rest } = target;
-                        return {
-                          ...rest,
-                          status: 'failed' as const,
-                          ...(command.error ? { error: command.error } : {}),
-                          completedAt: command.completedAt || Date.now()
-                        };
-                      }
-                      return target;
-                    });
-
-                    const allDone = updatedTargets.every(t => t.status === 'completed' || t.status === 'failed');
-                    const anyCompleted = updatedTargets.some(t => t.status === 'completed');
-                    const newStatus = allDone ? (anyCompleted ? 'partial' : 'failed') : 'in_progress';
-
-                    transaction.set(deploymentRef, {
-                      targets: updatedTargets,
-                      status: newStatus,
-                      ...(allDone ? { completedAt: Date.now() } : {}),
-                    }, { merge: true });
-                  } else if (command.status === 'cancelled') {
-                    const updatedTargets = deployment.targets.map(target =>
-                      target.machineId === machineId
-                        ? { ...target, status: 'cancelled' as const, cancelledAt: command.completedAt || Date.now() }
-                        : target
-                    );
-
-                    const remainingTargets = updatedTargets.filter(t => t.status !== 'cancelled');
-                    const allCompleted = remainingTargets.length > 0 && remainingTargets.every(t => t.status === 'completed');
-                    const anyFailed = remainingTargets.some(t => t.status === 'failed');
-                    const anyInProgress = remainingTargets.some(t => t.status === 'pending' || t.status === 'closing_processes' || t.status === 'downloading' || t.status === 'installing');
-
-                    let newStatus = deployment.status;
-                    if (remainingTargets.length === 0) {
-                      newStatus = 'failed';
-                    } else if (allCompleted) {
-                      newStatus = 'completed';
-                    } else if (anyFailed && !anyInProgress) {
-                      newStatus = 'partial';
-                    } else {
-                      newStatus = 'in_progress';
+                // Handle uninstall commands
+                if (command.type === 'uninstall_software' && command.status === 'completed') {
+                  const updatedTargets = deployment.targets.map(target => {
+                    if (target.machineId === machineId) {
+                      return {
+                        ...target,
+                        status: 'uninstalled' as const,
+                        uninstalledAt: command.completedAt || Date.now()
+                      };
                     }
+                    return target;
+                  });
 
-                    transaction.set(deploymentRef, {
-                      targets: updatedTargets,
-                      status: newStatus,
-                      ...(remainingTargets.length === 0 || (allCompleted && !anyInProgress) ? { completedAt: Date.now() } : {}),
-                    }, { merge: true });
-                  } else if (command.status === 'closing_processes' || command.status === 'downloading' || command.status === 'installing') {
-                    const updatedTargets = deployment.targets.map(target =>
-                      target.machineId === machineId
-                        ? {
-                            ...target,
-                            status: command.status as 'closing_processes' | 'downloading' | 'installing',
-                            ...(command.progress !== undefined ? { progress: command.progress } : {})
-                          }
-                        : target
-                    );
+                  // Calculate overall status - if all machines are uninstalled, mark deployment as uninstalled
+                  const allUninstalled = updatedTargets.every(t => t.status === 'uninstalled');
+                  const someUninstalled = updatedTargets.some(t => t.status === 'uninstalled');
+                  const newStatus = allUninstalled ? 'uninstalled' : (someUninstalled ? 'partial' : deployment.status);
 
-                    transaction.set(deploymentRef, {
-                      targets: updatedTargets,
-                      status: 'in_progress',
-                    }, { merge: true });
+                  console.log(`[useDeployments] Updating deployment ${command.deployment_id} to status: ${newStatus}`);
 
-                    // Signal intermediate state — don't mark as processed
-                    return true;
+                  // Update deployment
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: newStatus,
+                  }, { merge: true });
+
+                  console.log(`[useDeployments] Deployment ${command.deployment_id} updated successfully`);
+                } else if (command.status === 'completed') {
+                  // Handle completed installations
+                  const updatedTargets = deployment.targets.map(target => {
+                    if (target.machineId === machineId) {
+                      // Create new target object without progress/error fields
+                      const { progress, error, ...rest } = target;
+                      return {
+                        ...rest,
+                        status: 'completed' as const,
+                        completedAt: command.completedAt || Date.now()
+                      };
+                    }
+                    return target;
+                  });
+
+                  // Calculate overall status
+                  const allCompleted = updatedTargets.every(t => t.status === 'completed');
+                  const anyFailed = updatedTargets.some(t => t.status === 'failed');
+                  const newStatus = allCompleted ? 'completed' : anyFailed ? 'partial' : 'in_progress';
+
+                  console.log(`[useDeployments] Updating deployment ${command.deployment_id} to status: ${newStatus}`);
+
+                  // Update deployment
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: newStatus,
+                    ...(allCompleted ? { completedAt: Date.now() } : {}),
+                  }, { merge: true });
+
+                  console.log(`[useDeployments] Deployment ${command.deployment_id} updated successfully`);
+                } else if (command.status === 'failed') {
+                  // Handle failed installations
+                  const updatedTargets = deployment.targets.map(target => {
+                    if (target.machineId === machineId) {
+                      // Create new target object without progress field
+                      const { progress, ...rest } = target;
+                      return {
+                        ...rest,
+                        status: 'failed' as const,
+                        ...(command.error ? { error: command.error } : {}),
+                        completedAt: command.completedAt || Date.now()
+                      };
+                    }
+                    return target;
+                  });
+
+                  // Calculate overall status
+                  const allDone = updatedTargets.every(t => t.status === 'completed' || t.status === 'failed');
+                  const anyCompleted = updatedTargets.some(t => t.status === 'completed');
+                  const newStatus = allDone ? (anyCompleted ? 'partial' : 'failed') : 'in_progress';
+
+                  console.log(`[useDeployments] Updating deployment ${command.deployment_id} to status: ${newStatus}`);
+
+                  // Update deployment
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: newStatus,
+                    ...(allDone ? { completedAt: Date.now() } : {}),
+                  }, { merge: true });
+
+                  console.log(`[useDeployments] Deployment ${command.deployment_id} updated successfully`);
+                } else if (command.status === 'cancelled') {
+                  // Handle cancelled installations
+                  const updatedTargets = deployment.targets.map(target =>
+                    target.machineId === machineId
+                      ? { ...target, status: 'cancelled' as const, cancelledAt: command.completedAt || Date.now() }
+                      : target
+                  );
+
+                  // Calculate overall status
+                  // Cancelled targets don't affect the overall completion status
+                  const remainingTargets = updatedTargets.filter(t => t.status !== 'cancelled');
+                  const allCompleted = remainingTargets.length > 0 && remainingTargets.every(t => t.status === 'completed');
+                  const anyFailed = remainingTargets.some(t => t.status === 'failed');
+                  const anyInProgress = remainingTargets.some(t => t.status === 'pending' || t.status === 'closing_processes' || t.status === 'downloading' || t.status === 'installing');
+
+                  let newStatus = deployment.status;
+                  if (remainingTargets.length === 0) {
+                    // All targets cancelled
+                    newStatus = 'failed';
+                  } else if (allCompleted) {
+                    newStatus = 'completed';
+                  } else if (anyFailed && !anyInProgress) {
+                    newStatus = 'partial';
+                  } else {
+                    newStatus = 'in_progress';
                   }
 
-                  return false;
-                });
+                  console.log(`[useDeployments] Updating deployment ${command.deployment_id} to status: ${newStatus} (cancelled)`);
 
-                // Don't mark intermediate states as processed - allow future updates
-                if (isIntermediate) continue;
+                  // Update deployment
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: newStatus,
+                    ...(remainingTargets.length === 0 || (allCompleted && !anyInProgress) ? { completedAt: Date.now() } : {}),
+                  }, { merge: true });
+
+                  console.log(`[useDeployments] Deployment ${command.deployment_id} updated successfully`);
+                } else if (command.status === 'closing_processes' || command.status === 'downloading' || command.status === 'installing') {
+                  // Handle intermediate states (closing_processes, downloading, installing)
+                  const updatedTargets = deployment.targets.map(target =>
+                    target.machineId === machineId
+                      ? {
+                          ...target,
+                          status: command.status as 'closing_processes' | 'downloading' | 'installing',
+                          ...(command.progress !== undefined ? { progress: command.progress } : {})
+                        }
+                      : target
+                  );
+
+                  // Update deployment with new target status
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: 'in_progress',
+                  }, { merge: true });
+
+                  // Don't mark intermediate states as processed - allow future updates
+                  continue;
+                }
 
                 // Mark this command as processed ONLY for terminal states
+                // (completed, failed, cancelled handled above)
                 processedCommands.add(commandId);
               } catch (error: any) {
                 // Handle Firestore write errors gracefully
-                const retries = commandRetriesRef.current;
-                const attempts = (retries.get(commandId) || 0) + 1;
-                retries.set(commandId, attempts);
-                if (attempts >= 3) {
-                  // Give up after 3 attempts — mark as processed to stop retrying
-                  console.error(`[useDeployments] Giving up on ${commandId} after ${attempts} attempts:`, error);
-                  processedCommands.add(commandId);
-                  retries.delete(commandId);
-                } else {
-                  // Don't mark as processed — allow retry on next snapshot
-                  console.warn(`[useDeployments] Error processing ${commandId} (attempt ${attempts}/3):`, error);
-                }
+                console.error(`[useDeployments] Error updating deployment ${command.deployment_id}:`, error);
+                // Still mark as processed even on error to avoid infinite retries
+                processedCommands.add(commandId);
               }
             }
           }
@@ -551,14 +566,12 @@ export function useDeployments(siteId: string) {
         }
       }, { merge: true });
 
-      // Update deployment target status to 'cancelled' inside a transaction
-      // to avoid overwriting concurrent agent progress updates
+      // Update deployment target status to 'cancelled'
+      // This updates the UI optimistically while the agent processes the cancellation
       const deploymentRef = doc(db!, 'sites', siteId, 'deployments', deploymentId);
-      await runTransaction(db!, async (transaction) => {
-        const deploymentSnap = await transaction.get(deploymentRef);
+      const deploymentSnap = await getDoc(deploymentRef);
 
-        if (!deploymentSnap.exists()) return;
-
+      if (deploymentSnap.exists()) {
         const deploymentData = deploymentSnap.data();
         const targets = deploymentData.targets || [];
 
@@ -575,11 +588,11 @@ export function useDeployments(siteId: string) {
         });
 
         // Update the deployment with the new target status
-        transaction.update(deploymentRef, {
+        await updateDoc(deploymentRef, {
           targets: updatedTargets,
           updatedAt: Date.now(),
         });
-      });
+      }
 
       return commandId;
     } catch (error) {

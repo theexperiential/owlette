@@ -345,25 +345,16 @@ async function runAutonomousInvestigation(
     }).catch(() => {});
 
   } finally {
-    // Always decrement the active session counter (retry once on failure)
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        await db.runTransaction(async (tx) => {
-          const lockDoc = await tx.get(lockRef);
-          const active = lockDoc.data()?.activeSessions ?? 1;
-          tx.set(lockRef, {
-            activeSessions: Math.max(0, active - 1),
-            lastUpdated: Timestamp.now(),
-          }, { merge: true });
-        });
-        break; // Success
-      } catch (err) {
-        if (attempt === 0) {
-          console.warn(`[cortex/autonomous] Lock release failed for ${eventId}, retrying...`, err);
-        } else {
-          console.error(`[cortex/autonomous] Lock release failed permanently for ${eventId} — counter may be stale:`, err);
-        }
-      }
-    }
+    // Always decrement the active session counter
+    await db.runTransaction(async (tx) => {
+      const lockDoc = await tx.get(lockRef);
+      const active = lockDoc.data()?.activeSessions ?? 1;
+      tx.set(lockRef, {
+        activeSessions: Math.max(0, active - 1),
+        lastUpdated: Timestamp.now(),
+      }, { merge: true });
+    }).catch(err => {
+      console.error(`[cortex/autonomous] Failed to release lock for ${eventId}:`, err);
+    });
   }
 }

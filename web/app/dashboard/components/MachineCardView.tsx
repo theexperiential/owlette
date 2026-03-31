@@ -576,7 +576,7 @@ function MachineCard({
                             size="sm"
                             onClick={() => onKillProcess(process.id, process.name)}
                             className="bg-card border-border text-red-400 hover:bg-red-950 hover:border-red-700 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 p-2"
-                            disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                            disabled={process.status !== 'RUNNING'}
                             title="kill"
                           >
                             <Square className="h-3 w-3" />

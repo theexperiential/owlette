@@ -40,14 +40,12 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     const adminDb = getAdminDb();
-
-    // Resolve the document reference first (outside transaction for query-based lookup)
-    let docRef;
+    let doc;
 
     if (pairPhrase) {
       // Direct lookup by phrase (for /ADD= silent install flow)
       const normalized = pairPhrase.toLowerCase().trim();
-      docRef = adminDb.collection('device_codes').doc(normalized);
+      const docRef = adminDb.collection('device_codes').doc(normalized);
       const snapshot = await docRef.get();
       if (!snapshot.exists) {
         return NextResponse.json(
@@ -55,6 +53,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
           { status: 404 }
         );
       }
+      doc = snapshot;
     } else {
       // Lookup by device code hash (standard interactive flow)
       const crypto = await import('crypto');
@@ -71,61 +70,47 @@ export const POST = withRateLimit(async (request: NextRequest) => {
           { status: 404 }
         );
       }
-      docRef = snapshot.docs[0].ref;
+      doc = snapshot.docs[0];
     }
 
-    // Use a transaction to atomically check status and mark as consumed,
-    // preventing race conditions where two concurrent poll requests both
-    // read 'authorized' and both receive the tokens.
-    const result = await adminDb.runTransaction(async (transaction) => {
-      const doc = await transaction.get(docRef);
+    const data = doc.data()!;
 
-      if (!doc.exists) {
-        return { error: 'Invalid device code', status: 404 } as const;
-      }
-
-      const data = doc.data()!;
-
-      // Check expiry
-      const expiresAt = data.expiresAt?.toMillis?.() || data.expiresAt?.getTime?.() || 0;
-      if (Date.now() > expiresAt) {
-        // Clean up expired document
-        transaction.update(docRef, { status: 'expired' });
-        return { error: 'expired', status: 410 } as const;
-      }
-
-      // Check status
-      if (data.status === 'pending') {
-        return { body: { status: 'pending' }, status: 202 } as const;
-      }
-
-      if (data.status === 'authorized' && data.accessToken && data.refreshToken) {
-        // Atomically mark as consumed (single-use) within the transaction
-        transaction.update(docRef, { status: 'consumed' });
-
-        return {
-          body: {
-            accessToken: data.accessToken,
-            refreshToken: data.refreshToken,
-            expiresIn: 3600,
-            siteId: data.siteId,
-          },
-          status: 200,
-        } as const;
-      }
-
-      // Unexpected state
-      return { error: 'Invalid device code state', status: 400 } as const;
-    });
-
-    if ('error' in result) {
+    // Check expiry
+    const expiresAt = data.expiresAt?.toMillis?.() || data.expiresAt?.getTime?.() || 0;
+    if (Date.now() > expiresAt) {
+      // Clean up expired document
+      await doc.ref.update({ status: 'expired' });
       return NextResponse.json(
-        { error: result.error },
-        { status: result.status }
+        { error: 'expired' },
+        { status: 410 }
       );
     }
 
-    return NextResponse.json(result.body, { status: result.status });
+    // Check status
+    if (data.status === 'pending') {
+      return NextResponse.json(
+        { status: 'pending' },
+        { status: 202 }
+      );
+    }
+
+    if (data.status === 'authorized' && data.accessToken && data.refreshToken) {
+      // Return tokens and mark as consumed (single-use)
+      await doc.ref.update({ status: 'consumed' });
+
+      return NextResponse.json({
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken,
+        expiresIn: 3600,
+        siteId: data.siteId,
+      });
+    }
+
+    // Unexpected state
+    return NextResponse.json(
+      { error: 'Invalid device code state' },
+      { status: 400 }
+    );
   } catch (error: any) {
     console.error('Error polling device code:', error);
     return NextResponse.json(
