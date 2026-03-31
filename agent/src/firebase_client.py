@@ -462,6 +462,7 @@ class FirebaseClient:
 
         last_mode = None
         last_command_cleanup = 0  # epoch seconds — run cleanup on first connected cycle
+        first_loop = True  # Skip initial sleep so first metrics upload happens immediately
         try:
             while self.running:
                 interval = 60  # Default interval
@@ -539,7 +540,13 @@ class FirebaseClient:
                     self.connection_manager.report_error(e, "Metrics upload")
                     interval = 60
 
-                time.sleep(interval)
+                # First iteration: skip sleep so metrics upload happens ASAP after
+                # the main service loop has populated process state (~5s after start)
+                if first_loop:
+                    first_loop = False
+                    time.sleep(5)  # Brief wait for process state to populate
+                else:
+                    time.sleep(interval)
 
         except Exception as e:
             self.logger.error(f"[THREAD] Metrics loop CRASHED with unexpected error: {e}")
