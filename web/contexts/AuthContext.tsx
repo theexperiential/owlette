@@ -263,6 +263,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   if (
                     prev.temperatureUnit === newPrefs.temperatureUnit &&
                     prev.timezone === newPrefs.timezone &&
+                    prev.timeFormat === newPrefs.timeFormat &&
                     prev.healthAlerts === newPrefs.healthAlerts &&
                     prev.processAlerts === newPrefs.processAlerts &&
                     prev.statsExpanded === newPrefs.statsExpanded &&
