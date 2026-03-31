@@ -8,6 +8,7 @@ import { Plus, Minus, Trash2, ChevronUp, ChevronDown, Save, Pencil, X } from 'lu
 import type { ScheduleBlock } from '@/hooks/useFirestore';
 import type { SchedulePreset } from '@/hooks/useSchedulePresets';
 import { BLOCK_COLORS, BUILT_IN_PRESETS, ensureBlockColors } from '@/lib/scheduleDefaults';
+import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 
 const DAY_LABELS = [
@@ -28,14 +29,19 @@ interface TimePickerProps {
   compact?: boolean;
 }
 
-function formatTime12(value: string): string {
+function formatTimeDisplay(value: string, use24h: boolean): string {
   const [h, m] = value.split(':').map(Number);
+  if (use24h) {
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  }
   const ampm = h >= 12 ? 'pm' : 'am';
   const h12 = h % 12 || 12;
   return `${h12}:${m.toString().padStart(2, '0')} ${ampm}`;
 }
 
 function TimePicker({ value, onChange, compact }: TimePickerProps) {
+  const { userPreferences } = useAuth();
+  const use24h = (userPreferences.timeFormat || '12h') === '24h';
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -52,9 +58,13 @@ function TimePicker({ value, onChange, compact }: TimePickerProps) {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
 
-  const setHour = (newH12: number) => {
+  const setHour12 = (newH12: number) => {
     const h24 = isPM ? (newH12 === 12 ? 12 : newH12 + 12) : (newH12 === 12 ? 0 : newH12);
     onChange(`${h24.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
+  };
+
+  const setHour24 = (newH: number) => {
+    onChange(`${newH.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
   };
 
   const setMinute = (newM: number) => {
@@ -75,15 +85,25 @@ function TimePicker({ value, onChange, compact }: TimePickerProps) {
         onClick={() => setOpen(!open)}
         className={`${btnSize} rounded-md border border-border bg-background text-foreground font-medium cursor-pointer hover:bg-muted transition-colors whitespace-nowrap`}
       >
-        {formatTime12(value)}
+        {formatTimeDisplay(value, use24h)}
       </button>
       {open && (
         <div className="absolute z-50 mt-1 bg-card border border-border rounded-lg shadow-lg p-2 flex gap-1">
           {/* Hour column */}
           <div className="flex flex-col items-center gap-0.5">
-            <button type="button" onClick={() => setHour(hour12 >= 12 ? 1 : hour12 + 1)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronUp className="h-3 w-3" /></button>
-            <span className="text-sm font-medium text-foreground w-6 text-center">{hour12}</span>
-            <button type="button" onClick={() => setHour(hour12 <= 1 ? 12 : hour12 - 1)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronDown className="h-3 w-3" /></button>
+            {use24h ? (
+              <>
+                <button type="button" onClick={() => setHour24((h + 1) % 24)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronUp className="h-3 w-3" /></button>
+                <span className="text-sm font-medium text-foreground w-6 text-center">{h.toString().padStart(2, '0')}</span>
+                <button type="button" onClick={() => setHour24((h - 1 + 24) % 24)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronDown className="h-3 w-3" /></button>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={() => setHour12(hour12 >= 12 ? 1 : hour12 + 1)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronUp className="h-3 w-3" /></button>
+                <span className="text-sm font-medium text-foreground w-6 text-center">{hour12}</span>
+                <button type="button" onClick={() => setHour12(hour12 <= 1 ? 12 : hour12 - 1)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronDown className="h-3 w-3" /></button>
+              </>
+            )}
           </div>
           <span className="text-sm text-muted-foreground self-center">:</span>
           {/* Minute column */}
@@ -92,12 +112,14 @@ function TimePicker({ value, onChange, compact }: TimePickerProps) {
             <span className="text-sm font-medium text-foreground w-6 text-center">{m.toString().padStart(2, '0')}</span>
             <button type="button" onClick={() => setMinute((m - 5 + 60) % 60)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronDown className="h-3 w-3" /></button>
           </div>
-          {/* AM/PM toggle */}
-          <div className="flex flex-col items-center gap-0.5 ml-1">
-            <button type="button" onClick={toggleAmPm} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronUp className="h-3 w-3" /></button>
-            <span className="text-sm font-medium text-foreground w-6 text-center">{isPM ? 'pm' : 'am'}</span>
-            <button type="button" onClick={toggleAmPm} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronDown className="h-3 w-3" /></button>
-          </div>
+          {/* AM/PM toggle — only in 12h mode */}
+          {!use24h && (
+            <div className="flex flex-col items-center gap-0.5 ml-1">
+              <button type="button" onClick={toggleAmPm} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronUp className="h-3 w-3" /></button>
+              <span className="text-sm font-medium text-foreground w-6 text-center">{isPM ? 'pm' : 'am'}</span>
+              <button type="button" onClick={toggleAmPm} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronDown className="h-3 w-3" /></button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -106,8 +128,9 @@ function TimePicker({ value, onChange, compact }: TimePickerProps) {
 
 // ─── Format Summary ──────────────────────────────────────────────────────────
 
-function formatScheduleSummary(schedules: ScheduleBlock[] | null | undefined): string {
+function formatScheduleSummary(schedules: ScheduleBlock[] | null | undefined, timeFormat: '12h' | '24h' = '12h'): string {
   if (!schedules || schedules.length === 0) return 'no schedule configured';
+  const use24h = timeFormat === '24h';
 
   const parts: string[] = [];
   for (const block of schedules) {
@@ -138,6 +161,9 @@ function formatScheduleSummary(schedules: ScheduleBlock[] | null | undefined): s
     const rangeStr = ranges.map(r => {
       const fmt = (t: string) => {
         const [h, m] = t.split(':').map(Number);
+        if (use24h) {
+          return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+        }
         const ampm = h >= 12 ? 'pm' : 'am';
         const h12 = h % 12 || 12;
         return m === 0 ? `${h12} ${ampm}` : `${h12}:${m.toString().padStart(2, '0')} ${ampm}`;

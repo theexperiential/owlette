@@ -405,7 +405,7 @@ export function MachineRow({
                                   {(process._optimisticSchedules ?? process.schedules)!.map((block, i) => {
                                     const colorIdx = block.colorIndex ?? i;
                                     const color = BLOCK_COLORS[colorIdx % BLOCK_COLORS.length];
-                                    const summary = block.name || formatScheduleSummary([block]);
+                                    const summary = block.name || formatScheduleSummary([block], siteTimeFormat);
                                     return (
                                       <span key={i}>
                                         {i > 0 && <span className="text-muted-foreground"> · </span>}

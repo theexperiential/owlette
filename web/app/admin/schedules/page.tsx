@@ -15,7 +15,7 @@ import { Plus, Loader2, Pencil, Trash2, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function SchedulePresetsPage() {
-  const { user, isAdmin, userSites } = useAuth();
+  const { user, isAdmin, userSites, userPreferences } = useAuth();
   const { sites } = useSites(user?.uid, userSites, isAdmin);
 
   // Use first site by default
@@ -189,7 +189,7 @@ export default function SchedulePresetsPage() {
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground truncate">
-                    {preset.description || formatScheduleSummary(preset.blocks)}
+                    {preset.description || formatScheduleSummary(preset.blocks, userPreferences.timeFormat || '12h')}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
