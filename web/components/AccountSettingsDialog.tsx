@@ -70,6 +70,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [lastName, setLastName] = useState('');
   const [temperatureUnit, setTemperatureUnit] = useState<'C' | 'F'>('C');
   const [timezone, setTimezone] = useState('UTC');
+  const [timeFormat, setTimeFormat] = useState<'12h' | '24h'>('12h');
   const [healthAlerts, setHealthAlerts] = useState(true);
   const [processAlerts, setProcessAlerts] = useState(true);
   const [alertCcEmails, setAlertCcEmails] = useState<string[]>([]);
@@ -149,6 +150,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
 
       setTemperatureUnit(userPreferences.temperatureUnit);
       setTimezone(userPreferences.timezone || getBrowserTimezone());
+      setTimeFormat(userPreferences.timeFormat || '12h');
       setHealthAlerts(userPreferences.healthAlerts);
       setProcessAlerts(userPreferences.processAlerts);
       setAlertCcEmails(userPreferences.alertCcEmails || []);
@@ -179,6 +181,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setLastName('');
       setTemperatureUnit('C');
       setTimezone(getBrowserTimezone());
+      setTimeFormat('12h');
       setHealthAlerts(true);
       setProcessAlerts(true);
       setAlertCcEmails([]);
@@ -200,7 +203,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setActiveSection('profile');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, user?.displayName, userPreferences.temperatureUnit, userPreferences.timezone, userPreferences.healthAlerts, userPreferences.processAlerts, JSON.stringify(userPreferences.alertCcEmails)]);
+  }, [open, user?.displayName, userPreferences.temperatureUnit, userPreferences.timezone, userPreferences.timeFormat, userPreferences.healthAlerts, userPreferences.processAlerts, JSON.stringify(userPreferences.alertCcEmails)]);
 
   const handleOpenChange = (isOpen: boolean) => {
     onOpenChange(isOpen);
@@ -260,11 +263,12 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       }
       const prefsChanged = temperatureUnit !== userPreferences.temperatureUnit
         || timezone !== userPreferences.timezone
+        || timeFormat !== (userPreferences.timeFormat || '12h')
         || healthAlerts !== userPreferences.healthAlerts
         || processAlerts !== userPreferences.processAlerts
         || JSON.stringify(alertCcEmails) !== JSON.stringify(userPreferences.alertCcEmails || []);
       if (prefsChanged) {
-        await updateUserPreferences({ temperatureUnit, timezone, healthAlerts, processAlerts, alertCcEmails });
+        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, healthAlerts, processAlerts, alertCcEmails });
       }
       if (showPasswordSection && (currentPassword || newPassword || confirmPassword)) {
         if (!validatePassword()) {
@@ -431,6 +435,23 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       <SelectContent className="border-border bg-secondary text-white">
                         <SelectItem value="C" className="cursor-pointer hover:bg-muted">Celsius (°C)</SelectItem>
                         <SelectItem value="F" className="cursor-pointer hover:bg-muted">Fahrenheit (°F)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="timeFormat" className="text-white">time format</Label>
+                    <Select
+                      value={timeFormat}
+                      onValueChange={(value: '12h' | '24h') => setTimeFormat(value)}
+                      disabled={loading}
+                    >
+                      <SelectTrigger id="timeFormat" className="border-border bg-background text-white hover:bg-secondary w-48">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="border-border bg-secondary text-white">
+                        <SelectItem value="12h" className="cursor-pointer hover:bg-muted">12-hour (AM/PM)</SelectItem>
+                        <SelectItem value="24h" className="cursor-pointer hover:bg-muted">24-hour</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
