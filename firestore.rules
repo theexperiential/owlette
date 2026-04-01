@@ -93,7 +93,8 @@ service cloud.firestore {
         isSiteOwner(siteId) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites))
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites is list &&
+           siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites)))
       );
     }
 

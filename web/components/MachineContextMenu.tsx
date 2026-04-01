@@ -136,7 +136,7 @@ export function MachineContextMenu({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="border-border bg-secondary w-48">
-          {isAdmin && isOnline && (
+          {isOnline && (
             <>
               <div className="flex items-center justify-between px-2 py-1.5 text-sm text-cyan-400 rounded-sm hover:bg-cyan-950/30 hover:text-cyan-300">
                 <DropdownMenuItem
