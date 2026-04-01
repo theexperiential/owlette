@@ -6,6 +6,13 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.5.3] - 2026-04-01
+
+### Fixed
+- **Auto-update now reliably replaces Python files** — replaced deprecated WMIC `call terminate` with PowerShell `Stop-Process -Force` in the installer's `InitializeSetup()` phase. WMIC was silently failing to kill Python processes before file overwrite, causing Inno Setup to schedule locked DLLs for next-reboot replacement (which never comes during auto-update). Two-pass kill with verification ensures all handles are released before file copy begins.
+
+---
+
 ## [2.5.2] - 2026-03-31
 
 ### Changed

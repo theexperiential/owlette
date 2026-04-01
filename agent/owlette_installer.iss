@@ -438,21 +438,28 @@ begin
       Exec('C:\Owlette\tools\nssm.exe', 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
 
-  // Kill ALL Owlette Python processes to release DLL locks.
-  // Must use /F (force) and /T (tree kill) to ensure child processes are also terminated.
-  // The service Python process runs in Session 0, so we target by executable path
-  // rather than window title (service processes have no windows).
+  // Kill ALL Owlette Python processes to release DLL locks before file overwrite.
+  // Must run BEFORE Inno Setup's file copy phase — if any python.exe or pythonw.exe
+  // still holds a handle to python3XX.dll or libcrypto, Inno Setup will schedule the
+  // locked files for next-reboot replacement (MoveFileEx DELAY_UNTIL_REBOOT) in silent
+  // mode instead of replacing them immediately, leaving the agent on the old version.
+  //
+  // WMIC is deprecated on Windows 11 and can fail silently. PowerShell Stop-Process
+  // is the reliable cross-session replacement.
   Log('Killing any running Owlette Python processes (GUI, tray, service)...');
+  Exec('powershell.exe',
+    '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"Get-Process -Name python, pythonw -ErrorAction SilentlyContinue | ' +
+    'Where-Object { $_.Path -like ''*\Owlette\*'' } | ' +
+    'Stop-Process -Force -ErrorAction SilentlyContinue; ' +
+    'Start-Sleep -Seconds 3; ' +
+    'Get-Process -Name python, pythonw -ErrorAction SilentlyContinue | ' +
+    'Where-Object { $_.Path -like ''*\Owlette\*'' } | ' +
+    'Stop-Process -Force -ErrorAction SilentlyContinue"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Log('PowerShell Stop-Process returned: ' + IntToStr(ResultCode));
 
-  // Force-kill by executable path — catches Session 0 service processes
-  Exec('cmd', '/c wmic process where "executablepath like ''%\\Owlette\\%python%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  // Also catch any other Owlette processes (e.g. NSSM child processes)
-  Exec('cmd', '/c wmic process where "executablepath like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  // Fallback: command-line matching
-  Exec('cmd', '/c wmic process where "name=''pythonw.exe'' and commandline like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('cmd', '/c wmic process where "name=''python.exe'' and commandline like ''%\\Owlette\\%''" call terminate', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-
-  // Wait for processes to fully exit and release file handles.
-  // DLL handles (especially libcrypto) can take a moment to release after process termination.
+  // Wait for file handles to fully release after process exit.
+  // Python DLLs (especially libcrypto) can lag briefly behind TerminateProcess().
   Sleep(5000);
 end;
