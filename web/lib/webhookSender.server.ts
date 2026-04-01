@@ -1,10 +1,10 @@
 /**
- * Webhook dispatch utility for Owlette.
+ * Webhook dispatch utility for owlette.
  *
  * Fires JSON payloads to all enabled webhooks for a site that subscribe to a
  * given event type.  Non-blocking — uses Promise.allSettled and never throws.
  *
- * Each delivery includes an HMAC-SHA256 signature in the X-Owlette-Signature
+ * Each delivery includes an HMAC-SHA256 signature in the X-owlette-Signature
  * header so receivers can verify authenticity.
  *
  * Auto-disables webhooks after 10 consecutive delivery failures.
@@ -47,7 +47,7 @@ const EVENT_META: Record<string, EventMeta> = {
   'threshold.breached':  { title: 'Threshold Alert',      colorHex: '#ca8a04', discordColor: 13273604 },
 };
 
-const DEFAULT_META: EventMeta = { title: 'Owlette Event', colorHex: '#6366f1', discordColor: 6526705 };
+const DEFAULT_META: EventMeta = { title: 'owlette Event', colorHex: '#6366f1', discordColor: 6526705 };
 
 /** Extract human-readable fields from the webhook data object. */
 function extractFields(eventType: string, data: Record<string, unknown>) {
@@ -113,7 +113,7 @@ function formatForPlatform(
     const ts = new Date(payload.timestamp).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
     blocks.push({
       type: 'context',
-      elements: [{ type: 'mrkdwn', text: `Owlette | ${payload.site.name} | ${ts}` }],
+      elements: [{ type: 'mrkdwn', text: `owlette | ${payload.site.name} | ${ts}` }],
     });
 
     return JSON.stringify({
@@ -136,7 +136,7 @@ function formatForPlatform(
       color: meta.discordColor,
       fields,
       timestamp: payload.timestamp,
-      footer: { text: 'Owlette' },
+      footer: { text: 'owlette' },
     }],
   });
 }
@@ -182,7 +182,7 @@ export async function fireWebhooks(
       // Build headers — skip HMAC for Slack/Discord (they don't use it)
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        'User-Agent': 'Owlette-Webhooks/1.0',
+        'User-Agent': 'owlette-Webhooks/1.0',
       };
 
       if (platform === 'generic') {
@@ -190,8 +190,8 @@ export async function fireWebhooks(
           .createHmac('sha256', webhook.secret)
           .update(body)
           .digest('hex');
-        headers['X-Owlette-Signature'] = `sha256=${signature}`;
-        headers['X-Owlette-Event'] = eventType;
+        headers['X-owlette-Signature'] = `sha256=${signature}`;
+        headers['X-owlette-Event'] = eventType;
       }
 
       const response = await fetch(webhook.url, {
@@ -254,7 +254,7 @@ export async function testWebhook(
     data: {
       machine: { name: 'MEDIA-SERVER-01' },
       process: { name: 'TouchDesigner' },
-      details: 'This is a test webhook from Owlette.',
+      details: 'This is a test webhook from owlette.',
     },
   };
 
@@ -263,7 +263,7 @@ export async function testWebhook(
   // Build headers — skip HMAC for Slack/Discord
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'User-Agent': 'Owlette-Webhooks/1.0',
+    'User-Agent': 'owlette-Webhooks/1.0',
   };
 
   if (platform === 'generic') {
@@ -271,8 +271,8 @@ export async function testWebhook(
       .createHmac('sha256', secret)
       .update(body)
       .digest('hex');
-    headers['X-Owlette-Signature'] = `sha256=${signature}`;
-    headers['X-Owlette-Event'] = 'test';
+    headers['X-owlette-Signature'] = `sha256=${signature}`;
+    headers['X-owlette-Event'] = 'test';
   }
 
   try {

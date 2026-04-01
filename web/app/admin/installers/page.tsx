@@ -13,7 +13,7 @@ import { formatFileSize } from '@/lib/storageUtils';
 /**
  * Installers Admin Page
  *
- * Admin-only page for managing Owlette Agent installer versions.
+ * Admin-only page for managing owlette Agent installer versions.
  * Allows admins to:
  * - View all versions
  * - Upload new versions
@@ -132,7 +132,7 @@ export default function InstallerVersionsPage() {
         <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold text-foreground mb-2">Installers</h1>
-          <p className="text-muted-foreground">Manage Owlette Agent installer versions and downloads</p>
+          <p className="text-muted-foreground">Manage owlette Agent installer versions and downloads</p>
         </div>
         <Button
           onClick={() => setUploadDialogOpen(true)}
@@ -175,7 +175,7 @@ export default function InstallerVersionsPage() {
                 variant="outline"
                 size="icon"
                 className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
-                title={`Download Owlette Agent v${latestVersion.version}`}
+                title={`Download owlette Agent v${latestVersion.version}`}
               >
                 <Download className="h-4 w-4" />
               </Button>
@@ -184,7 +184,7 @@ export default function InstallerVersionsPage() {
                 variant="outline"
                 size="icon"
                 className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
-                title={`Copy download link for Owlette Agent v${latestVersion.version}`}
+                title={`Copy download link for owlette Agent v${latestVersion.version}`}
               >
                 <Copy className="h-4 w-4" />
               </Button>
@@ -311,7 +311,7 @@ export default function InstallerVersionsPage() {
                               variant="outline"
                               onClick={() => window.open(version.download_url, '_blank')}
                               className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
-                              title={`Download Owlette Agent v${version.version}`}
+                              title={`Download owlette Agent v${version.version}`}
                             >
                               <Download className="h-3 w-3" />
                             </Button>
@@ -320,7 +320,7 @@ export default function InstallerVersionsPage() {
                               variant="outline"
                               onClick={() => copyDownloadLink(version.download_url, version.version)}
                               className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
-                              title={`Copy download link for Owlette Agent v${version.version}`}
+                              title={`Copy download link for owlette Agent v${version.version}`}
                             >
                               <Copy className="h-3 w-3" />
                             </Button>

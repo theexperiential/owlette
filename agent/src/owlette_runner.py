@@ -1,5 +1,5 @@
 """
-Owlette Service Runner - NSSM Compatible
+owlette Service Runner - NSSM Compatible
 Runs the service main loop without Windows Service framework
 """
 import sys
@@ -49,7 +49,7 @@ def signal_handler(signum, frame):
             _service_instance.firebase_client.log_event(
                 action='agent_stopped',
                 level='info',
-                details=f'Owlette agent v{version} shutting down gracefully'
+                details=f'owlette agent v{version} shutting down gracefully'
             )
             logging.info("[SIGNAL HANDLER] agent_stopped event logged successfully")
             print("[SIGNAL HANDLER] agent_stopped logged", file=sys.stderr, flush=True)

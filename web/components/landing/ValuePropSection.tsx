@@ -104,7 +104,7 @@ export function ValuePropSection() {
         >
           <Image
             src="/dashboard.png"
-            alt="Owlette dashboard showing 10 machines with real-time metrics"
+            alt="owlette dashboard showing 10 machines with real-time metrics"
             width={2400}
             height={1300}
             className="w-full h-auto"

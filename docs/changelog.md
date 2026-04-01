@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Owlette are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/) and this project adheres to [Semantic Versioning](https://semver.org/).
+All notable changes to owlette are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
 For the full version management workflow, see [Version Management](internal/version-management.md).
 
@@ -186,7 +186,7 @@ For the full version management workflow, see [Version Management](internal/vers
 ## [2.0.48] - 2025-11-26
 
 ### Fixed
-- **Windows Defender False Positive** — Installer now adds Defender exclusion for Owlette directory (WinRing0 driver flagged as `VulnerableDriver:WinNT/Winring0`). Exclusion removed on uninstall.
+- **Windows Defender False Positive** — Installer now adds Defender exclusion for owlette directory (WinRing0 driver flagged as `VulnerableDriver:WinNT/Winring0`). Exclusion removed on uninstall.
 - **Join Site Performance** — Fixed extremely slow "Join Site" operation (2+ minutes to instant) by removing redundant Firebase client initialization from GUI
 - **Silent Browser Launch** — Changed from `webbrowser.open()` to `os.startfile()` to prevent flashing command prompt windows during OAuth flow
 
@@ -277,7 +277,7 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ### Major Release — Cloud-Connected Architecture
 
-Version 2.0.0 transforms Owlette from a standalone Windows process manager to a cloud-connected system.
+Version 2.0.0 transforms owlette from a standalone Windows process manager to a cloud-connected system.
 
 #### Added
 - **Next.js Web Dashboard** — Remote monitoring and control from any browser
@@ -301,7 +301,7 @@ Version 2.0.0 transforms Owlette from a standalone Windows process manager to a 
 
 ### Standalone Architecture
 
-The original Owlette — a standalone Windows service with local configuration.
+The original owlette — a standalone Windows service with local configuration.
 
 - Windows service process monitoring with auto-restart
 - System tray icon and GUI configuration

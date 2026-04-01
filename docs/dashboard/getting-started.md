@@ -1,6 +1,6 @@
 # Dashboard Getting Started
 
-This guide walks you through your first experience with the Owlette dashboard — from login to seeing your first machine.
+This guide walks you through your first experience with the owlette dashboard — from login to seeing your first machine.
 
 ---
 

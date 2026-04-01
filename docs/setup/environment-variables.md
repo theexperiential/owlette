@@ -1,6 +1,6 @@
 # Environment Variables
 
-Complete reference for all environment variables used by the Owlette web dashboard.
+Complete reference for all environment variables used by the owlette web dashboard.
 
 ---
 

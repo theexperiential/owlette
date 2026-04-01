@@ -1,6 +1,6 @@
 # Agent
 
-The Owlette agent is a Python Windows service that runs in the background, monitoring your processes, collecting system metrics, and syncing everything to the cloud. It's the core of the Owlette system — every machine you want to manage needs an agent installed.
+The owlette agent is a Python Windows service that runs in the background, monitoring your processes, collecting system metrics, and syncing everything to the cloud. It's the core of the owlette system — every machine you want to manage needs an agent installed.
 
 ---
 
@@ -72,12 +72,12 @@ owlette_tray.py (System Tray Icon — separate process)
 
 | Path | Contents |
 |------|----------|
-| `C:\ProgramData\Owlette\` | Installation root |
-| `C:\ProgramData\Owlette\agent\src\` | Python source code |
-| `C:\ProgramData\Owlette\agent\config\` | `config.json` and credentials |
-| `C:\ProgramData\Owlette\logs\` | Service and GUI log files |
-| `C:\ProgramData\Owlette\python\` | Embedded Python interpreter |
-| `C:\ProgramData\Owlette\nssm\` | NSSM service manager binary |
+| `C:\ProgramData\owlette\` | Installation root |
+| `C:\ProgramData\owlette\agent\src\` | Python source code |
+| `C:\ProgramData\owlette\agent\config\` | `config.json` and credentials |
+| `C:\ProgramData\owlette\logs\` | Service and GUI log files |
+| `C:\ProgramData\owlette\python\` | Embedded Python interpreter |
+| `C:\ProgramData\owlette\nssm\` | NSSM service manager binary |
 
 ---
 

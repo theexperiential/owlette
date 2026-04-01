@@ -3,13 +3,13 @@ hide:
   - navigation
 ---
 
-# Owlette
+# owlette
 
 ### Always Watching
 
-Owlette is a cloud-connected Windows process management and remote deployment system. Built for managing TouchDesigner installations, digital signage, kiosks, and media servers — it keeps your machines running and your processes alive, from anywhere.
+owlette is a cloud-connected Windows process management and remote deployment system. Built for managing TouchDesigner installations, digital signage, kiosks, and media servers — it keeps your machines running and your processes alive, from anywhere.
 
-Owlette is three things working together:
+owlette is three things working together:
 
 <div class="grid cards" markdown>
 
@@ -17,7 +17,7 @@ Owlette is three things working together:
 
     ---
 
-    A lightweight Windows service that monitors your processes every 10 seconds, auto-restarts crashed applications, collects system metrics, and syncs everything to the cloud. Configure locally via GUI or remotely from the web.
+    A lightweight Windows service that monitors your processes every 5 seconds, auto-restarts crashed applications, collects system metrics, and syncs everything to the cloud. Configure locally via GUI or remotely from the web.
 
     [:octicons-arrow-right-24: Learn about the agent](agent/index.md)
 
@@ -88,10 +88,10 @@ Owlette is three things working together:
 1. **Create an account** at [owlette.app](https://owlette.app)
 2. **Create a site** — Organize your machines by location or project
 3. **Install the agent** — Download the installer and run it on your Windows machines
-4. **Add processes** — Tell Owlette which applications to monitor
+4. **Add processes** — Tell owlette which applications to monitor
 5. **Start managing** — Your machines appear in the dashboard within seconds
 
 [:octicons-arrow-right-24: Full getting started guide](getting-started.md)
 
 !!! info "Want to self-host?"
-    You can run your own Owlette instance with your own Firebase project. See the [Self-Hosting](setup/index.md) guide.
+    You can run your own owlette instance with your own Firebase project. See the [Self-Hosting](setup/index.md) guide.

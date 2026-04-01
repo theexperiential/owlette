@@ -183,7 +183,7 @@ export const POST = withRateLimit(
         subject = `[${ENV_LABEL}] Process ${eventLabel}: ${processName} on ${machineId}`;
         html = buildProcessAlertEmail(siteId, machineId, processName, errorMessage || '', agentVersion || '', resolvedEventType);
       } else {
-        subject = `[${ENV_LABEL}] [ALERT] Owlette agent error on ${machineId}`;
+        subject = `[${ENV_LABEL}] [ALERT] owlette agent error on ${machineId}`;
         html = buildAlertEmail(siteId, machineId, errorCode, errorMessage || '', agentVersion || '');
       }
 

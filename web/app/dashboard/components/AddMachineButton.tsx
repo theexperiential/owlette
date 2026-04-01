@@ -265,13 +265,13 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                     <Label className="text-muted-foreground text-xs">silent install command</Label>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 bg-muted/50 border border-border rounded-md px-3 py-2 font-mono text-xs text-muted-foreground break-all">
-                        Owlette-Installer.exe /ADD={generatedPhrase} /SILENT
+                        owlette-Installer.exe /ADD={generatedPhrase} /SILENT
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => copyToClipboard(
-                          `Owlette-Installer.exe /ADD=${generatedPhrase} /SILENT`,
+                          `owlette-Installer.exe /ADD=${generatedPhrase} /SILENT`,
                           'Command'
                         )}
                         className="border-border text-foreground hover:bg-secondary cursor-pointer shrink-0"

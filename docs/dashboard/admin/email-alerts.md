@@ -1,6 +1,6 @@
 # Email Alerts
 
-Owlette sends email notifications when machines go offline, processes crash, or connections fail.
+owlette sends email notifications when machines go offline, processes crash, or connections fail.
 
 ---
 

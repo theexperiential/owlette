@@ -1,6 +1,6 @@
 # Installation
 
-There are three ways to install and authenticate the Owlette agent on a Windows machine.
+There are three ways to install and authenticate the owlette agent on a Windows machine.
 
 ---
 
@@ -10,7 +10,7 @@ Download the installer, run it, and pair from your phone or browser.
 
 ### Steps
 
-1. Log into the Owlette dashboard
+1. Log into the owlette dashboard
 2. Click the **download button** in the header bar (shows the latest version)
 3. Save the `.exe` installer to the target machine
 4. Run the installer **as Administrator**
@@ -63,20 +63,20 @@ Owlette-Installer-v2.4.1.exe /ADD=silver-compass-drift /VERYSILENT /SUPPRESSMSGB
 
 ## Method 3: Remote Deployment (Upgrades)
 
-Deploy agent updates to machines that already have Owlette installed.
+Deploy agent updates to machines that already have owlette installed.
 
 1. In the dashboard, go to **Deployments**
 2. Click **"New Deployment"**
 3. Configure:
-    - **Name**: e.g., "Owlette Agent v2.4.1"
+    - **Name**: e.g., "owlette Agent v2.4.1"
     - **Installer URL**: Direct download link to the installer `.exe`
     - **Silent Flags**: `/VERYSILENT /SUPPRESSMSGBOXES`
-    - **Verify Path**: `C:\ProgramData\Owlette\agent\src\owlette_service.py`
+    - **Verify Path**: `C:\ProgramData\owlette\agent\src\owlette_service.py`
 4. Select target machines
 5. Click **Deploy**
 
 !!! warning "Prerequisites"
-    Remote deployment requires the target machine to already have a running Owlette agent (to receive the deployment command). Use this method for **upgrading** existing agents or deploying other software.
+    Remote deployment requires the target machine to already have a running owlette agent (to receive the deployment command). Use this method for **upgrading** existing agents or deploying other software.
 
 ---
 
@@ -86,8 +86,8 @@ For development or custom setups:
 
 ```bash
 # Clone the repository
-git clone https://github.com/theexperiential/Owlette.git
-cd Owlette/agent
+git clone https://github.com/theexperiential/owlette.git
+cd owlette/agent
 
 # Install Python dependencies
 pip install -r requirements.txt
@@ -106,7 +106,7 @@ The install script:
 After installing, run the pairing flow manually:
 
 ```bash
-cd C:\ProgramData\Owlette\agent\src
+cd C:\ProgramData\owlette\agent\src
 python configure_site.py
 ```
 
@@ -136,7 +136,7 @@ Server generates tokens → agent polls and receives them
     └── Refresh Token (never expires, admin-revocable)
     │
     ▼
-Tokens encrypted to C:\ProgramData\Owlette\.tokens.enc
+Tokens encrypted to C:\ProgramData\owlette\.tokens.enc
 Agent authenticated — starts syncing
 ```
 
@@ -163,13 +163,13 @@ After installation, verify the agent is running:
 ### Check Logs
 
 ```
-C:\ProgramData\Owlette\logs\service.log
+C:\ProgramData\owlette\logs\service.log
 ```
 
 Look for:
 
 ```
-INFO: Owlette service started successfully
+INFO: owlette service started successfully
 INFO: Firebase client initialized for site: your_site_id
 INFO: Firebase client started successfully
 ```
@@ -190,23 +190,23 @@ An owl icon should appear in the Windows system tray. Right-click it for status 
 
 ## Uninstallation
 
-**Windows Settings** → **Apps** → **Owlette** → **Uninstall**
+**Windows Settings** → **Apps** → **owlette** → **Uninstall**
 
 The uninstaller will:
 
-1. Stop the Owlette service
+1. Stop the owlette service
 2. Remove the NSSM service wrapper
 3. Remove Windows Defender exclusions
-4. Delete program files from `C:\ProgramData\Owlette`
+4. Delete program files from `C:\ProgramData\owlette`
 
 !!! note "Data preservation"
-    Configuration, tokens, and logs in `C:\ProgramData\Owlette\` are preserved by default. To fully remove all data after uninstalling: `rd /s /q C:\ProgramData\Owlette`
+    Configuration, tokens, and logs in `C:\ProgramData\owlette\` are preserved by default. To fully remove all data after uninstalling: `rd /s /q C:\ProgramData\owlette`
 
 ---
 
 ## Installer Details
 
-The Owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php) and bundles:
+The owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php) and bundles:
 
 | Component | Purpose |
 |-----------|---------|

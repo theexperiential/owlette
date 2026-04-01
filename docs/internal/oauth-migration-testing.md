@@ -17,7 +17,7 @@
 
 ## Overview
 
-This document provides a comprehensive testing plan for the OAuth authentication migration that eliminates service account credentials from the Owlette agent.
+This document provides a comprehensive testing plan for the OAuth authentication migration that eliminates service account credentials from the owlette agent.
 
 **Major Changes:**
 - ✅ Agent uses OAuth custom tokens (no service accounts)
@@ -42,7 +42,7 @@ This document provides a comprehensive testing plan for the OAuth authentication
 
 **Firebase CLI Method:**
 ```bash
-cd Owlette
+cd owlette
 firebase deploy --only firestore:rules --project owlette-dev-3838a
 ```
 
@@ -135,7 +135,7 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 
 **Test Environment:**
 - Clean Windows 10/11 machine (VM recommended)
-- No previous Owlette installation
+- No previous owlette installation
 - Internet connection required
 
 **Test Steps:**
@@ -155,7 +155,7 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 3. **Token Exchange**
    - [ ] Installer shows "Exchanging registration code for OAuth tokens..."
    - [ ] No errors in installer output
-   - [ ] Config saved to `C:\Owlette\agent\config\config.json`
+   - [ ] Config saved to `C:\owlette\agent\config\config.json`
 
 4. **Verify config.json**
    ```json
@@ -172,7 +172,7 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 
 5. **Verify Windows Credential Manager**
    - Open: Control Panel → Credential Manager → Windows Credentials
-   - [ ] Credential named "Owlette" exists
+   - [ ] Credential named "owlette" exists
    - [ ] Has entries for:
      - `AgentRefreshToken`
      - `AgentSiteId`
@@ -186,7 +186,7 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 
 7. **Verify Service Logs**
    ```bash
-   type C:\Owlette\agent\logs\owlette_service.log
+   type C:\owlette\agent\logs\owlette_service.log
    ```
    - [ ] "Firebase client initialized for site: user@sitename"
    - [ ] "Connected to Firestore - Site: ..., Machine: ..."
@@ -220,7 +220,7 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 
 3. **Monitor logs** for token refresh:
    ```bash
-   type C:\Owlette\agent\logs\owlette_service.log | findstr "refresh"
+   type C:\owlette\agent\logs\owlette_service.log | findstr "refresh"
    ```
    - [ ] "Token expires in Xs, refreshing..."
    - [ ] "Token refreshed successfully, expires_in=3600s"
@@ -262,7 +262,7 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 
 6. **Monitor agent behavior:**
    ```bash
-   type C:\Owlette\agent\logs\owlette_service.log | findstr "error"
+   type C:\owlette\agent\logs\owlette_service.log | findstr "error"
    ```
    - [ ] "Token refresh failed: Invalid or expired refresh token"
    - [ ] Agent stops trying to sync
@@ -293,7 +293,7 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 
 3. **Verify offline mode:**
    ```bash
-   type C:\Owlette\agent\logs\owlette_service.log
+   type C:\owlette\agent\logs\owlette_service.log
    ```
    - [ ] "Running in OFFLINE MODE - will use cached config only"
    - [ ] Service continues running
@@ -322,13 +322,13 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 **Test Steps:**
 
 1. **Install old version** (with service accounts):
-   - Use Owlette v2.0.0 installer
+   - Use owlette v2.0.0 installer
    - Manually configure firebase-credentials.json
    - Verify agent works
 
 2. **Uninstall old version:**
    ```bash
-   C:\Owlette\unins000.exe
+   C:\owlette\unins000.exe
    ```
 
 3. **Install new version** (with OAuth):
@@ -364,7 +364,7 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 pip install trufflehog
 
 # Scan repository
-cd Owlette
+cd owlette
 trufflehog filesystem ./ --json > security-scan.json
 
 # Check for findings
@@ -413,7 +413,7 @@ type C:\Users\%USERNAME%\AppData\Local\Microsoft\Credentials\*
 
 **Verify Credential Manager:**
 - Open Credential Manager (Control Panel)
-- Find "Owlette" credentials
+- Find "owlette" credentials
 - [ ] Cannot view password in plaintext (Windows hides it)
 - [ ] Credentials tied to current user + machine
 
@@ -522,7 +522,7 @@ If critical issues are found:
 
 3. **Manually configure service accounts:**
    - Download firebase-credentials.json
-   - Place in `C:\Owlette\agent\config\`
+   - Place in `C:\owlette\agent\config\`
    - Restart service
 
 ---

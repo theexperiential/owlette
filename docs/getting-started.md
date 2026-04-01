@@ -57,7 +57,7 @@ Within 30 seconds of installation, your machine should appear in the dashboard:
 
 ## Step 5: Add Processes to Monitor
 
-Now that your machine is connected, tell Owlette which applications to watch:
+Now that your machine is connected, tell owlette which applications to watch:
 
 1. Click on your machine in the dashboard
 2. Click **"Add Process"**
@@ -66,7 +66,7 @@ Now that your machine is connected, tell Owlette which applications to watch:
 5. Enable **Autolaunch** to auto-start and auto-restart on crash
 6. Click **Save**
 
-The agent immediately begins monitoring the process. If it crashes, Owlette restarts it within 10 seconds.
+The agent immediately begins monitoring the process. If it crashes, owlette restarts it within 10 seconds.
 
 ---
 
@@ -88,4 +88,4 @@ You're up and running. Here's what else you can do:
 
 - Check the [Troubleshooting](troubleshooting.md) guide for common issues
 - Review [Agent Troubleshooting](agent/troubleshooting.md) for agent-specific problems
-- Open an issue on [GitHub](https://github.com/theexperiential/Owlette/issues)
+- Open an issue on [GitHub](https://github.com/theexperiential/owlette/issues)

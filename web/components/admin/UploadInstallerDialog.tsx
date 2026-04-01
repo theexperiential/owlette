@@ -11,7 +11,7 @@ import { Upload, FileUp, X, Loader2, CheckCircle, AlertCircle } from 'lucide-rea
 import { toast } from 'sonner';
 import { isValidVersion, formatFileSize } from '@/lib/storageUtils';
 
-// Extract version from filename (e.g., "Owlette-Installer-v2.0.10.exe" -> "2.0.10")
+// Extract version from filename (e.g., "owlette-Installer-v2.0.10.exe" -> "2.0.10")
 const extractVersionFromFilename = (filename: string): string | null => {
   const match = filename.match(/v?(\d+\.\d+\.\d+)/i);
   return match ? match[1] : null;
@@ -154,7 +154,7 @@ export default function UploadInstallerDialog({
         <DialogHeader>
           <DialogTitle className="text-white">Upload New Installer Version</DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            Upload a new Owlette Agent installer version to Firebase Storage
+            Upload a new owlette Agent installer version to Firebase Storage
           </DialogDescription>
         </DialogHeader>
 

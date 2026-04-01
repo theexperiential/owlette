@@ -1,6 +1,6 @@
 # Web Deployment
 
-The Owlette dashboard is a Next.js application. This guide covers deploying to Railway (recommended) and general Node.js hosting.
+The owlette dashboard is a Next.js application. This guide covers deploying to Railway (recommended) and general Node.js hosting.
 
 ---
 
@@ -10,7 +10,7 @@ The Owlette dashboard is a Next.js application. This guide covers deploying to R
 
 1. Go to [railway.app](https://railway.app) and sign up with GitHub
 2. Click **"New Project"** → **"Deploy from GitHub repo"**
-3. Select the Owlette repository
+3. Select the owlette repository
 
 ### Step 2: Configure Service
 
@@ -85,7 +85,7 @@ Add as `CRON_SECRET` in Railway Variables.
 
 ## Two-Branch Deployment
 
-Owlette uses two branches with separate Railway deployments:
+owlette uses two branches with separate Railway deployments:
 
 | Branch | Deployment | URL |
 |--------|-----------|-----|

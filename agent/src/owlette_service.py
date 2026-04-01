@@ -98,10 +98,10 @@ class Util:
         return process.get('name', 'Error retrieving process name')
 
 
-# Main Owlette Windows Service logic
+# Main owlette Windows Service logic
 class OwletteService(win32serviceutil.ServiceFramework):
     _svc_name_ = 'OwletteService'
-    _svc_display_name_ = 'Owlette Service'
+    _svc_display_name_ = 'owlette Service'
 
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
@@ -351,7 +351,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         """
         Write current service status to file for tray icon to read.
 
-        Creates/updates C:\\ProgramData\\Owlette\\tmp\\service_status.json with:
+        Creates/updates C:\\ProgramData\\owlette\\tmp\\service_status.json with:
         - Service running state
         - Firebase enabled/connected state
         - Site ID
@@ -518,7 +518,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             except Exception as e:
                 logging.error(f"[ERROR] Error stopping Firebase client: {e}")
 
-        # Close any open Owlette windows (GUI, prompts, etc.)
+        # Close any open owlette windows (GUI, prompts, etc.)
         self.close_owlette_windows()
 
         self.terminate_tray_icon()
@@ -541,9 +541,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         except Exception as e:
             logging.error(f"An unhandled exception occurred: {e}")
 
-    # Close all Owlette windows
+    # Close all owlette windows
     def close_owlette_windows(self):
-        """Close all Owlette GUI windows (config, prompts, etc.) when service stops."""
+        """Close all owlette GUI windows (config, prompts, etc.) when service stops."""
         try:
             for key, window_title in shared_utils.WINDOW_TITLES.items():
                 try:
@@ -556,7 +556,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 except Exception as e:
                     logging.debug(f"Could not close window '{window_title}': {e}")
         except Exception as e:
-            logging.error(f"Error closing Owlette windows: {e}")
+            logging.error(f"Error closing owlette windows: {e}")
 
     # Recover PIDs from previous session
     def recover_running_processes(self):
@@ -2281,7 +2281,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         Args:
             close_processes: List of exe names to kill (e.g., ["TouchDesigner.exe"])
-            suppress_projects: List of Owlette project config IDs to lock from relaunching
+            suppress_projects: List of owlette project config IDs to lock from relaunching
             deployment_id: Deployment ID for logging and lock tracking
             cmd_id: Command ID for progress reporting
 
@@ -2650,7 +2650,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         logging.warning(f"Error in cleanup finally block: {cleanup_error}")
 
             elif cmd_type == 'update_owlette':
-                # Self-update command: Downloads and installs new Owlette version
+                # Self-update command: Downloads and installs new owlette version
                 # Uses installer_utils for robust download (retries + backoff) and checksum verification
                 # Launches via Task Scheduler so installer survives service stop
                 # Recovery watchdog task ensures service comes back after update
@@ -2674,7 +2674,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                 # ANTI-FRAGILE: Idempotency guard - prevent concurrent update execution
                 import json
-                update_marker_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'logs', 'update_in_progress.json')
+                update_marker_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'owlette', 'logs', 'update_in_progress.json')
                 if os.path.exists(update_marker_path):
                     try:
                         with open(update_marker_path, 'r') as f:
@@ -2717,9 +2717,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                     # Download installer to our own temp directory (not WINDOWS\TEMP)
                     # Some security software blocks execution from system temp directories
-                    owlette_tmp_dir = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'tmp')
+                    owlette_tmp_dir = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'owlette', 'tmp')
                     os.makedirs(owlette_tmp_dir, exist_ok=True)
-                    temp_installer_path = os.path.join(owlette_tmp_dir, 'Owlette-Update.exe')
+                    temp_installer_path = os.path.join(owlette_tmp_dir, 'owlette-Update.exe')
 
                     # Use installer_utils for robust download with retries and progress
                     logging.info("Downloading installer (3 retries with exponential backoff)...")
@@ -2780,7 +2780,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                     # Launch installer via Windows Task Scheduler (survives service stop)
                     # This ensures installer keeps running even when Inno Setup kills the service
-                    log_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'logs', 'installer_update.log')
+                    log_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'owlette', 'logs', 'installer_update.log')
                     silent_flags = f'/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS /LOG="{log_path}"'
                     task_name = f"OwletteUpdate_{int(time.time())}"
 
@@ -3289,7 +3289,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             import subprocess
             subprocess.run(
-                ['shutdown', '/r', '/t', '30', '/c', 'Owlette scheduled reboot'],
+                ['shutdown', '/r', '/t', '30', '/c', 'owlette scheduled reboot'],
                 check=True, timeout=15
             )
             logging.info("Scheduled reboot command issued (30-second delay)")
@@ -3312,7 +3312,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Schedule reboot with 30-second delay (gives agent time to complete Firestore writes)
             import subprocess
             subprocess.run(
-                ['shutdown', '/r', '/t', '30', '/c', 'Owlette remote reboot requested'],
+                ['shutdown', '/r', '/t', '30', '/c', 'owlette remote reboot requested'],
                 check=True, timeout=15
             )
 
@@ -3333,7 +3333,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             import subprocess
             subprocess.run(
-                ['shutdown', '/s', '/t', '30', '/c', 'Owlette remote shutdown requested'],
+                ['shutdown', '/s', '/t', '30', '/c', 'owlette remote shutdown requested'],
                 check=True, timeout=15
             )
 
@@ -3882,7 +3882,7 @@ with open(out_path, 'wb') as f:
         try:
             update_marker_path = os.path.join(
                 os.environ.get('ProgramData', 'C:\\ProgramData'),
-                'Owlette', 'logs', 'update_in_progress.json'
+                'owlette', 'logs', 'update_in_progress.json'
             )
 
             if not os.path.exists(update_marker_path):
@@ -3973,7 +3973,7 @@ with open(out_path, 'wb') as f:
             try:
                 update_marker_path = os.path.join(
                     os.environ.get('ProgramData', 'C:\\ProgramData'),
-                    'Owlette', 'logs', 'update_in_progress.json'
+                    'owlette', 'logs', 'update_in_progress.json'
                 )
                 if os.path.exists(update_marker_path):
                     os.remove(update_marker_path)
@@ -4070,12 +4070,12 @@ with open(out_path, 'wb') as f:
                             if status == 'completed':
                                 self.firebase_client._mark_command_completed(cmd_id, result_msg, deployment_id, 'update_owlette')
                                 if deployment_id:
-                                    self.firebase_client.log_event('deployment_completed', 'info', 'Owlette Update',
+                                    self.firebase_client.log_event('deployment_completed', 'info', 'owlette Update',
                                                                    f"Deployment {deployment_id}: {result_msg}")
                             else:
                                 self.firebase_client._mark_command_failed(cmd_id, result_msg, deployment_id, 'update_owlette')
                                 if deployment_id:
-                                    self.firebase_client.log_event('deployment_failed', 'error', 'Owlette Update',
+                                    self.firebase_client.log_event('deployment_failed', 'error', 'owlette Update',
                                                                    f"Deployment {deployment_id} failed: {result_msg}")
                             logging.info(f"Update command {cmd_id} marked as {status} in Firestore")
                         except Exception as e:
@@ -4116,7 +4116,7 @@ with open(out_path, 'wb') as f:
             except Exception as e:
                 logging.warning(f"Failed to clear stale flags on startup: {e}")
 
-        # The heart of Owlette
+        # The heart of owlette
         cleanup_counter = 0  # Counter for periodic cleanup
         log_cleanup_counter = 0  # Counter for log cleanup (runs less frequently)
         firebase_check_counter = 0  # Counter for Firebase state check (runs every minute)
@@ -4230,7 +4230,7 @@ with open(out_path, 'wb') as f:
                     self._check_scheduled_reboot()
 
                 if self.first_start:
-                    logging.info('Owlette initialized')
+                    logging.info('owlette initialized')
 
                     # Log Agent Started event to Firestore
                     if self.firebase_client and self.firebase_client.is_connected():
@@ -4240,7 +4240,7 @@ with open(out_path, 'wb') as f:
                                 action='agent_started',
                                 level='info',
                                 process_name=None,
-                                details=f'Owlette agent v{version} started successfully'
+                                details=f'owlette agent v{version} started successfully'
                             )
                             logging.debug("Logged agent_started event to Firestore")
                         except Exception as log_err:
@@ -4363,10 +4363,10 @@ with open(out_path, 'wb') as f:
                 except Exception as e:
                     logging.error(f"[ERROR] Error during cleanup: {e}")
 
-            # Close any open Owlette windows
+            # Close any open owlette windows
             try:
                 self.close_owlette_windows()
-                logging.info("[OK] Owlette windows closed")
+                logging.info("[OK] owlette windows closed")
             except Exception as e:
                 logging.error(f"Error closing windows: {e}")
 
@@ -4387,7 +4387,7 @@ if __name__ == '__main__':
     if len(sys.argv) == 1:
         # No arguments - running under NSSM or direct execution
         # Run the service main loop directly
-        print("Starting Owlette service (NSSM mode)...")
+        print("Starting owlette service (NSSM mode)...")
         service = OwletteService(None)
         service.SvcDoRun()
     else:

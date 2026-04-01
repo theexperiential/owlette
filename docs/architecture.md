@@ -1,6 +1,6 @@
 # Architecture
 
-Owlette uses a serverless, event-driven architecture where all communication flows through Cloud Firestore. There is no direct connection between agents and the dashboard — Firestore acts as the message bus.
+owlette uses a serverless, event-driven architecture where all communication flows through Cloud Firestore. There is no direct connection between agents and the dashboard — Firestore acts as the message bus.
 
 ---
 
@@ -42,10 +42,10 @@ The agent runs as a Windows service managed by [NSSM](https://nssm.cc/) (Non-Suc
 The agent uses a **custom Firestore REST API client** (not the Firebase Admin SDK) with an OAuth two-token authentication system.
 
 !!! info "Key directories"
-    - **Installation**: `C:\ProgramData\Owlette\`
-    - **Agent code**: `C:\ProgramData\Owlette\agent\src\`
-    - **Logs**: `C:\ProgramData\Owlette\logs\`
-    - **Config**: `C:\ProgramData\Owlette\agent\config\config.json`
+    - **Installation**: `C:\ProgramData\owlette\`
+    - **Agent code**: `C:\ProgramData\owlette\agent\src\`
+    - **Logs**: `C:\ProgramData\owlette\logs\`
+    - **Config**: `C:\ProgramData\owlette\agent\config\config.json`
 
 ### Web Dashboard (Next.js)
 

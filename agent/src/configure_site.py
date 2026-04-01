@@ -1,5 +1,5 @@
 """
-Owlette Site Configuration - Device Code / QR Pairing Flow
+owlette Site Configuration - Device Code / QR Pairing Flow
 
 Runs during installer to configure Firebase site_id via device code authentication.
 
@@ -8,7 +8,7 @@ This script:
 2. Displays a QR code + the phrase in the console (or GUI)
 3. User scans QR code with phone or enters phrase on owlette.app/add (or dashboard)
 4. Agent polls for authorization until the user approves
-5. Receives and stores OAuth tokens securely (C:\\ProgramData\\Owlette\\.tokens.enc)
+5. Receives and stores OAuth tokens securely (C:\\ProgramData\\owlette\\.tokens.enc)
 6. Writes minimal configuration to config.json (site_id, project_id, api_base)
 
 Three authorization methods:
@@ -114,7 +114,7 @@ def _save_config(site_id: str, environment: str, api_base: str, project_id: str)
 
     if config is None:
         config = {
-            "_comment": "Owlette Configuration - Edit this file to add processes to monitor",
+            "_comment": "owlette Configuration - Edit this file to add processes to monitor",
             "version": shared_utils.CONFIG_VERSION,
             "processes": [],
             "logging": {
@@ -439,7 +439,7 @@ def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts
 
 def main():
     """Entry point for device code pairing flow."""
-    parser = argparse.ArgumentParser(description='Owlette Site Configuration')
+    parser = argparse.ArgumentParser(description='owlette Site Configuration')
     parser.add_argument('--url', type=str, default=None,
                         help='API base URL (auto-detected if not specified)')
     parser.add_argument('--add', type=str, default=None,
@@ -471,7 +471,7 @@ def main():
     )
 
     if success:
-        print("The Owlette service will now be installed and started.")
+        print("The owlette service will now be installed and started.")
         return 0
     else:
         print("Please try running the installer again.")

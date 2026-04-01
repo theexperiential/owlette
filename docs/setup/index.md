@@ -1,6 +1,6 @@
 # Self-Hosting
 
-Owlette is available as a hosted service at [owlette.app](https://owlette.app) — no setup required. But if you want to run your own instance, this section covers deploying the full stack yourself.
+owlette is available as a hosted service at [owlette.app](https://owlette.app) — no setup required. But if you want to run your own instance, this section covers deploying the full stack yourself.
 
 ---
 
@@ -9,7 +9,7 @@ Owlette is available as a hosted service at [owlette.app](https://owlette.app) �
 - **Data sovereignty** — Keep all data in your own Firebase project
 - **Custom domain** — Run the dashboard on your own URL
 - **Full control** — Modify the codebase, add features, integrate with your infrastructure
-- **Development** — Contribute to Owlette or build on top of it
+- **Development** — Contribute to owlette or build on top of it
 
 ---
 

@@ -1,6 +1,6 @@
-# Owlette 2.0 - Architecture Decisions
+# owlette 2.0 - Architecture Decisions
 
-This document outlines key architectural decisions for Owlette 2.0.
+This document outlines key architectural decisions for owlette 2.0.
 
 ---
 
@@ -11,7 +11,7 @@ This document outlines key architectural decisions for Owlette 2.0.
 We'll use a **monorepo** structure with clear directories for each component:
 
 ```
-Owlette/
+owlette/
 ├── agent/                      # Python Windows Service
 │   ├── src/
 │   │   ├── owlette_service.py

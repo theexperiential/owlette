@@ -1,6 +1,6 @@
 # Self-Update
 
-The Owlette agent can update itself remotely — no physical access to the machine required.
+The owlette agent can update itself remotely — no physical access to the machine required.
 
 ---
 
@@ -10,7 +10,7 @@ The self-update is handled directly by the service's command handler in `owlette
 
 1. **Receives** the `update_owlette` command from Firestore
 2. **Downloads** the new installer to a temp directory
-3. **Stops** the Owlette service
+3. **Stops** the owlette service
 4. **Executes** the installer silently (Inno Setup with `/VERYSILENT`)
 5. **Installer upgrades** in place — preserves `config.json` and credentials
 6. **Service restarts** automatically (NSSM or installer triggers restart)
@@ -23,7 +23,7 @@ The self-update is handled directly by the service's command handler in `owlette
 ### From the Dashboard
 
 1. Navigate to your machine in the dashboard
-2. Click the **"Update Owlette"** button
+2. Click the **"Update owlette"** button
 3. Select the target version (or use "latest")
 4. Confirm the update
 
@@ -72,7 +72,7 @@ After the update completes:
 If the machine goes offline and doesn't come back:
 
 1. **Check physically** — the machine may need manual intervention
-2. **Check logs** at `C:\ProgramData\Owlette\logs\service.log`
+2. **Check logs** at `C:\ProgramData\owlette\logs\service.log`
 3. **Restart service** manually: `net start OwletteService`
 
 ### Version Didn't Change

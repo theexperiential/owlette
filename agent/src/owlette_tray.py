@@ -154,7 +154,7 @@ def read_service_status():
     """
     Read service status from status file written by service.
 
-    The service writes C:\\ProgramData\\Owlette\\tmp\\service_status.json
+    The service writes C:\\ProgramData\\owlette\\tmp\\service_status.json
     every 10 seconds with current Firebase connection state.
 
     Returns dict or None if file doesn't exist and has never been read.
@@ -281,7 +281,7 @@ def open_config_gui(icon, item):
             win32gui.SetForegroundWindow(hwnd)
             return
     except Exception as e:
-        logging.error(f"Failed to bring Owlette GUI to the front: {e}")
+        logging.error(f"Failed to bring owlette GUI to the front: {e}")
 
     # No visible window — kill any zombie process and spawn fresh
     if is_process_running(pid):
@@ -298,12 +298,12 @@ def open_config_gui(icon, item):
         pid = process.pid
         logging.info(f"[TRAY] Spawned GUI process {pid}")
     except Exception as e:
-        logging.error(f"Failed to open Owlette GUI: {e}")
+        logging.error(f"Failed to open owlette GUI: {e}")
 
 # Function to restart the service (using UAC elevation)
 def restart_service(icon, item):
     """
-    Restart the Owlette service and tray icon.
+    Restart the owlette service and tray icon.
 
     No UAC prompt needed — the tray writes a restart flag, the service detects
     it and exits with code 42, NSSM automatically restarts the service (AppExit
@@ -321,7 +321,7 @@ def restart_service(icon, item):
         except:
             pass
 
-        # Close all Owlette windows first
+        # Close all owlette windows first
         for window_title in shared_utils.WINDOW_TITLES.values():
             try:
                 hwnd = win32gui.FindWindow(None, window_title)
@@ -582,7 +582,7 @@ def leave_site(icon, item):
         "• Firebase sync will be disabled\n"
         "• Machine will be deregistered\n"
         "• Service will be restarted\n\n"
-        "To re-join a site, you will need to run the Owlette installer again.\n\n"
+        "To re-join a site, you will need to run the owlette installer again.\n\n"
         "Are you sure you want to leave this site?"
     )
 

@@ -8,10 +8,10 @@ Common issues and how to resolve them.
 
 | Log | Path | Contents |
 |-----|------|----------|
-| **Service** | `C:\ProgramData\Owlette\logs\service.log` | Main service operations, Firebase sync, command execution |
-| **GUI** | `C:\ProgramData\Owlette\logs\gui.log` | Configuration GUI operations |
-| **Tray** | `C:\ProgramData\Owlette\logs\tray.log` | System tray icon operations |
-| **Installer** | `C:\ProgramData\Owlette\logs\setup.log` | Installation/setup logging |
+| **Service** | `C:\ProgramData\owlette\logs\service.log` | Main service operations, Firebase sync, command execution |
+| **GUI** | `C:\ProgramData\owlette\logs\gui.log` | Configuration GUI operations |
+| **Tray** | `C:\ProgramData\owlette\logs\tray.log` | System tray icon operations |
+| **Installer** | `C:\ProgramData\owlette\logs\setup.log` | Installation/setup logging |
 
 Logs use rotating file handlers: 10 MB per file, 5 backups. Old logs are auto-deleted after 90 days (configurable).
 
@@ -22,7 +22,7 @@ Logs use rotating file handlers: 10 MB per file, 5 backups. Old logs are auto-de
 Run the service in debug mode to see real-time console output:
 
 ```bash
-cd C:\ProgramData\Owlette\agent\src
+cd C:\ProgramData\owlette\agent\src
 python owlette_service.py debug
 ```
 
@@ -41,11 +41,11 @@ python owlette_service.py debug
 
 1. Run in debug mode to see the error:
     ```bash
-    cd C:\ProgramData\Owlette\agent\src
+    cd C:\ProgramData\owlette\agent\src
     python owlette_service.py debug
     ```
 2. Check `service.log` for startup errors
-3. Verify Python is installed: `C:\ProgramData\Owlette\python\python.exe --version`
+3. Verify Python is installed: `C:\ProgramData\owlette\python\python.exe --version`
 4. Verify config.json is valid JSON
 
 **Common causes**:
@@ -86,11 +86,11 @@ python owlette_service.py debug
 
 1. Delete the token file and re-pair:
     ```
-    del C:\ProgramData\Owlette\.tokens.enc
+    del C:\ProgramData\owlette\.tokens.enc
     ```
 2. Run the pairing flow:
     ```
-    C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\configure_site.py
+    C:\ProgramData\owlette\python\python.exe C:\ProgramData\owlette\agent\src\configure_site.py
     ```
 3. Authorize on the web page that opens, then restart the service
 
@@ -138,7 +138,7 @@ If stuck in `BACKOFF`:
 
 ### High CPU/Memory Usage
 
-**Symptoms**: The Owlette service itself uses excessive resources.
+**Symptoms**: The owlette service itself uses excessive resources.
 
 **Normal usage**: ~20-50 MB RAM, <1% CPU
 
@@ -157,10 +157,10 @@ If stuck in `BACKOFF`:
 **Check**:
 
 1. Look at `gui.log` for errors
-2. Verify GUI file exists: `C:\ProgramData\Owlette\agent\src\owlette_gui.py`
+2. Verify GUI file exists: `C:\ProgramData\owlette\agent\src\owlette_gui.py`
 3. Try launching manually:
     ```bash
-    "C:\ProgramData\Owlette\python\pythonw.exe" "C:\ProgramData\Owlette\agent\src\owlette_gui.py"
+    "C:\ProgramData\owlette\python\pythonw.exe" "C:\ProgramData\owlette\agent\src\owlette_gui.py"
     ```
 4. Check for CustomTkinter import errors (missing dependency)
 
@@ -175,7 +175,7 @@ If stuck in `BACKOFF`:
 **Fix**: The installer should add a Defender exclusion automatically. If it didn't:
 
 ```powershell
-Add-MpPreference -ExclusionPath "C:\ProgramData\Owlette"
+Add-MpPreference -ExclusionPath "C:\ProgramData\owlette"
 ```
 
 ---

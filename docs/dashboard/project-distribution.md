@@ -1,13 +1,13 @@
 # Project Distribution
 
-Distribute project files (ZIP archives) across your machines using your own file hosting. Owlette handles the download, extraction, and verification — you just provide the URL.
+Distribute project files (ZIP archives) across your machines using your own file hosting. owlette handles the download, extraction, and verification — you just provide the URL.
 
 ---
 
 ## How It Works
 
 ```
-Your File Host              Owlette Cloud              Agent Machines
+Your File Host              owlette Cloud              Agent Machines
 (Dropbox/Drive/etc.)       (Firestore)               (Windows)
 ────────────────────────────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ Your File Host              Owlette Cloud              Agent Machines
 
 4.                                              Download ZIP
    ◀─────────────────────────                  directly from host
-   (not through Owlette!)                       Report progress ──▶
+   (not through owlette!)                       Report progress ──▶
 
 5.                                              Extract to path
                                                 Report progress ──▶
@@ -29,7 +29,7 @@ Your File Host              Owlette Cloud              Agent Machines
                                                 Report complete ──▶
 ```
 
-**Key point**: Files download directly from your host to the machines — Owlette never stores or proxies the files. This keeps costs near zero.
+**Key point**: Files download directly from your host to the machines — owlette never stores or proxies the files. This keeps costs near zero.
 
 ---
 
@@ -72,7 +72,7 @@ Your File Host              Owlette Cloud              Agent Machines
 | Google Drive | $9.99 (2TB plan) | Included | **$9.99** |
 | Backblaze B2 | $0.50 | Free (3x rule) | **$0.50** |
 
-Owlette infrastructure cost: **~$0.001** per distribution (Firestore operations only).
+owlette infrastructure cost: **~$0.001** per distribution (Firestore operations only).
 
 ---
 

@@ -15,7 +15,7 @@ const FeatureGrid = dynamic(() => import('@/components/landing/FeatureGrid').the
 const jsonLd = {
   '@context': 'https://schema.org',
   '@type': 'SoftwareApplication',
-  name: 'Owlette',
+  name: 'owlette',
   applicationCategory: 'BusinessApplication',
   operatingSystem: 'Windows',
   url: 'https://owlette.app',

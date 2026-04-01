@@ -130,5 +130,5 @@ Each machine reports additional details:
 | **Hostname** | Windows computer name (used as machine ID) |
 | **OS** | Windows version (e.g., "Windows 11 Pro 10.0.22631") |
 | **CPU Model** | Processor name (e.g., "Intel Core i9-9900X") |
-| **Agent Version** | Installed Owlette version (e.g., "2.1.8") |
+| **Agent Version** | Installed owlette version (e.g., "2.1.8") |
 | **Uptime** | Time since last agent start |

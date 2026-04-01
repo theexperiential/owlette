@@ -43,7 +43,7 @@ Get comprehensive system information including hostname, OS (with correct Window
 
 ### get_process_list
 
-Get all Owlette-configured processes with their current status, PID, launch mode, and whether they are running.
+Get all owlette-configured processes with their current status, PID, launch mode, and whether they are running.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -118,7 +118,7 @@ Get the status of a Windows service by name.
 
 ### get_agent_config
 
-Get the current Owlette agent configuration (sensitive fields stripped).
+Get the current owlette agent configuration (sensitive fields stripped).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -128,7 +128,7 @@ Get the current Owlette agent configuration (sensitive fields stripped).
 
 ### get_agent_logs
 
-Get recent Owlette agent log entries.
+Get recent owlette agent log entries.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -160,11 +160,11 @@ Get available software deployment presets managed by the site admin. Returns ins
 
 ## Tier 2: Process & Machine Management Tools
 
-These wrap existing Owlette commands and execute immediately without user confirmation.
+These wrap existing owlette commands and execute immediately without user confirmation.
 
 ### restart_process
 
-Restart an Owlette-configured process by name.
+Restart an owlette-configured process by name.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

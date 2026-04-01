@@ -14,7 +14,7 @@ import { toast } from 'sonner';
 /**
  * DownloadButton Component
  *
- * Public download button for the Owlette Agent installer.
+ * Public download button for the owlette Agent installer.
  * Displays in the dashboard header for all authenticated users.
  *
  * Features:
@@ -38,7 +38,7 @@ export default function DownloadButton() {
       // Open download URL in new tab
       window.open(downloadUrl, '_blank');
       toast.success('download started', {
-        description: `downloading Owlette v${version}`,
+        description: `downloading owlette v${version}`,
       });
     } catch (err) {
       toast.error('download failed', {
@@ -99,7 +99,7 @@ export default function DownloadButton() {
             {isLoading ? (
               <p>loading version info...</p>
             ) : (
-              <p>download Owlette agent v{version}</p>
+              <p>download owlette agent v{version}</p>
             )}
           </TooltipContent>
         </Tooltip>
@@ -126,7 +126,7 @@ export default function DownloadButton() {
             {isLoading ? (
               <p>loading version info...</p>
             ) : (
-              <p>copy download link for Owlette agent v{version}</p>
+              <p>copy download link for owlette agent v{version}</p>
             )}
           </TooltipContent>
         </Tooltip>

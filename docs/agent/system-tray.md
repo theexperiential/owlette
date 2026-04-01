@@ -1,6 +1,6 @@
 # System Tray
 
-The Owlette system tray icon provides at-a-glance status and quick access to common actions. It runs as a separate process from the service, using `pystray` for the tray icon and `owlette_tray.py` for logic.
+The owlette system tray icon provides at-a-glance status and quick access to common actions. It runs as a separate process from the service, using `pystray` for the tray icon and `owlette_tray.py` for logic.
 
 ---
 
@@ -34,7 +34,7 @@ Right-clicking the tray icon shows:
 The tray icon communicates with the service through an **IPC status file**:
 
 ```
-C:\ProgramData\Owlette\tmp\service_status.json
+C:\ProgramData\owlette\tmp\service_status.json
 ```
 
 The service writes status updates to this file, and the tray reads it periodically (every 60 seconds) to display current state.
@@ -65,6 +65,6 @@ The service launches the tray icon automatically during startup using the logged
 
 1. Service detects the active user session via `WTSQueryUserToken`
 2. Launches `owlette_tray.py` under the user's account (so the icon appears in their tray)
-3. Uses the embedded Python interpreter at `C:\ProgramData\Owlette\python\pythonw.exe`
+3. Uses the embedded Python interpreter at `C:\ProgramData\owlette\python\pythonw.exe`
 
 The tray process is independent — if it crashes, the service continues running. The service re-launches the tray on its next status check if it's not running.

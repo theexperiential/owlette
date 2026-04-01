@@ -1,6 +1,6 @@
 # Firestore Security Rules
 
-Firestore security rules control who can read and write data. Owlette's rules enforce site-scoped access, agent isolation, and role-based permissions.
+Firestore security rules control who can read and write data. owlette's rules enforce site-scoped access, agent isolation, and role-based permissions.
 
 ---
 

@@ -1,6 +1,6 @@
 # Firebase Setup
 
-Firebase provides the real-time database (Firestore) and authentication backend for Owlette.
+Firebase provides the real-time database (Firestore) and authentication backend for owlette.
 
 ---
 
@@ -8,7 +8,7 @@ Firebase provides the real-time database (Firestore) and authentication backend 
 
 1. Go to [Firebase Console](https://console.firebase.google.com/)
 2. Click **"Add project"**
-3. Name it (e.g., "Owlette" or "Owlette-Dev")
+3. Name it (e.g., "owlette" or "owlette-Dev")
 4. Disable Google Analytics (not needed)
 5. Click **"Create Project"**
 
@@ -39,7 +39,7 @@ Firebase provides the real-time database (Firestore) and authentication backend 
 1. In Firebase Console → Project Settings (gear icon)
 2. Scroll to **"Your apps"**
 3. Click **"Add app"** → Select **Web** (&lt;/&gt; icon)
-4. Register the app (name: "Owlette Dashboard")
+4. Register the app (name: "owlette Dashboard")
 5. Copy the 6 configuration values:
 
 ```javascript
@@ -104,7 +104,7 @@ firebase deploy --only firestore:indexes
 
 ## Multi-User Access Control
 
-Owlette enforces site-based access at the Firestore security rules level:
+owlette enforces site-based access at the Firestore security rules level:
 
 | Role | Access |
 |------|--------|

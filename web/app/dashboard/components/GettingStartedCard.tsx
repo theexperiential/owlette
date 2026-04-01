@@ -40,7 +40,7 @@ export function GettingStartedCard({
     try {
       window.open(downloadUrl, '_blank');
       toast.success('Download Started', {
-        description: `Downloading Owlette v${version}`,
+        description: `Downloading owlette v${version}`,
       });
     } catch (err) {
       toast.error('Download Failed', {
@@ -99,7 +99,7 @@ export function GettingStartedCard({
         {sites.length > 0 && (
           <>
             <div className="rounded-lg border border-border bg-background p-4">
-              <h3 className="font-semibold text-white mb-3">Step 1: Download Owlette Agent</h3>
+              <h3 className="font-semibold text-white mb-3">Step 1: Download owlette Agent</h3>
               <p className="text-sm text-muted-foreground mb-4">
                 Download and run the installer <strong className="text-white">on the machine you want to add</strong> (not necessarily this one).
                 Use the copy link option if connecting via remote desktop tools like Parsec, TeamViewer, or RDP.
@@ -140,7 +140,7 @@ export function GettingStartedCard({
               <p className="text-sm text-muted-foreground">
                 Use the <strong className="text-white">+ add machine</strong> button → &quot;generate code&quot; tab to get a pre-authorized phrase. Then run:
                 <code className="block mt-2 px-3 py-2 bg-muted rounded text-xs font-mono text-foreground">
-                  Owlette-Installer.exe /ADD=your-phrase-here /SILENT
+                  owlette-Installer.exe /ADD=your-phrase-here /SILENT
                 </code>
               </p>
             </div>

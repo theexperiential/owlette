@@ -9,8 +9,8 @@ The agent can be configured locally via the GUI, remotely from the web dashboard
 The GUI is a CustomTkinter application that runs as a separate process from the service. Launch it from:
 
 - **System tray** → Right-click → "Open GUI"
-- **Start Menu** → Owlette
-- **Directly**: `C:\ProgramData\Owlette\python\pythonw.exe C:\ProgramData\Owlette\agent\src\owlette_gui.py`
+- **Start Menu** → owlette
+- **Directly**: `C:\ProgramData\owlette\python\pythonw.exe C:\ProgramData\owlette\agent\src\owlette_gui.py`
 
 ### GUI Features
 
@@ -25,7 +25,7 @@ The GUI is a CustomTkinter application that runs as a separate process from the 
 
 ## config.json
 
-The configuration file is stored at `C:\ProgramData\Owlette\agent\config\config.json`.
+The configuration file is stored at `C:\ProgramData\owlette\agent\config\config.json`.
 
 ### Top-Level Structure
 

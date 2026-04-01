@@ -148,7 +148,7 @@ The `install_software` command triggers a multi-step process:
 
 | Type | Silent Flag | Example |
 |------|-------------|---------|
-| **Inno Setup** | `/VERYSILENT /SUPPRESSMSGBOXES` | Owlette itself |
+| **Inno Setup** | `/VERYSILENT /SUPPRESSMSGBOXES` | owlette itself |
 | **NSIS** | `/S` | Notepad++ |
 | **MSI** | `msiexec /i installer.msi /qn` | Windows Installer packages |
 | **Custom** | Varies | Any executable with silent flags |
@@ -196,7 +196,7 @@ The agent logs the event to Firestore before executing.
 ### Self-Update
 
 1. Download new installer to temp directory
-2. Stop the Owlette service
+2. Stop the owlette service
 3. Execute installer with `/VERYSILENT` flags
 4. Installer upgrades in place, restarts service
 5. New agent version starts and reconnects

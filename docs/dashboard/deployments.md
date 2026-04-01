@@ -1,6 +1,6 @@
 # Deployments
 
-Deploy software remotely to one or many machines. Owlette downloads and silently installs applications, tracking progress in real-time.
+Deploy software remotely to one or many machines. owlette downloads and silently installs applications, tracking progress in real-time.
 
 ---
 
@@ -41,7 +41,7 @@ Different installer frameworks use different flags:
 
 | Installer Type | Silent Flags | Example Software |
 |----------------|--------------|-----------------|
-| **Inno Setup** | `/VERYSILENT /SUPPRESSMSGBOXES` | Owlette, many open-source tools |
+| **Inno Setup** | `/VERYSILENT /SUPPRESSMSGBOXES` | owlette, many open-source tools |
 | **NSIS** | `/S` | Notepad++, 7-Zip |
 | **MSI** | `/qn` (with `msiexec /i`) | Windows Installer packages |
 | **InstallShield** | `/s /v"/qn"` | Enterprise software |
@@ -145,7 +145,7 @@ Dashboard creates deployment record in Firestore
 
 - Verify silent flags are correct for the installer type
 - Check if the installer requires specific prerequisites (e.g., .NET Framework)
-- Review agent logs: `C:\ProgramData\Owlette\logs\service.log`
+- Review agent logs: `C:\ProgramData\owlette\logs\service.log`
 - Try installing manually with the same flags to diagnose
 
 ### Timeout

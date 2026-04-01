@@ -5,7 +5,7 @@
 > The interactive docs are powered by OpenAPI 3.1 and include a "Try It" panel for testing
 > endpoints live. This file is retained as a reference but may become stale.
 
-All HTTP endpoints exposed by the Owlette web dashboard. 51 route files under `web/app/api/`, producing **~65 distinct method+path combinations**.
+All HTTP endpoints exposed by the owlette web dashboard. 51 route files under `web/app/api/`, producing **~65 distinct method+path combinations**.
 
 ---
 
@@ -129,7 +129,7 @@ Generates TOTP secret and QR code for 2FA setup.
 ```json
 {
   "secret": "JBSWY3DPEHPK3PXP",
-  "qrCodeUrl": "otpauth://totp/Owlette:user@example.com?secret=..."
+  "qrCodeUrl": "otpauth://totp/owlette:user@example.com?secret=..."
 }
 ```
 

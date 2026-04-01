@@ -4,7 +4,7 @@
 **Created**: 2025-01-31
 **Status**: Production Ready
 
-This document explains the advanced Claude Code workflow system implemented for Owlette, based on battle-tested methodologies from 6 months of hardcore Claude Code usage.
+This document explains the advanced Claude Code workflow system implemented for owlette, based on battle-tested methodologies from 6 months of hardcore Claude Code usage.
 
 ---
 
@@ -717,7 +717,7 @@ console.log('Activated skills:', topMatches.map(m => m.skillName))
 
 ### Phase 5: Refinement & Templates (Ongoing)
 
-- [ ] Extract reusable templates from Owlette setup
+- [ ] Extract reusable templates from owlette setup
 - [ ] Document learnings and best practices
 - [ ] Create contribution guidelines
 - [ ] Share with other projects
@@ -800,11 +800,11 @@ Key concepts adapted:
 - Specialized agents for quality
 - Progressive disclosure pattern for skills
 
-**Customizations for Owlette**:
+**Customizations for owlette**:
 - Adapted for Next.js 16 + Python monorepo
 - Firebase/Firestore integration patterns
 - Windows service-specific guidelines
-- Owlette-specific architecture
+- owlette-specific architecture
 
 ---
 

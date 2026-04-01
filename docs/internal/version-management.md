@@ -2,7 +2,7 @@
 
 ## Overview
 
-Owlette uses **independent component versioning** for flexibility while maintaining a unified product version.
+owlette uses **independent component versioning** for flexibility while maintaining a unified product version.
 
 ## Version Files
 

@@ -1,6 +1,6 @@
 # Reference
 
-Technical reference documentation for Owlette's APIs, data model, authentication, and tool systems.
+Technical reference documentation for owlette's APIs, data model, authentication, and tool systems.
 
 ---
 

@@ -560,7 +560,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       )}
                     </h3>
                     <p className="text-xs text-muted-foreground mt-1">
-                      connect an LLM provider to power Owlette&apos;s intelligence layer. query machines,
+                      connect an LLM provider to power owlette&apos;s intelligence layer. query machines,
                       run diagnostics, and manage your fleet through natural language.
                     </p>
                   </div>

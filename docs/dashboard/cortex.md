@@ -87,25 +87,25 @@ These tools only read information and never modify anything:
 |------|-------------|
 | `get_site_logs` | Activity logs across all machines in the site (server-side) |
 | `get_system_info` | CPU, memory, disk, GPU, hostname, OS, uptime, agent version |
-| `get_process_list` | All Owlette-configured processes with status |
+| `get_process_list` | All owlette-configured processes with status |
 | `get_running_processes` | All OS processes with CPU/memory usage (filterable) |
 | `get_gpu_processes` | Per-process GPU/VRAM usage, sorted by consumption |
 | `get_network_info` | Network interfaces, IP addresses, link status |
 | `get_disk_usage` | All drives with total/used/free space |
 | `get_event_logs` | Windows event logs (Application, System, Security) |
 | `get_service_status` | Status of any Windows service |
-| `get_agent_config` | Owlette agent configuration (tokens stripped) |
+| `get_agent_config` | owlette agent configuration (tokens stripped) |
 | `get_agent_logs` | Recent agent log entries (filterable by level) |
 | `get_agent_health` | Connection state, health probe results |
 | `get_system_presets` | System presets for software deployments (server-side) |
 
 ### Tier 2: Process Management (Auto-Approved)
 
-These wrap existing Owlette commands:
+These wrap existing owlette commands:
 
 | Tool | Description |
 |------|-------------|
-| `restart_process` | Restart an Owlette-configured process |
+| `restart_process` | Restart an owlette-configured process |
 | `kill_process` | Kill/stop a process |
 | `start_process` | Start a stopped process |
 | `set_launch_mode` | Set launch mode (off, always, scheduled) |

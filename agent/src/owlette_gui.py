@@ -1711,7 +1711,7 @@ class OwletteConfigApp:
                    "• Firebase sync will be disabled\n"
                    "• Machine will be deregistered\n"
                    "• Service must be restarted\n\n"
-                   "To re-join a site, you will need to run the Owlette installer again.",
+                   "To re-join a site, you will need to run the owlette installer again.",
             icon="warning",
             option_1="Cancel",
             option_2="leave site",
@@ -1809,7 +1809,7 @@ class OwletteConfigApp:
                 CTkMessagebox(
                     master=self.master,
                     title="Left Site Successfully",
-                    message="This machine has been removed from the site and is no longer monitored.\n\nThe Owlette service has been restarted.",
+                    message="This machine has been removed from the site and is no longer monitored.\n\nThe owlette service has been restarted.",
                     icon="check",
                     width=600
                 )
@@ -1831,7 +1831,7 @@ class OwletteConfigApp:
             title="Join Site?",
             message="This will open your browser to authenticate with a site.\n\n"
                    "Steps:\n"
-                   "1. Log in to your Owlette account\n"
+                   "1. Log in to your owlette account\n"
                    "2. Select or create a site\n"
                    "3. Authorize this machine\n\n"
                    "The service will restart after authentication completes.",
@@ -1975,7 +1975,7 @@ class OwletteConfigApp:
             logging.error(f"Failed to reinitialize Firebase: {e}")
 
     def restart_service(self):
-        """Restart the Owlette service."""
+        """Restart the owlette service."""
         try:
             import win32serviceutil
             service_name = 'OwletteService'
@@ -1992,7 +1992,7 @@ class OwletteConfigApp:
             CTkMessagebox(
                 master=self.master,
                 title="Service Restarted",
-                message="The Owlette service has been restarted successfully.",
+                message="The owlette service has been restarted successfully.",
                 icon="check"
             )
         except Exception as e:
@@ -2159,7 +2159,7 @@ class OwletteConfigApp:
             pass
 
     def _open_docs(self):
-        """Open the Owlette documentation in the default browser."""
+        """Open the owlette documentation in the default browser."""
         import webbrowser
         webbrowser.open("https://theexperiential.github.io/owlette/")
         logging.info("Opened documentation URL")

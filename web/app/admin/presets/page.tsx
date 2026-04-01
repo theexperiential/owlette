@@ -107,7 +107,7 @@ export default function SystemPresetsPage() {
             <div>
               <h1 className="text-3xl font-bold text-foreground mb-2">Template Library</h1>
               <p className="text-muted-foreground">
-                Admin-curated software catalog for deployments (TouchDesigner, VLC, Owlette Agent, etc.)
+                Admin-curated software catalog for deployments (TouchDesigner, VLC, owlette Agent, etc.)
               </p>
             </div>
             <Button
