@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { toast } from 'sonner';
 import { validatePassword, validateEmail } from '@/lib/validators';
 import { sanitizeError } from '@/lib/errorHandler';
-import Image from 'next/image';
+import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 
 export default function RegisterPage() {
   const [firstName, setFirstName] = useState('');
@@ -30,7 +30,7 @@ export default function RegisterPage() {
 
     // Check terms agreement
     if (!agreedToTerms) {
-      toast.error('You must agree to the Terms of Service and Privacy Policy');
+      toast.error('you must agree to the terms of service and privacy policy');
       return;
     }
 
@@ -50,7 +50,7 @@ export default function RegisterPage() {
 
     // Check password confirmation
     if (password !== confirmPassword) {
-      toast.error('Passwords do not match');
+      toast.error('passwords do not match');
       return;
     }
 
@@ -58,7 +58,7 @@ export default function RegisterPage() {
 
     try {
       await signUp(email, password, firstName, lastName);
-      toast.success('Account created successfully!');
+      toast.success('account created successfully!');
       // Redirect to 2FA setup (mandatory for new users)
       router.push('/setup-2fa');
     } catch (error) {
@@ -71,7 +71,7 @@ export default function RegisterPage() {
   const handleGoogleSignup = async () => {
     // Check terms agreement
     if (!agreedToTerms) {
-      toast.error('You must agree to the Terms of Service and Privacy Policy');
+      toast.error('you must agree to the terms of service and privacy policy');
       return;
     }
 
@@ -79,7 +79,7 @@ export default function RegisterPage() {
 
     try {
       await signInWithGoogle();
-      toast.success('Account created with Google!');
+      toast.success('account created with Google!');
       // Note: AuthContext will redirect to /setup-2fa for new users
       router.push('/dashboard');
     } catch (error) {
@@ -90,21 +90,14 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+    <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-md bg-card/50 border-border">
         <CardHeader className="space-y-4 flex flex-col items-center">
-          <Image
-            src="/owlette-icon.png"
-            alt="Owlette"
-            width={96}
-            height={96}
-            className="rounded-full"
-            priority
-          />
+          <OwletteEyeIcon size={80} />
           <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-foreground">Create an account</CardTitle>
+            <CardTitle className="text-2xl font-bold text-foreground">create an account</CardTitle>
             <CardDescription className="text-muted-foreground">
-              Join Owlette to manage your fleet
+              join owlette to manage your fleet
             </CardDescription>
           </div>
         </CardHeader>
@@ -112,7 +105,7 @@ export default function RegisterPage() {
           <form onSubmit={handleRegister} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="firstName" className="text-foreground">First Name</Label>
+                <Label htmlFor="firstName" className="text-foreground">first name</Label>
                 <Input
                   id="firstName"
                   type="text"
@@ -124,7 +117,7 @@ export default function RegisterPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="lastName" className="text-foreground">Last Name</Label>
+                <Label htmlFor="lastName" className="text-foreground">last name</Label>
                 <Input
                   id="lastName"
                   type="text"
@@ -137,7 +130,7 @@ export default function RegisterPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-foreground">Email</Label>
+              <Label htmlFor="email" className="text-foreground">email</Label>
               <Input
                 id="email"
                 type="email"
@@ -150,7 +143,7 @@ export default function RegisterPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-foreground">Password</Label>
+              <Label htmlFor="password" className="text-foreground">password</Label>
               <Input
                 id="password"
                 type="password"
@@ -162,11 +155,11 @@ export default function RegisterPage() {
                 className="bg-input border-border text-foreground placeholder:text-muted-foreground"
               />
               <p className="text-xs text-muted-foreground">
-                Must be 8+ characters with at least 2 of: lowercase, uppercase, numbers, special characters
+                must be 8+ characters with at least 2 of: lowercase, uppercase, numbers, special characters
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="confirmPassword" className="text-foreground">Confirm Password</Label>
+              <Label htmlFor="confirmPassword" className="text-foreground">confirm password</Label>
               <Input
                 id="confirmPassword"
                 type="password"
@@ -187,18 +180,18 @@ export default function RegisterPage() {
                 className="mt-0.5 border-border data-[state=checked]:bg-accent-cyan data-[state=checked]:border-accent-cyan"
               />
               <Label htmlFor="terms" className="text-sm text-muted-foreground leading-tight cursor-pointer">
-                I agree to the{' '}
+                i agree to the{' '}
                 <Link href="/terms" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline" target="_blank">
-                  Terms of Service
+                  terms of service
                 </Link>
                 {' '}and{' '}
                 <Link href="/privacy" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline" target="_blank">
-                  Privacy Policy
+                  privacy policy
                 </Link>
               </Label>
             </div>
-            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-slate-950 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || !agreedToTerms}>
-              {loading ? 'Creating account...' : 'Create account'}
+            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || !agreedToTerms}>
+              {loading ? 'creating account...' : 'create account'}
             </Button>
           </form>
 
@@ -208,7 +201,7 @@ export default function RegisterPage() {
             </div>
             <div className="relative flex justify-center text-xs uppercase">
               <span className="bg-card/50 px-2 text-muted-foreground">
-                Or continue with
+                or continue with
               </span>
             </div>
           </div>
@@ -242,9 +235,9 @@ export default function RegisterPage() {
           </Button>
 
           <div className="text-center text-sm text-muted-foreground">
-            Already have an account?{' '}
+            already have an account?{' '}
             <a href="/login" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
-              Sign in
+              sign in
             </a>
           </div>
         </CardContent>

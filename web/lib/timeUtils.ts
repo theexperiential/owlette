@@ -69,14 +69,14 @@ export function formatTimeOnly(
       minute: '2-digit',
       hour12,
       timeZone: timezone,
-    });
+    }).toLowerCase();
   } catch {
     // Fallback if timezone is invalid
     return date.toLocaleTimeString('en-US', {
       hour: 'numeric',
       minute: '2-digit',
       hour12,
-    });
+    }).toLowerCase();
   }
 }
 
@@ -135,6 +135,10 @@ export function formatHeartbeatTime(
   timezone: string = 'UTC',
   timeFormat: '12h' | '24h' = '12h'
 ): { display: string; isStale: boolean; tooltip: string } {
+  // Guard against missing/invalid timestamps (epoch 0, negative, etc.)
+  if (!timestampSeconds || timestampSeconds < 86400) {
+    return { display: '--', isStale: true, tooltip: 'No heartbeat received' };
+  }
   const isStale = isHeartbeatStale(timestampSeconds);
   const tooltip = formatFullTimestamp(timestampSeconds, timezone, timeFormat);
 
@@ -207,4 +211,115 @@ export function isValidTimezone(timezone: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Timezone option for the searchable timezone picker
+ */
+export interface TimezoneOption {
+  value: string;
+  label: string;
+  offset: number;
+  offsetLabel: string;
+  region: string;
+  /** Extra search terms (alternative city spellings, old IANA names, etc.) */
+  aliases?: string[];
+}
+
+/**
+ * Map of IANA timezone IDs → alternative search terms.
+ * Covers renamed cities, transliterations, and common misspellings.
+ */
+const TIMEZONE_SEARCH_ALIASES: Record<string, string[]> = {
+  'Europe/Kiev': ['kyiv'],
+  'Europe/Kyiv': ['kiev'],
+  'Asia/Kolkata': ['bombay', 'mumbai', 'calcutta'],
+  'Asia/Ho_Chi_Minh': ['saigon'],
+  'Asia/Yangon': ['rangoon'],
+  'Atlantic/Reykjavik': ['reykjavík'],
+  'America/Nuuk': ['godthab', 'godthåb'],
+  'Pacific/Honolulu': ['hawaii'],
+  'America/Anchorage': ['alaska'],
+  'Asia/Istanbul': ['constantinople'],
+  'Europe/Istanbul': ['constantinople'],
+  'Africa/Abidjan': ['gmt', 'greenwich'],
+};
+
+/**
+ * Get the current UTC offset for a timezone
+ */
+export function getTimezoneOffset(timezone: string): { offset: number; offsetLabel: string } {
+  try {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'shortOffset',
+    });
+    const parts = formatter.formatToParts(now);
+    const tzPart = parts.find((p) => p.type === 'timeZoneName')?.value || 'UTC';
+
+    // Parse "GMT+2", "GMT-5:30", "GMT+5:45", "GMT" etc.
+    if (tzPart === 'GMT' || tzPart === 'UTC') {
+      return { offset: 0, offsetLabel: 'UTC+00:00' };
+    }
+
+    const match = tzPart.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+    if (match) {
+      const sign = match[1] === '+' ? 1 : -1;
+      const hours = parseInt(match[2], 10);
+      const minutes = parseInt(match[3] || '0', 10);
+      const offset = sign * (hours * 60 + minutes);
+      const offsetLabel = `UTC${match[1]}${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+      return { offset, offsetLabel };
+    }
+
+    return { offset: 0, offsetLabel: 'UTC+00:00' };
+  } catch {
+    return { offset: 0, offsetLabel: 'UTC+00:00' };
+  }
+}
+
+/**
+ * Format an IANA timezone ID as a readable label
+ * e.g., "America/New_York" → "America / New York"
+ */
+export function formatTimezoneLabel(timezone: string): string {
+  if (timezone === 'UTC') return 'UTC';
+  return timezone.replace(/_/g, ' ').replace(/\//g, ' / ');
+}
+
+let cachedTimezones: TimezoneOption[] | null = null;
+
+/**
+ * Get all IANA timezones with labels and UTC offsets.
+ * Uses Intl.supportedValuesOf (browser-native), cached after first call.
+ * Falls back to COMMON_TIMEZONES if the API is unavailable.
+ */
+export function getAllTimezones(): TimezoneOption[] {
+  if (cachedTimezones) return cachedTimezones;
+
+  let tzIds: string[];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tzIds = (Intl as any).supportedValuesOf('timeZone');
+  } catch {
+    // Fallback for SSR or old browsers
+    cachedTimezones = COMMON_TIMEZONES.map((tz) => {
+      const { offset, offsetLabel } = getTimezoneOffset(tz.value);
+      const region = tz.value.includes('/') ? tz.value.split('/')[0] : 'Other';
+      const aliases = TIMEZONE_SEARCH_ALIASES[tz.value];
+      return { value: tz.value, label: formatTimezoneLabel(tz.value), offset, offsetLabel, region, ...(aliases && { aliases }) };
+    });
+    return cachedTimezones;
+  }
+
+  cachedTimezones = tzIds.map((tz) => {
+    const { offset, offsetLabel } = getTimezoneOffset(tz);
+    const region = tz.includes('/') ? tz.split('/')[0] : 'Other';
+    const aliases = TIMEZONE_SEARCH_ALIASES[tz];
+    return { value: tz, label: formatTimezoneLabel(tz), offset, offsetLabel, region, ...(aliases && { aliases }) };
+  });
+
+  cachedTimezones.sort((a, b) => a.offset - b.offset || a.label.localeCompare(b.label));
+  return cachedTimezones;
 }

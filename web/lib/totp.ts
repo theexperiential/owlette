@@ -93,32 +93,56 @@ export function verifyBackupCode(code: string, hash: string): boolean {
 }
 
 /**
- * Encrypt TOTP secret for storage (client-side encryption)
- * Note: In production, consider using server-side encryption
+ * Encrypt TOTP secret for storage using AES-256-GCM
  * @param secret TOTP secret to encrypt
  * @param userKey User-specific encryption key (e.g., derived from UID)
- * @returns Encrypted secret
+ * @returns Encrypted secret in format: salt:iv:authTag:ciphertext (base64)
  */
 export function encryptSecret(secret: string, userKey: string): string {
-  // For production, use proper encryption library
-  // This is a simple XOR cipher for demonstration
-  // TODO: Replace with proper encryption (e.g., AES-256-GCM)
-  const cipher = crypto.createCipher('aes-256-cbc', userKey);
-  let encrypted = cipher.update(secret, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  return encrypted;
+  const salt = crypto.randomBytes(16);
+  const iv = crypto.randomBytes(12);
+  const key = crypto.scryptSync(userKey, salt, 32);
+
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  let encrypted = cipher.update(secret, 'utf8', 'base64');
+  encrypted += cipher.final('base64');
+  const authTag = cipher.getAuthTag();
+
+  return [
+    salt.toString('base64'),
+    iv.toString('base64'),
+    authTag.toString('base64'),
+    encrypted,
+  ].join(':');
 }
 
 /**
- * Decrypt TOTP secret from storage
- * @param encryptedSecret Encrypted TOTP secret
+ * Decrypt TOTP secret from storage (AES-256-GCM)
+ * @param encryptedSecret Encrypted TOTP secret in format: salt:iv:authTag:ciphertext
  * @param userKey User-specific encryption key
  * @returns Decrypted secret
  */
 export function decryptSecret(encryptedSecret: string, userKey: string): string {
   try {
-    const decipher = crypto.createDecipher('aes-256-cbc', userKey);
-    let decrypted = decipher.update(encryptedSecret, 'hex', 'utf8');
+    // Guard against legacy AES-CBC hex format (pre-GCM migration)
+    if (!encryptedSecret.includes(':')) {
+      throw new Error('Legacy TOTP secret format — user must re-enroll MFA');
+    }
+
+    const parts = encryptedSecret.split(':');
+    if (parts.length !== 4) {
+      throw new Error('Invalid encrypted data format');
+    }
+
+    const [saltB64, ivB64, authTagB64, ciphertext] = parts;
+    const salt = Buffer.from(saltB64, 'base64');
+    const iv = Buffer.from(ivB64, 'base64');
+    const authTag = Buffer.from(authTagB64, 'base64');
+    const key = crypto.scryptSync(userKey, salt, 32);
+
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(ciphertext, 'base64', 'utf8');
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (error) {

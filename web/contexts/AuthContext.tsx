@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import {
   User,
   signInWithEmailAndPassword,
@@ -18,8 +18,29 @@ import {
 import { doc, getDoc, setDoc, onSnapshot, deleteDoc, collection, getDocs, writeBatch } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
+import { getBrowserTimezone } from '@/lib/timeUtils';
 import { toast } from 'sonner';
 import { clearMfaSession } from '@/lib/mfaSession';
+
+// Shallow-compare two arrays by value (for string arrays like userSites)
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+// Shallow-compare two flat objects (for lastMachineIds)
+function shallowEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
 
 // Helper functions for server-side session management
 const createSessionCookie = async (userId: string, idToken: string): Promise<void> => {
@@ -56,6 +77,13 @@ type UserRole = 'user' | 'admin';
 
 export interface UserPreferences {
   temperatureUnit: 'C' | 'F'; // Default: 'C'
+  timezone: string; // IANA timezone (e.g. 'America/New_York'). Default: browser-detected
+  timeFormat: '12h' | '24h'; // Time display format. Default: '12h'
+  healthAlerts: boolean; // Receive email alerts when machines go offline. Default: true
+  processAlerts: boolean; // Receive email alerts when processes crash or fail to start. Default: true
+  alertCcEmails: string[]; // Additional CC recipients for alert emails. Default: []
+  statsExpanded: boolean; // Whether stats section is expanded in card view. Default: false
+  processesExpanded: boolean; // Whether process list is expanded in card view. Default: false
 }
 
 interface AuthContextType {
@@ -64,7 +92,10 @@ interface AuthContextType {
   role: UserRole;
   isAdmin: boolean;
   userSites: string[]; // Sites the user has access to
+  lastSiteId: string | null; // Last active site (synced to Firestore)
+  lastMachineIds: Record<string, string>; // Last active machine per site (synced to Firestore)
   requiresMfaSetup: boolean; // Whether user needs to complete 2FA setup
+  passkeyEnrolled: boolean; // Whether user has registered passkeys
   userPreferences: UserPreferences; // User preferences (temperature unit, etc.)
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, firstName?: string, lastName?: string) => Promise<void>;
@@ -72,7 +103,9 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   updateUserProfile: (firstName: string, lastName: string) => Promise<void>;
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
-  updateUserPreferences: (preferences: Partial<UserPreferences>) => Promise<void>;
+  updateUserPreferences: (preferences: Partial<UserPreferences>, options?: { silent?: boolean }) => Promise<void>;
+  updateLastSite: (siteId: string) => void;
+  updateLastMachine: (siteId: string, machineId: string) => void;
   deleteAccount: (password: string) => Promise<void>;
 }
 
@@ -82,8 +115,11 @@ const AuthContext = createContext<AuthContextType>({
   role: 'user',
   isAdmin: false,
   userSites: [],
+  lastSiteId: null,
+  lastMachineIds: {},
   requiresMfaSetup: false,
-  userPreferences: { temperatureUnit: 'C' },
+  passkeyEnrolled: false,
+  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', healthAlerts: true, processAlerts: true, alertCcEmails: [], statsExpanded: true, processesExpanded: true },
   signIn: async () => {},
   signUp: async () => {},
   signInWithGoogle: async () => {},
@@ -91,6 +127,8 @@ const AuthContext = createContext<AuthContextType>({
   updateUserProfile: async () => {},
   updatePassword: async () => {},
   updateUserPreferences: async () => {},
+  updateLastSite: () => {},
+  updateLastMachine: () => {},
   deleteAccount: async () => {},
 });
 
@@ -108,7 +146,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<UserRole>('user');
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
-  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C' });
+  const [passkeyEnrolled, setPasskeyEnrolled] = useState(false);
+  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', healthAlerts: true, processAlerts: true, alertCcEmails: [], statsExpanded: true, processesExpanded: true });
+  const [lastSiteId, setLastSiteId] = useState<string | null>(null);
+  const [lastMachineIds, setLastMachineIds] = useState<Record<string, string>>({});
 
   // Helper function to send user creation notification
   const sendUserCreatedNotification = async (
@@ -146,11 +187,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({ status: response.status }));
         console.error('Failed to send user creation notification:', error);
-      } else {
-        const result = await response.json();
-        console.log('✅ User creation notification sent:', result);
       }
     } catch (error) {
       // Don't fail user creation if notification fails
@@ -194,16 +232,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             async (docSnap) => {
               if (docSnap.exists()) {
                 const userData = docSnap.data();
-                console.log('✅ User document updated, role:', userData.role);
-                console.log('📋 User sites array:', userData.sites);
-                setRole(userData.role || 'user');
-                setUserSites(userData.sites || []);
-                setRequiresMfaSetup(userData.requiresMfaSetup || false);
+                const newRole = userData.role || 'user';
+                const newSites: string[] = userData.sites || [];
+                const newRequiresMfa = userData.requiresMfaSetup || false;
+                const newPasskeyEnrolled = userData.passkeyEnrolled || false;
+                const newLastSiteId = userData.lastSiteId || null;
+                const newLastMachineIds: Record<string, string> = userData.lastMachineIds || {};
+
+                // Only update state when values actually change to avoid unnecessary re-renders
+                setRole(prev => prev === newRole ? prev : newRole);
+                setUserSites(prev => arraysEqual(prev, newSites) ? prev : newSites);
+                setRequiresMfaSetup(prev => prev === newRequiresMfa ? prev : newRequiresMfa);
+                setPasskeyEnrolled(prev => prev === newPasskeyEnrolled ? prev : newPasskeyEnrolled);
+                setLastSiteId(prev => prev === newLastSiteId ? prev : newLastSiteId);
+                setLastMachineIds(prev => shallowEqual(prev, newLastMachineIds) ? prev : newLastMachineIds);
 
                 // Load user preferences (with defaults if missing)
                 const preferences = userData.preferences || {};
-                setUserPreferences({
+                const newPrefs: UserPreferences = {
                   temperatureUnit: preferences.temperatureUnit || 'C',
+                  timezone: preferences.timezone || getBrowserTimezone(),
+                  timeFormat: preferences.timeFormat || '12h',
+                  healthAlerts: preferences.healthAlerts !== false, // Default: true
+                  processAlerts: preferences.processAlerts !== false, // Default: true
+                  alertCcEmails: preferences.alertCcEmails || [], // Default: []
+                  statsExpanded: preferences.statsExpanded ?? true, // Default: expanded
+                  processesExpanded: preferences.processesExpanded ?? true, // Default: expanded
+                };
+                setUserPreferences(prev => {
+                  if (
+                    prev.temperatureUnit === newPrefs.temperatureUnit &&
+                    prev.timezone === newPrefs.timezone &&
+                    prev.timeFormat === newPrefs.timeFormat &&
+                    prev.healthAlerts === newPrefs.healthAlerts &&
+                    prev.processAlerts === newPrefs.processAlerts &&
+                    prev.statsExpanded === newPrefs.statsExpanded &&
+                    prev.processesExpanded === newPrefs.processesExpanded &&
+                    arraysEqual(prev.alertCcEmails, newPrefs.alertCcEmails)
+                  ) return prev;
+                  return newPrefs;
                 });
 
                 setLoading(false);
@@ -224,6 +291,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     // Default preferences
                     preferences: {
                       temperatureUnit: 'C',
+                      timezone: getBrowserTimezone(),
                     },
                   });
                   console.log('✅ User document created by listener');
@@ -328,6 +396,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Default preferences
           preferences: {
             temperatureUnit: 'C',
+            timezone: getBrowserTimezone(),
           },
         });
         console.log('✅ User document created in Firestore:', userCredential.user.uid);
@@ -446,7 +515,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const updateUserPreferences = async (preferences: Partial<UserPreferences>) => {
+  const updateUserPreferences = async (preferences: Partial<UserPreferences>, options?: { silent?: boolean }) => {
     try {
       if (!auth?.currentUser || !db) {
         const error = new Error('No user is currently signed in.');
@@ -472,15 +541,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ...preferences,
       });
 
-      toast.success('Preferences Updated', {
-        description: 'Your preferences have been saved successfully.',
-      });
+      if (!options?.silent) {
+        toast.success('Preferences Updated', {
+          description: 'Your preferences have been saved successfully.',
+        });
+      }
     } catch (error: any) {
       const friendlyMessage = handleError(error);
       toast.error('Update Failed', {
         description: friendlyMessage,
       });
       throw error;
+    }
+  };
+
+  const updateLastSite = (siteId: string) => {
+    setLastSiteId(siteId);
+    // Also keep localStorage for fast same-browser access
+    localStorage.setItem('owlette_current_site', siteId);
+    // Write to Firestore (fire-and-forget for responsiveness)
+    if (auth?.currentUser && db) {
+      const userDocRef = doc(db, 'users', auth.currentUser.uid);
+      setDoc(userDocRef, { lastSiteId: siteId }, { merge: true }).catch((err) =>
+        console.error('Failed to save lastSiteId:', err)
+      );
+    }
+  };
+
+  const updateLastMachine = (siteId: string, machineId: string) => {
+    setLastMachineIds((prev) => ({ ...prev, [siteId]: machineId }));
+    if (auth?.currentUser && db) {
+      const userDocRef = doc(db, 'users', auth.currentUser.uid);
+      setDoc(userDocRef, { lastMachineIds: { [siteId]: machineId } }, { merge: true }).catch((err) =>
+        console.error('Failed to save lastMachineId:', err)
+      );
     }
   };
 
@@ -638,13 +732,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const value = {
+  const isAdmin = role === 'admin';
+
+  const value = useMemo(() => ({
     user,
     loading,
     role,
-    isAdmin: role === 'admin',
+    isAdmin,
     userSites,
+    lastSiteId,
+    lastMachineIds,
     requiresMfaSetup,
+    passkeyEnrolled,
     userPreferences,
     signIn,
     signUp,
@@ -653,8 +752,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     updateUserProfile,
     updatePassword,
     updateUserPreferences,
+    updateLastSite,
+    updateLastMachine,
     deleteAccount,
-  };
+  }), [user, loading, role, isAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, passkeyEnrolled, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updatePassword, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

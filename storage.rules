@@ -31,7 +31,22 @@ service firebase.storage {
     }
 
     // ============================================
-    // All Other Files - Authenticated Users Only
+    // Chat Images - Authenticated Read, Owner Write
+    // ============================================
+
+    match /chat-images/{userId}/{allPaths=**} {
+      // Any authenticated user can view chat images (needed for shared sites)
+      allow read: if request.auth != null;
+
+      // Only the owning user can upload; max 5 MB, images only
+      allow write: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // ============================================
+    // All Other Files - Deny by Default
     // ============================================
 
     match /{allPaths=**} {

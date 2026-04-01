@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import RequireAdmin from '@/components/RequireAdmin';
-import { Shield, Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound } from 'lucide-react';
+import { Shield, Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook, Clock, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -47,10 +47,28 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       description: 'View and revoke agent tokens',
     },
     {
-      name: 'Email Test',
-      href: '/admin/test-email',
+      name: 'Schedules',
+      href: '/admin/schedules',
+      icon: Clock,
+      description: 'Manage schedule presets',
+    },
+    {
+      name: 'Alerts',
+      href: '/admin/alerts',
+      icon: Bell,
+      description: 'Threshold-based metric alerts',
+    },
+    {
+      name: 'Webhooks',
+      href: '/admin/webhooks',
+      icon: Webhook,
+      description: 'Configure webhook notifications',
+    },
+    {
+      name: 'Email',
+      href: '/admin/email',
       icon: Mail,
-      description: 'Test email notifications',
+      description: 'Email configuration & testing',
     },
   ];
 
@@ -72,7 +90,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <RequireAdmin>
       <TooltipProvider delayDuration={100}>
-        <div className="flex min-h-screen bg-background">
+        <div className="flex min-h-screen">
         {/* Mobile Menu Button */}
         {!mobileMenuOpen && (
           <div className="lg:hidden fixed top-4 left-4 z-50">
@@ -137,7 +155,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   <Button
                     variant="outline"
                     size="sm"
-                    className="w-full border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer lg:px-2 xl:px-3"
+                    className="w-full border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer lg:px-2 xl:px-3"
                   >
                     <ArrowLeft className="h-4 w-4 lg:mr-0 xl:mr-2" />
                     <span className="lg:hidden xl:inline">{getBackLabel()}</span>
@@ -165,8 +183,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           flex items-start gap-3 p-3 lg:p-2 lg:justify-center xl:justify-start xl:p-3 rounded-lg cursor-pointer transition-colors mb-2
                           ${
                             isActive
-                              ? 'bg-accent-cyan text-foreground'
-                              : 'text-foreground hover:bg-muted hover:text-foreground'
+                              ? 'bg-accent-cyan/15 text-accent-cyan border border-accent-cyan/30'
+                              : 'text-foreground hover:bg-accent hover:text-foreground'
                           }
                         `}
                       >
@@ -175,7 +193,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           <p className="font-medium text-sm">{item.name}</p>
                           <p
                             className={`text-xs mt-0.5 ${
-                              isActive ? 'text-accent-cyan-foreground' : 'text-muted-foreground'
+                              isActive ? 'text-accent-cyan/70' : 'text-muted-foreground'
                             }`}
                           >
                             {item.description}

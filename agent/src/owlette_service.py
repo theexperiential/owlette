@@ -1,5 +1,8 @@
 import os
 import sys
+import threading
+import socket
+import requests
 
 # Add the src directory to Python path so imports work when running as service
 src_dir = os.path.dirname(os.path.abspath(__file__))
@@ -18,6 +21,7 @@ import win32profile
 import win32ts
 import win32con
 import win32gui
+import win32security
 import servicemanager
 import logging
 import psutil
@@ -25,6 +29,7 @@ import time
 import json
 import datetime
 import atexit
+import shlex
 import subprocess
 import tempfile
 
@@ -38,9 +43,32 @@ except ImportError as e:
     FIREBASE_IMPORT_ERROR = str(e)
     # Note: logging not initialized yet, so we can't log here
 
+# Health probe (stdlib-only module, safe to import unconditionally)
+from health_probe import HealthProbe, HealthState, STATUS_OK
+
+
+def _handle_unhandled_exception(exc_type, exc_value, exc_tb):
+    """Log unhandled exceptions before NSSM restarts the service."""
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+    logging.critical(
+        "UNHANDLED EXCEPTION — service will be restarted by NSSM:",
+        exc_info=(exc_type, exc_value, exc_tb)
+    )
+
+
+def _handle_thread_exception(args):
+    """Log unhandled exceptions from non-main threads."""
+    logging.critical(
+        f"UNHANDLED THREAD EXCEPTION in {args.thread!r}:",
+        exc_info=(args.exc_type, args.exc_value, args.exc_traceback)
+    )
+
+
 """
-To install/run this as a service, 
-switch to the current working directory in 
+To install/run this as a service,
+switch to the current working directory in
 an Administrator Command Prompt & run:
 python owlette_service.py install | start | stop | remove
 """
@@ -48,7 +76,7 @@ python owlette_service.py install | start | stop | remove
 # Constants
 LOG_FILE_PATH = shared_utils.get_data_path('logs/service.log')
 MAX_RELAUNCH_ATTEMPTS = 3
-SLEEP_INTERVAL = 10
+SLEEP_INTERVAL = 5
 TIME_TO_INIT = 60
 
 # Utility functions
@@ -63,11 +91,7 @@ class Util:
     # Check if a Process ID (PID) is running
     @staticmethod
     def is_pid_running(pid):
-        try:
-            process = psutil.Process(pid)
-            return True
-        except psutil.NoSuchProcess:
-            return False
+        return psutil.pid_exists(pid)
 
     @staticmethod
     def get_process_name(process):
@@ -86,28 +110,59 @@ class OwletteService(win32serviceutil.ServiceFramework):
         log_level = shared_utils.get_log_level_from_config()
         shared_utils.initialize_logging("service", level=log_level)
 
+        # Wire global exception hooks (after logging is configured)
+        sys.excepthook = _handle_unhandled_exception
+        threading.excepthook = _handle_thread_exception
+
         # Only initialize results file if it doesn't exist (don't clear existing PIDs!)
         if not os.path.exists(shared_utils.RESULT_FILE_PATH):
             Util.initialize_results_file()
             logging.info("Initialized new app_states.json file")
 
         # Upgrade JSON config to latest version
-        logging.info(f"Config path: {shared_utils.CONFIG_PATH}")
+        logging.debug(f"Config path: {shared_utils.CONFIG_PATH}")
         shared_utils.upgrade_config()
+
+        # --- STARTUP HEALTH PROBE ---
+        api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
+        self._health_state: HealthState = HealthProbe(
+            config_path=shared_utils.CONFIG_PATH,
+            api_base=api_base
+        ).run()
+        logging.debug(f"Startup health probe: status={self._health_state.status}, results={self._health_state.probe_results}")
+        if not self._health_state.is_ok():
+            logging.error(f"Health probe failed: {self._health_state.error_code} — {self._health_state.error_message}")
+
+        # Store auth manager and api_base for use in _update_health_state
+        self._auth_manager = None
+        self._api_base = api_base
+
+        # Write early status so tray can show health alerts before Firebase init
+        self._write_service_status_early()
 
         self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
         self.is_alive = True
+        self._restart_exit_code = 0
         self.tray_icon_pid = None
+        self.cortex_pid = None
         self.relaunch_attempts = {} # Restart attempts for each process
         self.first_start = True # First start of this service
         self.last_started = {} # Last time a process was started
         self.results = {} # App process response esults
         self.current_time = datetime.datetime.now()
         self.active_installations = {} # Track active installer processes for cancellation
+        self.install_locks = {}  # {process_config_id: deployment_id} - suppress relaunch during install
+        self.manual_overrides = {} # Processes manually started outside their schedule window
+        self._skip_launch_delay = set()  # Process IDs that should skip time_delay on next launch
+        self._cached_site_timezone = None  # Cached from firebase_client
+        self._last_scheduled_reboot_time = None  # Tracks when we last triggered a scheduled reboot
+        self._reboot_schedule_counter = 0  # Check reboot schedule every ~60s (6 iterations)
+        self._live_view_active = False
+        self._live_view_stop_time = 0
 
         # Initialize Firebase client
         self.firebase_client = None
-        logging.info(f"Firebase check - Available: {FIREBASE_AVAILABLE}")
+        logging.debug(f"Firebase check - Available: {FIREBASE_AVAILABLE}")
 
         if not FIREBASE_AVAILABLE and FIREBASE_IMPORT_ERROR:
             logging.warning(f"Firebase client not available - Import error: {FIREBASE_IMPORT_ERROR}")
@@ -115,21 +170,22 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         if FIREBASE_AVAILABLE:
             firebase_enabled = shared_utils.read_config(['firebase', 'enabled'])
-            logging.info(f"Firebase config - enabled: {firebase_enabled}")
+            logging.debug(f"Firebase config - enabled: {firebase_enabled}")
 
             if firebase_enabled:
                 try:
                     # Get configuration
                     site_id = shared_utils.read_config(['firebase', 'site_id'])
                     project_id = shared_utils.read_config(['firebase', 'project_id']) or "owlette-dev-3838a"
-                    api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
+                    api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
                     cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
 
-                    logging.info(f"Firebase config - site: {site_id}, project: {project_id}")
+                    logging.debug(f"Firebase config - site: {site_id}, project: {project_id}")
 
                     # Initialize OAuth authentication manager
                     from auth_manager import AuthManager
                     auth_manager = AuthManager(api_base=api_base)
+                    self._auth_manager = auth_manager  # Store for health alerting
 
                     # Check if authenticated
                     if not auth_manager.is_authenticated():
@@ -177,7 +233,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 return False
 
             project_id = shared_utils.read_config(['firebase', 'project_id']) or "owlette-dev-3838a"
-            api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
+            api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
             cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
 
             logging.info(f"Initializing Firebase client - site: {site_id}, project: {project_id}")
@@ -194,10 +250,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             # Stop existing Firebase client if running
             if self.firebase_client:
-                logging.info("Stopping existing Firebase client before reinitialization...")
+                logging.debug("Stopping existing Firebase client before reinitialization...")
                 try:
                     self.firebase_client.stop()
-                    logging.info("Existing Firebase client stopped")
+                    logging.debug("Existing Firebase client stopped")
                 except Exception as e:
                     logging.warning(f"Error stopping existing Firebase client: {e}")
 
@@ -213,27 +269,33 @@ class OwletteService(win32serviceutil.ServiceFramework):
             self.firebase_client.register_command_callback(self.handle_firebase_command)
             self.firebase_client.register_config_update_callback(self.handle_config_update)
 
-            # Upload local config before starting listeners
-            local_config = shared_utils.read_config()
-            if local_config:
-                config_for_firestore = {k: v for k, v in local_config.items() if k != 'firebase'}
+            # Sync config: pull from Firestore (source of truth), or seed if new machine
+            sync_result = self.firebase_client.sync_config_on_startup()
+            logging.info(f"Config sync on reinit: {sync_result}")
 
-                # Pre-set hash to prevent listener loop
-                import hashlib
-                import json
-                config_hash = hashlib.md5(json.dumps(config_for_firestore, sort_keys=True).encode()).hexdigest()
-                self.firebase_client._last_uploaded_config_hash = config_hash
-                logging.info(f"Pre-set config hash: {config_hash[:8]}...")
+            # Wire state listener BEFORE start() so the CONNECTED event
+            # writes the status file immediately (tray polls every 1s)
+            def _on_connection_change(event):
+                try:
+                    self._write_service_status()
+                except Exception:
+                    pass
+            self.firebase_client.connection_manager.add_state_listener(_on_connection_change)
 
-                self.firebase_client.upload_config(config_for_firestore)
-                logging.info("Local config uploaded to Firebase")
+            # Wire health callback so connection failures update health state + alert
+            self.firebase_client.connection_manager.set_health_callback(
+                lambda code, msg: self._update_health_state('connection_failure', code, msg)
+            )
 
             # Start Firebase client background threads
             self.firebase_client.start()
             logging.info(f"[OK] Firebase client initialized and started for site: {site_id}")
 
-            # Write status file for tray icon
-            self._write_service_status()
+            # Cache site timezone for schedule evaluation
+            self._cached_site_timezone = self.firebase_client.site_timezone
+
+            # Clear any stale health errors (e.g. config_error from startup before site was joined)
+            self._update_health_state('ok', 'ok', 'Firebase connected successfully')
 
             return True
 
@@ -242,6 +304,48 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.exception("Firebase initialization error details:")
             self.firebase_client = None
             return False
+
+    def _health_section(self) -> dict:
+        """Build the health section for service_status.json from current _health_state."""
+        h = getattr(self, '_health_state', None)
+        if h is None:
+            return {'status': 'unknown', 'checked_at': 0, 'error_code': None, 'error_message': None, 'probe_results': {}}
+        return h.to_dict()
+
+    def _write_service_status_early(self, running=True):
+        """
+        Write service + health sections to service_status.json immediately after
+        the startup health probe, before Firebase is initialized.
+        This lets the tray icon show health alerts right away.
+        """
+        try:
+            status_path = shared_utils.get_data_path('tmp/service_status.json')
+            os.makedirs(os.path.dirname(status_path), exist_ok=True)
+
+            status = {
+                'service': {
+                    'running': running,
+                    'last_update': int(time.time()),
+                    'version': shared_utils.APP_VERSION
+                },
+                'firebase': {
+                    'enabled': False,
+                    'connected': False,
+                    'site_id': '',
+                    'last_heartbeat': 0
+                },
+                'health': self._health_section()
+            }
+
+            temp_path = status_path + '.tmp'
+            with open(temp_path, 'w') as f:
+                json.dump(status, f, indent=2)
+            if os.path.exists(status_path):
+                os.remove(status_path)
+            os.rename(temp_path, status_path)
+
+        except Exception as e:
+            logging.debug(f"Failed to write early service status: {e}")
 
     def _write_service_status(self, running=True):
         """
@@ -253,6 +357,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         - Site ID
         - Last heartbeat timestamp
         - Service version
+        - Health probe results
 
         This provides real-time IPC from service → tray icon without log parsing.
 
@@ -292,21 +397,83 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'connected': firebase_connected,
                     'site_id': site_id,
                     'last_heartbeat': last_heartbeat
-                }
+                },
+                'health': self._health_section()
             }
 
-            # Write atomically (write to temp file, then rename)
+            # Write atomically (write to temp file, then replace)
             temp_path = status_path + '.tmp'
             with open(temp_path, 'w') as f:
                 json.dump(status, f, indent=2)
 
-            # Atomic rename on Windows
-            if os.path.exists(status_path):
-                os.remove(status_path)
-            os.rename(temp_path, status_path)
+            # os.replace() is atomic on Windows (no gap where file is missing)
+            os.replace(temp_path, status_path)
 
         except Exception as e:
             logging.debug(f"Failed to write service status: {e}")
+
+    def _update_health_state(self, status: str, error_code: str, message: str):
+        """
+        Update health state and propagate to IPC file, Firestore (if connected),
+        and web API alert endpoint (if auth available and connection failed).
+
+        Called by the ConnectionManager health callback and internal error handlers.
+        Never raises — failures are logged at DEBUG level.
+        """
+        try:
+            from health_probe import HealthState
+            import time as _time
+            if self._health_state is None:
+                self._health_state = HealthState(
+                    status=status,
+                    error_code=error_code,
+                    error_message=message,
+                    checked_at=int(_time.time())
+                )
+            else:
+                self._health_state.status = status
+                self._health_state.error_code = error_code
+                self._health_state.error_message = message
+
+            self._write_service_status()
+            logging.warning(f"[HEALTH] Status updated: {status} — {error_code}: {message}")
+
+        except Exception as e:
+            logging.debug(f"_update_health_state write failed: {e}")
+
+        # Write health fields to Firestore if connected
+        try:
+            if self.firebase_client and self.firebase_client.is_connected():
+                self.firebase_client.write_health_to_firestore(status, error_code, message)
+        except Exception as e:
+            logging.debug(f"_update_health_state Firestore write failed: {e}")
+
+        # Send alert to web API in a daemon thread when connection fails but auth is OK
+        if status == 'connection_failure' and self._auth_manager:
+            def _send_alert():
+                try:
+                    token = self._auth_manager.get_valid_token()
+                    site_id = self._auth_manager.get_site_id() or ''
+                    machine_id = socket.gethostname()
+                    api_base = self._api_base or shared_utils.get_api_base_url()
+                    requests.post(
+                        f"{api_base}/agent/alert",
+                        json={
+                            'siteId': site_id,
+                            'machineId': machine_id,
+                            'errorCode': error_code,
+                            'errorMessage': message,
+                            'agentVersion': shared_utils.APP_VERSION,
+                        },
+                        headers={'Authorization': f'Bearer {token}'},
+                        timeout=10
+                    )
+                    logging.info(f"[HEALTH] Alert sent to web API: {error_code}")
+                except Exception as e:
+                    logging.debug(f"[HEALTH] Web API alert failed (non-critical): {e}")
+
+            t = threading.Thread(target=_send_alert, daemon=True)
+            t.start()
 
     # On service stop
     def SvcStop(self):
@@ -355,6 +522,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.close_owlette_windows()
 
         self.terminate_tray_icon()
+        self.terminate_cortex()
 
         # Write final status (service stopped) for tray icon
         self._write_service_status(running=False)
@@ -405,7 +573,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.info("No previous app states found (file empty or doesn't exist)")
                 return
 
-            logging.info(f"Found {len(app_states)} PID(s) in app_states.json")
+            logging.debug(f"Found {len(app_states)} PID(s) in app_states.json")
 
             # Clean up dead PIDs immediately to prevent unbounded growth
             cleaned_states = {}
@@ -418,69 +586,75 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 return
 
             processes = config.get('processes', [])
-            logging.info(f"Checking {len(processes)} configured process(es) for recovery")
+            logging.debug(f"Checking {len(processes)} configured process(es) for recovery")
 
             # Check each PID in the state file
             recovered_count = 0
             for pid_str, state_info in app_states.items():
                 try:
+                    # Skip invalid PID entries (e.g. "None" from failed launches)
+                    if pid_str in ('None', 'null', ''):
+                        dead_pid_count += 1
+                        logging.debug(f"Removing invalid PID entry: '{pid_str}'")
+                        continue
                     pid = int(pid_str)
                     process_id = state_info.get('id')
 
                     logging.debug(f"Checking PID {pid} (process ID: {process_id})")
 
-                    # Check if this PID is still running
-                    if Util.is_pid_running(pid):
-                        logging.info(f"PID {pid} is still running")
+                    # Validate PID atomically — get process info in one shot to avoid TOCTOU race
+                    # (PID could be reused between an is_running check and exe() call)
+                    if process_id:
+                        process = next((p for p in processes if p.get('id') == process_id), None)
 
-                        # Validate that this PID is actually the expected process (prevent PID reuse/hijacking)
-                        if process_id:
-                            process = next((p for p in processes if p.get('id') == process_id), None)
+                        if process:
+                            try:
+                                actual_process = psutil.Process(pid)
+                                actual_exe = actual_process.exe().lower()
+                                expected_exe = process.get('exe_path', '').replace('/', '\\').lower()
+                                logging.debug(f"PID {pid} is still running")
 
-                            if process:
-                                # Validate executable path matches
-                                try:
-                                    import psutil
-                                    actual_process = psutil.Process(pid)
-                                    actual_exe = actual_process.exe().lower()
-                                    expected_exe = process.get('exe_path', '').replace('/', '\\').lower()
-
-                                    # Check if the executable matches
-                                    if expected_exe and expected_exe in actual_exe:
-                                        # Valid process - keep in cleaned state
-                                        cleaned_states[pid_str] = state_info
-
-                                        # Only recover if autolaunch is enabled
-                                        if process.get('autolaunch', False):
-                                            # Adopt this process
-                                            self.last_started[process_id] = {
-                                                'time': datetime.datetime.now(),
-                                                'pid': pid
-                                            }
-                                            recovered_count += 1
-                                            logging.info(f"[OK] Recovered process '{process.get('name')}' with PID {pid}")
-                                        else:
-                                            logging.info(f"Skipping recovery of '{process.get('name')}' (PID {pid}) - autolaunch is disabled")
-                                    else:
-                                        # PID reused for different process - don't recover
-                                        dead_pid_count += 1
-                                        logging.warning(f"PID {pid} is running but executable mismatch (expected: {expected_exe}, actual: {actual_exe}) - likely PID reuse, not recovering")
-                                except psutil.NoSuchProcess:
-                                    # Process died between is_running check and exe() call
-                                    dead_pid_count += 1
-                                    logging.debug(f"PID {pid} died during validation")
-                                except Exception as e:
-                                    # On validation error, keep the PID to be safe
+                                # Check if the executable matches
+                                # Match by exe filename (basename) to handle version/path differences
+                                # e.g. file association may launch a different version than configured
+                                expected_basename = os.path.basename(expected_exe)
+                                actual_basename = os.path.basename(actual_exe)
+                                if expected_exe and (expected_exe in actual_exe or expected_basename == actual_basename):
+                                    # Valid process - keep in cleaned state
                                     cleaned_states[pid_str] = state_info
-                                    logging.warning(f"Could not validate PID {pid}: {e} - keeping in state")
-                            else:
-                                # Process ID not found in config - keep in state but don't recover
+
+                                    # Only recover if launch_mode is active
+                                    mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+                                    if mode == 'always' or (mode == 'scheduled' and shared_utils.is_within_schedule(process.get('schedules'), self._cached_site_timezone)):
+                                        # Adopt this process
+                                        self.last_started[process_id] = {
+                                            'time': datetime.datetime.now(),
+                                            'pid': pid
+                                        }
+                                        recovered_count += 1
+                                        logging.info(f"[OK] Recovered process '{process.get('name')}' with PID {pid}")
+                                    else:
+                                        logging.info(f"Skipping recovery of '{process.get('name')}' (PID {pid}) - launch_mode is '{mode}'")
+                                else:
+                                    # PID reused for different process - don't recover
+                                    dead_pid_count += 1
+                                    logging.warning(f"PID {pid} is running but executable mismatch (expected: {expected_exe}, actual: {actual_exe}) - likely PID reuse, not recovering")
+                            except psutil.NoSuchProcess:
+                                # Process no longer running
+                                dead_pid_count += 1
+                                logging.debug(f"PID {pid} is no longer running")
+                            except Exception as e:
+                                # On validation error, keep the PID to be safe
                                 cleaned_states[pid_str] = state_info
-                                logging.warning(f"PID {pid} is running but process ID {process_id} not found in config")
+                                logging.warning(f"Could not validate PID {pid}: {e} - keeping in state")
                         else:
-                            # No process ID in state - keep but warn
+                            # Process ID not found in config - keep in state but don't recover
                             cleaned_states[pid_str] = state_info
-                            logging.warning(f"PID {pid} has no process ID in state file")
+                            logging.warning(f"PID {pid} is running but process ID {process_id} not found in config")
+                    elif Util.is_pid_running(pid):
+                        # No process ID in state - keep but warn
+                        cleaned_states[pid_str] = state_info
+                        logging.warning(f"PID {pid} has no process ID in state file")
                     else:
                         # PID is no longer running - don't add to cleaned_states
                         dead_pid_count += 1
@@ -498,7 +672,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if recovered_count > 0:
                 logging.info(f"[OK] Successfully recovered {recovered_count} running process(es) from previous session")
             else:
-                logging.info("No running processes to recover from previous session")
+                logging.debug("No running processes to recover from previous session")
 
         except Exception as e:
             logging.error(f"Error recovering processes from previous session: {e}")
@@ -525,6 +699,573 @@ class OwletteService(win32serviceutil.ServiceFramework):
             except Exception as e:
                 logging.error(f"An unexpected error occurred while terminating the process: {e}")
 
+    def _is_tray_alive(self):
+        """Check if the tray icon process is still running using tracked PID.
+        Falls back to a process scan only if we don't have a PID."""
+        # Fast path: check tracked PID
+        if self.tray_icon_pid:
+            try:
+                proc = psutil.Process(self.tray_icon_pid)
+                if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+            # PID is stale — clear it
+            self.tray_icon_pid = None
+
+        # Slow path: the tray may have been launched by the Startup shortcut (not by us),
+        # so we don't have its PID.  Do a process scan, but this is rare.
+        if shared_utils.is_script_running('owlette_tray.py'):
+            return True
+
+        return False
+
+    def _try_launch_tray(self):
+        """Launch the tray icon with cooldown to avoid thrashing.
+        Returns True if launched (or already running), False if skipped/failed."""
+        tray_script = 'owlette_tray.py'
+
+        # Already running?
+        if self._is_tray_alive():
+            return True
+
+        # Cooldown — don't spam launches if the tray keeps crashing
+        now = time.time()
+        elapsed = now - self._tray_last_launch_time
+        if elapsed < self._tray_launch_cooldown:
+            return False
+
+        # Try to launch
+        if self.launch_python_script_as_user(tray_script):
+            self._tray_last_launch_time = now
+            logging.info("Tray icon launched")
+            return True
+        else:
+            logging.debug("Could not launch tray icon (no user session?)")
+            return False
+
+    # ─── Cortex Process Management ──────────────────────────────────────
+
+    def _is_cortex_alive(self):
+        """Check if the Cortex process is still running using tracked PID."""
+        if self.cortex_pid:
+            try:
+                proc = psutil.Process(self.cortex_pid)
+                if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+            self.cortex_pid = None
+
+        # Fallback: check PID file written by Cortex itself
+        pid_path = shared_utils.CORTEX_PID_PATH
+        if os.path.exists(pid_path):
+            try:
+                with open(pid_path, 'r') as f:
+                    pid = int(f.read().strip())
+                proc = psutil.Process(pid)
+                if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+                    self.cortex_pid = pid
+                    return True
+            except (ValueError, psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                pass
+
+        return False
+
+    def _try_launch_cortex(self):
+        """Launch the Cortex process with cooldown. Mirrors _try_launch_tray() pattern.
+        Returns True if launched (or already running), False if skipped/failed."""
+        # Check if enabled in config
+        if not shared_utils.is_cortex_enabled():
+            return False
+
+        # Already running?
+        if self._is_cortex_alive():
+            return True
+
+        # Cooldown
+        now = time.time()
+        elapsed = now - self._cortex_last_launch_time
+        if elapsed < self._cortex_launch_cooldown:
+            return False
+
+        # Try to launch
+        if self.launch_python_script_as_user('owlette_cortex.py'):
+            self._cortex_last_launch_time = now
+            logging.info("Cortex process launched")
+            return True
+        else:
+            logging.debug("Could not launch Cortex (no user session?)")
+            return False
+
+    def terminate_cortex(self):
+        """Terminate the Cortex process if running."""
+        if self.cortex_pid:
+            try:
+                psutil.Process(self.cortex_pid).terminate()
+                logging.info(f"Cortex process terminated (PID {self.cortex_pid})")
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+            except Exception as e:
+                logging.error(f"Error terminating Cortex: {e}")
+            self.cortex_pid = None
+
+    def _process_cortex_ipc_commands(self):
+        """Process IPC command files from Cortex (Tier 2 tools).
+
+        Scans ipc/cortex_commands/ for JSON files, executes the tool,
+        writes result to ipc/cortex_results/.
+        """
+        cmd_dir = shared_utils.CORTEX_IPC_CMD_DIR
+        result_dir = shared_utils.CORTEX_IPC_RESULT_DIR
+
+        if not os.path.isdir(cmd_dir):
+            return
+
+        try:
+            files = [f for f in os.listdir(cmd_dir) if f.endswith('.json')]
+        except OSError:
+            return
+
+        for filename in files:
+            cmd_path = os.path.join(cmd_dir, filename)
+            try:
+                with open(cmd_path, 'r', encoding='utf-8') as f:
+                    cmd = json.load(f)
+
+                cmd_id = cmd.get('id', filename.replace('.json', ''))
+                tool_name = cmd.get('tool_name', '')
+                tool_params = cmd.get('tool_params', {})
+
+                logging.debug(f"Processing Cortex IPC command: {cmd_id} ({tool_name})")
+
+                # Execute the tool via the existing command system
+                result = self._execute_cortex_command(tool_name, tool_params)
+
+                # Write result
+                os.makedirs(result_dir, exist_ok=True)
+                result_path = os.path.join(result_dir, f"{cmd_id}.json")
+                tmp_path = result_path + '.tmp'
+                with open(tmp_path, 'w', encoding='utf-8') as f:
+                    json.dump({'id': cmd_id, 'result': result}, f)
+                os.replace(tmp_path, result_path)
+
+                # Remove processed command
+                os.remove(cmd_path)
+                logging.debug(f"Cortex IPC command completed: {cmd_id}")
+
+            except Exception as e:
+                logging.error(f"Error processing Cortex IPC command {filename}: {e}")
+                # Remove corrupt command to prevent infinite retry
+                try:
+                    os.remove(cmd_path)
+                except OSError:
+                    pass
+
+    def _execute_cortex_command(self, tool_name, tool_params):
+        """Execute a Cortex IPC tool command using existing service logic.
+
+        Maps Tier 2 tool names to the service's existing command handlers.
+        """
+        process_name = tool_params.get('process_name', '')
+
+        if tool_name == 'restart_process':
+            return self._handle_cortex_process_command('restart_process', process_name)
+        elif tool_name == 'kill_process':
+            return self._handle_cortex_process_command('kill_process', process_name)
+        elif tool_name == 'start_process':
+            return self._handle_cortex_process_command('restart_process', process_name)
+        elif tool_name == 'set_launch_mode':
+            mode = tool_params.get('mode', 'off')
+            schedules = tool_params.get('schedules')
+            return self._handle_cortex_set_launch_mode(process_name, mode, schedules)
+        elif tool_name == 'capture_screenshot':
+            return self._handle_capture_screenshot({
+                'monitor': tool_params.get('monitor', 0),
+            })
+        else:
+            return {'error': f'Unknown Cortex IPC tool: {tool_name}'}
+
+    def _handle_cortex_process_command(self, command_type, process_name):
+        """Handle a process restart/kill/start command from Cortex IPC."""
+        config = shared_utils.read_config()
+        processes = config.get('processes', [])
+
+        # Find the process
+        target = None
+        for proc in processes:
+            if proc.get('name', '').lower() == process_name.lower():
+                target = proc
+                break
+
+        if not target:
+            return {'error': f'Process not found: {process_name}'}
+
+        try:
+            if command_type == 'kill_process':
+                shared_utils.graceful_terminate(target)
+                return {'status': 'completed', 'result': f'Process {process_name} terminated'}
+            else:
+                # restart_process (also used for start)
+                shared_utils.graceful_terminate(target)
+                time.sleep(1)
+                # The main loop will re-launch the process if autolaunch/launch_mode is set
+                return {'status': 'completed', 'result': f'Process {process_name} restarted'}
+        except Exception as e:
+            return {'status': 'failed', 'error': str(e)}
+
+    def _handle_cortex_set_launch_mode(self, process_name, mode, schedules=None):
+        """Handle a set_launch_mode command from Cortex IPC."""
+        config = shared_utils.read_config()
+        processes = config.get('processes', [])
+
+        for proc in processes:
+            if proc.get('name', '').lower() == process_name.lower():
+                proc['launch_mode'] = mode
+                if mode == 'scheduled' and schedules:
+                    proc['schedules'] = schedules
+                shared_utils.write_config(config)
+                return {'status': 'completed', 'result': f'Launch mode set to {mode} for {process_name}'}
+
+        return {'error': f'Process not found: {process_name}'}
+
+    def _write_cortex_event(self, process_name, error_message, event_type):
+        """Write an IPC event file for Cortex autonomous investigation.
+
+        Args:
+            process_name: Name of the affected process.
+            error_message: Description of what happened.
+            event_type: 'process_crash' or 'process_start_failed'.
+        """
+        if not shared_utils.is_cortex_enabled():
+            return
+
+        events_dir = shared_utils.CORTEX_IPC_EVENTS_DIR
+        os.makedirs(events_dir, exist_ok=True)
+
+        event_id = f"evt_{int(time.time()*1000)}_{process_name}"
+        event_path = os.path.join(events_dir, f"{event_id}.json")
+
+        event = {
+            'id': event_id,
+            'processName': process_name,
+            'errorMessage': error_message,
+            'eventType': event_type,
+            'machineId': socket.gethostname(),
+            'machineName': socket.gethostname(),
+            'timestamp': time.time(),
+        }
+
+        try:
+            tmp_path = event_path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(event, f)
+            os.replace(tmp_path, event_path)
+            logging.info(f"Cortex event written: {event_id} ({event_type}: {process_name})")
+        except Exception as e:
+            logging.error(f"Failed to write Cortex event: {e}")
+
+    # ─── End Cortex ───────────────────────────────────────────────────────
+
+    def _find_running_process_by_exe(self, exe_path, file_path=None):
+        """Find a running process by its executable path.
+
+        Used during startup to detect processes that survived a service restart
+        (thanks to AppKillProcessTree=0), so we adopt them instead of launching duplicates.
+        Matches by exe filename (basename) to handle version/path differences when
+        file association launches a different version than configured.
+
+        When file_path is provided, also checks the command line to distinguish
+        between multiple instances of the same exe (e.g. different .toe files).
+        """
+        try:
+            exe_lower = exe_path.replace('/', '\\').lower()
+            exe_basename = os.path.basename(exe_lower)
+            file_path_lower = file_path.replace('/', '\\').lower() if file_path else None
+            for proc in psutil.process_iter(['pid', 'exe']):
+                try:
+                    if proc.info['exe']:
+                        proc_exe = proc.info['exe'].lower()
+                        if proc_exe == exe_lower or os.path.basename(proc_exe) == exe_basename:
+                            # If file_path specified, check command line to distinguish instances
+                            if file_path_lower:
+                                try:
+                                    cmdline = ' '.join(proc.cmdline()).lower()
+                                    if file_path_lower not in cmdline:
+                                        continue  # Wrong instance, keep looking
+                                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                    continue  # Can't verify cmdline, skip to avoid false match
+                            return proc.info['pid']
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except Exception:
+            pass
+        return None
+
+    def _enable_privileges(self):
+        """Enable critical privileges in the service process token.
+
+        LocalSystem has SE_TCB_PRIVILEGE assigned but it may not be enabled
+        in the inherited token (e.g. when NSSM spawns the Python child process).
+        WTSQueryUserToken requires it to be enabled. We also enable
+        SeAssignPrimaryTokenPrivilege and SeIncreaseQuotaPrivilege which
+        CreateProcessAsUser needs.
+        """
+        privileges_to_enable = [
+            'SeTcbPrivilege',               # Required by WTSQueryUserToken
+            'SeAssignPrimaryTokenPrivilege', # Required by CreateProcessAsUser
+            'SeIncreaseQuotaPrivilege',      # Required by CreateProcessAsUser
+        ]
+
+        try:
+            import ctypes
+            process_token = win32security.OpenProcessToken(
+                win32process.GetCurrentProcess(),
+                win32security.TOKEN_ADJUST_PRIVILEGES | win32security.TOKEN_QUERY
+            )
+
+            enabled = []
+            failed = []
+            for priv_name in privileges_to_enable:
+                try:
+                    luid = win32security.LookupPrivilegeValue('', priv_name)
+                    win32security.AdjustTokenPrivileges(
+                        process_token, False,
+                        [(luid, win32security.SE_PRIVILEGE_ENABLED)]
+                    )
+                    # AdjustTokenPrivileges returns success even if privilege not held —
+                    # must check GetLastError for ERROR_NOT_ALL_ASSIGNED (1300)
+                    if ctypes.windll.kernel32.GetLastError() == 1300:
+                        failed.append(priv_name)
+                    else:
+                        enabled.append(priv_name)
+                except Exception as e:
+                    failed.append(f"{priv_name} ({e})")
+
+            process_token.Close()
+
+            if enabled:
+                logging.info(f"Privileges enabled: {', '.join(enabled)}")
+            if failed:
+                logging.warning(f"Privileges NOT available (will use fallback): {', '.join(failed)}")
+
+        except Exception as e:
+            logging.warning(f"Could not adjust process privileges: {e}")
+
+    def _get_token_from_user_process(self, session_id):
+        """Obtain a user token by duplicating from a process in the target session.
+
+        Fallback for when WTSQueryUserToken fails (error 1314). Opens an
+        existing user-session process (explorer.exe preferred), duplicates
+        its token as a primary token, and returns it with the environment block.
+
+        This does NOT require SE_TCB_PRIVILEGE — LocalSystem can open any
+        process token via PROCESS_QUERY_INFORMATION.
+
+        Returns:
+            (token, environment) on success, (None, None) on failure.
+        """
+        import ctypes
+
+        PROCESS_QUERY_INFORMATION = 0x0400
+
+        # Candidates in order of preference — explorer.exe has the richest
+        # desktop context; dwm.exe runs even on locked/minimal sessions.
+        candidates = ['explorer.exe', 'sihost.exe', 'taskhostw.exe', 'dwm.exe']
+
+        for candidate_name in candidates:
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    if not proc.info['name'] or proc.info['name'].lower() != candidate_name:
+                        continue
+
+                    pid = proc.info['pid']
+
+                    # Check if this process is in the target session
+                    proc_session_id = ctypes.c_ulong(0)
+                    if not ctypes.windll.kernel32.ProcessIdToSessionId(
+                        pid, ctypes.byref(proc_session_id)
+                    ):
+                        continue
+                    if proc_session_id.value != session_id:
+                        continue
+
+                    # Open the process
+                    proc_handle = ctypes.windll.kernel32.OpenProcess(
+                        PROCESS_QUERY_INFORMATION, False, pid
+                    )
+                    if not proc_handle:
+                        continue
+
+                    try:
+                        # Open the process token
+                        token = win32security.OpenProcessToken(
+                            proc_handle,
+                            win32security.TOKEN_DUPLICATE | win32security.TOKEN_QUERY
+                        )
+
+                        # Duplicate as primary token for CreateProcessAsUser
+                        dup_token = win32security.DuplicateTokenEx(
+                            token,
+                            win32security.TOKEN_ALL_ACCESS,
+                            None,  # SECURITY_ATTRIBUTES
+                            win32security.SecurityImpersonation,
+                            win32security.TokenPrimary
+                        )
+                        token.Close()
+
+                        # Create environment block from the duplicated token
+                        environment = win32profile.CreateEnvironmentBlock(dup_token, False)
+
+                        logging.info(
+                            f"Obtained user token from {candidate_name} "
+                            f"(PID {pid}, session {session_id})"
+                        )
+                        return dup_token, environment
+
+                    finally:
+                        ctypes.windll.kernel32.CloseHandle(proc_handle)
+
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                except Exception as e:
+                    logging.debug(
+                        f"Failed to get token from {candidate_name} "
+                        f"PID {proc.info.get('pid', '?')}: {e}"
+                    )
+                    continue
+
+        logging.warning(f"Could not obtain token from any user process in session {session_id}")
+        return None, None
+
+    def _refresh_user_token(self):
+        """Re-obtain the console user token, session ID, and environment block.
+
+        Uses a three-tier approach:
+        1. WTSQueryUserToken (standard API, requires SE_TCB_PRIVILEGE)
+        2. Token cloning from explorer.exe (fallback, no SE_TCB needed)
+        3. Cached token from previous successful call (last resort)
+        """
+        try:
+            session_id = win32ts.WTSGetActiveConsoleSessionId()
+            if session_id == 0xFFFFFFFF:
+                logging.warning("No active console session (headless/locked machine)")
+                self.console_session_id = None
+                self.console_user_token = None
+                self.environment = None
+                return False
+
+            # Tier 1: WTSQueryUserToken (standard path)
+            token = None
+            environment = None
+            try:
+                token = win32ts.WTSQueryUserToken(session_id)
+                environment = win32profile.CreateEnvironmentBlock(token, False)
+            except Exception as e:
+                error_code = getattr(e, 'winerror', 0)
+                if error_code == 1314:
+                    logging.debug("WTSQueryUserToken failed (error 1314) — trying token cloning")
+                else:
+                    logging.debug(f"WTSQueryUserToken failed: {e} — trying token cloning")
+                token = None
+                environment = None
+
+            # Tier 2: Clone token from explorer.exe (fallback)
+            if token is None:
+                token, environment = self._get_token_from_user_process(session_id)
+
+            # Tier 3: Use cached token (last resort)
+            if token is None:
+                if self.console_user_token:
+                    logging.debug("Falling back to cached user token")
+                    return True
+                self.console_session_id = None
+                self.console_user_token = None
+                self.environment = None
+                return False
+
+            # Success — update cached token
+            if self.console_user_token and self.console_user_token != token:
+                try:
+                    self.console_user_token.Close()
+                except Exception as e:
+                    logging.debug(f"Could not close old user token: {e}")
+
+            self.console_session_id = session_id
+            self.console_user_token = token
+            self.environment = environment
+
+            if session_id != getattr(self, '_last_logged_session_id', None):
+                logging.info(f"User token refreshed for console session {session_id}")
+                self._last_logged_session_id = session_id
+
+            return True
+
+        except Exception as e:
+            logging.warning(f"Could not obtain console user token: {e}")
+            if self.console_user_token:
+                logging.debug("Falling back to cached user token")
+                return True
+            self.console_session_id = None
+            self.console_user_token = None
+            self.environment = None
+            return False
+
+    def _get_elevated_install_token(self):
+        """Get an elevated token that runs on the user's desktop.
+
+        Duplicates the service's own SYSTEM token and sets its session ID
+        to the active console session.  This gives the installer full admin
+        privileges while running on the user's desktop (not Session 0),
+        so sub-installers that need a desktop won't hang.
+
+        Returns:
+            (token, environment) or (None, None) if no console session.
+        """
+        try:
+            import ctypes
+            import win32api
+
+            session_id = win32ts.WTSGetActiveConsoleSessionId()
+            if session_id == 0xFFFFFFFF:
+                logging.warning("No active console session for elevated install")
+                return None, None
+
+            # Get the service's own (SYSTEM) process token
+            proc_handle = win32api.GetCurrentProcess()
+            service_token = win32security.OpenProcessToken(
+                proc_handle,
+                win32security.TOKEN_DUPLICATE | win32security.TOKEN_QUERY
+            )
+
+            # Duplicate as primary token with full access
+            elevated_token = win32security.DuplicateTokenEx(
+                ExistingToken=service_token,
+                DesiredAccess=win32security.TOKEN_ALL_ACCESS,
+                ImpersonationLevel=win32security.SecurityImpersonation,
+                TokenType=win32security.TokenPrimary,
+                TokenAttributes=None,
+            )
+            service_token.Close()
+
+            # Set the session ID so the process runs on the user's desktop
+            ctypes.windll.advapi32.SetTokenInformation(
+                int(elevated_token),
+                12,  # TokenSessionId
+                ctypes.byref(ctypes.c_ulong(session_id)),
+                ctypes.sizeof(ctypes.c_ulong),
+            )
+
+            # Create environment block for the user session
+            environment = win32profile.CreateEnvironmentBlock(elevated_token, False)
+
+            logging.info(f"Created elevated install token for session {session_id}")
+            return elevated_token, environment
+
+        except Exception as e:
+            logging.error(f"Failed to create elevated install token: {e}")
+            return None, None
+
     # Start a python script as a user
     def launch_python_script_as_user(self, script_name, args=None):
         try:
@@ -535,9 +1276,21 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.error(f"Cannot launch script {script_name}: {e}")
                 return False
 
-            self.startup_info.wShowWindow = win32con.SW_HIDE
+            # Refresh token to handle session changes since service startup
+            self._refresh_user_token()
+            if not self.console_user_token:
+                logging.error(f"Cannot launch script {script_name}: no interactive user session")
+                return False
+
+            # Use a fresh STARTUPINFO with the interactive desktop so the tray icon
+            # (and any other UI script) can access the notification area / create windows.
+            # Without lpDesktop, the process inherits the service's hidden desktop.
+            si = win32process.STARTUPINFO()
+            si.dwFlags = win32process.STARTF_USESHOWWINDOW
+            si.wShowWindow = win32con.SW_HIDE
+            si.lpDesktop = "WinSta0\\Default"
+
             command_line = f'"{python_exe}" "{shared_utils.get_path(script_name)}" {args}' if args else f'"{python_exe}" "{shared_utils.get_path(script_name)}"'
-            #logging.info(command_line)
             _, _, pid, _ = win32process.CreateProcessAsUser(self.console_user_token,
                 None,  # Application Name
                 command_line,  # Command Line
@@ -545,15 +1298,112 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 None,
                 0,
                 win32con.NORMAL_PRIORITY_CLASS,
-                self.environment,  # To open in user's self.environment
+                self.environment,
                 None,
-                self.startup_info)
+                si)
             if 'owlette_tray.py' in script_name:
                 self.tray_icon_pid = pid
+            elif 'owlette_cortex.py' in script_name:
+                self.cortex_pid = pid
             return True
         except Exception as e:
             logging.error(f"Failed to start process: {e}")
             return False
+
+    def execute_in_user_session(self, job_type, code, timeout=30):
+        """Execute code in the interactive user's desktop session.
+
+        Launches session_exec.py via CreateProcessAsUser, which runs
+        Python/cmd/PowerShell in the user's session and writes the result
+        to an IPC file.
+
+        Args:
+            job_type: 'python', 'cmd', or 'powershell'
+            code: The code or command string to execute
+            timeout: Max execution time in seconds (default 30, max 120)
+
+        Returns:
+            dict with keys: stdout, stderr, exitCode, error, durationMs, files
+            On failure returns dict with 'error' key.
+        """
+        import uuid
+        import json as _json
+
+        request_id = str(uuid.uuid4())
+        ipc_dir = shared_utils.get_data_path('ipc')
+        output_dir = os.path.join(ipc_dir, 'results', request_id)
+        job_path = os.path.join(ipc_dir, 'jobs', f'{request_id}.json')
+        result_path = os.path.join(output_dir, 'result.json')
+
+        os.makedirs(os.path.join(ipc_dir, 'jobs'), exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Write job file
+        job = {
+            'type': job_type,
+            'code': code,
+            'timeout': min(timeout, 120),
+            'outputDir': output_dir,
+        }
+        with open(job_path, 'w') as f:
+            _json.dump(job, f)
+
+        try:
+            # Launch session_exec.py in the user's session
+            success = self.launch_python_script_as_user(
+                'session_exec.py', f'"{job_path}"'
+            )
+            if not success:
+                return {'error': 'Failed to launch in user session — no interactive session available'}
+
+            # Poll for result (timeout + 5s grace period for startup)
+            poll_timeout = timeout + 5
+            start = time.time()
+            while time.time() - start < poll_timeout:
+                if os.path.exists(result_path):
+                    # Wait briefly for file to be fully written
+                    time.sleep(0.2)
+                    try:
+                        with open(result_path, 'r') as f:
+                            result = _json.load(f)
+                        return result
+                    except (_json.JSONDecodeError, IOError):
+                        time.sleep(0.3)
+                        continue
+                time.sleep(0.5)
+
+            return {'error': f'Execution timed out after {timeout}s'}
+
+        finally:
+            # Cleanup job file (result dir cleaned up by caller if needed)
+            try:
+                os.remove(job_path)
+            except OSError:
+                pass
+
+    def get_session_output_path(self, request_id, filename):
+        """Get the path to an output file from a user session execution."""
+        return os.path.join(
+            shared_utils.get_data_path('ipc'), 'results', request_id, filename
+        )
+
+    @staticmethod
+    def _validate_path(path, label="Path"):
+        """Validate a file/directory path for security.
+        Rejects UNC paths (remote shares) and symbolic links to prevent
+        path-based attacks from Firestore-sourced configuration.
+        """
+        if not path:
+            return path
+        # Reject UNC paths (\\server\share) to prevent remote share attacks
+        if path.startswith('\\\\') or path.startswith('//'):
+            raise ValueError(f"{label} cannot be a UNC/network path: {path}")
+        # Normalize to absolute path to prevent traversal
+        resolved = os.path.abspath(path)
+        # Reject symbolic links
+        if os.path.islink(resolved):
+            raise ValueError(f"{label} cannot be a symbolic link: {path}")
+        return resolved
 
     # Start a Windows process as a user
     def launch_process_as_user(self, process):
@@ -568,9 +1418,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Convert forward slashes to backslashes for Windows
         exe_path = exe_path.replace('/', '\\')
         try:
+            exe_path = self._validate_path(exe_path, "Executable path")
             if not os.path.isfile(exe_path):
                 raise FileNotFoundError('Executable path not found!')
-        except Exception as e:
+        except (ValueError, FileNotFoundError) as e:
             logging.error(f'Error: {e}')
             return None
 
@@ -579,6 +1430,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
         if file_path:
             # Convert forward slashes to backslashes for Windows
             file_path = file_path.replace('/', '\\')
+            try:
+                file_path = self._validate_path(file_path, "File path")
+            except ValueError as e:
+                logging.error(f'Error: {e}')
+                return None
         # If file path exists, leave as-is (could be file or cmd args)
         file_path = f"{file_path}" if os.path.isfile(file_path) else file_path
         logging.info(f"Starting {exe_path}{' ' if file_path else ''}{file_path}...")
@@ -587,16 +1443,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
         cwd = process.get('cwd', None)
         if cwd == '':
             cwd = None
+        if cwd:
+            try:
+                cwd = self._validate_path(cwd, "Working directory")
+            except ValueError as e:
+                logging.error(f'Error: {e}')
+                return None
         if cwd and not os.path.isdir(cwd):
             logging.error(f"Working directory {cwd} does not exist.")
             return None
 
-        # Start the process via Windows Task Scheduler (schtasks)
-        # CRITICAL: This approach launches the process with svchost.exe (Task Scheduler) as parent,
-        # not the Owlette service. This completely bypasses NSSM's job object management and ensures
-        # the process survives service restarts.
-        #
-        # This is the same proven approach used in the self-update mechanism (lines 1123-1189)
+        # Launch the process as the logged-in user via CreateProcessAsUser.
+        # Token is refreshed before each launch to handle session changes.
 
         # Normalize visibility (backward compatible with Show/Hide)
         if visibility == 'Show':
@@ -604,222 +1462,120 @@ class OwletteService(win32serviceutil.ServiceFramework):
         elif visibility == 'Hide':
             visibility = 'Hidden'
 
-        # Track all VBS files created for cleanup
-        vbs_cleanup_paths = []
-
-        # For Hidden mode, use VBScript wrapper to launch without window
-        # This is the most reliable method for truly hidden launches (works for console apps)
-        if visibility == 'Hidden':
-            # Create VBScript that launches process with window style 0 (hidden)
-            # Use Chr(34) for quotes to avoid escaping issues
-            if file_path:
-                # Build command with proper quote escaping: "exe_path" "file_path"
-                vbs_content = f'''Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run Chr(34) & "{exe_path}" & Chr(34) & " " & Chr(34) & "{file_path}" & Chr(34), 0, False
-Set WshShell = Nothing'''
-            else:
-                vbs_content = f'''Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run Chr(34) & "{exe_path}" & Chr(34), 0, False
-Set WshShell = Nothing'''
-
-            # Write VBS to temp file
-            import tempfile
-            vbs_file = tempfile.NamedTemporaryFile(mode='w', suffix='.vbs', delete=False, dir=shared_utils.get_data_path('tmp'))
-            vbs_file.write(vbs_content)
-            vbs_path = vbs_file.name
-            vbs_file.close()
-            vbs_cleanup_paths.append(vbs_path)
-
-            command = f'cscript.exe //nologo "{vbs_path}"'
-            logging.info(f"Launching with Hidden visibility via VBScript wrapper")
-        else:
-            # Normal launch
-            if file_path:
-                command = f'"{exe_path}" "{file_path}"'
-            else:
-                command = f'"{exe_path}"'
-
-        # Wrap command with working directory if specified
         if cwd:
-            # Create a VBScript wrapper to launch with zero window visibility
-            # VBScript's Run method with windowStyle=0 (vbHide) completely suppresses windows
-            import tempfile
+            logging.info(f"Command will run in directory: {cwd}")
 
-            # Escape quotes in command for VBScript
-            vbs_command = command.replace('"', '""')
+        logging.info(f"Launching: {exe_path}{' ' + file_path if file_path else ''} "
+                     f"(visibility={visibility}, priority={priority})")
 
-            vbs_content = f'''Set WshShell = CreateObject("WScript.Shell")
-WshShell.CurrentDirectory = "{cwd}"
-WshShell.Run "{vbs_command}", 0, False
-'''
+        pid = None
 
-            # Create temp VBS file (in ProgramData, not install directory)
-            tmp_dir = shared_utils.get_data_path('tmp')
-            vbs_fd, vbs_path = tempfile.mkstemp(suffix='.vbs', dir=tmp_dir)
-            try:
-                with os.fdopen(vbs_fd, 'w') as f:
-                    f.write(vbs_content)
-                vbs_cleanup_paths.append(vbs_path)
-                # Update command to execute VBS with hidden window
-                command = f'wscript.exe //nologo "{vbs_path}"'
-                logging.info(f"Command will run in directory: {cwd}")
-            except Exception as e:
-                logging.error(f"Failed to create VBS wrapper: {e}")
-                if os.path.exists(vbs_path):
-                    os.unlink(vbs_path)
-                # Fall back to cmd approach
-                command = f'cmd /c start /b /d "{cwd}" "" {command}'
+        # Refresh user token to handle session changes (logout/login, RDP, user switch)
+        self._refresh_user_token()
 
-        logging.info(f"Launching: {command}")
-        if visibility not in ['Normal', 'Hidden']:
-            logging.warning(f"Visibility mode '{visibility}' is not yet supported - using Normal visibility")
-        if priority != 'Normal':
-            logging.warning(f"Priority '{priority}' is not yet supported - using Normal priority")
+        if not self.console_user_token:
+            logging.error("No interactive user session available - cannot launch process")
+            return None
 
-        # Generate unique task name
-        task_name = f"OwletteProcess_{process.get('id', 'unknown')}_{int(time.time())}"
+        # Launch via process_launcher.py helper in the user's session.
+        #
+        # The helper is launched via CreateProcessAsUser into the user's session,
+        # then uses ShellExecuteEx (ctypes) to launch the target with full
+        # desktop/GPU context. The PID is returned immediately from the process handle.
+        import json as json_module
 
-        # Get the logged-in user from console session
-        user_context = None
-        if self.console_session_id is not None:
-            try:
-                # Query the username from the active console session
-                username = win32ts.WTSQuerySessionInformation(
-                    win32ts.WTS_CURRENT_SERVER_HANDLE,
-                    self.console_session_id,
-                    win32ts.WTSUserName
-                )
-                domain = win32ts.WTSQuerySessionInformation(
-                    win32ts.WTS_CURRENT_SERVER_HANDLE,
-                    self.console_session_id,
-                    win32ts.WTSDomainName
-                )
-
-                if domain and username:
-                    user_context = f"{domain}\\{username}"
-                    logging.info(f"Task will run as: {user_context}")
-                else:
-                    user_context = None
-                    logging.warning("Could not determine user context - task will run as SYSTEM")
-            except Exception as e:
-                logging.error(f"Failed to query user session info: {e}")
-                user_context = None
-        else:
-            logging.debug("No console session available - task will run as SYSTEM")
+        tmp_dir = shared_utils.get_data_path('tmp')
+        pid_file = os.path.join(tmp_dir, f'pid_{int(time.time())}_{os.getpid()}.txt')
+        args_file = os.path.join(tmp_dir, f'launch_{int(time.time())}_{os.getpid()}.json')
 
         try:
-            # Step 1: Create scheduled task
-            from datetime import datetime
-            start_date = datetime.now().strftime('%m/%d/%Y')  # Format: mm/dd/yyyy (required by schtasks)
+            launch_args = {
+                'exe_path': exe_path,
+                'file_path': file_path,
+                'cwd': cwd,
+                'visibility': visibility,
+                'priority': priority,
+                'pid_file': pid_file
+            }
+            with open(args_file, 'w') as f:
+                json_module.dump(launch_args, f)
 
-            create_cmd = [
-                'schtasks', '/Create',
-                '/TN', task_name,
-                '/TR', command,
-                '/SC', 'ONCE',
-                '/SD', start_date,  # Start date in mm/dd/yyyy format
-                '/ST', '00:00',  # Required but overridden by /Run
-                '/F'  # Force create
-            ]
+            python_exe = shared_utils.get_python_exe_path()
+            launcher_script = shared_utils.get_path('process_launcher.py')
+            helper_cmd = f'"{python_exe}" "{launcher_script}" "{args_file}"'
 
-            # Only add /RU if we successfully got user context
-            if user_context:
-                create_cmd.extend(['/RU', user_context, '/RL', 'LIMITED'])
+            startup_info = win32process.STARTUPINFO()
+            startup_info.lpDesktop = "WinSta0\\Default"
 
-            logging.info(f"Creating scheduled task: {task_name}")
-            logging.info(f"Command: {command}")
-
-            result = subprocess.run(
-                create_cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
+            # DETACHED_PROCESS: no console for the helper. It only makes COM
+            # calls — it doesn't need GUI access. The target gets GUI context
+            # via Task Scheduler + cmd /c start.
+            DETACHED_PROCESS = 0x00000008
+            _, _, helper_pid, _ = win32process.CreateProcessAsUser(
+                self.console_user_token,
+                None,
+                helper_cmd,
+                None, None, 0,
+                win32con.NORMAL_PRIORITY_CLASS | DETACHED_PROCESS,
+                self.environment,
+                None,
+                startup_info
             )
+            logging.debug(f"Launcher helper started with PID {helper_pid}")
 
-            if result.returncode != 0:
-                logging.error(f"Failed to create task: {result.stderr}")
-                return None
+            # Wait for the helper to write the PID file.
+            # The helper uses ShellExecuteEx which returns the PID immediately,
+            # so the PID file should appear within 1-2 seconds. The 5s timeout
+            # is generous to account for file association launches that need
+            # a moment to resolve the real app PID.
+            for _ in range(50):  # 5 second timeout
+                if os.path.exists(pid_file):
+                    time.sleep(0.3)
+                    break
+                time.sleep(0.1)
 
-            logging.info(f"Task created successfully")
+            if os.path.exists(pid_file):
+                with open(pid_file, 'r') as f:
+                    pid_content = f.read().strip()
 
-            # Step 2: Run the task immediately
-            run_cmd = ['schtasks', '/Run', '/TN', task_name]
-            run_result = subprocess.run(
-                run_cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-
-            if run_result.returncode != 0:
-                logging.warning(f"Task run warning: {run_result.stderr}")
-            else:
-                logging.info(f"Task started successfully")
-
-            # Step 3: Wait for process to launch
-            time.sleep(2)
-
-            # Step 4: Find the launched process by matching executable
-            pid = None
-            exe_name = os.path.basename(exe_path)
-            newest_time = time.time() - 10  # Look for processes created in last 10 seconds
-
-            for proc in psutil.process_iter(['pid', 'name', 'exe', 'create_time']):
                 try:
-                    if proc.info['exe'] and proc.info['exe'].lower() == exe_path.lower():
-                        if proc.info['create_time'] > newest_time:
-                            pid = proc.info['pid']
-                            logging.info(f"Found launched process: PID {pid}")
-                            break
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
+                    result = json_module.loads(pid_content)
+                except (json_module.JSONDecodeError, ValueError):
+                    if pid_content.startswith('ERROR:'):
+                        logging.error(f"Launcher helper failed: {pid_content}")
+                        return None
+                    result = {'pid': int(pid_content)}
 
-            # Step 5: Clean up the scheduled task
-            delete_cmd = ['schtasks', '/Delete', '/TN', task_name, '/F']
-            subprocess.run(
-                delete_cmd,
-                capture_output=True,
-                timeout=10
-            )
-            logging.info(f"Cleaned up task: {task_name}")
+                if 'error' in result:
+                    logging.error(f"Launcher helper failed: {result['error']}")
+                    return None
 
-            # Clean up VBS wrappers after a delay (in background thread)
-            # This prevents race condition where wscript.exe hasn't finished reading the VBS file yet
-            if vbs_cleanup_paths:
-                import threading
-
-                def delayed_vbs_cleanup(paths, delay=10):
-                    """Clean up VBS files after a delay to ensure wscript.exe has finished"""
-                    time.sleep(delay)
-                    for path in paths:
-                        if os.path.exists(path):
-                            try:
-                                os.unlink(path)
-                                logging.debug(f"Cleaned up VBS wrapper: {path}")
-                            except Exception as e:
-                                logging.warning(f"Failed to clean up VBS wrapper {path}: {e}")
-
-                cleanup_thread = threading.Thread(
-                    target=delayed_vbs_cleanup,
-                    args=(vbs_cleanup_paths.copy(),),
-                    daemon=True
-                )
-                cleanup_thread.start()
-                logging.debug(f"Scheduled VBS cleanup for {len(vbs_cleanup_paths)} file(s)")
-
-            if not pid:
-                logging.error(f"Could not find PID for newly launched process")
+                pid = result['pid']
+                if result.get('adopted'):
+                    logging.info(f"Adopted existing process with PID {pid} (single-instance app)")
+                else:
+                    logging.info(f"Process launched with PID {pid}")
+            else:
+                logging.error("Launcher helper did not produce a PID file within timeout")
+                # Fallback: process may have launched but psutil couldn't see it in time.
+                # Scan by exe before giving up — prevents spurious failed=True and double-launches.
+                found_pid = self._find_running_process_by_exe(exe_path, file_path)
+                if found_pid:
+                    logging.info(f"Fallback scan found process (PID {found_pid}) after PID file timeout")
+                    return found_pid
                 return None
 
-            logging.info(f"Process launched with PID {pid} (via schtasks - survives service restarts)")
-
-        except subprocess.TimeoutExpired:
-            logging.error("schtasks operation timed out")
-            return None
         except Exception as e:
-            logging.error(f"Failed to launch via schtasks: {e}")
+            logging.error(f"Process launch failed: {e}")
             logging.exception("Full traceback:")
             return None
+        finally:
+            for f in [args_file, pid_file]:
+                try:
+                    if os.path.exists(f):
+                        os.unlink(f)
+                except Exception as e:
+                    logging.debug(f"Could not clean up temp file {f}: {e}")
 
         # Get the current Unix timestamp
         self.current_timestamp = int(time.time())
@@ -849,8 +1605,8 @@ WshShell.Run "{vbs_command}", 0, False
         # Write the updated results back to the output file
         try:
             shared_utils.write_json_to_file(self.results, shared_utils.RESULT_FILE_PATH)
-        except:
-            logging.error('JSON write error')
+        except Exception as e:
+            logging.error(f'JSON write error: {e}')
 
         # Process launched - status will sync via centralized metrics loop
         # (removed direct upload to eliminate duplicates and reduce Firebase writes)
@@ -879,7 +1635,15 @@ WshShell.Run "{vbs_command}", 0, False
                     )
                 # If this is more than the maximum number of attempts allowed
                 if attempts > relaunches_to_attempt and relaunches_to_attempt != 0:
-                    # If a restart prompt isn't already running, open one
+                    # Write reboot_pending to Firestore so dashboard can approve/dismiss remotely
+                    if self.firebase_client and self.firebase_client.is_connected():
+                        self.firebase_client.set_reboot_pending(
+                            process_name=process_name,
+                            reason=f'{process_name} crashed {relaunches_to_attempt} times',
+                            timestamp=time.time()
+                        )
+
+                    # If a restart prompt isn't already running, open one (local fallback)
                     started_restart_prompt = self.launch_python_script_as_user(
                         shared_utils.get_path('prompt_restart.py'),
                         None
@@ -909,8 +1673,8 @@ WshShell.Run "{vbs_command}", 0, False
         process_name = Util.get_process_name(process)
         if not self.reached_max_relaunch_attempts(process):
             try:
-                # Kill the process
-                psutil.Process(pid).terminate()
+                # Gracefully terminate (WM_CLOSE then hard kill)
+                shared_utils.graceful_terminate(pid)
 
                 # Log process kill event
                 if self.firebase_client and self.firebase_client.is_connected():
@@ -924,12 +1688,16 @@ WshShell.Run "{vbs_command}", 0, False
                 # Launch new process
                 new_pid = self.launch_process_as_user(process)
 
+                if new_pid is None:
+                    logging.error(f"Relaunch of {process_name} failed - no PID returned")
+                    return None
+
                 self.log_and_notify(
                     process,
                     f'Terminated PID {pid} and restarted with new PID {new_pid}'
                 )
                 # Status message - sync to Firebase immediately
-                shared_utils.update_process_status_in_json(new_pid, 'LAUNCHING', self.firebase_client)
+                shared_utils.update_process_status_in_json(new_pid, 'LAUNCHING', self.firebase_client, process_id=process.get('id'))
 
                 return new_pid
 
@@ -946,6 +1714,10 @@ WshShell.Run "{vbs_command}", 0, False
                         process_name=process_name,
                         details=f'Failed to kill and restart PID {pid}: {str(e)}'
                     )
+                    self.firebase_client.send_process_alert(
+                        process_name, f'Failed to kill and restart PID {pid}: {str(e)}', 'process_crash'
+                    )
+                self._write_cortex_event(process_name, f'Failed to kill and restart PID {pid}: {str(e)}', 'process_crash')
                 return None
 
     # Attempt to launch the process if not running
@@ -954,12 +1726,14 @@ WshShell.Run "{vbs_command}", 0, False
         exe_path = process.get('exe_path', '').strip()
         if not exe_path:
             process_name = Util.get_process_name(process)
-            logging.error(f"Cannot launch '{process_name}': Executable path is not set. Please configure a valid exe_path and disable/re-enable autolaunch.")
+            logging.error(f"Cannot launch '{process_name}': Executable path is not set. Please configure a valid exe_path and set launch mode to Always On or Scheduled.")
+            self.last_started[process.get('id', '')] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
             return None
 
         if not os.path.isfile(exe_path):
             process_name = Util.get_process_name(process)
             logging.error(f"Cannot launch '{process_name}': Executable path does not exist: {exe_path}")
+            self.last_started[process.get('id', '')] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
             return None
 
         # Ensure process has not exceeded maximum relaunch attempts
@@ -975,8 +1749,12 @@ WshShell.Run "{vbs_command}", 0, False
             last_time = last_info.get('time')
 
             if last_time is None or (last_time is not None and (self.current_time - last_time).total_seconds() >= (time_to_init or TIME_TO_INIT)):
-                # Delay starting of the app (if applicable)
-                time.sleep(delay)
+                # Skip delay on first launch (delay is for crash recovery spacing,
+                # not fresh starts) and on manual mode changes
+                if last_time is None or process_list_id in self._skip_launch_delay:
+                    self._skip_launch_delay.discard(process_list_id)
+                elif delay:
+                    time.sleep(delay)
 
                 # Attempt to start the process
                 try:
@@ -991,10 +1769,25 @@ WshShell.Run "{vbs_command}", 0, False
                             process_name=Util.get_process_name(process),
                             details=str(e)
                         )
+                        self.firebase_client.send_process_alert(
+                            Util.get_process_name(process), str(e), 'process_start_failed'
+                        )
+                    self._write_cortex_event(Util.get_process_name(process), str(e), 'process_start_failed')
                     return None
 
-                # Update the last started time and PID
-                self.last_started[process_list_id] = {'time': self.current_time, 'pid': pid}
+                # Only update tracking if we got a valid PID
+                if pid is None:
+                    logging.error(f"Launch returned no PID for {Util.get_process_name(process)} - will not track or retry this cycle")
+                    # Store a launch-failed marker with timestamp so we don't retry immediately.
+                    # The 'failed' flag tells handle_process to wait before retrying.
+                    # Use datetime.now() (not self.current_time) so the cooldown starts from
+                    # the actual failure time, not the start of the loop iteration — otherwise
+                    # blocking launches cause the cooldown to expire too early on the next cycle.
+                    self.last_started[process_list_id] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
+                    return None
+
+                # Update the last started time and PID (use real time, not loop-start time)
+                self.last_started[process_list_id] = {'time': datetime.datetime.now(), 'pid': pid}
                 logging.info(f"PID {pid} started")
 
                 # Log process start event
@@ -1043,7 +1836,7 @@ WshShell.Run "{vbs_command}", 0, False
             if hung_duration < 10:  # First detection (within first check cycle)
                 logging.warning(f"Process {process_name} (PID {pid}) appears to be not responding, monitoring...")
                 # Set status to STALLED but don't kill yet
-                shared_utils.update_process_status_in_json(pid, 'STALLED', self.firebase_client)
+                shared_utils.update_process_status_in_json(pid, 'STALLED', self.firebase_client, process_id=process.get('id'))
                 return None  # Don't kill yet, wait for confirmation
 
             # Only kill after confirmed hang (multiple checks)
@@ -1057,7 +1850,7 @@ WshShell.Run "{vbs_command}", 0, False
                 return new_pid
             else:
                 # Still waiting for confirmation
-                logging.info(f"Process {process_name} (PID {pid}) hung for {hung_duration}s, waiting for confirmation ({self.HANG_CONFIRM_SECONDS}s threshold)")
+                logging.debug(f"Process {process_name} (PID {pid}) hung for {hung_duration}s, waiting for confirmation ({self.HANG_CONFIRM_SECONDS}s threshold)")
                 return None
 
         return None
@@ -1065,34 +1858,93 @@ WshShell.Run "{vbs_command}", 0, False
     # Main process handler
     def handle_process(self, process):
         process_list_id = process['id']
+
+        # Skip processing entirely if this process is locked for an active deployment
+        if process_list_id in self.install_locks:
+            logging.debug(f"Skipping '{process.get('name')}' - install lock active (deployment: {self.install_locks[process_list_id]})")
+            return
+
         last_info = self.last_started.get(process_list_id, {})
+
+        # Process was manually killed via dashboard — don't relaunch.
+        # The killed flag is set by kill_process and cleared when mode
+        # switches back to always/scheduled (via set_launch_mode which
+        # pops last_started) or by a manual start_process command.
+        if last_info.get('killed'):
+            return
+
         last_pid = last_info.get('pid')
 
         # Launch process if this is the first startup
         if self.first_start:
             # Check if we've already recovered this process from a previous session
             if not last_pid:
-                # No recovered PID, launch normally
-                new_pid = self.handle_process_launch(process)
+                # Before launching, check if process is already running
+                # (e.g., survived a service restart due to AppKillProcessTree=0)
+                exe_path = process.get('exe_path', '')
+                file_path = process.get('file_path', '')
+                existing_pid = self._find_running_process_by_exe(exe_path, file_path) if exe_path else None
+                if existing_pid:
+                    self.last_started[process_list_id] = {
+                        'time': datetime.datetime.now(),
+                        'pid': existing_pid
+                    }
+                    shared_utils.update_process_status_in_json(existing_pid, 'RUNNING', self.firebase_client, process_id=process_list_id)
+                    logging.info(f"[OK] Adopted already-running '{process.get('name')}' (PID {existing_pid})")
+                    new_pid = None
+                else:
+                    new_pid = self.handle_process_launch(process)
             else:
                 # Process was recovered from previous session, just use it - sync to Firebase immediately
-                shared_utils.update_process_status_in_json(last_pid, 'RUNNING', self.firebase_client)
-                logging.info(f"Using recovered process '{process.get('name')}' with PID {last_pid}")
+                shared_utils.update_process_status_in_json(last_pid, 'RUNNING', self.firebase_client, process_id=process_list_id)
+                logging.debug(f"Using recovered process '{process.get('name')}' with PID {last_pid}")
                 new_pid = None  # Don't update last_started since it's already set
 
         else:
+            # If previous launch failed (PID detection failed), try to find the process
+            # by exe+cmdline scan before attempting another launch
+            if last_info.get('failed'):
+                exe_path = process.get('exe_path', '')
+                file_path = process.get('file_path', '')
+                found_pid = self._find_running_process_by_exe(exe_path, file_path) if exe_path else None
+                if found_pid:
+                    self.last_started[process_list_id] = {
+                        'time': datetime.datetime.now(),
+                        'pid': found_pid
+                    }
+                    shared_utils.update_process_status_in_json(found_pid, 'RUNNING', self.firebase_client, process_id=process_list_id)
+                    logging.info(f"[OK] Adopted '{Util.get_process_name(process)}' after failed PID detection (PID {found_pid})")
+                    return
+                # Cooldown: don't retry launch until max(time_to_init, 60s) has elapsed.
+                # The 60s minimum prevents double-launching slow apps (e.g. Sublime, TouchDesigner)
+                # that take a long time to appear in psutil after a Task Scheduler launch.
+                last_time = last_info.get('time')
+                if last_time:
+                    time_to_init = max(float(process.get('time_to_init', 0) or TIME_TO_INIT), 60.0)
+                    elapsed = (self.current_time - last_time).total_seconds()
+                    if elapsed < time_to_init:
+                        return  # Still cooling down, skip this cycle
+
             # Check if process is running
             if last_pid and Util.is_pid_running(last_pid):
-                # Launch scout to check if process is responsive
-                self.launch_python_script_as_user(
-                    shared_utils.get_path('owlette_scout.py'), 
-                    str(last_pid)
-                )
-                new_pid = self.handle_unresponsive_process(last_pid, process)
+                # Grace period: skip responsiveness check while process is still initializing
+                last_time = last_info.get('time')
+                time_to_init = float(process.get('time_to_init', 0) or TIME_TO_INIT)
+                if last_time and (self.current_time - last_time).total_seconds() < time_to_init:
+                    # Still within init grace period - mark as LAUNCHING, skip responsiveness check
+                    shared_utils.update_process_status_in_json(last_pid, 'LAUNCHING', self.firebase_client, process_id=process_list_id)
+                    new_pid = None
+                else:
+                    # Launch scout to check if process is responsive
+                    self.launch_python_script_as_user(
+                        shared_utils.get_path('owlette_scout.py'),
+                        str(last_pid)
+                    )
+                    new_pid = self.handle_unresponsive_process(last_pid, process)
 
                 #  Everything is fine, keep calm and carry on - sync to Firebase immediately
                 if not new_pid:
-                    shared_utils.update_process_status_in_json(last_pid, 'RUNNING', self.firebase_client)
+                    shared_utils.update_process_status_in_json(last_pid, 'RUNNING', self.firebase_client, process_id=process_list_id)
 
             else:
                 # Process crashed or was manually closed
@@ -1105,28 +1957,74 @@ WshShell.Run "{vbs_command}", 0, False
                             results = {}
                         process_status = results.get(str(last_pid), {}).get('status', '')
                         was_manually_killed = (process_status == 'KILLED')
-                    except:
+                    except Exception as e:
+                        logging.warning(f"Error checking manual kill status: {e}")
                         was_manually_killed = False
 
                     # Only log crash if it wasn't manually killed
                     if not was_manually_killed:
                         process_name = Util.get_process_name(process)
+
+                        # Best-effort screenshot capture before relaunch
+                        crash_screenshot_url = None
+                        try:
+                            crash_screenshot_url = self._capture_crash_screenshot()
+                        except Exception:
+                            pass
+
                         if self.firebase_client and self.firebase_client.is_connected():
                             self.firebase_client.log_event(
                                 action='process_crash',
                                 level='error',
                                 process_name=process_name,
-                                details=f'Process stopped unexpectedly (PID {last_pid} no longer running)'
+                                details=f'Process stopped unexpectedly (PID {last_pid} no longer running)',
+                                screenshot_url=crash_screenshot_url
                             )
+                            self.firebase_client.send_process_alert(
+                                process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash'
+                            )
+                        self._write_cortex_event(process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash')
                     else:
-                        logging.info(f"Process {last_pid} was manually killed - skipping crash log")
+                        logging.debug(f"Process {last_pid} was manually killed - skipping crash log")
 
-                # Launch the process again if it isn't running
-                new_pid = self.handle_process_launch(process)
+                # Re-read config to get the latest launch_mode state
+                # (config may have changed via GUI/Firestore since the main loop started)
+                fresh_config = shared_utils.read_config()
+                fresh_processes = fresh_config.get('processes', []) if fresh_config else []
+                fresh_process = next((p for p in fresh_processes if p.get('id') == process_list_id), None)
+                fresh_mode = fresh_process.get('launch_mode', 'always' if fresh_process.get('autolaunch', False) else 'off') if fresh_process else 'off'
+                if fresh_mode == 'off' or (fresh_mode == 'scheduled' and not shared_utils.is_within_schedule(fresh_process.get('schedules') if fresh_process else None, self._cached_site_timezone)):
+                    logging.debug(f"Skipping relaunch of '{Util.get_process_name(process)}' - launch_mode is '{fresh_mode}' (not active)")
+                    # Clear last_started so we don't keep detecting it as crashed
+                    if process_list_id in self.last_started:
+                        del self.last_started[process_list_id]
+                    new_pid = None
+                else:
+                    # Before launching, check if process is already running
+                    # (handles case where previous launch succeeded but PID detection failed)
+                    exe_path = process.get('exe_path', '')
+                    file_path = process.get('file_path', '')
+                    existing_pid = self._find_running_process_by_exe(exe_path, file_path) if exe_path else None
+                    if existing_pid:
+                        self.last_started[process_list_id] = {
+                            'time': datetime.datetime.now(),
+                            'pid': existing_pid
+                        }
+                        shared_utils.update_process_status_in_json(existing_pid, 'RUNNING', self.firebase_client, process_id=process_list_id)
+                        logging.info(f"[OK] Adopted already-running '{Util.get_process_name(process)}' (PID {existing_pid})")
+                        new_pid = None
+                    else:
+                        # Clear stale tracking so handle_process_launch sees
+                        # last_time=None and skips time_delay (delay is for
+                        # crash recovery spacing, handled by time_to_init)
+                        self.last_started.pop(process_list_id, None)
+                        # Launch the process again if it isn't running
+                        new_pid = self.handle_process_launch(process)
         
         # Update last started info (for handling process startup timing)
+        # Use real time so cooldowns measure from actual launch, not loop-start
         if new_pid:
-            self.last_started[process_list_id] = {'time': self.current_time, 'pid': new_pid}
+            self.last_started[process_list_id] = {'time': datetime.datetime.now(), 'pid': new_pid}
 
     # Clean up stale entries in tracking dictionaries
     def cleanup_stale_tracking_data(self):
@@ -1156,6 +2054,43 @@ WshShell.Run "{vbs_command}", 0, False
                 for name in stale_names:
                     del self.relaunch_attempts[name]
                 logging.info(f"[OK] Cleaned up {len(stale_names)} stale entries from relaunch_attempts tracking")
+
+            # Clean up install_locks for processes no longer in config
+            stale_locks = [pid for pid in self.install_locks.keys() if pid not in current_process_ids]
+            if stale_locks:
+                for pid in stale_locks:
+                    del self.install_locks[pid]
+                logging.info(f"[OK] Cleaned up {len(stale_locks)} stale entries from install_locks")
+
+            # Clean up active_installations for processes no longer in config
+            stale_installs = [pid for pid in self.active_installations.keys() if pid not in current_process_ids]
+            if stale_installs:
+                for pid in stale_installs:
+                    del self.active_installations[pid]
+                logging.info(f"[OK] Cleaned up {len(stale_installs)} stale entries from active_installations")
+
+            # Clean up manual_overrides for processes no longer in config
+            stale_overrides = [pid for pid in self.manual_overrides.keys() if pid not in current_process_ids]
+            if stale_overrides:
+                for pid in stale_overrides:
+                    del self.manual_overrides[pid]
+                logging.info(f"[OK] Cleaned up {len(stale_overrides)} stale entries from manual_overrides")
+
+            # Clean up _skip_launch_delay for processes no longer in config
+            stale_skips = self._skip_launch_delay - current_process_ids
+            if stale_skips:
+                self._skip_launch_delay -= stale_skips
+                logging.info(f"[OK] Cleaned up {len(stale_skips)} stale entries from _skip_launch_delay")
+
+            # Clean up app_states.json (results file) — remove PIDs that no longer exist
+            if self.results:
+                stale_pids = [pid_str for pid_str in self.results.keys()
+                              if not psutil.pid_exists(int(pid_str))]
+                if stale_pids:
+                    for pid_str in stale_pids:
+                        del self.results[pid_str]
+                    shared_utils.write_json_to_file(self.results, shared_utils.RESULT_FILE_PATH)
+                    logging.info(f"[OK] Cleaned up {len(stale_pids)} stale PID entries from app_states.json")
 
         except Exception as e:
             logging.error(f"Error cleaning up stale tracking data: {e}")
@@ -1190,10 +2125,38 @@ WshShell.Run "{vbs_command}", 0, False
                 else:
                     logging.warning("Old config exists but has no firebase section - proceeding with Firestore sync")
 
+            # Merge launch_mode/schedules: if Firestore processes don't have launch_mode,
+            # preserve the local values (GUI may have set them before Firestore caught up)
+            merged_launch_mode = False
+            if old_config:
+                old_processes = {p.get('id'): p for p in old_config.get('processes', []) if p.get('id')}
+                for process in new_config.get('processes', []):
+                    pid = process.get('id')
+                    if pid and pid in old_processes:
+                        old_proc = old_processes[pid]
+                        if 'launch_mode' not in process and 'launch_mode' in old_proc:
+                            process['launch_mode'] = old_proc['launch_mode']
+                            merged_launch_mode = True
+                        if 'schedules' not in process and 'schedules' in old_proc:
+                            process['schedules'] = old_proc['schedules']
+                    # Always derive autolaunch from launch_mode for consistency
+                    if 'launch_mode' in process:
+                        process['autolaunch'] = process['launch_mode'] != 'off'
+
             # Write the updated config to local config.json
             shared_utils.write_json_to_file(new_config, shared_utils.CONFIG_PATH)
 
             logging.info("Local config.json updated from Firestore")
+
+            # If we had to merge launch_mode from local, push back to Firestore
+            # so the Firestore config document gets launch_mode too (stops the sync cycle)
+            if merged_launch_mode and self.firebase_client and self.firebase_client.is_connected():
+                try:
+                    upload_config = {k: v for k, v in new_config.items() if k != 'firebase'}
+                    self.firebase_client.upload_config(upload_config)
+                    logging.info("Pushed launch_mode back to Firestore config (one-time sync)")
+                except Exception as e:
+                    logging.error(f"Failed to push launch_mode to Firestore: {e}")
 
             # Check for Firebase enable/disable changes (site rejoining detection)
             if old_config:
@@ -1207,10 +2170,10 @@ WshShell.Run "{vbs_command}", 0, False
 
                 # Detect if Firebase was disabled and is now re-enabled, or site_id changed
                 if not old_firebase_enabled and new_firebase_enabled:
-                    logging.info("=" * 60)
+                    logging.debug("=" * 60)
                     logging.info("Firebase has been RE-ENABLED - reinitializing Firebase client")
-                    logging.info(f"Site ID: {new_site_id}")
-                    logging.info("=" * 60)
+                    logging.debug(f"Site ID: {new_site_id}")
+                    logging.debug("=" * 60)
 
                     # Reinitialize Firebase client
                     success = self._initialize_or_restart_firebase_client()
@@ -1220,10 +2183,10 @@ WshShell.Run "{vbs_command}", 0, False
                         logging.error("[ERROR] Failed to restart Firebase client after being re-enabled")
 
                 elif old_firebase_enabled and new_firebase_enabled and old_site_id != new_site_id:
-                    logging.info("=" * 60)
+                    logging.debug("=" * 60)
                     logging.info(f"Site ID CHANGED: {old_site_id} -> {new_site_id}")
-                    logging.info("Reinitializing Firebase client for new site")
-                    logging.info("=" * 60)
+                    logging.debug("Reinitializing Firebase client for new site")
+                    logging.debug("=" * 60)
 
                     # Reinitialize Firebase client for new site
                     success = self._initialize_or_restart_firebase_client()
@@ -1256,9 +2219,9 @@ WshShell.Run "{vbs_command}", 0, False
 
                         if pid and Util.is_pid_running(pid):
                             try:
-                                psutil.Process(pid).terminate()
+                                shared_utils.graceful_terminate(pid)
                                 # Update status and sync to Firebase immediately
-                                shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client)
+                                shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client, process_id=removed_id)
                                 logging.info(f"[OK] Terminated removed process: {removed_proc.get('name')} (PID {pid})")
                             except Exception as e:
                                 logging.error(f"Failed to terminate removed process PID {pid}: {e}")
@@ -1266,31 +2229,34 @@ WshShell.Run "{vbs_command}", 0, False
                         # Clean up tracking
                         del self.last_started[removed_id]
 
-                # Check for autolaunch changes (disable -> terminate)
+                # Check for launch_mode changes
                 for process_id, new_proc in new_process_map.items():
                     if process_id in old_process_map:
                         old_proc = old_process_map[process_id]
-                        old_autolaunch = old_proc.get('autolaunch', False)
-                        new_autolaunch = new_proc.get('autolaunch', False)
+                        old_mode = old_proc.get('launch_mode', 'always' if old_proc.get('autolaunch', False) else 'off')
+                        new_mode = new_proc.get('launch_mode', 'always' if new_proc.get('autolaunch', False) else 'off')
 
-                        if old_autolaunch and not new_autolaunch:
-                            # Autolaunch disabled - terminate the process
-                            logging.info(f"Autolaunch disabled for {new_proc.get('name')} - terminating process")
+                        if old_mode != new_mode:
+                            logging.info(f"Launch mode changed for {new_proc.get('name')}: {old_mode} -> {new_mode}")
 
-                            if process_id in self.last_started:
-                                pid_info = self.last_started[process_id]
-                                pid = pid_info.get('pid')
-
-                                if pid and Util.is_pid_running(pid):
-                                    try:
-                                        psutil.Process(pid).terminate()
-                                        # Update status and sync to Firebase immediately
-                                        shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client)
-                                        logging.info(f"[OK] Terminated process with disabled autolaunch: {new_proc.get('name')} (PID {pid})")
-                                    except Exception as e:
-                                        logging.error(f"Failed to terminate PID {pid}: {e}")
-                        elif new_autolaunch and not old_autolaunch:
-                            logging.info(f"Autolaunch enabled for {new_proc.get('name')} - will start on next cycle")
+                        if new_mode == 'off' and old_mode != 'off':
+                            # Mode set to off - stop monitoring but keep process running
+                            logging.info(f"Launch mode set to off for {new_proc.get('name')} - stopping monitoring (process stays running)")
+                            self.manual_overrides.pop(process_id, None)
+                        elif new_mode in ('always', 'scheduled') and old_mode == 'off':
+                            # Mode enabled - clear any cooldown, launch immediately if appropriate
+                            should_launch = new_mode == 'always' or shared_utils.is_within_schedule(new_proc.get('schedules'), self._cached_site_timezone)
+                            if should_launch:
+                                logging.info(f"Launch mode set to {new_mode} for {new_proc.get('name')} - launching now")
+                                self._skip_launch_delay.add(new_proc.get('id'))
+                                self.last_started.pop(new_proc.get('id'), None)
+                                self.relaunch_attempts.pop(new_proc.get('name'), None)
+                                try:
+                                    self.handle_process(new_proc)
+                                except Exception as e:
+                                    logging.error(f"Failed to immediately launch {new_proc.get('name')}: {e}")
+                            else:
+                                logging.info(f"Launch mode set to {new_mode} for {new_proc.get('name')} - outside schedule, will launch when window opens")
 
                 # Log summary
                 logging.info(f"Config update complete - Processes: {len(old_processes)} -> {len(new_processes)}, Removed: {len(removed_process_ids)}")
@@ -1310,7 +2276,80 @@ WshShell.Run "{vbs_command}", 0, False
         except Exception as e:
             logging.error(f"Error handling config update: {e}")
 
+    def _terminate_processes_for_install(self, close_processes, suppress_projects, deployment_id, cmd_id):
+        """Gracefully terminate processes and set install locks before a deployment.
+
+        Args:
+            close_processes: List of exe names to kill (e.g., ["TouchDesigner.exe"])
+            suppress_projects: List of Owlette project config IDs to lock from relaunching
+            deployment_id: Deployment ID for logging and lock tracking
+            cmd_id: Command ID for progress reporting
+
+        Returns:
+            List of project config IDs that were locked (for cleanup in finally block)
+        """
+        locked_project_ids = []
+
+        # Report status so dashboard shows what's happening
+        if self.firebase_client:
+            self.firebase_client.update_command_progress(cmd_id, 'closing_processes', deployment_id)
+
+        # Lock managed projects and terminate their tracked processes
+        config = shared_utils.read_config()
+        config_processes = config.get('processes', []) if config else []
+
+        for project_id in suppress_projects:
+            self.install_locks[project_id] = deployment_id
+            locked_project_ids.append(project_id)
+            logging.info(f"Install lock set for project {project_id} (deployment: {deployment_id})")
+
+            # Find and terminate the managed process
+            last_info = self.last_started.get(project_id, {})
+            pid = last_info.get('pid')
+            if pid:
+                process_name = next((p.get('name', '?') for p in config_processes if p.get('id') == project_id), '?')
+                logging.info(f"Terminating managed process '{process_name}' (PID {pid}) for deployment")
+                try:
+                    shared_utils.graceful_terminate(pid)
+                    shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client, process_id=project_id)
+                except Exception as e:
+                    logging.warning(f"Failed to terminate managed process PID {pid}: {e}")
+                # Clear tracking so handle_process doesn't see a stale PID after lock release
+                if project_id in self.last_started:
+                    del self.last_started[project_id]
+
+        # Kill any additional processes by exe name (unmanaged or extra)
+        for exe_name in close_processes:
+            try:
+                for proc in psutil.process_iter(['name', 'pid']):
+                    try:
+                        if proc.info['name'] and proc.info['name'].lower() == exe_name.lower():
+                            logging.info(f"Terminating process '{exe_name}' (PID {proc.info['pid']}) for deployment")
+                            shared_utils.graceful_terminate(proc.info['pid'])
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+            except Exception as e:
+                logging.warning(f"Error scanning for process '{exe_name}': {e}")
+
+        # Wait for file handles to release after process termination
+        if close_processes or any(self.last_started.get(pid) for pid in suppress_projects):
+            time.sleep(2)
+
+        killed_summary = []
+        if suppress_projects:
+            killed_summary.append(f"{len(suppress_projects)} managed project(s) locked")
+        if close_processes:
+            killed_summary.append(f"scanned for {', '.join(close_processes)}")
+        logging.info(f"Pre-install process termination complete: {'; '.join(killed_summary)}")
+
+        return locked_project_ids
+
     # Handle commands from Firebase
+    # Command rate limiting: tracks last execution time per command type
+    _command_rate_limits = {}
+    # Minimum seconds between commands of the same type
+    COMMAND_RATE_LIMIT_SECONDS = 5
+
     def handle_firebase_command(self, cmd_id, cmd_data):
         """
         Handle commands received from Firebase web portal.
@@ -1326,6 +2365,14 @@ WshShell.Run "{vbs_command}", 0, False
             cmd_type = cmd_data.get('type')
             logging.info(f"Received Firebase command: {cmd_type} (ID: {cmd_id})")
 
+            # Rate limit: prevent rapid-fire commands of the same type
+            now = time.time()
+            last_time = self._command_rate_limits.get(cmd_type, 0)
+            if now - last_time < self.COMMAND_RATE_LIMIT_SECONDS:
+                logging.warning(f"Command rate-limited: {cmd_type} (last executed {now - last_time:.1f}s ago)")
+                return f"Rate limited: {cmd_type} executed too recently, try again in a few seconds"
+            self._command_rate_limits[cmd_type] = now
+
             if cmd_type == 'restart_process':
                 # Restart a specific process by name
                 process_name = cmd_data.get('process_name')
@@ -1333,6 +2380,11 @@ WshShell.Run "{vbs_command}", 0, False
                 for process in processes:
                     if process.get('name') == process_name:
                         process_list_id = process['id']
+                        # Track manual override for scheduled processes started outside window
+                        mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+                        if mode == 'scheduled' and not shared_utils.is_within_schedule(process.get('schedules'), self._cached_site_timezone):
+                            self.manual_overrides[process_list_id] = True
+                            logging.info(f"Manual override set for '{process_name}' (started outside schedule window)")
                         last_info = self.last_started.get(process_list_id, {})
                         last_pid = last_info.get('pid')
                         if last_pid and Util.is_pid_running(last_pid):
@@ -1369,9 +2421,14 @@ WshShell.Run "{vbs_command}", 0, False
                         last_info = self.last_started.get(process_list_id, {})
                         last_pid = last_info.get('pid')
                         if last_pid and Util.is_pid_running(last_pid):
-                            psutil.Process(last_pid).terminate()
+                            shared_utils.graceful_terminate(last_pid)
                             # Update status and sync to Firebase immediately
-                            shared_utils.update_process_status_in_json(last_pid, 'STOPPED', self.firebase_client)
+                            shared_utils.update_process_status_in_json(last_pid, 'KILLED', self.firebase_client, process_id=process_list_id)
+                            # Mark as killed (not deleted!) so handle_process() won't
+                            # treat an empty last_started as "untracked → needs launch".
+                            # This prevents the race where kill runs before the mode=off
+                            # config change has synced to local config.json.
+                            self.last_started[process_list_id] = {'killed': True, 'time': datetime.datetime.now()}
                             # Log process kill event (manual kill from dashboard)
                             if self.firebase_client and self.firebase_client.is_connected():
                                 self.firebase_client.log_event(
@@ -1385,18 +2442,43 @@ WshShell.Run "{vbs_command}", 0, False
                             return f"Process {process_name} is not running"
                 return f"Process {process_name} not found in configuration"
 
-            elif cmd_type == 'toggle_autolaunch':
-                # Toggle autolaunch for a specific process
+            elif cmd_type in ('toggle_autolaunch', 'set_launch_mode'):
+                # Set launch mode for a specific process (also handles legacy toggle_autolaunch)
                 process_name = cmd_data.get('process_name')
-                new_autolaunch_value = cmd_data.get('autolaunch', False)
                 config = shared_utils.read_config()
                 processes = config.get('processes', [])
                 for process in processes:
                     if process.get('name') == process_name:
-                        process['autolaunch'] = new_autolaunch_value
+                        if cmd_type == 'set_launch_mode':
+                            new_mode = cmd_data.get('mode', 'off')
+                            new_schedules = cmd_data.get('schedules', None)
+                            process['launch_mode'] = new_mode
+                            if new_schedules is not None:
+                                process['schedules'] = new_schedules
+                        else:
+                            # Legacy toggle_autolaunch support
+                            new_autolaunch_value = cmd_data.get('autolaunch', False)
+                            process['launch_mode'] = 'always' if new_autolaunch_value else 'off'
+                        # Always derive autolaunch for backward compat
+                        process['autolaunch'] = process.get('launch_mode', 'off') != 'off'
                         shared_utils.save_config(config)
-                        logging.info(f"Autolaunch for {process_name} set to {new_autolaunch_value}")
-                        return f"Autolaunch for {process_name} set to {new_autolaunch_value}"
+                        new_mode = process['launch_mode']
+                        logging.info(f"Launch mode for {process_name} set to {new_mode}")
+
+                        # Immediate launch when mode switches to always/scheduled
+                        if new_mode in ('always', 'scheduled'):
+                            process_id = process.get('id')
+                            should_launch = new_mode == 'always' or shared_utils.is_within_schedule(process.get('schedules'), self._cached_site_timezone)
+                            if should_launch and process_id:
+                                self._skip_launch_delay.add(process_id)
+                                self.last_started.pop(process_id, None)
+                                self.relaunch_attempts.pop(process_name, None)
+                                try:
+                                    self.handle_process(process)
+                                except Exception as e:
+                                    logging.error(f"Failed to immediately launch {process_name}: {e}")
+
+                        return f"Launch mode for {process_name} set to {new_mode}"
                 return f"Process {process_name} not found in configuration"
 
             elif cmd_type == 'update_config':
@@ -1421,26 +2503,44 @@ WshShell.Run "{vbs_command}", 0, False
                 installer_url = cmd_data.get('installer_url')
                 installer_name = cmd_data.get('installer_name', 'installer.exe')
                 silent_flags = cmd_data.get('silent_flags', '')
-                verify_path = cmd_data.get('verify_path')  # Optional verification path
+                verify_path = cmd_data.get('verify_path')  # Optional — auto-derived from /DIR if absent
                 timeout_seconds = cmd_data.get('timeout_seconds', 2400)  # Default: 40 minutes
                 expected_sha256 = cmd_data.get('sha256_checksum')  # Optional but recommended
                 deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
+                parallel_install = cmd_data.get('parallel_install', False)
 
                 if not installer_url:
                     return "Error: No installer URL provided"
 
+                # Auto-derive verify_path from /DIR flag if not explicitly provided
+                if not verify_path and silent_flags:
+                    import re
+                    dir_match = re.search(r'/DIR="([^"]+)"', silent_flags, re.IGNORECASE)
+                    if not dir_match:
+                        dir_match = re.search(r'/DIR=(\S+)', silent_flags, re.IGNORECASE)
+                    if dir_match:
+                        verify_path = dir_match.group(1)
+                        logging.debug(f"Auto-derived verify_path from /DIR: {verify_path}")
+
                 logging.info(f"Starting software installation: {installer_name}")
-                logging.info(f"URL: {installer_url}")
-                logging.info(f"Flags: {silent_flags}")
-                logging.info(f"Timeout: {timeout_seconds} seconds")
+                logging.debug(f"URL: {installer_url}")
+                logging.debug(f"Flags: {silent_flags}")
+                logging.debug(f"Timeout: {timeout_seconds} seconds")
                 if expected_sha256:
-                    logging.info(f"Checksum verification enabled: {expected_sha256[:16]}...")
+                    logging.debug(f"Checksum verification enabled: {expected_sha256[:16]}...")
+
+                # Pre-install: terminate conflicting processes and lock managed projects
+                close_processes = cmd_data.get('close_processes', [])
+                suppress_projects = cmd_data.get('suppress_projects', [])
+                locked_project_ids = []
+
+                if close_processes or suppress_projects:
+                    locked_project_ids = self._terminate_processes_for_install(
+                        close_processes, suppress_projects, deployment_id, cmd_id
+                    )
 
                 # Get temporary path for installer
                 temp_installer_path = installer_utils.get_temp_installer_path(installer_name)
-
-                # Initialize self-update flag (must be before try block for finally block access)
-                is_self_update = False
 
                 try:
                     # Update status: downloading
@@ -1448,7 +2548,7 @@ WshShell.Run "{vbs_command}", 0, False
                         self.firebase_client.update_command_progress(cmd_id, 'downloading', deployment_id)
 
                     # Download the installer
-                    logging.info(f"Downloading installer to: {temp_installer_path}")
+                    logging.debug(f"Downloading installer to: {temp_installer_path}")
                     download_success, actual_installer_path = installer_utils.download_file(installer_url, temp_installer_path)
 
                     if not download_success:
@@ -1472,76 +2572,59 @@ WshShell.Run "{vbs_command}", 0, False
                     if self.firebase_client:
                         self.firebase_client.update_command_progress(cmd_id, 'installing', deployment_id)
 
-                    # SELF-UPDATE DETECTION: Check if this is an Owlette self-update
-                    is_self_update = 'owlette' in installer_name.lower()
+                    # Get an elevated token for the user's desktop session.
+                    # Session 0 (SYSTEM) causes sub-installers (CodeMeter, VC++ redists)
+                    # to hang because there's no desktop for UI.
+                    install_token, install_env = self._get_elevated_install_token()
+                    if not install_token:
+                        return "Error: No interactive user session available for installation. A user must be logged in."
 
-                    if is_self_update:
-                        # SIMPLIFIED SELF-UPDATE:
-                        # Just launch the installer - Inno Setup handles service stop/restart automatically
-                        logging.warning("=" * 60)
-                        logging.warning("SELF-UPDATE DETECTED: Running installer directly")
-                        logging.warning(f"Installer: {installer_name}")
-                        logging.warning("Inno Setup will handle service stop/restart automatically")
-                        logging.warning("=" * 60)
+                    # Parallel install: hide existing registry keys so installer
+                    # can't detect and uninstall previous versions
+                    hidden_keys = []
+                    if parallel_install:
+                        # Derive software name from installer_name for registry matching
+                        # e.g. "TouchDesigner.2025.32280.exe" -> "TouchDesigner"
+                        software_name = installer_name.split('.')[0] if '.' in installer_name else installer_name
+                        logging.info(f"Parallel install enabled — hiding existing '{software_name}' registry keys")
+                        hidden_keys = installer_utils.hide_registry_keys(software_name)
 
-                        try:
-                            # Update status: installing
-                            if self.firebase_client:
-                                self.firebase_client.update_command_progress(cmd_id, 'installing', deployment_id)
-
-                            # Launch installer as detached process
-                            # Inno Setup will:
-                            # 1. Stop this service automatically
-                            # 2. Replace files
-                            # 3. Restart service automatically
-                            DETACHED_PROCESS = 0x00000008
-                            CREATE_NO_WINDOW = 0x08000000
-
-                            logging.info(f"Launching Owlette installer: {temp_installer_path}")
-                            logging.info(f"Flags: {silent_flags}")
-
-                            process = subprocess.Popen(
-                                [temp_installer_path] + silent_flags,
-                                creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                                stdin=subprocess.DEVNULL
-                            )
-
-                            logging.info(f"Installer launched (PID: {process.pid})")
-                            logging.info("Installer will handle service restart automatically")
-                            logging.info("=" * 60)
-
-                            return "Self-update initiated - installer running in background"
-
-                        except Exception as e:
-                            error_msg = f"Error launching installer: {str(e)}"
-                            logging.error(error_msg)
-                            logging.exception("Installer launch failed")
-                            return error_msg
-
-                    else:
-                        # Normal installation (not self-update) - wait for completion
+                    try:
+                        # Execute installer in user session with elevation
                         logging.info("Executing installer with silent flags")
                         success, exit_code, error_msg = installer_utils.execute_installer(
                             temp_installer_path,
                             silent_flags,
                             installer_name,
                             self.active_installations,
-                            timeout_seconds
+                            timeout_seconds,
+                            user_token=install_token,
+                            environment=install_env,
                         )
+                    finally:
+                        # ALWAYS restore registry keys, even if installer fails
+                        if hidden_keys:
+                            logging.info("Restoring hidden registry keys")
+                            installer_utils.restore_registry_keys(hidden_keys)
 
-                        if not success:
-                            return f"Error: Installation failed with exit code {exit_code}. {error_msg}"
+                    if not success:
+                        return f"Error: Installation failed with exit code {exit_code}. {error_msg}"
 
                     # Optional: Verify installation
                     if verify_path:
+                        time.sleep(3)  # Allow filesystem to settle after install
                         if installer_utils.verify_installation(verify_path):
-                            result_msg = f"Installation completed successfully. Verified at {verify_path}"
+                            if exit_code == 3010:
+                                result_msg = f"Installation completed successfully (reboot required). Verified at {verify_path}"
+                            else:
+                                result_msg = f"Installation completed successfully. Verified at {verify_path}"
                         else:
-                            result_msg = f"Installation completed (exit code 0) but verification failed - {verify_path} not found"
+                            return f"Error: Installation completed (exit code {exit_code}) but verification failed - {verify_path} not found. The installer may have shown a dialog or requires different silent flags."
                     else:
-                        result_msg = f"Installation completed successfully (exit code {exit_code})"
+                        if exit_code == 3010:
+                            result_msg = f"Installation completed successfully (reboot required)"
+                        else:
+                            result_msg = f"Installation completed successfully (exit code {exit_code})"
 
                     logging.info(result_msg)
 
@@ -1552,60 +2635,112 @@ WshShell.Run "{vbs_command}", 0, False
                             self.firebase_client.sync_software_inventory()
                     except Exception as sync_error:
                         logging.warning(f"Failed to sync software inventory after installation: {sync_error}")
-                        # Don't fail the installation if sync fails
 
                     return result_msg
 
                 finally:
-                    # Always cleanup the temporary installer file (with force=True to handle locked files)
-                    # EXCEPT for self-updates: installer must stay on disk until it finishes extracting
+                    # Release install locks so service loop can relaunch managed processes
+                    for project_id in locked_project_ids:
+                        self.install_locks.pop(project_id, None)
+                        logging.info(f"Released install lock for project {project_id}")
+                    # Always cleanup the temporary installer file
                     try:
-                        if not is_self_update:
-                            installer_utils.cleanup_installer(temp_installer_path, force=True)
-                        else:
-                            logging.info("Skipping cleanup for self-update (installer will clean itself up)")
+                        installer_utils.cleanup_installer(temp_installer_path, force=True)
                     except Exception as cleanup_error:
                         logging.warning(f"Error in cleanup finally block: {cleanup_error}")
 
             elif cmd_type == 'update_owlette':
                 # Self-update command: Downloads and installs new Owlette version
-                # SIMPLIFIED: Download installer, launch it, let Inno Setup handle service restart
+                # Uses installer_utils for robust download (retries + backoff) and checksum verification
+                # Launches via Task Scheduler so installer survives service stop
+                # Recovery watchdog task ensures service comes back after update
                 installer_url = cmd_data.get('installer_url')
-                deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
+                deployment_id = cmd_data.get('deployment_id')
+                expected_sha256 = cmd_data.get('checksum_sha256')
+
+                # Resolve target version: from command data, URL filename, or 'unknown'
+                target_version = cmd_data.get('target_version')
+                if not target_version:
+                    import re
+                    version_match = re.search(r'v(\d+\.\d+\.\d+)', installer_url or '')
+                    target_version = version_match.group(1) if version_match else 'unknown'
 
                 if not installer_url:
                     return "Error: No installer URL provided for update"
 
+                # ANTI-FRAGILE: Require checksum for self-updates (supply chain protection)
+                if not expected_sha256:
+                    return "Error: No checksum provided for self-update - refusing to install unverified binary"
+
+                # ANTI-FRAGILE: Idempotency guard - prevent concurrent update execution
+                import json
+                update_marker_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'logs', 'update_in_progress.json')
+                if os.path.exists(update_marker_path):
+                    try:
+                        with open(update_marker_path, 'r') as f:
+                            existing_marker = json.load(f)
+                        started_at = existing_marker.get('started_at', '')
+                        # Parse the timestamp and check if update is still recent (< 10 minutes)
+                        from datetime import datetime
+                        marker_time = datetime.strptime(started_at, '%Y-%m-%d %H:%M:%S')
+                        age_minutes = (datetime.now() - marker_time).total_seconds() / 60
+                        if age_minutes < 10:
+                            logging.warning(f"Update already in progress (started {age_minutes:.1f}m ago) - rejecting duplicate command")
+                            return f"Update already in progress (started {age_minutes:.1f}m ago)"
+                        else:
+                            logging.warning(f"Stale update marker found ({age_minutes:.1f}m old) - proceeding with new update")
+                    except Exception as marker_err:
+                        logging.warning(f"Could not read existing update marker, proceeding: {marker_err}")
+
                 logging.info("="*60)
                 logging.info("OWLETTE SELF-UPDATE INITIATED")
+                logging.info(f"Current version: {shared_utils.APP_VERSION}")
+                logging.info(f"Target version: {target_version}")
                 logging.info("="*60)
-                logging.info(f"Installer URL: {installer_url}")
-                logging.info("Inno Setup will handle service stop/restart automatically")
+                logging.debug(f"Installer URL: {installer_url}")
+                logging.debug(f"Checksum: {expected_sha256[:16]}...")
 
                 try:
+                    # ANTI-FRAGILE: Check disk space before downloading
+                    # Installer is ~100MB, extraction needs ~200MB more, plus old install still present
+                    import shutil
+                    install_drive = os.path.splitdrive(os.environ.get('ProgramData', 'C:\\ProgramData'))[0] or 'C:'
+                    disk_usage = shutil.disk_usage(install_drive + '\\')
+                    free_mb = disk_usage.free / (1024 * 1024)
+                    logging.debug(f"Disk space on {install_drive}: {free_mb:.0f} MB free")
+                    if free_mb < 500:
+                        raise Exception(f"Insufficient disk space: {free_mb:.0f} MB free, need at least 500 MB for safe update")
+
                     # Update status: downloading
                     if self.firebase_client:
                         self.firebase_client.update_command_progress(cmd_id, 'downloading', deployment_id)
 
                     # Download installer to our own temp directory (not WINDOWS\TEMP)
                     # Some security software blocks execution from system temp directories
-                    logging.info("Downloading installer...")
                     owlette_tmp_dir = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'tmp')
                     os.makedirs(owlette_tmp_dir, exist_ok=True)
                     temp_installer_path = os.path.join(owlette_tmp_dir, 'Owlette-Update.exe')
 
-                    import urllib.request
-                    urllib.request.urlretrieve(installer_url, temp_installer_path)
-                    logging.info(f"Installer downloaded to: {temp_installer_path}")
+                    # Use installer_utils for robust download with retries and progress
+                    logging.info("Downloading installer (3 retries with exponential backoff)...")
+                    download_success, actual_path = installer_utils.download_file(
+                        installer_url,
+                        temp_installer_path,
+                        progress_callback=None,  # Progress already tracked via Firestore status
+                        max_retries=3,
+                        connect_timeout=30,
+                        read_timeout=600
+                    )
 
-                    # Verify downloaded file
-                    if not os.path.exists(temp_installer_path):
-                        raise Exception("Installer file not found after download")
+                    if not download_success:
+                        raise Exception(f"Failed to download installer after 3 retries from {installer_url}")
 
-                    file_size = os.path.getsize(temp_installer_path)
-                    logging.info(f"Installer file size: {file_size:,} bytes")
+                    temp_installer_path = actual_path
+                    logging.debug(f"Installer downloaded to: {temp_installer_path}")
 
                     # Sanity check - Inno Setup installer should be at least 1MB
+                    file_size = os.path.getsize(temp_installer_path)
+                    logging.debug(f"Installer file size: {file_size:,} bytes")
                     if file_size < 1_000_000:
                         raise Exception(f"Downloaded file too small ({file_size} bytes) - likely not a valid installer")
 
@@ -1615,23 +2750,29 @@ WshShell.Run "{vbs_command}", 0, False
                         if header != b'MZ':
                             raise Exception("Downloaded file is not a valid Windows executable")
 
+                    # SHA256 checksum verification (MANDATORY for self-updates)
+                    logging.info("Verifying installer checksum...")
+                    if not installer_utils.verify_checksum(temp_installer_path, expected_sha256):
+                        installer_utils.cleanup_installer(temp_installer_path, force=True)
+                        raise Exception("Checksum verification FAILED - installer may be corrupted or tampered. Update aborted.")
+                    logging.info("[OK] Checksum verification passed")
+
                     logging.info("Installer verified successfully")
 
                     # Create update marker file (persists across service restart)
-                    # This helps diagnose whether updates are completing successfully
-                    update_marker_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'logs', 'update_in_progress.json')
-                    import json
+                    # Used by _check_update_status() after service restarts to report success/failure
                     update_marker = {
                         'started_at': time.strftime('%Y-%m-%d %H:%M:%S'),
                         'old_version': shared_utils.APP_VERSION,
                         'target_version': target_version,
                         'installer_url': installer_url,
                         'installer_path': temp_installer_path,
-                        'command_id': cmd_id
+                        'command_id': cmd_id,
+                        'deployment_id': deployment_id
                     }
                     with open(update_marker_path, 'w') as f:
                         json.dump(update_marker, f, indent=2)
-                    logging.info(f"Update marker created: {update_marker_path}")
+                    logging.debug(f"Update marker created: {update_marker_path}")
 
                     # Update status: installing
                     if self.firebase_client:
@@ -1639,14 +2780,13 @@ WshShell.Run "{vbs_command}", 0, False
 
                     # Launch installer via Windows Task Scheduler (survives service stop)
                     # This ensures installer keeps running even when Inno Setup kills the service
-                    # Include /LOG to help diagnose failures on problematic systems
                     log_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'logs', 'installer_update.log')
                     silent_flags = f'/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS /LOG="{log_path}"'
                     task_name = f"OwletteUpdate_{int(time.time())}"
 
-                    logging.info(f"Creating scheduled task: {task_name}")
-                    logging.info(f"Installer flags: {silent_flags}")
-                    logging.info(f"Installer log will be written to: {log_path}")
+                    logging.debug(f"Creating scheduled task: {task_name}")
+                    logging.debug(f"Installer flags: {silent_flags}")
+                    logging.debug(f"Installer log will be written to: {log_path}")
 
                     # Create one-time task that runs immediately as SYSTEM
                     schtasks_cmd = [
@@ -1655,10 +2795,10 @@ WshShell.Run "{vbs_command}", 0, False
                         '/TN', task_name,
                         '/TR', f'"{temp_installer_path}" {silent_flags}',
                         '/SC', 'ONCE',
-                        '/ST', '00:00',  # Start time (will be forced to run immediately)
+                        '/ST', '00:00',
                         '/RU', 'SYSTEM',
                         '/RL', 'HIGHEST',
-                        '/F'  # Force create (overwrite if exists)
+                        '/F'
                     ]
 
                     result = subprocess.run(
@@ -1671,7 +2811,7 @@ WshShell.Run "{vbs_command}", 0, False
                     if result.returncode != 0:
                         raise Exception(f"Failed to create scheduled task: {result.stderr}")
 
-                    logging.info(f"Scheduled task created: {task_name}")
+                    logging.debug(f"Scheduled task created: {task_name}")
 
                     # Run the task immediately
                     run_result = subprocess.run(
@@ -1686,19 +2826,49 @@ WshShell.Run "{vbs_command}", 0, False
                     else:
                         logging.info("Installer task started successfully")
 
-                    # Delete the task after a delay (cleanup) - but don't wait for it
-                    # The task will self-clean after installer completes
-                    cleanup_cmd = f'schtasks /Delete /TN "{task_name}" /F'
-                    subprocess.Popen(
-                        f'timeout /t 300 && {cleanup_cmd}',  # Delete after 5 min
-                        shell=True,
+                    # ANTI-FRAGILE: Recovery watchdog - if service doesn't come back after update,
+                    # attempt to restart it. Uses powershell Start-Sleep for clean non-interactive delay.
+                    # Sequence: wait 5min → check if service running → if not, try net start
+                    recovery_task_name = f"OwletteRecovery_{int(time.time())}"
+                    recovery_cmd = (
+                        f'powershell -NoProfile -Command "Start-Sleep 300" && '
+                        f'sc query OwletteService | findstr "RUNNING" > nul || '
+                        f'(net start OwletteService & '
+                        f'schtasks /Delete /TN "{recovery_task_name}" /F)'
+                    )
+                    try:
+                        subprocess.run(
+                            ['schtasks', '/Create',
+                             '/TN', recovery_task_name,
+                             '/TR', f'cmd /c {recovery_cmd}',
+                             '/SC', 'ONCE', '/ST', '00:00',
+                             '/RU', 'SYSTEM', '/RL', 'HIGHEST', '/F'],
+                            capture_output=True, text=True, timeout=10
+                        )
+                        subprocess.run(
+                            ['schtasks', '/Run', '/TN', recovery_task_name],
+                            capture_output=True, text=True, timeout=10
+                        )
+                        logging.info(f"Recovery watchdog scheduled: {recovery_task_name} (will check service in ~5 min)")
+                    except Exception as recovery_err:
+                        logging.warning(f"Failed to create recovery watchdog (non-fatal): {recovery_err}")
+
+                    # Clean up the installer scheduled task after 5 minutes
+                    cleanup_proc = subprocess.Popen(
+                        ['cmd', '/c',
+                         f'powershell -NoProfile -Command "Start-Sleep 300" && '
+                         f'schtasks /Delete /TN "{task_name}" /F && '
+                         f'schtasks /Delete /TN "{recovery_task_name}" /F'],
+                        shell=False,
                         creationflags=0x00000008,  # DETACHED_PROCESS
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL
                     )
+                    del cleanup_proc  # Release Popen handle — process runs detached
 
-                    logging.info("Installer will handle service restart automatically")
-                    logging.info("="*60)
+                    logging.debug("Installer will handle service restart automatically")
+                    logging.debug("Recovery watchdog will attempt restart if service doesn't come back")
+                    logging.debug("="*60)
 
                     return "Self-update initiated via Task Scheduler"
 
@@ -1706,6 +2876,12 @@ WshShell.Run "{vbs_command}", 0, False
                     error_msg = f"Error initiating update: {str(e)}"
                     logging.error(error_msg)
                     logging.exception("Update initiation failed")
+                    # Clean up marker on failure so we don't block future updates
+                    try:
+                        if os.path.exists(update_marker_path):
+                            os.remove(update_marker_path)
+                    except OSError as marker_err:
+                        logging.warning(f"Could not remove update marker: {marker_err}")
                     return error_msg
 
             elif cmd_type == 'cancel_installation':
@@ -1744,22 +2920,31 @@ WshShell.Run "{vbs_command}", 0, False
                     return "Error: Software name and uninstall command required"
 
                 logging.info(f"Starting software uninstallation: {software_name}")
-                logging.info(f"Uninstall command: {uninstall_command}")
-                logging.info(f"Installer type: {installer_type}")
-                logging.info(f"Timeout: {timeout_seconds} seconds")
+                logging.debug(f"Uninstall command: {uninstall_command}")
+                logging.debug(f"Installer type: {installer_type}")
+                logging.debug(f"Timeout: {timeout_seconds} seconds")
 
                 # Build complete silent uninstall command
                 if not silent_flags:
                     # Auto-detect silent flags if not provided
                     silent_flags = registry_utils.get_silent_uninstall_flags(installer_type)
-                    logging.info(f"Auto-detected silent flags: {silent_flags}")
+                    logging.debug(f"Auto-detected silent flags: {silent_flags}")
 
-                complete_command = registry_utils.build_silent_uninstall_command(
+                complete_command_str = registry_utils.build_silent_uninstall_command(
                     uninstall_command,
                     installer_type
                 ) if not silent_flags else f"{uninstall_command} {silent_flags}"
 
-                logging.info(f"Complete uninstall command: {complete_command}")
+                logging.debug(f"Complete uninstall command: {complete_command_str}")
+
+                # Parse command string into list to avoid shell injection.
+                # Use posix=True so shlex strips surrounding quotes from paths
+                # like '"C:\Program Files\App\Uninstall.exe"' — without this,
+                # subprocess.Popen fails with Access Denied on quoted paths.
+                try:
+                    complete_command = shlex.split(complete_command_str, posix=True)
+                except ValueError as e:
+                    return f"Error: Invalid uninstall command format: {e}"
 
                 try:
                     # Update status: uninstalling
@@ -1778,7 +2963,7 @@ WshShell.Run "{vbs_command}", 0, False
 
                     process = subprocess.Popen(
                         complete_command,
-                        shell=True,
+                        shell=False,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True
@@ -1786,7 +2971,7 @@ WshShell.Run "{vbs_command}", 0, False
 
                     # Track process for potential cancellation
                     self.active_installations[uninstall_process_name] = process
-                    logging.info(f"Tracking uninstall process: {uninstall_process_name} (PID: {process.pid})")
+                    logging.debug(f"Tracking uninstall process: {uninstall_process_name} (PID: {process.pid})")
 
                     # Wait for uninstallation to complete
                     try:
@@ -1908,13 +3093,13 @@ WshShell.Run "{vbs_command}", 0, False
                     return "Error: No project URL provided"
 
                 logging.info(f"Starting project distribution: {project_name}")
-                logging.info(f"URL: {project_url}")
-                logging.info(f"Extract path: {extract_path or 'default'}")
+                logging.debug(f"URL: {project_url}")
+                logging.debug(f"Extract path: {extract_path or 'default'}")
 
                 # Determine extraction path
                 if not extract_path:
                     extract_path = project_utils.get_default_project_directory()
-                    logging.info(f"Using default extraction path: {extract_path}")
+                    logging.debug(f"Using default extraction path: {extract_path}")
 
                 # Get temporary path for project ZIP
                 temp_project_path = project_utils.get_temp_project_path(project_name)
@@ -1925,7 +3110,7 @@ WshShell.Run "{vbs_command}", 0, False
                         self.firebase_client.update_command_progress(cmd_id, 'downloading', distribution_id)
 
                     # Download the project ZIP
-                    logging.info(f"Downloading project to: {temp_project_path}")
+                    logging.debug(f"Downloading project to: {temp_project_path}")
                     download_success, result = project_utils.download_project(
                         project_url,
                         project_name,
@@ -1986,6 +3171,60 @@ WshShell.Run "{vbs_command}", 0, False
 
                 return f"Distribution cancelled: {project_name} (cleaned up temporary files)"
 
+            elif cmd_type == 'mcp_tool_call':
+                # MCP tool call from chat interface
+                tool_name = cmd_data.get('tool_name')
+                tool_params = cmd_data.get('tool_params', {})
+
+                if not tool_name:
+                    return "Error: No tool_name provided for mcp_tool_call"
+
+                logging.info(f"Executing MCP tool: {tool_name} with params: {list(tool_params.keys())}")
+
+                # Tools that need user-session execution (desktop access)
+                import json as _json
+                user_session_result = self._try_user_session_tool(tool_name, tool_params)
+                if user_session_result is not None:
+                    self._log_cortex_tool(tool_name, tool_params, user_session_result)
+                    return _json.dumps(user_session_result)
+
+                import mcp_tools
+                config = shared_utils.read_config()
+                result = mcp_tools.execute_tool(tool_name, tool_params, config)
+
+                self._log_cortex_tool(tool_name, tool_params, result)
+
+                # MCP tool results are dicts — serialize to JSON string for Firestore
+                return _json.dumps(result)
+
+            elif cmd_type == 'capture_screenshot':
+                result = self._handle_capture_screenshot(cmd_data)
+                # Dashboard UI expects a string result, not the full dict
+                if isinstance(result, dict):
+                    return result.get('message') or result.get('error', str(result))
+                return result
+
+            elif cmd_type == 'reboot_machine':
+                return self._handle_reboot_machine(cmd_data)
+
+            elif cmd_type == 'shutdown_machine':
+                return self._handle_shutdown_machine(cmd_data)
+
+            elif cmd_type == 'cancel_reboot':
+                return self._handle_cancel_reboot(cmd_data)
+
+            elif cmd_type == 'dismiss_reboot_pending':
+                return self._handle_dismiss_reboot_pending(cmd_data)
+
+            elif cmd_type == 'provision_cortex_key':
+                return self._handle_provision_cortex_key(cmd_data)
+
+            elif cmd_type == 'start_live_view':
+                return self._handle_start_live_view(cmd_data)
+
+            elif cmd_type == 'stop_live_view':
+                return self._handle_stop_live_view(cmd_data)
+
             else:
                 logging.warning(f"Unknown command type: {cmd_type}")
                 return f"Unknown command type: {cmd_type}"
@@ -1995,10 +3234,650 @@ WshShell.Run "{vbs_command}", 0, False
             logging.error(error_msg)
             return error_msg
 
+    def _check_scheduled_reboot(self):
+        """Check if a scheduled reboot should be triggered.
+
+        Conditions:
+        1. Firebase is connected
+        2. rebootSchedule.enabled is True
+        3. Current time is within a schedule window
+        4. Machine uptime > 30 minutes (avoid reboot loops after fresh boot)
+        5. Haven't already triggered a reboot in this schedule window
+        """
+        if not self.firebase_client or not self.firebase_client.is_connected():
+            return
+
+        try:
+            reboot_schedule = self.firebase_client.get_reboot_schedule()
+            if not reboot_schedule or not reboot_schedule.get('enabled'):
+                return
+
+            schedules = reboot_schedule.get('schedules')
+            if not schedules:
+                return
+
+            # Check if current time is within the schedule window
+            if not shared_utils.is_within_schedule(schedules, self._cached_site_timezone):
+                return
+
+            # Check machine uptime > 30 minutes to avoid reboot loops
+            uptime_seconds = time.time() - psutil.boot_time()
+            if uptime_seconds < 1800:  # 30 minutes
+                logging.debug("Scheduled reboot skipped: machine uptime < 30 minutes")
+                return
+
+            # Check if we already triggered a reboot in this schedule window
+            now = datetime.datetime.now()
+            if self._last_scheduled_reboot_time:
+                # If the last reboot trigger was less than 2 hours ago, skip
+                # This prevents re-triggering within the same schedule window
+                elapsed = (now - self._last_scheduled_reboot_time).total_seconds()
+                if elapsed < 7200:  # 2 hours
+                    return
+
+            # All conditions met — trigger the reboot
+            self._last_scheduled_reboot_time = now
+            logging.info("Scheduled reboot triggered — all conditions met")
+
+            self.firebase_client.log_event(
+                action='scheduled_reboot',
+                level='warning',
+                details='Scheduled reboot initiated by reboot schedule'
+            )
+
+            self.firebase_client.set_machine_flag('rebooting', True)
+
+            import subprocess
+            subprocess.run(
+                ['shutdown', '/r', '/t', '30', '/c', 'Owlette scheduled reboot'],
+                check=True, timeout=15
+            )
+            logging.info("Scheduled reboot command issued (30-second delay)")
+
+        except Exception as e:
+            logging.error(f"Scheduled reboot check failed: {e}")
+
+    def _handle_reboot_machine(self, command_data):
+        """Handle remote reboot command."""
+        try:
+            self.firebase_client.log_event(
+                action='command_executed',
+                level='warning',
+                details='Remote reboot initiated from dashboard'
+            )
+
+            # Set rebooting flag so dashboard shows "Rebooting..."
+            self.firebase_client.set_machine_flag('rebooting', True)
+
+            # Schedule reboot with 30-second delay (gives agent time to complete Firestore writes)
+            import subprocess
+            subprocess.run(
+                ['shutdown', '/r', '/t', '30', '/c', 'Owlette remote reboot requested'],
+                check=True, timeout=15
+            )
+
+            return "Reboot scheduled in 30 seconds"
+        except Exception as e:
+            return f"Reboot failed: {str(e)}"
+
+    def _handle_shutdown_machine(self, command_data):
+        """Handle remote shutdown command."""
+        try:
+            self.firebase_client.log_event(
+                action='command_executed',
+                level='warning',
+                details='Remote shutdown initiated from dashboard'
+            )
+
+            self.firebase_client.set_machine_flag('shuttingDown', True)
+
+            import subprocess
+            subprocess.run(
+                ['shutdown', '/s', '/t', '30', '/c', 'Owlette remote shutdown requested'],
+                check=True, timeout=15
+            )
+
+            return "Shutdown scheduled in 30 seconds"
+        except Exception as e:
+            return f"Shutdown failed: {str(e)}"
+
+    def _handle_cancel_reboot(self, command_data):
+        """Cancel a pending reboot/shutdown."""
+        try:
+            import subprocess
+            subprocess.run(['shutdown', '/a'], check=True, timeout=15)
+
+            self.firebase_client.set_machine_flag('rebooting', False)
+            self.firebase_client.set_machine_flag('shuttingDown', False)
+            self.firebase_client.log_event(
+                action='command_executed',
+                level='info',
+                details='Pending reboot/shutdown cancelled from dashboard'
+            )
+
+            return "Reboot/shutdown cancelled"
+        except subprocess.CalledProcessError:
+            return "No pending reboot to cancel"
+
+    def _handle_dismiss_reboot_pending(self, command_data):
+        """Dismiss a reboot pending prompt and reset relaunch counters."""
+        try:
+            process_name = command_data.get('process_name')
+
+            # Clear the reboot pending flag
+            self.firebase_client.clear_reboot_pending()
+
+            # Reset relaunch counter for the affected process so it gets fresh attempts
+            if process_name and process_name in self.relaunch_attempts:
+                del self.relaunch_attempts[process_name]
+                logging.info(f"Reset relaunch counter for {process_name}")
+
+            # Kill the local restart prompt if it's still running
+            if shared_utils.is_script_running('prompt_restart.py'):
+                try:
+                    import subprocess
+                    subprocess.run(
+                        ['taskkill', '/F', '/IM', 'pythonw.exe', '/FI', 'WINDOWTITLE eq *restart*'],
+                        capture_output=True
+                    )
+                except Exception:
+                    pass
+
+            self.firebase_client.log_event(
+                action='command_executed',
+                level='info',
+                process_name=process_name,
+                details='Reboot dismissed by admin from dashboard'
+            )
+
+            return f"Reboot pending dismissed, relaunch counters reset for {process_name}"
+        except Exception as e:
+            return f"Failed to dismiss reboot pending: {str(e)}"
+
+    def _handle_provision_cortex_key(self, command_data):
+        """Encrypt and store the Cortex LLM API key in config.json."""
+        try:
+            api_key = command_data.get('api_key', '')
+            provider = command_data.get('provider', 'anthropic')
+
+            if not api_key:
+                return "Error: No API key provided"
+
+            # Encrypt with the same machine-specific Fernet key used by SecureStorage
+            from secure_storage import get_storage
+            storage = get_storage()
+            encrypted = storage._fernet.encrypt(api_key.encode('utf-8')).decode('utf-8')
+
+            # Store in config
+            config = shared_utils.read_config()
+            if 'cortex' not in config:
+                config['cortex'] = {}
+            config['cortex']['apiKeyEncrypted'] = encrypted
+            config['cortex']['provider'] = provider
+            config['cortex']['enabled'] = True
+            shared_utils.write_config(config)
+
+            logging.info(f"Cortex API key provisioned (provider={provider})")
+            return "Cortex API key provisioned successfully"
+        except Exception as e:
+            logging.error(f"Failed to provision Cortex key: {e}")
+            return f"Error: {str(e)}"
+
+    def _try_user_session_tool(self, tool_name, tool_params):
+        """Handle MCP tools that require user-session execution.
+
+        Returns:
+            dict result if handled, None if the tool should fall through
+            to the standard mcp_tools.execute_tool() path.
+        """
+        if tool_name == 'run_command' and tool_params.get('user_session'):
+            command = tool_params.get('command', '').strip()
+            if not command:
+                return {'error': 'command parameter is required'}
+            result = self.execute_in_user_session('cmd', command, timeout=25)
+            return {
+                'command': command,
+                'exit_code': result.get('exitCode', -1),
+                'stdout': result.get('stdout', ''),
+                'stderr': result.get('stderr', ''),
+                'user_session': True,
+                'error': result.get('error'),
+            }
+
+        if tool_name == 'run_powershell' and tool_params.get('user_session'):
+            script = tool_params.get('script', '').strip()
+            if not script:
+                return {'error': 'script parameter is required'}
+            result = self.execute_in_user_session('powershell', script, timeout=25)
+            return {
+                'script': script,
+                'exit_code': result.get('exitCode', -1),
+                'stdout': result.get('stdout', ''),
+                'stderr': result.get('stderr', ''),
+                'user_session': True,
+                'error': result.get('error'),
+            }
+
+        if tool_name == 'run_python':
+            code = tool_params.get('code', '').strip()
+            if not code:
+                return {'error': 'code parameter is required'}
+            result = self.execute_in_user_session('python', code, timeout=25)
+            return {
+                'exit_code': result.get('exitCode', -1),
+                'stdout': result.get('stdout', ''),
+                'stderr': result.get('stderr', ''),
+                'files': result.get('files', []),
+                'duration_ms': result.get('durationMs', 0),
+                'error': result.get('error'),
+            }
+
+        if tool_name == 'capture_screenshot':
+            result = self._handle_capture_screenshot({
+                'monitor': tool_params.get('monitor', 0),
+            })
+            if isinstance(result, dict):
+                # Strip base64 before Firestore serialization (1MB doc limit)
+                return {k: v for k, v in result.items() if k != 'base64'}
+            return result
+
+        return None  # Not a user-session tool, fall through
+
+    def _capture_crash_screenshot(self):
+        """Best-effort screenshot capture on process crash. Returns URL or None.
+
+        Uses the same capture pipeline as _handle_capture_screenshot but with
+        lower quality settings for speed, and never blocks the relaunch path.
+        """
+        try:
+            import base64
+            capture_code = """
+import mss
+import io
+import os
+from mss.tools import to_png
+
+with mss.mss() as sct:
+    screenshot = sct.grab(sct.monitors[0])
+    png_bytes = to_png(screenshot.rgb, screenshot.size)
+
+try:
+    from PIL import Image
+    img = Image.open(io.BytesIO(png_bytes))
+    max_width = 1920
+    if img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+    buffer = io.BytesIO()
+    img.save(buffer, format='JPEG', quality=60)
+    jpeg_bytes = buffer.getvalue()
+except ImportError:
+    jpeg_bytes = png_bytes
+
+out_path = os.path.join(output_dir, 'screenshot.jpg')
+with open(out_path, 'wb') as f:
+    f.write(jpeg_bytes)
+"""
+            result = self.execute_in_user_session('python', capture_code, timeout=8)
+
+            if result.get('error') or 'screenshot.jpg' not in result.get('files', []):
+                logging.debug("Crash screenshot capture failed — proceeding with relaunch")
+                return None
+
+            ipc_dir = shared_utils.get_data_path('ipc')
+            results_base = os.path.join(ipc_dir, 'results')
+            screenshot_path = None
+            for d in sorted(os.listdir(results_base), reverse=True):
+                candidate = os.path.join(results_base, d, 'screenshot.jpg')
+                if os.path.exists(candidate):
+                    screenshot_path = candidate
+                    break
+
+            if not screenshot_path:
+                return None
+
+            with open(screenshot_path, 'rb') as f:
+                jpeg_bytes = f.read()
+
+            screenshot_b64 = base64.b64encode(jpeg_bytes).decode('ascii')
+
+            # Cleanup result directory
+            try:
+                import shutil
+                shutil.rmtree(os.path.dirname(screenshot_path), ignore_errors=True)
+            except Exception:
+                pass
+
+            upload_result = self._upload_screenshot(screenshot_b64)
+            url = upload_result.get('url', '') if upload_result else ''
+            if url:
+                logging.info(f"Crash screenshot captured: {len(jpeg_bytes) // 1024}KB")
+            return url or None
+
+        except Exception as e:
+            logging.debug(f"Crash screenshot failed: {e}")
+            return None
+
+    # Tier 3 tools that warrant site-log entries on success
+    _TIER3_TOOLS = frozenset([
+        'run_command', 'run_powershell', 'execute_script', 'run_python',
+        'write_file', 'reboot_machine', 'shutdown_machine',
+    ])
+
+    def _log_cortex_tool(self, tool_name, tool_params, result):
+        """Log Cortex tool calls to site logs — always on error, Tier 3 on success."""
+        try:
+            has_error = isinstance(result, dict) and 'error' in result
+            if has_error:
+                detail_parts = [f'Tool {tool_name} failed']
+                error_msg = result['error']
+                detail_parts.append(error_msg)
+                self.firebase_client.log_event(
+                    action='command_executed',
+                    level='error',
+                    details=' — '.join(detail_parts),
+                )
+            elif tool_name in self._TIER3_TOOLS:
+                # Log privileged tool executions for audit trail
+                detail = f'Cortex: {tool_name}'
+                if tool_name in ('run_command', 'run_powershell') and 'command' in tool_params:
+                    cmd = tool_params['command']
+                    if len(cmd) > 100:
+                        cmd = cmd[:100] + '...'
+                    detail += f' — {cmd}'
+                elif tool_name == 'execute_script' and 'script' in tool_params:
+                    script = tool_params['script']
+                    first_line = script.split('\n', 1)[0]
+                    if len(first_line) > 100:
+                        first_line = first_line[:100] + '...'
+                    detail += f' — {first_line}'
+                elif tool_name == 'write_file' and 'path' in tool_params:
+                    detail += f' — {tool_params["path"]}'
+                self.firebase_client.log_event(
+                    action='command_executed',
+                    level='info',
+                    details=detail,
+                )
+        except Exception as e:
+            logging.debug(f"Failed to log Cortex tool event: {e}")
+
+    def _handle_capture_screenshot(self, command_data):
+        """Handle screenshot capture via user-session execution."""
+        try:
+            import base64
+
+            monitor = command_data.get('monitor', 0)
+
+            # Python code to run in the user's desktop session
+            capture_code = f"""
+import mss
+import io
+import os
+from mss.tools import to_png
+
+with mss.mss() as sct:
+    mon_idx = {monitor} if {monitor} > 0 and {monitor} < len(sct.monitors) else 0
+    screenshot = sct.grab(sct.monitors[mon_idx])
+    png_bytes = to_png(screenshot.rgb, screenshot.size)
+
+try:
+    from PIL import Image
+    img = Image.open(io.BytesIO(png_bytes))
+    max_width = 7680
+    if img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+    buffer = io.BytesIO()
+    img.save(buffer, format='JPEG', quality=72)
+    jpeg_bytes = buffer.getvalue()
+except ImportError:
+    jpeg_bytes = png_bytes
+
+out_path = os.path.join(output_dir, 'screenshot.jpg')
+with open(out_path, 'wb') as f:
+    f.write(jpeg_bytes)
+print(f'size_kb={{len(jpeg_bytes) // 1024}}')
+print(f'monitors={{len(sct.monitors) - 1}}')
+"""
+
+            result = self.execute_in_user_session('python', capture_code, timeout=20)
+
+            if result.get('error'):
+                return {'error': f"Screenshot failed: {result['error']}"}
+
+            if 'screenshot.jpg' not in result.get('files', []):
+                stderr = result.get('stderr', '')
+                return {'error': f"Screenshot capture failed{': ' + stderr if stderr else ''}"}
+
+            # Read the captured screenshot
+            # Find the output dir from the result files
+            ipc_dir = shared_utils.get_data_path('ipc')
+            # The result came from the most recent execution — find the screenshot
+            # We need to locate it via the results directory
+            results_base = os.path.join(ipc_dir, 'results')
+            screenshot_path = None
+            for d in sorted(os.listdir(results_base), reverse=True):
+                candidate = os.path.join(results_base, d, 'screenshot.jpg')
+                if os.path.exists(candidate):
+                    screenshot_path = candidate
+                    break
+
+            if not screenshot_path:
+                return {'error': 'Screenshot file not found after capture'}
+
+            with open(screenshot_path, 'rb') as f:
+                jpeg_bytes = f.read()
+
+            size_kb = len(jpeg_bytes) / 1024
+            screenshot_b64 = base64.b64encode(jpeg_bytes).decode('ascii')
+
+            logging.info(f"Screenshot captured: {size_kb:.0f}KB")
+
+            # Cleanup result directory
+            result_dir = os.path.dirname(screenshot_path)
+            try:
+                import shutil
+                shutil.rmtree(result_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+            # Upload to Firebase Storage via web API
+            upload_result = self._upload_screenshot(screenshot_b64)
+
+            self.firebase_client.log_event(
+                action='command_executed',
+                level='info',
+                details=f'Screenshot captured ({size_kb:.0f}KB)'
+            )
+
+            url = upload_result.get('url', '') if upload_result else ''
+            monitor_label = f'monitor {monitor}' if monitor > 0 else 'all monitors'
+            message = f"Screenshot captured ({monitor_label}, {size_kb:.0f}KB)"
+            if url:
+                message += f" — URL: {url}"
+
+            return {
+                'message': message,
+                'url': url,
+                'base64': screenshot_b64,
+                'size_kb': round(size_kb, 1),
+                'monitor': monitor,
+            }
+
+        except Exception as e:
+            return {'error': f"Screenshot failed: {str(e)}"}
+
+    def _upload_screenshot(self, screenshot_b64):
+        """Upload screenshot base64 to web API for storage in Firebase Storage.
+
+        Returns:
+            dict with 'url' and 'sizeKB' on success, None on failure.
+        """
+        try:
+            import requests
+            token = self.firebase_client.auth_manager.get_valid_token()
+            api_base = shared_utils.get_api_base_url()
+            response = requests.post(
+                f"{api_base}/agent/screenshot",
+                json={
+                    'siteId': self.firebase_client.site_id,
+                    'machineId': self.firebase_client.machine_id,
+                    'screenshot': screenshot_b64,
+                    'agentVersion': shared_utils.APP_VERSION,
+                },
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=30
+            )
+            if response.status_code != 200:
+                logging.warning(f"Screenshot upload failed: {response.status_code} {response.text}")
+                return None
+            else:
+                logging.info("Screenshot uploaded successfully")
+                return response.json()
+        except Exception as e:
+            logging.warning(f"Screenshot upload failed: {e}")
+            return None
+
+    def _handle_start_live_view(self, command_data):
+        """Start periodic screenshot capture for live view."""
+        try:
+            interval = command_data.get('interval', 10)
+            interval = max(5, min(60, int(interval)))
+            duration = command_data.get('duration', 600)
+            duration = max(60, min(1800, int(duration)))
+
+            if self._live_view_active:
+                return "Live view already active"
+
+            self._live_view_active = True
+            self._live_view_stop_time = time.time() + duration
+
+            # Set Firestore flag
+            if self.firebase_client and self.firebase_client.is_connected():
+                self.firebase_client.set_machine_flag('liveView', {
+                    'active': True,
+                    'interval': interval,
+                    'startedAt': time.time(),
+                    'expiresAt': self._live_view_stop_time,
+                })
+
+            # Start background daemon thread
+            thread = threading.Thread(
+                target=self._live_view_loop,
+                args=(interval,),
+                daemon=True,
+                name='LiveViewLoop',
+            )
+            thread.start()
+
+            logging.info(f"Live view started: interval={interval}s, duration={duration}s")
+            return f"Live view started (interval: {interval}s, duration: {duration}s)"
+
+        except Exception as e:
+            self._live_view_active = False
+            return f"Error starting live view: {e}"
+
+    def _handle_stop_live_view(self, command_data):
+        """Stop the live view screenshot loop."""
+        self._live_view_active = False
+
+        if self.firebase_client and self.firebase_client.is_connected():
+            self.firebase_client.set_machine_flag('liveView', {'active': False})
+
+        logging.info("Live view stopped")
+        return "Live view stopped"
+
+    def _live_view_loop(self, interval):
+        """Background loop that captures and uploads screenshots periodically."""
+        try:
+            import base64
+
+            logging.info(f"Live view loop started (interval={interval}s)")
+
+            while self._live_view_active and time.time() < self._live_view_stop_time:
+                try:
+                    # Low-quality capture for live view
+                    capture_code = """
+import mss
+import io
+import os
+from mss.tools import to_png
+
+with mss.mss() as sct:
+    screenshot = sct.grab(sct.monitors[0])
+    png_bytes = to_png(screenshot.rgb, screenshot.size)
+
+try:
+    from PIL import Image
+    img = Image.open(io.BytesIO(png_bytes))
+    max_width = 1280
+    if img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+    buffer = io.BytesIO()
+    img.save(buffer, format='JPEG', quality=50)
+    jpeg_bytes = buffer.getvalue()
+except ImportError:
+    jpeg_bytes = png_bytes
+
+out_path = os.path.join(output_dir, 'screenshot.jpg')
+with open(out_path, 'wb') as f:
+    f.write(jpeg_bytes)
+"""
+                    result = self.execute_in_user_session('python', capture_code, timeout=10)
+
+                    if result.get('error') or 'screenshot.jpg' not in result.get('files', []):
+                        logging.debug(f"Live view capture failed: {result.get('error', 'no screenshot file')}")
+                    else:
+                        # Read and upload the screenshot
+                        ipc_dir = shared_utils.get_data_path('ipc')
+                        results_base = os.path.join(ipc_dir, 'results')
+                        screenshot_path = None
+                        for d in sorted(os.listdir(results_base), reverse=True):
+                            candidate = os.path.join(results_base, d, 'screenshot.jpg')
+                            if os.path.exists(candidate):
+                                screenshot_path = candidate
+                                break
+
+                        if screenshot_path:
+                            with open(screenshot_path, 'rb') as f:
+                                jpeg_bytes = f.read()
+
+                            screenshot_b64 = base64.b64encode(jpeg_bytes).decode('ascii')
+
+                            # Cleanup result directory
+                            try:
+                                import shutil
+                                shutil.rmtree(os.path.dirname(screenshot_path), ignore_errors=True)
+                            except Exception:
+                                pass
+
+                            self._upload_screenshot(screenshot_b64)
+
+                except Exception as e:
+                    logging.warning(f"Live view capture error: {e}")
+
+                # Sleep in small increments so we can stop promptly
+                sleep_end = time.time() + interval
+                while self._live_view_active and time.time() < sleep_end and time.time() < self._live_view_stop_time:
+                    time.sleep(1)
+
+        except Exception as e:
+            logging.error(f"Live view loop crashed: {e}")
+        finally:
+            self._live_view_active = False
+            if self.firebase_client and self.firebase_client.is_connected():
+                try:
+                    self.firebase_client.set_machine_flag('liveView', {'active': False})
+                except Exception:
+                    pass
+            logging.info("Live view loop ended")
+
     def _check_update_status(self):
         """
         Check if a self-update was in progress when the service started.
         This helps diagnose whether updates are completing successfully.
+        Also detects stale markers from updates that never completed (crash, power loss, etc.)
         """
         try:
             update_marker_path = os.path.join(
@@ -2027,18 +3906,37 @@ WshShell.Run "{vbs_command}", 0, False
             logging.info(f"Target version: {target_version}")
             logging.info(f"Current version: {current_version}")
 
-            # Store result for Firebase logging after client starts
+            # ANTI-FRAGILE: Detect stale markers from updates that never completed
+            # (e.g., power loss during install, BSOD, installer hung and was killed)
+            from datetime import datetime
+            marker_age_minutes = float('inf')
+            try:
+                marker_time = datetime.strptime(started_at, '%Y-%m-%d %H:%M:%S')
+                marker_age_minutes = (datetime.now() - marker_time).total_seconds() / 60
+                logging.info(f"Update marker age: {marker_age_minutes:.1f} minutes")
+            except (ValueError, TypeError):
+                logging.warning(f"Could not parse marker timestamp: {started_at}")
+
+            command_id = marker.get('command_id')
+            deployment_id = marker.get('deployment_id')
+
+            # Store result for Firebase logging + command completion after client starts
             if current_version == target_version:
                 logging.info("[SUCCESS] Self-update completed successfully!")
                 self._pending_update_event = ('update_success', f'Updated from {old_version} to {current_version}', 'info')
+                self._pending_update_completion = ('completed', command_id, deployment_id, f'Updated to {current_version}')
             elif current_version == old_version:
                 logging.error(f"[FAILED] Self-update FAILED - still on version {old_version}")
                 logging.error("Check installer_update.log for details")
+                if marker_age_minutes > 30:
+                    logging.error(f"Marker is {marker_age_minutes:.0f}m old - update likely crashed or hung")
                 self._pending_update_event = ('update_failed', f'Failed to update from {old_version} to {target_version}', 'error')
+                self._pending_update_completion = ('failed', command_id, deployment_id, f'Still on {old_version}, target was {target_version}')
             else:
                 logging.warning(f"[PARTIAL?] Unexpected version {current_version} after update")
                 logging.warning(f"Expected {target_version}, was {old_version}")
                 self._pending_update_event = ('update_unknown', f'Unexpected version {current_version} after update from {old_version}', 'warning')
+                self._pending_update_completion = ('completed', command_id, deployment_id, f'Updated to {current_version} (expected {target_version})')
 
             logging.info("=" * 60)
 
@@ -2049,8 +3947,39 @@ WshShell.Run "{vbs_command}", 0, False
             except Exception as e:
                 logging.warning(f"Failed to remove update marker: {e}")
 
+            # ANTI-FRAGILE: Clean up any leftover recovery/update scheduled tasks
+            try:
+                # List and clean up any OwletteUpdate_* or OwletteRecovery_* tasks
+                result = subprocess.run(
+                    ['schtasks', '/Query', '/FO', 'LIST'],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    import re
+                    for task_match in re.finditer(r'(OwletteUpdate_\d+|OwletteRecovery_\d+)', result.stdout):
+                        stale_task = task_match.group(1)
+                        logging.info(f"Cleaning up leftover scheduled task: {stale_task}")
+                        subprocess.run(
+                            ['schtasks', '/Delete', '/TN', stale_task, '/F'],
+                            capture_output=True, text=True, timeout=10
+                        )
+            except Exception as task_err:
+                logging.debug(f"Task cleanup (non-fatal): {task_err}")
+
         except Exception as e:
             logging.warning(f"Error checking update status: {e}")
+            # ANTI-FRAGILE: If we can't even read the marker, clean it up to prevent
+            # blocking all future updates
+            try:
+                update_marker_path = os.path.join(
+                    os.environ.get('ProgramData', 'C:\\ProgramData'),
+                    'Owlette', 'logs', 'update_in_progress.json'
+                )
+                if os.path.exists(update_marker_path):
+                    os.remove(update_marker_path)
+                    logging.info("Cleaned up unreadable update marker")
+            except OSError as marker_err:
+                logging.warning(f"Could not remove update marker during cleanup: {marker_err}")
 
     # Main main
     def main(self):
@@ -2059,25 +3988,29 @@ WshShell.Run "{vbs_command}", 0, False
         self.startup_info = win32process.STARTUPINFO()
         self.startup_info.dwFlags = win32process.STARTF_USESHOWWINDOW
 
-        # Get token for logged-in user (with fallback for headless/no-user scenarios)
-        # NOTE: Since we now use schtasks for process launching, this is less critical
-        # If this fails, the service will still work but launch_python_script_as_user will be unavailable
-        try:
-            self.console_session_id = win32ts.WTSGetActiveConsoleSessionId()
-            self.console_user_token = win32ts.WTSQueryUserToken(self.console_session_id)
-            # Get self.environment for logged-in user
-            self.environment = win32profile.CreateEnvironmentBlock(self.console_user_token, False)
-            logging.info("Successfully obtained user token for console session")
-        except Exception as e:
-            # This is expected when:
-            # - No user is logged into the console (server/headless machine)
-            # - Service doesn't have sufficient privileges
-            # - Session ID is invalid
-            logging.warning(f"Could not obtain console user token (expected for headless machines): {e}")
-            logging.info("Service will continue without user token - processes will be launched via schtasks")
-            self.console_session_id = None
-            self.console_user_token = None
-            self.environment = None
+        # Enable critical privileges before first token acquisition.
+        # LocalSystem has these assigned but NSSM child process may inherit them disabled.
+        self._enable_privileges()
+
+        # Initial user token acquisition. This is refreshed before each process launch
+        # via _refresh_user_token() to handle session changes (logout/login, RDP, user switch).
+        self.console_session_id = None
+        self.console_user_token = None
+        self.environment = None
+        self._last_logged_session_id = None
+        self._refresh_user_token()
+
+        # Tray icon launch tracking — avoid thrashing (crash-relaunch loops)
+        self._tray_last_launch_time = 0
+        self._tray_launch_cooldown = 30  # seconds between launch attempts
+
+        # Cortex (local AI agent) launch tracking
+        self._cortex_last_launch_time = 0
+        self._cortex_launch_cooldown = 30
+
+        # Launch tray icon EARLY - before Firebase init which can take several seconds
+        # This gives the user immediate visual feedback that the service is starting
+        self._try_launch_tray()
 
         logging.info("Service initialization complete")
 
@@ -2093,29 +4026,31 @@ WshShell.Run "{vbs_command}", 0, False
                 # Register config update callback
                 self.firebase_client.register_config_update_callback(self.handle_config_update)
 
-                # CRITICAL: Upload local config to Firestore BEFORE starting the config listener
-                # This prevents a race condition where the listener processes an empty/old Firestore config
-                # before we upload the local config, which would wipe out the firebase auth section
-                local_config = shared_utils.read_config()
-                if local_config:
-                    # Create a copy without the firebase section (local auth config, not for Firestore)
-                    config_for_firestore = {k: v for k, v in local_config.items() if k != 'firebase'}
+                # Sync config: pull from Firestore (source of truth), or seed if new machine
+                sync_result = self.firebase_client.sync_config_on_startup()
+                logging.info(f"Config sync on startup: {sync_result}")
 
-                    # Pre-set the hash BEFORE uploading to prevent listener from processing this upload
-                    import hashlib
-                    import json
-                    config_hash = hashlib.md5(json.dumps(config_for_firestore, sort_keys=True).encode()).hexdigest()
-                    self.firebase_client._last_uploaded_config_hash = config_hash
-                    logging.info(f"Pre-set config hash to prevent listener loop: {config_hash[:8]}...")
+                # Wire state listener BEFORE start() so the CONNECTED event
+                # writes the status file immediately (tray polls every 1s)
+                def _on_connection_change(event):
+                    try:
+                        self._write_service_status()
+                    except Exception:
+                        pass
+                self.firebase_client.connection_manager.add_state_listener(_on_connection_change)
 
-                    # Now upload
-                    self.firebase_client.upload_config(config_for_firestore)
-                    logging.info("Local config uploaded to Firebase (firebase auth section excluded)")
+                # Wire health callback
+                self.firebase_client.connection_manager.set_health_callback(
+                    lambda code, msg: self._update_health_state('connection_failure', code, msg)
+                )
 
                 # NOW start Firebase background threads (including config listener)
                 # At this point, Firestore has our local config, and the hash is set
                 self.firebase_client.start()
                 logging.info("Firebase client started successfully")
+
+                # Cache site timezone for schedule evaluation
+                self._cached_site_timezone = self.firebase_client.site_timezone
 
                 # Log any pending update event (from self-update check)
                 if hasattr(self, '_pending_update_event') and self._pending_update_event:
@@ -2127,6 +4062,26 @@ WshShell.Run "{vbs_command}", 0, False
                         logging.warning(f"Failed to log update event to Firebase: {e}")
                     self._pending_update_event = None
 
+                # Report update command completion to Firestore (closes the loop for web dashboard)
+                if hasattr(self, '_pending_update_completion') and self._pending_update_completion:
+                    status, cmd_id, deployment_id, result_msg = self._pending_update_completion
+                    if cmd_id:
+                        try:
+                            if status == 'completed':
+                                self.firebase_client._mark_command_completed(cmd_id, result_msg, deployment_id, 'update_owlette')
+                                if deployment_id:
+                                    self.firebase_client.log_event('deployment_completed', 'info', 'Owlette Update',
+                                                                   f"Deployment {deployment_id}: {result_msg}")
+                            else:
+                                self.firebase_client._mark_command_failed(cmd_id, result_msg, deployment_id, 'update_owlette')
+                                if deployment_id:
+                                    self.firebase_client.log_event('deployment_failed', 'error', 'Owlette Update',
+                                                                   f"Deployment {deployment_id} failed: {result_msg}")
+                            logging.info(f"Update command {cmd_id} marked as {status} in Firestore")
+                        except Exception as e:
+                            logging.warning(f"Failed to report update completion to Firestore: {e}")
+                    self._pending_update_completion = None
+
                 # Register atexit handler to ensure machine is marked offline even if killed abruptly
                 def emergency_offline_handler():
                     """Emergency handler to mark machine offline if service is killed without proper shutdown"""
@@ -2134,12 +4089,12 @@ WshShell.Run "{vbs_command}", 0, False
                         if self.firebase_client and self.firebase_client.connected:
                             logging.warning("EMERGENCY CLEANUP: Marking machine offline")
                             self.firebase_client._update_presence(False)
-                            logging.info("Emergency offline update sent")
-                    except:
-                        pass  # Fail silently - we're shutting down anyway
+                            logging.debug("Emergency offline update sent")
+                    except Exception as e:
+                        logging.debug(f"Emergency offline handler error (shutting down): {e}")
 
                 atexit.register(emergency_offline_handler)
-                logging.info("Emergency offline handler registered")
+                logging.debug("Emergency offline handler registered")
 
                 # Add Firebase log shipping if enabled
                 shared_utils.add_firebase_log_handler(self.firebase_client)
@@ -2148,8 +4103,18 @@ WshShell.Run "{vbs_command}", 0, False
                 logging.error(f"Error starting Firebase client: {e}")
 
         # Recover processes from previous session (if any are still running)
-        logging.info("Checking for processes from previous session...")
+        logging.debug("Checking for processes from previous session...")
         self.recover_running_processes()
+
+        # Clear stale reboot/shutdown flags from previous session (e.g., after a completed reboot)
+        if self.firebase_client and self.firebase_client.is_connected():
+            try:
+                self.firebase_client.set_machine_flag('rebooting', False)
+                self.firebase_client.set_machine_flag('shuttingDown', False)
+                self.firebase_client.clear_reboot_pending()
+                logging.info("Cleared stale reboot/shutdown flags on startup")
+            except Exception as e:
+                logging.warning(f"Failed to clear stale flags on startup: {e}")
 
         # The heart of Owlette
         cleanup_counter = 0  # Counter for periodic cleanup
@@ -2170,32 +4135,33 @@ WshShell.Run "{vbs_command}", 0, False
                     logging.info("Shutdown flag detected - initiating graceful shutdown")
                     try:
                         os.remove(shutdown_flag)
-                    except:
-                        pass
+                    except Exception as e:
+                        logging.debug(f"Could not remove shutdown flag: {e}")
                     self.is_alive = False
                     break
 
-                # Check for restart flag from tray icon
+                # Check for restart flag from tray icon.
+                # Exit with code 42 so NSSM auto-restarts us (AppExit Default Restart).
+                # Code 42 is arbitrary non-zero — NSSM restarts on any non-zero exit.
                 restart_flag = shared_utils.get_data_path('tmp/restart.flag')
                 if os.path.exists(restart_flag):
-                    logging.info("Restart flag detected - logging agent_stopped before restart")
+                    logging.info("Restart flag detected — exiting for NSSM restart")
                     try:
                         os.remove(restart_flag)
-                    except:
-                        pass
+                    except Exception as e:
+                        logging.debug(f"Could not remove restart flag: {e}")
+                    self._restart_exit_code = 42
+                    self.is_alive = False
+                    break
 
-                    # Note: agent_stopped is logged by signal handler in owlette_runner.py
-                    # (most reliable - always executes even if service is killed quickly)
-                    # No need to log here to avoid duplicate events
-                    if self.firebase_client:
-                        logging.info("Restart requested - agent_stopped will be logged by signal handler")
-                    else:
-                        logging.warning("No Firebase client - cannot log agent_stopped")
+                # Ensure tray icon is running (with cooldown to avoid crash-relaunch thrashing)
+                self._try_launch_tray()
 
-                # Start the tray icon script as a process (if it isn't running)
-                tray_script = 'owlette_tray.py'
-                if not shared_utils.is_script_running(tray_script):
-                    self.launch_python_script_as_user(tray_script)
+                # Ensure Cortex is running (if enabled)
+                self._try_launch_cortex()
+
+                # Process Cortex IPC commands (Tier 2 tool calls)
+                self._process_cortex_ipc_commands()
 
                 # Get the current time
                 self.current_time = datetime.datetime.now()
@@ -2214,8 +4180,54 @@ WshShell.Run "{vbs_command}", 0, False
                 # Load in all processes in config json
                 processes = shared_utils.read_config(['processes'])
                 for process in processes:
-                    if process.get('autolaunch', False): # Default to False if not found
+                    mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+                    if mode == 'always':
                         self.handle_process(process)
+                    elif mode == 'scheduled':
+                        process_id = process.get('id')
+                        schedules = process.get('schedules')
+                        in_window = shared_utils.is_within_schedule(schedules, self._cached_site_timezone)
+                        has_override = process_id in self.manual_overrides
+
+                        if in_window:
+                            # Clear manual override when schedule window opens
+                            if has_override:
+                                del self.manual_overrides[process_id]
+                            self.handle_process(process)
+                        else:
+                            # Outside schedule window
+                            if has_override:
+                                # Manual override active — keep processing (don't kill)
+                                self.handle_process(process)
+                            else:
+                                # Check if process is running and should be stopped
+                                last_info = self.last_started.get(process_id, {})
+                                last_pid = last_info.get('pid')
+                                if last_pid and not last_info.get('failed'):
+                                    try:
+                                        p = psutil.Process(last_pid)
+                                        if p.is_running():
+                                            p.terminate()
+                                            logging.info(f"Stopped '{process.get('name')}' (PID {last_pid}) - outside schedule window")
+                                            if self.firebase_client and self.firebase_client.is_connected():
+                                                self.firebase_client.log_event(
+                                                    action='process_killed',
+                                                    level='info',
+                                                    process_name=process.get('name'),
+                                                    details=f'Stopped by schedule (outside active window) - PID {last_pid}'
+                                                )
+                                            # Clear tracking so we don't keep trying to stop
+                                            if process_id in self.last_started:
+                                                del self.last_started[process_id]
+                                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                        pass
+                    # mode == 'off': skip entirely
+
+                # Scheduled reboot check (every ~60 seconds to avoid hammering Firestore)
+                self._reboot_schedule_counter += 1
+                if self._reboot_schedule_counter >= 6:
+                    self._reboot_schedule_counter = 0
+                    self._check_scheduled_reboot()
 
                 if self.first_start:
                     logging.info('Owlette initialized')
@@ -2230,16 +4242,16 @@ WshShell.Run "{vbs_command}", 0, False
                                 process_name=None,
                                 details=f'Owlette agent v{version} started successfully'
                             )
-                            logging.info("Logged agent_started event to Firestore")
+                            logging.debug("Logged agent_started event to Firestore")
                         except Exception as log_err:
                             logging.error(f"Failed to log agent_started event: {log_err}")
 
                 self.first_start = False
 
-                # Periodic check for Firebase state changes (every 6 iterations = 1 minute)
+                # Periodic check for Firebase state changes (every 2 iterations = 10 seconds)
                 # This detects when Firebase is re-enabled via GUI or config file changes
                 firebase_check_counter += 1
-                if firebase_check_counter >= 6:
+                if firebase_check_counter >= 2:
                     try:
                         current_firebase_enabled = shared_utils.read_config(['firebase', 'enabled'])
                         current_site_id = shared_utils.read_config(['firebase', 'site_id'])
@@ -2256,11 +4268,11 @@ WshShell.Run "{vbs_command}", 0, False
 
                         # Case 1: Firebase was disabled and is now enabled
                         if not was_enabled and is_enabled:
-                            logging.info("=" * 60)
+                            logging.debug("=" * 60)
                             logging.info("FIREBASE RE-ENABLED DETECTED (via local config change)")
-                            logging.info(f"Site ID: {new_site_id}")
-                            logging.info("Reinitializing Firebase client...")
-                            logging.info("=" * 60)
+                            logging.debug(f"Site ID: {new_site_id}")
+                            logging.debug("Reinitializing Firebase client...")
+                            logging.debug("=" * 60)
 
                             success = self._initialize_or_restart_firebase_client()
                             if success:
@@ -2271,10 +4283,10 @@ WshShell.Run "{vbs_command}", 0, False
 
                         # Case 2: Site ID changed while Firebase was enabled
                         elif was_enabled and is_enabled and old_site_id != new_site_id:
-                            logging.info("=" * 60)
+                            logging.debug("=" * 60)
                             logging.info(f"SITE ID CHANGE DETECTED: {old_site_id} -> {new_site_id}")
-                            logging.info("Reinitializing Firebase client for new site...")
-                            logging.info("=" * 60)
+                            logging.debug("Reinitializing Firebase client for new site...")
+                            logging.debug("=" * 60)
 
                             success = self._initialize_or_restart_firebase_client()
                             if success:
@@ -2302,18 +4314,18 @@ WshShell.Run "{vbs_command}", 0, False
 
                 # Periodic cleanup of stale tracking data (every 30 iterations = 5 minutes)
                 cleanup_counter += 1
-                if cleanup_counter >= 30:
+                if cleanup_counter >= 60:
                     self.cleanup_stale_tracking_data()
                     cleanup_counter = 0
 
                 # Periodic cleanup of old log files (every 8640 iterations = 24 hours)
                 log_cleanup_counter += 1
-                if log_cleanup_counter >= 8640:
+                if log_cleanup_counter >= 17280:
                     try:
                         max_age_days = shared_utils.read_config(['logging', 'max_age_days']) or 90
                         deleted_count = shared_utils.cleanup_old_logs(max_age_days)
                         if deleted_count > 0:
-                            logging.info(f"Daily log cleanup: {deleted_count} old log file(s) removed")
+                            logging.debug(f"Daily log cleanup: {deleted_count} old log file(s) removed")
                     except Exception as e:
                         logging.error(f"Log cleanup failed: {e}")
                     log_cleanup_counter = 0

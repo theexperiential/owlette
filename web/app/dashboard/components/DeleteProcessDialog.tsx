@@ -25,10 +25,10 @@ export function DeleteProcessDialog({
 }: DeleteProcessDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white">
+      <DialogContent className="border-border bg-card text-foreground">
         <DialogHeader>
-          <DialogTitle className="text-white">Delete Process</DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogTitle className="text-foreground">Delete Process</DialogTitle>
+          <DialogDescription className="text-muted-foreground">
             Are you sure you want to permanently delete &quot;{processName}&quot;? This action cannot be undone.
           </DialogDescription>
         </DialogHeader>
@@ -36,7 +36,7 @@ export function DeleteProcessDialog({
           <Button
             variant="outline"
             onClick={onClose}
-            className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            className="border-border bg-card text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
           >
             Cancel
           </Button>

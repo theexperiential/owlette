@@ -93,7 +93,8 @@ service cloud.firestore {
         isSiteOwner(siteId) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites))
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites is list &&
+           siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites)))
       );
     }
 
@@ -127,12 +128,13 @@ service cloud.firestore {
                        isServiceAccount() ||
                        agentCanAccessMachine(siteId, machineId);
 
-        // Allow web dashboard to update configChangeFlag (for push-based config updates)
-        // Also permit timestamp fields that Firebase may add automatically
-        // Block modifications to agent-managed fields (metrics, processes, online, lastHeartbeat)
+        // Allow web dashboard to update configChangeFlag and mirror launch_mode/schedules
+        // to metrics.processes for real-time UI responsiveness.
+        // configChangeFlag must always be included to distinguish from fake metrics writes.
+        // Agent-only fields (online, lastHeartbeat) remain protected.
         allow update: if canAccessSite(siteId) &&
                          request.resource.data.diff(resource.data).affectedKeys().hasAny(['configChangeFlag']) &&
-                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['metrics', 'processes', 'online', 'lastHeartbeat']);
+                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['online', 'lastHeartbeat']);
 
         // Allow agents full write access for metrics, heartbeats, processes
         allow write: if isServiceAccount() ||
@@ -152,6 +154,14 @@ service cloud.firestore {
                           isServiceAccount() ||
                           agentCanAccessMachine(siteId, machineId);
           allow delete: if canAccessSite(siteId); // Authenticated users can delete commands
+        }
+
+        // Screenshot History Subcollection
+        // Server-side API writes history entries (admin SDK bypasses rules)
+        // Web dashboard reads to display screenshot history gallery
+        match /screenshots/{screenshotId} {
+          allow read: if canAccessSite(siteId) ||
+                         isServiceAccount();
         }
 
         // Installed Software Inventory Subcollection
@@ -249,6 +259,18 @@ service cloud.firestore {
       }
 
       // ----------------------------------------
+      // Webhooks Subcollection
+      // ----------------------------------------
+
+      match /webhooks/{webhookId} {
+        // Webhook notification endpoints
+        // READ: Users with site access can see webhooks
+        // WRITE: Only admins can create/update/delete webhooks
+        allow read: if isAuthenticated() && (isAdmin() || canAccessSite(siteId));
+        allow write: if isAuthenticated() && isAdmin();
+      }
+
+      // ----------------------------------------
       // Logs Subcollection
       // ----------------------------------------
 
@@ -284,6 +306,14 @@ service cloud.firestore {
                       isServiceAccount() ||
                       agentCanAccessMachine(siteId, machineId);
       allow delete: if canAccessSite(siteId); // Authenticated users can delete machine config
+    }
+
+    match /config/{siteId}/schedule_presets/{presetId} {
+      // Schedule presets for process scheduling
+      // Users with site access can read and manage presets
+      allow read: if canAccessSite(siteId);
+      allow write: if canAccessSite(siteId);
+      allow delete: if canAccessSite(siteId);
     }
 
     // ============================================
@@ -343,6 +373,56 @@ service cloud.firestore {
     }
 
     // ============================================
+    // User Settings Subcollection
+    // ============================================
+
+    match /users/{userId}/settings/{settingId} {
+      // User-level settings (e.g., LLM API keys)
+      // Users can only read/write their own settings
+      // Admin SDK handles encryption server-side
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // ============================================
+    // Site Settings Subcollection
+    // ============================================
+
+    match /sites/{siteId}/settings/{settingId} {
+      // Site-level settings (e.g., shared LLM API keys)
+      // Only admins can manage site-level settings
+      // Regular users can read (to check if site key exists)
+      allow read: if canAccessSite(siteId);
+      allow write: if isAdmin();
+    }
+
+    // ============================================
+    // Chat Conversations Collection
+    // ============================================
+
+    match /chats/{chatId} {
+      // AI chat conversations
+      // Users can read their own chats OR autonomous chats for sites they have access to
+      allow read: if isAuthenticated() &&
+                     (resource.data.userId == request.auth.uid ||
+                      (resource.data.source == 'autonomous' &&
+                       canAccessSite(resource.data.siteId)));
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() &&
+                               resource.data.userId == request.auth.uid;
+
+      match /messages/{messageId} {
+        // Chat messages within a conversation
+        // Access controlled by parent chat ownership OR autonomous chat site access
+        allow read: if isAuthenticated() &&
+                       (get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid ||
+                        (get(/databases/$(database)/documents/chats/$(chatId)).data.source == 'autonomous' &&
+                         canAccessSite(get(/databases/$(database)/documents/chats/$(chatId)).data.siteId)));
+        allow write: if isAuthenticated() &&
+                        get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid;
+      }
+    }
+
+    // ============================================
     // OAuth Token Collections (Server-Side Only)
     // ============================================
 
@@ -357,6 +437,13 @@ service cloud.firestore {
       // Refresh tokens for agent authentication
       // SECURITY: Only accessible via server-side Admin SDK
       // Tokens are stored hashed for additional security
+      allow read, write: if false;
+    }
+
+    match /device_codes/{phrase} {
+      // Device code pairing phrases for QR/device-code auth flow
+      // SECURITY: Only accessible via server-side Admin SDK
+      // Contains temporary tokens during pairing handshake
       allow read, write: if false;
     }
 

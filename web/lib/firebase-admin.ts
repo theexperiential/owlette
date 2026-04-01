@@ -46,6 +46,7 @@ if (!admin.apps.length) {
           clientEmail,
           privateKey,
         }),
+        storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || `${projectId}.firebasestorage.app`,
       });
 
       console.log('Firebase Admin SDK initialized successfully');

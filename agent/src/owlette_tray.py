@@ -1,13 +1,24 @@
+import os
+import sys
+
+# Ensure our source directory is on the path (so we work without PYTHONPATH or batch wrapper)
+_src_dir = os.path.dirname(os.path.abspath(__file__))
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
 import shared_utils
+
+# Set app identity so Windows notifications show "owlette" instead of "Python"
+import ctypes
+ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('tec.owlette.tray')
+
 import pystray
 from pystray import MenuItem as item
 from PIL import Image
 import subprocess
 import logging
-import os
 import psutil
 import ctypes
-import sys
 import winreg
 import win32gui
 import win32con
@@ -18,10 +29,50 @@ import win32serviceutil
 import win32service
 
 pid = None
-start_on_login = True
+start_on_login = True  # updated from registry in _run_tray() before first menu build
 current_status = {'service': 'unknown', 'firebase': 'unknown'}
 last_status = {'service': 'unknown', 'firebase': 'unknown'}
 status_lock = threading.Lock()
+
+# Icon flashing state
+_flash_active = False
+_flash_stop = threading.Event()
+
+# Notification debounce — only notify if degraded state persists
+_degraded_since = None   # timestamp when status first went non-normal
+_degraded_notified = False  # True once we've sent a notification for this degraded period
+_NOTIFY_DELAY = 5        # seconds a degraded state must persist before notifying
+
+def _start_flash(icon, status_code):
+    """Start flashing the tray icon between normal and error/warning."""
+    global _flash_active
+    if _flash_active:
+        return
+    _flash_active = True
+    _flash_stop.clear()
+
+    def flash_loop():
+        global _flash_active
+        normal_icon = load_icon('normal')
+        alert_icon = load_icon(status_code)
+        show_alert = True
+        while not _flash_stop.is_set():
+            try:
+                icon.icon = alert_icon if show_alert else normal_icon
+            except Exception:
+                break
+            show_alert = not show_alert
+            _flash_stop.wait(0.8)
+        _flash_active = False
+
+    t = threading.Thread(target=flash_loop, daemon=True)
+    t.start()
+
+def _stop_flash():
+    """Stop flashing the tray icon."""
+    global _flash_active
+    _flash_stop.set()
+    _flash_active = False
 
 # Function to detect Windows theme (light or dark)
 def is_windows_dark_theme():
@@ -96,6 +147,9 @@ def check_service_running():
         return False
 
 # Function to read service status from IPC file
+_last_good_status = None  # Cache last successful read to ride through atomic-rename races
+_last_good_status_time = 0  # Timestamp of last successful read
+
 def read_service_status():
     """
     Read service status from status file written by service.
@@ -103,8 +157,12 @@ def read_service_status():
     The service writes C:\\ProgramData\\Owlette\\tmp\\service_status.json
     every 10 seconds with current Firebase connection state.
 
-    Returns dict or None if file doesn't exist/can't be read.
+    Returns dict or None if file doesn't exist and has never been read.
+    On transient read failures (PermissionError, JSONDecodeError during
+    atomic rename), returns the last successfully read status to avoid
+    false-positive "Starting" flickers in determine_status().
     """
+    global _last_good_status, _last_good_status_time
     try:
         status_path = shared_utils.get_data_path('tmp/service_status.json')
 
@@ -122,13 +180,19 @@ def read_service_status():
         # Parse JSON
         with open(status_path, 'r') as f:
             status_data = json.load(f)
+            _last_good_status = status_data
+            _last_good_status_time = time.time()
             return status_data
 
     except NameError as e:
         logging.error(f"[STATUS] NameError (json module not imported?): {e}")
         return None
-    except json.JSONDecodeError as e:
-        logging.error(f"[STATUS] JSON decode error: {e}")
+    except (json.JSONDecodeError, PermissionError, OSError) as e:
+        # Transient failures during atomic rename — return cached status if fresh enough
+        if _last_good_status is not None and (time.time() - _last_good_status_time) < 60:
+            logging.debug(f"[STATUS] Transient read error, using cached status: {e}")
+            return _last_good_status
+        logging.error(f"[STATUS] Failed to read service status (no cache or cache too old): {e}")
         return None
     except Exception as e:
         logging.error(f"[STATUS] Failed to read service status: {e}", exc_info=True)
@@ -155,6 +219,13 @@ def determine_status():
         else:
             # Service running but no status file - likely starting up
             return 'warning', 'Service: Running', 'Starting'
+
+    # --- Health probe errors take priority (config/auth issues) ---
+    health = status_data.get('health', {})
+    health_status = health.get('status')
+    if health_status and health_status not in ('ok', 'unknown'):
+        error_code = health.get('error_code', health_status)
+        return 'error', 'Service: Error', error_code
 
     # Service reports its own status
     service_running = status_data.get('service', {}).get('running', False)
@@ -200,56 +271,52 @@ def is_process_running(pid):
 # Function to open configuration
 def open_config_gui(icon, item):
     global pid
-    if not is_process_running(pid):
+    gui_title = shared_utils.WINDOW_TITLES.get("owlette_gui")
+    # First, try to find and focus an existing GUI window
+    try:
+        hwnd = win32gui.FindWindow(None, gui_title)
+        logging.info(f"[TRAY] open_config_gui: FindWindow('{gui_title}') = {hwnd}, pid={pid}, running={is_process_running(pid)}")
+        if hwnd:
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(hwnd)
+            return
+    except Exception as e:
+        logging.error(f"Failed to bring Owlette GUI to the front: {e}")
+
+    # No visible window — kill any zombie process and spawn fresh
+    if is_process_running(pid):
+        logging.info(f"[TRAY] Killing zombie GUI process {pid}")
         try:
-            process = subprocess.Popen(
-                ["pythonw", shared_utils.get_path('owlette_gui.py')],
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            pid = process.pid
-        except Exception as e:
-            logging.error(f"Failed to open Owlette Configuration: {e}")
-    else:
-        try:
-            # Assuming the window title contains "Owlette"
-            hwnd = win32gui.FindWindow(None, shared_utils.WINDOW_TITLES.get("owlette_gui"))
-            if hwnd:
-                # Restore window if minimized.
-                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                # Bring window to front.
-                win32gui.SetForegroundWindow(hwnd)
-        except Exception as e:
-            logging.error(f"Failed to bring Owlette Configuration to the front: {e}")
+            psutil.Process(pid).kill()
+        except Exception:
+            pass
+    try:
+        process = subprocess.Popen(
+            ["pythonw", shared_utils.get_path('owlette_gui.py')],
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        pid = process.pid
+        logging.info(f"[TRAY] Spawned GUI process {pid}")
+    except Exception as e:
+        logging.error(f"Failed to open Owlette GUI: {e}")
 
 # Function to restart the service (using UAC elevation)
 def restart_service(icon, item):
     """
     Restart the Owlette service and tray icon.
+
+    No UAC prompt needed — the tray writes a restart flag, the service detects
+    it and exits with code 42, NSSM automatically restarts the service (AppExit
+    Default Restart), and the service relaunches the tray on startup.
     """
     try:
         logging.info("Starting service restart procedure...")
 
-        # CRITICAL: Write restart flag for service to detect
-        # Service will log agent_stopped when it sees this flag
-        try:
-            restart_flag = shared_utils.get_data_path('tmp/restart.flag')
-            os.makedirs(os.path.dirname(restart_flag), exist_ok=True)
-            with open(restart_flag, 'w') as f:
-                f.write('restart_requested')
-            logging.info("Restart flag written - waiting for service to log agent_stopped...")
-
-            # Wait 2 seconds for service to detect flag and log agent_stopped
-            time.sleep(2)
-            logging.info("Proceeding with restart commands...")
-        except Exception as flag_error:
-            logging.error(f"Failed to write restart flag: {flag_error}")
-            # Continue with restart anyway
-
         # Show notification immediately for user feedback
         try:
             icon.notify(
-                title="🔄 Restarting Owlette",
-                message="Restarting service - will return momentarily"
+                title="owlette — restarting",
+                message="restarting service — will return momentarily"
             )
         except:
             pass
@@ -264,62 +331,24 @@ def restart_service(icon, item):
             except Exception as e:
                 logging.debug(f"Could not close window '{window_title}': {e}")
 
-        # Build the restart command (runs with admin privileges via UAC)
-        # This batch script will:
-        # 1. Stop the service
-        # 2. Wait 3 seconds
-        # 3. Start the service
-        # 4. Wait 2 seconds
-        # 5. Restart the tray icon
-        tray_path = shared_utils.get_path('owlette_tray.py')
+        # Write restart flag — service picks this up and exits with code 42,
+        # which triggers NSSM's automatic restart (AppExit Default Restart).
+        restart_flag = shared_utils.get_data_path('tmp/restart.flag')
+        os.makedirs(os.path.dirname(restart_flag), exist_ok=True)
+        with open(restart_flag, 'w') as f:
+            f.write('restart_requested')
+        logging.info("Restart flag written — service will restart via NSSM")
 
-        # Get pythonw.exe path from installation directory
-        # Assumes structure: C:\Owlette\python\pythonw.exe
-        python_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        pythonw_path = os.path.join(python_dir, 'python', 'pythonw.exe')
-
-        restart_cmd = (
-            f'net stop OwletteService && '
-            f'timeout /t 3 /nobreak >nul && '
-            f'net start OwletteService && '
-            f'timeout /t 2 /nobreak >nul && '
-            f'start "" "{pythonw_path}" "{tray_path}" --restarted'
-        )
-
-        logging.info(f"Launching elevated restart command: {restart_cmd}")
-
-        # Use ShellExecuteW with "runas" to trigger UAC prompt
-        # SW_HIDE (0) hides the command window
-        result = ctypes.windll.shell32.ShellExecuteW(
-            None,           # parent window
-            "runas",        # operation (triggers UAC)
-            "cmd.exe",      # executable
-            f'/c {restart_cmd}',  # parameters
-            None,           # working directory
-            0               # show command (0 = hidden)
-        )
-
-        # Result > 32 means success, <= 32 means error
-        if result > 32:
-            logging.info("Elevated restart command launched successfully")
-        else:
-            logging.error(f"Failed to launch elevated command, result code: {result}")
-            icon.notify(
-                title="⚠️ Restart Cancelled",
-                message="UAC was cancelled or failed. Service not restarted."
-            )
-            return
-
-        # Stop the icon immediately (the elevated command will restart it)
+        # Stop the tray icon — service will relaunch it after restart
         time.sleep(0.5)
         icon.stop()
-        logging.info("Tray icon stopped, elevated restart command running")
+        logging.info("Tray icon stopped, waiting for service restart")
 
     except Exception as e:
         logging.error(f"Failed to initiate service restart: {e}")
         try:
             icon.notify(
-                title="⚠️ Restart Failed",
+                title="restart failed",
                 message=f"Error: {str(e)}"
             )
         except:
@@ -364,10 +393,10 @@ def on_select(icon, item):
 
         if not is_admin:
             # Re-run the command with admin rights
-            ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/k sc config OwletteService start= {start_type}", None, 0)
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c sc config OwletteService start= {start_type}", None, 0)
         else:
             subprocess.run(
-                'sc config OwletteService start= disabled',
+                f'sc config OwletteService start= {start_type}',
                 shell=True,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
@@ -403,7 +432,7 @@ def monitor_status(icon):
     global current_status, last_status
 
     # Wait for icon to become visible (icon.run() is called after thread starts)
-    logging.info("[MONITOR] Waiting for icon to become visible...")
+    logging.debug("[MONITOR] Waiting for icon to become visible...")
     for i in range(100):  # Wait up to 10 seconds
         if icon.visible:
             break
@@ -413,72 +442,122 @@ def monitor_status(icon):
         logging.error("[MONITOR] Icon never became visible after 10s, exiting monitor thread")
         return
 
-    logging.info("[MONITOR] Icon is visible, starting status monitoring loop")
+    logging.debug("[MONITOR] Icon is visible, starting status monitoring loop")
 
-    # Grace period to avoid false alarms during restarts (seconds)
-    grace_period = 5
-    last_check_time = 0
+    # Grace period after startup to avoid false-alarm notifications (seconds)
+    started_at = time.time()
+    grace_period = 10
 
     while icon.visible:
         try:
-            current_time = time.time()
+            status_code, service_msg, firebase_msg = determine_status()
 
-            # Check status every 15 seconds (more responsive than 60s)
-            if current_time - last_check_time >= 15:
-                status_code, service_msg, firebase_msg = determine_status()
+            with status_lock:
+                current_status = {
+                    'code': status_code,
+                    'service': service_msg,
+                    'firebase': firebase_msg
+                }
 
-                with status_lock:
-                    current_status = {
-                        'code': status_code,
-                        'service': service_msg,
-                        'firebase': firebase_msg
-                    }
+            # Update tooltip and menu OUTSIDE the lock (generate_menu also uses lock)
+            hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
+            tooltip = f"owlette v{shared_utils.APP_VERSION}\nhostname: {hostname}\n{service_msg.lower()}\nstatus: {firebase_msg.lower()}"
+            icon.title = tooltip
+            icon.menu = generate_menu()  # Update menu object
+            icon.update_menu()  # Signal OS to refresh the menu display
 
-                # Update tooltip and menu OUTSIDE the lock (generate_menu also uses lock)
-                hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
-                tooltip = f"Owlette v{shared_utils.APP_VERSION}\nHostname: {hostname}\n{service_msg}\nStatus: {firebase_msg}"
-                icon.title = tooltip
-                icon.menu = generate_menu()  # Update menu object
-                icon.update_menu()  # Signal OS to refresh the menu display
+            with status_lock:
+                # Track how long we've been in a degraded state (debounce)
+                global _degraded_since, _degraded_notified
+                if status_code != 'normal':
+                    if _degraded_since is None:
+                        _degraded_since = time.time()
+                        _degraded_notified = False
+                else:
+                    # Recovered — send recovery notification if we previously notified about degradation
+                    if _degraded_notified and last_status.get('code') != 'unknown' and time.time() - started_at > grace_period:
+                        send_status_notification(icon, status_code, service_msg, firebase_msg)
+                    _degraded_since = None
+                    _degraded_notified = False
 
-                with status_lock:
-                    # Check if icon color should change
-                    if last_status.get('code') != status_code:
-                        # Update icon
-                        icon.icon = load_icon(status_code)
-                        logging.info(f"[TRAY] Icon updated: {last_status.get('code')} -> {status_code} ({firebase_msg})")
-
-                        # Send notification on state change (but not on first check)
-                        if last_status.get('code') != 'unknown' and current_time - last_check_time > grace_period:
-                            send_status_notification(icon, status_code, service_msg, firebase_msg)
+                # Check if icon color should change
+                if last_status.get('code') != status_code:
+                    # Error: flash blood red. Warning: dim solid. Normal: solid coral.
+                    if status_code == 'error':
+                        _stop_flash()
+                        time.sleep(0.1)
+                        _start_flash(icon, 'error')
                     else:
-                        # Log status even if unchanged (for debugging)
-                        logging.debug(f"[TRAY] Status check: {status_code} ({firebase_msg})")
+                        _stop_flash()
+                        time.sleep(0.1)
+                        if status_code == 'warning':
+                            icon.icon = load_icon('disconnected')
+                        else:
+                            icon.icon = load_icon('normal')
+                    logging.info(f"[TRAY] Icon updated: {last_status.get('code')} -> {status_code} ({firebase_msg})")
 
-                    # Always update last status
-                    last_status = current_status.copy()
+                # Send degraded notification only after debounce threshold (once per degraded period)
+                # This prevents spam from brief 1-second blips during status file rewrites
+                if (status_code != 'normal'
+                        and not _degraded_notified
+                        and _degraded_since is not None
+                        and time.time() - _degraded_since >= _NOTIFY_DELAY
+                        and last_status.get('code') != 'unknown'
+                        and time.time() - started_at > grace_period):
+                    _degraded_notified = True
+                    send_status_notification(icon, status_code, service_msg, firebase_msg)
 
-                last_check_time = current_time
+                # Always update last status
+                last_status = current_status.copy()
 
-            # Sleep for 5 seconds before checking again
-            time.sleep(5)
+            time.sleep(1)
 
         except Exception as e:
             logging.error(f"Status monitoring error: {e}")
             time.sleep(60)
 
+_HEALTH_ERROR_MESSAGES = {
+    'config_error': (
+        "owlette — config error",
+        "config file missing or corrupted. please reinstall owlette."
+    ),
+    'auth_error': (
+        "owlette — not registered",
+        "no authentication token found. please run the installer again."
+    ),
+    'network_error': (
+        "owlette — network unreachable",
+        "network was not reachable at startup. check internet connection."
+    ),
+    'connection_failure': (
+        "owlette — connection failed",
+        "persistent connection failures. check service logs."
+    ),
+    'fatal_error': (
+        "owlette — fatal error",
+        "a fatal connection error occurred. check service logs."
+    ),
+}
+
+
 def send_status_notification(icon, status_code, service_msg, firebase_msg):
     """Send Windows notification when status changes."""
     try:
         if status_code == 'error':
-            icon.notify(
-                title="⚠️ Owlette Service Stopped",
-                message=f"{service_msg}\nThe service may have crashed or failed to start.\nClick 'Restart' to fix."
-            )
+            # Check if firebase_msg is a health error code
+            health_notification = _HEALTH_ERROR_MESSAGES.get(firebase_msg)
+            if health_notification:
+                title, message = health_notification
+                icon.notify(title=title, message=message)
+            else:
+                icon.notify(
+                    title="owlette — service stopped",
+                    message="the service may have crashed or failed to start.\nclick 'restart' to fix."
+                )
         elif status_code == 'warning':
             icon.notify(
-                title="⚠️ Firebase Connection Issue",
-                message=f"{firebase_msg}\nLocal monitoring still works, but cloud sync is unavailable."
+                title="owlette — reconnecting",
+                message="cloud sync temporarily unavailable. local monitoring still active."
             )
         # Don't notify on normal status (too noisy)
     except Exception as e:
@@ -510,7 +589,7 @@ def leave_site(icon, item):
     result = ctypes.windll.user32.MessageBoxW(
         0,
         message,
-        "Leave Site?",
+        "owlette — leave site?",
         MB_YESNO | MB_ICONWARNING
     )
 
@@ -518,8 +597,8 @@ def leave_site(icon, item):
         try:
             # Show notification immediately
             icon.notify(
-                title="🔄 Leaving Site...",
-                message="Stopping service and marking machine offline..."
+                title="owlette — leaving site",
+                message="stopping service and marking machine offline..."
             )
 
             # CRITICAL: Restart service FIRST while Firebase is still enabled
@@ -550,15 +629,15 @@ def leave_site(icon, item):
 
                 logging.info("Service restarted successfully after leaving site")
                 icon.notify(
-                    title="✓ Service Restarted",
-                    message="The Owlette service has been restarted successfully."
+                    title="owlette — service restarted",
+                    message="service is running normally."
                 )
             except Exception as restart_error:
                 logging.error(f"Error restarting service: {restart_error}")
                 ctypes.windll.user32.MessageBoxW(
                     0,
                     f"Failed to restart service:\n{str(restart_error)}\n\nPlease restart manually.",
-                    "Restart Failed",
+                    "restart failed",
                     0x10  # MB_ICONERROR
                 )
 
@@ -580,87 +659,224 @@ def generate_menu():
         service_status = current_status.get('service', 'Checking...')
         firebase_status = current_status.get('firebase', 'Checking...')
 
-    return pystray.Menu(
-        item(f'Owlette v{shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),
-        item(f'Hostname: {hostname}', lambda icon, item: None, enabled=False),
-        item(f'{service_status}', lambda icon, item: None, enabled=False),
-        item(f'Status: {firebase_status}', lambda icon, item: None, enabled=False),
+    # Check for health error message to surface in menu
+    health_error_item = None
+    try:
+        status_data = read_service_status()
+        if status_data:
+            health = status_data.get('health', {})
+            health_status = health.get('status')
+            if health_status and health_status not in ('ok', 'unknown'):
+                error_msg = health.get('error_message') or health.get('error_code', 'Unknown error')
+                # Truncate if too long for a menu item
+                if len(error_msg) > 60:
+                    error_msg = error_msg[:57] + '...'
+                health_error_item = item(f'  {error_msg}', lambda icon, i: None, enabled=False)
+    except Exception:
+        pass
+
+    menu_items = [
+        item(f'owlette v{shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),
+        item(f'hostname: {hostname}', lambda icon, item: None, enabled=False),
+        item(f'{service_status.lower()}', lambda icon, item: None, enabled=False),
+        item(f'status: {firebase_status.lower()}', lambda icon, item: None, enabled=False),
+    ]
+
+    if health_error_item:
+        menu_items.append(health_error_item)
+
+    menu_items += [
         pystray.Menu.SEPARATOR,
-        item('Open Config', open_config_gui),
-        item('Start on Login', on_select, checked=lambda text: start_on_login),
-        item('Restart', restart_service),
-        item('Exit', exit_action)
+        item('open owlette', open_config_gui),
+        item('start on login', on_select, checked=lambda text: start_on_login),
+        item('restart', restart_service),
+        item('exit', exit_action),
+    ]
+
+    return pystray.Menu(*menu_items)
+
+_PID_FILE = shared_utils.get_data_path('tmp/tray.pid')
+
+
+def _acquire_pid_lock():
+    """Try to claim the tray singleton via a PID file.
+    Returns True if we are the only instance, False if another is alive."""
+    try:
+        if os.path.exists(_PID_FILE):
+            with open(_PID_FILE, 'r') as f:
+                old_pid = int(f.read().strip())
+            # Check if that PID is still a tray process
+            try:
+                proc = psutil.Process(old_pid)
+                name = (proc.name() or '').lower()
+                if 'python' in name and proc.is_running():
+                    return False  # another tray is alive
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass  # stale PID — we can take over
+
+        # Write our PID
+        os.makedirs(os.path.dirname(_PID_FILE), exist_ok=True)
+        with open(_PID_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+        return True
+    except Exception as e:
+        logging.warning(f"[TRAY] PID lock error: {e}")
+        return True  # proceed anyway on error
+
+def _wait_for_explorer(timeout=120):
+    """
+    Wait until explorer.exe is running (shell notification area is available).
+    At boot, the service may launch us before the user's desktop is ready.
+    Returns True if Explorer is found, False if timeout expired.
+
+    Uses FindWindowW instead of psutil — it's instantaneous because it
+    queries the Window Manager directly rather than iterating all processes.
+    """
+    deadline = time.time() + timeout
+    check_interval = 2  # seconds between checks
+    while time.time() < deadline:
+        # Shell_TrayWnd is the class name of the Windows taskbar/notification area.
+        # If it exists, Explorer is running and the tray is ready.
+        if ctypes.windll.user32.FindWindowW("Shell_TrayWnd", None):
+            return True
+        logging.debug(f"[TRAY] Waiting for Shell_TrayWnd ({int(deadline - time.time())}s remaining)...")
+        time.sleep(check_interval)
+    return False
+
+
+def _run_tray(is_restarted=False):
+    """
+    Create and run the tray icon.  Separated from __main__ so we can
+    retry on failure without re-importing everything.
+    """
+    # Sync Start on Login state from registry before building the first menu
+    global start_on_login
+    start_on_login = check_service_status()
+
+    # Do initial status check
+    status_code, service_msg, firebase_msg = determine_status()
+
+    with status_lock:
+        current_status_local = {
+            'code': status_code,
+            'service': service_msg,
+            'firebase': firebase_msg
+        }
+        # Update globals
+        global current_status, last_status
+        current_status = current_status_local
+        last_status = current_status_local.copy()
+
+    # Create the system tray icon with initial status
+    hostname = os.environ.get('COMPUTERNAME', 'Unknown')
+    tooltip = f"owlette v{shared_utils.APP_VERSION}\nhostname: {hostname}\n{service_msg.lower()}\nstatus: {firebase_msg.lower()}"
+    image = load_icon(status_code)
+
+    icon = pystray.Icon(
+        "owlette_icon",
+        image,
+        tooltip,
+        menu=generate_menu()  # Initial menu - will be updated by monitor_status
     )
 
-def is_script_running(script_name):
-    count = 0
-    for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
-        if 'python' in process.info['name']:
-            cmdline = process.info.get('cmdline')
-            if cmdline:
-                if script_name in ' '.join(cmdline):
-                    count += 1
-    return count > 1
+    # Start status monitoring thread
+    monitor_thread = threading.Thread(target=monitor_status, args=(icon,), daemon=True)
+    monitor_thread.start()
+
+    # Show "back online" notification if this was a restart
+    if is_restarted:
+        def show_restart_notification():
+            time.sleep(1)
+            try:
+                icon.notify(
+                    title="owlette — back online",
+                    message="service running normally."
+                )
+                logging.info("Restart complete - 'back online' notification shown")
+            except Exception as e:
+                logging.debug(f"Could not show restart notification: {e}")
+
+        notification_thread = threading.Thread(target=show_restart_notification, daemon=True)
+        notification_thread.start()
+
+    # Run the icon (blocking call)
+    icon.run()
+    logging.info('Exiting Tray icon...')
+
+    # Clean up PID file on normal exit
+    try:
+        if os.path.exists(_PID_FILE):
+            os.remove(_PID_FILE)
+    except Exception:
+        pass
+
+
+def _flush_logs():
+    """Force-flush all log handlers so messages appear in the log file immediately.
+    Necessary because pythonw.exe uses full buffering (no terminal)."""
+    for handler in logging.getLogger().handlers:
+        try:
+            handler.flush()
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
-    # Initialize logging with configurable log level
+    # Initialize logging FIRST so any crash is captured
     log_level = shared_utils.get_log_level_from_config()
     shared_utils.initialize_logging("tray", level=log_level)
 
-    # Check if this is a restart (--restarted flag passed)
-    is_restarted = '--restarted' in sys.argv
+    try:
+        # Check if this is a restart (--restarted flag passed)
+        is_restarted = '--restarted' in sys.argv
 
-    if not is_script_running('owlette_tray.py'):
-        # Do initial status check
-        status_code, service_msg, firebase_msg = determine_status()
+        if not _acquire_pid_lock():
+            logging.info('Tray icon is already running (PID lock)...')
+            _flush_logs()
+            sys.exit(0)
 
-        with status_lock:
-            current_status = {
-                'code': status_code,
-                'service': service_msg,
-                'firebase': firebase_msg
-            }
-            last_status = current_status.copy()
+        logging.info("[TRAY] Waiting for Explorer shell...")
+        _flush_logs()
 
-        # Create the system tray icon with initial status
-        hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
-        tooltip = f"Owlette v{shared_utils.APP_VERSION}\nHostname: {hostname}\n{service_msg}\nStatus: {firebase_msg}"
-        image = load_icon(status_code)
+        # Wait for Explorer (shell notification area) before attempting to show icon.
+        # At boot, the service launches us before the desktop is ready, which causes
+        # pystray to fail silently.  This avoids the crash-relaunch loop.
+        if not _wait_for_explorer(timeout=120):
+            logging.error("[TRAY] Explorer not found after 120s — exiting (service will retry later)")
+            _flush_logs()
+            sys.exit(1)
 
-        icon = pystray.Icon(
-            "owlette_icon",
-            image,
-            tooltip,
-            menu=generate_menu()  # Initial menu - will be updated by monitor_status
-        )
+        # Small grace period after Explorer starts — the notification area needs a
+        # moment to initialise even after explorer.exe appears in the process list.
+        logging.info("[TRAY] Explorer found, waiting 2s for notification area...")
+        _flush_logs()
+        time.sleep(2)
 
-        # Start status monitoring thread
-        monitor_thread = threading.Thread(target=monitor_status, args=(icon,), daemon=True)
-        monitor_thread.start()
+        # Retry with backoff — pystray can still fail if the shell notification area
+        # is not fully initialised (common during Windows boot).
+        max_retries = 5
+        for attempt in range(1, max_retries + 1):
+            try:
+                logging.info(f"[TRAY] Attempting to show icon (attempt {attempt}/{max_retries})")
+                _flush_logs()
+                _run_tray(is_restarted=is_restarted)
+                break  # icon.run() returned normally (user clicked Exit)
+            except Exception as e:
+                logging.error(f"[TRAY] Icon failed on attempt {attempt}/{max_retries}: {e}", exc_info=True)
+                _flush_logs()
+                if attempt < max_retries:
+                    wait = min(5 * attempt, 20)  # 5s, 10s, 15s, 20s
+                    logging.info(f"[TRAY] Retrying in {wait}s...")
+                    _flush_logs()
+                    time.sleep(wait)
+                else:
+                    logging.error("[TRAY] All retry attempts exhausted — exiting")
+                    _flush_logs()
+                    sys.exit(1)
 
-        # Show "back online" notification if this was a restart
-        if is_restarted:
-            def show_restart_notification():
-                # Wait a moment for icon to fully initialize
-                time.sleep(1)
-                try:
-                    icon.notify(
-                        title="✅ Back online!",
-                        message="Owlette service running normally."
-                    )
-                    logging.info("Restart complete - 'back online' notification shown")
-                except Exception as e:
-                    logging.debug(f"Could not show restart notification: {e}")
-
-            # Show notification in background thread
-            notification_thread = threading.Thread(target=show_restart_notification, daemon=True)
-            notification_thread.start()
-
-        # Run the icon (blocking call)
-        icon.run()
-
-        logging.info('Exiting Tray icon...')
-
-    else:
-        logging.info('Tray icon is already running...')
-        sys.exit(0)
+    except SystemExit:
+        raise  # Let sys.exit() through
+    except Exception as e:
+        logging.critical(f"[TRAY] FATAL unhandled error: {e}", exc_info=True)
+        _flush_logs()
+        sys.exit(1)

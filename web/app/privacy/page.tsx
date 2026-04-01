@@ -8,215 +8,215 @@ export default function PrivacyPage() {
   const router = useRouter();
 
   return (
-    <div className="min-h-screen bg-slate-950 py-12 px-4">
+    <div className="min-h-screen py-12 px-4">
       <div className="max-w-3xl mx-auto">
         <div className="mb-8">
           <button
             onClick={() => router.back()}
-            className="text-blue-400 hover:text-blue-300 text-sm cursor-pointer"
+            className="text-accent-cyan hover:text-accent-cyan text-sm cursor-pointer"
           >
-            &larr; Back
+            &larr; back
           </button>
         </div>
 
         <article className="prose prose-invert prose-slate max-w-none">
-          <h1 className="text-3xl font-bold text-white mb-2">Privacy Policy</h1>
-          <p className="text-slate-400 text-sm mb-8">Last updated: {lastUpdated}</p>
+          <h1 className="text-3xl font-bold text-white mb-2">privacy policy</h1>
+          <p className="text-muted-foreground text-sm mb-8">last updated: {lastUpdated}</p>
 
-          <div className="space-y-8 text-slate-300">
+          <div className="space-y-8 text-muted-foreground">
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">1. Introduction</h2>
+              <h2 className="text-xl font-semibold text-white mb-4">1. introduction</h2>
               <p>
                 The Experiential Company, LLC (&quot;TEC,&quot; &quot;we,&quot; &quot;our,&quot; or &quot;us&quot;) operates Owlette, a cloud-connected
-                process management and remote deployment system. This Privacy Policy explains how we
+                process management and remote deployment system. this privacy policy explains how we
                 collect, use, disclose, and safeguard your information when you use our service.
               </p>
               <p className="mt-4">
-                By using Owlette, you agree to the collection and use of information in accordance
+                by using Owlette, you agree to the collection and use of information in accordance
                 with this policy.
               </p>
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">2. Information We Collect</h2>
+              <h2 className="text-xl font-semibold text-white mb-4">2. information we collect</h2>
 
-              <h3 className="text-lg font-medium text-white mt-6 mb-3">Account Information</h3>
-              <p>When you create an account, we collect:</p>
+              <h3 className="text-lg font-medium text-white mt-6 mb-3">account information</h3>
+              <p>when you create an account, we collect:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
-                <li>Email address</li>
-                <li>Name (first and last)</li>
-                <li>Password (stored securely using industry-standard hashing)</li>
-                <li>Two-factor authentication secrets (encrypted)</li>
+                <li>email address</li>
+                <li>name (first and last)</li>
+                <li>password (stored securely using industry-standard hashing)</li>
+                <li>two-factor authentication secrets (encrypted)</li>
               </ul>
 
-              <h3 className="text-lg font-medium text-white mt-6 mb-3">Machine Data</h3>
-              <p>When you install the Owlette agent on a machine, we collect:</p>
+              <h3 className="text-lg font-medium text-white mt-6 mb-3">machine data</h3>
+              <p>when you install the Owlette agent on a machine, we collect:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
-                <li>Machine hostname and unique identifiers</li>
-                <li>Operating system information</li>
-                <li>System metrics (CPU, memory, disk usage, GPU temperature)</li>
-                <li>Process information (names, paths, running status)</li>
-                <li>Agent heartbeat and online/offline status</li>
+                <li>machine hostname and unique identifiers</li>
+                <li>operating system information</li>
+                <li>system metrics (CPU, memory, disk usage, GPU temperature)</li>
+                <li>process information (names, paths, running status)</li>
+                <li>agent heartbeat and online/offline status</li>
               </ul>
 
-              <h3 className="text-lg font-medium text-white mt-6 mb-3">Usage Data</h3>
-              <p>We automatically collect:</p>
+              <h3 className="text-lg font-medium text-white mt-6 mb-3">usage data</h3>
+              <p>we automatically collect:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
-                <li>Actions performed (process starts, stops, deployments)</li>
-                <li>Event logs (errors, crashes, status changes)</li>
-                <li>Timestamps of activities</li>
-              </ul>
-            </section>
-
-            <section>
-              <h2 className="text-xl font-semibold text-white mb-4">3. How We Use Your Information</h2>
-              <p>We use the collected information to:</p>
-              <ul className="list-disc pl-6 mt-2 space-y-1">
-                <li>Provide and maintain the Owlette service</li>
-                <li>Monitor machine health and process status</li>
-                <li>Execute remote commands and deployments</li>
-                <li>Send alerts and notifications</li>
-                <li>Authenticate users and secure accounts</li>
-                <li>Improve and optimize our service</li>
-                <li>Respond to support requests</li>
+                <li>actions performed (process starts, stops, deployments)</li>
+                <li>event logs (errors, crashes, status changes)</li>
+                <li>timestamps of activities</li>
               </ul>
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">4. Data Storage and Security</h2>
+              <h2 className="text-xl font-semibold text-white mb-4">3. how we use your information</h2>
+              <p>we use the collected information to:</p>
+              <ul className="list-disc pl-6 mt-2 space-y-1">
+                <li>provide and maintain the Owlette service</li>
+                <li>monitor machine health and process status</li>
+                <li>execute remote commands and deployments</li>
+                <li>send alerts and notifications</li>
+                <li>authenticate users and secure accounts</li>
+                <li>improve and optimize our service</li>
+                <li>respond to support requests</li>
+              </ul>
+            </section>
+
+            <section>
+              <h2 className="text-xl font-semibold text-white mb-4">4. data storage and security</h2>
               <p>
-                Your data is stored using Google Firebase and Google Cloud Platform infrastructure.
-                We implement industry-standard security measures including:
+                your data is stored using Google Firebase and Google Cloud Platform infrastructure.
+                we implement industry-standard security measures including:
               </p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
-                <li>Encryption in transit (TLS/HTTPS)</li>
-                <li>Encryption at rest (AES-256)</li>
-                <li>Secure authentication tokens with automatic expiration</li>
-                <li>Machine-specific encryption keys for agent credentials</li>
-                <li>Role-based access controls</li>
+                <li>encryption in transit (TLS/HTTPS)</li>
+                <li>encryption at rest (AES-256)</li>
+                <li>secure authentication tokens with automatic expiration</li>
+                <li>machine-specific encryption keys for agent credentials</li>
+                <li>role-based access controls</li>
               </ul>
               <p className="mt-4">
-                While we strive to protect your information, no method of transmission over the
-                Internet is 100% secure. We cannot guarantee absolute security.
+                while we strive to protect your information, no method of transmission over the
+                internet is 100% secure. we cannot guarantee absolute security.
               </p>
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">5. Data Retention</h2>
-              <p>We retain your data as follows:</p>
+              <h2 className="text-xl font-semibold text-white mb-4">5. data retention</h2>
+              <p>we retain your data as follows:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
-                <li><strong>Account data:</strong> Until you delete your account</li>
-                <li><strong>Machine metrics:</strong> Rolling 30-90 days (configurable)</li>
-                <li><strong>Event logs:</strong> Up to 90 days by default</li>
-                <li><strong>Process data:</strong> Until the machine is removed from your account</li>
+                <li><strong>account data:</strong> until you delete your account</li>
+                <li><strong>machine metrics:</strong> rolling 30-90 days (configurable)</li>
+                <li><strong>event logs:</strong> up to 90 days by default</li>
+                <li><strong>process data:</strong> until the machine is removed from your account</li>
               </ul>
               <p className="mt-4">
-                You may request deletion of your data at any time by contacting us.
+                you may request deletion of your data at any time by contacting us.
               </p>
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">6. Third-Party Services</h2>
-              <p>We use the following third-party services to operate Owlette:</p>
+              <h2 className="text-xl font-semibold text-white mb-4">6. third-party services</h2>
+              <p>we use the following third-party services to operate Owlette:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
-                <li><strong>Google Firebase:</strong> Authentication, database, and hosting</li>
-                <li><strong>Google Cloud Platform:</strong> Infrastructure and storage</li>
+                <li><strong>Google Firebase:</strong> authentication, database, and hosting</li>
+                <li><strong>Google Cloud Platform:</strong> infrastructure and storage</li>
               </ul>
               <p className="mt-4">
-                These services have their own privacy policies governing how they handle your data.
+                these services have their own privacy policies governing how they handle your data.
               </p>
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">7. Your Rights</h2>
+              <h2 className="text-xl font-semibold text-white mb-4">7. your rights</h2>
               <p>
-                Depending on your location, you may have certain rights regarding your personal
+                depending on your location, you may have certain rights regarding your personal
                 information:
               </p>
 
-              <h3 className="text-lg font-medium text-white mt-6 mb-3">California Residents (CCPA)</h3>
-              <p>You have the right to:</p>
+              <h3 className="text-lg font-medium text-white mt-6 mb-3">California residents (CCPA)</h3>
+              <p>you have the right to:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
-                <li>Know what personal information is collected</li>
-                <li>Request deletion of your personal information</li>
-                <li>Opt-out of the sale of personal information (we do not sell your data)</li>
-                <li>Non-discrimination for exercising your privacy rights</li>
+                <li>know what personal information is collected</li>
+                <li>request deletion of your personal information</li>
+                <li>opt-out of the sale of personal information (we do not sell your data)</li>
+                <li>non-discrimination for exercising your privacy rights</li>
               </ul>
 
-              <h3 className="text-lg font-medium text-white mt-6 mb-3">All Users</h3>
-              <p>You can:</p>
+              <h3 className="text-lg font-medium text-white mt-6 mb-3">all users</h3>
+              <p>you can:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
-                <li>Access your account data through the dashboard</li>
-                <li>Update or correct your information</li>
-                <li>Delete your account and associated data</li>
-                <li>Export your data upon request</li>
+                <li>access your account data through the dashboard</li>
+                <li>update or correct your information</li>
+                <li>delete your account and associated data</li>
+                <li>export your data upon request</li>
               </ul>
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">8. Cookies and Tracking</h2>
+              <h2 className="text-xl font-semibold text-white mb-4">8. cookies and tracking</h2>
               <p>
                 Owlette uses cookies and similar technologies for authentication and session
-                management. These are essential for the service to function and cannot be
+                management. these are essential for the service to function and cannot be
                 disabled while using Owlette.
               </p>
               <p className="mt-4">
-                We use Firebase Authentication, which sets cookies to maintain your login session.
-                We do not use tracking cookies for advertising purposes.
+                we use Firebase Authentication, which sets cookies to maintain your login session.
+                we do not use tracking cookies for advertising purposes.
               </p>
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">9. Children&apos;s Privacy</h2>
+              <h2 className="text-xl font-semibold text-white mb-4">9. children&apos;s privacy</h2>
               <p>
-                Owlette is not intended for use by anyone under the age of 13. We do not knowingly
-                collect personal information from children under 13. If you are a parent or guardian
+                Owlette is not intended for use by anyone under the age of 13. we do not knowingly
+                collect personal information from children under 13. if you are a parent or guardian
                 and believe your child has provided us with personal information, please contact us.
               </p>
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">10. Changes to This Policy</h2>
+              <h2 className="text-xl font-semibold text-white mb-4">10. changes to this policy</h2>
               <p>
-                We may update this Privacy Policy from time to time. We will notify you of any
-                changes by posting the new Privacy Policy on this page and updating the
-                &quot;Last updated&quot; date.
+                we may update this privacy policy from time to time. we will notify you of any
+                changes by posting the new privacy policy on this page and updating the
+                &quot;last updated&quot; date.
               </p>
               <p className="mt-4">
-                We encourage you to review this Privacy Policy periodically for any changes.
+                we encourage you to review this privacy policy periodically for any changes.
               </p>
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">11. Contact Us</h2>
+              <h2 className="text-xl font-semibold text-white mb-4">11. contact us</h2>
               <p>
-                If you have any questions about this Privacy Policy or our data practices,
+                if you have any questions about this privacy policy or our data practices,
                 please contact us at:
               </p>
               <p className="mt-4">
-                <strong>Email:</strong>{' '}
-                <a href="mailto:support@owlette.app" className="text-blue-400 hover:text-blue-300">
+                <strong>email:</strong>{' '}
+                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan">
                   support@owlette.app
                 </a>
               </p>
               <p className="mt-2">
-                <strong>Company:</strong> The Experiential Company, LLC
+                <strong>company:</strong> The Experiential Company, LLC
               </p>
               <p className="mt-2">
-                <strong>Location:</strong> California, USA
+                <strong>location:</strong> California, USA
               </p>
             </section>
           </div>
         </article>
 
-        <div className="mt-12 pt-8 border-t border-slate-800 text-center">
-          <p className="text-slate-500 text-sm">
-            <Link href="/terms" className="text-slate-400 hover:text-slate-300">
-              Terms of Service
+        <div className="mt-12 pt-8 border-t border-border text-center">
+          <p className="text-muted-foreground text-sm">
+            <Link href="/terms" className="text-muted-foreground hover:text-muted-foreground">
+              terms of service
             </Link>
             {' '}&middot;{' '}
-            <Link href="/dashboard" className="text-slate-400 hover:text-slate-300">
-              Dashboard
+            <Link href="/dashboard" className="text-muted-foreground hover:text-muted-foreground">
+              dashboard
             </Link>
           </p>
         </div>

@@ -3,6 +3,7 @@ import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import admin from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
+import logger from '@/lib/logger';
 
 /**
  * POST /api/agent/auth/exchange
@@ -189,8 +190,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       agentUid,
     });
 
-    // Log successful token exchange (for auditing)
-    console.log(`Agent token exchanged: site=${siteId}, machine=${machineId}, uid=${agentUid}`);
+    logger.info(`Agent token exchanged: site=${siteId}, machine=${machineId}, uid=${agentUid}`);
 
     return NextResponse.json(
       {

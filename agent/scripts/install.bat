@@ -58,10 +58,14 @@ echo ProgramData directories created at: %DATA_DIR%
 :: Step 3: Stop and remove existing service (if any)
 :: ============================================================================
 echo [2/4] Checking for existing service...
-"%INSTALL_DIR%\tools\nssm.exe" status OwletteService >nul 2>&1
+:: Use registry to detect service — reliable regardless of running/stopped state.
+:: nssm status returns non-zero for stopped services, which previously caused
+:: this block to be skipped during upgrades, leaving the old registration in place
+:: and causing nssm install to fail (service already exists).
+reg query "HKLM\SYSTEM\CurrentControlSet\Services\OwletteService" >nul 2>&1
 if %errorLevel% equ 0 (
-    echo Stopping existing service...
-    "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService
+    echo Existing service found, stopping...
+    "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService >nul 2>&1
 
     :: Wait up to 10 seconds for service to stop gracefully
     :: This allows the service to cleanly set online=false in Firestore
@@ -71,14 +75,14 @@ if %errorLevel% equ 0 (
     "%INSTALL_DIR%\tools\nssm.exe" status OwletteService | findstr /C:"SERVICE_STOPPED" >nul 2>&1
     if !errorLevel! equ 0 goto SERVICE_STOPPED
 
-    timeout /t 1 /nobreak >nul
+    timeout /t 1 /nobreak >nul 2>&1
     set /a WAIT_COUNT+=1
     if !WAIT_COUNT! lss 10 goto WAIT_LOOP
 
     :: If service didn't stop after 10 seconds, force stop
     echo Service did not stop gracefully, forcing...
-    "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService
-    timeout /t 1 /nobreak >nul
+    "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService >nul 2>&1
+    timeout /t 1 /nobreak >nul 2>&1
 
     :SERVICE_STOPPED
     echo Service stopped successfully
@@ -87,7 +91,7 @@ if %errorLevel% equ 0 (
     :: This ensures Firestore has fully processed the online=false write
     :: and the web dashboard will show machine as offline
     echo Waiting for Firestore sync to complete...
-    timeout /t 3 /nobreak >nul
+    timeout /t 3 /nobreak >nul 2>&1
 
     echo Removing existing service...
     "%INSTALL_DIR%\tools\nssm.exe" remove OwletteService confirm
@@ -95,7 +99,7 @@ if %errorLevel% equ 0 (
     :: SAFETY MARGIN: Wait 2 seconds after removing service
     :: This prevents any race conditions between old/new service
     echo Preparing to install new service...
-    timeout /t 2 /nobreak >nul
+    timeout /t 2 /nobreak >nul 2>&1
 )
 
 :: ============================================================================
@@ -103,7 +107,7 @@ if %errorLevel% equ 0 (
 :: ============================================================================
 echo [3/4] Installing Owlette service...
 
-:: Install service with application and script (no spaces in C:\Owlette path)
+:: Install service with application and script
 "%INSTALL_DIR%\tools\nssm.exe" install OwletteService "%INSTALL_DIR%\python\python.exe" "%INSTALL_DIR%\agent\src\owlette_runner.py"
 
 if %errorLevel% neq 0 (
@@ -118,6 +122,11 @@ echo Configuring service...
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService DisplayName "Owlette Service"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Description "Owlette process monitoring and management service"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Start SERVICE_AUTO_START
+
+:: Enable delayed auto-start — gives Windows time to fully initialise the desktop,
+:: network adapters and user sessions before Owlette starts.  This is a separate
+:: registry flag on top of SERVICE_AUTO_START.
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\OwletteService" /v DelayedAutostart /t REG_DWORD /d 1 /f >nul 2>&1
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppNoConsole 1
 
 :: Run service as LocalSystem for elevated privileges (needed for silent installer execution)
@@ -141,6 +150,13 @@ echo Configuring service to run as LocalSystem...
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppExit Default Restart
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppExit 0 Exit
 
+:: Don't kill child processes on service stop.
+:: Managed processes (TouchDesigner, etc.) are launched via a helper script that
+:: breaks the parent-child chain, but this is a safety net to ensure they survive
+:: service restarts and upgrades.
+:: Note: AppKillProcessTree is not exposed via nssm set CLI, must use reg add.
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\OwletteService\Parameters" /v AppKillProcessTree /t REG_DWORD /d 0 /f >nul 2>&1
+
 :: ============================================================================
 :: Step 5: Start service
 :: ============================================================================
@@ -155,7 +171,7 @@ if %errorLevel% neq 0 (
 )
 
 :: Wait a moment and check status
-timeout /t 3 /nobreak >nul
+timeout /t 3 /nobreak >nul 2>&1
 "%INSTALL_DIR%\tools\nssm.exe" status OwletteService
 
 echo.

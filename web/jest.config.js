@@ -58,17 +58,11 @@ const config = {
     '**/?(*.)+(spec|test).[jt]s?(x)',
   ],
 
-  // Transform files with Next.js jest transformer
-  transform: {
-    '^.+\\.(js|jsx|ts|tsx)$': ['next/jest', {
-      // Options for next/jest
-    }],
-  },
-
   // Ignore patterns
   testPathIgnorePatterns: [
     '/node_modules/',
     '/.next/',
+    '__tests__/api/helpers/',
   ],
 
   // Transform ignore patterns

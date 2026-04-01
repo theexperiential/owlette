@@ -96,23 +96,59 @@ export async function getLatestOwletteVersion(): Promise<{
 
 /**
  * Send update_owlette command to a machine
+ *
+ * ANTI-FRAGILE: Requires checksum (agent will reject commands without it).
+ * Always fetches a fresh download URL from installer_metadata to avoid expired tokens.
+ *
  * @param siteId Site ID
  * @param machineId Machine ID
  * @param installerUrl URL of the Owlette installer
  * @param deploymentId Optional deployment ID for tracking
+ * @param targetVersion Target version string (e.g., "2.1.0")
+ * @param checksumSha256 SHA256 checksum of the installer (REQUIRED - agent rejects without it)
  * @returns Command ID
  */
 export async function sendOwletteUpdateCommand(
   siteId: string,
   machineId: string,
   installerUrl: string,
-  deploymentId?: string
+  deploymentId?: string,
+  targetVersion?: string,
+  checksumSha256?: string
 ): Promise<string> {
   if (!db) {
     throw new Error('Firestore not initialized');
   }
 
+  // ANTI-FRAGILE: Checksum is mandatory - agent will reject updates without it
+  if (!checksumSha256) {
+    throw new Error('Checksum is required for self-updates. The agent will reject updates without SHA256 verification.');
+  }
+
+  // ANTI-FRAGILE: Version is mandatory for proper update tracking
+  if (!targetVersion) {
+    throw new Error('Target version is required for update tracking.');
+  }
+
   try {
+    // ANTI-FRAGILE: Fetch a fresh download URL from installer_metadata to avoid
+    // expired Firebase Storage tokens. URLs contain auth tokens that expire after ~7 days.
+    // If the machine is offline and processes this command later, the original URL may be stale.
+    let freshUrl = installerUrl;
+    try {
+      const latestRef = doc(db, 'installer_metadata', 'latest');
+      const latestDoc = await getDoc(latestRef);
+      if (latestDoc.exists()) {
+        const data = latestDoc.data();
+        const metadataUrl = data.download_url || data.downloadUrl || data.url;
+        if (metadataUrl) {
+          freshUrl = metadataUrl;
+        }
+      }
+    } catch (urlErr) {
+      console.warn('Could not refresh download URL, using provided URL:', urlErr);
+    }
+
     const commandId = `update_owlette_${Date.now()}`;
     const commandRef = doc(
       db,
@@ -124,8 +160,10 @@ export async function sendOwletteUpdateCommand(
     await setDoc(commandRef, {
       [commandId]: {
         type: 'update_owlette',
-        installer_url: installerUrl,
+        installer_url: freshUrl,
         deployment_id: deploymentId || null,
+        target_version: targetVersion,
+        checksum_sha256: checksumSha256,
         timestamp: Timestamp.now(),
         status: 'pending',
       }

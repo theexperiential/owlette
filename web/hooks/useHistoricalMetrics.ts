@@ -15,7 +15,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { useDemoContext } from '@/contexts/DemoContext';
 import type { TimeRange } from '@/components/charts';
+
+/**
+ * Per-NIC sample in history (abbreviated keys)
+ */
+interface NicSample {
+  i: string;   // interface name
+  tx: number;  // TX bytes/sec
+  rx: number;  // RX bytes/sec
+  tu: number;  // TX utilization % of link speed
+  ru: number;  // RX utilization % of link speed
+}
 
 /**
  * Raw sample from Firestore (abbreviated keys)
@@ -28,19 +40,22 @@ export interface MetricsSample {
   g?: number;  // gpu percent (optional)
   ct?: number; // cpu temperature (optional)
   gt?: number; // gpu temperature (optional)
+  n?: NicSample[]; // per-NIC network metrics (optional)
 }
 
 /**
  * Chart-ready data point (expanded keys, millisecond timestamps)
+ * Network fields are dynamic: e.g., Ethernet_tx, Ethernet_rx, Ethernet_tx_util, Ethernet_rx_util
  */
 export interface ChartDataPoint {
   time: number;     // timestamp in milliseconds
-  cpu: number;
-  memory: number;
-  disk: number;
-  gpu?: number;
-  cpuTemp?: number;
-  gpuTemp?: number;
+  cpu: number | null;
+  memory: number | null;
+  disk: number | null;
+  gpu?: number | null;
+  cpuTemp?: number | null;
+  gpuTemp?: number | null;
+  [key: string]: number | null | undefined; // dynamic network keys
 }
 
 interface UseHistoricalMetricsResult {
@@ -115,6 +130,44 @@ function downsampleForDisplay(
 }
 
 /**
+ * Insert null-value gap markers where consecutive samples are too far apart.
+ * This causes Recharts to break the line instead of interpolating across offline periods.
+ * Gap threshold = 3x the median interval between consecutive points.
+ */
+function insertGapMarkers(samples: ChartDataPoint[]): ChartDataPoint[] {
+  if (samples.length < 2) return samples;
+
+  // Calculate all intervals
+  const intervals: number[] = [];
+  for (let i = 1; i < samples.length; i++) {
+    intervals.push(samples[i].time - samples[i - 1].time);
+  }
+
+  // Use median interval to determine gap threshold (robust to outliers)
+  const sorted = [...intervals].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const gapThreshold = Math.max(median * 3, 5 * 60 * 1000); // At least 5 minutes
+
+  const result: ChartDataPoint[] = [];
+  for (let i = 0; i < samples.length; i++) {
+    if (i > 0 && samples[i].time - samples[i - 1].time > gapThreshold) {
+      // Insert a null marker at the midpoint of the gap
+      result.push({
+        time: samples[i - 1].time + 1,
+        cpu: null,
+        memory: null,
+        disk: null,
+        gpu: null,
+        cpuTemp: null,
+        gpuTemp: null,
+      });
+    }
+    result.push(samples[i]);
+  }
+  return result;
+}
+
+/**
  * Maximum data points to display per time range
  * Balances chart performance with data density
  */
@@ -132,11 +185,18 @@ export function useHistoricalMetrics(
   machineId: string | null,
   timeRange: TimeRange
 ): UseHistoricalMetricsResult {
+  const demo = useDemoContext();
   const [data, setData] = useState<ChartDataPoint[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!demo);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
+    if (demo && machineId) {
+      setData(demo.getHistoricalData(machineId, timeRange));
+      setLoading(false);
+      return;
+    }
+
     if (!db || !siteId || !machineId) {
       setLoading(false);
       setData(null);
@@ -182,7 +242,7 @@ export function useHistoricalMetrics(
         // Filter samples within time range and convert to chart format
         for (const sample of samples as MetricsSample[]) {
           if (sample.t >= startTimestamp) {
-            allSamples.push({
+            const point: ChartDataPoint = {
               time: sample.t * 1000, // Convert to milliseconds
               cpu: sample.c,
               memory: sample.m,
@@ -190,7 +250,19 @@ export function useHistoricalMetrics(
               gpu: sample.g,
               cpuTemp: sample.ct,
               gpuTemp: sample.gt,
-            });
+            };
+
+            // Expand per-NIC network data into flat chart keys
+            if (sample.n) {
+              for (const nic of sample.n) {
+                point[`${nic.i}_tx`] = nic.tx;
+                point[`${nic.i}_rx`] = nic.rx;
+                point[`${nic.i}_tx_util`] = nic.tu;
+                point[`${nic.i}_rx_util`] = nic.ru;
+              }
+            }
+
+            allSamples.push(point);
           }
         }
       });
@@ -200,7 +272,8 @@ export function useHistoricalMetrics(
 
       // Downsample for performance
       const maxPoints = MAX_POINTS[timeRange];
-      const finalData = downsampleForDisplay(allSamples, maxPoints);
+      const downsampled = downsampleForDisplay(allSamples, maxPoints);
+      const finalData = insertGapMarkers(downsampled);
 
       setData(finalData);
     } catch (e: unknown) {
@@ -209,7 +282,7 @@ export function useHistoricalMetrics(
     } finally {
       setLoading(false);
     }
-  }, [siteId, machineId, timeRange]);
+  }, [siteId, machineId, timeRange, demo]);
 
   useEffect(() => {
     fetchData();

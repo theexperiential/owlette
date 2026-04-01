@@ -1,0 +1,121 @@
+/* Owlette brand — aligned with the web dashboard color system */
+/* Web app uses OKLch with hue 250 (blue-gray) base + cyan (hue 195) accents */
+
+/* ------------------------------------------------------------------ */
+/*  Light mode                                                        */
+/* ------------------------------------------------------------------ */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #0e1525;
+  --md-primary-fg-color--light: #192337;
+  --md-primary-fg-color--dark: #080d1a;
+  --md-accent-fg-color: #1aafbd;
+  --md-typeset-a-color: #1aafbd;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Dark mode (slate) — matches .dark in globals.css                  */
+/* ------------------------------------------------------------------ */
+[data-md-color-scheme="slate"] {
+  /* Background — oklch(0.145 0.03 250) */
+  --md-default-bg-color: #0e1525;
+  --md-default-bg-color--light: #141e35;
+
+  /* Header / nav bar — oklch(0.205 0.04 250) */
+  --md-primary-fg-color: #141e35;
+  --md-primary-fg-color--light: #192337;
+  --md-primary-fg-color--dark: #0a1020;
+
+  /* Text — oklch(0.985 0.01 250) */
+  --md-default-fg-color: #f5f7ff;
+  --md-default-fg-color--light: #c5ccdf;
+  --md-default-fg-color--lighter: #8d9bb5;
+  --md-default-fg-color--lightest: #8d9bb515;
+
+  /* Accent cyan — oklch(0.75 0.18 195) */
+  --md-accent-fg-color: #22c3d6;
+  --md-accent-fg-color--transparent: #22c3d620;
+  --md-typeset-a-color: #22c3d6;
+
+  /* Code blocks — oklch(0.23 0.04 250) card color */
+  --md-code-bg-color: #192337;
+  --md-code-fg-color: #f5f7ff;
+  --md-code-hl-color: #22c3d630;
+
+  /* Footer */
+  --md-footer-bg-color: #0a1020;
+  --md-footer-bg-color--dark: #070c18;
+  --md-footer-fg-color: #c5ccdf;
+  --md-footer-fg-color--light: #8d9bb5;
+  --md-footer-fg-color--lighter: #8d9bb580;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Component refinements — dark mode only                            */
+/* ------------------------------------------------------------------ */
+[data-md-color-scheme="slate"] .md-nav--primary .md-nav__item--active > .md-nav__link {
+  color: #22c3d6;
+}
+
+[data-md-color-scheme="slate"] .md-header {
+  background-color: #0e1525;
+  border-bottom: 1px solid #293a5c;
+}
+
+[data-md-color-scheme="slate"] .md-tabs {
+  background-color: #0e1525;
+  border-bottom: 1px solid #1e2d4a20;
+}
+
+[data-md-color-scheme="slate"] .md-search__form {
+  background-color: #192337;
+}
+
+[data-md-color-scheme="slate"] .md-sidebar {
+  border-right-color: #293a5c40;
+}
+
+/* Inline code in dark mode */
+[data-md-color-scheme="slate"] .md-typeset code {
+  background-color: #1e2d4a;
+  color: #c5ccdf;
+}
+
+/* Admonitions */
+[data-md-color-scheme="slate"] .md-typeset .admonition,
+[data-md-color-scheme="slate"] .md-typeset details {
+  background-color: #141e35;
+  border-color: #293a5c;
+}
+
+/* Tables */
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
+  background-color: #192337;
+}
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) tr:hover td {
+  background-color: #141e3580;
+}
+
+/* Scrollbar — matches web app's blue-tinted scrollbars */
+[data-md-color-scheme="slate"] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+[data-md-color-scheme="slate"] ::-webkit-scrollbar-track {
+  background: #0e1525;
+}
+
+[data-md-color-scheme="slate"] ::-webkit-scrollbar-thumb {
+  background: #293a5c;
+  border-radius: 4px;
+}
+
+[data-md-color-scheme="slate"] ::-webkit-scrollbar-thumb:hover {
+  background: #3a4f75;
+}
+
+[data-md-color-scheme="slate"] * {
+  scrollbar-color: #293a5c #0e1525;
+  scrollbar-width: thin;
+}

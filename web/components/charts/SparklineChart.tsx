@@ -33,10 +33,10 @@ interface SparklineChartProps {
   loading?: boolean;
 }
 
-// Map metric types to explicit RGB colors (CSS variables don't work in SVG stroke)
+// Map metric types to explicit colors (CSS variables don't work in SVG stroke)
 const colorMap: Record<MetricColor, string> = {
-  cpu: 'rgb(59, 130, 246)',       // blue-500
-  memory: 'rgb(168, 85, 247)',    // purple-500
+  cpu: 'oklch(0.75 0.18 195)',    // cyan accent (matches --accent-cyan)
+  memory: 'oklch(0.65 0.25 250)', // blue (matches sidebar-primary)
   disk: 'rgb(34, 197, 94)',       // green-500
   gpu: 'rgb(249, 115, 22)',       // orange-500
   temp: 'rgb(239, 68, 68)',       // red-500
@@ -89,7 +89,7 @@ export function SparklineChart({
     <div
       className={cn(
         'cursor-pointer hover:opacity-90 transition-opacity rounded',
-        onClick && 'hover:bg-slate-700/30',
+        onClick && 'hover:bg-muted/30',
         className
       )}
       onClick={onClick}

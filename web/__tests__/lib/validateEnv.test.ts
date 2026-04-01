@@ -89,7 +89,7 @@ describe('validateEnv', () => {
     });
 
     it('should not throw in development mode with invalid config', () => {
-      process.env.NODE_ENV = 'development';
+      (process.env as Record<string, string>).NODE_ENV = 'development';
       process.env.NEXT_PUBLIC_FIREBASE_API_KEY = '';
 
       expect(() => validateEnvironmentOrThrow()).not.toThrow();
@@ -97,14 +97,14 @@ describe('validateEnv', () => {
     });
 
     it('should throw in production mode with invalid config', () => {
-      process.env.NODE_ENV = 'production';
+      (process.env as Record<string, string>).NODE_ENV = 'production';
       process.env.NEXT_PUBLIC_FIREBASE_API_KEY = '';
 
       expect(() => validateEnvironmentOrThrow()).toThrow();
     });
 
     it('should log success in development mode with valid config', () => {
-      process.env.NODE_ENV = 'development';
+      (process.env as Record<string, string>).NODE_ENV = 'development';
       process.env.NEXT_PUBLIC_FIREBASE_API_KEY = 'real-api-key';
       process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN = 'project.firebaseapp.com';
       process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID = 'project-id';

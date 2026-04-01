@@ -10,7 +10,6 @@ import GPUtil
 import platform
 import subprocess
 import threading
-import psutil
 import winreg
 import time
 from pathlib import Path
@@ -22,7 +21,7 @@ def get_app_version():
     This ensures a single source of truth for version management.
 
     Returns:
-        str: Version string (e.g., "2.0.3") or "0.0.0" if VERSION file not found
+        str: Version string (e.g., "2.0.55") or "0.0.0" if VERSION file not found
     """
     try:
         # VERSION file is in agent/ directory (parent of src/)
@@ -30,34 +29,89 @@ def get_app_version():
         if version_file.exists():
             return version_file.read_text().strip()
         else:
-            # Fallback for development or if VERSION file is missing
-            return '2.0.3'  # Hardcoded fallback
+            logging.warning("VERSION file not found — using fallback '0.0.0'")
+            return '0.0.0'
     except Exception as e:
-        # If anything goes wrong, use fallback version
-        return '2.0.3'
+        logging.warning(f"Failed to read VERSION file: {e} — using fallback '0.0.0'")
+        return '0.0.0'
 
 # GLOBAL VARS
 
 APP_VERSION = get_app_version()
-CONFIG_VERSION = '1.5.0'  # Added environment configuration
-# Color scheme matching web app (Tailwind slate palette)
-WINDOW_COLOR = '#020617'      # slate-950 - main background
-FRAME_COLOR = '#0f172a'       # slate-900 - panels/cards
-BUTTON_COLOR = '#1e293b'      # slate-800 - buttons
-BUTTON_HOVER_COLOR = '#334155' # slate-700 - button hover
-BUTTON_IMPORTANT_COLOR = '#2563eb' # blue-600 - accent buttons (New, autolaunch toggle)
+CONFIG_VERSION = '1.6.0'  # Added launch_mode (scheduling)
+# Color scheme matching web app dark theme (oklch hue 250 navy + cyan accent)
+WINDOW_COLOR = '#020b16'      # web --background oklch(0.145 0.03 250)
+FRAME_COLOR = '#0d1e2f'       # web --card oklch(0.23 0.04 250)
+BUTTON_COLOR = '#11283e'      # web --muted oklch(0.269 0.05 250)
+BUTTON_HOVER_COLOR = '#143c62' # web --accent/border oklch(0.35 0.08 250)
+BUTTON_IMPORTANT_COLOR = '#00cfd1' # web --accent-cyan oklch(0.75 0.18 195)
+BUTTON_IMPORTANT_HOVER = '#00e2e5' # web --accent-cyan-hover oklch(0.80 0.20 195)
+BUTTON_IMPORTANT_TEXT = '#020b16'  # dark text on cyan buttons (matches background)
+ACCENT_COLOR = '#00cfd1'      # web --accent-cyan oklch(0.75 0.18 195)
+BORDER_COLOR = '#143c62'      # web --border oklch(0.35 0.08 250)
+HIGHLIGHT_COLOR = '#006566'   # web --accent-cyan-muted oklch(0.45 0.10 195)
 TEXT_COLOR = "white"
+CORNER_RADIUS = 6             # consistent corner radius for all elements
+STATUS_COLORS = {
+    'RUNNING':       '#4ade80',  # green-400
+    'LAUNCHING':     '#facc15',  # yellow-400
+    'QUEUED':        '#fb923c',  # orange-400
+    'LAUNCH_FAILED': '#ef4444',  # red-500
+    'KILLED':        '#f87171',  # red-400
+    'STOPPED':       '#f87171',  # red-400
+    'INACTIVE':      '#94a3b8',  # slate-400
+}
 WINDOW_TITLES = {
-    "owlette_gui": "Owlette Configuration", 
-    "prompt_slack_config": "Connect to Slack",
-    "prompt_restart": "Process repeatedly failing!"
+    "owlette_gui": "owlette",
+    "prompt_slack_config": "connect to slack",
+    "prompt_restart": "process repeatedly failing!",
+    "report_issue": "feedback"
 }
 SERVICE_NAME = 'OwletteService'
 
 
 # OS
-# Initialize a global lock
+# Initialize a global lock (thread-level)
 json_lock = threading.Lock()
+
+# Cross-process mutex for JSON file access (service + GUI coordination)
+_json_file_mutex = None
+def _get_json_file_mutex():
+    """Get or create a Windows named mutex for cross-process JSON file locking."""
+    global _json_file_mutex
+    if _json_file_mutex is None:
+        try:
+            import win32event
+            # Named mutex shared between service and GUI processes
+            _json_file_mutex = win32event.CreateMutex(None, False, "Global\\OwletteJsonFileMutex")
+        except Exception:
+            _json_file_mutex = False  # Fallback: skip cross-process locking
+    return _json_file_mutex
+
+class _CrossProcessLock:
+    """Context manager for cross-process file locking using a Windows named mutex."""
+    def __init__(self, timeout_ms=2000):
+        self.timeout_ms = timeout_ms
+        self.mutex = _get_json_file_mutex()
+        self.acquired = False
+
+    def __enter__(self):
+        if self.mutex:
+            try:
+                import win32event, win32con
+                result = win32event.WaitForSingleObject(self.mutex, self.timeout_ms)
+                self.acquired = result in (win32event.WAIT_OBJECT_0, win32event.WAIT_ABANDONED)
+            except Exception:
+                pass
+        return self
+
+    def __exit__(self, *args):
+        if self.acquired and self.mutex:
+            try:
+                import win32event
+                win32event.ReleaseMutex(self.mutex)
+            except Exception:
+                pass
 
 # Return the hostname of the machine where the script is running
 def get_hostname():
@@ -221,6 +275,221 @@ def get_gpu_temperatures():
     # All methods failed
     return []
 
+
+# Network monitoring state for delta calculation
+_prev_net_counters: dict = {}
+_prev_net_time: float = 0.0
+
+
+def get_network_metrics():
+    """
+    Get per-NIC network throughput metrics.
+
+    Computes TX/RX bytes/sec by calculating deltas between consecutive calls.
+    First call returns zeros (no previous baseline to compare against).
+
+    Returns:
+        dict: {
+            'interfaces': {
+                'Ethernet': {
+                    'tx_bps': int,       # TX bytes per second
+                    'rx_bps': int,       # RX bytes per second
+                    'tx_util': float,    # TX as % of link speed (0-100)
+                    'rx_util': float,    # RX as % of link speed (0-100)
+                    'link_speed': int,   # NIC link speed in Mbps
+                },
+                ...
+            }
+        }
+    """
+    global _prev_net_counters, _prev_net_time
+
+    result = {'interfaces': {}}
+    now = time.time()
+
+    try:
+        # Get current counters and NIC stats
+        counters = psutil.net_io_counters(pernic=True)
+        nic_stats = psutil.net_if_stats()
+
+        if not _prev_net_counters or _prev_net_time == 0.0:
+            # First call — store baseline, return zeros but include active NICs
+            _prev_net_counters = {
+                name: {'sent': c.bytes_sent, 'recv': c.bytes_recv}
+                for name, c in counters.items()
+            }
+            _prev_net_time = now
+            # Populate interfaces with zeros so the web never sees an empty result
+            for name in counters:
+                stats = nic_stats.get(name)
+                if stats and stats.isup and stats.speed > 0 and 'loopback' not in name.lower():
+                    result['interfaces'][name] = {
+                        'tx_bps': 0, 'rx_bps': 0,
+                        'tx_util': 0.0, 'rx_util': 0.0,
+                        'link_speed': stats.speed,
+                    }
+            return result
+
+        elapsed = now - _prev_net_time
+        if elapsed <= 0:
+            return result
+
+        for name, c in counters.items():
+            # Skip interfaces that are down
+            stats = nic_stats.get(name)
+            if not stats or not stats.isup:
+                continue
+
+            # Skip loopback-like interfaces (no link speed or name contains "Loopback")
+            if stats.speed == 0 or 'loopback' in name.lower():
+                continue
+
+            prev = _prev_net_counters.get(name)
+            if not prev:
+                continue
+
+            # Compute deltas (clamp negative to 0 for counter resets)
+            tx_delta = max(0, c.bytes_sent - prev['sent'])
+            rx_delta = max(0, c.bytes_recv - prev['recv'])
+
+            tx_bps = int(tx_delta / elapsed)
+            rx_bps = int(rx_delta / elapsed)
+
+            # Compute utilization % relative to link speed
+            link_speed_mbps = stats.speed  # Mbps
+            link_speed_bps = link_speed_mbps * 1_000_000 / 8  # Convert to bytes/sec
+
+            if link_speed_bps > 0:
+                tx_util = round(min((tx_bps / link_speed_bps) * 100, 100.0), 1)
+                rx_util = round(min((rx_bps / link_speed_bps) * 100, 100.0), 1)
+            else:
+                tx_util = 0.0
+                rx_util = 0.0
+
+            result['interfaces'][name] = {
+                'tx_bps': tx_bps,
+                'rx_bps': rx_bps,
+                'tx_util': tx_util,
+                'rx_util': rx_util,
+                'link_speed': link_speed_mbps,
+            }
+
+        # Update stored state for next call
+        _prev_net_counters = {
+            name: {'sent': c.bytes_sent, 'recv': c.bytes_recv}
+            for name, c in counters.items()
+        }
+        _prev_net_time = now
+
+    except Exception as e:
+        logging.error(f"Error collecting network metrics: {e}")
+
+    return result
+
+
+# --- Network quality (ping-based) ---
+_cached_gateway: str = ''
+_cached_gateway_time: float = 0.0
+_cached_ping_result: dict = {}
+_ping_thread: threading.Thread = None
+
+
+def _detect_default_gateway() -> str:
+    """Detect default gateway IP via ipconfig."""
+    global _cached_gateway, _cached_gateway_time
+    now = time.time()
+    # Cache gateway for 5 minutes
+    if _cached_gateway and now - _cached_gateway_time < 300:
+        return _cached_gateway
+    try:
+        output = subprocess.check_output(
+            ['ipconfig'], text=True, timeout=5, creationflags=0x08000000
+        )
+        for line in output.splitlines():
+            if 'Default Gateway' in line:
+                parts = line.split(':')
+                if len(parts) >= 2:
+                    ip = parts[-1].strip()
+                    if ip and not ip.startswith('fe80'):  # skip IPv6 link-local
+                        _cached_gateway = ip
+                        _cached_gateway_time = now
+                        return ip
+    except Exception:
+        pass
+    return ''
+
+
+def _run_ping(target: str) -> dict:
+    """Run ping and parse results. Returns {latency_ms, packet_loss_pct}."""
+    try:
+        output = subprocess.check_output(
+            ['ping', '-n', '4', '-w', '1000', target],
+            text=True, timeout=10, creationflags=0x08000000
+        )
+        # Parse packet loss: "(0% loss)" or "(25% loss)"
+        packet_loss = 100.0
+        for line in output.splitlines():
+            if '% loss' in line or '% lost' in line:
+                import re
+                m = re.search(r'\((\d+)%', line)
+                if m:
+                    packet_loss = float(m.group(1))
+                break
+
+        # Parse average latency: "Average = 5ms"
+        latency = -1.0
+        for line in output.splitlines():
+            if 'Average' in line or 'average' in line:
+                import re
+                m = re.search(r'(\d+)ms', line)
+                if m:
+                    latency = float(m.group(1))
+                break
+
+        return {
+            'latency_ms': latency if latency >= 0 else None,
+            'packet_loss_pct': packet_loss
+        }
+    except subprocess.TimeoutExpired:
+        return {'latency_ms': None, 'packet_loss_pct': 100.0}
+    except Exception:
+        return {'latency_ms': None, 'packet_loss_pct': None}
+
+
+def _ping_background():
+    """Background thread that runs ping and caches result."""
+    global _cached_ping_result
+    try:
+        gateway = _detect_default_gateway()
+        if not gateway:
+            _cached_ping_result = {'gateway_ip': None, 'latency_ms': None, 'packet_loss_pct': None}
+            return
+        result = _run_ping(gateway)
+        _cached_ping_result = {
+            'gateway_ip': gateway,
+            'latency_ms': result.get('latency_ms'),
+            'packet_loss_pct': result.get('packet_loss_pct'),
+        }
+    except Exception as e:
+        logging.debug(f"Network quality ping failed: {e}")
+        _cached_ping_result = {'gateway_ip': None, 'latency_ms': None, 'packet_loss_pct': None}
+
+
+def get_network_quality() -> dict:
+    """Get network quality metrics (latency + packet loss via ping to gateway).
+
+    Runs ping in a background thread to avoid blocking the metrics loop (~4s for 4 pings).
+    Returns cached result from previous ping cycle.
+    """
+    global _ping_thread
+    if _ping_thread is None or not _ping_thread.is_alive():
+        _ping_thread = threading.Thread(target=_ping_background, daemon=True)
+        _ping_thread.start()
+    return dict(_cached_ping_result) if _cached_ping_result else {
+        'gateway_ip': None, 'latency_ms': None, 'packet_loss_pct': None
+    }
+
+
 def get_path(filename=None):
     """
     Get path relative to the currently executing script (installation directory).
@@ -251,8 +520,8 @@ def get_python_exe_path():
     Raises:
         FileNotFoundError: If neither pythonw.exe nor python.exe can be found
     """
-    # Get installation root (C:\Owlette or wherever installed)
-    # src is at C:\Owlette\agent\src, so go up 2 levels to get C:\Owlette
+    # Get installation root (C:\ProgramData\Owlette or wherever installed)
+    # src is at <install>\agent\src, so go up 2 levels to get <install>
     install_root = os.path.dirname(os.path.dirname(get_path()))
 
     # Try pythonw.exe first (for GUI scripts, no console window)
@@ -315,7 +584,10 @@ def ensure_data_directories():
         get_data_path('config'),
         get_data_path('logs'),
         get_data_path('cache'),
-        get_data_path('tmp')
+        get_data_path('tmp'),
+        get_data_path('ipc/cortex_commands'),
+        get_data_path('ipc/cortex_results'),
+        get_data_path('ipc/cortex_events'),
     ]
 
     try:
@@ -337,8 +609,8 @@ def get_environment():
         config = read_config()
         if config:
             return config.get('environment', 'production')
-    except:
-        pass
+    except (json.JSONDecodeError, OSError, KeyError) as e:
+        logging.debug(f"Could not read environment from config: {e}")
     return 'production'
 
 def get_api_base_url(environment=None):
@@ -400,16 +672,39 @@ def get_project_id(environment=None):
 
 def is_script_running(script_name):
     for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
-        logging.debug(f"Checking process: {process.info['name']}")
-        logging.debug(f"Looking for script: {script_name}")
-        if 'python' in process.info['name']:
-            if script_name in ' '.join(process.info['cmdline']):
-                return True
+        try:
+            name = process.info.get('name') or ''
+            if 'python' in name:
+                cmdline = process.info.get('cmdline')
+                if cmdline and script_name in ' '.join(cmdline):
+                    return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
     return False
 
 # PATHS - Now using ProgramData for proper Windows service data storage
 CONFIG_PATH = get_data_path('config/config.json')
 RESULT_FILE_PATH = get_data_path('tmp/app_states.json')
+
+# Cortex (local AI agent) paths
+CORTEX_PID_PATH = get_data_path('tmp/cortex.pid')
+CORTEX_IPC_CMD_DIR = get_data_path('ipc/cortex_commands')
+CORTEX_IPC_RESULT_DIR = get_data_path('ipc/cortex_results')
+CORTEX_IPC_EVENTS_DIR = get_data_path('ipc/cortex_events')
+
+
+def is_cortex_enabled(config=None):
+    """Check if Cortex is enabled in config.
+
+    Args:
+        config: Optional config dict. If None, reads from disk.
+
+    Returns:
+        True if cortex.enabled is truthy.
+    """
+    if config is None:
+        config = read_config()
+    return bool(config.get('cortex', {}).get('enabled', False))
 
 # LOGGING
 # Get log level from config
@@ -482,7 +777,7 @@ def cleanup_old_logs(max_age_days=90):
                     os.remove(file_path)
                     deleted_count += 1
                     total_size_freed += file_size
-                    logging.info(f"Deleted old log file: {filename} ({round(file_size / 1024 / 1024, 2)} MB)")
+                    logging.debug(f"Deleted old log file: {filename} ({round(file_size / 1024 / 1024, 2)} MB)")
                 except Exception as e:
                     logging.warning(f"Could not delete old log file {filename}: {e}")
 
@@ -495,6 +790,20 @@ def cleanup_old_logs(max_age_days=90):
     except Exception as e:
         logging.error(f"Error during log cleanup: {e}")
         return 0
+
+def get_log_tail(log_name='service', lines=100):
+    """Read the last N lines from a log file. Returns empty string on failure."""
+    try:
+        log_path = get_data_path(f'logs/{log_name}.log')
+        if not os.path.exists(log_path):
+            return ''
+        with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+            all_lines = f.readlines()
+            return ''.join(all_lines[-lines:])
+    except Exception as e:
+        logging.warning(f"Failed to read log tail: {e}")
+        return ''
+
 
 # Initialize logging with a rotating file handler
 def initialize_logging(log_file_name, level=logging.INFO):
@@ -645,10 +954,14 @@ def load_config(emails_to_entry=None):
 def save_config(config=None, emails_to_entry=None):
     if config is None:
         config = read_json_from_file(CONFIG_PATH)
-    
+
     if emails_to_entry is not None:
         config['gmail']['to'] = [email.strip() for email in emails_to_entry.get().split(',')]
-    
+
+    # Strip runtime-only fields before persisting — these belong in app_states.json, not config
+    for process in config.get('processes', []):
+        process.pop('status', None)
+
     write_json_to_file(config, CONFIG_PATH)
   
 # Maintain compatibility from JSON config versions < 1.1.0
@@ -710,6 +1023,19 @@ def upgrade_config():
                     config['environment'] = 'production'
                 logging.info(f"Added environment configuration to config.json (v1.5.0): {config['environment']}")
 
+            # Migrate autolaunch → launch_mode (v1.6.0+)
+            for process in config.get('processes', []):
+                if 'launch_mode' not in process:
+                    if process.get('autolaunch', False):
+                        process['launch_mode'] = 'always'
+                    else:
+                        process['launch_mode'] = 'off'
+                    logging.info(f"Migrated process '{process.get('name', '?')}' autolaunch={process.get('autolaunch')} -> launch_mode={process['launch_mode']}")
+                # Always derive autolaunch for backward compat with older agents
+                process['autolaunch'] = process.get('launch_mode', 'off') != 'off'
+                if 'schedules' not in process:
+                    process['schedules'] = None
+
             # Reorder the keys so that 'version' is at the top
             ordered_config = {'version': config['version']}
             for key in config:
@@ -734,6 +1060,62 @@ def upgrade_config():
         new_config = generate_config_file()
         write_json_to_file(new_config, CONFIG_PATH)
 
+# Schedule utility for launch_mode='scheduled'
+def is_within_schedule(schedules, timezone_str=None):
+    """Check if current time falls within ANY schedule block's active window.
+
+    Args:
+        schedules: List of schedule blocks, each with 'days' and 'ranges'.
+        timezone_str: Optional IANA timezone (e.g. 'America/New_York'). Uses local time if None.
+
+    Returns:
+        True if current day+time matches any block, or if schedules is empty/None (safety fallback).
+    """
+    if not schedules:
+        return True  # No schedules = always active (safety fallback)
+
+    from datetime import datetime, time as dt_time
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo
+
+    try:
+        tz = ZoneInfo(timezone_str) if timezone_str else None
+    except (KeyError, Exception):
+        logging.warning(f"Invalid timezone '{timezone_str}', falling back to local time")
+        tz = None
+    now = datetime.now(tz)
+    day_names = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+    current_day = day_names[now.weekday()]
+    current_time = now.time()
+
+    prev_day = day_names[(day_names.index(current_day) - 1) % 7]
+
+    for block in schedules:
+        days = block.get('days', day_names)
+        for time_range in block.get('ranges', []):
+            try:
+                start_h, start_m = map(int, time_range['start'].split(':'))
+                stop_h, stop_m = map(int, time_range['stop'].split(':'))
+            except (ValueError, KeyError):
+                continue
+            start = dt_time(start_h, start_m)
+            stop = dt_time(stop_h, stop_m)
+            if start <= stop:
+                # Normal range: current day must be in the schedule
+                if current_day in days and start <= current_time <= stop:
+                    return True
+            else:
+                # Overnight range (e.g. 22:00 – 01:00): spans midnight.
+                # "Before midnight" portion — current day must be scheduled, time >= start
+                if current_day in days and current_time >= start:
+                    return True
+                # "After midnight" portion — the *previous* day must be scheduled, time <= stop
+                if prev_day in days and current_time <= stop:
+                    return True
+    return False
+
 # Read a JSON file and returns its content as a Python dictionary with retry logic
 def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
     """
@@ -747,7 +1129,7 @@ def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
     Returns:
         Dictionary from JSON file, or {} if error/not found (never returns None)
     """
-    with json_lock:
+    with _CrossProcessLock(), json_lock:
         for attempt in range(max_retries):
             try:
                 with open(file_path, 'r') as f:
@@ -796,7 +1178,7 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
         max_retries: Maximum number of retry attempts (default: 3)
         initial_delay: Initial delay in seconds, doubles with each retry (default: 0.1s)
     """
-    with json_lock:
+    with _CrossProcessLock(), json_lock:
         # Use atomic write pattern: write to temp file, then rename
         temp_path = file_path + '.tmp'
 
@@ -825,7 +1207,7 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
                     if os.path.exists(temp_path):
                         try:
                             os.remove(temp_path)
-                        except:
+                        except Exception:
                             pass
 
             except Exception as e:
@@ -833,7 +1215,7 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
                 if os.path.exists(temp_path):
                     try:
                         os.remove(temp_path)
-                    except:
+                    except Exception:
                         pass
                 logging.error(f"An error occurred while writing to the file: {e}")
                 break  # Exit retry loop on non-permission errors
@@ -925,6 +1307,72 @@ def write_config(keys, value):
 
     write_json_to_file(config, CONFIG_PATH)
 
+# PROCESS TERMINATION
+
+def find_windows_by_pid(pid):
+    """Find all top-level window handles (HWNDs) owned by a given PID."""
+    import win32gui
+    import win32process
+    windows = []
+    def enum_callback(hwnd, _):
+        try:
+            _, window_pid = win32process.GetWindowThreadProcessId(hwnd)
+            if window_pid == pid and win32gui.IsWindowVisible(hwnd):
+                windows.append(hwnd)
+        except Exception:
+            pass
+    try:
+        win32gui.EnumWindows(enum_callback, None)
+    except Exception:
+        pass
+    return windows
+
+
+def graceful_terminate(pid, timeout=5):
+    """Attempt graceful shutdown via WM_CLOSE, then fall back to hard terminate.
+
+    Returns True if the process was terminated, False if it was already gone.
+    """
+    import win32gui
+    import win32con
+
+    try:
+        proc = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return False
+
+    # Try graceful shutdown: send WM_CLOSE to all visible windows
+    windows = find_windows_by_pid(pid)
+    if windows:
+        for hwnd in windows:
+            try:
+                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+            except Exception:
+                pass
+
+        # Wait for process to exit gracefully
+        try:
+            proc.wait(timeout=timeout)
+            logging.info(f"Process {pid} exited gracefully after WM_CLOSE")
+            return True
+        except psutil.TimeoutExpired:
+            logging.info(f"Process {pid} did not exit after WM_CLOSE ({timeout}s), forcing terminate")
+
+    # Fall back to hard terminate
+    try:
+        proc.terminate()
+        proc.wait(timeout=3)
+        return True
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.TimeoutExpired:
+        try:
+            proc.kill()
+            return True
+        except psutil.NoSuchProcess:
+            return False
+
+
 # PROCESSES
 
 def fetch_pid_by_id(target_id):
@@ -946,15 +1394,21 @@ def fetch_pid_by_id(target_id):
     
     return newest_pid
 
-def update_process_status_in_json(pid, new_status, firebase_client=None):
+def update_process_status_in_json(pid, new_status, firebase_client=None, process_id=None):
     """
     Update process status in JSON file. Status will sync to Firebase via centralized metrics loop.
 
     Args:
-        pid: Process ID to update
+        pid: OS process ID to update
         new_status: New status string (LAUNCHING, RUNNING, STALLED, etc.)
         firebase_client: Deprecated parameter (kept for compatibility)
+        process_id: Config process ID (for GUI status mapping)
     """
+    # Guard against None/invalid PIDs — writing "None" as a key corrupts app_states.json
+    if pid is None:
+        logging.debug(f"Skipping status update for None PID (status={new_status}, process_id={process_id})")
+        return
+
     data = read_json_from_file(RESULT_FILE_PATH)
 
     # Defensive programming: ensure data is never None
@@ -966,6 +1420,8 @@ def update_process_status_in_json(pid, new_status, firebase_client=None):
         data[str(pid)] = {}
 
     data[str(pid)]['status'] = new_status
+    if process_id:
+        data[str(pid)]['id'] = process_id
     write_json_to_file(data, RESULT_FILE_PATH)
 
     # Status updated locally - will sync via centralized metrics loop on next interval
@@ -1112,10 +1568,15 @@ def get_system_metrics_with_config(config, skip_gpu=False):
                 pid_to_runtime = {}
                 if runtime_state:
                     for pid, state_info in runtime_state.items():
+                        # Skip invalid PID keys (e.g. "None" from failed launches)
+                        try:
+                            pid_int = int(pid)
+                        except (ValueError, TypeError):
+                            continue
                         process_id = state_info.get('id')
                         if process_id:
                             pid_to_runtime[process_id] = {
-                                'pid': int(pid),
+                                'pid': pid_int,
                                 'status': state_info.get('status', 'UNKNOWN'),
                                 'responsive': state_info.get('responsive', True),
                                 'timestamp': state_info.get('timestamp', 0)
@@ -1132,11 +1593,13 @@ def get_system_metrics_with_config(config, skip_gpu=False):
                             'file_path': process.get('file_path', ''),
                             'cwd': process.get('cwd', ''),
                             'autolaunch': process.get('autolaunch', False),
+                            'launch_mode': process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off'),
+                            'schedules': process.get('schedules', None),
                             'priority': process.get('priority', 'Normal'),
                             'visibility': process.get('visibility', 'Show'),
                             'time_delay': process.get('time_delay', 0),
                             'time_to_init': process.get('time_to_init', 10),
-                            'relaunch_attempts': process.get('relaunch_attempts', 3),
+                            'relaunch_attempts': process.get('relaunch_attempts', 5),
                             'index': index  # Preserve config order for web app display
                         }
 
@@ -1150,7 +1613,8 @@ def get_system_metrics_with_config(config, skip_gpu=False):
                         else:
                             # Process not running
                             process_data['pid'] = None
-                            process_data['status'] = 'INACTIVE' if not process.get('autolaunch', False) else 'STOPPED'
+                            mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+                            process_data['status'] = 'INACTIVE' if mode == 'off' else 'STOPPED'
                             process_data['responsive'] = True
                             process_data['last_updated'] = 0
 
@@ -1193,6 +1657,7 @@ def get_system_metrics_with_config(config, skip_gpu=False):
                 'unit': 'GB'
             },
             'gpu': gpu_metrics,
+            'network': {**get_network_metrics(), **get_network_quality()},
             'processes': processes_data
         }
     except Exception as e:
@@ -1202,5 +1667,6 @@ def get_system_metrics_with_config(config, skip_gpu=False):
             'memory': {'used_gb': 0, 'total_gb': 0, 'percent': 0, 'unit': 'GB'},
             'disk': {'used_gb': 0, 'total_gb': 0, 'percent': 0, 'unit': 'GB'},
             'gpu': {'name': 'N/A', 'usage_percent': 0, 'vram_used_gb': 0, 'vram_total_gb': 0, 'unit': 'GB'},
+            'network': {'interfaces': {}, 'gateway_ip': None, 'latency_ms': None, 'packet_loss_pct': None},
             'processes': {}
         }

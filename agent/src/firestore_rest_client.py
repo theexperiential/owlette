@@ -33,8 +33,10 @@ Usage:
     firestore.listen_to_document('config/abc/machines/DESKTOP-001', callback)
 """
 
+import hashlib
 import requests
 import json
+import re
 import time
 import threading
 import logging
@@ -85,7 +87,7 @@ class FirestoreRestClient:
             'Content-Type': 'application/json',
         })
 
-        logger.info(f"FirestoreRestClient initialized: project={project_id}")
+        logger.debug(f"FirestoreRestClient initialized: project={project_id}")
 
     def _get_auth_headers(self) -> Dict[str, str]:
         """
@@ -121,8 +123,9 @@ class FirestoreRestClient:
             # Special marker for field deletion
             return None  # Signal to caller to handle as deletion
         elif value == SERVER_TIMESTAMP:
-            # Server timestamp - use current UTC time
-            # Note: True server timestamp requires Firestore transform operation
+            # SERVER_TIMESTAMP should be extracted by _extract_server_timestamps()
+            # before reaching here. If it does, fall back to client time with warning.
+            logger.warning("SERVER_TIMESTAMP not extracted before conversion - using client time as fallback")
             return {'timestampValue': datetime.utcnow().isoformat() + 'Z'}
         elif isinstance(value, bool):
             return {'booleanValue': value}
@@ -193,6 +196,83 @@ class FirestoreRestClient:
         fields = {k: self._to_firestore_value(v) for k, v in data.items()}
         return {'fields': fields}
 
+    def _extract_server_timestamps(self, data: Dict[str, Any], prefix: str = ""):
+        """
+        Extract SERVER_TIMESTAMP sentinel values from a data dict.
+
+        Returns:
+            (cleaned_data, timestamp_field_paths) where cleaned_data has
+            SERVER_TIMESTAMP entries removed and timestamp_field_paths is
+            a list of escaped dotted field paths for use in fieldTransforms.
+        """
+        cleaned = {}
+        field_paths = []
+
+        for key, value in data.items():
+            escaped_key = key if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', key) else f'`{key}`'
+            field_path = f"{prefix}.{escaped_key}" if prefix else escaped_key
+
+            if value == SERVER_TIMESTAMP:
+                field_paths.append(field_path)
+            elif isinstance(value, dict):
+                nested_cleaned, nested_paths = self._extract_server_timestamps(value, field_path)
+                if nested_cleaned:
+                    cleaned[key] = nested_cleaned
+                field_paths.extend(nested_paths)
+            else:
+                cleaned[key] = value
+
+        return cleaned, field_paths
+
+    def _build_field_transforms(self, field_paths: List[str]) -> List[Dict[str, str]]:
+        """Build Firestore fieldTransforms for server timestamps."""
+        return [
+            {'fieldPath': path, 'setToServerValue': 'REQUEST_TIME'}
+            for path in field_paths
+        ]
+
+    def _flatten_field_paths(self, data: Dict[str, Any], prefix: str = ""):
+        """Yield all leaf field paths from a nested dict (for updateMask).
+        Field names with special characters are backtick-escaped."""
+        for key, value in data.items():
+            escaped_key = key if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', key) else f'`{key}`'
+            field_path = f"{prefix}.{escaped_key}" if prefix else escaped_key
+            if isinstance(value, dict):
+                yield from self._flatten_field_paths(value, field_path)
+            else:
+                yield field_path
+
+    def _commit_write(self, path: str, cleaned_data: Dict[str, Any],
+                      field_transforms: List[Dict[str, str]],
+                      update_mask_paths: Optional[List[str]] = None):
+        """
+        Write a document via the :commit endpoint (supports fieldTransforms).
+
+        Used instead of PATCH when SERVER_TIMESTAMP fields are present,
+        since PATCH does not support updateTransforms.
+        """
+        url = f"{FIRESTORE_API_BASE}/projects/{self.project_id}/databases/(default)/documents:commit"
+        doc_name = f"projects/{self.project_id}/databases/(default)/documents/{path}"
+
+        write_entry = {
+            'update': {
+                'name': doc_name,
+                **self._to_firestore_document(cleaned_data)
+            },
+            'updateTransforms': field_transforms
+        }
+
+        if update_mask_paths is not None:
+            write_entry['updateMask'] = {'fieldPaths': update_mask_paths}
+
+        response = self.session.post(
+            url,
+            json={'writes': [write_entry]},
+            headers=self._get_auth_headers(),
+            timeout=30
+        )
+        response.raise_for_status()
+
     def _from_firestore_document(self, firestore_doc: Dict[str, Any]) -> Dict[str, Any]:
         """
         Convert Firestore document to Python dict.
@@ -221,14 +301,18 @@ class FirestoreRestClient:
         """
         try:
             url = f"{self.base_url}/{path}"
-            response = self.session.get(url, headers=self._get_auth_headers())
+            response = self.session.get(url, headers=self._get_auth_headers(), timeout=30)
 
             if response.status_code == 404:
                 logger.debug(f"Document not found: {path}")
                 return None
 
             response.raise_for_status()
-            doc = response.json()
+            try:
+                doc = response.json()
+            except json.JSONDecodeError:
+                logger.error(f"Non-JSON response for {path} (status {response.status_code}): {response.text[:200]}")
+                raise
             return self._from_firestore_document(doc)
 
         except requests.exceptions.HTTPError as e:
@@ -263,30 +347,34 @@ class FirestoreRestClient:
             merge: If True, merge with existing data (default: False)
         """
         try:
-            url = f"{self.base_url}/{path}"
-            firestore_doc = self._to_firestore_document(data)
+            # Extract SERVER_TIMESTAMP fields for proper server-side timestamps
+            cleaned_data, timestamp_paths = self._extract_server_timestamps(data)
 
-            if merge:
-                # Use PATCH with merge behavior
-                # Note: Firestore REST API doesn't have exact "merge" like SDK
-                # We need to get existing doc and merge manually, or use updateMask
-                # For simplicity, we'll use PATCH which updates specified fields
-                response = self.session.patch(
-                    url,
-                    json=firestore_doc,
-                    headers=self._get_auth_headers()
-                )
+            if timestamp_paths:
+                # Use :commit endpoint (supports fieldTransforms for server timestamps)
+                field_transforms = self._build_field_transforms(timestamp_paths)
+
+                if merge:
+                    # For merge, specify updateMask with all field paths to avoid overwriting
+                    all_paths = list(self._flatten_field_paths(cleaned_data)) + timestamp_paths
+                    self._commit_write(path, cleaned_data, field_transforms,
+                                       update_mask_paths=all_paths)
+                else:
+                    self._commit_write(path, cleaned_data, field_transforms)
             else:
-                # Full replace - use PATCH without updateMask (or PUT-like behavior)
-                # Actually, Firestore REST uses PATCH for updates
-                # For create/replace, we use the write method or just PATCH
+                # No server timestamps — use existing PATCH logic
+                url = f"{self.base_url}/{path}"
+                firestore_doc = self._to_firestore_document(cleaned_data)
+
                 response = self.session.patch(
                     url,
                     json=firestore_doc,
-                    headers=self._get_auth_headers()
+                    headers=self._get_auth_headers(),
+                    timeout=30
                 )
 
-            response.raise_for_status()
+                response.raise_for_status()
+
             logger.debug(f"Document written: {path}")
 
         except Exception as e:
@@ -306,8 +394,6 @@ class FirestoreRestClient:
         Returns:
             Escaped field path
         """
-        import re
-
         # Split on dots for nested paths
         parts = field_path.split('.')
         escaped_parts = []
@@ -334,15 +420,15 @@ class FirestoreRestClient:
             updates: Fields to update (supports dot notation for nested fields)
         """
         try:
-            url = f"{self.base_url}/{path}"
+            # Extract SERVER_TIMESTAMP fields for proper server-side timestamps
+            cleaned_updates, timestamp_paths = self._extract_server_timestamps(updates)
 
-            # Firestore REST API uses updateMask to specify which fields to update
-            # Build updateMask from keys, escaping field names with special characters
+            # Build updateMask from ALL original keys (including timestamp fields)
             update_mask_paths = [self._escape_field_path(key) for key in updates.keys()]
 
-            # Convert updates to Firestore format, handling nested paths
+            # Convert cleaned updates to Firestore format, handling nested paths
             firestore_fields = {}
-            for key, value in updates.items():
+            for key, value in cleaned_updates.items():
                 firestore_value = self._to_firestore_value(value)
 
                 # If _to_firestore_value returns None, it's a DELETE_FIELD sentinel
@@ -367,17 +453,41 @@ class FirestoreRestClient:
                     # Top-level field
                     firestore_fields[key] = firestore_value
 
-            # Make PATCH request with updateMask
-            params = {
-                'updateMask.fieldPaths': update_mask_paths
-            }
+            if timestamp_paths:
+                # Use :commit endpoint (supports fieldTransforms for server timestamps)
+                field_transforms = self._build_field_transforms(timestamp_paths)
+                url = f"{FIRESTORE_API_BASE}/projects/{self.project_id}/databases/(default)/documents:commit"
+                doc_name = f"projects/{self.project_id}/databases/(default)/documents/{path}"
 
-            response = self.session.patch(
-                url,
-                json={'fields': firestore_fields},
-                params=params,
-                headers=self._get_auth_headers()
-            )
+                write_entry = {
+                    'update': {
+                        'name': doc_name,
+                        'fields': firestore_fields
+                    },
+                    'updateTransforms': field_transforms,
+                    'updateMask': {'fieldPaths': update_mask_paths}
+                }
+
+                response = self.session.post(
+                    url,
+                    json={'writes': [write_entry]},
+                    headers=self._get_auth_headers(),
+                    timeout=30
+                )
+            else:
+                # No server timestamps — use existing PATCH logic
+                url = f"{self.base_url}/{path}"
+                params = {
+                    'updateMask.fieldPaths': update_mask_paths
+                }
+
+                response = self.session.patch(
+                    url,
+                    json={'fields': firestore_fields},
+                    params=params,
+                    headers=self._get_auth_headers(),
+                    timeout=30
+                )
 
             response.raise_for_status()
             logger.debug(f"Document updated: {path}")
@@ -395,7 +505,7 @@ class FirestoreRestClient:
         """
         try:
             url = f"{self.base_url}/{path}"
-            response = self.session.delete(url, headers=self._get_auth_headers())
+            response = self.session.delete(url, headers=self._get_auth_headers(), timeout=30)
 
             # 404 is OK for delete (already doesn't exist)
             if response.status_code not in [200, 204, 404]:
@@ -407,20 +517,35 @@ class FirestoreRestClient:
             logger.error(f"Error deleting document {path}: {e}")
             raise
 
-    def listen_to_document(self, path: str, callback: Callable[[Optional[Dict[str, Any]]], None]) -> threading.Thread:
+    def listen_to_document(
+        self,
+        path: str,
+        callback: Callable[[Optional[Dict[str, Any]]], None],
+        min_interval: float = 2.0,
+        max_interval: float = 30.0,
+        backoff_multiplier: float = 1.5
+    ) -> tuple:
         """
         Listen to document changes in real-time using adaptive polling.
 
-        Uses exponential backoff: starts at 2s polling, increases to 30s when idle.
-        This reduces Firebase read operations by ~80% while maintaining responsiveness.
+        Uses exponential backoff: starts at min_interval polling, increases to
+        max_interval when idle. Configurable per-listener for different responsiveness needs.
 
         Args:
             path: Document path to listen to
             callback: Function to call when document changes (receives doc data)
+            min_interval: Minimum polling interval in seconds (default: 2.0)
+            max_interval: Maximum polling interval in seconds (default: 30.0)
+            backoff_multiplier: Multiplier for interval increase when idle (default: 1.5)
 
         Returns:
-            Thread object (already started)
+            (thread, wake_event, stop_event) — thread is already started; set wake_event to
+            interrupt the backoff sleep and force an immediate poll; set stop_event to
+            terminate the polling loop.
         """
+        wake_event = threading.Event()
+        stop_event = threading.Event()
+
         def poll_document():
             """Poll document for changes with exponential backoff."""
             # Use a sentinel value to detect first run (different from None which means "document doesn't exist")
@@ -428,17 +553,14 @@ class FirestoreRestClient:
             last_data = _UNINITIALIZED
             last_hash = None
 
-            # Exponential backoff parameters
-            current_interval = 2.0  # Start at 2 seconds
-            min_interval = 2.0      # Minimum interval (when changes detected)
-            max_interval = 30.0     # Maximum interval (when idle)
-            backoff_multiplier = 1.5  # Multiply by this when no change
+            # Adaptive polling parameters (configured per-listener)
+            current_interval = min_interval
 
             # Error tracking for reduced logging
             consecutive_errors = 0
             last_error_type = None
 
-            while True:
+            while not stop_event.is_set():
                 try:
                     # Get current document (suppress logging - we handle it here)
                     current_data = self.get_document(path, _suppress_logging=True)
@@ -450,8 +572,6 @@ class FirestoreRestClient:
                     last_error_type = None
 
                     # Calculate hash for reliable comparison (handles dict ordering, float precision, etc.)
-                    import hashlib
-                    import json
                     if current_data is not None:
                         current_hash = hashlib.md5(json.dumps(current_data, sort_keys=True).encode()).hexdigest()
                     else:
@@ -472,11 +592,18 @@ class FirestoreRestClient:
                         # No change - increase interval (exponential backoff)
                         current_interval = min(current_interval * backoff_multiplier, max_interval)
 
-                    # Poll with current interval
+                    # Poll with current interval (wake_event.set() interrupts immediately)
                     logger.debug(f"Polling {path} - next check in {current_interval:.1f}s")
-                    time.sleep(current_interval)
+                    if stop_event.is_set():
+                        break
+                    if wake_event.wait(current_interval):
+                        # Woken up externally — reset to fast polling
+                        wake_event.clear()
+                        current_interval = min_interval
 
                 except Exception as e:
+                    if stop_event.is_set():
+                        break
                     consecutive_errors += 1
                     error_type = type(e).__name__
 
@@ -507,15 +634,17 @@ class FirestoreRestClient:
 
                     last_error_type = error_type
 
-                    # Back off on error - increase backoff for consecutive errors
+                    # Back off on error - interruptible via stop_event
                     error_backoff = min(5 * (1 + consecutive_errors // 10), 60)  # 5s to 60s max
-                    time.sleep(error_backoff)
+                    stop_event.wait(error_backoff)
                     current_interval = min_interval  # Reset interval after error
+
+            logger.debug(f"Listener stopped for document: {path}")
 
         thread = threading.Thread(target=poll_document, daemon=True)
         thread.start()
-        logger.info(f"Started listener for document: {path}")
-        return thread
+        logger.debug(f"Started listener for document: {path}")
+        return thread, wake_event, stop_event
 
     def batch_write(self, writes: List[Dict[str, Any]]):
         """
@@ -548,34 +677,43 @@ class FirestoreRestClient:
                 doc_name = f"projects/{self.project_id}/databases/(default)/documents/{path}"
 
                 if operation == 'set':
-                    # For set operations, omit currentDocument to allow upsert
-                    batch_writes.append({
+                    # Extract SERVER_TIMESTAMP fields for proper server-side timestamps
+                    cleaned_data, timestamp_paths = self._extract_server_timestamps(data)
+                    write_entry = {
                         'update': {
                             'name': doc_name,
-                            **self._to_firestore_document(data)
+                            **self._to_firestore_document(cleaned_data)
                         }
-                    })
+                    }
+                    if timestamp_paths:
+                        write_entry['updateTransforms'] = self._build_field_transforms(timestamp_paths)
+                    batch_writes.append(write_entry)
                 elif operation == 'delete':
                     batch_writes.append({
                         'delete': doc_name
                     })
                 elif operation == 'update':
-                    # For update, we need to specify updateMask
-                    batch_writes.append({
+                    # Extract SERVER_TIMESTAMP fields for proper server-side timestamps
+                    cleaned_data, timestamp_paths = self._extract_server_timestamps(data)
+                    write_entry = {
                         'update': {
                             'name': doc_name,
-                            **self._to_firestore_document(data)
+                            **self._to_firestore_document(cleaned_data)
                         },
                         'updateMask': {
                             'fieldPaths': list(data.keys())
                         }
-                    })
+                    }
+                    if timestamp_paths:
+                        write_entry['updateTransforms'] = self._build_field_transforms(timestamp_paths)
+                    batch_writes.append(write_entry)
 
             # Execute batch write
             response = self.session.post(
                 url,
                 json={'writes': batch_writes},
-                headers=self._get_auth_headers()
+                headers=self._get_auth_headers(),
+                timeout=30
             )
 
             response.raise_for_status()
@@ -592,7 +730,7 @@ class FirestoreRestClient:
                     try:
                         error_details = e.response.json()
                         logger.debug(f"Firestore error details: {error_details}")
-                    except:
+                    except (json.JSONDecodeError, ValueError):
                         pass
             else:
                 # Log other errors at ERROR level
@@ -602,7 +740,7 @@ class FirestoreRestClient:
                     try:
                         error_details = e.response.json()
                         logger.error(f"Firestore error details: {error_details}")
-                    except:
+                    except (json.JSONDecodeError, ValueError):
                         logger.error(f"Response text: {e.response.text if hasattr(e.response, 'text') else 'N/A'}")
             raise
 
@@ -661,11 +799,16 @@ class CollectionReference:
 
             response = self.client.session.get(
                 url,
-                headers=self.client._get_auth_headers()
+                headers=self.client._get_auth_headers(),
+                timeout=30
             )
 
             response.raise_for_status()
-            data = response.json()
+            try:
+                data = response.json()
+            except json.JSONDecodeError:
+                logger.error(f"Non-JSON response listing documents (status {response.status_code}): {response.text[:200]}")
+                return
 
             # Parse documents from response
             documents = data.get('documents', [])
@@ -685,9 +828,7 @@ class CollectionReference:
 
         except Exception as e:
             logger.error(f"Error streaming collection {self.path}: {e}")
-            # Return empty generator on error
-            return
-            yield  # Make this a generator function
+            raise
 
 
 class DocumentReference:

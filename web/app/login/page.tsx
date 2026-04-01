@@ -7,12 +7,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Fingerprint } from 'lucide-react';
 import { toast } from 'sonner';
 import { sanitizeError } from '@/lib/errorHandler';
-import Image from 'next/image';
 import { doc, getDoc } from 'firebase/firestore';
+import { signInWithCustomToken } from 'firebase/auth';
+import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { auth as firebaseAuth, db } from '@/lib/firebase';
 import { isDeviceTrusted, setMfaVerifiedForSession } from '@/lib/mfaSession';
+import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser';
 
 function LoginForm() {
   const [email, setEmail] = useState('');
@@ -82,9 +85,9 @@ function LoginForm() {
       const redirectPath = await checkMfaAndRedirect();
 
       if (redirectPath.includes('/verify-2fa')) {
-        toast.info('2FA Verification Required');
+        toast.info('2FA verification required');
       } else {
-        toast.success('Logged in successfully!');
+        toast.success('logged in successfully!');
       }
 
       router.push(redirectPath);
@@ -108,9 +111,9 @@ function LoginForm() {
       const redirectPath = await checkMfaAndRedirect();
 
       if (redirectPath.includes('/verify-2fa')) {
-        toast.info('2FA Verification Required');
+        toast.info('2FA verification required');
       } else {
-        toast.success('Logged in with Google!');
+        toast.success('logged in with Google!');
       }
 
       router.push(redirectPath);
@@ -121,29 +124,77 @@ function LoginForm() {
     }
   };
 
+  const handlePasskeyLogin = async () => {
+    setLoading(true);
+
+    try {
+      // Step 1: Get authentication options
+      const optionsRes = await fetch('/api/passkeys/authenticate/options', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      if (!optionsRes.ok) {
+        throw new Error('Failed to get authentication options');
+      }
+
+      const { options, challengeId } = await optionsRes.json();
+
+      // Step 2: Start WebAuthn authentication (browser prompt)
+      const credential = await startAuthentication({ optionsJSON: options });
+
+      // Step 3: Verify with server
+      const verifyRes = await fetch('/api/passkeys/authenticate/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential, challengeId }),
+      });
+
+      if (!verifyRes.ok) {
+        const data = await verifyRes.json();
+        throw new Error(data.error || 'Passkey authentication failed');
+      }
+
+      const { customToken, userId } = await verifyRes.json();
+
+      // Step 4: Sign in with Firebase custom token
+      if (firebaseAuth) {
+        await signInWithCustomToken(firebaseAuth, customToken);
+      }
+
+      // Step 5: Mark MFA as verified (passkey IS the second factor)
+      setMfaVerifiedForSession(userId);
+
+      toast.success('signed in with passkey!');
+      router.push(redirectUrl);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'NotAllowedError') {
+        toast.error('passkey authentication was cancelled');
+      } else {
+        toast.error(sanitizeError(error));
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+    <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-md bg-card/50 border-border">
         <CardHeader className="space-y-4 flex flex-col items-center">
-          <Image
-            src="/owlette-icon.png"
-            alt="Owlette"
-            width={96}
-            height={96}
-            className="rounded-full"
-            priority
-          />
+          <OwletteEyeIcon size={80} />
           <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-foreground">Owlette</CardTitle>
+            <CardTitle className="text-2xl font-bold text-foreground">owlette</CardTitle>
             <CardDescription className="text-muted-foreground">
-              Always Watching
+              attention is all you need
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <form onSubmit={handleEmailLogin} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-foreground">Email</Label>
+              <Label htmlFor="email" className="text-foreground">email</Label>
               <Input
                 id="email"
                 type="email"
@@ -156,7 +207,7 @@ function LoginForm() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-foreground">Password</Label>
+              <Label htmlFor="password" className="text-foreground">password</Label>
               <Input
                 id="password"
                 type="password"
@@ -168,8 +219,8 @@ function LoginForm() {
                 className="bg-input border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
-            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-slate-950 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
-              {loading ? 'Signing in...' : 'Sign in with Email'}
+            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
+              {loading ? 'signing in...' : 'sign in with email'}
             </Button>
           </form>
 
@@ -179,7 +230,7 @@ function LoginForm() {
             </div>
             <div className="relative flex justify-center text-xs uppercase">
               <span className="bg-card/50 px-2 text-muted-foreground">
-                Or continue with
+                or continue with
               </span>
             </div>
           </div>
@@ -212,10 +263,23 @@ function LoginForm() {
             Google
           </Button>
 
+          {browserSupportsWebAuthn() && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full bg-input border-border text-foreground hover:bg-muted hover:text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handlePasskeyLogin}
+              disabled={loading}
+            >
+              <Fingerprint className="mr-2 h-4 w-4" />
+              passkey
+            </Button>
+          )}
+
           <div className="text-center text-sm text-muted-foreground">
-            Don't have an account?{' '}
+            don't have an account?{' '}
             <a href="/register" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
-              Sign up
+              sign up
             </a>
           </div>
         </CardContent>
@@ -227,26 +291,19 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <Suspense fallback={
-      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <div className="flex min-h-screen items-center justify-center p-4">
         <Card className="w-full max-w-md bg-card/50 border-border">
           <CardHeader className="space-y-4 flex flex-col items-center">
-            <Image
-              src="/owlette-icon.png"
-              alt="Owlette"
-              width={96}
-              height={96}
-              className="rounded-full"
-              priority
-            />
+            <OwletteEyeIcon size={80} />
             <div className="space-y-1 text-center">
-              <CardTitle className="text-2xl font-bold text-foreground">Owlette</CardTitle>
+              <CardTitle className="text-2xl font-bold text-foreground">owlette</CardTitle>
               <CardDescription className="text-muted-foreground">
-                Always Watching
+                attention is all you need
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-center text-muted-foreground">Loading...</div>
+            <div className="text-center text-muted-foreground">loading...</div>
           </CardContent>
         </Card>
       </div>

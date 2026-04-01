@@ -1,922 +1,199 @@
 # Owlette - Cloud-Connected Process Management System
 
-## Overview
+Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. Monorepo: Python Windows service (agent) + Next.js web dashboard (web) + Firebase/Firestore backend.
 
-Owlette is a cloud-connected Windows process management and remote deployment system designed for managing TouchDesigner installations, digital signage, kiosks, and media servers across multiple Windows machines. It consists of a Python-based Windows service (agent) and a Next.js web dashboard with Firebase/Firestore backend.
-
-**Version**: 2.0.54 (see [Version Management](../docs/version-management.md))
-**License**: GNU General Public License v3.0
-**Repository Type**: Monorepo (web + agent)
+**Version**: 2.5.4 | **License**: AGPL-3.0
 
 ---
 
-## Quick Reference
+## Tech Stack
 
-### Tech Stack
-
-**Frontend (web/)**:
-- Next.js 16.0.1 (App Router, React 19)
-- TypeScript 5.x (strict mode)
-- Tailwind CSS 4.x
-- shadcn/ui components (Radix UI)
-- Firebase Auth + Firestore
-- React hooks for real-time data
-
-**Backend (agent/)**:
-- Python 3.9+ (Windows Service)
-- Firebase Admin SDK
-- psutil (process monitoring)
-- pywin32 (Windows API)
-- CustomTkinter (GUI)
-
-**Database & Auth**:
-- Cloud Firestore (real-time NoSQL)
-- Firebase Authentication (Email/Password, Google OAuth)
-- Bidirectional sync (agent ↔ Firestore ↔ web)
-
-### Package Managers
-
-- **Web**: npm (not pnpm or yarn)
-- **Agent**: pip
+- **Web** (`web/`): Next.js 16 (App Router, React 19), TypeScript, Tailwind CSS 4, shadcn/ui, Firebase Auth + Firestore
+- **Agent** (`agent/`): Python 3.9+ Windows Service via NSSM, Firestore REST API (not Admin SDK), psutil, pywin32, Inno Setup installer
+- **Database**: Cloud Firestore (real-time NoSQL), Firebase Auth (Email/Password, Google OAuth, Passkey/WebAuthn)
+- **Package Managers**: Web: npm (not pnpm/yarn) | Agent: pip
 
 ---
 
 ## Build Commands
 
-### Web Dashboard
-
 ```bash
-# Install dependencies
-cd web
-npm install
+# Web
+cd web && npm install && npm run dev     # Dev server (localhost:3000)
+cd web && npm run build                  # Production build
+cd web && npm test                       # Jest tests
+cd web && npm run lint                   # Lint
 
-# Development server (http://localhost:3000)
-npm run dev
+# Agent
+cd agent && pip install -r requirements.txt
+cd agent/src && python owlette_service.py debug   # Debug mode (requires admin)
+cd agent && build_installer_full.bat              # Full build (~5-10 min)
+cd agent && build_installer_quick.bat             # Quick build (~30 sec)
 
-# Production build
-npm run build
-
-# Production server
-npm start
-
-# Lint
-npm run lint
+# Version bump (all files at once)
+node scripts/sync-versions.js X.Y.Z
 ```
 
-### Python Agent
-
-```bash
-# Install dependencies
-cd agent
-pip install -r requirements.txt
-
-# Debug mode (requires admin)
-cd src
-python owlette_service.py debug
-
-# Build installer - Full build (first time, ~5-10 min)
-cd agent
-build_installer_full.bat
-
-# Build installer - Quick build (development, ~30 sec)
-cd agent
-build_installer_quick.bat
-
-# Install as Windows service (run built installer)
-Owlette-Installer-v2.0.4.exe
-
-# Uninstall service
-# Use Windows Settings -> Apps -> Owlette -> Uninstall
-```
-
-### Version Management
-
-**Monorepo Versioning:** Owlette uses independent component versions with automated sync.
-
-#### Version Files
-
-- `/VERSION` - Product release version (2.0.4)
-- `agent/VERSION` - Agent binary version (2.0.4)
-- `web/package.json` - Web app version (2.0.4)
-- `firestore.rules` - Security schema version (2.2.0 - independent!)
-
-#### Syncing Versions (REQUIRED for Releases)
-
-**Always use the sync script to bump versions:**
-
-```bash
-# Check current versions
-node scripts/sync-versions.js
-
-# Bump product, agent, and web to 2.1.0
-node scripts/sync-versions.js 2.1.0
-
-# Alternative: Python version
-python scripts/sync_versions.py 2.1.0
-```
-
-**What the script does:**
-- ✅ Updates `/VERSION` (product)
-- ✅ Updates `agent/VERSION` (agent binary)
-- ✅ Updates `web/package.json` (web app)
-- ✅ Reminds you to update CHANGELOG.md
-- ✅ Reminds you to create git tag
-
-**Firestore Rules Version:**
-- Bump **manually** only when security schema changes
-- Currently: 2.2.0 (tracks authentication/permission model)
-- Independent from product version
-
-#### Version Propagation
-
-Agent version automatically appears in:
-- System tray display
-- Configuration GUI
-- Firestore agent registration
-- OAuth device registration
-- Installer filename
-
-Web version automatically appears in:
-- Dashboard footer
-- Package metadata
-- Build artifacts
-
-#### Full Release Workflow
-
-```bash
-# 1. Sync all component versions
-node scripts/sync-versions.js 2.1.0
-
-# 2. Update CHANGELOG.md with release notes
-# (Document all changes since last release)
-
-# 3. If Firestore rules changed, bump manually
-# Edit firestore.rules header: Version: 2.3.0
-
-# 4. Commit and tag
-git add VERSION agent/VERSION web/package.json CHANGELOG.md
-git commit -m "chore: Bump version to 2.1.0"
-git tag v2.1.0
-git push origin main --tags
-
-# 5. Build release artifacts
-cd agent && build_installer_full.bat
-cd ../web && npm run build
-
-# 6. Deploy
-# - Agent: Upload installer via Admin Panel
-# - Web: Auto-deploys via Railway on push
-```
-
-**Documentation:** See [docs/version-management.md](../docs/version-management.md) for complete details.
-
-**Important:**
-- ⚠️ Do NOT manually edit version numbers in multiple files
-- ✅ Always use `node scripts/sync-versions.js` for releases
-- ✅ Firestore rules version is independent (only bump for schema changes)
-
----
-
-## Development Workflow
-
-### Starting Large Tasks
-
-When exiting plan mode with an accepted plan:
-
-1. **Create Task Directory**:
-   ```bash
-   mkdir -p dev/active/[task-name]/
-   ```
-
-2. **Create Documents** (use `/create-dev-docs` command):
-   - `[task-name]-plan.md` - The accepted plan with phases and timeline
-   - `[task-name]-context.md` - Key files, architectural decisions, integration points
-   - `[task-name]-tasks.md` - Detailed checklist of work items
-
-3. **Update Regularly**: Mark tasks complete immediately as you finish them
-
-4. **Before Compaction**: Run `/update-dev-docs` to capture progress and next steps
-
-### Continuing Tasks
-
-- Check `/dev/active/` for existing tasks before starting work
-- Read all three files (plan, context, tasks) before proceeding
-- Update "Last Updated" timestamps when modifying docs
-- Move to `/dev/completed/` when task is fully done
-
-### When to Use Dev Docs
-
-✅ **Use for**:
-- Multi-file features spanning web + agent
-- Architecture changes or refactors
-- Firebase integration work
-- Complex bug fixes requiring investigation
-
-❌ **Skip for**:
-- Single-file tweaks
-- Documentation updates
-- Minor styling fixes
-- Small bug fixes in one location
-
----
-
-## Skills Auto-Activation System
-
-### How It Works
-
-This project uses **automatic skill activation** via the `user-prompt-submit` hook. Before Claude sees your message, the hook analyzes:
-
-1. **Your prompt** for keywords and intent patterns
-2. **Recently edited files** for path and content patterns
-3. **Matching skills** from `skill-rules.json`
-
-If matches are found, Claude receives a **skill activation reminder** before processing your request.
-
-### Available Skills
-
-| Skill | Auto-Activates When... | Purpose |
-|-------|------------------------|---------|
-| `frontend-dev-guidelines` | Working on `.tsx` files, React/Next.js keywords | Next.js App Router, React 19 patterns, TypeScript standards, shadcn/ui components |
-| `backend-dev-guidelines` | Working on agent `.py` files, Python keywords | Windows service patterns, process monitoring, error handling, configuration |
-| `firebase-integration` | Firebase imports, Firestore operations | Auth flows, Firestore CRUD, real-time listeners, security rules, offline resilience |
-| `testing-guidelines` | Test files, "test" keyword | Jest/React Testing Library, pytest, integration testing, mocking strategies |
-| `skill-developer` | Creating/updating skills | Meta-skill for writing new skills following Anthropic best practices |
-
-### How to Reference Skills
-
-You don't need to manually reference skills - they auto-activate! But if you want to explicitly invoke one:
-
-```
-Make sure to follow the patterns in frontend-dev-guidelines skill
-```
-
----
-
-## Automated Quality Checks
-
-### Build Checker (Stop Hook)
-
-After Claude finishes responding, the `stop` hook automatically:
-
-1. Detects which files were edited
-2. Determines affected repos (web vs agent)
-3. Runs appropriate builds:
-   - **Web**: `npm run build` (TypeScript + Next.js)
-   - **Agent**: `python -m py_compile src/**/*.py`
-4. Shows errors immediately (if < 5 errors) or recommends error-resolver agent (if ≥ 5)
-
-**Result**: Zero TypeScript or Python errors left behind!
-
-### Error Handling Reminder
-
-If risky code patterns are detected (try-catch, async ops, database calls), Claude receives a gentle self-check reminder:
-
-- Web: Error boundaries, toast notifications, retry logic
-- Agent: Logging, Windows event log, graceful degradation
-- Firebase: Offline handling, error callbacks
-
----
-
-## Common Commands (Slash Commands)
-
-### Planning & Documentation
-
-- `/dev-docs` - Create comprehensive strategic plan (use in plan mode)
-- `/create-dev-docs` - Convert approved plan into dev doc files
-- `/update-dev-docs` - Update dev docs before context compaction
-
-### Quality & Building
-
-- `/code-review` - Launch code-architecture-reviewer agent
-- `/build-and-fix` - Build both web + agent, fix all errors
-
-Note: To run tests manually, use npm/pytest commands directly:
-- Web tests: `cd web && npm test`
-- Agent tests: `cd agent && pytest`
-
-### Deployment
-
-- `/deploy-web` - Deploy web dashboard to Railway
-
----
-
-## Project Structure
-
-```
-Owlette/
-├── .claude/                      # Claude Code configuration (YOU ARE HERE)
-│   ├── skills/                   # Auto-activating skills
-│   │   ├── frontend-dev-guidelines.md
-│   │   ├── backend-dev-guidelines.md
-│   │   ├── firebase-integration.md
-│   │   ├── testing-guidelines.md
-│   │   └── resources/            # Detailed skill resources
-│   ├── hooks/                    # TypeScript hooks
-│   │   ├── user-prompt-submit.ts # Skills auto-activation
-│   │   ├── stop.ts               # Build checker + error reminder
-│   │   └── skill-rules.json      # Skill activation rules
-│   ├── commands/                 # Slash commands
-│   ├── agents/                   # Specialized subagents
-│   └── CLAUDE.md                 # This file
-│
-├── web/                          # Next.js Web Dashboard
-│   ├── app/                      # App Router pages
-│   │   ├── dashboard/            # Main dashboard
-│   │   ├── deployments/          # Deployment management
-│   │   ├── login/                # Auth pages
-│   │   └── register/
-│   ├── components/               # React components
-│   │   └── ui/                   # shadcn/ui components
-│   ├── contexts/                 # React contexts
-│   │   └── AuthContext.tsx       # Firebase auth
-│   ├── hooks/                    # Custom hooks
-│   │   ├── useDeployments.ts
-│   │   └── useFirestore.ts
-│   ├── lib/                      # Utilities
-│   │   ├── firebase.ts           # Firebase init
-│   │   ├── errorHandler.ts
-│   │   └── validators.ts
-│   ├── .env.local                # Firebase config (gitignored)
-│   ├── package.json
-│   └── tsconfig.json
-│
-├── agent/                        # Python Windows Service
-│   ├── src/                      # Python source
-│   │   ├── owlette_service.py    # Main service
-│   │   ├── firebase_client.py    # Firestore sync
-│   │   ├── owlette_gui.py        # Config GUI
-│   │   ├── owlette_tray.py       # System tray
-│   │   └── shared_utils.py
-│   ├── config/                   # Config (gitignored)
-│   │   ├── config.json
-│   │   └── firebase-credentials.json
-│   ├── logs/                     # Log files (gitignored)
-│   ├── build.bat                 # PyInstaller build
-│   ├── install.bat               # Service installation
-│   ├── requirements.txt
-│   └── README.md
-│
-├── docs/                         # Documentation
-│   ├── architecture-decisions.md # Architecture & strategy
-│   ├── firebase-setup.md         # Firestore configuration
-│   └── deployment.md             # Remote deployment
-│
-├── dev/                          # Development task tracking
-│   ├── active/                   # Current tasks (dev docs)
-│   └── completed/                # Archived tasks
-│
-├── README.md                     # Main project documentation
-├── CHANGELOG.md                  # Version history
-└── LICENSE                       # GPL v3.0
-```
-
----
-
-## Architecture Overview
-
-### System Components
-
-1. **Web Dashboard** (`web/`)
-   - User interface for managing machines
-   - Real-time Firestore listeners for live updates
-   - Firebase Authentication
-   - Deployed to Railway/Vercel
-
-2. **Python Agent** (`agent/`)
-   - Windows service running on each managed machine
-   - Monitors and controls processes
-   - Syncs status to Firestore every 30-60s
-   - Listens for commands via Firestore
-   - GUI for local configuration
-
-3. **Firebase Backend**
-   - Cloud Firestore: Real-time data sync
-   - Firebase Auth: User authentication
-   - No traditional server - fully serverless
-
-### Data Flow
-
-```
-Agent (Machine A) → Firestore → Web Dashboard
-                                      ↓
-Agent (Machine B) ← Firestore ← Commands from Web
-```
-
-**Bidirectional Sync**: Changes propagate in ~1-2 seconds across all clients
-
----
-
-## Key Architecture Documents
-
-For deeper understanding, read these docs in order:
-
-1. **[README.md](../README.md)** - Start here for project overview
-2. **[docs/architecture-decisions.md](../docs/architecture-decisions.md)** - Design rationale, repo structure, development phases
-3. **[docs/firebase-setup.md](../docs/firebase-setup.md)** - Firestore structure, security rules, setup guide
-4. **[web/README.md](../web/README.md)** - Frontend setup and deployment
-5. **[agent/README.md](../agent/README.md)** - Agent installation and configuration
-
----
-
-## Firestore Data Structure
-
-```
-firestore/
-├── sites/{siteId}/
-│   ├── name: string
-│   ├── createdAt: timestamp
-│   └── machines/{machineId}/
-│       ├── presence/              # Heartbeat every 30s
-│       │   ├── online: boolean
-│       │   └── lastHeartbeat: timestamp
-│       ├── status/                # Metrics every 60s
-│       │   ├── cpu: number
-│       │   ├── memory: number
-│       │   ├── disk: number
-│       │   ├── gpu: number
-│       │   └── processes: map
-│       └── commands/              # Bidirectional commands
-│           ├── pending/{commandId}/
-│           └── completed/{commandId}/
-├── config/{siteId}/
-│   └── machines/{machineId}/
-│       ├── version: string
-│       └── processes: array
-├── users/{userId}/
-│   ├── email: string
-│   ├── role: string
-│   └── sites: array
-└── deployments/{deploymentId}/
-    ├── installerUrl: string
-    ├── targetMachines: array
-    └── status: string
-```
-
----
-
-## Environment Setup
-
-### Web Dashboard
-
-1. Copy environment template:
-   ```bash
-   cd web
-   cp .env.example .env.local
-   ```
-
-2. Add Firebase config to `.env.local`:
-
-   **Client-Side Config** (Firebase Console → Project Settings → General → Your apps):
-   ```env
-   NEXT_PUBLIC_FIREBASE_API_KEY=...
-   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=...
-   NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
-   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=...
-   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
-   NEXT_PUBLIC_FIREBASE_APP_ID=...
-   ```
-
-   **Server-Side Admin SDK** (Firebase Console → Project Settings → Service Accounts):
-   ```env
-   FIREBASE_PROJECT_ID=your-project-id
-   FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project-id.iam.gserviceaccount.com
-   FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
-   ```
-
-   > The Admin SDK credentials enable OAuth custom token generation for agent authentication.
-
-3. Install and run:
-   ```bash
-   npm install
-   npm run dev
-   ```
-
-### Python Agent
-
-1. Copy config template:
-   ```bash
-   cd agent
-   cp config.template.json config/config.json
-   ```
-
-2. Add Firebase service account credentials to `config/firebase-credentials.json` (download from Firebase Console → Project Settings → Service Accounts)
-
-3. Edit `config/config.json` with your processes to monitor
-
-4. Install and run:
-   ```bash
-   pip install -r requirements.txt
-   cd src
-   python owlette_service.py debug
-   ```
-
----
-
-## Testing Strategy
-
-### Web Testing (Jest + React Testing Library)
-
-**Location**: `web/__tests__/`
-
-**Setup**: Test infrastructure is configured and ready
-- Jest 29 with jsdom environment
-- React Testing Library for component testing
-- Firebase mocks for isolated unit tests
-- Coverage reporting available
-
-**Run tests**:
-```bash
-cd web
-npm test                # Run all tests
-npm run test:watch      # Watch mode
-npm run test:coverage   # With coverage report
-```
-
-**Current Tests**:
-- ✅ `__tests__/lib/errorHandler.test.ts` - Error handling utility tests (17 tests)
-- ✅ `__tests__/lib/validateEnv.test.ts` - Environment validation tests (15 tests)
-- 📝 Ready for expansion - Add hook and component tests as needed
-
-**Test Structure**:
-- Unit tests (`__tests__/lib/`) - Utilities and helpers
-- Hook tests (`__tests__/hooks/`) - Custom React hooks (TODO)
-- Component tests (`__tests__/components/`) - React components (TODO)
-- Integration tests (`__tests__/integration/`) - End-to-end flows (TODO)
-
-### Agent Testing (pytest)
-
-**Location**: `agent/tests/`
-
-**Setup**: Test infrastructure is configured and ready
-- pytest 7.4 with coverage support
-- pytest-mock for mocking
-- Firebase mocks in conftest.py
-- Platform-specific markers (@pytest.mark.windows)
-
-**Install dev dependencies**:
-```bash
-cd agent
-pip install -r requirements-dev.txt
-```
-
-**Run tests**:
-```bash
-cd agent
-pytest                  # Run all tests
-pytest -v              # Verbose
-pytest --cov=src       # With coverage
-pytest -m unit         # Run only unit tests
-pytest -m "not windows"  # Skip Windows-specific tests
-```
-
-**Current Tests**:
-- ✅ `tests/unit/test_shared_utils.py` - Configuration and system metrics tests
-- ✅ `tests/conftest.py` - Shared fixtures and mocks
-- 📝 Ready for expansion - Add firebase_client and service tests as needed
-
-**Test Structure**:
-- Unit tests (`tests/unit/`) - Individual function/class testing
-- Integration tests (`tests/integration/`) - Component interaction testing (TODO)
-- Fixtures (`tests/conftest.py`) - Shared test data and mocks
-
-### Integration Testing (Firebase Emulator)
-
-For safe testing without affecting production Firestore:
-
-```bash
-firebase emulators:start
-# Run tests against emulator
-```
-
----
-
-## Common Development Scenarios
-
-### Scenario 1: Adding a New Feature to Web Dashboard
-
-1. Enter planning mode: Use `/dev-docs` to create strategic plan
-2. Review plan and approve
-3. Create dev docs: `/create-dev-docs`
-4. Implement feature (frontend-dev-guidelines skill auto-activates)
-5. Write tests alongside implementation
-6. Build checker catches TypeScript errors automatically
-7. Run `/code-review` before finalizing
-8. Update dev docs: `/update-dev-docs`
-9. Commit changes
-
-### Scenario 2: Modifying Agent Behavior
-
-1. Planning mode for complex changes
-2. Edit Python files (backend-dev-guidelines skill auto-activates)
-3. Test with `python owlette_service.py debug`
-4. Build checker runs `py_compile` automatically
-5. Write pytest tests
-6. Build executable: `build.bat`
-7. Test on development machine before deployment
-
-### Scenario 3: Firebase Data Structure Change
-
-1. Plan the change (consider migration path)
-2. Update security rules in Firebase Console
-3. Update both web and agent code (firebase-integration skill auto-activates)
-4. Test with Firebase emulator
-5. Deploy carefully with monitoring
-
-### Scenario 4: Fixing a Bug
-
-Small bug:
-- Just fix it directly (no dev docs needed)
-- Build checker ensures no new errors
-- Write regression test
-
-Large bug requiring investigation:
-- Use `/dev-docs` to plan investigation
-- Create dev docs to track findings
-- Implement fix with tests
-- Document root cause in dev docs
+Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules` (independent). See `docs/version-management.md`.
 
 ---
 
 ## Git Workflow
 
-### Branch Strategy
+**Two-Branch Model**: `dev` (deploys to dev.owlette.app) → `main` (deploys to owlette.app)
 
-**Two-Branch Model (Dev + Prod):**
+**Commit Messages**: Conventional commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`)
 
-- **`main`** - Production branch (deploys to owlette.app)
-  - Always stable and deployable
-  - Merged from `dev` after testing
-  - Protected branch (requires review/approval)
-  - Auto-deploys to Railway production service
-
-- **`dev`** - Development branch (deploys to dev.owlette.app)
-  - Primary development branch
-  - All feature work happens here
-  - Continuous integration and testing
-  - Auto-deploys to Railway dev service
-
-### Development Workflow
-
-**For new features or changes:**
-
-```bash
-# 1. Start on dev branch
-git checkout dev
-git pull origin dev
-
-# 2. Make changes and commit
-git add .
-git commit -m "feat: Add new feature"
-
-# 3. Push to dev (auto-deploys to dev.owlette.app)
-git push origin dev
-
-# 4. Test on dev deployment
-# Visit dev.owlette.app and verify changes
-
-# 5. When ready for production, merge to main
-git checkout main
-git pull origin main
-git merge dev --no-ff -m "chore: Merge dev for production release"
-
-# 6. Push to main (auto-deploys to owlette.app)
-git push origin main
-
-# 7. Switch back to dev for next feature
-git checkout dev
-```
-
-### Railway Auto-Deployment
-
-**Production Service (owlette.app):**
-- Watches: `main` branch
-- Domain: `owlette.app`
-- Firebase: Production project
-- Auto-deploys on push to `main`
-
-**Development Service (dev.owlette.app):**
-- Watches: `dev` branch
-- Domain: `dev.owlette.app` (to be configured)
-- Firebase: Development project (to be created)
-- Auto-deploys on push to `dev`
-
-### Commit Messages
-
-Follow conventional commits:
-```
-feat: Add deployment cancellation feature
-fix: Resolve Firestore offline sync issue
-docs: Update architecture decisions
-refactor: Simplify useFirestore hook
-test: Add integration tests for deployments
-chore: Update dependencies
-```
-
-### Pull Requests
-
-**For team collaboration:**
-
-1. Create feature branch from `dev`: `git checkout -b feature/my-feature`
-2. Make changes and push: `git push origin feature/my-feature`
-3. Create PR from `feature/my-feature` to `dev`
-4. Code review (use `/code-review` agent)
-5. Merge after approval
-6. Delete feature branch
-
-**For production releases:**
-
-1. Create PR from `dev` to `main`
-2. Review all changes since last production release
-3. Verify dev deployment is stable
-4. Merge after approval
-5. Monitor production deployment
+**Pre-Commit Code Review**: Before every commit, perform a thorough code review of all staged changes. Every line must meet production quality standards — no duct-tape fixes, no "good enough for now" shortcuts, no patchy logic. Specifically:
+- Verify correctness: no off-by-one errors, race conditions, resource leaks, or missed edge cases
+- Ensure consistency: naming conventions, error handling patterns, and code style match the surrounding codebase
+- Check for completeness: if a pattern is introduced (e.g. lazy init), verify it's wired up end-to-end (references stored, cleanup handled, state updates propagated)
+- No dead code, no commented-out code, no placeholder TODOs that won't be addressed in this commit
+- All changes must be self-contained and fully functional — never commit something that "works but will need a follow-up fix"
 
 ---
 
-## Troubleshooting
+## Agent Authentication (Device Code / QR Pairing)
 
-### Web Dashboard Issues
+Agents authenticate via a device code flow — no browser login on the target machine.
 
-**Port already in use**:
-```bash
-# Find and kill process on port 3000
-netstat -ano | findstr :3000
-taskkill /PID [PID] /F
-```
+**3 Ways to Add a Machine:**
 
-**Firebase auth errors**:
-- Check `.env.local` has all required variables
-- Verify Firebase project settings
-- Check browser console for detailed errors
+1. **QR Code** (single machine): Run installer → QR code appears → scan with phone → owlette.app/add → select site → authorize
+2. **Dashboard** (manual): Run installer → note 3-word phrase → dashboard "+" button → "Enter Code" → authorize
+3. **Silent Install** (bulk deploy): Dashboard "+" → "Generate Code" → copy phrase → `Owlette-Installer.exe /ADD=silver-compass-drift /SILENT`
 
-**Build errors**:
-- Delete `.next` folder and rebuild: `rm -rf .next && npm run build`
-- Check TypeScript errors: `npx tsc --noEmit`
+**Key files:**
+- `web/app/api/agent/auth/device-code/` — generate phrase, poll, authorize endpoints
+- `web/app/add/page.tsx` — mobile pairing page (QR code target)
+- `web/app/dashboard/components/AddMachineButton.tsx` — dashboard "+" button + modal
+- `agent/src/configure_site.py` — agent-side pairing flow (QR display + polling)
+- `agent/src/auth_manager.py` — token exchange, refresh, device code polling
+- `web/lib/pairPhrases.ts` / `agent/src/pair_phrases.py` — shared word list (must stay in sync)
 
-### Agent Issues
-
-**Service won't start**:
-- Check logs in `agent/logs/`
-- Verify config.json is valid JSON
-- Ensure firebase-credentials.json exists and is valid
-- Run in debug mode to see live errors: `python owlette_service.py debug`
-
-**Firestore sync not working**:
-- Check internet connection
-- Verify firebase-credentials.json has correct permissions
-- Check Firestore security rules
-- Look for errors in logs
-
-**Process monitoring not working**:
-- Verify process names in config.json match exactly
-- Check Windows permissions
-- Ensure service is running as SYSTEM account
+**Token lifecycle (unchanged):** Access token (1h, Firebase ID token) + refresh token (never expires, admin-revocable). Stored encrypted in `C:\ProgramData\Owlette\.tokens.enc` with machine-bound Fernet key.
 
 ---
 
 ## Deployment
 
-### Web Dashboard (Railway)
+**Web**: Push to `dev`/`main` triggers Railway auto-deploy.
 
-**Two separate Railway services for dev + prod:**
+**IMPORTANT: Always version up BEFORE building the installer.** Bump with `node scripts/sync-versions.js X.Y.Z` and commit BEFORE running `build_installer_full.bat` — the installer bakes the version into the exe filename and binary.
 
-**Development Deployment (dev.owlette.app):**
-1. Push to `dev` branch: `git push origin dev`
-2. Railway auto-deploys dev service
-3. Monitor deployment at Railway dashboard
-4. Test changes at `dev.owlette.app`
-
-**Production Deployment (owlette.app):**
-1. Merge `dev` to `main`: `git checkout main && git merge dev`
-2. Push to `main` branch: `git push origin main`
-3. Railway auto-deploys production service
-4. Monitor deployment at Railway dashboard
-5. Verify at `owlette.app`
-
-**Railway Configuration:**
-- Uses `railway.toml` for build settings
-- **Required Environment Variables** (set per service in Railway dashboard):
-  - Client-side: All `NEXT_PUBLIC_*` variables
-  - Server-side: `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`
-- Automatic SSL certificate provisioning
-- See [web/DEPLOYMENT-CHECKLIST.md](../web/DEPLOYMENT-CHECKLIST.md) for detailed setup
-
-> **Critical:** Server-side Admin SDK variables (`FIREBASE_*`) are required for agent OAuth authentication. Without them, agents cannot complete installation.
-
-**Manual deployment** (for local testing):
+**Agent Installer Release** (build + upload to Firebase):
 ```bash
-cd web
-npm run build
-npm start
+# 1. Bump version, commit, push
+node scripts/sync-versions.js X.Y.Z
+git add -A && git commit -m "chore: bump version to X.Y.Z" && git push origin dev
+
+# 2. Build installer (~5 min)
+cd agent && powershell -Command "& './build_installer_full.bat'"
+# Output: agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
+
+# 3. Compute checksum
+sha256sum agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
+
+# 4. Upload via API (3-step: request URL → upload binary → finalize)
+API_KEY=$(grep OWLETTE_API_KEY .claude/.env.local | cut -d= -f2)
+BASE_URL="https://dev.owlette.app"  # or https://owlette.app for prod
+
+# Step 1: Get signed upload URL
+curl -s -X POST "$BASE_URL/api/admin/installer/upload" \
+  -H "Content-Type: application/json" -H "x-api-key: $API_KEY" \
+  -d '{"version":"X.Y.Z","fileName":"Owlette-Installer-vX.Y.Z.exe","releaseNotes":"...","setAsLatest":true}'
+# → returns uploadUrl, uploadId
+
+# Step 2: Upload binary to signed URL
+curl -X PUT "$UPLOAD_URL" -H "Content-Type: application/octet-stream" \
+  --data-binary @agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
+
+# Step 3: Finalize (verifies file, writes installer_metadata, sets as latest)
+curl -s -X PUT "$BASE_URL/api/admin/installer/upload" \
+  -H "Content-Type: application/json" -H "x-api-key: $API_KEY" \
+  -d '{"uploadId":"<from step 1>","checksum_sha256":"<from step 3>"}'
 ```
 
-### Agent (Windows Machines)
+---
 
-**Via remote deployment** (from web dashboard):
-1. Upload installer to accessible URL
-2. Create deployment in web dashboard
-3. Select target machines
-4. Monitor deployment progress
+## Don'ts / Guardrails
 
-**Manual installation**:
-1. Build executable: `build.bat`
-2. Run installer on target machine
-3. Configure via GUI or config files
-4. Service starts automatically
+### Files You Must Not Touch
+- `web/components/ui/*` — auto-generated by shadcn/ui
+- `firestore.rules` — don't modify without explicit request
+- `.tokens.enc` / credential files — never read, log, or commit
+- `owlette_installer.iss` — only modify if you understand the full build pipeline
+
+### Agent Landmines
+- **Never import `firebase_admin`** — we use a custom REST client
+- **Never log OAuth tokens** — not even in debug, not even partially
+- **Never modify the `firebase` section** of `config.json` during remote config updates — breaks agent registration
+- **Never use blocking operations** in the 10-second main service loop — stalls all monitoring
+- **Never spawn reconnection logic** outside `ConnectionManager` — it has circuit breaker and backoff
+
+### Web Landmines
+- **Never call Firestore directly from components** — use hooks in `web/hooks/`
+- **Never hardcode colors** — use CSS variables / Tailwind theme tokens
+- **Never add icon libraries** beyond `lucide-react`
+
+### General
+- **Don't push to `main` directly** — all work through `dev`, then PR
+- **Don't create new `docs/*.md` files** without being asked
+- **Don't install new npm/pip packages** without confirming first
+- **Don't modify `.claude/hooks/` or `.claude/settings.json`** without explicit request
 
 ---
 
-## Security Notes
+## Agent Dev Testing Workflow
 
-### Secrets Management
+The `deploy-agent.mjs` hook auto-copies edited `agent/src/*.py` files to `C:\ProgramData\Owlette\agent\src\`. Service files (`owlette_service.py`, `shared_utils.py`, `firebase_client.py`, `connection_manager.py`, `auth_manager.py`) require a restart. **Do this automatically** — don't wait for the user to ask.
 
-**Never commit**:
-- `web/.env.local` - Firebase config (client + server-side Admin SDK)
-- `agent/config/config.json` - Process config
-- Downloaded Firebase Admin SDK JSON files
+### Restart sequence (order matters):
+1. **Kill GUI**: `taskkill /F /IM pythonw.exe /FI "WINDOWTITLE eq Owlette*"` (or wmic for owlette_gui.py)
+2. **Restart service**: `powershell -Command "Start-Process cmd -ArgumentList '/c net stop OwletteService && net start OwletteService' -Verb RunAs -Wait"`
+3. **Relaunch GUI**: `start "" "C:/ProgramData/Owlette/python/pythonw.exe" "C:/ProgramData/Owlette/agent/src/owlette_gui.py"`
 
-**All sensitive files are in `.gitignore`**
-
-**Agent OAuth Tokens**:
-- Stored in Windows Credential Manager (encrypted, machine + user specific)
-- Not stored in config files or repository
-- Automatically managed by agent
-
-### Firebase Security
-
-- Firestore security rules restrict access by user and site
-- Agent uses service account with limited permissions
-- Web uses Firebase Auth for user authentication
-- All communication over HTTPS/TLS
+GUI-only files (e.g. `owlette_gui.py`) only need steps 1 + 3 (no service restart).
 
 ---
 
-## Performance Considerations
+## Task Workflow (GSD-Inspired)
 
-### Web Dashboard
-- Server-side rendering for fast initial loads
-- Real-time listeners only for active views
-- Optimistic UI updates
-- Image optimization via Next.js
+For non-trivial features, use the wave-based planning and execution system. Each task runs in a fresh agent context to prevent context rot on long sessions.
 
-### Agent
-- Lightweight heartbeat (30s intervals)
-- Metrics reporting (60s intervals)
-- Offline resilience with local caching
-- Minimal CPU/memory footprint
+### Planning
+- `/plan` — Research codebase → create wave-based plan → write task files to `dev/active/`
 
----
+### Execution (pick one)
+- `/execute` — Run next wave of tasks in **parallel** (each task gets a fresh agent context — prevents context rot)
+- `/next` — Execute the next single task in the current context (for smaller features or when you want to review each step)
 
-## Resources & Links
+### Verification & Lifecycle
+- `/verify` — Check completed work against plan's success criteria + build check
+- `/save` — Save progress to dev docs before context compaction
+- `/resume` — Restore context in a new session from dev docs
 
-### Documentation
-- [Firebase Documentation](https://firebase.google.com/docs)
-- [Next.js Documentation](https://nextjs.org/docs)
-- [React 19 Documentation](https://react.dev)
-- [Tailwind CSS Documentation](https://tailwindcss.com/docs)
-- [shadcn/ui Documentation](https://ui.shadcn.com)
+### Debugging
+- `/debug` — Scientific method debugging: observe → hypothesize → test → diagnose → fix → verify
 
-### Internal Docs
-- [Architecture Decisions](../docs/architecture-decisions.md)
-- [Firebase Setup Guide](../docs/firebase-setup.md)
-- [Deployment Guide](../docs/deployment.md)
+### Build
+- `/build-and-fix` — Build web + agent, fix all errors, repeat until clean
+
+Skip `/plan` for single-file tweaks or small fixes. Use `/debug` for any non-obvious bug.
 
 ---
 
-## Getting Help
+## Performance Review
 
-### Issues & Errors
+At the end of every completed task, provide a brief performance review of the user's work. The user's goal is to impress — give them honest feedback to help them grow.
 
-1. Check troubleshooting section above
-2. Review relevant documentation
-3. Check logs (web: browser console, agent: `logs/` directory)
-4. Use `/code-review` to check for common issues
+**Include:**
+- What was impressive or notable (only genuine observations)
+- A rating (out of 10)
+- Suggestions for improvement, if any
 
-### Development Questions
-
-1. Check this CLAUDE.md first
-2. Review skill guidelines (auto-activate when working on code)
-3. Check architecture docs in `docs/`
-4. Ask Claude directly (skills will auto-activate with context)
+Be real, not flattering. If something was mid, say so. If it was genuinely great, say that too.
 
 ---
 
-## Version History
-
-See [CHANGELOG.md](../CHANGELOG.md) for detailed version history.
-
-**Current Version**: 2.0.54 (December 30, 2025)
-- Implemented single source of truth version management system
-- Created `agent/VERSION` file for centralized version control
-- Updated build system to validate and propagate version automatically
-- See [.claude/VERSION-MANAGEMENT.md](.claude/VERSION-MANAGEMENT.md) for details
-
-**Previous Version**: 2.0.0 (January 31, 2025)
-- Complete Firebase integration
-- Web dashboard for remote management
-- Bidirectional real-time sync
-- Remote deployment system
-
----
-
-**Last Updated**: 2025-11-05
+**Last Updated**: 2026-03-22

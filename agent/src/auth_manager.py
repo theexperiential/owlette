@@ -31,6 +31,7 @@ import time
 import socket
 import logging
 import json
+import threading
 from typing import Optional, Dict, Any
 from secure_storage import SecureStorage, get_storage
 import shared_utils
@@ -87,14 +88,17 @@ class AuthManager:
         # Retry/backoff state for token refresh
         self._last_refresh_attempt: Optional[float] = None
         self._refresh_backoff_seconds: float = 60  # Start with 1 minute
-        self._max_backoff_seconds: float = 3600  # Max 1 hour
+        self._max_backoff_seconds: float = 300  # Max 5 minutes
         self._consecutive_failures: int = 0  # Track consecutive failures
         self._backoff_logged: bool = False  # Track if we've logged backoff message
+
+        # Lock to prevent concurrent token refresh attempts from multiple threads
+        self._refresh_lock = threading.Lock()
 
         # Load cached tokens from storage
         self._load_cached_tokens()
 
-        logger.info(f"AuthManager initialized: machine={self.machine_id}, api={self.api_base}")
+        logger.debug(f"AuthManager initialized: machine={self.machine_id}, api={self.api_base}")
 
     def _load_cached_tokens(self):
         """Load cached access token and site ID from secure storage."""
@@ -139,9 +143,8 @@ class AuthManager:
 
             # Call exchange endpoint
             url = f"{self.api_base}/agent/auth/exchange"
-            print(f"DEBUG: Calling exchange endpoint: {url}")
-            logger.info(f"Exchange URL: {url}")
-            logger.info(f"Machine ID: {machine_id}")
+            logger.debug(f"Exchange URL: {url}")
+            logger.debug(f"Machine ID: {machine_id}")
 
             # Write to debug log for troubleshooting
             from pathlib import Path
@@ -159,14 +162,12 @@ class AuthManager:
                 },
                 timeout=30,
             )
-            print(f"DEBUG: Response status: {response.status_code}")
-            logger.info(f"Exchange response status: {response.status_code}")
+            logger.debug(f"Exchange response status: {response.status_code}")
 
-            # Log response to debug file
+            # Log response to debug file (omit body — may contain tokens)
             with open(debug_log, 'a') as f:
                 f.write(f"Response Status: {response.status_code}\n")
-                f.write(f"Response Headers: {dict(response.headers)}\n")
-                f.write(f"Response Body: {response.text[:500]}\n\n")
+                f.write(f"Response Headers: {dict(response.headers)}\n\n")
 
             if response.status_code != 200:
                 try:
@@ -195,15 +196,12 @@ class AuthManager:
             expiry_timestamp = time.time() + expires_in
 
             # Store tokens securely
-            print(f"DEBUG: Saving tokens to encrypted file...")
             success_refresh = self.storage.save_refresh_token(refresh_token)
             success_access = self.storage.save_access_token(access_token, expiry_timestamp)
             success_site = self.storage.save_site_id(site_id)
 
             if not success_refresh or not success_access or not success_site:
                 raise AuthenticationError("Failed to save tokens to encrypted file")
-
-            print(f"DEBUG: Tokens saved successfully")
 
             # Update instance state
             self._access_token = access_token
@@ -225,6 +223,118 @@ class AuthManager:
             logger.error(f"Unexpected error during token exchange: {e}")
             raise AuthenticationError(f"Unexpected error: {e}")
 
+    def request_device_code(self) -> dict:
+        """
+        Request a new device code (pairing phrase) from the server.
+
+        Returns:
+            dict with keys: pairPhrase, deviceCode, verificationUri, qrUrl, expiresIn, interval
+
+        Raises:
+            AuthenticationError: If request fails
+        """
+        try:
+            url = f"{self.api_base}/agent/auth/device-code"
+            response = requests.post(
+                url,
+                json={
+                    'machineId': self.machine_id,
+                    'version': shared_utils.APP_VERSION,
+                },
+                timeout=30,
+            )
+
+            if response.status_code != 200:
+                try:
+                    error_msg = response.json().get('error', 'Unknown error')
+                except (ValueError, json.JSONDecodeError):
+                    error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                raise AuthenticationError(f"Device code request failed: {error_msg}")
+
+            return response.json()
+
+        except requests.exceptions.RequestException as e:
+            raise AuthenticationError(f"Network error requesting device code: {e}")
+
+    def poll_device_code(self, device_code: str, interval: int = 5, timeout: int = 600) -> bool:
+        """
+        Poll the server for device code authorization.
+
+        Blocks until authorized, expired, or timeout. Designed to be called
+        from configure_site.py during installation.
+
+        Args:
+            device_code: Opaque device code from request_device_code()
+            interval: Polling interval in seconds (from server response)
+            timeout: Maximum time to poll in seconds
+
+        Returns:
+            True if authorized and tokens stored successfully
+
+        Raises:
+            AuthenticationError: If polling fails or code expires
+        """
+        url = f"{self.api_base}/agent/auth/device-code/poll"
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            try:
+                response = requests.post(
+                    url,
+                    json={'deviceCode': device_code},
+                    timeout=15,
+                )
+
+                if response.status_code == 202:
+                    # Still pending — wait and retry
+                    time.sleep(interval)
+                    continue
+
+                if response.status_code == 200:
+                    # Authorized — extract and store tokens
+                    data = response.json()
+                    access_token = data.get('accessToken')
+                    refresh_token = data.get('refreshToken')
+                    expires_in = data.get('expiresIn', 3600)
+                    site_id = data.get('siteId')
+
+                    if not access_token or not refresh_token or not site_id:
+                        raise AuthenticationError("Invalid response (missing tokens)")
+
+                    expiry_timestamp = time.time() + expires_in
+
+                    # Store tokens securely (same as exchange_registration_code)
+                    success_refresh = self.storage.save_refresh_token(refresh_token)
+                    success_access = self.storage.save_access_token(access_token, expiry_timestamp)
+                    success_site = self.storage.save_site_id(site_id)
+
+                    if not success_refresh or not success_access or not success_site:
+                        raise AuthenticationError("Failed to save tokens to encrypted file")
+
+                    self._access_token = access_token
+                    self._token_expiry = expiry_timestamp
+                    self._site_id = site_id
+
+                    logger.info(f"Device code authorized: site={site_id}")
+                    return True
+
+                if response.status_code == 410:
+                    raise AuthenticationError("Pairing phrase expired. Please try again.")
+
+                # Other errors
+                try:
+                    error_msg = response.json().get('error', 'Unknown error')
+                except (ValueError, json.JSONDecodeError):
+                    error_msg = f"HTTP {response.status_code}"
+                raise AuthenticationError(f"Device code poll failed: {error_msg}")
+
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Network error during poll (retrying): {e}")
+                time.sleep(interval)
+                continue
+
+        raise AuthenticationError("Timed out waiting for authorization")
+
     def refresh_access_token(self) -> bool:
         """
         Refresh expired access token using refresh token.
@@ -239,7 +349,7 @@ class AuthManager:
             TokenRefreshError: If refresh fails
         """
         try:
-            logger.info("Refreshing access token...")
+            logger.debug("Refreshing access token...")
 
             # Get refresh token from storage
             refresh_token = self.storage.get_refresh_token()
@@ -312,11 +422,17 @@ class AuthManager:
             self._access_token = access_token
             self._token_expiry = expiry_timestamp
 
+            # Only log at INFO when recovering from failures (state change)
+            was_failing = self._consecutive_failures > 0
+
             # Reset failure counters on success
             self._consecutive_failures = 0
             self._refresh_backoff_seconds = 60  # Reset backoff to 1 minute
 
-            logger.info(f"Token refreshed successfully, expires_in={expires_in}s")
+            if was_failing:
+                logger.info(f"Token refresh recovered after failures, expires_in={expires_in}s")
+            else:
+                logger.debug(f"Token refreshed successfully, expires_in={expires_in}s")
 
             return True
 
@@ -355,51 +471,57 @@ class AuthManager:
 
             # Refresh if token expires in less than 5 minutes
             if time_until_expiry <= TOKEN_REFRESH_BUFFER_SECONDS:
-                # Check backoff - don't retry too soon after previous failure
-                if self._last_refresh_attempt:
-                    time_since_last_attempt = time.time() - self._last_refresh_attempt
-                    if time_since_last_attempt < self._refresh_backoff_seconds:
-                        # Still in backoff period - only log ONCE per backoff period
-                        retry_in = int(self._refresh_backoff_seconds - time_since_last_attempt)
-                        if not self._backoff_logged:
-                            logger.warning(
-                                f"Token refresh in backoff (waiting {int(self._refresh_backoff_seconds)}s, "
-                                f"{self._consecutive_failures} consecutive failures)"
-                            )
-                            self._backoff_logged = True
-                        # Use existing token even if close to expiry (better than spamming)
-                        if self._access_token and time_until_expiry > 0:
-                            return self._access_token
-                        # If token completely expired and still in backoff, raise error
-                        raise TokenRefreshError(
-                            f"Token expired and refresh in backoff period (retry in {retry_in}s)"
-                        )
-
-                # Attempt refresh - reset backoff log flag since we're trying again
-                self._backoff_logged = False
-                logger.info(
-                    f"[WARNING] Token expires in {int(time_until_expiry)}s (< {TOKEN_REFRESH_BUFFER_SECONDS}s buffer), triggering refresh..."
-                )
-                try:
-                    self._last_refresh_attempt = time.time()
-                    self.refresh_access_token()
-                    logger.info("[OK] Token refresh completed successfully")
-                except TokenRefreshError as e:
-                    # Double backoff on failure (exponential backoff)
-                    self._refresh_backoff_seconds = min(
-                        self._refresh_backoff_seconds * 2,
-                        self._max_backoff_seconds
-                    )
-                    logger.error(
-                        f"Token refresh failed, increasing backoff to {int(self._refresh_backoff_seconds)}s "
-                        f"({self._consecutive_failures} consecutive failures)"
-                    )
-                    # If token is still valid (not completely expired), use it
-                    if self._access_token and time_until_expiry > 0:
-                        logger.warning("Using expiring token due to refresh failure")
+                with self._refresh_lock:
+                    # Re-check after acquiring lock — another thread may have refreshed
+                    time_until_expiry = self._token_expiry - time.time()
+                    if time_until_expiry > TOKEN_REFRESH_BUFFER_SECONDS:
                         return self._access_token
-                    # Otherwise, re-raise the error
-                    raise
+
+                    # Check backoff - don't retry too soon after previous failure
+                    if self._last_refresh_attempt:
+                        time_since_last_attempt = time.time() - self._last_refresh_attempt
+                        if time_since_last_attempt < self._refresh_backoff_seconds:
+                            # Still in backoff period - only log ONCE per backoff period
+                            retry_in = int(self._refresh_backoff_seconds - time_since_last_attempt)
+                            if not self._backoff_logged:
+                                logger.warning(
+                                    f"Token refresh in backoff (waiting {int(self._refresh_backoff_seconds)}s, "
+                                    f"{self._consecutive_failures} consecutive failures)"
+                                )
+                                self._backoff_logged = True
+                            # Use existing token even if close to expiry (better than spamming)
+                            if self._access_token and time_until_expiry > 0:
+                                return self._access_token
+                            # If token completely expired and still in backoff, raise error
+                            raise TokenRefreshError(
+                                f"Token expired and refresh in backoff period (retry in {retry_in}s)"
+                            )
+
+                    # Attempt refresh - reset backoff log flag since we're trying again
+                    self._backoff_logged = False
+                    logger.debug(
+                        f"Token expires in {int(time_until_expiry)}s (< {TOKEN_REFRESH_BUFFER_SECONDS}s buffer), triggering refresh..."
+                    )
+                    try:
+                        self._last_refresh_attempt = time.time()
+                        self.refresh_access_token()
+                        logger.debug("Token refresh completed successfully")
+                    except TokenRefreshError as e:
+                        # Double backoff on failure (exponential backoff)
+                        self._refresh_backoff_seconds = min(
+                            self._refresh_backoff_seconds * 2,
+                            self._max_backoff_seconds
+                        )
+                        logger.error(
+                            f"Token refresh failed, increasing backoff to {int(self._refresh_backoff_seconds)}s "
+                            f"({self._consecutive_failures} consecutive failures)"
+                        )
+                        # If token is still valid (not completely expired), use it
+                        if self._access_token and time_until_expiry > 0:
+                            logger.warning("Using expiring token due to refresh failure")
+                            return self._access_token
+                        # Otherwise, re-raise the error
+                        raise
 
         # If we still don't have a token, authentication is required
         if not self._access_token:
@@ -491,7 +613,7 @@ if __name__ == "__main__":
     # Example: Get valid token (auto-refreshes if needed)
     try:
         token = auth.get_valid_token()
-        print(f"Got valid token: {token[:20]}...")  # Only print first 20 chars
+        print("Got valid token successfully")
     except (AuthenticationError, TokenRefreshError) as e:
         print(f"Failed to get token: {e}")
 

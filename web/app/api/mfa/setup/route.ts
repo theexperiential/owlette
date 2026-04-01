@@ -41,19 +41,36 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     await requireSessionUser(request, userId);
 
     // Generate TOTP secret
-    const secret = generateTOTPSecret();
+    let secret: string;
+    try {
+      secret = generateTOTPSecret();
+    } catch (e) {
+      console.error('[MFA Setup] generateTOTPSecret failed:', e);
+      throw e;
+    }
 
     // Generate QR code
-    const qrCodeUrl = await generateQRCode(email, secret);
+    let qrCodeUrl: string;
+    try {
+      qrCodeUrl = await generateQRCode(email, secret);
+    } catch (e) {
+      console.error('[MFA Setup] generateQRCode failed:', e);
+      throw e;
+    }
 
     // Store pending setup in Firestore (temporary, expires in 10 minutes)
-    const db = getAdminDb();
-    await db.collection('mfa_pending').doc(userId).set({
-      secret,
-      email,
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
-    });
+    try {
+      const db = getAdminDb();
+      await db.collection('mfa_pending').doc(userId).set({
+        secret,
+        email,
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+      });
+    } catch (e) {
+      console.error('[MFA Setup] Firestore write failed:', e);
+      throw e;
+    }
 
     return NextResponse.json({
       secret,
@@ -63,9 +80,10 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
+    const message = error instanceof Error ? error.message : 'Failed to generate MFA setup';
     console.error('[MFA Setup] Error:', error);
     return NextResponse.json(
-      { error: 'Failed to generate MFA setup' },
+      { error: message },
       { status: 500 }
     );
   }

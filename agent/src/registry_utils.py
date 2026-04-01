@@ -236,12 +236,13 @@ def detect_installer_type(uninstall_command: str) -> str:
     """
     command_lower = uninstall_command.lower()
 
-    # Inno Setup - typically "unins000.exe" or contains "inno"
-    if 'unins' in command_lower or 'inno' in command_lower:
+    # Inno Setup - uses "unins000.exe" (numbered) or contains "inno"
+    # Must check for the numbered pattern specifically — generic "Uninstall.exe" is NOT Inno
+    if re.search(r'unins\d+\.exe', command_lower) or 'inno' in command_lower:
         return 'inno'
 
-    # NSIS - typically "uninst.exe" or "uninstall.exe"
-    if 'uninst.exe' in command_lower or 'nsis' in command_lower:
+    # NSIS - typically "uninst.exe", "uninstall.exe", or contains "nsis"
+    if 'uninst' in command_lower or 'uninstall' in command_lower or 'nsis' in command_lower:
         return 'nsis'
 
     # MSI - uses msiexec

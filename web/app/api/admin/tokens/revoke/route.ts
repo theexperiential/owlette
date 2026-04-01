@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
+import logger from '@/lib/logger';
 
 /**
  * POST /api/admin/tokens/revoke
@@ -68,7 +69,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         await batch.commit();
       }
 
-      console.log(`Revoked ${revokedCount} tokens for site ${siteId}`);
+      logger.info(`Revoked ${revokedCount} tokens for site ${siteId}`);
 
       return NextResponse.json({
         success: true,
@@ -100,7 +101,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       await tokenRef.delete();
       revokedCount = 1;
 
-      console.log(`Revoked token ${tokenId} for site ${siteId}`);
+      logger.info(`Revoked token ${tokenId} for site ${siteId}`);
 
       return NextResponse.json({
         success: true,
@@ -124,7 +125,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         await batch.commit();
       }
 
-      console.log(`Revoked ${revokedCount} tokens for machine ${machineId} in site ${siteId}`);
+      logger.info(`Revoked ${revokedCount} tokens for machine ${machineId} in site ${siteId}`);
 
       return NextResponse.json({
         success: true,
@@ -146,6 +147,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     );
   }
 }, {
-  strategy: 'user',
+  strategy: 'api',
   identifier: 'ip',
 });

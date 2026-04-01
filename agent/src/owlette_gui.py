@@ -4,6 +4,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 from CTkListbox import *
 from custom_messagebox import OwletteMessagebox as CTkMessagebox
+from CTkToolTip import CTkToolTip
 import os
 import signal
 import json
@@ -21,14 +22,27 @@ import socket
 # from firebase_client import FirebaseClient  # Moved to background thread
 FIREBASE_AVAILABLE = True  # Assume available, handle import errors in background thread
 
+def _lazy_tooltip(widget, message, **opts):
+    """Attach a tooltip that is only created on first hover, saving ~25ms per tooltip at startup.
+    Returns a holder dict so callers can update the message later:
+      - holder['tooltip'] is the CTkToolTip once materialized (None before first hover)
+      - holder['message'] is the pending message (used if tooltip not yet created)"""
+    holder = {"tooltip": None, "message": message}
+    def on_enter(event):
+        if holder["tooltip"] is None:
+            holder["tooltip"] = CTkToolTip(widget, message=holder["message"], **opts)
+            # CTkToolTip binds its own <Enter>/<Leave>, so trigger show now
+            widget.event_generate("<Enter>")
+    widget.bind("<Enter>", on_enter, add="+")
+    return holder
+
 class OwletteConfigApp:
 
     def __init__(self, master):
         self.master = master
 
         # Initialize basic window properties
-        hostname = socket.gethostname()
-        self.master.title(f"Owlette: {hostname}")
+        self.master.title(shared_utils.WINDOW_TITLES["owlette_gui"])
 
         # Set window icon
         try:
@@ -57,6 +71,9 @@ class OwletteConfigApp:
         # Load saved UI state (default to collapsed)
         self.details_collapsed = self.config.get('gui', {}).get('details_collapsed', True)
 
+        # Collapsed width for the process-list-only view
+        self.collapsed_width = 270
+
         # Build UI directly - no loading screen
         self.setup_ui()
 
@@ -75,7 +92,7 @@ class OwletteConfigApp:
         if not self.time_to_init_entry.get():
             self.time_to_init_entry.insert(0, 10)
         if not self.relaunch_attempts_entry.get():
-            self.relaunch_attempts_entry.insert(0, 3)
+            self.relaunch_attempts_entry.insert(0, 5)
 
         # Auto-select first process if any exist
         if self.process_list.size() > 0:
@@ -83,7 +100,7 @@ class OwletteConfigApp:
 
         # Start periodic updates
         self.master.after(1000, self.update_process_list_periodically)
-        self.master.after(5000, self.update_firebase_status_periodically)  # Refresh connection status every 5s
+        self.master.after(1000, self.update_firebase_status_periodically)  # Refresh connection status (initial fast check)
 
     def _start_background_initialization(self):
         """Start heavy operations in background threads"""
@@ -99,7 +116,7 @@ class OwletteConfigApp:
                     self.start_service()
                     self.service_running = True
 
-                logging.info(f"Service status: {'Running' if is_running else 'Started'}")
+                logging.debug(f"Service status: {'Running' if is_running else 'Started'}")
             except Exception as e:
                 logging.error(f"Error checking service: {e}")
                 self.service_running = False
@@ -136,7 +153,7 @@ class OwletteConfigApp:
                     # Update UI on main thread
                     self.master.after(0, self.update_firebase_status)
                 else:
-                    # Firebase is disabled - still update status to show "Disabled"
+                    # Firebase is disabled - still update status to show "disabled"
                     logging.info("Firebase is disabled in config")
                     self.master.after(0, self.update_firebase_status)
             except ImportError as e:
@@ -153,20 +170,52 @@ class OwletteConfigApp:
     def _apply_window_state(self):
         """Apply saved window state (collapsed or expanded)"""
         if self.details_collapsed:
-            # Start in collapsed state (narrow window crops out PROCESS DETAILS completely)
-            shared_utils.center_window(self.master, 270, 450)
-            self.master.minsize(270, 450)
-            self.details_toggle_button.configure(text=">>")
-            self.footer_label.grid_remove()  # Hide footer
-            self.site_label_left.pack(side='left', expand=True)  # Show Site in center
-            self.site_id_label.pack_forget()  # Hide Site in right panel
+            shared_utils.center_window(self.master, self.collapsed_width, 450)
+            self.master.minsize(self.collapsed_width, 450)
+            self.details_toggle_button.configure(text="\u276F")
+            self.footer_frame.grid_remove()
+            self._collapse_right_panel()
         else:
-            # Start in expanded state
-            shared_utils.center_window(self.master, 1300, 450)
-            self.master.minsize(1300, 450)
-            self.details_toggle_button.configure(text="<<")
-            self.site_label_left.pack_forget()  # Hide Site from header
-            # Footer and site_id_label are already visible by default
+            shared_utils.center_window(self.master, 950, 450)
+            self.master.minsize(950, 450)
+            self.details_toggle_button.configure(text="\u276E")
+
+    def _collapse_right_panel(self):
+        """Hide all right-panel widgets so nothing peeks into collapsed view"""
+        self.panel_separator.grid_remove()
+        self.process_details_frame.grid_remove()
+        for w in getattr(self, '_detail_widgets', []):
+            try:
+                w.grid_remove()
+            except Exception:
+                pass
+        # Give column 1 weight so process list stretches to fill the full window width
+        # Also zero out right-side column weights (6, 8) so they don't steal space
+        self.master.grid_columnconfigure(1, weight=1)
+        self.master.grid_columnconfigure(6, weight=0)
+        self.master.grid_columnconfigure(8, weight=0)
+
+    def _expand_right_panel(self):
+        """Restore all right-panel widgets with saved grid positions"""
+        # Reset all column weights back to normal for expanded layout
+        self.master.grid_columnconfigure(1, weight=0)
+        self.master.grid_columnconfigure(6, weight=2)
+        self.master.grid_columnconfigure(8, weight=1)
+        self.panel_separator.grid(row=0, column=3, rowspan=10, sticky='ns', padx=0, pady=(20, 10))
+        self.process_details_frame.grid(row=0, column=4, sticky='news', rowspan=10, columnspan=6, padx=(4, 4), pady=(4, 4))
+        # Restore detail widgets using saved grid info (not relying on grid memory)
+        for w in getattr(self, '_detail_widgets', []):
+            info = self._detail_grid_info.get(id(w))
+            if info:
+                try:
+                    w.grid(**info)
+                except Exception:
+                    pass
+        # Then respect current selection state
+        if self.process_list.size() > 0 and self.process_list.curselection() is not None:
+            self._show_detail_fields(True)
+        else:
+            self._show_detail_fields(False)
 
     def _apply_windows11_theme(self):
         """Apply Windows 11 dark titlebar - deferred for faster startup"""
@@ -179,7 +228,7 @@ class OwletteConfigApp:
             HWND = ctypes.windll.user32.GetParent(self.master.winfo_id())
             DWMWA_USE_IMMERSIVE_DARK_MODE = 20
             ctypes.windll.dwmapi.DwmSetWindowAttribute(HWND, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int(1)))
-            logging.info("Applied Windows 11 dark theme")
+            logging.debug("Applied Windows 11 dark theme")
         except Exception as e:
             logging.debug(f"Could not apply Windows 11 theme: {e}")
             pass  # Silently fail if not on Windows 11 or if it doesn't work
@@ -200,214 +249,229 @@ class OwletteConfigApp:
 
         # PROCESS LIST (LEFT SIDE)
         # Create a frame for the process list
-        self.process_list_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.WINDOW_COLOR, border_width=0, corner_radius=12)
-        self.process_list_frame.grid(row=0, column=0, sticky='nsew', rowspan=10, columnspan=3, padx=(10, 0), pady=(10, 0))
+        self.process_list_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.WINDOW_COLOR, border_width=1, border_color=shared_utils.BORDER_COLOR, corner_radius=shared_utils.CORNER_RADIUS)
+        self.process_list_frame.grid(row=0, column=0, sticky='nsew', rowspan=10, columnspan=3, padx=(4, 4), pady=(4, 4))
 
         # Header container frame (spans columns 0-2, row 0)
         self.header_frame = ctk.CTkFrame(self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR)
-        self.header_frame.grid(row=0, column=0, columnspan=3, sticky='ew', padx=(20, 2), pady=(20, 0))
+        self.header_frame.grid(row=0, column=0, columnspan=3, sticky='ew', padx=(14, 14), pady=(12, 0))
 
         # PROCESSES label (left aligned)
-        self.process_list_label = ctk.CTkLabel(self.header_frame, text="Processes", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.process_list_label = ctk.CTkLabel(self.header_frame, text="processes", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.process_list_label.pack(side='left')
 
         # Toggle button (right aligned)
-        self.details_toggle_button = ctk.CTkButton(self.header_frame, text="<<", command=self.toggle_details_panel, width=30, height=24, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
+        self.details_toggle_button = ctk.CTkButton(self.header_frame, text="\u276E", command=self.toggle_details_panel, width=30, height=30, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=15, font=("Segoe UI", 14))
         self.details_toggle_button.pack(side='right', padx=(0, 5))
 
-        # Site label (center - only visible when collapsed)
-        site_id = self.config.get('firebase', {}).get('site_id', '')
-        site_display = site_id if site_id else "Unassigned"
-        self.site_label_left = ctk.CTkLabel(self.header_frame, text=f"Site: {site_display}", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color="#60a5fa", font=("", 12))
-        self.site_label_left.pack(side='left', expand=True)  # expand=True centers it in remaining space
-        self.site_label_left.pack_forget()  # Hidden initially if starting expanded
+        # Add process button (in header, next to toggle)
+        self.new_button = ctk.CTkButton(self.header_frame, text="\uff0b", command=self.new_process, width=30, height=30, fg_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_IMPORTANT_HOVER, text_color=shared_utils.BUTTON_IMPORTANT_TEXT, bg_color=shared_utils.FRAME_COLOR, corner_radius=15, font=("Segoe UI", 14))
+        self.new_button.pack(side='right', padx=(0, 5))
+        _lazy_tooltip(self.new_button, message="add process")
 
         # Create a Listbox to display the list of processes
         self.process_list = CTkListbox(self.master, command=self.on_select)
-        self.process_list.grid(row=1, column=0, columnspan=3, rowspan=7, sticky='nsew', padx=(20, 10), pady=10)
-        self.process_list.configure(highlight_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1)
-        # Adjust scrollbar padding to shift it left
+        self.process_list.grid(row=1, column=0, columnspan=3, rowspan=9, sticky='nsew', padx=(6, 6), pady=(8, 10))
+        self.process_list.configure(highlight_color=shared_utils.HIGHLIGHT_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_width=0)
+        # Save default scrollbar colors before _update_scrollbar_visibility modifies them
+        # Note: cget uses 'scrollbar_color'/'scrollbar_hover_color' but configure uses 'button_color'/'button_hover_color'
+        self._scrollbar_defaults = {
+            'fg_color': self.process_list._scrollbar.cget('fg_color'),
+            'button_color': self.process_list._scrollbar.cget('scrollbar_color'),
+            'button_hover_color': self.process_list._scrollbar.cget('scrollbar_hover_color'),
+        }
+        # Start as invisible placeholder; _update_scrollbar_visibility will set the correct state
         self.process_list._scrollbar.grid_configure(padx=(0, 8))
+        self.process_list._scrollbar.configure(
+            width=1,
+            fg_color=shared_utils.FRAME_COLOR,
+            button_color=shared_utils.FRAME_COLOR,
+            button_hover_color=shared_utils.FRAME_COLOR,
+        )
 
-        # Button row 1: New/Up/Kill
-        self.new_button = ctk.CTkButton(self.master, text="New", command=self.new_process, width=60, fg_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.new_button.grid(row=8, column=0, sticky='w', padx=(20, 0), pady=(5, 5))
+        # Custom context menu (built with CTk widgets for modern look)
+        self._context_menu_window = None
+        self._ctx_bind_id = None
 
-        self.up_button = ctk.CTkButton(self.master, text="↑", command=self.move_up, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.up_button.grid(row=8, column=1, sticky='', padx=5, pady=(5, 5))
+        # Global right-click handler — catches clicks on any widget inside the process list
+        self.master.bind_all("<Button-3>", self._on_global_right_click)
 
-        self.kill_button = ctk.CTkButton(self.master, text="Kill", command=self.kill_process, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.kill_button.grid(row=8, column=2, sticky='e', padx=5, pady=(5, 5))
+        # FOOTER BAR (row 10) — proper frame layout instead of overlapping grid cells
+        self.footer_frame = ctk.CTkFrame(self.master, fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, corner_radius=0, height=40)
+        self.footer_frame.grid(row=10, column=0, columnspan=9, sticky='sew', padx=0, pady=0)
+        self.footer_frame.pack_propagate(False)  # Keep fixed height
 
-        # Button row 2: Down arrow/Delete
-        self.down_button = ctk.CTkButton(self.master, text="↓", command=self.move_down, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.down_button.grid(row=9, column=1, sticky='', padx=5, pady=(5, 15))
+        # Left section: Firebase status + Site/Machine labels + Site button
+        self.footer_left = ctk.CTkFrame(self.footer_frame, fg_color='transparent')
+        self.footer_left.pack(side='left', padx=(15, 0), pady=4)
 
-        self.remove_button = ctk.CTkButton(self.master, text="Delete", command=self.remove_process, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.remove_button.grid(row=9, column=2, sticky='e', padx=5, pady=(5, 15))
+        self.firebase_status_label = ctk.CTkLabel(self.footer_left, text="", fg_color='transparent', text_color=shared_utils.TEXT_COLOR, font=("", 11))
+        self.firebase_status_label.pack(side='left', pady=0)
 
-        # Firebase status indicator (left side of row 10)
-        self.firebase_status_label = ctk.CTkLabel(self.master, text="", fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 11))
-        self.firebase_status_label.grid(row=10, column=0, columnspan=2, sticky='sw', padx=(20, 0), pady=(5, 5))
+        # Site label in footer (shows site_id, truncated for long names)
+        hostname = socket.gethostname()
+        site_id = self.config.get('firebase', {}).get('site_id', '')
+        site_display = site_id if site_id else "Unassigned"
+        site_truncated = site_display[:18] + "\u2026" if len(site_display) > 18 else site_display
+        hostname_truncated = hostname[:18] + "\u2026" if len(hostname) > 18 else hostname
 
-        # Site management button (Join/Leave Site - changes based on connection state)
+        self.footer_site_label = ctk.CTkLabel(self.footer_left, text=f"{site_truncated}", fg_color='transparent', text_color=shared_utils.ACCENT_COLOR, font=("", 11))
+        self.footer_site_label.pack(side='left', padx=(8, 0), pady=0)
+        self._footer_site_holder = _lazy_tooltip(self.footer_site_label, message=f"Site: {site_display}")
+
+        # Separator dot
+        ctk.CTkLabel(self.footer_left, text="\u00b7", fg_color='transparent', text_color=shared_utils.BORDER_COLOR, font=("", 11)).pack(side='left', padx=(6, 0), pady=0)
+
+        # Machine label in footer
+        self.footer_machine_label = ctk.CTkLabel(self.footer_left, text=f"{hostname_truncated}", fg_color='transparent', text_color=shared_utils.TEXT_COLOR, font=("", 11))
+        self.footer_machine_label.pack(side='left', padx=(6, 0), pady=0)
+        _lazy_tooltip(self.footer_machine_label, message=f"Machine: {hostname}")
+
         self.site_button = ctk.CTkButton(
-            self.master,
-            text="Join Site",
+            self.footer_left,
+            text="join site",
             command=self.on_site_button_click,
             width=100,
             height=24,
             fg_color=shared_utils.BUTTON_COLOR,
             hover_color=shared_utils.BUTTON_HOVER_COLOR,
             font=("", 11),
-            bg_color=shared_utils.WINDOW_COLOR,
-            corner_radius=6
+            corner_radius=shared_utils.CORNER_RADIUS
         )
-        self.site_button.grid(row=10, column=2, sticky='se', padx=5, pady=(5, 5))
+        self.site_button.pack(side='left', padx=(10, 0), pady=0)
 
-        # Footer label (perfectly centered in row 10)
-        footer_text = "Made with ♥ in California by TEC"
-        self.footer_label = ctk.CTkLabel(self.master, text=footer_text, fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color="#60a5fa", font=("", 11))
-        self.footer_label.grid(row=10, column=0, columnspan=8, sticky='', padx=0, pady=(5, 5))
-        # Make TEC text clickable
+        # Center section: Footer text
+        footer_text = "made with \u2665 in california by TEC"
+        self.footer_label = ctk.CTkLabel(self.footer_frame, text=footer_text, fg_color='transparent', text_color=shared_utils.ACCENT_COLOR, font=("", 11))
+        self.footer_label.pack(side='left', expand=True)
         self.footer_label.configure(cursor="hand2")
         self.footer_label.bind("<Button-1>", lambda _: self._open_tec_website())
 
-        # Config button (far right, before Logs)
-        self.config_button = ctk.CTkButton(
-            self.master,
-            text="Config",
-            command=self.open_config,
-            width=70,
+        # Right section: Overflow menu + Version
+        self.footer_right = ctk.CTkFrame(self.footer_frame, fg_color='transparent')
+        self.footer_right.pack(side='right', padx=(0, 15), pady=4)
+
+        self._overflow_panel = None  # Track the floating panel
+
+        self.overflow_button = ctk.CTkButton(
+            self.footer_right,
+            text="···",
+            command=self._toggle_overflow_menu,
+            width=36,
             height=24,
             fg_color=shared_utils.BUTTON_COLOR,
             hover_color=shared_utils.BUTTON_HOVER_COLOR,
-            font=("", 11),
-            bg_color=shared_utils.WINDOW_COLOR,
-            corner_radius=6
+            font=("", 14, "bold"),
+            corner_radius=shared_utils.CORNER_RADIUS
         )
-        self.config_button.grid(row=10, column=7, sticky='e', padx=(0, 230), pady=(5, 5))
+        self.overflow_button.pack(side='left', padx=(0, 10))
 
-        # Logs button (far right, before version)
-        self.logs_button = ctk.CTkButton(
-            self.master,
-            text="Logs",
-            command=self.open_logs,
-            width=70,
-            height=24,
-            fg_color=shared_utils.BUTTON_COLOR,
-            hover_color=shared_utils.BUTTON_HOVER_COLOR,
-            font=("", 11),
-            bg_color=shared_utils.WINDOW_COLOR,
-            corner_radius=6
-        )
-        self.logs_button.grid(row=10, column=7, sticky='e', padx=(0, 150), pady=(5, 5))
+        self.version_label = ctk.CTkLabel(self.footer_right, text=f"v{shared_utils.APP_VERSION} | AGPL-3.0", fg_color='transparent', text_color=shared_utils.TEXT_COLOR, font=("", 11))
+        self.version_label.pack(side='left')
 
-        # Version label (far right of row 10)
-        self.version_label = ctk.CTkLabel(self.master, text=f"v{shared_utils.APP_VERSION}", fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 11))
-        self.version_label.grid(row=10, column=7, sticky='se', padx=(0, 20), pady=(5, 5))
+        # VERTICAL SEPARATOR between panels
+        self.panel_separator = ctk.CTkFrame(self.master, fg_color=shared_utils.BORDER_COLOR, bg_color=shared_utils.WINDOW_COLOR, width=1, corner_radius=0)
+        self.panel_separator.grid(row=0, column=3, rowspan=10, sticky='ns', padx=(0, 0), pady=(20, 10))
 
         # PROCESS DETAILS (RIGHT SIDE)
         # Create frame for process details
-        self.process_details_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.WINDOW_COLOR, border_width=0, corner_radius=12)
-        self.process_details_frame.grid(row=0, column=4, sticky='news', rowspan=10, columnspan=5, padx=(5, 10), pady=(10, 0))
+        self.process_details_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.WINDOW_COLOR, border_width=1, border_color=shared_utils.BORDER_COLOR, corner_radius=shared_utils.CORNER_RADIUS)
+        self.process_details_frame.grid(row=0, column=4, sticky='news', rowspan=10, columnspan=6, padx=(4, 4), pady=(4, 4))
+
+        # Empty state placeholder (shown when no process is selected)
+        self.empty_state_label = ctk.CTkLabel(
+            self.process_details_frame,
+            text="Select a process to view details",
+            fg_color='transparent',
+            text_color='#475569',
+            font=("", 14)
+        )
+        self.empty_state_label.place(relx=0.5, rely=0.45, anchor='center')
 
         # Create a label for the process details
-        self.process_details_label = ctk.CTkLabel(self.master, text="Process Details", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.process_details_label.grid(row=0, column=4, columnspan=2, sticky='w', padx=(20, 10), pady=(20, 0))
+        self.process_details_label = ctk.CTkLabel(self.master, text="process details", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.process_details_label.grid(row=0, column=4, columnspan=3, sticky='w', padx=(20, 10), pady=(20, 0))
 
-        # Create hostname and site ID labels in same row, right-aligned
-        hostname = socket.gethostname()
-        site_id = self.config.get('firebase', {}).get('site_id', '')
+        # Invisible spacer — keeps grid layout stable (previously held machine info)
+        self.machine_info_frame = ctk.CTkFrame(self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, height=0, width=0)
 
-        # Show "Unassigned" if no site_id
-        site_display = site_id if site_id else "Unassigned"
-
-        # Container frame for hostname and site ID (right-aligned)
-        self.machine_info_frame = ctk.CTkFrame(self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR)
-        self.machine_info_frame.grid(row=0, column=6, columnspan=2, sticky='e', padx=(10, 20), pady=(20, 0))
-
-        # Hostname label with "Machine:" prefix
-        self.hostname_label = ctk.CTkLabel(self.machine_info_frame, text=f"Machine: {hostname}", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 12, "bold"))
-        self.hostname_label.pack(side='right')
-
-        # Site ID label (same size, lighter color) - pack on the right side (appears to left of hostname)
-        self.site_id_label = ctk.CTkLabel(self.machine_info_frame, text=f"Site: {site_display}", fg_color=shared_utils.FRAME_COLOR, text_color="#60a5fa", font=("", 12))
-        self.site_id_label.pack(side='right', padx=(0, 15))
-
-        # Create a toggle switch for process
-        self.autolaunch_label = ctk.CTkLabel(self.master, text="Autolaunch:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.autolaunch_label.grid(row=1, column=4, sticky='e', padx=5, pady=5)
-        self.autolaunch_toggle = ctk.CTkSwitch(master=self.master, text="", command=self.toggle_launch_process, onvalue="on", offvalue="off")
-        self.autolaunch_toggle.grid(row=1, column=5, sticky='w', padx=10, pady=5)
-        self.autolaunch_toggle.configure(bg_color=shared_utils.FRAME_COLOR, fg_color='#475569', progress_color=shared_utils.BUTTON_IMPORTANT_COLOR)
-        self.autolaunch_toggle.select()
+        # Create launch mode dropdown
+        self.launch_mode_label = ctk.CTkLabel(self.master, text="launch mode:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.launch_mode_label.grid(row=1, column=4, sticky='e', padx=(15, 5), pady=5)
+        self.launch_mode_options = ["Off", "Always On", "Scheduled"]
+        self.launch_mode_menu = ctk.CTkOptionMenu(self.master, values=self.launch_mode_options, command=self.on_launch_mode_change)
+        self.launch_mode_menu.configure(fg_color=shared_utils.BUTTON_COLOR, bg_color=shared_utils.FRAME_COLOR, button_color=shared_utils.BUTTON_HOVER_COLOR, button_hover_color=shared_utils.ACCENT_COLOR, width=120, dropdown_fg_color=shared_utils.BUTTON_COLOR, corner_radius=shared_utils.CORNER_RADIUS)
+        self.launch_mode_menu.grid(row=1, column=5, columnspan=2, sticky='w', padx=10, pady=5)
+        self.launch_mode_menu.set('Off')
+        # Read-only schedule info label (shown when mode is Scheduled)
+        self.schedule_info_label = ctk.CTkLabel(self.master, text="", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color='#64748b', font=("", 11))
+        self.schedule_info_label.grid(row=1, column=7, columnspan=2, sticky='w', padx=(5, 20), pady=5)
 
         # Create Name of process field
-        self.name_label = ctk.CTkLabel(self.master, text="Name:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.name_label.grid(row=2, column=4, sticky='e', padx=5, pady=5)
-        self.name_entry = ctk.CTkEntry(self.master, placeholder_text="Name of your process", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
-        self.name_entry.grid(row=2, column=5, columnspan=3, sticky='ew', padx=(10, 20), pady=5)
+        self.name_label = ctk.CTkLabel(self.master, text="name:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.name_label.grid(row=2, column=4, sticky='e', padx=(15, 5), pady=5)
+        self.name_entry = ctk.CTkEntry(self.master, placeholder_text="name of your process", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
+        self.name_entry.grid(row=2, column=5, columnspan=4, sticky='ew', padx=(10, 20), pady=5)
 
         # Create Exe path field
-        self.exe_path_label = ctk.CTkLabel(self.master, text="Exe:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.exe_path_label.grid(row=3, column=4, sticky='e', padx=5, pady=5)
-        self.exe_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_exe, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.exe_browse_button.grid(row=3, column=5, sticky='w', padx=(10, 5), pady=5)
-        self.exe_path_entry = ctk.CTkEntry(self.master, placeholder_text="The full path to your executable (application)", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
-        self.exe_path_entry.grid(row=3, column=6, columnspan=2, sticky='ew', padx=(5, 20), pady=5)
+        self.exe_path_label = ctk.CTkLabel(self.master, text="exe:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.exe_path_label.grid(row=3, column=4, sticky='e', padx=(15, 5), pady=5)
+        self.exe_browse_button = ctk.CTkButton(self.master, text="\uE838", command=self.browse_exe, width=36, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=shared_utils.CORNER_RADIUS, font=("Segoe MDL2 Assets", 14))
+        self.exe_browse_button.grid(row=3, column=5, sticky='w', padx=(10, 2), pady=5)
+        self.exe_path_entry = ctk.CTkEntry(self.master, placeholder_text="the full path to your executable (application)", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
+        self.exe_path_entry.grid(row=3, column=6, columnspan=3, sticky='ew', padx=(2, 20), pady=5)
 
         # Create File path / cmd line args
-        self.file_path_label = ctk.CTkLabel(self.master, text="Path / Args:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.file_path_label.grid(row=4, column=4, sticky='e', padx=5, pady=5)
-        self.file_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_file, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.file_browse_button.grid(row=4, column=5, sticky='w', padx=(10, 5), pady=5)
-        self.file_path_entry = ctk.CTkEntry(self.master, placeholder_text="The full path to your document or command line arguments", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
-        self.file_path_entry.grid(row=4, column=6, columnspan=2, sticky='ew', padx=(5, 20), pady=5)
+        self.file_path_label = ctk.CTkLabel(self.master, text="path / args:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.file_path_label.grid(row=4, column=4, sticky='e', padx=(15, 5), pady=5)
+        self.file_browse_button = ctk.CTkButton(self.master, text="\uE838", command=self.browse_file, width=36, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=shared_utils.CORNER_RADIUS, font=("Segoe MDL2 Assets", 14))
+        self.file_browse_button.grid(row=4, column=5, sticky='w', padx=(10, 2), pady=5)
+        self.file_path_entry = ctk.CTkEntry(self.master, placeholder_text="the full path to your document or command line arguments", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
+        self.file_path_entry.grid(row=4, column=6, columnspan=3, sticky='ew', padx=(2, 20), pady=5)
 
         # Create CWD path field
-        self.cwd_label = ctk.CTkLabel(self.master, text="CWD:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.cwd_label.grid(row=5, column=4, sticky='e', padx=5, pady=5)
-        self.cwd_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_cwd, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.cwd_browse_button.grid(row=5, column=5, sticky='w', padx=(10, 5), pady=5)
-        self.cwd_entry = ctk.CTkEntry(self.master, placeholder_text="The working directory for your process", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
-        self.cwd_entry.grid(row=5, column=6, columnspan=2, sticky='ew', padx=(5, 20), pady=5)
+        self.cwd_label = ctk.CTkLabel(self.master, text="cwd:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.cwd_label.grid(row=5, column=4, sticky='e', padx=(15, 5), pady=5)
+        self.cwd_browse_button = ctk.CTkButton(self.master, text="\uED25", command=self.browse_cwd, width=36, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=shared_utils.CORNER_RADIUS, font=("Segoe MDL2 Assets", 14))
+        self.cwd_browse_button.grid(row=5, column=5, sticky='w', padx=(10, 2), pady=5)
+        self.cwd_entry = ctk.CTkEntry(self.master, placeholder_text="the working directory for your process", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
+        self.cwd_entry.grid(row=5, column=6, columnspan=3, sticky='ew', padx=(2, 20), pady=5)
 
         # Create Time delay label and field
-        self.time_delay_label = ctk.CTkLabel(self.master, text="Delay (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.time_delay_label.grid(row=6, column=4, sticky='e', padx=5, pady=5)
-        self.time_delay_entry = ctk.CTkEntry(self.master, placeholder_text="0", width=80, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
-        self.time_delay_entry.grid(row=6, column=5, sticky='w', padx=(10, 5), pady=5)
+        self.time_delay_label = ctk.CTkLabel(self.master, text="delay (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.time_delay_label.grid(row=6, column=4, sticky='e', padx=(15, 5), pady=5)
+        self.time_delay_entry = ctk.CTkEntry(self.master, placeholder_text="0", width=50, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
+        self.time_delay_entry.grid(row=6, column=5, columnspan=2, sticky='w', padx=(10, 5), pady=5)
 
         # Create Priority dropdown
-        self.priority_label = ctk.CTkLabel(self.master, text="Priority:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.priority_label.grid(row=6, column=6, sticky='e', padx=5, pady=5)
+        self.priority_label = ctk.CTkLabel(self.master, text="priority:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.priority_label.grid(row=6, column=7, sticky='e', padx=5, pady=5)
         self.priority_options = ["Low", "Normal", "High", "Realtime"]
         self.priority_menu = ctk.CTkOptionMenu(self.master, values=self.priority_options, command=self.update_selected_process)
-        self.priority_menu.configure(fg_color=shared_utils.BUTTON_COLOR, bg_color=shared_utils.FRAME_COLOR, button_color=shared_utils.BUTTON_IMPORTANT_COLOR, button_hover_color=shared_utils.BUTTON_HOVER_COLOR, width=140, dropdown_fg_color=shared_utils.BUTTON_COLOR, corner_radius=6)
-        self.priority_menu.grid(row=6, column=7, sticky='w', padx=(5, 20), pady=5)
+        self.priority_menu.configure(fg_color=shared_utils.BUTTON_COLOR, bg_color=shared_utils.FRAME_COLOR, button_color=shared_utils.BUTTON_HOVER_COLOR, button_hover_color=shared_utils.ACCENT_COLOR, width=100, dropdown_fg_color=shared_utils.BUTTON_COLOR, corner_radius=shared_utils.CORNER_RADIUS)
+        self.priority_menu.grid(row=6, column=8, sticky='w', padx=(5, 20), pady=5)
         self.priority_menu.set('Normal')
 
         # Create a label and entry for "Time to Initialize"
-        self.time_to_init_label = ctk.CTkLabel(self.master, text="Wait (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.time_to_init_label.grid(row=7, column=4, sticky='e', padx=5, pady=5)
-        self.time_to_init_entry = ctk.CTkEntry(self.master, placeholder_text="10", width=80, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
-        self.time_to_init_entry.grid(row=7, column=5, sticky='w', padx=(10, 5), pady=5)
+        self.time_to_init_label = ctk.CTkLabel(self.master, text="wait (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.time_to_init_label.grid(row=7, column=4, sticky='e', padx=(15, 5), pady=5)
+        self.time_to_init_entry = ctk.CTkEntry(self.master, placeholder_text="10", width=50, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
+        self.time_to_init_entry.grid(row=7, column=5, columnspan=2, sticky='w', padx=(10, 5), pady=5)
 
         # Create Visibility dropdown
-        self.visibility_label = ctk.CTkLabel(self.master, text="Visibility:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.visibility_label.grid(row=7, column=6, sticky='e', padx=5, pady=5)
+        self.visibility_label = ctk.CTkLabel(self.master, text="visibility:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.visibility_label.grid(row=7, column=7, sticky='e', padx=5, pady=5)
         self.visibility_options = ["Normal", "Hidden"]
         self.visibility_menu = ctk.CTkOptionMenu(self.master, values=self.visibility_options, command=self.update_selected_process)
-        self.visibility_menu.configure(width=140, fg_color=shared_utils.BUTTON_COLOR, bg_color=shared_utils.FRAME_COLOR, button_color=shared_utils.BUTTON_IMPORTANT_COLOR, button_hover_color=shared_utils.BUTTON_HOVER_COLOR, dropdown_fg_color=shared_utils.BUTTON_COLOR, corner_radius=6)
-        self.visibility_menu.grid(row=7, column=7, sticky='w', padx=(5, 20), pady=5)
+        self.visibility_menu.configure(width=100, fg_color=shared_utils.BUTTON_COLOR, bg_color=shared_utils.FRAME_COLOR, button_color=shared_utils.BUTTON_HOVER_COLOR, button_hover_color=shared_utils.ACCENT_COLOR, dropdown_fg_color=shared_utils.BUTTON_COLOR, corner_radius=shared_utils.CORNER_RADIUS)
+        self.visibility_menu.grid(row=7, column=8, sticky='w', padx=(5, 20), pady=5)
         self.visibility_menu.set('Normal')
 
         # Create a label and entry for "Restart Attempts"
-        self.relaunch_attempts_label = ctk.CTkLabel(self.master, text="Attempts:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.relaunch_attempts_label.grid(row=8, column=4, sticky='e', padx=5, pady=5)
-        self.relaunch_attempts_entry = ctk.CTkEntry(self.master, placeholder_text="3", width=80, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
-        self.relaunch_attempts_entry.grid(row=8, column=5, sticky='w', padx=(10, 5), pady=5)
+        self.relaunch_attempts_label = ctk.CTkLabel(self.master, text="attempts:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.relaunch_attempts_label.grid(row=8, column=4, sticky='e', padx=(15, 5), pady=5)
+        self.relaunch_attempts_entry = ctk.CTkEntry(self.master, placeholder_text="5", width=50, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color=shared_utils.BORDER_COLOR, border_width=1, corner_radius=shared_utils.CORNER_RADIUS)
+        self.relaunch_attempts_entry.grid(row=8, column=5, columnspan=2, sticky='w', padx=(10, 5), pady=5)
 
         # BINDINGS
         # Bind the Entry widgets to auto-save when Return is pressed or focus is lost
@@ -435,25 +499,107 @@ class OwletteConfigApp:
         # Bind a mouse click event to the root window to defocus entry fields
         self.master.bind("<Button-1>", self.defocus_entry)
 
+        # Tooltips (lazy — only created on first hover to speed up startup)
+        tooltip_opts = {"delay": 0.5, "alpha": 0.95, "corner_radius": shared_utils.CORNER_RADIUS}
+        _lazy_tooltip(self.launch_mode_label, message="Off: not managed | Always On: 24/7 with crash recovery | Scheduled: runs during configured time windows", **tooltip_opts)
+        _lazy_tooltip(self.launch_mode_menu, message="Off: not managed | Always On: 24/7 with crash recovery | Scheduled: runs during configured time windows", **tooltip_opts)
+        _lazy_tooltip(self.name_label, message="Display name for this process", **tooltip_opts)
+        _lazy_tooltip(self.name_entry, message="Display name for this process", **tooltip_opts)
+        _lazy_tooltip(self.exe_path_label, message="Full path to the executable (.exe)", **tooltip_opts)
+        _lazy_tooltip(self.exe_path_entry, message="Full path to the executable (.exe)", **tooltip_opts)
+        _lazy_tooltip(self.exe_browse_button, message="Browse for an executable file", **tooltip_opts)
+        _lazy_tooltip(self.file_path_label, message="A file to open with the executable, or CLI arguments", **tooltip_opts)
+        _lazy_tooltip(self.file_path_entry, message="A file to open with the executable (e.g. a .toe project),\nor command line arguments (e.g. --verbose --port 8080)", **tooltip_opts)
+        _lazy_tooltip(self.file_browse_button, message="Browse for a file to pass to the executable", **tooltip_opts)
+        _lazy_tooltip(self.cwd_label, message="Working directory for the process", **tooltip_opts)
+        _lazy_tooltip(self.cwd_entry, message="Working directory for the process", **tooltip_opts)
+        _lazy_tooltip(self.cwd_browse_button, message="Browse for a working directory", **tooltip_opts)
+        _lazy_tooltip(self.time_delay_label, message="Seconds to wait before launching this process on startup", **tooltip_opts)
+        _lazy_tooltip(self.time_delay_entry, message="Seconds to wait before launching this process on startup", **tooltip_opts)
+        _lazy_tooltip(self.priority_label, message="CPU priority level for the process", **tooltip_opts)
+        _lazy_tooltip(self.priority_menu, message="CPU priority level for the process", **tooltip_opts)
+        _lazy_tooltip(self.time_to_init_label, message="Seconds to wait after launch before monitoring starts", **tooltip_opts)
+        _lazy_tooltip(self.time_to_init_entry, message="Seconds to wait after launch before monitoring starts", **tooltip_opts)
+        visibility_tip = ("Window visibility on launch.\n"
+                          "Hidden suppresses the console window, ideal for\n"
+                          "background scripts and services. Apps that create\n"
+                          "their own GUI windows (e.g. tkinter, Qt, WPF)\n"
+                          "will still be visible.")
+        _lazy_tooltip(self.visibility_label, message=visibility_tip, **tooltip_opts)
+        _lazy_tooltip(self.visibility_menu, message=visibility_tip, **tooltip_opts)
+        _lazy_tooltip(self.relaunch_attempts_label, message="Max restart attempts before giving up (0 = unlimited)", **tooltip_opts)
+        _lazy_tooltip(self.relaunch_attempts_entry, message="Max restart attempts before giving up (0 = unlimited)", **tooltip_opts)
+        _lazy_tooltip(self.new_button, message="Add process", **tooltip_opts)
+        _lazy_tooltip(self.details_toggle_button, message="Show/hide process details panel", **tooltip_opts)
+        _lazy_tooltip(self.overflow_button, message="Config, logs, docs, feedback", **tooltip_opts)
+        _lazy_tooltip(self.site_button, message="Join or leave a cloud site for remote management", **tooltip_opts)
+
         # Make columns stretchable
         # Left side (process list): columns 0-2 - VERY high weight to dominate space
-        # self.master.grid_columnconfigure(0, weight=1, minsize=120)
-        # self.master.grid_columnconfigure(1, weight=100, minsize=120)
-        # self.master.grid_columnconfigure(2, weight=100, minsize=120)
+        self.master.grid_columnconfigure(0, weight=0)
+        self.master.grid_columnconfigure(1, weight=0)
+        self.master.grid_columnconfigure(2, weight=0)
         # Separator: column 3
-        self.master.grid_columnconfigure(3, weight=0, minsize=10)
-        # Right side (process details): columns 4-7
-        self.master.grid_columnconfigure(4, weight=1)  # Labels column
-        self.master.grid_columnconfigure(5, weight=0)  # First input/browse column
-        self.master.grid_columnconfigure(6, weight=2)  # Second label/input column
-        self.master.grid_columnconfigure(7, weight=2)  # Second input column
+        self.master.grid_columnconfigure(3, weight=0, minsize=0)
+        # Right side (process details): columns 4-8
+        self.master.grid_columnconfigure(4, weight=0)  # Labels column
+        self.master.grid_columnconfigure(5, weight=0)  # Browse icon column (narrow)
+        self.master.grid_columnconfigure(6, weight=2)  # Main input column
+        self.master.grid_columnconfigure(7, weight=0)  # Second label column
+        self.master.grid_columnconfigure(8, weight=1)  # Second input column
 
-        # No row weight configuration needed - keeps layout compact
+        # Give row 9 (empty spacer before footer) all the weight so the footer stays at the bottom
+        self.master.grid_rowconfigure(9, weight=1)
+
+        # Collect all detail field widgets for empty state management
+        self._detail_widgets = [
+            self.process_details_label,
+            self.launch_mode_label, self.launch_mode_menu, self.schedule_info_label,
+            self.name_label, self.name_entry,
+            self.exe_path_label, self.exe_browse_button, self.exe_path_entry,
+            self.file_path_label, self.file_browse_button, self.file_path_entry,
+            self.cwd_label, self.cwd_browse_button, self.cwd_entry,
+            self.time_delay_label, self.time_delay_entry,
+            self.priority_label, self.priority_menu,
+            self.time_to_init_label, self.time_to_init_entry,
+            self.visibility_label, self.visibility_menu,
+            self.relaunch_attempts_label, self.relaunch_attempts_entry,
+        ]
+
+        # Save grid info for all detail widgets (used to restore after grid_remove)
+        self._detail_grid_info = {}
+        for w in self._detail_widgets:
+            info = w.grid_info()
+            if info:
+                self._detail_grid_info[id(w)] = {k: v for k, v in info.items() if k != 'in'}
+
+        # Start with details hidden (no process selected)
+        self._show_detail_fields(False)
+
+    def _show_detail_fields(self, show):
+        """Show or hide all detail fields, toggling the empty state placeholder."""
+        # Don't show detail widgets when the right panel is collapsed
+        if self.details_collapsed:
+            return
+        if show:
+            self.empty_state_label.place_forget()
+            for w in self._detail_widgets:
+                try:
+                    w.grid()
+                except Exception:
+                    pass  # Some widgets use pack (machine_info_frame children)
+        else:
+            self.empty_state_label.place(relx=0.5, rely=0.45, anchor='center')
+            for w in self._detail_widgets:
+                try:
+                    w.grid_remove()
+                except Exception:
+                    pass
 
     def toggle_details_panel(self):
         """Toggle collapse/expand window (crop to show/hide right panel)"""
         # Get current window position to preserve it
-        geometry = self.master.geometry()  # e.g., "1300x450+100+200"
+        geometry = self.master.geometry()  # e.g., "950x450+100+200"
         parts = geometry.split('+')
         if len(parts) >= 3:
             # Extract position (x, y coordinates)
@@ -465,32 +611,26 @@ class OwletteConfigApp:
             y = None
 
         if self.details_collapsed:
-            # EXPAND: Resize window to show everything
-            self.details_toggle_button.configure(text="<<")
-            self.footer_label.grid()  # Show footer
-            self.site_label_left.pack_forget()  # Hide Site from header center
-            self.site_id_label.pack(side='right', padx=(0, 15))  # Show Site in right panel
-
+            # EXPAND
+            self.details_toggle_button.configure(text="\u276E")
+            self._expand_right_panel()
+            self.footer_frame.grid()
+            self.master.minsize(950, 450)
             if x and y:
-                self.master.geometry(f'1300x450+{x}+{y}')
+                self.master.geometry(f'950x450+{x}+{y}')
             else:
-                shared_utils.center_window(self.master, 1300, 450)
-
-            self.master.minsize(1300, 450)
+                shared_utils.center_window(self.master, 950, 450)
             self.details_collapsed = False
         else:
-            # COLLAPSE: Resize window to crop and show only left panel
-            self.details_toggle_button.configure(text=">>")
-            self.footer_label.grid_remove()  # Hide footer
-            self.site_id_label.pack_forget()  # Hide Site from right panel
-            self.site_label_left.pack(side='left', expand=True)  # Show Site in header center
-
+            # COLLAPSE
+            self.details_toggle_button.configure(text="\u276F")
+            self.footer_frame.grid_remove()
+            self._collapse_right_panel()
+            self.master.minsize(self.collapsed_width, 450)
             if x and y:
-                self.master.geometry(f'270x450+{x}+{y}')
+                self.master.geometry(f'{self.collapsed_width}x450+{x}+{y}')
             else:
-                shared_utils.center_window(self.master, 270, 450)
-
-            self.master.minsize(270, 450)
+                shared_utils.center_window(self.master, self.collapsed_width, 450)
             self.details_collapsed = True
 
         # Save state to config
@@ -503,29 +643,33 @@ class OwletteConfigApp:
 
     # PROCESS HANDLING
 
-    def toggle_launch_process(self):
+    def on_launch_mode_change(self, selected_mode=None):
         if self.selected_process:
             index = shared_utils.get_process_index(self.selected_process)
-            current_state = self.config['processes'][index].get('autolaunch', False)
-            new_state = not current_state
+            mode_map = {"Off": "off", "Always On": "always", "Scheduled": "scheduled"}
+            new_mode = mode_map.get(selected_mode, 'off')
 
-            # If turning ON, validate required fields
-            if new_state:
+            # If enabling (not off), validate required fields
+            if new_mode != 'off':
                 name = self.config['processes'][index].get('name', '')
                 exe_path = self.config['processes'][index].get('exe_path', '').strip()
 
                 if not name or not exe_path:
-                    CTkMessagebox(master=self.master, title="Validation Error", message="Name and Exe Path are required to enable Autolaunch.", icon="cancel")
-                    self.autolaunch_toggle.deselect()
+                    CTkMessagebox(master=self.master, title="Validation Error", message="Name and Exe Path are required to enable launch mode.", icon="cancel")
+                    self.launch_mode_menu.set('Off')
                     return
 
                 # Validate that executable path actually exists
                 if not os.path.isfile(exe_path):
-                    CTkMessagebox(master=self.master, title="Validation Error", message=f"Cannot enable Autolaunch: Executable path does not exist.\n\n{exe_path}\n\nPlease set a valid executable path first.", icon="cancel")
-                    self.autolaunch_toggle.deselect()
+                    CTkMessagebox(master=self.master, title="Validation Error", message=f"Cannot enable launch mode: Executable path does not exist.\n\n{exe_path}\n\nPlease set a valid executable path first.", icon="cancel")
+                    self.launch_mode_menu.set('Off')
                     return
 
-            self.config['processes'][index]['autolaunch'] = new_state
+            self.config['processes'][index]['launch_mode'] = new_mode
+            # Derive autolaunch for backward compat
+            self.config['processes'][index]['autolaunch'] = new_mode != 'off'
+            # Update schedule info display
+            self._update_schedule_info_label(self.config['processes'][index])
             shared_utils.save_config(self.config)
 
             # Upload to Firestore immediately for fast sync (in background thread)
@@ -533,12 +677,12 @@ class OwletteConfigApp:
                 def upload_in_background():
                     try:
                         self.firebase_client.upload_config(self._get_config_for_firestore())
-                        logging.info("Config uploaded to Firestore immediately after toggle")
+                        logging.debug("Config uploaded to Firestore immediately after toggle")
 
                         # Push metrics so web app sees the change immediately
                         metrics = shared_utils.get_system_metrics(skip_gpu=True)
                         self.firebase_client._upload_metrics(metrics)
-                        logging.info("Metrics pushed to Firestore after toggle")
+                        logging.debug("Metrics pushed to Firestore after toggle")
                     except Exception as e:
                         logging.error(f"Failed to upload to Firestore: {e}")
 
@@ -549,9 +693,27 @@ class OwletteConfigApp:
             # Status message if process has been launched
             try:
                 pid = shared_utils.fetch_pid_by_id(self.config['processes'][index]['id'])
-                shared_utils.update_process_status_in_json(pid, 'INACTIVE' if current_state else 'QUEUED')
+                shared_utils.update_process_status_in_json(pid, 'INACTIVE' if new_mode == 'off' else 'QUEUED', process_id=self.config['processes'][index]['id'])
             except Exception as e:
                 logging.info(e)
+
+    def _update_schedule_info_label(self, process):
+        """Show read-only schedule summary when mode is Scheduled."""
+        mode = process.get('launch_mode', 'off')
+        schedules = process.get('schedules')
+        if mode == 'scheduled' and schedules:
+            parts = []
+            for block in schedules:
+                days = block.get('days', [])
+                ranges = block.get('ranges', [])
+                day_str = ', '.join(d.capitalize() for d in days) if days else 'All days'
+                range_str = ', '.join(f"{r['start']}-{r['stop']}" for r in ranges)
+                parts.append(f"{day_str}: {range_str}")
+            self.schedule_info_label.configure(text=' | '.join(parts))
+        elif mode == 'scheduled':
+            self.schedule_info_label.configure(text='(no schedule set — configure via web)')
+        else:
+            self.schedule_info_label.configure(text='')
 
     def new_process(self):
         """Create a new process entry immediately with default values"""
@@ -561,7 +723,7 @@ class OwletteConfigApp:
         # Create new process with default values
         new_process = {
             'id': unique_id,
-            'name': 'New Process',
+            'name': 'Untitled Process',
             'exe_path': '',
             'file_path': '',
             'cwd': '',
@@ -569,8 +731,10 @@ class OwletteConfigApp:
             'visibility': 'Show',
             'time_delay': '0',
             'time_to_init': '10',
-            'relaunch_attempts': '3',
-            'autolaunch': False
+            'relaunch_attempts': '5',
+            'launch_mode': 'off',
+            'autolaunch': False,
+            'schedules': None
         }
 
         # Add to config and save
@@ -582,12 +746,12 @@ class OwletteConfigApp:
             def upload_in_background():
                 try:
                     self.firebase_client.upload_config(self._get_config_for_firestore())
-                    logging.info("Config uploaded to Firestore immediately after new process")
+                    logging.debug("Config uploaded to Firestore immediately after new process")
 
                     # Push metrics so web app sees the change immediately
                     metrics = shared_utils.get_system_metrics(skip_gpu=True)
                     self.firebase_client._upload_metrics(metrics)
-                    logging.info("Metrics pushed to Firestore after new process")
+                    logging.debug("Metrics pushed to Firestore after new process")
                 except Exception as e:
                     logging.error(f"Failed to upload to Firestore: {e}")
 
@@ -680,21 +844,21 @@ class OwletteConfigApp:
                     raise ValueError("Relaunch attempts must be >=0")
         except ValueError:
             if not is_soft_save:
-                CTkMessagebox(master=self.master, title="Validation Error", message="Relaunch attempts must be an integer. 3 is recommended. After 3 attempts, a system restart will be attempted. Set to 0 for unlimited attempts to relaunch (no system restart).", icon="cancel")
+                CTkMessagebox(master=self.master, title="Validation Error", message="Relaunch attempts must be an integer. 5 is recommended. After 5 attempts, a system restart will be attempted. Set to 0 for unlimited attempts to relaunch (no system restart).", icon="cancel")
                 self.relaunch_attempts_entry.delete(0, tk.END)
-                self.relaunch_attempts_entry.insert(0, 3)
+                self.relaunch_attempts_entry.insert(0, 5)
                 return
             else:
                 # For soft saves, just use default value but continue saving
-                relaunch_attempts = '3'
+                relaunch_attempts = '5'
 
         # Check if relaunch attempts is empty and set to default if so
         if not relaunch_attempts:
-            relaunch_attempts = 3  # Default value
+            relaunch_attempts = 5  # Default value
 
         # Check if time to init is empty and set to default if so
         if not time_to_init:
-            relaunch_attempts = 60  # Default value
+            time_to_init = 60  # Default value
 
         # Write config
         if self.selected_process:
@@ -713,6 +877,21 @@ class OwletteConfigApp:
                     return
 
             index = shared_utils.get_process_index(self.selected_process)
+
+            # For soft saves (FocusOut/Enter), skip if no form fields actually changed.
+            # This prevents uploading stale config to Firestore when focus shifts
+            # (e.g. after Firestore updates config.json but before GUI's 1s poll).
+            if is_soft_save:
+                proc = self.config['processes'][index]
+                form_vals = (name, exe_path, file_path, cwd, priority, visibility,
+                             str(time_delay), str(time_to_init), str(relaunch_attempts))
+                cfg_vals = (proc.get('name', ''), proc.get('exe_path', ''),
+                            proc.get('file_path', ''), proc.get('cwd', ''),
+                            proc.get('priority', 'Normal'), proc.get('visibility', 'Normal'),
+                            str(proc.get('time_delay', '0')), str(proc.get('time_to_init', '10')),
+                            str(proc.get('relaunch_attempts', '5')))
+                if form_vals == cfg_vals:
+                    return  # Nothing changed — don't save or upload
 
             self.config['processes'][index]['name'] = name
             self.config['processes'][index]['exe_path'] = exe_path
@@ -736,12 +915,12 @@ class OwletteConfigApp:
                 def upload_in_background():
                     try:
                         self.firebase_client.upload_config(self._get_config_for_firestore())
-                        logging.info("Config uploaded to Firestore immediately after process update")
+                        logging.debug("Config uploaded to Firestore immediately after process update")
 
                         # Push metrics so web app sees the change immediately
                         metrics = shared_utils.get_system_metrics(skip_gpu=True)
                         self.firebase_client._upload_metrics(metrics)
-                        logging.info("Metrics pushed to Firestore after process update")
+                        logging.debug("Metrics pushed to Firestore after process update")
                     except Exception as e:
                         logging.error(f"Failed to upload to Firestore: {e}")
 
@@ -774,7 +953,8 @@ class OwletteConfigApp:
 
             # Generate unique ID
             unique_id = str(uuid.uuid4())
-            autolaunch = True if self.autolaunch_toggle.get() == 'on' else False
+            mode_map = {"Off": "off", "Always On": "always", "Scheduled": "scheduled"}
+            launch_mode = mode_map.get(self.launch_mode_menu.get(), 'off')
 
             new_process = {
                 'id': unique_id,
@@ -787,7 +967,9 @@ class OwletteConfigApp:
                 'time_delay': time_delay,
                 'time_to_init': time_to_init,
                 'relaunch_attempts': relaunch_attempts,
-                'autolaunch': autolaunch
+                'launch_mode': launch_mode,
+                'autolaunch': launch_mode != 'off',
+                'schedules': None
             }
 
             self.config['processes'].append(new_process)
@@ -811,17 +993,18 @@ class OwletteConfigApp:
         visibility = self.visibility_menu.get()
         time_delay = self.time_delay_entry.get() if self.time_delay_entry.get() else 0 # Default to 0 if empty
         time_to_init = self.time_to_init_entry.get() if self.time_to_init_entry.get() else 60 # Default to 60 if empty
-        relaunch_attempts = self.relaunch_attempts_entry.get() if self.relaunch_attempts_entry.get() else 3 # Default to 3 if empty
-        autolaunch = True if self.autolaunch_toggle.get() == 'on' else False
-        
+        relaunch_attempts = self.relaunch_attempts_entry.get() if self.relaunch_attempts_entry.get() else 5 # Default to 5 if empty
+        mode_map = {"Off": "off", "Always On": "always", "Scheduled": "scheduled"}
+        launch_mode = mode_map.get(self.launch_mode_menu.get(), 'off')
+
         if not name or not exe_path:
             CTkMessagebox(master=self.master, title="Validation Error", message="Name and Exe Path are required fields.", icon="cancel")
             return
-        
+
         if not os.path.exists(exe_path):
             CTkMessagebox(master=self.master, title="Validation Error", message="The specified Exe Path does not exist.", icon="cancel")
             return
-        
+
         if file_path and not os.path.exists(file_path):
             CTkMessagebox(master=self.master, title="Validation Error", message="The specified File Path does not exist.", icon="cancel")
             return
@@ -837,7 +1020,9 @@ class OwletteConfigApp:
             'time_delay': time_delay,
             'time_to_init': time_to_init,
             'relaunch_attempts': relaunch_attempts,
-            'autolaunch': autolaunch
+            'launch_mode': launch_mode,
+            'autolaunch': launch_mode != 'off',
+            'schedules': None
         }
 
         self.config['processes'].append(new_process)
@@ -848,18 +1033,24 @@ class OwletteConfigApp:
 
     def browse_exe(self):
         exe_path = filedialog.askopenfilename(initialdir="C:/", title="Select Exe File", filetypes=[("Executable files", "*.exe")])
+        if not exe_path:
+            return
         self.exe_path_entry.delete(0, tk.END)
         self.exe_path_entry.insert(0, exe_path)
         self.update_selected_process()
 
     def browse_file(self):
         file_path = filedialog.askopenfilename(initialdir="C:/", title="Select File")
+        if not file_path:
+            return
         self.file_path_entry.delete(0, tk.END)
         self.file_path_entry.insert(0, file_path)
         self.update_selected_process()
 
     def browse_cwd(self):
         cwd = filedialog.askdirectory(initialdir="C:/", title="Select Working Directory")
+        if not cwd:
+            return
         self.cwd_entry.delete(0, tk.END)
         self.cwd_entry.insert(0, cwd)
         self.update_selected_process()
@@ -873,21 +1064,21 @@ class OwletteConfigApp:
         if app_states is None:
             app_states = {}
 
-        # Filter the dictionary by the process_list_id
-        filtered_dict = {pid: info for pid, info in app_states.items() if info.get('id') == process_list_id}
-        
-        # Sort the filtered dictionary by the timestamp
-        sorted_dict = {k: v for k, v in sorted(filtered_dict.items(), key=lambda item: item[1]['timestamp'], reverse=True)}
-        
-        # Get the last (latest) pid
-        last_pid = next(iter(sorted_dict.keys()), None)
-        
+        # Find the RUNNING PID for this process (not killed/stale entries)
+        matching = [(pid, info) for pid, info in app_states.items()
+                    if info.get('id') == process_list_id]
+        # Prefer RUNNING status, fall back to most recent by timestamp
+        running = [pid for pid, info in matching if info.get('status') == 'RUNNING']
+        if running:
+            return int(max(running, key=lambda p: app_states[p].get('timestamp', 0)))
+        # No running entry — return highest PID as last resort
+        pids = [pid for pid, _ in matching]
+        last_pid = max(pids, key=int) if pids else None
         return int(last_pid) if last_pid else None
 
     def kill_process(self):
         if self.selected_process:
             os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
-            killed = False
 
             # Get process name for logging
             process_name = None
@@ -897,44 +1088,42 @@ class OwletteConfigApp:
                     break
 
             if os_pid:
-                try:
-                    os.kill(os_pid, signal.SIGTERM)  # or signal.SIGKILL
-                    killed = True
+                # Run kill in background thread to avoid freezing the GUI
+                # (graceful_terminate blocks up to 8s, log_event makes network calls)
+                def _do_kill():
+                    try:
+                        shared_utils.graceful_terminate(os_pid)
+                        shared_utils.update_process_status_in_json(os_pid, 'KILLED')
 
-                    # Log process kill event to Firebase
-                    if self.firebase_client and self.firebase_client.is_connected():
-                        try:
-                            self.firebase_client.log_event(
-                                action='process_killed',
-                                level='warning',
-                                process_name=process_name,
-                                details=f'Manual kill from GUI - PID: {os_pid}'
-                            )
-                            logging.info(f"Logged process kill event for {process_name} (PID {os_pid})")
-                        except Exception as log_err:
-                            logging.error(f"Failed to log kill event: {log_err}")
+                        # Log process kill event to Firebase
+                        if self.firebase_client and self.firebase_client.is_connected():
+                            try:
+                                self.firebase_client.log_event(
+                                    action='process_killed',
+                                    level='warning',
+                                    process_name=process_name,
+                                    details=f'Manual kill from GUI - PID: {os_pid}'
+                                )
+                                logging.info(f"Logged process kill event for {process_name} (PID {os_pid})")
+                            except Exception as log_err:
+                                logging.error(f"Failed to log kill event: {log_err}")
 
-                except Exception as e:
-                    CTkMessagebox(master=self.master, title="Error", message=f"Failed to kill the process: {e}", icon="cancel")
+                    except Exception as e:
+                        self.master.after(0, lambda: CTkMessagebox(
+                            master=self.master, title="Error",
+                            message=f"Failed to kill the process: {e}", icon="cancel"))
+
+                threading.Thread(target=_do_kill, daemon=True).start()
             else:
                 CTkMessagebox(master=self.master, title="Error", message="No OS process ID found for the selected process.", icon="cancel")
-
-            if killed:
-                shared_utils.update_process_status_in_json(os_pid, 'KILLED')
         else:
             CTkMessagebox(master=self.master, title="Error", message=f"You must select a process to kill it.", icon="cancel")
 
     def get_status_indicator(self, status):
-        """Map status to fixed-width text badge"""
-        status_map = {
-            'RUNNING': '[RUN ]',      # Actively running
-            'LAUNCHING': '[INIT]',    # Starting up
-            'QUEUED': '[WAIT]',       # Waiting to start
-            'KILLED': '[STOP]',       # Manually stopped
-            'STOPPED': '[STOP]',      # Stopped
-            'INACTIVE': '[OFF ]',     # Inactive/not managed
-        }
-        return status_map.get(status, '[OFF ]')
+        """Map status to Unicode dot indicator"""
+        if status == 'INACTIVE':
+            return '○'  # Hollow dot for inactive
+        return '●'      # Solid dot for all active states
 
     def map_status_to_config(self, status_data, config_data):
         id_to_status = {}
@@ -992,21 +1181,56 @@ class OwletteConfigApp:
         updated_config = self.map_status_to_config(status_data, self.config)
 
         # Format with colored dot indicators
-        new_list = [f"{self.get_status_indicator(process['status'])} {process['name']}" for process in updated_config['processes']]
+        new_items = []
+        new_statuses = []
+        for process in updated_config['processes']:
+            status = process['status']
+            indicator = self.get_status_indicator(status)
+            display_text = f"{indicator} {process['name']}"
+            color = shared_utils.STATUS_COLORS.get(status, '#94a3b8')
+            new_items.append((display_text, color))
+            new_statuses.append(status.capitalize())
 
-        if new_list != self.prev_process_list:
-            if self.process_list.size() > 0:
-                self.process_list.delete(0, 'end')  # Clear the existing listbox items
-            for item in new_list:
-                self.process_list.insert('end', item)
-            self.prev_process_list = new_list  # Update the previous list
+        if new_items != self.prev_process_list:
+            needs_full_rebuild = True
+            if self.prev_process_list and len(new_items) == len(self.prev_process_list):
+                # Try in-place update: same number of items, just update text/color
+                try:
+                    for btn, (text, color) in zip(self.process_list.buttons.values(), new_items):
+                        btn.configure(text=text, text_color=color)
+                    needs_full_rebuild = False
+                except Exception:
+                    # A button's internal widget is broken — fall through to full rebuild
+                    pass
 
-        # Try to reselect process list item automatically (if not editing an entry)
-        if self.selected_index is not None and current_focus == '.' or current_focus is None:
-            try:
-                self.process_list.activate(self.selected_index)
-            except Exception as e:
-                logging.info(e)
+            if needs_full_rebuild:
+                # Full rebuild: delete all and recreate
+                if self.process_list.size() > 0:
+                    self.process_list.delete(0, 'end')
+                for text, color in new_items:
+                    self.process_list.insert('end', text)
+                for btn, (_, color) in zip(self.process_list.buttons.values(), new_items):
+                    btn.configure(text_color=color)
+
+            # Update status tooltips on each button
+            if not hasattr(self, '_process_tooltips'):
+                self._process_tooltips = {}
+            for btn, status_text in zip(self.process_list.buttons.values(), new_statuses):
+                btn_id = str(btn)
+                if btn_id in self._process_tooltips:
+                    self._process_tooltips[btn_id].configure(message=status_text)
+                else:
+                    self._process_tooltips[btn_id] = CTkToolTip(btn, message=status_text, delay=0.4)
+
+            self.prev_process_list = new_items
+            self._update_scrollbar_visibility()
+
+            # Reselect process list item after rebuild (if not editing an entry)
+            if self.selected_index is not None and (current_focus == '.' or current_focus is None):
+                try:
+                    self.process_list.activate(self.selected_index)
+                except Exception as e:
+                    logging.info(e)
 
         # Auto-refresh displayed fields if config changed externally AND user is not editing
         # This allows Firestore changes to appear immediately without overwriting user input
@@ -1022,7 +1246,10 @@ class OwletteConfigApp:
                     logging.debug(f"Auto-refreshed displayed fields for external config change")  # Debug level - fires frequently
 
     def update_process_list_periodically(self):
-        self.update_process_list()
+        try:
+            self.update_process_list()
+        except Exception as e:
+            logging.error(f"Error updating process list: {e}")
         self.master.after(1000, self.update_process_list_periodically)  # Schedule next run
 
     def update_firebase_status_periodically(self):
@@ -1031,7 +1258,7 @@ class OwletteConfigApp:
             self.update_firebase_status()
         except Exception as e:
             logging.debug(f"Error updating firebase status: {e}")
-        self.master.after(5000, self.update_firebase_status_periodically)  # Schedule next run (every 5s)
+        self.master.after(2000, self.update_firebase_status_periodically)  # Schedule next run (every 2s)
 
     def remove_process(self):
         if self.selected_process:
@@ -1051,12 +1278,12 @@ class OwletteConfigApp:
                                 try:
                                     # Upload config first
                                     self.firebase_client.upload_config(self._get_config_for_firestore())
-                                    logging.info("Config uploaded to Firestore immediately after process removal")
+                                    logging.debug("Config uploaded to Firestore immediately after process removal")
 
                                     # Then push metrics so web app sees the change immediately
                                     metrics = shared_utils.get_system_metrics(skip_gpu=True)
                                     self.firebase_client._upload_metrics(metrics)
-                                    logging.info("Metrics pushed to Firestore after process removal")
+                                    logging.debug("Metrics pushed to Firestore after process removal")
                                 except Exception as e:
                                     logging.error(f"Failed to upload to Firestore: {e}")
 
@@ -1064,7 +1291,9 @@ class OwletteConfigApp:
                             upload_thread = threading.Thread(target=upload_in_background, daemon=True)
                             upload_thread.start()
 
-                        self.update_process_list()            
+                        self.selected_process = None
+                        self._show_detail_fields(False)
+                        self.update_process_list()
             else:
                 CTkMessagebox(master=self.master, title="Error", message=f"No process found with the name '{self.selected_process}'", icon="cancel")
         else:
@@ -1082,12 +1311,12 @@ class OwletteConfigApp:
                     def upload_in_background():
                         try:
                             self.firebase_client.upload_config(self._get_config_for_firestore())
-                            logging.info("Config uploaded to Firestore immediately after move up")
+                            logging.debug("Config uploaded to Firestore immediately after move up")
 
                             # Push metrics so web app sees the change immediately
                             metrics = shared_utils.get_system_metrics(skip_gpu=True)
                             self.firebase_client._upload_metrics(metrics)
-                            logging.info("Metrics pushed to Firestore after move up")
+                            logging.debug("Metrics pushed to Firestore after move up")
                         except Exception as e:
                             logging.error(f"Failed to upload to Firestore: {e}")
 
@@ -1112,12 +1341,12 @@ class OwletteConfigApp:
                     def upload_in_background():
                         try:
                             self.firebase_client.upload_config(self._get_config_for_firestore())
-                            logging.info("Config uploaded to Firestore immediately after move down")
+                            logging.debug("Config uploaded to Firestore immediately after move down")
 
                             # Push metrics so web app sees the change immediately
                             metrics = shared_utils.get_system_metrics(skip_gpu=True)
                             self.firebase_client._upload_metrics(metrics)
-                            logging.info("Metrics pushed to Firestore after move down")
+                            logging.debug("Metrics pushed to Firestore after move down")
                         except Exception as e:
                             logging.error(f"Failed to upload to Firestore: {e}")
 
@@ -1130,13 +1359,228 @@ class OwletteConfigApp:
         else:
             CTkMessagebox(master=self.master, title="Error", message=f"You must select a process to move it down in the list.", icon="cancel")
 
+    def _bind_right_click_to_list(self):
+        """No-op — right-click is now handled globally via bind_all."""
+        pass
+
+    def _on_global_right_click(self, event):
+        """Handle right-click anywhere — show context menu if click is on a process list item."""
+        try:
+            self._on_global_right_click_inner(event)
+        except Exception as e:
+            import traceback
+            logging.error(f"[RC-DEBUG] UNCAUGHT EXCEPTION: {e}\n{traceback.format_exc()}")
+
+    def _on_global_right_click_inner(self, event):
+        # Get mouse position from Win32 API — bypasses tkinter widget transparency bugs
+        import ctypes
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+        pt = POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        mouse_x, mouse_y = pt.x, pt.y
+
+        logging.debug(f"[RC-DEBUG] GetCursorPos=({mouse_x},{mouse_y}), "
+                     f"event.widget={event.widget}, widget_class={event.widget.__class__.__name__}")
+
+        try:
+            target = self.master.winfo_containing(mouse_x, mouse_y)
+        except Exception as e:
+            logging.debug(f"[RC-DEBUG] winfo_containing FAILED: {e}")
+            self._dismiss_context_menu()
+            return
+
+        if target is None:
+            self._dismiss_context_menu()
+            return
+
+        # Walk up from the target widget to find a CTkButton
+        p = target
+        found_btn = None
+        while p:
+            if isinstance(p, ctk.CTkButton):
+                found_btn = p
+                break
+            try:
+                p = p.master
+            except Exception:
+                break
+
+        if not found_btn:
+            self._dismiss_context_menu()
+            return
+
+        # Check if the button belongs to the process list using widget path
+        found_str = str(found_btn)
+        logging.debug(f"[RC-DEBUG] found_btn path={found_str}")
+
+        for idx, btn in enumerate(self.process_list.buttons.values()):
+            if str(btn) == found_str or btn is found_btn:
+                btn_text = btn.cget('text')
+                logging.debug(f"[RC-DEBUG] MATCH idx={idx}, text={btn_text}")
+                try:
+                    self.process_list.activate(idx)
+                except Exception:
+                    pass
+                self.on_select(btn_text)
+                logging.debug(f"[RC-DEBUG] on_select done, showing menu at ({mouse_x},{mouse_y})")
+                self._show_process_context_menu(mouse_x, mouse_y)
+                logging.debug(f"[RC-DEBUG] menu shown successfully")
+                return
+
+        logging.debug(f"[RC-DEBUG] NO MATCH — dismissing")
+        self._dismiss_context_menu()
+
+    def _dismiss_context_menu(self, event=None):
+        """Close the custom context menu."""
+        if self._context_menu_window:
+            try:
+                self._context_menu_window.destroy()
+            except Exception:
+                pass
+            self._context_menu_window = None
+            # Remove the click-outside binding
+            if hasattr(self, '_ctx_bind_id') and self._ctx_bind_id:
+                try:
+                    self.master.unbind("<Button-1>", self._ctx_bind_id)
+                except Exception:
+                    pass
+                self._ctx_bind_id = None
+
+    def _show_process_context_menu(self, mouse_x, mouse_y):
+        """Show custom context menu on the process list."""
+        self._dismiss_context_menu()
+
+        # Button activation is already handled by _on_global_right_click
+
+        if not self.selected_process:
+            return
+
+        index = shared_utils.get_process_index(self.selected_process)
+        num_processes = len(self.config.get('processes', []))
+        can_move_up = index > 0
+        can_move_down = index < num_processes - 1
+
+        # Plain tk.Toplevel avoids CTkToplevel's grab/focus blocking
+        menu = tk.Toplevel(self.master)
+        menu.overrideredirect(True)
+        menu.attributes("-topmost", True)
+        menu.configure(bg=shared_utils.FRAME_COLOR)
+        self._context_menu_window = menu
+
+        frame = ctk.CTkFrame(menu, fg_color=shared_utils.FRAME_COLOR, corner_radius=0,
+                             border_width=1, border_color=shared_utils.BORDER_COLOR)
+        frame.pack(fill='both', expand=True)
+
+        btn_opts = {
+            "fg_color": "transparent",
+            "hover_color": shared_utils.HIGHLIGHT_COLOR,
+            "text_color": shared_utils.TEXT_COLOR,
+            "anchor": "w",
+            "width": 160,
+            "height": 32,
+            "corner_radius": 4,
+            "font": ("Segoe UI", 13),
+        }
+
+        def make_action(cmd):
+            def action():
+                self._dismiss_context_menu()
+                self.master.after(50, cmd)
+            return action
+
+        # Kill
+        ctk.CTkButton(frame, text="  kill process", command=make_action(self.kill_process), **btn_opts).pack(fill='x', padx=4, pady=(4, 0))
+
+        # Separator
+        ctk.CTkFrame(frame, fg_color=shared_utils.BORDER_COLOR, height=1).pack(fill='x', padx=8, pady=3)
+
+        # Move Up
+        if can_move_up:
+            ctk.CTkButton(frame, text="  move up", command=make_action(self.move_up), **btn_opts).pack(fill='x', padx=4)
+        else:
+            ctk.CTkButton(frame, text="  move up", state="disabled", text_color="#475569",
+                          fg_color="transparent", hover_color=shared_utils.FRAME_COLOR, hover=False, anchor="w",
+                          width=160, height=32, corner_radius=4, font=("Segoe UI", 13)).pack(fill='x', padx=4)
+
+        # Move Down
+        if can_move_down:
+            ctk.CTkButton(frame, text="  move down", command=make_action(self.move_down), **btn_opts).pack(fill='x', padx=4)
+        else:
+            ctk.CTkButton(frame, text="  move down", state="disabled", text_color="#475569",
+                          fg_color="transparent", hover_color=shared_utils.FRAME_COLOR, hover=False, anchor="w",
+                          width=160, height=32, corner_radius=4, font=("Segoe UI", 13)).pack(fill='x', padx=4)
+
+        # Separator
+        ctk.CTkFrame(frame, fg_color=shared_utils.BORDER_COLOR, height=1).pack(fill='x', padx=8, pady=3)
+
+        # Delete (red)
+        ctk.CTkButton(frame, text="  delete", command=make_action(self.remove_process),
+                      fg_color="transparent", hover_color="#3b1111", text_color="#f87171",
+                      anchor="w", width=160, height=32, corner_radius=4,
+                      font=("Segoe UI", 13)).pack(fill='x', padx=4, pady=(0, 4))
+
+        # Size and position using actual mouse coords
+        menu.update_idletasks()
+        mw = menu.winfo_reqwidth()
+        mh = menu.winfo_reqheight()
+        sw = self.master.winfo_screenwidth()
+        sh = self.master.winfo_screenheight()
+        x = min(mouse_x, sw - mw - 5)
+        y = min(mouse_y, sh - mh - 5)
+        menu.geometry(f"{mw}x{mh}+{x}+{y}")
+
+        # Dismiss on any click outside the menu
+        def on_click_outside(e):
+            try:
+                if self._context_menu_window and self._context_menu_window.winfo_exists():
+                    mx, my = self._context_menu_window.winfo_rootx(), self._context_menu_window.winfo_rooty()
+                    w, h = self._context_menu_window.winfo_width(), self._context_menu_window.winfo_height()
+                    if not (mx <= e.x_root <= mx + w and my <= e.y_root <= my + h):
+                        self._dismiss_context_menu()
+                else:
+                    self._dismiss_context_menu()
+            except Exception:
+                self._dismiss_context_menu()
+
+        self._ctx_bind_id = self.master.bind("<Button-1>", on_click_outside, add=True)
+        # Also dismiss on right-click elsewhere
+        menu.bind("<Button-3>", lambda e: self._dismiss_context_menu())
+        # Escape key
+        menu.bind("<Escape>", lambda e: self._dismiss_context_menu())
+        menu.focus_set()
+
+    def _update_scrollbar_visibility(self):
+        """Toggle between full scrollbar (overflow) and thin 1px divider line (no overflow)."""
+        self.process_list.update_idletasks()
+        content_height = sum(btn.winfo_reqheight() + 5 for btn in self.process_list.buttons.values())
+        visible_height = self.process_list.winfo_height()
+        scrollbar = self.process_list._scrollbar
+        if content_height > visible_height:
+            scrollbar.configure(
+                width=12,
+                fg_color=self._scrollbar_defaults['fg_color'],
+                button_color=self._scrollbar_defaults['button_color'],
+                button_hover_color=self._scrollbar_defaults['button_hover_color'],
+            )
+            scrollbar.grid_configure(padx=(0, 8))
+        else:
+            scrollbar.configure(
+                width=1,
+                fg_color=shared_utils.FRAME_COLOR,
+                button_color=shared_utils.FRAME_COLOR,
+                button_hover_color=shared_utils.FRAME_COLOR,
+            )
+            scrollbar.grid_configure(padx=(0, 8))
+
     def on_select(self, process_name):
-        # Remove status indicator "[XXX] " from the beginning
-        if process_name.startswith('[') and '] ' in process_name:
-            process_name = process_name.split('] ', 1)[1]  # Strip status badge
+        # Remove status dot indicator "● " or "○ " from the beginning
+        if process_name and len(process_name) >= 2 and process_name[1] == ' ':
+            process_name = process_name[2:]
         process_id = shared_utils.fetch_process_id_by_name(process_name, self.config)
         self.selected_process = process_id
         process = shared_utils.fetch_process_by_id(process_id, self.config)
+        self._show_detail_fields(True)
         self.refresh_displayed_fields(process)
 
     def refresh_displayed_fields(self, process):
@@ -1165,11 +1609,11 @@ class OwletteConfigApp:
         self.time_to_init_entry.insert(0, process.get('time_to_init', ''))
         self.relaunch_attempts_entry.delete(0, tk.END)
         self.relaunch_attempts_entry.insert(0, process.get('relaunch_attempts', ''))
-        autolaunch = process.get('autolaunch', True)
-        if autolaunch:
-            self.autolaunch_toggle.select()
-        else:
-            self.autolaunch_toggle.deselect()
+        # Set launch mode dropdown
+        mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+        display_map = {'off': 'Off', 'always': 'Always On', 'scheduled': 'Scheduled'}
+        self.launch_mode_menu.set(display_map.get(mode, 'Off'))
+        self._update_schedule_info_label(process)
 
     # FIREBASE STATUS
 
@@ -1182,10 +1626,14 @@ class OwletteConfigApp:
         firebase_enabled = self.config.get('firebase', {}).get('enabled', False)
         site_id = self.config.get('firebase', {}).get('site_id', '')
 
-        # Update site display label (both left and right panel labels)
+        # Update site display label (truncated, tooltip has full name)
         site_display = site_id if site_id else "Unassigned"
-        self.site_id_label.configure(text=f"Site: {site_display}")
-        self.site_label_left.configure(text=f"Site: {site_display}")  # Keep both in sync
+        site_truncated = site_display[:18] + "\u2026" if len(site_display) > 18 else site_display
+        self.footer_site_label.configure(text=site_truncated)
+        # Update tooltip message (materialized or pending)
+        self._footer_site_holder["message"] = f"Site: {site_display}"
+        if self._footer_site_holder["tooltip"]:
+            self._footer_site_holder["tooltip"].configure(message=f"Site: {site_display}")
 
         # Read ACTUAL connection status from service_status.json (IPC from service)
         # This is the real-time status, not just token validity
@@ -1225,26 +1673,26 @@ class OwletteConfigApp:
 
         if firebase_enabled and not site_id:
             # Firebase was enabled but site_id is missing (removed from site)
-            self.firebase_status_label.configure(text="Removed from Site", text_color="#f87171")  # Red
-            self.site_button.configure(text="Join Site", state="normal")
+            self.firebase_status_label.configure(text="removed from site", text_color="#f87171")  # Red
+            self.site_button.configure(text="join site", state="normal")
         elif firebase_enabled and actually_connected:
-            self.firebase_status_label.configure(text="Connected", text_color="#4ade80")  # Green
-            self.site_button.configure(text="Leave Site", state="normal")
+            self.firebase_status_label.configure(text="connected", text_color="#4ade80")  # Green
+            self.site_button.configure(text="leave site", state="normal")
         elif firebase_enabled and service_status_valid and not service_connected:
             # Service is running but not connected (internet down, reconnecting, etc.)
-            self.firebase_status_label.configure(text="Disconnected", text_color="#f87171")  # Red
-            self.site_button.configure(text="Leave Site", state="normal")
+            self.firebase_status_label.configure(text="disconnected", text_color="#f87171")  # Red
+            self.site_button.configure(text="leave site", state="normal")
         elif firebase_enabled and not tokens_valid:
-            self.firebase_status_label.configure(text="Authentication Required", text_color="#fbbf24")  # Yellow/Warning
-            self.site_button.configure(text="Join Site", state="normal")
+            self.firebase_status_label.configure(text="authentication required", text_color="#fbbf24")  # Yellow/Warning
+            self.site_button.configure(text="join site", state="normal")
         else:
-            self.firebase_status_label.configure(text="Disabled", text_color="#9ca3af")  # Gray
-            self.site_button.configure(text="Join Site", state="normal")
+            self.firebase_status_label.configure(text="disabled", text_color="#9ca3af")  # Gray
+            self.site_button.configure(text="join site", state="normal")
 
     def on_site_button_click(self):
         """Route to appropriate handler based on current button state."""
         button_text = self.site_button.cget("text")
-        if button_text == "Leave Site":
+        if button_text == "leave site":
             self.on_leave_site_click()
         else:
             self.on_join_site_click()
@@ -1266,13 +1714,13 @@ class OwletteConfigApp:
                    "To re-join a site, you will need to run the Owlette installer again.",
             icon="warning",
             option_1="Cancel",
-            option_2="Leave Site",
+            option_2="leave site",
             width=550
         )
 
-        if response.get() == "Leave Site":
+        if response.get() == "leave site":
             # Update status immediately to show we're working (before GUI freezes)
-            self.firebase_status_label.configure(text="Disabling...", text_color="#fbbf24")  # Yellow
+            self.firebase_status_label.configure(text="disabling...", text_color="#fbbf24")  # Yellow
             self.master.update()  # Force GUI update before blocking operation
 
             try:
@@ -1300,7 +1748,7 @@ class OwletteConfigApp:
 
                 # CRITICAL: STOP the service BEFORE deleting the machine document
                 # This prevents the service from recreating the document while we delete it
-                # NSSM is at C:\Owlette\tools\nssm.exe (three directories up from this file)
+                # NSSM is at <install>\tools\nssm.exe (three directories up from this file)
                 nssm_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'tools', 'nssm.exe')
                 if os.path.exists(nssm_path):
                     try:
@@ -1319,7 +1767,8 @@ class OwletteConfigApp:
                 # Service is stopped, so it won't recreate the document
                 if self.firebase_client and self.firebase_client.connected:
                     try:
-                        machine_ref = self.firebase_client.db.collection('sites').document(self.site_id)\
+                        site_id = self.config.get('firebase', {}).get('site_id', '')
+                        machine_ref = self.firebase_client.db.collection('sites').document(site_id)\
                             .collection('machines').document(self.firebase_client.machine_id)
 
                         # Delete the entire machine document
@@ -1386,17 +1835,17 @@ class OwletteConfigApp:
                    "2. Select or create a site\n"
                    "3. Authorize this machine\n\n"
                    "The service will restart after authentication completes.",
-            icon=None,
+            icon="question",
             option_1="Cancel",
-            option_2="Join Site",
+            option_2="join site",
             width=550
         )
 
-        if response.get() != "Join Site":
+        if response.get() != "join site":
             return
 
         # Update status immediately to show we're connecting (before any blocking operations)
-        self.firebase_status_label.configure(text="Connecting...", text_color="#fbbf24")  # Yellow
+        self.firebase_status_label.configure(text="connecting...", text_color="#fbbf24")  # Yellow
         self.master.update()  # Force GUI update before blocking operation
 
         # Get setup URL based on environment setting
@@ -1405,7 +1854,7 @@ class OwletteConfigApp:
         # Show loading dialog (not topmost so browser is accessible)
         loading_dialog = CTkMessagebox(
             master=self.master,
-            title="Joining Site...",
+            title="joining site...",
             message="Opening browser for authentication.\n\nPlease complete the steps in your browser.\n\nThis window will close automatically when done.",
             icon=None,
             option_1="Cancel",
@@ -1464,9 +1913,9 @@ class OwletteConfigApp:
                         master=self.master,
                         title="Joined Site Successfully",
                         message=f"This machine has been registered to site: {site_id}\n\n"
-                               f"The service is now connecting to Firebase. This may take awhile.\n\n"
+                               f"The service is now connecting to Firebase.\n\n"
                                f"The status will update automatically once connected.",
-                        icon=None,
+                        icon="check",
                         width=600
                     ))
                 else:
@@ -1476,7 +1925,7 @@ class OwletteConfigApp:
                         master=self.master,
                         title="Failed to Join Site",
                         message=f"Could not complete authentication:\n\n{message}\n\nPlease try again or check the logs for details.",
-                        icon=None,
+                        icon="cancel",
                         width=600
                     ))
 
@@ -1487,7 +1936,7 @@ class OwletteConfigApp:
                     master=self.master,
                     title="Error",
                     message=f"An unexpected error occurred:\n\n{str(e)}",
-                    icon=None,
+                    icon="cancel",
                     width=600
                 ))
 
@@ -1614,6 +2063,121 @@ class OwletteConfigApp:
                 icon="cancel"
             )
 
+    # OVERFLOW MENU
+
+    def _toggle_overflow_menu(self):
+        """Toggle the floating overflow menu above the ··· button."""
+        if self._overflow_panel and self._overflow_panel.winfo_exists():
+            self._close_overflow_menu()
+            return
+
+        self._overflow_panel = ctk.CTkToplevel(self.master)
+        self._overflow_panel.overrideredirect(True)
+        self._overflow_panel.configure(fg_color=shared_utils.FRAME_COLOR)
+        self._overflow_panel.attributes('-topmost', True)
+
+        # Inner frame with border
+        inner = ctk.CTkFrame(
+            self._overflow_panel,
+            fg_color=shared_utils.FRAME_COLOR,
+            border_color=shared_utils.BORDER_COLOR,
+            border_width=1,
+            corner_radius=shared_utils.CORNER_RADIUS
+        )
+        inner.pack(fill='both', expand=True, padx=0, pady=0)
+
+        menu_items = [
+            ("config", self.open_config),
+            ("logs", self.open_logs),
+            ("docs", self._open_docs),
+            ("feedback / bug", self._open_feedback_dialog),
+        ]
+
+        pad = 6  # equal padding on all sides inside the border
+        for label, command in menu_items:
+            btn = ctk.CTkButton(
+                inner, text=label, anchor='w',
+                width=120, height=28,
+                fg_color='transparent',
+                hover_color=shared_utils.BUTTON_HOVER_COLOR,
+                text_color=shared_utils.TEXT_COLOR,
+                font=("", 11),
+                corner_radius=4,
+                command=lambda cmd=command: self._overflow_action(cmd)
+            )
+            btn.pack(fill='x', padx=pad, pady=(pad if label == menu_items[0][0] else 1, pad if label == menu_items[-1][0] else 1))
+
+        # Position above the ··· button
+        self.overflow_button.update_idletasks()
+        btn_x = self.overflow_button.winfo_rootx()
+        btn_y = self.overflow_button.winfo_rooty()
+        panel_height = len(menu_items) * 30 + pad * 2
+        panel_width = 128
+        x = btn_x + self.overflow_button.winfo_width() - panel_width
+        y = btn_y - panel_height - 4
+        self._overflow_panel.geometry(f"{panel_width}x{panel_height}+{x}+{y}")
+
+        # Auto-dismiss on click outside or focus loss
+        self._overflow_panel.bind('<FocusOut>', lambda e: self.master.after(100, self._close_overflow_menu_safe))
+        self.master.bind('<Button-1>', self._on_click_outside_overflow, add='+')
+
+    def _overflow_action(self, command):
+        """Execute a menu action and close the panel."""
+        self._close_overflow_menu()
+        command()
+
+    def _on_click_outside_overflow(self, event):
+        """Close overflow menu if click is outside it."""
+        if self._overflow_panel and self._overflow_panel.winfo_exists():
+            try:
+                mx, my = self._overflow_panel.winfo_rootx(), self._overflow_panel.winfo_rooty()
+                mw, mh = self._overflow_panel.winfo_width(), self._overflow_panel.winfo_height()
+                if not (mx <= event.x_root <= mx + mw and my <= event.y_root <= my + mh):
+                    self._close_overflow_menu()
+            except Exception:
+                pass
+
+    def _close_overflow_menu_safe(self):
+        """Close overflow menu if it exists and doesn't have focus."""
+        if self._overflow_panel and self._overflow_panel.winfo_exists():
+            try:
+                if self.master.focus_get() is None or not str(self.master.focus_get()).startswith(str(self._overflow_panel)):
+                    self._close_overflow_menu()
+            except Exception:
+                self._close_overflow_menu()
+
+    def _close_overflow_menu(self):
+        """Destroy the overflow menu panel."""
+        if self._overflow_panel and self._overflow_panel.winfo_exists():
+            self._overflow_panel.destroy()
+        self._overflow_panel = None
+        try:
+            self.master.unbind('<Button-1>')
+            # Re-bind the global right-click handler that may have been affected
+            self.master.bind_all("<Button-3>", self._on_global_right_click)
+        except Exception:
+            pass
+
+    def _open_docs(self):
+        """Open the Owlette documentation in the default browser."""
+        import webbrowser
+        webbrowser.open("https://theexperiential.github.io/owlette/")
+        logging.info("Opened documentation URL")
+
+    def _open_feedback_dialog(self):
+        """Spawn the feedback/bug report dialog using bundled pythonw."""
+        try:
+            pythonw = os.path.join(shared_utils.get_data_path('python'), 'pythonw.exe')
+            if not os.path.exists(pythonw):
+                pythonw = 'pythonw'  # fall back to PATH
+            subprocess.Popen(
+                [pythonw, shared_utils.get_path('report_issue.py')],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            logging.info(f"Spawned feedback dialog via {pythonw}")
+        except Exception as e:
+            logging.error(f"Failed to open feedback dialog: {e}")
+
     # SYSTEM/MISC
 
     def check_service_is_running(self, service_name):
@@ -1643,6 +2207,14 @@ if __name__ == "__main__":
     # Initialize logging with configurable log level
     log_level = shared_utils.get_log_level_from_config()
     shared_utils.initialize_logging("gui", level=log_level)
-    root = ctk.CTk()
-    app = OwletteConfigApp(root)
-    root.mainloop()
+    try:
+        root = ctk.CTk()
+        app = OwletteConfigApp(root)
+        root.mainloop()
+    except Exception:
+        logging.exception("GUI crashed with unhandled exception")
+    finally:
+        logging.info("GUI process exiting")
+        # Force-exit the process — pythonw can hang if any non-daemon thread
+        # or background I/O (e.g. logging, firebase) keeps the interpreter alive
+        os._exit(0)

@@ -4,6 +4,7 @@ Project distribution utilities for downloading and extracting project files.
 
 import os
 import logging
+import time
 import zipfile
 import tempfile
 import shutil
@@ -124,6 +125,20 @@ def get_temp_project_path(project_name: str) -> str:
     temp_dir = tempfile.gettempdir()
     owlette_temp = os.path.join(temp_dir, "owlette_projects")
     os.makedirs(owlette_temp, exist_ok=True)
+
+    # Clean up temp files older than 24 hours to prevent unbounded disk growth
+    cutoff = time.time() - 86400
+    try:
+        for filename in os.listdir(owlette_temp):
+            filepath = os.path.join(owlette_temp, filename)
+            try:
+                if os.path.isfile(filepath) and os.path.getmtime(filepath) < cutoff:
+                    os.remove(filepath)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
     return os.path.join(owlette_temp, project_name)
 
 

@@ -1,368 +1,162 @@
 """
-Owlette Site Configuration - OAuth Flow
-Runs during installer to configure Firebase site_id via browser-based OAuth authentication.
+Owlette Site Configuration - Device Code / QR Pairing Flow
+
+Runs during installer to configure Firebase site_id via device code authentication.
 
 This script:
-1. Starts an HTTP server on localhost:8765
-2. Opens the user's browser to dev.owlette.app/setup (or owlette.app/setup if --url specified)
-3. Waits for callback with site_id and registration code
-4. Exchanges registration code for OAuth tokens (access + refresh)
-5. Stores tokens securely in encrypted file (C:\\ProgramData\\Owlette\\.tokens.enc, not config.json)
+1. Requests a pairing phrase from the server (3 random words, e.g., "silver-compass-drift")
+2. Displays a QR code + the phrase in the console (or GUI)
+3. User scans QR code with phone or enters phrase on owlette.app/add (or dashboard)
+4. Agent polls for authorization until the user approves
+5. Receives and stores OAuth tokens securely (C:\\ProgramData\\Owlette\\.tokens.enc)
 6. Writes minimal configuration to config.json (site_id, project_id, api_base)
-7. Returns success/failure status
 
-OAuth Flow:
-- Registration code (from callback) → Access token + Refresh token (via API)
-- Access token: Short-lived (1h), used for Firestore API calls
-- Refresh token: Long-lived (30d), encrypted with machine-specific key, used to get new access tokens
+Three authorization methods:
+- QR Code: Scan with phone → owlette.app/add pre-filled → select site → authorize
+- Manual: Visit owlette.app/add → enter phrase → select site → authorize
+- Dashboard: Click "+" on dashboard → enter phrase → authorize
+
+For silent/bulk deployment:
+    python configure_site.py --add silver-compass-drift
 
 Usage:
-    python configure_site.py [--url URL]
+    python configure_site.py [--url URL] [--add PHRASE]
 
-    --url URL    Override the setup URL (default: https://owlette.app/setup)
-                 Examples:
-                   python configure_site.py --url https://dev.owlette.app/setup
-                   python configure_site.py --url https://owlette.app/setup
+    --url URL        Override the API base URL
+    --add PHRASE     Pre-authorized pairing phrase (skips QR display, polls immediately)
 """
 
-import http.server
-import socketserver
-import webbrowser
 import json
+import logging
 import os
 import sys
 import time
 import argparse
-import subprocess
-from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 
-
-def open_browser_silent(url: str) -> bool:
-    """
-    Open browser without spawning visible console windows on Windows.
-
-    Uses os.startfile() on Windows which doesn't create console windows,
-    unlike webbrowser.open() which can spawn visible cmd.exe windows.
-    """
-    try:
-        if sys.platform == 'win32':
-            # os.startfile doesn't spawn console windows
-            os.startfile(url)
-            return True
-        else:
-            # Use webbrowser on other platforms
-            return webbrowser.open(url)
-    except Exception:
-        # Fallback to webbrowser
-        return webbrowser.open(url)
-
-# Configuration
-CALLBACK_PORT = 8765
-DEFAULT_URL = "https://owlette.app/setup"
-TIMEOUT_SECONDS = 300  # 5 minutes
-
-# Import shared_utils to get ProgramData path
 import shared_utils
 
 # Use ProgramData for config (proper Windows location)
 CONFIG_PATH = Path(shared_utils.get_data_path('config/config.json'))
 
-# Global state
-received_config = None
-server_error = None
-web_app_url = None  # Set in main(), used in save_config()
+# Default timeout for polling (10 minutes, matching server-side expiry)
+TIMEOUT_SECONDS = 600
+
+# ANSI color codes (Windows 10+ supports these natively)
+CYAN = '\033[96m'
+GREEN = '\033[92m'
+RED = '\033[91m'
+DIM = '\033[2m'
+BOLD = '\033[1m'
+RESET = '\033[0m'
 
 
-class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
-    """Handles OAuth callback from owlette.app"""
-
-    def do_GET(self):
-        global received_config, server_error
-
-        parsed = urlparse(self.path)
-
-        if parsed.path == '/callback':
-            params = parse_qs(parsed.query)
-            site_id = params.get('site_id', [None])[0]
-            registration_code = params.get('token', [None])[0]  # 'token' param contains registration code
-
-            if site_id and registration_code:
-                try:
-                    # Exchange registration code for OAuth tokens and save configuration
-                    self.save_config(site_id, registration_code)
-                    received_config = {'site_id': site_id, 'registration_code': registration_code}
-
-                    # Send success response
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-
-                    success_html = """
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <title>Owlette Configuration Complete</title>
-                        <meta charset="UTF-8">
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <style>
-                            * {
-                                margin: 0;
-                                padding: 0;
-                                box-sizing: border-box;
-                            }
-                            body {
-                                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
-                                background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-                                color: #e2e8f0;
-                                min-height: 100vh;
-                                display: flex;
-                                align-items: center;
-                                justify-content: center;
-                                padding: 20px;
-                            }
-                            .container {
-                                text-align: center;
-                                max-width: 500px;
-                            }
-                            .logo {
-                                font-size: 120px;
-                                margin-bottom: 30px;
-                                filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.3));
-                                animation: fadeIn 0.6s ease-out;
-                            }
-                            h1 {
-                                color: #10b981;
-                                font-size: 2.5rem;
-                                font-weight: 700;
-                                margin-bottom: 20px;
-                                animation: fadeIn 0.8s ease-out;
-                            }
-                            .message {
-                                color: #cbd5e1;
-                                font-size: 1.1rem;
-                                line-height: 1.6;
-                                margin-bottom: 15px;
-                                animation: fadeIn 1s ease-out;
-                            }
-                            .checkmark {
-                                display: inline-block;
-                                width: 80px;
-                                height: 80px;
-                                border-radius: 50%;
-                                background: #10b981;
-                                position: relative;
-                                margin: 20px auto 30px;
-                                animation: scaleIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-                            }
-                            .checkmark::after {
-                                content: '✓';
-                                position: absolute;
-                                top: 50%;
-                                left: 50%;
-                                transform: translate(-50%, -50%);
-                                color: white;
-                                font-size: 48px;
-                                font-weight: bold;
-                            }
-                            @keyframes fadeIn {
-                                from {
-                                    opacity: 0;
-                                    transform: translateY(20px);
-                                }
-                                to {
-                                    opacity: 1;
-                                    transform: translateY(0);
-                                }
-                            }
-                            @keyframes scaleIn {
-                                from {
-                                    opacity: 0;
-                                    transform: scale(0);
-                                }
-                                to {
-                                    opacity: 1;
-                                    transform: scale(1);
-                                }
-                            }
-                        </style>
-                    </head>
-                    <body>
-                        <div class="container">
-                            <div class="logo">🦉</div>
-                            <div class="checkmark"></div>
-                            <h1>Configuration Complete!</h1>
-                            <p class="message">Your Owlette agent has been configured successfully.</p>
-                            <p class="message">You can close this window and return to the installer.</p>
-                        </div>
-                    </body>
-                    </html>
-                    """
-                    self.wfile.write(success_html.encode('utf-8'))
-
-                except Exception as e:
-                    server_error = str(e)
-                    self.send_error(500, f"Configuration error: {e}")
-            else:
-                server_error = "Missing site_id or registration_code in callback"
-                self.send_error(400, server_error)
-
-        elif parsed.path == '/health':
-            # Health check endpoint
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b'OK')
-        else:
-            self.send_error(404)
-
-    def save_config(self, site_id, registration_code):
-        """
-        Exchange registration code for OAuth tokens and save configuration.
-
-        Args:
-            site_id: Site ID from OAuth callback
-            registration_code: Registration code to exchange for tokens
-        """
-        # Ensure config directory exists
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-        # Import auth_manager here to avoid import errors if not installed
-        from auth_manager import AuthManager, AuthenticationError
-
-        # Determine API base URL from setup URL
-        # If using dev.owlette.app, use dev API. Otherwise production API.
-        global web_app_url
-        # Use the global web_app_url set in main(), or fall back to env var + default
-        url_to_check = web_app_url or os.environ.get("OWLETTE_SETUP_URL", DEFAULT_URL)
-
-        # Determine environment from URL
-        if 'dev.owlette.app' in url_to_check:
-            environment = 'development'
-            api_base = "https://dev.owlette.app/api"
-            project_id = "owlette-dev-3838a"
-        else:
-            environment = 'production'
-            api_base = "https://owlette.app/api"
-            project_id = "owlette-prod-90a12"
-
-        print(f"  API Base: {api_base}")
-        print(f"  Project ID: {project_id}")
-        print()
-        print("Exchanging registration code for OAuth tokens...")
-
-        # Write debug info to file for troubleshooting (APPEND, don't overwrite)
-        debug_log = Path(shared_utils.get_data_path('logs/oauth_debug.log'))
-        with open(debug_log, 'a') as f:
-            f.write(f"\nOAuth Exchange Debug\n")
-            f.write(f"====================\n")
-            f.write(f"API Base: {api_base}\n")
-            f.write(f"Project ID: {project_id}\n")
-            f.write(f"Site ID: {site_id}\n")
-            f.write(f"Registration Code: {registration_code[:20]}...\n\n")
-
-        # Initialize auth manager
-        auth_manager = AuthManager(api_base=api_base)
-
+def _enable_ansi_colors():
+    """Enable ANSI escape code processing on Windows."""
+    if sys.platform == 'win32':
         try:
-            # Exchange registration code for access + refresh tokens
-            success = auth_manager.exchange_registration_code(registration_code)
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            # Enable ENABLE_VIRTUAL_TERMINAL_PROCESSING
+            kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+        except Exception:
+            pass
 
-            if not success:
-                raise Exception("Token exchange returned False")
 
-            print("✓ OAuth tokens received and stored securely")
-            print("  - Access token: Valid for 1 hour")
-            print("  - Refresh token: Valid for 30 days (encrypted in C:\\ProgramData\\Owlette\\.tokens.enc)")
+def _open_browser(url: str) -> bool:
+    """Open URL in browser without spawning visible console windows."""
+    try:
+        if sys.platform == 'win32':
+            os.startfile(url)
+            return True
+        else:
+            import webbrowser
+            return webbrowser.open(url)
+    except Exception:
+        return False
 
-        except AuthenticationError as e:
-            raise Exception(f"OAuth authentication failed: {e}")
-        except Exception as e:
-            raise Exception(f"Failed to exchange registration code: {e}")
 
-        # Read existing config or create default
-        if CONFIG_PATH.exists():
+def _determine_environment(url_hint: str = '') -> tuple:
+    """
+    Determine environment (dev/prod) from URL hint or existing config.
+
+    Returns:
+        (environment, api_base, project_id)
+    """
+    # Check existing config first
+    try:
+        existing_env = shared_utils.get_environment()
+        if existing_env == 'development':
+            return ('development', 'https://dev.owlette.app/api', 'owlette-dev-3838a')
+    except Exception:
+        pass
+
+    # Check URL hint
+    if 'dev.owlette.app' in url_hint:
+        return ('development', 'https://dev.owlette.app/api', 'owlette-dev-3838a')
+
+    return ('production', 'https://owlette.app/api', 'owlette-prod-90a12')
+
+
+def _save_config(site_id: str, environment: str, api_base: str, project_id: str):
+    """Save site configuration to config.json (tokens stored separately in .tokens.enc)."""
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    if CONFIG_PATH.exists():
+        try:
             with open(CONFIG_PATH, 'r') as f:
                 config = json.load(f)
-        else:
-            config = {
-                "_comment": "Owlette Configuration - Edit this file to add processes to monitor",
-                "version": shared_utils.CONFIG_VERSION,
-                "processes": [],
-                "logging": {
-                    "level": "INFO",
-                    "max_age_days": 90,
-                    "firebase_shipping": {
-                        "enabled": False,
-                        "ship_errors_only": True
-                    }
-                },
-                "firebase": {
-                    "_comment": "Cloud features: remote control, web dashboard, metrics",
+        except (json.JSONDecodeError, OSError) as e:
+            logging.warning(f"Config file corrupted or unreadable ({e}), starting fresh")
+            config = None
+    else:
+        config = None
+
+    if config is None:
+        config = {
+            "_comment": "Owlette Configuration - Edit this file to add processes to monitor",
+            "version": shared_utils.CONFIG_VERSION,
+            "processes": [],
+            "logging": {
+                "level": "INFO",
+                "max_age_days": 90,
+                "firebase_shipping": {
                     "enabled": False,
-                    "site_id": ""
+                    "ship_errors_only": True
                 }
+            },
+            "firebase": {
+                "_comment": "Cloud features: remote control, web dashboard, metrics",
+                "enabled": False,
+                "site_id": ""
             }
+        }
 
-        # Update Firebase configuration
-        if 'firebase' not in config:
-            config['firebase'] = {}
+    if 'firebase' not in config:
+        config['firebase'] = {}
 
-        config['firebase']['enabled'] = True
-        config['firebase']['site_id'] = site_id
-        config['firebase']['project_id'] = project_id
-        config['firebase']['api_base'] = api_base
+    config['firebase']['enabled'] = True
+    config['firebase']['site_id'] = site_id
+    config['firebase']['project_id'] = project_id
+    config['firebase']['api_base'] = api_base
+    config['environment'] = environment
 
-        # Save environment setting (production or development)
-        config['environment'] = environment
+    # Remove legacy token field if present
+    if 'token' in config.get('firebase', {}):
+        del config['firebase']['token']
 
-        # DO NOT store tokens in config.json - they are encrypted in C:\ProgramData\Owlette\.tokens.enc
-        # Remove old token field if it exists (from previous versions)
-        if 'token' in config['firebase']:
-            del config['firebase']['token']
-
-        # Write updated config
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(config, f, indent=2)
-
-        print()
-        print(f"✓ Configuration saved to {CONFIG_PATH}")
-        print(f"  Site ID: {site_id}")
-        print(f"  Project ID: {project_id}")
-        print(f"  API Base: {api_base}")
-
-    def log_message(self, format, *args):
-        """Suppress HTTP server logs during normal operation"""
-        # Only log errors
-        if format.startswith('code 4') or format.startswith('code 5'):
-            print(f"HTTP Error: {format % args}", file=sys.stderr)
+    # Atomic write: write to temp file, then replace
+    tmp_path = CONFIG_PATH.with_suffix('.tmp')
+    with open(tmp_path, 'w') as f:
+        json.dump(config, f, indent=2)
+    os.replace(tmp_path, CONFIG_PATH)
 
 
-def wait_for_callback(httpd, timeout_seconds):
-    """Wait for callback with timeout"""
-    global received_config, server_error
-
-    start_time = time.time()
-
-    while received_config is None and server_error is None:
-        # Check timeout
-        elapsed = time.time() - start_time
-        if elapsed > timeout_seconds:
-            return False, "Timeout waiting for configuration"
-
-        # Handle one request (non-blocking with timeout)
-        httpd.timeout = 1  # 1 second socket timeout
-        httpd.handle_request()
-
-    if server_error:
-        return False, server_error
-
-    return True, "Configuration received successfully"
-
-
-def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts=True):
+def run_pairing_flow(api_base: str = None, add_phrase: str = None,
+                     timeout_seconds: int = TIMEOUT_SECONDS,
+                     show_prompts: bool = True):
     """
-    Run OAuth flow to configure site authentication.
+    Run device code pairing flow to configure site authentication.
 
     This function can be called from:
     - Command line (configure_site.py main())
@@ -370,169 +164,323 @@ def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts
     - Installer (Inno Setup)
 
     Args:
-        setup_url: Setup URL (default: https://owlette.app/setup)
-        timeout_seconds: How long to wait for callback (default: 300)
-        show_prompts: Show console prompts (False for GUI usage)
+        api_base: API base URL (auto-detected if None)
+        add_phrase: Pre-authorized pairing phrase (for /ADD= silent install)
+        timeout_seconds: Max time to wait for authorization
+        show_prompts: Show console output (False for GUI usage)
 
     Returns:
         tuple: (success: bool, message: str, site_id: Optional[str])
-            - success: True if OAuth completed successfully
-            - message: Status message or error description
-            - site_id: Site ID if successful, None otherwise
     """
-    global received_config, server_error, web_app_url
+    from auth_manager import AuthManager, AuthenticationError
 
-    # Reset global state
-    received_config = None
-    server_error = None
-
-    # Use provided URL or environment variable override
-    if setup_url is None:
-        setup_url = os.environ.get("OWLETTE_SETUP_URL", DEFAULT_URL)
-
-    web_app_url = setup_url
+    # Determine environment
+    environment, default_api_base, project_id = _determine_environment(api_base or '')
+    api_base = api_base or default_api_base
 
     if show_prompts:
-        print("=" * 60)
-        print("Owlette Site Configuration")
-        print("=" * 60)
-        print(f"Setup URL: {web_app_url}")
+        _enable_ansi_colors()
+        print(f"{DIM}{'=' * 60}{RESET}")
+        print(f"{BOLD}owlette site configuration{RESET}")
+        print(f"{DIM}{'=' * 60}{RESET}")
+        print(f"  {DIM}api: {api_base}{RESET}")
         print()
 
-    # Check if already configured (skip prompt if show_prompts=False)
-    if show_prompts and CONFIG_PATH.exists():
+    # Check if already configured
+    if show_prompts and not add_phrase and CONFIG_PATH.exists():
         try:
             with open(CONFIG_PATH, 'r') as f:
                 config = json.load(f)
                 if config.get('firebase', {}).get('enabled') and config.get('firebase', {}).get('site_id'):
-                    print(f"⚠ Already configured with site: {config['firebase']['site_id']}")
+                    print(f"  already configured with site: {CYAN}{config['firebase']['site_id']}{RESET}")
                     print()
-                    response = input("Reconfigure? (y/N): ").strip().lower()
+                    response = input("  reconfigure? (y/N): ").strip().lower()
                     if response != 'y':
                         return (False, "User cancelled reconfiguration", None)
-        except Exception as e:
-            if show_prompts:
-                print(f"⚠ Warning: Could not read existing config: {e}")
+        except Exception:
+            pass
 
-    # Start HTTP server
-    if show_prompts:
-        print(f"Starting configuration server on http://localhost:{CALLBACK_PORT}...")
+    auth_manager = AuthManager(api_base=api_base)
 
     try:
-        # Enable socket reuse to avoid "Address already in use" errors
-        socketserver.TCPServer.allow_reuse_address = True
-        with socketserver.TCPServer(("localhost", CALLBACK_PORT), ConfigCallbackHandler) as httpd:
+        if add_phrase:
+            # Silent mode: phrase was pre-authorized on dashboard
             if show_prompts:
-                print(f"✓ Server started successfully")
+                print(f"Using pre-authorized phrase: {add_phrase}")
+                print("Polling for authorization...")
                 print()
 
-            # Open browser
-            callback_url = f"{web_app_url}?callback_port={CALLBACK_PORT}"
+            # We need the device code to poll. For pre-authorized phrases,
+            # the agent still needs to request a device code first, then poll.
+            # But in the /ADD= flow, the admin already generated the phrase
+            # from the dashboard. The agent needs to look up this phrase.
+            # The server returns a deviceCode when generating the phrase.
+            # For /ADD=, we call the device-code endpoint which returns
+            # both the phrase and deviceCode. But we already have the phrase.
+            # Solution: request a new device code, but the server will see
+            # the phrase is already authorized and the poll will return immediately.
+            #
+            # Actually, for /ADD= the flow is:
+            # 1. Admin generates phrase on dashboard (calls device-code endpoint)
+            # 2. Admin authorizes it immediately for their site
+            # 3. Admin gives phrase to deployment tech
+            # 4. Agent calls device-code endpoint with the phrase... but the
+            #    phrase is the document ID, not something the agent sends.
+            #
+            # Better approach: the /ADD= phrase IS the deviceCode-equivalent.
+            # The agent calls the poll endpoint with a special "pairPhrase" field
+            # instead of deviceCode. But that changes the API contract.
+            #
+            # Simplest approach: Agent requests its own device code, but passes
+            # the pre-authorized phrase. If the phrase was already authorized,
+            # the server can return tokens immediately. But the agent doesn't
+            # control the phrase...
+            #
+            # Cleanest approach for /ADD=: Add a dedicated exchange endpoint
+            # that takes a pairPhrase directly and returns tokens if authorized.
+            # For now, we'll use a workaround: request our own device code,
+            # then have the installer tech also manually authorize via dashboard.
+            #
+            # WAIT - rethinking this. The /ADD= flow should work like this:
+            # 1. Admin clicks "Generate Code" on dashboard
+            # 2. Server creates device_codes/{phrase} with status: 'pending'
+            # 3. Admin clicks "Authorize" on dashboard for that phrase
+            # 4. Server updates status to 'authorized' and generates tokens
+            # 5. Agent runs with /ADD=phrase, requests device-code endpoint
+            #    BUT this creates a NEW phrase, not the admin's phrase.
+            #
+            # The RIGHT approach: Agent needs to poll using the admin's phrase.
+            # The poll endpoint should accept either deviceCode OR pairPhrase.
+            # Let's modify the poll to also accept pairPhrase as a lookup key.
+            #
+            # For now: the agent will poll using the pairPhrase directly
+            # (the poll endpoint looks up by deviceCodeHash, but we can also
+            # look up the document directly by phrase since phrase = document ID).
+            import requests as http_requests
+
+            poll_url = f"{api_base}/agent/auth/device-code/poll"
+            start_time = time.time()
+            interval = 5
+
+            while time.time() - start_time < timeout_seconds:
+                try:
+                    response = http_requests.post(
+                        poll_url,
+                        json={'pairPhrase': add_phrase},
+                        timeout=15,
+                    )
+
+                    if response.status_code == 202:
+                        if show_prompts:
+                            elapsed = int(time.time() - start_time)
+                            print(f"\r  Waiting for authorization... ({elapsed}s)", end='', flush=True)
+                        time.sleep(interval)
+                        continue
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        access_token = data.get('accessToken')
+                        refresh_token = data.get('refreshToken')
+                        expires_in = data.get('expiresIn', 3600)
+                        site_id = data.get('siteId')
+
+                        if not access_token or not refresh_token or not site_id:
+                            return (False, "Invalid response from server (missing tokens)", None)
+
+                        # Store tokens
+                        expiry_timestamp = time.time() + expires_in
+                        auth_manager.storage.save_refresh_token(refresh_token)
+                        auth_manager.storage.save_access_token(access_token, expiry_timestamp)
+                        auth_manager.storage.save_site_id(site_id)
+
+                        # Save config
+                        _save_config(site_id, environment, api_base, project_id)
+
+                        if show_prompts:
+                            print()
+                            print()
+                            print(f"{DIM}{'=' * 60}{RESET}")
+                            print(f"  {GREEN}{BOLD}configuration complete!{RESET}")
+                            print(f"{DIM}{'=' * 60}{RESET}")
+                            print(f"  site: {CYAN}{site_id}{RESET}")
+                            print(f"  {DIM}config: {CONFIG_PATH}{RESET}")
+                            print()
+
+                        return (True, "Configuration successful", site_id)
+
+                    if response.status_code == 410:
+                        return (False, "Pairing phrase expired. Generate a new one from the dashboard.", None)
+
+                    if response.status_code == 404:
+                        return (False, f"Pairing phrase not found: {add_phrase}", None)
+
+                    error_msg = response.json().get('error', f"HTTP {response.status_code}")
+                    return (False, f"Poll failed: {error_msg}", None)
+
+                except http_requests.exceptions.RequestException as e:
+                    if show_prompts:
+                        print(f"\n  Network error (retrying): {e}")
+                    time.sleep(interval)
+                    continue
+
+            return (False, "Timed out waiting for authorization", None)
+
+        else:
+            # Interactive mode: request device code and display QR
+            if show_prompts:
+                print(f"  {DIM}requesting pairing code from server...{RESET}")
+                print()
+
+            device_data = auth_manager.request_device_code()
+
+            pair_phrase = device_data['pairPhrase']
+            device_code = device_data['deviceCode']
+            verification_uri = device_data['verificationUri']
+            qr_url = device_data['qrUrl']
+            interval = device_data.get('interval', 5)
+            expires_in = device_data.get('expiresIn', 600)
 
             if show_prompts:
-                print(f"Opening browser to: {web_app_url}")
+                print(f"{DIM}{'=' * 60}{RESET}")
                 print()
-                print("Please complete the following steps in your browser:")
-                print("1. Log in to your Owlette account")
-                print("2. Select or create a site")
-                print("3. Authorize this agent")
+                print(f"  pairing phrase:  {BOLD}{CYAN}{pair_phrase}{RESET}")
                 print()
-
-            if open_browser_silent(callback_url):
-                if show_prompts:
-                    print("Browser opened successfully")
-            else:
-                if show_prompts:
-                    print("Could not open browser automatically")
-                    print(f"  Please manually navigate to: {callback_url}")
-
-            if show_prompts:
+                print(f"  {DIM}authorize this machine at:{RESET}")
+                print(f"  {CYAN}{verification_uri}{RESET}")
                 print()
-                print(f"Waiting for configuration (timeout: {timeout_seconds}s)...")
-                print("Press Ctrl+C to cancel")
+                print(f"  {DIM}expires in {expires_in // 60} minutes{RESET}")
+                print()
+                print(f"{DIM}{'=' * 60}{RESET}")
                 print()
 
-            # Wait for callback
-            success, message = wait_for_callback(httpd, timeout_seconds)
+                # Auto-open browser with phrase pre-filled
+                if _open_browser(qr_url):
+                    print(f"  {DIM}browser opened — select a site and authorize{RESET}")
+                else:
+                    print(f"  {DIM}couldn't open browser — visit the url above manually{RESET}")
+                print()
+                print(f"  waiting for authorization...")
+
+            # Poll for authorization
+            success = auth_manager.poll_device_code(
+                device_code=device_code,
+                interval=interval,
+                timeout=expires_in,
+            )
 
             if success:
-                site_id = received_config.get('site_id') if received_config else None
+                site_id = auth_manager._site_id
+
+                # Save config
+                _save_config(site_id, environment, api_base, project_id)
+
                 if show_prompts:
                     print()
-                    print("=" * 60)
-                    print("✓ Configuration Complete!")
-                    print("=" * 60)
+                    print(f"{DIM}{'=' * 60}{RESET}")
+                    print(f"  {GREEN}{BOLD}configuration complete!{RESET}")
+                    print(f"{DIM}{'=' * 60}{RESET}")
+                    print(f"  site: {CYAN}{site_id}{RESET}")
+                    print(f"  {DIM}config: {CONFIG_PATH}{RESET}")
                     print()
-                    print(f"Site ID: {site_id}")
-                    print(f"Config saved to: {CONFIG_PATH}")
-                    print()
+
                 return (True, "Configuration successful", site_id)
             else:
-                if show_prompts:
-                    print()
-                    print("=" * 60)
-                    print("✗ Configuration Failed")
-                    print("=" * 60)
-                    print()
-                    print(f"Error: {message}")
-                    print()
-                return (False, message, None)
+                return (False, "Authorization failed", None)
 
-    except OSError as e:
-        if "Address already in use" in str(e):
-            error_msg = f"Port {CALLBACK_PORT} is already in use. Another configuration process may be running."
-            if show_prompts:
-                print(f"✗ Error: {error_msg}")
-            return (False, error_msg, None)
-        else:
-            error_msg = f"Failed to start server: {e}"
-            if show_prompts:
-                print(f"✗ Error: {error_msg}")
-            return (False, error_msg, None)
+    except AuthenticationError as e:
+        error_msg = str(e)
+        if show_prompts:
+            print()
+            print(f"{DIM}{'=' * 60}{RESET}")
+            print(f"  {RED}{BOLD}configuration failed{RESET}")
+            print(f"{DIM}{'=' * 60}{RESET}")
+            print(f"  {RED}{error_msg}{RESET}")
+            print()
+        return (False, error_msg, None)
 
     except KeyboardInterrupt:
         if show_prompts:
             print()
-            print("✗ Cancelled by user")
+            print(f"  {DIM}cancelled by user{RESET}")
         return (False, "Cancelled by user", None)
 
     except Exception as e:
         error_msg = f"Unexpected error: {e}"
         if show_prompts:
-            print(f"✗ Error: {error_msg}")
+            print(f"Error: {error_msg}")
+
+        # Log to debug file
+        import traceback
+        try:
+            debug_log = Path(shared_utils.get_data_path('logs/pairing_debug.log'))
+            debug_log.parent.mkdir(parents=True, exist_ok=True)
+            with open(debug_log, 'a') as f:
+                f.write(f"\nPairing Flow Error\n")
+                f.write(f"==================\n")
+                f.write(f"Error: {e}\n")
+                f.write(f"Traceback:\n{traceback.format_exc()}\n")
+        except Exception:
+            pass
+
         return (False, error_msg, None)
 
 
+# Keep backward compatibility: run_oauth_flow calls run_pairing_flow
+def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts=True):
+    """Backward-compatible wrapper. Calls run_pairing_flow()."""
+    api_base = None
+    if setup_url:
+        if 'dev.owlette.app' in setup_url:
+            api_base = 'https://dev.owlette.app/api'
+        else:
+            api_base = 'https://owlette.app/api'
+    return run_pairing_flow(api_base=api_base, timeout_seconds=timeout_seconds, show_prompts=show_prompts)
+
+
 def main():
-    """Start HTTP server and open browser for OAuth flow (command-line entry point)"""
-    # Parse command-line arguments
+    """Entry point for device code pairing flow."""
     parser = argparse.ArgumentParser(description='Owlette Site Configuration')
-    parser.add_argument('--url', type=str, default=DEFAULT_URL,
-                       help='Setup URL (default: https://owlette.app/setup)')
+    parser.add_argument('--url', type=str, default=None,
+                        help='API base URL (auto-detected if not specified)')
+    parser.add_argument('--add', type=str, default=None,
+                        help='Pre-authorized pairing phrase for silent install')
     args = parser.parse_args()
 
-    # Use provided URL or environment variable override
-    setup_url = os.environ.get("OWLETTE_SETUP_URL", args.url)
+    # Determine API base
+    api_base = args.url
+    if not api_base:
+        env_url = os.environ.get("OWLETTE_SETUP_URL", "")
+        if 'dev.owlette.app' in env_url:
+            api_base = 'https://dev.owlette.app/api'
 
-    # Write command line args to debug log
-    debug_log = Path(shared_utils.get_data_path('logs/oauth_debug.log'))
+    # Write debug log
+    debug_log = Path(shared_utils.get_data_path('logs/pairing_debug.log'))
     Path(shared_utils.get_data_path('logs')).mkdir(parents=True, exist_ok=True)
     with open(debug_log, 'w') as f:
-        f.write(f"Command Line Debug\n")
+        f.write(f"Pairing Flow Debug\n")
         f.write(f"==================\n")
-        f.write(f"DEFAULT_URL constant: {DEFAULT_URL}\n")
-        f.write(f"--url argument received: {args.url}\n")
-        f.write(f"OWLETTE_SETUP_URL env var: {os.environ.get('OWLETTE_SETUP_URL', 'NOT SET')}\n")
-        f.write(f"Final setup_url: {setup_url}\n\n")
+        f.write(f"--url: {args.url}\n")
+        f.write(f"--add: {args.add}\n")
+        f.write(f"Resolved api_base: {api_base}\n")
+        f.write(f"OWLETTE_SETUP_URL: {os.environ.get('OWLETTE_SETUP_URL', 'NOT SET')}\n\n")
 
-    # Run OAuth flow with console prompts
-    success, message, site_id = run_oauth_flow(setup_url=setup_url, show_prompts=True)
+    success, message, site_id = run_pairing_flow(
+        api_base=api_base,
+        add_phrase=args.add,
+        show_prompts=True,
+    )
 
     if success:
         print("The Owlette service will now be installed and started.")
         return 0
     else:
         print("Please try running the installer again.")
+        # Pause so the user can read the error before the window closes
+        if not args.add:  # Don't pause in silent /ADD= mode
+            try:
+                input("Press Enter to continue...")
+            except (EOFError, KeyboardInterrupt):
+                pass
         return 1
 
 

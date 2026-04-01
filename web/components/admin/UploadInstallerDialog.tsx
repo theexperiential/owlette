@@ -150,10 +150,10 @@ export default function UploadInstallerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-2xl">
+      <DialogContent className="border-border bg-secondary text-white max-w-2xl">
         <DialogHeader>
           <DialogTitle className="text-white">Upload New Installer Version</DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             Upload a new Owlette Agent installer version to Firebase Storage
           </DialogDescription>
         </DialogHeader>
@@ -168,19 +168,19 @@ export default function UploadInstallerDialog({
               onDrop={handleDrop}
               className={`
                 border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
-                ${isDragging ? 'border-blue-500 bg-blue-900/20' : 'border-slate-700 hover:border-slate-600'}
+                ${isDragging ? 'border-accent-cyan bg-accent-cyan/10' : 'border-border hover:border-border'}
               `}
             >
               {!file ? (
                 <div>
-                  <FileUp className="h-12 w-12 mx-auto mb-4 text-slate-400" />
+                  <FileUp className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
                   <p className="text-white mb-2">Drag & drop installer file here</p>
-                  <p className="text-sm text-slate-400 mb-4">or</p>
+                  <p className="text-sm text-muted-foreground mb-4">or</p>
                   <label htmlFor="file-upload">
                     <Button
                       type="button"
                       variant="outline"
-                      className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 cursor-pointer"
+                      className="border-border bg-background text-white hover:bg-muted cursor-pointer"
                       onClick={() => document.getElementById('file-upload')?.click()}
                     >
                       <Upload className="h-4 w-4 mr-2" />
@@ -194,15 +194,15 @@ export default function UploadInstallerDialog({
                     className="hidden"
                     onChange={handleFileSelect}
                   />
-                  <p className="text-xs text-slate-500 mt-4">Only .exe files accepted</p>
+                  <p className="text-xs text-muted-foreground mt-4">Only .exe files accepted</p>
                 </div>
               ) : (
-                <div className="flex items-center justify-between bg-slate-900 rounded p-4">
+                <div className="flex items-center justify-between bg-background rounded p-4">
                   <div className="flex items-center gap-3">
                     <CheckCircle className="h-5 w-5 text-green-500" />
                     <div className="text-left">
                       <p className="text-white font-medium">{file.name}</p>
-                      <p className="text-sm text-slate-400">{formatFileSize(file.size)}</p>
+                      <p className="text-sm text-muted-foreground">{formatFileSize(file.size)}</p>
                     </div>
                   </div>
                   <Button
@@ -211,9 +211,9 @@ export default function UploadInstallerDialog({
                     size="sm"
                     onClick={() => setFile(null)}
                     disabled={uploading}
-                    className="hover:bg-slate-800 cursor-pointer"
+                    className="hover:bg-secondary cursor-pointer"
                   >
-                    <X className="h-4 w-4 text-slate-400" />
+                    <X className="h-4 w-4 text-muted-foreground" />
                   </Button>
                 </div>
               )}
@@ -229,9 +229,9 @@ export default function UploadInstallerDialog({
               value={version}
               onChange={(e) => setVersion(e.target.value)}
               disabled={uploading}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">Format: X.Y.Z (e.g., 2.0.0, 2.1.5)</p>
+            <p className="text-xs text-muted-foreground">Format: X.Y.Z (e.g., 2.0.0, 2.1.5)</p>
           </div>
 
           {/* Release Notes */}
@@ -244,7 +244,7 @@ export default function UploadInstallerDialog({
               onChange={(e) => setReleaseNotes(e.target.value)}
               disabled={uploading}
               rows={4}
-              className="border-slate-700 bg-slate-900 text-white resize-none"
+              className="border-border bg-background text-white resize-none"
             />
           </div>
 
@@ -266,12 +266,12 @@ export default function UploadInstallerDialog({
           {uploading && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-400">Uploading...</span>
+                <span className="text-muted-foreground">Uploading...</span>
                 <span className="text-white font-medium">{uploadProgress}%</span>
               </div>
-              <div className="w-full bg-slate-900 rounded-full h-2">
+              <div className="w-full bg-background rounded-full h-2">
                 <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  className="bg-accent-cyan h-2 rounded-full transition-all duration-300"
                   style={{ width: `${uploadProgress}%` }}
                 />
               </div>
@@ -284,14 +284,14 @@ export default function UploadInstallerDialog({
             variant="outline"
             onClick={() => onOpenChange(false)}
             disabled={uploading}
-            className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
           >
             Cancel
           </Button>
           <Button
             onClick={handleUpload}
             disabled={uploading || !file || !version}
-            className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
           >
             {uploading ? (
               <>

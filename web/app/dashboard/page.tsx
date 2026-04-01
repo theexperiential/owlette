@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { useMachines, useSites } from '@/hooks/useFirestore';
+import { useMachines, useSites, type LaunchMode, type ScheduleBlock } from '@/hooks/useFirestore';
+import { DEFAULT_SCHEDULE } from '@/lib/scheduleDefaults';
+import { useSchedulePresets } from '@/hooks/useSchedulePresets';
 import { useDeployments } from '@/hooks/useDeployments';
 import { useMachineOperations } from '@/hooks/useMachineOperations';
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
@@ -15,7 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Copy, Pencil, Trash2, Download } from 'lucide-react';
+import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, ChevronsUpDown, ChevronsDownUp, Square, Copy, Pencil, Trash2, Download, Monitor, Wifi, Cog, Settings2 } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -25,13 +27,18 @@ import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import DownloadButton from '@/components/DownloadButton';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { RemoveMachineDialog } from '@/components/RemoveMachineDialog';
+import { ScreenshotDialog } from '@/components/ScreenshotDialog';
+import { LiveViewModal } from '@/components/LiveViewModal';
 import { PageHeader } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { formatStorageRange } from '@/lib/storageUtils';
 import { MetricsDetailPanel, type MetricType } from '@/components/charts';
+import ScheduleEditor from '@/components/ScheduleEditor';
 import { MachineCardView } from './components/MachineCardView';
 import { MachineRow, MemoizedTableHeader as ListViewTableHeader } from './components/MachineListView';
+import { AddMachineButton } from './components/AddMachineButton';
+import type { Process } from '@/hooks/useFirestore';
 
 type ViewType = 'card' | 'list';
 
@@ -44,18 +51,48 @@ interface DetailPanelState {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, loading, signOut, isAdmin, userSites, requiresMfaSetup, userPreferences } = useAuth();
+  const { user, loading, signOut, isAdmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences, updateUserPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [viewType, setViewType] = useState<ViewType>('card');
-  const [expandedMachines, setExpandedMachines] = useState<Set<string>>(new Set());
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
 
   // Delay showing "Getting Started" to avoid flash if machines are still loading
   const [canShowGettingStarted, setCanShowGettingStarted] = useState(false);
+
+  // Schedule Editor dialog state (single instance, opened by gear icon on any process)
+  const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
+  const [scheduleEditorTarget, setScheduleEditorTarget] = useState<{ machineId: string; process: Process } | null>(null);
+
+  const handleConfigureSchedule = (machineId: string, process: Process) => {
+    setScheduleEditorTarget({ machineId, process });
+    setScheduleEditorOpen(true);
+  };
+
+  const handleScheduleApply = (schedules: ScheduleBlock[], presetId: string | null) => {
+    if (scheduleEditorTarget) {
+      const { machineId, process } = scheduleEditorTarget;
+      const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as 'off' | 'always' | 'scheduled';
+      handleSetLaunchMode(machineId, process.id, process.name, currentMode, process.exe_path, schedules, presetId, `Schedule saved for "${process.name}"`);
+    }
+    setScheduleEditorOpen(false);
+    setScheduleEditorTarget(null);
+  };
+
+  const handleCreatePreset = async (name: string, blocks: ScheduleBlock[]) => {
+    if (!user?.uid) return;
+    await createPreset({
+      name,
+      blocks,
+      isBuiltIn: false,
+      order: 99,
+      createdBy: user.uid,
+    });
+    toast.success(`Preset "${name}" saved`);
+  };
 
   // Process Dialog state (supports both create and edit modes)
   const [processDialogOpen, setProcessDialogOpen] = useState(false);
@@ -63,7 +100,11 @@ export default function DashboardPage() {
   const [editingMachineId, setEditingMachineId] = useState<string>('');
   const [editingProcessId, setEditingProcessId] = useState<string>('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [editProcessForm, setEditProcessForm] = useState({
+  const [editProcessForm, setEditProcessForm] = useState<{
+    name: string; exe_path: string; file_path: string; cwd: string;
+    priority: string; visibility: string; time_delay: string; time_to_init: string;
+    relaunch_attempts: string; autolaunch: boolean; launch_mode: LaunchMode; schedules: ScheduleBlock[] | null;
+  }>({
     name: '',
     exe_path: '',
     file_path: '',
@@ -74,21 +115,46 @@ export default function DashboardPage() {
     time_to_init: '10',
     relaunch_attempts: '3',
     autolaunch: false,
+    launch_mode: 'off',
+    schedules: null,
   });
 
-  const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess } = useMachines(currentSiteId);
+  const { machines, loading: machinesLoading, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView } = useMachines(currentSiteId);
+  const { presets: schedulePresets, createPreset, deletePreset: deleteSchedulePreset, updatePreset: updateSchedulePreset } = useSchedulePresets(currentSiteId);
   const { checkMachineHasActiveDeployment } = useDeployments(currentSiteId);
   const { removeMachineFromSite, removing: isRemovingMachine } = useMachineOperations(currentSiteId);
+
+  // Per-row expand state for list view
+  const [expandedMachineIds, setExpandedMachineIds] = useState<Set<string>>(() => new Set());
+
+  // Sync expanded set when machines change (expand new machines if global pref is expanded)
+  useEffect(() => {
+    if (userPreferences.processesExpanded) {
+      setExpandedMachineIds(new Set(machines.map(m => m.machineId)));
+    }
+  }, [machines.length, userPreferences.processesExpanded]);
 
   // Remove Machine Dialog state
   const [removeMachineDialogOpen, setRemoveMachineDialogOpen] = useState(false);
   const [machineToRemove, setMachineToRemove] = useState<{ id: string; name: string; isOnline: boolean } | null>(null);
 
+  // Kill Process Confirmation state
+  const [killConfirmOpen, setKillConfirmOpen] = useState(false);
+  const [killTarget, setKillTarget] = useState<{ machineId: string; processId: string; processName: string } | null>(null);
+
+  // Screenshot Dialog state
+  const [screenshotDialogOpen, setScreenshotDialogOpen] = useState(false);
+  const [screenshotTarget, setScreenshotTarget] = useState<{ machineId: string; machineName: string; isOnline: boolean } | null>(null);
+
+  // Live View Modal state
+  const [liveViewOpen, setLiveViewOpen] = useState(false);
+  const [liveViewTarget, setLiveViewTarget] = useState<{ machineId: string; machineName: string } | null>(null);
+
   // Metrics Detail Panel state (replaces top stats cards when active)
   const [detailPanel, setDetailPanel] = useState<DetailPanelState | null>(null);
 
-  // Multilingual welcome messages with language info
-  const welcomeMessages = [
+  // Multilingual welcome messages with language info (memoized to avoid recreation)
+  const welcomeMessages = useMemo(() => [
     // English (heavy)
     { text: "Welcome back", language: "English", translation: "Welcome back" },
     { text: "Greetings", language: "English", translation: "Greetings" },
@@ -171,10 +237,10 @@ export default function DashboardPage() {
     { text: "Fàilte air ais", language: "Scottish Gaelic", translation: "Welcome back" },
     { text: "Croeso yn ôl", language: "Welsh", translation: "Welcome back" },
     { text: "Fáilte ar ais", language: "Irish", translation: "Welcome back" },
-  ];
+  ], []);
 
-  // Random cheesy tech jokes
-  const techJokes = [
+  // Random cheesy tech jokes (memoized)
+  const techJokes = useMemo(() => [
     "Your pixels are in good hands",
     "Keeping your GPUs well-fed and happy",
     "Because Ctrl+Alt+Delete is so 2000s",
@@ -230,24 +296,43 @@ export default function DashboardPage() {
     "Making Windows services less mysterious",
     "Your exhibition's technical director",
     "Process management: It's not rocket science, it's harder"
-  ];
+  ], []);
 
   const [randomWelcome] = useState(() => welcomeMessages[Math.floor(Math.random() * welcomeMessages.length)]);
   const [randomJoke] = useState(() => techJokes[Math.floor(Math.random() * techJokes.length)]);
 
-  const toggleMachineExpanded = (machineId: string) => {
-    setExpandedMachines(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(machineId)) {
-        newSet.delete(machineId);
-      } else {
-        newSet.add(machineId);
-      }
-      return newSet;
-    });
-  };
+  const toggleStatsExpanded = useCallback(() => {
+    updateUserPreferences({ statsExpanded: !userPreferences.statsExpanded }, { silent: true });
+  }, [userPreferences.statsExpanded, updateUserPreferences]);
 
-  const handleRowClick = (machineId: string, canExpand: boolean) => {
+  const toggleProcessesExpanded = useCallback(() => {
+    updateUserPreferences({ processesExpanded: !userPreferences.processesExpanded }, { silent: true });
+  }, [userPreferences.processesExpanded, updateUserPreferences]);
+
+  // Global expand/collapse all (both stats + processes)
+  const allExpanded = expandedMachineIds.size === machines.length && machines.length > 0;
+
+  const toggleAllExpanded = useCallback(() => {
+    if (allExpanded) {
+      setExpandedMachineIds(new Set());
+      updateUserPreferences({ statsExpanded: false, processesExpanded: false }, { silent: true });
+    } else {
+      setExpandedMachineIds(new Set(machines.map(m => m.machineId)));
+      updateUserPreferences({ statsExpanded: true, processesExpanded: true }, { silent: true });
+    }
+  }, [allExpanded, machines, updateUserPreferences]);
+
+  // Per-machine expand toggle for list view
+  const toggleMachineExpanded = useCallback((machineId: string) => {
+    setExpandedMachineIds(prev => {
+      const next = new Set(prev);
+      if (next.has(machineId)) next.delete(machineId);
+      else next.add(machineId);
+      return next;
+    });
+  }, []);
+
+  const handleRowClick = (_machineId: string, canExpand: boolean) => {
     // Don't toggle if user is selecting text
     const selection = window.getSelection();
     if (selection && selection.toString().length > 0) {
@@ -255,38 +340,47 @@ export default function DashboardPage() {
     }
 
     if (canExpand) {
-      toggleMachineExpanded(machineId);
+      toggleProcessesExpanded();
     }
   };
 
-  const handleKillProcess = async (machineId: string, processId: string, processName: string) => {
-    console.log('handleKillProcess called:', { machineId, processId, processName });
+  const handleKillProcess = (machineId: string, processId: string, processName: string) => {
+    setKillTarget({ machineId, processId, processName });
+    setKillConfirmOpen(true);
+  };
+
+  const confirmKillProcess = async () => {
+    if (!killTarget) return;
+    const { machineId, processId, processName } = killTarget;
+    setKillConfirmOpen(false);
+    setKillTarget(null);
     try {
       await killProcess(machineId, processId, processName);
-      console.log('killProcess completed successfully');
       toast.success(`Kill command sent for "${processName}"`);
     } catch (error: any) {
-      console.error('handleKillProcess error:', error);
+      console.error('confirmKillProcess error:', error);
       toast.error(error.message || 'Failed to kill process');
     }
   };
 
-  const handleToggleAutolaunch = async (machineId: string, processId: string, newValue: boolean, processName: string, exePath: string) => {
-    console.log('handleToggleAutolaunch called:', { machineId, processId, processName, newValue, exePath });
-
-    // Validate exe_path before enabling autolaunch
-    if (newValue && (!exePath || exePath.trim() === '')) {
-      toast.error(`Cannot enable autolaunch for "${processName}": Executable path is not set. Please edit the process and set a valid executable path.`);
+  const handleSetLaunchMode = async (machineId: string, processId: string, processName: string, mode: 'off' | 'always' | 'scheduled', exePath: string, schedules?: any[] | null, schedulePresetId?: string | null, successMessage?: string) => {
+    // Validate exe_path before enabling
+    if (mode !== 'off' && (!exePath || exePath.trim() === '')) {
+      toast.error(`cannot enable launch mode for "${processName}": executable path is not set. please edit the process and set a valid executable path.`);
       return;
     }
 
     try {
-      await toggleAutolaunch(machineId, processId, processName, newValue);
-      console.log('toggleAutolaunch completed successfully');
-      toast.success(`Autolaunch ${newValue ? 'enabled' : 'disabled'} for "${processName}"`);
+      // When activating scheduled mode without schedules, use default (M-F 9-5)
+      const effectiveSchedules = mode === 'scheduled' && (!schedules || schedules.length === 0)
+        ? DEFAULT_SCHEDULE
+        : schedules;
+      await setLaunchMode(machineId, processId, processName, mode, effectiveSchedules, schedulePresetId);
+      const modeLabels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+      toast.success(successMessage ?? `Launch mode set to ${modeLabels[mode]} for "${processName}"`);
     } catch (error: any) {
-      console.error('handleToggleAutolaunch error:', error);
-      toast.error(error.message || 'Failed to toggle autolaunch');
+      console.error('handleSetLaunchMode error:', error);
+      toast.error(error.message || 'Failed to set launch mode');
     }
   };
 
@@ -314,6 +408,8 @@ export default function DashboardPage() {
       time_to_init: process.time_to_init || '10',
       relaunch_attempts: process.relaunch_attempts || '3',
       autolaunch: process.autolaunch || false,
+      launch_mode: process.launch_mode || (process.autolaunch ? 'always' : 'off'),
+      schedules: process.schedules || null,
     });
     setProcessDialogOpen(true);
   };
@@ -334,6 +430,8 @@ export default function DashboardPage() {
       time_to_init: '10',
       relaunch_attempts: '3',
       autolaunch: false,
+      launch_mode: 'off' as LaunchMode,
+      schedules: null as ScheduleBlock[] | null,
     });
     setProcessDialogOpen(true);
   };
@@ -341,12 +439,12 @@ export default function DashboardPage() {
   const handleSaveProcess = async () => {
     // Validation
     if (!editProcessForm.name || !editProcessForm.name.trim()) {
-      toast.error('Process name is required');
+      toast.error('process name is required');
       return;
     }
 
     if (!editProcessForm.exe_path || !editProcessForm.exe_path.trim()) {
-      toast.error('Executable path is required');
+      toast.error('executable path is required');
       return;
     }
 
@@ -395,10 +493,10 @@ export default function DashboardPage() {
     }
   };
 
-  // Load view preference from localStorage
-  useEffect(() => {
-    const savedView = localStorage.getItem('owlette_view_type') as ViewType;
-    if (savedView) {
+  // Read view preference from localStorage before first paint to avoid card→list flash
+  useLayoutEffect(() => {
+    const savedView = localStorage.getItem('owlette_view_type');
+    if (savedView === 'card' || savedView === 'list') {
       setViewType(savedView);
     }
   }, []);
@@ -417,22 +515,21 @@ export default function DashboardPage() {
     localStorage.setItem('owlette_view_type', view);
   };
 
-  // Load saved site from localStorage or use first available
+  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
   useEffect(() => {
     if (!sitesLoading && sites.length > 0 && !currentSiteId) {
-      const savedSite = localStorage.getItem('owlette_current_site');
+      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
       if (savedSite && sites.find(s => s.id === savedSite)) {
         setCurrentSiteId(savedSite);
       } else {
         setCurrentSiteId(sites[0].id);
       }
     }
-  }, [sites, sitesLoading, currentSiteId]);
+  }, [sites, sitesLoading, currentSiteId, lastSiteId]);
 
-  // Save site selection to localStorage
   const handleSiteChange = (siteId: string) => {
     setCurrentSiteId(siteId);
-    localStorage.setItem('owlette_current_site', siteId);
+    updateLastSite(siteId);
   };
 
   // Handle metric click to open detail panel
@@ -452,7 +549,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!loading && !user) {
-      router.push('/login');
+      router.push('/');
     }
   }, [user, loading, router]);
 
@@ -465,8 +562,8 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <p className="text-muted-foreground">Loading...</p>
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-muted-foreground">loading...</p>
       </div>
     );
   }
@@ -483,10 +580,10 @@ export default function DashboardPage() {
   const currentSite = sites.find(s => s.id === currentSiteId);
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="relative min-h-screen pb-24 animate-in fade-in duration-300">
       {/* Header */}
       <PageHeader
-        currentPage="Dashboard"
+        currentPage="dashboard"
         sites={sites}
         currentSiteId={currentSiteId}
         onSiteChange={handleSiteChange}
@@ -524,7 +621,7 @@ export default function DashboardPage() {
       />
 
       {/* Main content */}
-      <main className="mx-auto max-w-screen-2xl p-3 md:p-4">
+      <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex-1">
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-1">
@@ -532,7 +629,7 @@ export default function DashboardPage() {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span className="cursor-help">
-                      {randomWelcome.text}{user.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}!
+                      {randomWelcome.text.toLowerCase()}{user.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}!
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>
@@ -543,14 +640,48 @@ export default function DashboardPage() {
               </TooltipProvider>
             </h2>
             <p className="text-sm md:text-base text-muted-foreground">
-              {randomJoke}
+              {randomJoke.toLowerCase()}
             </p>
+          </div>
+
+          {/* Quick stats - inline with welcome */}
+          <div className="flex items-center gap-6 md:gap-8">
+            {/* Machines / Online ratio */}
+            <div className="flex items-center gap-2.5">
+              <div className={`rounded-md p-1.5 ${onlineMachines > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-muted text-muted-foreground'}`}>
+                <Monitor className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="flex items-baseline gap-0.5">
+                  <span className={`text-xl font-bold ${onlineMachines > 0 ? 'text-emerald-400' : 'text-foreground'}`}>{onlineMachines}</span>
+                  <span className="text-xs text-muted-foreground">/ {machines.length}</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-tight">online</p>
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="h-8 w-px bg-border" />
+
+            {/* Processes */}
+            <div className="flex items-center gap-2.5">
+              <div className="rounded-md p-1.5 bg-muted text-muted-foreground">
+                <Cog className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="flex items-baseline gap-0.5">
+                  <span className="text-xl font-bold text-foreground">{totalProcesses}</span>
+                  <span className="text-xs text-muted-foreground">managed</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-tight">processes</p>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Quick stats OR Metrics Detail Panel */}
-        <div className="mb-6">
-          {detailPanel ? (
+        {/* Metrics Detail Panel */}
+        {detailPanel && (
+          <div className="mb-6">
             <MetricsDetailPanel
               machineId={detailPanel.machineId}
               machineName={detailPanel.machineName}
@@ -558,94 +689,93 @@ export default function DashboardPage() {
               initialMetric={detailPanel.metric}
               onClose={handleCloseDetailPanel}
             />
-          ) : (
-            <div className="grid grid-cols-3 gap-2 md:gap-4">
-              <Card className="border-border bg-card">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
-                  <CardTitle className="text-xs md:text-sm font-medium text-foreground">Machines</CardTitle>
-                </CardHeader>
-                <CardContent className="pb-2 md:pb-6">
-                  <div className="text-xl md:text-2xl font-bold text-foreground">{machines.length}</div>
-                  <p className="text-xs text-muted-foreground hidden md:block">
-                    {machines.length === 0 ? 'No machines' : `${machines.length} registered`}
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="border-border bg-card">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
-                  <CardTitle className="text-xs md:text-sm font-medium text-foreground">Online</CardTitle>
-                </CardHeader>
-                <CardContent className="pb-2 md:pb-6">
-                  <div className="text-xl md:text-2xl font-bold text-foreground">{onlineMachines}</div>
-                  <p className="text-xs text-muted-foreground hidden md:block">
-                    {onlineMachines === 0 ? 'None online' : `${onlineMachines} online`}
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="border-border bg-card">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
-                  <CardTitle className="text-xs md:text-sm font-medium text-foreground">Processes</CardTitle>
-                </CardHeader>
-                <CardContent className="pb-2 md:pb-6">
-                  <div className="text-xl md:text-2xl font-bold text-foreground">{totalProcesses}</div>
-                  <p className="text-xs text-muted-foreground hidden md:block">
-                    Managed
-                  </p>
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Machines list */}
         {machines.length > 0 ? (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg md:text-xl font-bold text-foreground">Machines</h3>
+              <h3 className="text-lg md:text-xl font-bold text-foreground">machines</h3>
 
-              {/* View Toggle - Hidden on mobile, always show card view */}
-              <div className="hidden md:flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
-                <Button
-                  variant={viewType === 'card' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => handleViewChange('card')}
-                  className={`cursor-pointer ${viewType === 'card' ? 'bg-input text-foreground' : 'text-muted-foreground hover:bg-input hover:text-foreground'}`}
-                >
-                  <LayoutGrid className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant={viewType === 'list' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => handleViewChange('list')}
-                  className={`cursor-pointer ${viewType === 'list' ? 'bg-input text-foreground' : 'text-muted-foreground hover:bg-input hover:text-foreground'}`}
-                >
-                  <List className="h-4 w-4" />
-                </Button>
+              <div className="flex items-center gap-2">
+                {/* Add Machine Button */}
+                <AddMachineButton
+                  currentSiteId={currentSiteId}
+                  currentSiteName={currentSite?.name}
+                />
+
+                {/* Expand/Collapse All + View Toggle */}
+                <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={toggleAllExpanded}
+                    className="cursor-pointer text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    title={allExpanded ? 'collapse all' : 'expand all'}
+                  >
+                    {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
+                  </Button>
+                  <div className="h-4 w-px bg-border" />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleViewChange('card')}
+                    className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                  >
+                    <LayoutGrid className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleViewChange('list')}
+                    className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                  >
+                    <List className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </div>
 
-            {/* Card View - Always shown on mobile, toggle on desktop */}
-            <div className={`animate-in fade-in duration-300 ${viewType === 'list' ? 'md:hidden' : ''}`}>
-              <MachineCardView
-                machines={machines}
-                expandedMachines={expandedMachines}
-                currentSiteId={currentSiteId}
-                siteTimezone={currentSite?.timezone}
-                siteTimeFormat={currentSite?.timeFormat}
-                onToggleExpanded={toggleMachineExpanded}
-                onEditProcess={openEditProcessDialog}
-                onCreateProcess={openCreateProcessDialog}
-                onKillProcess={handleKillProcess}
-                onToggleAutolaunch={handleToggleAutolaunch}
-                onRemoveMachine={openRemoveMachineDialog}
-                onMetricClick={handleMetricClick}
-              />
-            </div>
+            {/* Card View — only rendered when active */}
+            {viewType === 'card' && (
+              <div className="animate-in fade-in duration-300">
+                <MachineCardView
+                  machines={machines}
+                  statsExpanded={userPreferences.statsExpanded}
+                  processesExpanded={userPreferences.processesExpanded}
+                  onToggleStats={toggleStatsExpanded}
+                  onToggleProcesses={toggleProcessesExpanded}
+                  currentSiteId={currentSiteId}
+                  siteTimezone={currentSite?.timezone}
+                  siteTimeFormat={userPreferences.timeFormat || '12h'}
+                  onEditProcess={openEditProcessDialog}
+                  onCreateProcess={openCreateProcessDialog}
+                  onKillProcess={handleKillProcess}
+                  onSetLaunchMode={handleSetLaunchMode}
+                  onConfigureSchedule={handleConfigureSchedule}
+                  onRemoveMachine={openRemoveMachineDialog}
+                  onMetricClick={handleMetricClick}
+                  onReboot={rebootMachine}
+                  onShutdown={shutdownMachine}
+                  onCancelReboot={cancelReboot}
+                  onDismissRebootPending={dismissRebootPending}
+                  onScreenshot={(machineId) => {
+                    const m = machines.find(m => m.machineId === machineId);
+                    setScreenshotTarget({ machineId, machineName: machineId, isOnline: m?.online ?? false });
+                    setScreenshotDialogOpen(true);
+                  }}
+                  onLiveView={(machineId) => {
+                    setLiveViewTarget({ machineId, machineName: machineId });
+                    setLiveViewOpen(true);
+                  }}
+                />
+              </div>
+            )}
 
-            {/* List View - Hidden on mobile, only shown on desktop when selected */}
-            <div className={`rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300 ${viewType === 'card' ? 'hidden' : 'hidden md:block'}`}>
+            {/* List View — only rendered when active */}
+            {viewType === 'list' && (
+              <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
                 <Table style={{ contain: 'layout', tableLayout: 'fixed' }}>
                   <ListViewTableHeader />
                   <TableBody>
@@ -653,52 +783,62 @@ export default function DashboardPage() {
                       <MachineRow
                         key={machine.machineId}
                         machine={machine}
-                        isExpanded={expandedMachines.has(machine.machineId)}
+                        isExpanded={expandedMachineIds.has(machine.machineId)}
                         currentSiteId={currentSiteId}
                         siteTimezone={currentSite?.timezone || 'UTC'}
-                        siteTimeFormat={currentSite?.timeFormat || '12h'}
+                        siteTimeFormat={userPreferences.timeFormat || '12h'}
                         userPreferences={userPreferences}
-                        onToggleExpanded={() => handleRowClick(machine.machineId, true)}
+                        isAdmin={isAdmin}
+                        onToggleExpanded={() => toggleMachineExpanded(machine.machineId)}
                         onEditProcess={(process) => openEditProcessDialog(machine.machineId, process)}
                         onCreateProcess={() => openCreateProcessDialog(machine.machineId)}
                         onKillProcess={(processId, processName) => handleKillProcess(machine.machineId, processId, processName)}
-                        onToggleAutolaunch={(processId, enabled) => {
-                          const process = machine.processes?.find(p => p.id === processId);
-                          if (process) {
-                            handleToggleAutolaunch(machine.machineId, processId, enabled, process.name, process.exe_path);
-                          }
-                        }}
+                        onSetLaunchMode={(processId, processName, mode, exePath, schedules) =>
+                          handleSetLaunchMode(machine.machineId, processId, processName, mode, exePath, schedules)
+                        }
+                        onConfigureSchedule={(process) => handleConfigureSchedule(machine.machineId, process)}
                         onRemoveMachine={() => openRemoveMachineDialog(machine.machineId, machine.machineId, machine.online)}
                         onMetricClick={(metricType) => handleMetricClick(machine.machineId, metricType)}
+                        onReboot={() => rebootMachine(machine.machineId)}
+                        onShutdown={() => shutdownMachine(machine.machineId)}
+                        onScreenshot={() => {
+                          setScreenshotTarget({ machineId: machine.machineId, machineName: machine.machineId, isOnline: machine.online });
+                          setScreenshotDialogOpen(true);
+                        }}
+                        onLiveView={() => {
+                          setLiveViewTarget({ machineId: machine.machineId, machineName: machine.machineId });
+                          setLiveViewOpen(true);
+                        }}
                       />
                     ))}
                   </TableBody>
                 </Table>
               </div>
+            )}
           </div>
         ) : canShowGettingStarted ? (
           <Card className="border-border bg-card animate-in fade-in duration-500">
             <CardHeader>
-              <CardTitle className="text-foreground">Getting Started</CardTitle>
+              <CardTitle className="text-foreground">getting started</CardTitle>
               <CardDescription className="text-muted-foreground">
-                Connect your first machine to start managing processes
+                connect your first machine to start managing processes
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Step 1: Create Your First Site (only shown when no sites exist) */}
               {sites.length === 0 && (
                 <div className="rounded-lg border-2 border-accent-cyan bg-accent-cyan/10 p-6">
-                  <h3 className="text-lg font-bold text-foreground mb-2">Step 1: Create Your First Site</h3>
+                  <h3 className="text-lg font-bold text-foreground mb-2">step 1: create your first site</h3>
                   <p className="text-sm text-foreground mb-4">
                     Sites organize your machines by location or purpose (e.g., &quot;NYC Office&quot;, &quot;Home Studio&quot;, &quot;Production Floor&quot;).
                     Create your first site to get started!
                   </p>
                   <Button
                     onClick={() => setCreateDialogOpen(true)}
-                    className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground font-semibold px-6 py-3 cursor-pointer"
+                    className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 font-semibold px-6 py-3 cursor-pointer"
                   >
                     <Plus className="h-4 w-4 mr-2" />
-                    Create Your First Site
+                    create your first site
                   </Button>
                 </div>
               )}
@@ -707,80 +847,80 @@ export default function DashboardPage() {
               {sites.length > 0 && (
                 <>
                   <div className="rounded-lg border border-border bg-background p-4">
-                    <h3 className="font-semibold text-foreground mb-3">Step 1: Download Owlette Agent</h3>
+                    <h3 className="font-semibold text-foreground mb-3">step 1: download owlette agent</h3>
                 <p className="text-sm text-muted-foreground mb-4">
-                  Download and run the installer <strong className="text-foreground">on the machine you want to add</strong> (not necessarily this one).
-                  Use the copy link option if connecting via remote desktop tools like Parsec, TeamViewer, or RDP.
+                  download and run the installer <strong className="text-foreground">on the machine you want to add</strong> (not necessarily this one).
+                  use the copy link option if connecting via remote desktop tools like Parsec, TeamViewer, or RDP.
                 </p>
                 <div className="flex gap-2">
                   <Button
                     onClick={() => {
                       if (!downloadUrl) {
-                        toast.error('Download Unavailable', {
-                          description: 'Installer download URL is not available.',
+                        toast.error('download unavailable', {
+                          description: 'installer download URL is not available.',
                         });
                         return;
                       }
                       try {
                         window.open(downloadUrl, '_blank');
-                        toast.success('Download Started', {
-                          description: `Downloading Owlette v${version}`,
+                        toast.success('download started', {
+                          description: `downloading Owlette v${version}`,
                         });
                       } catch (err) {
-                        toast.error('Download Failed', {
-                          description: 'Failed to start download. Please try again.',
+                        toast.error('download failed', {
+                          description: 'failed to start download. please try again.',
                         });
                       }
                     }}
                     disabled={!downloadUrl}
-                    className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+                    className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                   >
                     <Download className="h-4 w-4 mr-2" />
-                    <span>Download {version && `v${version}`}</span>
+                    <span>download {version && `v${version}`}</span>
                   </Button>
                   <Button
                     onClick={() => {
                       if (!downloadUrl) {
-                        toast.error('Copy Failed', {
-                          description: 'Download URL is not available.',
+                        toast.error('copy failed', {
+                          description: 'download URL is not available.',
                         });
                         return;
                       }
                       try {
                         navigator.clipboard.writeText(downloadUrl);
-                        toast.success('Link Copied', {
-                          description: 'Download link copied to clipboard',
+                        toast.success('link copied', {
+                          description: 'download link copied to clipboard',
                         });
                       } catch (err) {
-                        toast.error('Copy Failed', {
-                          description: 'Failed to copy link. Please try again.',
+                        toast.error('copy failed', {
+                          description: 'failed to copy link. please try again.',
                         });
                       }
                     }}
                     disabled={!downloadUrl}
-                    className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+                    className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                   >
                     <Copy className="h-4 w-4 mr-2" />
-                    <span>Copy Link</span>
+                    <span>copy link</span>
                   </Button>
                 </div>
               </div>
               <div className="rounded-lg border border-border bg-background p-4">
-                <h3 className="font-semibold text-foreground">Step 2: Run the Installer</h3>
+                <h3 className="font-semibold text-foreground">step 2: run the installer</h3>
                 <p className="text-sm text-muted-foreground">
-                  On that machine, double-click the installer - it will automatically open a browser for authentication
+                  on that machine, double-click the installer - it will automatically open a browser for authentication
                 </p>
               </div>
               <div className="rounded-lg border border-border bg-background p-4">
-                <h3 className="font-semibold text-foreground">Step 3: Authorize Agent</h3>
+                <h3 className="font-semibold text-foreground">step 3: authorize agent</h3>
                 <p className="text-sm text-muted-foreground">
-                  Log in and authorize the agent for site <span className="font-mono text-accent-cyan">{currentSiteId}</span>
+                  log in and authorize the agent for site <span className="font-mono text-accent-cyan">{currentSite?.name || currentSiteId}</span>
                 </p>
               </div>
               <div className="rounded-lg border border-border bg-background p-4">
-                <h3 className="font-semibold text-foreground">Step 4: Done!</h3>
+                <h3 className="font-semibold text-foreground">step 4: done!</h3>
                 <p className="text-sm text-muted-foreground">
-                  The installer completes automatically and that machine will appear above within seconds
+                  the installer completes automatically and that machine will appear above within seconds
                 </p>
               </div>
                 </>
@@ -795,18 +935,19 @@ export default function DashboardPage() {
         <DialogContent className="border-border bg-muted text-foreground max-w-3xl">
           <DialogHeader>
             <DialogTitle className="text-foreground">
-              {processDialogMode === 'create' ? 'New Process' : 'Edit Process'}
+              {processDialogMode === 'create' ? 'add process' : 'edit process'}
+
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
               {processDialogMode === 'create'
-                ? 'Create a new process configuration'
-                : 'Update process configuration'}
+                ? 'add a process to this machine'
+                : 'update process configuration'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             {/* Name */}
             <div className="space-y-2">
-              <Label htmlFor="edit-name" className="text-foreground">Name</Label>
+              <Label htmlFor="edit-name" className="text-foreground">name</Label>
               <Input
                 id="edit-name"
                 value={editProcessForm.name}
@@ -815,9 +956,68 @@ export default function DashboardPage() {
               />
             </div>
 
+            {/* Launch Mode — positioned prominently after name */}
+            <div className="space-y-2">
+              <Label className="text-foreground text-sm">launch mode</Label>
+              <div className="flex rounded-lg overflow-hidden border border-border">
+                {(['off', 'always', 'scheduled'] as const).map((mode) => {
+                  const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+                  const isActive = editProcessForm.launch_mode === mode;
+                  const colors = {
+                    off: isActive ? 'bg-muted text-foreground' : '',
+                    always: isActive ? 'bg-emerald-600 text-white' : '',
+                    scheduled: isActive ? 'bg-blue-600 text-white' : '',
+                  };
+
+                  if (mode === 'scheduled' && isActive) {
+                    return (
+                      <span key={mode} className="flex items-stretch flex-1 bg-blue-600 text-white">
+                        <button
+                          type="button"
+                          onClick={() => setEditProcessForm({ ...editProcessForm, launch_mode: mode, autolaunch: true })}
+                          className="flex-1 px-3 py-1.5 text-xs font-medium cursor-pointer"
+                        >
+                          {labels[mode]}
+                        </button>
+                        <span className="w-px bg-blue-400/50" />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProcessDialogOpen(false);
+                            handleConfigureSchedule(editingMachineId, {
+                              id: editingProcessId,
+                              name: editProcessForm.name,
+                              exe_path: editProcessForm.exe_path,
+                              schedules: editProcessForm.schedules || null,
+                              launch_mode: 'scheduled',
+                            } as Process);
+                          }}
+                          className="px-1.5 hover:bg-blue-500 transition-colors cursor-pointer flex items-center"
+                          title="configure schedule"
+                        >
+                          <Settings2 className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                    );
+                  }
+
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setEditProcessForm({ ...editProcessForm, launch_mode: mode, autolaunch: mode !== 'off' })}
+                      className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${colors[mode]} ${!isActive ? 'bg-card text-muted-foreground hover:bg-muted/50' : ''}`}
+                    >
+                      {labels[mode]}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Executable Path */}
             <div className="space-y-2">
-              <Label htmlFor="edit-exe-path" className="text-foreground">Executable Path</Label>
+              <Label htmlFor="edit-exe-path" className="text-foreground">executable path</Label>
               <Input
                 id="edit-exe-path"
                 value={editProcessForm.exe_path}
@@ -829,32 +1029,33 @@ export default function DashboardPage() {
 
             {/* File Path / Cmd Args */}
             <div className="space-y-2">
-              <Label htmlFor="edit-file-path" className="text-foreground">File Path / Command Arguments</Label>
+              <Label htmlFor="edit-file-path" className="text-foreground">file path / command arguments</Label>
               <Input
                 id="edit-file-path"
                 value={editProcessForm.file_path}
                 onChange={(e) => setEditProcessForm({ ...editProcessForm, file_path: e.target.value })}
                 className="border-border bg-card text-foreground"
-                placeholder="Optional"
+                placeholder="optional"
               />
             </div>
 
             {/* Working Directory */}
             <div className="space-y-2">
-              <Label htmlFor="edit-cwd" className="text-foreground">Working Directory</Label>
+              <Label htmlFor="edit-cwd" className="text-foreground">working directory</Label>
               <Input
                 id="edit-cwd"
                 value={editProcessForm.cwd}
                 onChange={(e) => setEditProcessForm({ ...editProcessForm, cwd: e.target.value })}
                 className="border-border bg-card text-foreground"
-                placeholder="Optional"
+                placeholder="optional"
               />
             </div>
 
             <div className="grid grid-cols-3 gap-4">
               {/* Priority */}
               <div className="space-y-2">
-                <Label htmlFor="edit-priority" className="text-foreground">Task Priority</Label>
+                <Label htmlFor="edit-priority" className="text-foreground">task priority</Label>
+
                 <Select
                   value={editProcessForm.priority}
                   onValueChange={(value) => setEditProcessForm({ ...editProcessForm, priority: value })}
@@ -863,17 +1064,17 @@ export default function DashboardPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="border-border bg-card text-foreground">
-                    <SelectItem value="Low">Low</SelectItem>
-                    <SelectItem value="Normal">Normal</SelectItem>
-                    <SelectItem value="High">High</SelectItem>
-                    <SelectItem value="Realtime">Realtime</SelectItem>
+                    <SelectItem value="Low">low</SelectItem>
+                    <SelectItem value="Normal">normal</SelectItem>
+                    <SelectItem value="High">high</SelectItem>
+                    <SelectItem value="Realtime">realtime</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               {/* Visibility */}
               <div className="space-y-2">
-                <Label htmlFor="edit-visibility" className="text-foreground">Window Visibility</Label>
+                <Label htmlFor="edit-visibility" className="text-foreground">window visibility</Label>
                 <Select
                   value={editProcessForm.visibility}
                   onValueChange={(value) => setEditProcessForm({ ...editProcessForm, visibility: value })}
@@ -882,8 +1083,8 @@ export default function DashboardPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="border-border bg-card text-foreground">
-                    <SelectItem value="Show">Show</SelectItem>
-                    <SelectItem value="Hide">Hide</SelectItem>
+                    <SelectItem value="Normal">normal</SelectItem>
+                    <SelectItem value="Hidden">hidden (console apps only)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -895,7 +1096,7 @@ export default function DashboardPage() {
             <div className="grid grid-cols-3 gap-4">
               {/* Time Delay */}
               <div className="space-y-2">
-                <Label htmlFor="edit-time-delay" className="text-foreground">Launch Delay (sec)</Label>
+                <Label htmlFor="edit-time-delay" className="text-foreground">launch delay (sec)</Label>
                 <Input
                   id="edit-time-delay"
                   type="number"
@@ -907,7 +1108,7 @@ export default function DashboardPage() {
 
               {/* Time to Init */}
               <div className="space-y-2">
-                <Label htmlFor="edit-time-init" className="text-foreground">Init Timeout (sec)</Label>
+                <Label htmlFor="edit-time-init" className="text-foreground">init timeout (sec)</Label>
                 <Input
                   id="edit-time-init"
                   type="number"
@@ -919,7 +1120,7 @@ export default function DashboardPage() {
 
               {/* Relaunch Attempts */}
               <div className="space-y-2">
-                <Label htmlFor="edit-relaunch" className="text-foreground">Relaunch Attempts</Label>
+                <Label htmlFor="edit-relaunch" className="text-foreground">relaunch attempts</Label>
                 <Input
                   id="edit-relaunch"
                   type="number"
@@ -930,17 +1131,6 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Autolaunch */}
-            <div className="flex items-center space-x-2">
-              <Switch
-                id="edit-autolaunch"
-                checked={editProcessForm.autolaunch}
-                onCheckedChange={(checked) => setEditProcessForm({ ...editProcessForm, autolaunch: checked })}
-              />
-              <Label htmlFor="edit-autolaunch" className="text-foreground cursor-pointer">
-                Enable Autolaunch
-              </Label>
-            </div>
           </div>
           <DialogFooter className="flex items-center">
             {processDialogMode === 'edit' && (
@@ -956,15 +1146,15 @@ export default function DashboardPage() {
               <Button
                 variant="outline"
                 onClick={() => setProcessDialogOpen(false)}
-                className="border-border bg-muted text-foreground hover:bg-input hover:text-foreground cursor-pointer"
+                className="border-border bg-muted text-foreground hover:bg-accent hover:border-foreground/30 hover:text-white cursor-pointer"
               >
-                Cancel
+                cancel
               </Button>
               <Button
                 onClick={handleSaveProcess}
-                className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
               >
-                {processDialogMode === 'create' ? 'Create Process' : 'Save Changes'}
+                {processDialogMode === 'create' ? 'create process' : 'save changes'}
               </Button>
             </div>
           </DialogFooter>
@@ -975,24 +1165,24 @@ export default function DashboardPage() {
       <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <DialogContent className="border-border bg-muted text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-foreground">Delete Process</DialogTitle>
+            <DialogTitle className="text-foreground">delete process</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              Are you sure you want to permanently delete "{editProcessForm.name}"? This action cannot be undone.
+              are you sure you want to permanently delete "{editProcessForm.name}"? this action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button
               variant="outline"
               onClick={() => setDeleteConfirmOpen(false)}
-              className="border-border bg-muted text-foreground hover:bg-input hover:text-foreground cursor-pointer"
+              className="border-border bg-muted text-foreground hover:bg-accent hover:border-foreground/30 hover:text-white cursor-pointer"
             >
-              Cancel
+              cancel
             </Button>
             <Button
               onClick={handleDeleteProcess}
               className="bg-red-600 hover:bg-red-700 text-foreground cursor-pointer"
             >
-              Delete Process
+              delete process
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1015,6 +1205,81 @@ export default function DashboardPage() {
           hasActiveDeployments={checkMachineHasActiveDeployment(machineToRemove.id)}
           isRemoving={isRemovingMachine}
           onConfirmRemove={handleConfirmRemoveMachine}
+        />
+      )}
+
+      {/* Kill Process Confirmation Dialog */}
+      <Dialog open={killConfirmOpen} onOpenChange={setKillConfirmOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>kill process</DialogTitle>
+            <DialogDescription>
+              are you sure you want to kill <span className="font-semibold text-foreground">{killTarget?.processName}</span>? this will immediately terminate the process.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setKillConfirmOpen(false)}
+            >
+              cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmKillProcess}
+            >
+              <Square className="h-4 w-4 mr-2" />
+              kill process
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Schedule Editor Dialog — only mounted when open for fresh state each time */}
+      {scheduleEditorOpen && scheduleEditorTarget && (
+        <ScheduleEditor
+          open
+          onOpenChange={(open) => {
+            setScheduleEditorOpen(open);
+            if (!open) setScheduleEditorTarget(null);
+          }}
+          schedules={scheduleEditorTarget.process._optimisticSchedules ?? scheduleEditorTarget.process.schedules ?? null}
+          initialPresetId={scheduleEditorTarget.process._optimisticPresetId ?? scheduleEditorTarget.process.schedulePresetId}
+          onChange={handleScheduleApply}
+          siteTimezone={currentSite?.timezone}
+          currentLaunchMode={(scheduleEditorTarget.process._optimisticLaunchMode ?? scheduleEditorTarget.process.launch_mode ?? (scheduleEditorTarget.process.autolaunch ? 'always' : 'off')) as 'off' | 'always' | 'scheduled'}
+          presets={schedulePresets}
+          onCreatePreset={handleCreatePreset}
+          onDeletePreset={async (id) => { await deleteSchedulePreset(id); toast.success('Preset deleted'); }}
+          onUpdatePreset={async (id, updates) => { await updateSchedulePreset(id, updates); toast.success('Preset updated'); }}
+        />
+      )}
+
+      {/* Screenshot Dialog */}
+      {screenshotTarget && (
+        <ScreenshotDialog
+          open={screenshotDialogOpen}
+          onOpenChange={setScreenshotDialogOpen}
+          machineId={screenshotTarget.machineId}
+          machineName={screenshotTarget.machineName}
+          siteId={currentSiteId}
+          isOnline={screenshotTarget.isOnline}
+          onCaptureScreenshot={() => captureScreenshot(screenshotTarget.machineId)}
+          lastScreenshot={machines.find(m => m.machineId === screenshotTarget.machineId)?.lastScreenshot}
+          hasActiveDeployment={checkMachineHasActiveDeployment(screenshotTarget.machineId)}
+        />
+      )}
+
+      {/* Live View Modal */}
+      {liveViewTarget && (
+        <LiveViewModal
+          open={liveViewOpen}
+          onOpenChange={setLiveViewOpen}
+          siteId={currentSiteId}
+          machineId={liveViewTarget.machineId}
+          machineName={liveViewTarget.machineName}
+          onStartLiveView={startLiveView}
+          onStopLiveView={stopLiveView}
         />
       )}
     </div>

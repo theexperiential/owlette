@@ -1,9 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, query, setDoc, deleteDoc, updateDoc, getDoc, where } from 'firebase/firestore';
+import { useEffect, useState, useRef } from 'react';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, getDocs, runTransaction } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
+
+export type LaunchMode = 'off' | 'always' | 'scheduled';
+
+export interface TimeRange {
+  start: string; // "HH:MM"
+  stop: string;  // "HH:MM"
+}
+
+export interface ScheduleBlock {
+  name?: string;       // Optional custom name (e.g. 'Morning shift')
+  colorIndex?: number; // Stable color assignment (persists when blocks are deleted)
+  days: string[];      // e.g. ['mon', 'tue', 'wed', 'thu', 'fri']
+  ranges: TimeRange[];
+}
 
 export interface Process {
   id: string;
@@ -11,6 +25,9 @@ export interface Process {
   status: string;
   pid: number | null;
   autolaunch: boolean;
+  launch_mode?: LaunchMode;
+  schedules?: ScheduleBlock[] | null;
+  schedulePresetId?: string | null;
   exe_path: string;
   file_path: string;
   cwd: string;
@@ -24,6 +41,9 @@ export interface Process {
   index: number; // Order from config file
   // For optimistic UI updates
   _optimisticAutolaunch?: boolean;
+  _optimisticLaunchMode?: LaunchMode;
+  _optimisticSchedules?: ScheduleBlock[] | null;
+  _optimisticPresetId?: string | null;
 }
 
 export interface Machine {
@@ -31,11 +51,46 @@ export interface Machine {
   lastHeartbeat: number;
   online: boolean;
   agent_version?: string;  // Agent version for update detection (e.g., "2.0.0")
+  rebooting?: boolean;
+  shuttingDown?: boolean;
+  rebootPending?: {
+    active: boolean;
+    processName: string | null;
+    reason: string | null;
+    timestamp: number | null;
+  };
+  rebootSchedule?: {
+    enabled: boolean;
+    schedules: ScheduleBlock[];
+  };
+  lastScreenshot?: {
+    url: string;       // Firebase Storage public URL
+    timestamp: number;
+    sizeKB: number;
+  };
+  liveView?: {
+    active: boolean;
+    interval?: number;
+    startedAt?: number;
+    expiresAt?: number;
+  };
   metrics?: {
     cpu: { name?: string; percent: number; unit: string; temperature?: number };
     memory: { percent: number; total_gb: number; used_gb: number; unit: string };
     disk: { percent: number; total_gb: number; used_gb: number; unit: string };
     gpu?: { name: string; usage_percent: number; vram_total_gb: number; vram_used_gb: number; unit: string; temperature?: number };
+    network?: {
+      interfaces?: Record<string, {
+        tx_bps: number;
+        rx_bps: number;
+        tx_util: number;
+        rx_util: number;
+        link_speed: number;
+      }>;
+      gateway_ip?: string | null;
+      latency_ms?: number | null;
+      packet_loss_pct?: number | null;
+    };
     processes?: Record<string, string>;
   };
   processes?: Process[];
@@ -99,57 +154,23 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
         return () => unsubscribe();
       }
 
-      // NON-ADMINS: Combine owned sites + assigned sites
-      console.log('Non-admin user - fetching sites:', userSites);
-
+      // NON-ADMINS: Fetch each assigned site individually by ID.
+      // Collection queries (e.g. where('owner', '==', uid)) fail because
+      // Firestore rules use get() calls that can't be evaluated for queries.
       const unsubscribes: (() => void)[] = [];
       const siteDataMap = new Map<string, Site>();
-      let ownedSiteIds = new Set<string>();
-      const assignedSiteIds = new Set<string>(userSites);
 
       const updateStateFromMap = () => {
         const siteArray = Array.from(siteDataMap.values());
         siteArray.sort((a, b) => a.name.localeCompare(b.name));
-        console.log('dY?? User sites loaded:', siteArray.map(s => s.id));
         setSites(siteArray);
         setLoading(false);
       };
 
-      // Listen to sites owned by the user
-      const ownedQuery = query(collection(db, 'sites'), where('owner', '==', userId));
-      const ownedUnsub = onSnapshot(
-        ownedQuery,
-        (snapshot) => {
-          const nextOwned = new Set<string>();
-          snapshot.forEach((docSnap) => {
-            const data = docSnap.data();
-            nextOwned.add(docSnap.id);
-            siteDataMap.set(docSnap.id, {
-              id: docSnap.id,
-              name: data.name || docSnap.id,
-              createdAt: data.createdAt || Date.now(),
-              timezone: data.timezone,
-            });
-          });
+      if (userSites.length === 0) {
+        setLoading(false);
+      }
 
-          // Remove sites that are no longer owned and not assigned
-          ownedSiteIds.forEach((siteId) => {
-            if (!nextOwned.has(siteId) && !assignedSiteIds.has(siteId)) {
-              siteDataMap.delete(siteId);
-            }
-          });
-
-          ownedSiteIds = nextOwned;
-          updateStateFromMap();
-        },
-        (err) => {
-          console.error('Error fetching owned sites:', err);
-          setLoading(false);
-        }
-      );
-      unsubscribes.push(ownedUnsub);
-
-      // Listen to assigned sites from user document
       userSites.forEach((siteId) => {
         const siteDocRef = doc(db!, 'sites', siteId);
         const unsubscribe = onSnapshot(
@@ -163,9 +184,9 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
                 createdAt: data.createdAt || Date.now(),
                 timezone: data.timezone,
               });
-            } else if (!ownedSiteIds.has(siteId)) {
+            } else {
               siteDataMap.delete(siteId);
-              console.warn(`?s??,? Site "${siteId}" not found in Firestore`);
+              console.warn(`Site "${siteId}" not found in Firestore`);
             }
 
             updateStateFromMap();
@@ -197,22 +218,25 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
       throw new Error(error);
     }
 
-    // Check if site already exists (CRITICAL: Prevent overwriting existing sites)
-    const siteRef = doc(db, 'sites', siteId);
-    const siteSnap = await getDoc(siteRef);
-
-    if (siteSnap.exists()) {
-      throw new Error(`Site ID "${siteId}" is already taken. Please choose a different ID.`);
-    }
-
     // Create site document with owner field and timezone
-    await setDoc(siteRef, {
-      name,
-      createdAt: Date.now(),
-      owner: userId,
-      timezone: timezone || 'UTC',
-    });
-
+    // Note: No pre-read existence check — non-admin users can't read sites they don't own,
+    // so getDoc would fail with permission-denied. Firestore rules protect against overwrites:
+    // setDoc on an existing doc triggers the 'update' rule (requires canAccessSite), so a
+    // non-owner can't overwrite someone else's site. Availability is checked in CreateSiteDialog.
+    const siteRef = doc(db, 'sites', siteId);
+    try {
+      await setDoc(siteRef, {
+        name,
+        createdAt: Date.now(),
+        owner: userId,
+        timezone: timezone || 'UTC',
+      });
+    } catch (err: any) {
+      if (err?.code === 'permission-denied') {
+        throw new Error(`Site ID "${siteId}" is already taken. Please choose a different ID.`);
+      }
+      throw err;
+    }
 
     // Return the created site ID so caller can auto-switch to it
     return siteId;
@@ -280,6 +304,61 @@ export function useMachines(siteId: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Config doc overrides: authoritative launch_mode/schedules from config collection
+  // This prevents the 10-second flicker on page load where status doc has stale values
+  const configOverridesRef = useRef<Record<string, Record<string, { launch_mode?: string; schedules?: any; schedulePresetId?: string | null }>>>({});
+
+  // Real-time listener on config docs for authoritative launch_mode/schedules.
+  // Config doc is source of truth — status doc may lag behind by 10-120s.
+  // Using onSnapshot (not getDocs) so agent-originated changes propagate to the web.
+  useEffect(() => {
+    if (!db || !siteId) return;
+    const configCol = collection(db, 'config', siteId, 'machines');
+    const unsubConfig = onSnapshot(configCol, (snapshot) => {
+      const overrides: typeof configOverridesRef.current = {};
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data.processes && Array.isArray(data.processes)) {
+          const processMap: Record<string, { launch_mode?: string; schedules?: any; schedulePresetId?: string | null }> = {};
+          for (const proc of data.processes) {
+            if (proc.id) {
+              processMap[proc.id] = {
+                launch_mode: proc.launch_mode,
+                schedules: proc.schedules,
+                schedulePresetId: proc.schedulePresetId ?? null,
+              };
+            }
+          }
+          overrides[docSnap.id] = processMap;
+        }
+      });
+      configOverridesRef.current = overrides;
+
+      // Apply overrides to any already-loaded machines
+      setMachines(prev => prev.map(machine => {
+        const machineOverrides = overrides[machine.machineId];
+        if (!machineOverrides || !machine.processes) return machine;
+        return {
+          ...machine,
+          processes: machine.processes.map(p => {
+            const override = machineOverrides[p.id];
+            if (!override) return p;
+            return {
+              ...p,
+              launch_mode: (override.launch_mode || p.launch_mode) as LaunchMode,
+              schedules: override.schedules ?? p.schedules,
+              schedulePresetId: override.schedulePresetId,
+            };
+          }),
+        };
+      }));
+    }, (e) => {
+      // Non-critical — status doc values still work, just may lag
+      console.debug('Config override listener error:', e);
+    });
+    return () => unsubConfig();
+  }, [siteId]);
+
   // Client-side heartbeat timeout checker
   // Re-evaluates machine online status every 30 seconds based on lastHeartbeat age
   // This catches machines that went offline without writing online=false (crashes, installer kills, etc.)
@@ -336,29 +415,76 @@ export function useMachines(siteId: string) {
 
             // Parse processes from the processes object - try both locations
             let processes: Process[] = [];
-            const processesData = data.processes || data.metrics?.processes;
+            const processesData = data.metrics?.processes || data.processes;
+
+            // Build a lookup of previous process state to preserve optimistic updates
+            // and avoid flicker when metrics uploads briefly lack launch_mode during write
+            const prevProcessMap: Record<string, {
+              launch_mode?: LaunchMode;
+              schedules?: any;
+              _optimisticLaunchMode?: LaunchMode;
+              _optimisticAutolaunch?: boolean;
+              _optimisticSchedules?: ScheduleBlock[] | null;
+              _optimisticPresetId?: string | null;
+            }> = {};
+            if (prevMachine?.processes) {
+              for (const p of prevMachine.processes) {
+                prevProcessMap[p.id] = {
+                  launch_mode: p.launch_mode,
+                  schedules: p.schedules,
+                  _optimisticLaunchMode: p._optimisticLaunchMode,
+                  _optimisticAutolaunch: p._optimisticAutolaunch,
+                  _optimisticSchedules: p._optimisticSchedules,
+                  _optimisticPresetId: p._optimisticPresetId,
+                };
+              }
+            }
 
             if (processesData && typeof processesData === 'object') {
               processes = Object.entries(processesData)
-                .map(([id, processData]: [string, any]) => ({
-                  id,
-                  name: processData.name || 'Unknown',
-                  status: processData.status || 'UNKNOWN',
-                  pid: processData.pid || null,
-                  autolaunch: processData.autolaunch || false,
-                  exe_path: processData.exe_path || '',
-                  file_path: processData.file_path || '',
-                  cwd: processData.cwd || '',
-                  priority: processData.priority || 'Normal',
-                  visibility: processData.visibility || 'Show',
-                  time_delay: processData.time_delay || '0',
-                  time_to_init: processData.time_to_init || '10',
-                  relaunch_attempts: processData.relaunch_attempts || '3',
-                  responsive: processData.responsive ?? true,
-                  last_updated: processData.last_updated || 0,
-                  index: processData.index ?? 999, // Preserve config order, default to end
-                }))
-                .sort((a, b) => a.index - b.index); // Sort by config order (index field)
+                .map(([id, processData]: [string, any]) => {
+                  const prev = prevProcessMap[id];
+                  // Config doc is authoritative for launch_mode/schedules — override status doc values
+                  const configOverride = configOverridesRef.current[doc.id]?.[id];
+                  const firestoreMode = configOverride?.launch_mode || processData.launch_mode || prev?.launch_mode || (processData.autolaunch ? 'always' : 'off') as LaunchMode;
+                  const firestoreSchedules = configOverride?.schedules ?? processData.schedules ?? prev?.schedules ?? null;
+                  const firestorePresetId = configOverride?.schedulePresetId ?? processData.schedulePresetId ?? null;
+
+                  // Preserve optimistic state until Firestore catches up
+                  // Clear optimistic flag once Firestore agrees with the optimistic value
+                  const optimisticMode = prev?._optimisticLaunchMode;
+                  const keepOptimistic = optimisticMode !== undefined && optimisticMode !== firestoreMode;
+
+                  return {
+                    id,
+                    name: processData.name || 'Unknown',
+                    status: processData.status || 'UNKNOWN',
+                    pid: processData.pid || null,
+                    autolaunch: processData.autolaunch || false,
+                    launch_mode: firestoreMode,
+                    schedulePresetId: firestorePresetId,
+                    schedules: firestoreSchedules,
+                    exe_path: processData.exe_path || '',
+                    file_path: processData.file_path || '',
+                    cwd: processData.cwd || '',
+                    priority: processData.priority || 'Normal',
+                    visibility: processData.visibility || 'Show',
+                    time_delay: processData.time_delay || '0',
+                    time_to_init: processData.time_to_init || '10',
+                    relaunch_attempts: processData.relaunch_attempts || '3',
+                    responsive: processData.responsive ?? true,
+                    last_updated: processData.last_updated || 0,
+                    index: processData.index ?? 999,
+                    // Carry optimistic state forward until Firestore confirms
+                    ...(keepOptimistic ? {
+                      _optimisticLaunchMode: prev._optimisticLaunchMode,
+                      _optimisticAutolaunch: prev._optimisticAutolaunch,
+                      _optimisticSchedules: prev._optimisticSchedules,
+                      _optimisticPresetId: prev._optimisticPresetId,
+                    } : {}),
+                  };
+                })
+                .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
             }
 
             // Convert Firestore Timestamp to Unix timestamp in seconds
@@ -395,6 +521,7 @@ export function useMachines(siteId: string) {
                 lastHeartbeat,
                 online: isOnline,
                 agent_version: data.agent_version,  // Agent version for update detection
+                rebootSchedule: data.rebootSchedule,
                 metrics,
                 processes,
               });
@@ -453,10 +580,14 @@ export function useMachines(siteId: string) {
     }
   };
 
-  const toggleAutolaunch = async (machineId: string, processId: string, processName: string, newValue: boolean) => {
+  const setLaunchMode = async (
+    machineId: string, processId: string, processName: string,
+    mode: LaunchMode, schedules?: ScheduleBlock[] | null, schedulePresetId?: string | null
+  ) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
     // Optimistically update the UI immediately
+    // These fields persist until the Firestore listener confirms the change
     setMachines(prevMachines =>
       prevMachines.map(machine => {
         if (machine.machineId === machineId) {
@@ -466,7 +597,10 @@ export function useMachines(siteId: string) {
               if (process.id === processId) {
                 return {
                   ...process,
-                  _optimisticAutolaunch: newValue
+                  _optimisticLaunchMode: mode,
+                  _optimisticAutolaunch: mode !== 'off',
+                  _optimisticSchedules: schedules ?? process.schedules,
+                  _optimisticPresetId: schedulePresetId,
                 };
               }
               return process;
@@ -477,32 +611,98 @@ export function useMachines(siteId: string) {
       })
     );
 
-    const commandPath = `sites/${siteId}/machines/${machineId}/commands/pending`;
-    const commandId = `toggle_autolaunch_${Date.now()}`;
-
-    logger.debug(`Toggling autolaunch for "${processName}" to ${newValue}`, {
-      context: 'toggleAutolaunch',
-      data: { machineId, processId, commandId },
-    });
-
-    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-    const commandData = {
-      type: 'toggle_autolaunch',
-      process_name: processName,
-      autolaunch: newValue,
-      timestamp: Date.now(),
-      status: 'pending',
+    // Update config overrides ref so subsequent listener fires use the new value
+    if (!configOverridesRef.current[machineId]) configOverridesRef.current[machineId] = {};
+    configOverridesRef.current[machineId][processId] = {
+      launch_mode: mode,
+      schedules: schedules ?? undefined,
+      schedulePresetId: schedulePresetId,
     };
 
-    try {
-      await setDoc(commandRef, {
-        [commandId]: commandData
-      }, { merge: true });
+    const configRef = doc(db, 'config', siteId, 'machines', machineId);
+    const configPath = `config/${siteId}/machines/${machineId}`;
 
-      logger.firestore.write(commandPath, commandId, 'create');
-      logger.debug('Toggle command sent successfully', { context: 'toggleAutolaunch' });
+    logger.debug(`Setting launch mode for "${processName}" to ${mode}`, {
+      context: 'setLaunchMode',
+      data: { machineId, processId, mode },
+    });
+
+    try {
+      // Strip undefined values from schedule blocks (Firestore rejects undefined)
+      const cleanSchedules = schedules?.map(b => {
+        const clean: Record<string, unknown> = { days: b.days, ranges: b.ranges };
+        if (b.name) clean.name = b.name;
+        if (b.colorIndex != null) clean.colorIndex = b.colorIndex;
+        return clean;
+      });
+
+      // Use a transaction to prevent race conditions from rapid clicks
+      // (non-transactional read-modify-write can clobber concurrent changes)
+      await runTransaction(db, async (transaction) => {
+        const configSnap = await transaction.get(configRef);
+        if (!configSnap.exists()) {
+          throw new Error('Configuration not found');
+        }
+
+        const config = configSnap.data();
+        if (!config.processes || !Array.isArray(config.processes)) {
+          throw new Error('Invalid configuration structure');
+        }
+
+        const updatedProcesses = config.processes.map((proc: any) =>
+          proc.name === processName ? {
+            ...proc,
+            launch_mode: mode,
+            autolaunch: mode !== 'off',
+            ...(cleanSchedules !== undefined ? { schedules: cleanSchedules } : {}),
+            ...(schedulePresetId !== undefined ? { schedulePresetId: schedulePresetId || null } : {}),
+          } : proc
+        );
+
+        transaction.update(configRef, { processes: updatedProcesses });
+      });
+      logger.firestore.write(configPath, undefined, 'update');
+
+      // Mirror launch_mode + schedules to status doc for immediate UI visibility
+      // configChangeFlag signals the agent to pick up config changes
+      try {
+        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+        await updateDoc(statusRef, {
+          configChangeFlag: true,
+          [`metrics.processes.${processId}.launch_mode`]: mode,
+          [`metrics.processes.${processId}.autolaunch`]: mode !== 'off',
+          ...(cleanSchedules !== undefined ? { [`metrics.processes.${processId}.schedules`]: cleanSchedules } : {}),
+          ...(schedulePresetId !== undefined ? { [`metrics.processes.${processId}.schedulePresetId`]: schedulePresetId || null } : {}),
+        });
+      } catch (flagError) {
+        logger.debug('Status doc mirror write skipped (non-critical)', { context: 'setLaunchMode' });
+      }
+
+      logger.debug('Launch mode set via config system', { context: 'setLaunchMode' });
     } catch (error) {
-      logger.firestore.error('Failed to send toggle command', error);
+      // Roll back optimistic update on failure
+      setMachines(prevMachines =>
+        prevMachines.map(machine => {
+          if (machine.machineId === machineId) {
+            return {
+              ...machine,
+              processes: machine.processes?.map(process => {
+                if (process.id === processId) {
+                  const { _optimisticLaunchMode, _optimisticAutolaunch, _optimisticSchedules, _optimisticPresetId, ...rest } = process;
+                  return rest;
+                }
+                return process;
+              })
+            };
+          }
+          return machine;
+        })
+      );
+      // Clear config override so listener doesn't re-apply stale optimistic values
+      if (configOverridesRef.current[machineId]) {
+        delete configOverridesRef.current[machineId][processId];
+      }
+      logger.firestore.error('Failed to set launch mode', error);
       throw error;
     }
   };
@@ -519,45 +719,50 @@ export function useMachines(siteId: string) {
     });
 
     try {
-      logger.firestore.read(configPath);
-
-      const configSnap = await getDoc(configRef);
-      if (!configSnap.exists()) {
-        logger.error('Config document not found', { context: 'updateProcess', data: { configPath } });
-        throw new Error('Configuration not found');
+      // Clean schedule blocks to strip undefined values (Firestore rejects undefined)
+      const cleanedData = { ...updatedData };
+      if (cleanedData.schedules) {
+        cleanedData.schedules = cleanedData.schedules.map(b => {
+          const clean: any = { days: b.days, ranges: b.ranges };
+          if (b.name) clean.name = b.name;
+          if (b.colorIndex != null) clean.colorIndex = b.colorIndex;
+          return clean;
+        });
       }
 
-      const config = configSnap.data();
+      await runTransaction(db, async (transaction) => {
+        const configSnap = await transaction.get(configRef);
+        if (!configSnap.exists()) {
+          throw new Error('Configuration not found');
+        }
 
-      if (!config.processes || !Array.isArray(config.processes)) {
-        logger.error('Invalid config structure - no processes array', { context: 'updateProcess' });
-        throw new Error('Invalid configuration structure');
-      }
+        const config = configSnap.data();
+        if (!config.processes || !Array.isArray(config.processes)) {
+          throw new Error('Invalid configuration structure');
+        }
 
-      const targetProcess = config.processes.find((proc: any) => proc.id === processId);
-      if (!targetProcess) {
-        logger.error('Process not found in config', { context: 'updateProcess', data: { processId } });
-        throw new Error('Process not found');
-      }
+        const targetProcess = config.processes.find((proc: any) => proc.id === processId);
+        if (!targetProcess) {
+          throw new Error('Process not found');
+        }
 
-      const updatedProcesses = config.processes.map((proc: any) =>
-        proc.id === processId ? { ...proc, ...updatedData } : proc
-      );
+        const updatedProcesses = config.processes.map((proc: any) =>
+          proc.id === processId ? { ...proc, ...cleanedData } : proc
+        );
 
-      await updateDoc(configRef, {
-        processes: updatedProcesses
+        transaction.update(configRef, { processes: updatedProcesses });
       });
 
       logger.firestore.write(configPath, undefined, 'update');
       logger.debug('Process updated successfully', { context: 'updateProcess' });
 
-      // Set config change flag to notify agent (push notification)
-      // This eliminates agent's need to constantly poll config (saves ~500K-1M reads/week)
-      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-      await updateDoc(statusRef, {
-        configChangeFlag: true
-      });
-      logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
+      // Set config change flag to notify agent (non-critical, agent polls anyway)
+      try {
+        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+        await updateDoc(statusRef, { configChangeFlag: true });
+      } catch (flagError) {
+        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'updateProcess' });
+      }
     } catch (error: any) {
       logger.firestore.error('Failed to update process', error);
 
@@ -596,42 +801,36 @@ export function useMachines(siteId: string) {
     });
 
     try {
-      logger.firestore.read(configPath);
+      await runTransaction(db, async (transaction) => {
+        const configSnap = await transaction.get(configRef);
+        if (!configSnap.exists()) {
+          throw new Error('Configuration not found');
+        }
 
-      const configSnap = await getDoc(configRef);
-      if (!configSnap.exists()) {
-        logger.error('Config document not found', { context: 'deleteProcess', data: { configPath } });
-        throw new Error('Configuration not found');
-      }
+        const config = configSnap.data();
+        if (!config.processes || !Array.isArray(config.processes)) {
+          throw new Error('Invalid configuration structure');
+        }
 
-      const config = configSnap.data();
+        const targetProcess = config.processes.find((proc: any) => proc.id === processId);
+        if (!targetProcess) {
+          throw new Error('Process not found');
+        }
 
-      if (!config.processes || !Array.isArray(config.processes)) {
-        logger.error('Invalid config structure - no processes array', { context: 'deleteProcess' });
-        throw new Error('Invalid configuration structure');
-      }
-
-      const targetProcess = config.processes.find((proc: any) => proc.id === processId);
-      if (!targetProcess) {
-        logger.error('Process not found in config', { context: 'deleteProcess', data: { processId } });
-        throw new Error('Process not found');
-      }
-
-      const updatedProcesses = config.processes.filter((proc: any) => proc.id !== processId);
-
-      await updateDoc(configRef, {
-        processes: updatedProcesses
+        const updatedProcesses = config.processes.filter((proc: any) => proc.id !== processId);
+        transaction.update(configRef, { processes: updatedProcesses });
       });
 
       logger.firestore.write(configPath, undefined, 'delete');
       logger.debug('Process deleted successfully', { context: 'deleteProcess' });
 
-      // Set config change flag to notify agent
-      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-      await updateDoc(statusRef, {
-        configChangeFlag: true
-      });
-      logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
+      // Set config change flag to notify agent (non-critical, agent polls anyway)
+      try {
+        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+        await updateDoc(statusRef, { configChangeFlag: true });
+      } catch (flagError) {
+        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'deleteProcess' });
+      }
     } catch (error: any) {
       logger.firestore.error('Failed to delete process', error);
 
@@ -670,26 +869,11 @@ export function useMachines(siteId: string) {
     });
 
     try {
-      logger.firestore.read(configPath);
-
-      const configSnap = await getDoc(configRef);
-      if (!configSnap.exists()) {
-        logger.error('Config document not found', { context: 'createProcess', data: { configPath } });
-        throw new Error('Configuration not found');
-      }
-
-      const config = configSnap.data();
-
-      if (!config.processes || !Array.isArray(config.processes)) {
-        logger.error('Invalid config structure - no processes array', { context: 'createProcess' });
-        throw new Error('Invalid configuration structure');
-      }
-
       const newProcessId = crypto.randomUUID();
 
       const newProcess = {
         id: newProcessId,
-        name: processData.name || 'New Process',
+        name: processData.name || 'Untitled Process',
         exe_path: processData.exe_path || '',
         file_path: processData.file_path || '',
         cwd: processData.cwd || '',
@@ -698,24 +882,36 @@ export function useMachines(siteId: string) {
         time_delay: processData.time_delay || '0',
         time_to_init: processData.time_to_init || '10',
         relaunch_attempts: processData.relaunch_attempts || '3',
-        autolaunch: processData.autolaunch ?? false
+        autolaunch: processData.autolaunch ?? false,
+        launch_mode: processData.launch_mode || 'off',
+        schedules: processData.schedules || null
       };
 
-      const updatedProcesses = [...config.processes, newProcess];
+      await runTransaction(db, async (transaction) => {
+        const configSnap = await transaction.get(configRef);
+        if (!configSnap.exists()) {
+          throw new Error('Configuration not found');
+        }
 
-      await updateDoc(configRef, {
-        processes: updatedProcesses
+        const config = configSnap.data();
+        if (!config.processes || !Array.isArray(config.processes)) {
+          throw new Error('Invalid configuration structure');
+        }
+
+        const updatedProcesses = [...config.processes, newProcess];
+        transaction.update(configRef, { processes: updatedProcesses });
       });
 
       logger.firestore.write(configPath, undefined, 'create');
       logger.debug('Process created successfully', { context: 'createProcess', data: { newProcessId } });
 
-      // Set config change flag to notify agent
-      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-      await updateDoc(statusRef, {
-        configChangeFlag: true
-      });
-      logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
+      // Set config change flag to notify agent (non-critical, agent polls anyway)
+      try {
+        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+        await updateDoc(statusRef, { configChangeFlag: true });
+      } catch (flagError) {
+        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'createProcess' });
+      }
 
       return newProcessId;
     } catch (error: any) {
@@ -744,5 +940,50 @@ export function useMachines(siteId: string) {
     }
   };
 
-  return { machines, loading, error, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess };
+  const sendMachineCommand = async (machineId: string, commandType: string, extraData: Record<string, any> = {}) => {
+    if (!db || !siteId) throw new Error('Firebase not configured');
+
+    const commandId = `${commandType}_${Date.now()}`;
+    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
+    const commandData = {
+      type: commandType,
+      timestamp: Date.now(),
+      status: 'pending',
+      ...extraData,
+    };
+
+    await setDoc(commandRef, {
+      [commandId]: commandData
+    }, { merge: true });
+  };
+
+  const rebootMachine = async (machineId: string) => {
+    await sendMachineCommand(machineId, 'reboot_machine');
+  };
+
+  const shutdownMachine = async (machineId: string) => {
+    await sendMachineCommand(machineId, 'shutdown_machine');
+  };
+
+  const cancelReboot = async (machineId: string) => {
+    await sendMachineCommand(machineId, 'cancel_reboot');
+  };
+
+  const dismissRebootPending = async (machineId: string, processName: string) => {
+    await sendMachineCommand(machineId, 'dismiss_reboot_pending', { process_name: processName });
+  };
+
+  const captureScreenshot = async (machineId: string) => {
+    await sendMachineCommand(machineId, 'capture_screenshot');
+  };
+
+  const startLiveView = async (machineId: string, interval: number = 10, duration: number = 600) => {
+    await sendMachineCommand(machineId, 'start_live_view', { interval, duration });
+  };
+
+  const stopLiveView = async (machineId: string) => {
+    await sendMachineCommand(machineId, 'stop_live_view');
+  };
+
+  return { machines, loading, error, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView };
 }

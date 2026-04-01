@@ -1,94 +1,120 @@
+'use client';
+
+import { useState } from 'react';
 import {
-  Activity,
-  RefreshCw,
-  Cloud,
-  Globe,
-  Cpu,
-  Settings,
-  Bell,
-  Shield,
+  FerrisWheel,
+  Monitor,
+  Landmark,
+  Music,
+  Building2,
+  Church,
+  Clapperboard,
+  Store,
+  type LucideIcon,
 } from 'lucide-react';
 
-const features = [
+interface Vertical {
+  label: string;
+  tagline: string;
+  icon: LucideIcon;
+}
+
+const verticals: Vertical[] = [
   {
-    icon: Activity,
-    title: 'Real-time Monitoring',
-    description: 'Live CPU, memory, GPU, and disk metrics with inline sparkline charts. Track trends and spot issues instantly.',
+    label: 'theme parks',
+    tagline: 'keep every ride, queue, and show running 24/7',
+    icon: FerrisWheel,
   },
   {
-    icon: RefreshCw,
-    title: 'Auto-Restart & Recovery',
-    description: 'Crashed process? Owlette restarts it automatically. Configure startup sequences and dependencies.',
+    label: 'digital signage',
+    tagline: 'keep every screen on and up to date',
+    icon: Monitor,
   },
   {
-    icon: Cloud,
-    title: 'Remote Deployments',
-    description: 'Push updates to any machine, anywhere. Deploy software, configurations, and content remotely.',
+    label: 'museums & galleries',
+    tagline: 'catch and resolve software crashes before doors open',
+    icon: Landmark,
   },
   {
-    icon: Globe,
-    title: 'Multi-Site Management',
-    description: 'Organize machines by site or project. Manage distributed installations from a single dashboard.',
+    label: 'live events',
+    tagline: 'manage multi-machine clusters under pressure',
+    icon: Music,
   },
   {
-    icon: Cpu,
-    title: 'Process Control',
-    description: 'Start, stop, and restart processes remotely. Full control over your Windows applications.',
+    label: 'corporate AV',
+    tagline: 'maintain lobby displays and experience centers remotely',
+    icon: Building2,
   },
   {
-    icon: Bell,
-    title: 'Instant Alerts',
-    description: 'Get notified when things go wrong. Email alerts for offline machines and failed processes.',
+    label: 'worship',
+    tagline: 'keep services running without a tech in the booth',
+    icon: Church,
   },
   {
-    icon: Shield,
-    title: 'Secure by Design',
-    description: 'End-to-end encryption. OAuth authentication. Your machines, your data, protected.',
+    label: 'virtual production',
+    tagline: 'monitor real-time rendering performance over time on XR stages',
+    icon: Clapperboard,
   },
   {
-    icon: Settings,
-    title: 'Easy Configuration',
-    description: 'Simple agent installer. Intuitive dashboard. Get up and running in minutes, not hours.',
+    label: 'experiential retail',
+    tagline: 'manage in-store installations across every flagship',
+    icon: Store,
   },
 ];
 
 export function FeatureGrid() {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
   return (
-    <section id="features" className="py-24 md:py-32 px-6 bg-gradient-to-b from-background via-card/30 to-background">
-      <div className="max-w-7xl mx-auto">
-        {/* Section Header */}
-        <div className="text-center mb-16">
-          <h2 className="section-headline text-foreground mb-4">
-            Everything you need to stay in control
-          </h2>
-          <p className="section-subheadline max-w-2xl mx-auto">
-            Powerful features designed for IT professionals and integrators
-            who demand reliability.
-          </p>
-        </div>
-
-        {/* Feature Grid */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {features.map((feature, index) => (
-            <div
-              key={feature.title}
-              className="group p-6 rounded-lg border border-border/30 bg-background/50 hover:border-accent-cyan/30 hover:bg-card/50 transition-all duration-300"
-              style={{ animationDelay: `${index * 50}ms` }}
+    <section className="py-16 sm:py-24 px-4 sm:px-6">
+      <div className="max-w-4xl mx-auto text-center">
+        <p className="text-sm sm:text-base text-muted-foreground mb-6">
+          built for
+        </p>
+        <div className="flex flex-wrap justify-center gap-x-3 sm:gap-x-4 gap-y-2">
+          {verticals.map(({ label, icon: Icon }, i) => (
+            <span
+              key={label}
+              className="flex items-center gap-3 sm:gap-4"
+              onMouseEnter={() => setActiveIndex(i)}
+              onMouseLeave={() => setActiveIndex(null)}
             >
-              {/* Icon */}
-              <div className="w-10 h-10 rounded-md bg-accent-cyan/10 flex items-center justify-center mb-4 group-hover:bg-accent-cyan/20 transition-colors">
-                <feature.icon className="w-5 h-5 text-accent-cyan" />
-              </div>
-
-              {/* Content */}
-              <h3 className="text-base font-semibold text-foreground mb-2">
-                {feature.title}
-              </h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                {feature.description}
-              </p>
-            </div>
+              <span className="flex items-center gap-1.5 sm:gap-2 cursor-default">
+                <Icon
+                  className={`w-4 h-4 sm:w-[18px] sm:h-[18px] transition-colors duration-200 ${
+                    activeIndex === i
+                      ? 'text-accent-warm'
+                      : 'text-muted-foreground/50'
+                  }`}
+                />
+                <span
+                  className={`text-lg sm:text-2xl font-heading font-semibold transition-colors duration-200 ${
+                    activeIndex === i
+                      ? 'text-accent-warm'
+                      : 'text-foreground/80'
+                  }`}
+                >
+                  {label}
+                </span>
+              </span>
+              {i < verticals.length - 1 && (
+                <span className="text-accent-warm/40 text-lg select-none">
+                  /
+                </span>
+              )}
+            </span>
           ))}
+        </div>
+        <div className="h-8 mt-4 flex items-center justify-center">
+          <p
+            className={`text-base sm:text-lg text-muted-foreground transition-all duration-200 ${
+              activeIndex !== null
+                ? 'opacity-100 translate-y-0'
+                : 'opacity-0 translate-y-1'
+            }`}
+          >
+            {activeIndex !== null ? verticals[activeIndex].tagline : ''}
+          </p>
         </div>
       </div>
     </section>

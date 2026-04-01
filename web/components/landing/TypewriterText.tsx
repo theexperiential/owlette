@@ -79,14 +79,14 @@ export function TypewriterText({
     currentCharIndex >= lines[lines.length - 1].text.length;
 
   return (
-    <span className={className}>
+    <span className={`flex flex-col gap-0 ${className}`}>
       {lines.map((line, index) => {
         const isLastLine = index === lines.length - 1;
         const showCursorOnThisLine = index === currentLineIndex && !isComplete;
         const showFinalCursor = isLastLine && isComplete;
 
         return (
-          <span key={index} className="relative block">
+          <span key={index} className="relative block leading-[1.05]">
             {/* Invisible placeholder to reserve space for full line + cursor */}
             <span className="invisible" aria-hidden="true">
               {line.text}_

@@ -1,3 +1,8 @@
+# Environment / credentials
+.env.test
+.env.local
+.env*.local
+
 # Python
 __pycache__/
 *.py[cod]
@@ -18,7 +23,11 @@ agent/.venv/
 # IDE
 .vscode/
 .idea/
-.claude/
+.claude/settings.local.json
+.claude/session-edits.json
+.claude/.env.local
+.claude/memory/
+.claude/plans/
 *.swp
 *.swo
 *~
@@ -33,11 +42,14 @@ agent/logs/
 agent/tmp/
 
 # Build artifacts
+site/
 build/
 dist/
-installer/
+/installer/
 agent/build/
+agent/build_output.txt
 agent/dist/
+agent/downloads/
 agent/installer/
 *.exe
 *.msi
@@ -57,6 +69,7 @@ agent/config/firebase-credentials.json
 agent/config/firebase_cache.json
 
 # Temporary/generated files
+nul
 Manage
 *.spec.bak
 hook-*.py

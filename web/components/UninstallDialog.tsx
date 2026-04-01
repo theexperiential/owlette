@@ -250,10 +250,10 @@ export default function UninstallDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Trash2 className="h-5 w-5" />
-            Uninstall Software
+            uninstall software
           </DialogTitle>
           <DialogDescription>
-            Select machines and software to uninstall remotely
+            select machines and software to uninstall remotely
           </DialogDescription>
         </DialogHeader>
 
@@ -261,7 +261,7 @@ export default function UninstallDialog({
           {/* Step 1: Select Machines */}
           <div className="space-y-3 max-w-full">
             <div className="flex items-center justify-between">
-              <Label className="text-base font-semibold">1. Select Target Machines</Label>
+              <Label className="text-base font-semibold">1. select target machines</Label>
               <div className="flex gap-2">
                 <Button
                   size="sm"
@@ -269,21 +269,21 @@ export default function UninstallDialog({
                   onClick={selectOnlyOnlineMachines}
                   disabled={onlineMachines.length === 0}
                 >
-                  Online Only ({onlineMachines.length})
+                  online only ({onlineMachines.length})
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={toggleAllMachines}
                 >
-                  {allMachinesSelected ? 'Deselect All' : 'Select All'}
+                  {allMachinesSelected ? 'deselect all' : 'select all'}
                 </Button>
               </div>
             </div>
 
             <div className="border rounded-md p-4 max-h-48 overflow-y-auto">
               {machines.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No machines available</p>
+                <p className="text-sm text-muted-foreground">no machines available</p>
               ) : (
                 <div className="space-y-2">
                   {machines.map((machine) => (
@@ -299,9 +299,9 @@ export default function UninstallDialog({
                       >
                         {machine.machineId}
                         {machine.online ? (
-                          <Badge variant="default" className="ml-2">Online</Badge>
+                          <Badge variant="default" className="ml-2">online</Badge>
                         ) : (
-                          <Badge variant="secondary" className="ml-2">Offline</Badge>
+                          <Badge variant="secondary" className="ml-2">offline</Badge>
                         )}
                       </label>
                     </div>
@@ -313,17 +313,17 @@ export default function UninstallDialog({
 
           {/* Step 2: Select Software */}
           <div className="space-y-3 max-w-full overflow-hidden">
-            <Label className="text-base font-semibold">2. Select Software to Uninstall</Label>
+            <Label className="text-base font-semibold">2. select software to uninstall</Label>
 
             {selectedMachines.size === 0 ? (
-              <p className="text-sm text-muted-foreground">Select machines first to see available software</p>
+              <p className="text-sm text-muted-foreground">select machines first to see available software</p>
             ) : loading ? (
               <div className="flex items-center gap-2 p-4 border rounded-md">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm">Loading installed software...</span>
+                <span className="text-sm">loading installed software...</span>
               </div>
             ) : availableSoftware.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No software detected on selected machines (may need to wait for inventory sync)</p>
+              <p className="text-sm text-muted-foreground">no software detected on selected machines (may need to wait for inventory sync)</p>
             ) : (
               <>
                 {/* Inline Software List with Filter */}
@@ -332,7 +332,7 @@ export default function UninstallDialog({
                   <div className="relative border-b p-3 bg-card overflow-hidden">
                     <Search className="absolute left-6 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                     <Input
-                      placeholder="Filter software..."
+                      placeholder="filter software..."
                       value={filterText}
                       onChange={(e) => setFilterText(e.target.value)}
                       className="pl-9 pr-9 h-9"
@@ -422,20 +422,20 @@ export default function UninstallDialog({
                     <CardContent className="pt-4 space-y-2">
                       <div className="grid grid-cols-2 gap-2 text-sm">
                         <div className="overflow-hidden">
-                          <span className="font-semibold">Name:</span> <span className="truncate inline-block max-w-full align-bottom">{selectedSoftwareInfo.name}</span>
+                          <span className="font-semibold">name:</span> <span className="truncate inline-block max-w-full align-bottom">{selectedSoftwareInfo.name}</span>
                         </div>
                         <div className="overflow-hidden">
-                          <span className="font-semibold">Version:</span> <span className="truncate inline-block max-w-full align-bottom">{selectedSoftwareInfo.version || 'N/A'}</span>
+                          <span className="font-semibold">version:</span> <span className="truncate inline-block max-w-full align-bottom">{selectedSoftwareInfo.version || 'N/A'}</span>
                         </div>
                         <div className="overflow-hidden">
-                          <span className="font-semibold">Publisher:</span> <span className="truncate inline-block max-w-full align-bottom">{selectedSoftwareInfo.publisher || 'N/A'}</span>
+                          <span className="font-semibold">publisher:</span> <span className="truncate inline-block max-w-full align-bottom">{selectedSoftwareInfo.publisher || 'N/A'}</span>
                         </div>
                         <div className="overflow-hidden">
-                          <span className="font-semibold">Type:</span> <span className="truncate inline-block max-w-full align-bottom">{selectedSoftwareInfo.installer_type.toUpperCase()}</span>
+                          <span className="font-semibold">type:</span> <span className="truncate inline-block max-w-full align-bottom">{selectedSoftwareInfo.installer_type.toUpperCase()}</span>
                         </div>
                         {selectedSoftwareInfo.install_location && (
                           <div className="col-span-2 overflow-hidden">
-                            <span className="font-semibold">Location:</span>
+                            <span className="font-semibold">location:</span>
                             <span className="text-muted-foreground ml-1 font-mono text-xs truncate block">{selectedSoftwareInfo.install_location}</span>
                           </div>
                         )}
@@ -450,7 +450,7 @@ export default function UninstallDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={uninstalling}>
-            Cancel
+            cancel
           </Button>
           <Button
             onClick={handleUninstall}
@@ -460,12 +460,12 @@ export default function UninstallDialog({
             {uninstalling ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Uninstalling...
+                uninstalling...
               </>
             ) : (
               <>
                 <Trash2 className="mr-2 h-4 w-4" />
-                Uninstall Software
+                uninstall software
               </>
             )}
           </Button>
@@ -475,14 +475,14 @@ export default function UninstallDialog({
       <ConfirmDialog
         open={confirmDialogOpen}
         onOpenChange={setConfirmDialogOpen}
-        title="Confirm Uninstall"
+        title="confirm uninstall"
         description={
           pendingUninstall
-            ? `Uninstall "${pendingUninstall.software.name}" from ${pendingUninstall.machineCount} machine${pendingUninstall.machineCount > 1 ? 's' : ''}?\n\nThis action cannot be undone.`
+            ? `uninstall "${pendingUninstall.software.name}" from ${pendingUninstall.machineCount} machine${pendingUninstall.machineCount > 1 ? 's' : ''}?\n\nthis action cannot be undone.`
             : ''
         }
-        confirmText="Uninstall"
-        cancelText="Cancel"
+        confirmText="uninstall"
+        cancelText="cancel"
         onConfirm={executeUninstall}
         variant="destructive"
       />

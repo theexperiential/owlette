@@ -166,6 +166,7 @@ class ConnectionManager:
         # =====================================================================
         self._reconnect_lock = threading.Lock()
         self._reconnect_in_progress = False
+        self._reconnect_thread: Optional[threading.Thread] = None
 
         # =====================================================================
         # Callbacks (injected by FirebaseClient)
@@ -174,7 +175,7 @@ class ConnectionManager:
         self._disconnect_callback: Optional[Callable[[], None]] = None
         self._on_connected_callback: Optional[Callable[[], None]] = None
 
-        self.logger.info("ConnectionManager initialized")
+        self.logger.debug("ConnectionManager initialized")
 
     # =========================================================================
     # Properties
@@ -259,6 +260,31 @@ class ConnectionManager:
         with self._listeners_lock:
             if listener in self._state_listeners:
                 self._state_listeners.remove(listener)
+
+    def set_health_callback(self, callback: Callable[[str, str], None]):
+        """
+        Register a callback invoked when the connection enters a persistent
+        failure state (BACKOFF or FATAL_ERROR).
+
+        The callback receives (error_code: str, reason: str) and should update
+        the service health state for IPC, Firestore, and remote alerting.
+
+        Args:
+            callback: Called with (error_code, reason) on BACKOFF/FATAL_ERROR transitions.
+        """
+        def _health_listener(event: ConnectionEvent):
+            if event.new_state in (ConnectionState.BACKOFF, ConnectionState.FATAL_ERROR):
+                error_code = (
+                    'fatal_error' if event.new_state == ConnectionState.FATAL_ERROR
+                    else 'connection_failure'
+                )
+                try:
+                    callback(error_code, event.reason)
+                except Exception as e:
+                    self.logger.debug(f"Health callback error: {e}")
+
+        self.add_state_listener(_health_listener)
+        self.logger.debug("Health callback registered")
 
     # =========================================================================
     # State Management (Internal)
@@ -462,6 +488,7 @@ class ConnectionManager:
             name="ConnectionManager-Reconnect"
         )
         thread.start()
+        self._reconnect_thread = thread
 
     def _reconnect_sequence(self, reason: str):
         """
@@ -483,11 +510,11 @@ class ConnectionManager:
             wait_time = self._calculate_backoff_wait()
             if wait_time > 0:
                 self._set_state(ConnectionState.BACKOFF, f"Waiting {wait_time:.0f}s before retry")
-                self.logger.info(f"[BACKOFF] Waiting {wait_time:.0f}s (attempt #{self._consecutive_failures + 1})")
+                self.logger.debug(f"[BACKOFF] Waiting {wait_time:.0f}s (attempt #{self._consecutive_failures + 1})")
 
                 # Interruptible sleep
                 if self._shutdown_event.wait(wait_time):
-                    self.logger.info("[RECONNECT] Interrupted by shutdown")
+                    self.logger.debug("[RECONNECT] Interrupted by shutdown")
                     return
 
             self._set_state(ConnectionState.RECONNECTING, "Attempting reconnection")
@@ -525,7 +552,7 @@ class ConnectionManager:
         try:
             result = self._connect_callback()
             if result:
-                self.logger.info("[CONNECT] Callback returned success")
+                self.logger.debug("[CONNECT] Callback returned success")
             else:
                 self.logger.warning("[CONNECT] Callback returned failure")
             return result
@@ -621,11 +648,11 @@ class ConnectionManager:
         """
         for host, port in self.CONNECTIVITY_HOSTS:
             try:
-                sock = socket.create_connection(
+                with socket.create_connection(
                     (host, port),
                     timeout=self.CONNECTIVITY_TIMEOUT
-                )
-                sock.close()
+                ) as sock:
+                    pass
                 self.logger.debug(f"[INTERNET] Connectivity confirmed via {host}")
                 return True
             except OSError:
@@ -746,7 +773,7 @@ class ConnectionManager:
             thread.daemon = True
             thread.start()
             self._supervised_threads[name] = thread
-            self.logger.info(f"[SUPERVISOR] Started thread: {name}")
+            self.logger.debug(f"[SUPERVISOR] Started thread: {name}")
         except Exception as e:
             self.logger.error(f"[SUPERVISOR] Failed to start thread {name}: {e}")
 
@@ -759,7 +786,7 @@ class ConnectionManager:
         threads are started at the right time.
         """
         self._thread_supervision_enabled = True
-        self.logger.info("[SUPERVISOR] Thread supervision enabled")
+        self.logger.debug("[SUPERVISOR] Thread supervision enabled")
 
         # If already connected, start threads now
         if self.state == ConnectionState.CONNECTED:
@@ -788,7 +815,7 @@ class ConnectionManager:
             name="ConnectionManager-Watchdog"
         )
         self._watchdog_thread.start()
-        self.logger.info("[WATCHDOG] Started")
+        self.logger.debug("[WATCHDOG] Started")
 
     def _watchdog_loop(self):
         """
@@ -797,7 +824,7 @@ class ConnectionManager:
         Runs in a background thread, checking thread health
         at regular intervals.
         """
-        self.logger.info("[WATCHDOG] Loop started")
+        self.logger.debug("[WATCHDOG] Loop started")
 
         while not self._shutdown_event.is_set():
             try:
@@ -824,7 +851,7 @@ class ConnectionManager:
             # Wait for next check (interruptible)
             self._shutdown_event.wait(self.WATCHDOG_INTERVAL)
 
-        self.logger.info("[WATCHDOG] Loop exited")
+        self.logger.debug("[WATCHDOG] Loop exited")
 
     def get_thread_status(self) -> Dict[str, bool]:
         """
@@ -863,7 +890,11 @@ class ConnectionManager:
 
         # Wait for watchdog to stop
         if self._watchdog_thread and self._watchdog_thread.is_alive():
-            self._watchdog_thread.join(timeout=2.0)
+            self._watchdog_thread.join(timeout=5.0)
+
+        # Wait for any in-flight reconnect attempt
+        if self._reconnect_thread and self._reconnect_thread.is_alive():
+            self._reconnect_thread.join(timeout=5.0)
 
         self._set_state(ConnectionState.DISCONNECTED, "Shutdown complete")
         self.logger.info("[SHUTDOWN] Complete")

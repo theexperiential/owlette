@@ -11,7 +11,6 @@ import { Loader2, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSystemPresets, type SystemPreset } from '@/hooks/useSystemPresets';
 import { useAuth } from '@/contexts/AuthContext';
-import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 import { serverTimestamp } from 'firebase/firestore';
 
 /**
@@ -25,7 +24,6 @@ import { serverTimestamp } from 'firebase/firestore';
  * - Edit existing preset (preset prop provided)
  * - Form validation
  * - Category selection
- * - Special handling for Owlette Agent preset
  */
 interface SystemPresetDialogProps {
   open: boolean;
@@ -40,8 +38,6 @@ export default function SystemPresetDialog({
 }: SystemPresetDialogProps) {
   const { createPreset, updatePreset } = useSystemPresets();
   const { user } = useAuth();
-  const { version: latestInstallerVersion, downloadUrl: latestInstallerUrl, isLoading: installerLoading } = useInstallerVersion();
-
   // Form state
   const [name, setName] = useState('');
   const [softwareName, setSoftwareName] = useState('');
@@ -52,11 +48,11 @@ export default function SystemPresetDialog({
   const [installerUrl, setInstallerUrl] = useState('');
   const [silentFlags, setSilentFlags] = useState('/VERYSILENT /NORESTART /SUPPRESSMSGBOXES');
   const [verifyPath, setVerifyPath] = useState('');
-  const [isOwletteAgent, setIsOwletteAgent] = useState(false);
   const [timeoutSeconds, setTimeoutSeconds] = useState(600);
   const [order, setOrder] = useState(100);
 
   const [saving, setSaving] = useState(false);
+  const [fetchingTd, setFetchingTd] = useState(false);
 
   const isEditMode = preset !== null;
 
@@ -72,7 +68,6 @@ export default function SystemPresetDialog({
       setInstallerUrl(preset.installer_url);
       setSilentFlags(preset.silent_flags);
       setVerifyPath(preset.verify_path || '');
-      setIsOwletteAgent(preset.is_owlette_agent);
       setTimeoutSeconds(preset.timeout_seconds || 600);
       setOrder(preset.order);
     } else {
@@ -86,37 +81,44 @@ export default function SystemPresetDialog({
       setInstallerUrl('');
       setSilentFlags('/VERYSILENT /NORESTART /SUPPRESSMSGBOXES');
       setVerifyPath('');
-      setIsOwletteAgent(false);
       setTimeoutSeconds(600);
       setOrder(100);
     }
   }, [preset, open]);
 
-  // Auto-fill Owlette Agent preset
-  const handleAutoFillOwlette = () => {
-    if (!latestInstallerUrl || !latestInstallerVersion) {
-      toast.error('Installer Not Available', {
-        description: 'No Owlette installer found. Please upload one in Admin > Installers first.',
+  const handleAutoFillTd = async () => {
+    setFetchingTd(true);
+    try {
+      const res = await fetch('/api/admin/fetch-td-version');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: 'Failed to fetch' }));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+
+      const { latest } = await res.json();
+
+      setName(`TouchDesigner ${latest.version} (Full)`);
+      setSoftwareName('TouchDesigner');
+      setCategory('Creative Software');
+      setDescription(`TouchDesigner ${latest.version} full installer`);
+      setIcon('');
+      setInstallerName(`TouchDesigner.${latest.version}.exe`);
+      setInstallerUrl(latest.full_installer_url);
+      setSilentFlags('/VERYSILENT /SP- /NORESTART /SUPPRESSMSGBOXES');
+      setVerifyPath('C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe');
+      setTimeoutSeconds(1200);
+      setOrder(10);
+
+      toast.success('Auto-filled', {
+        description: `TouchDesigner ${latest.version} ready to save.`,
       });
-      return;
+    } catch (err: any) {
+      toast.error('Failed to fetch TD version', {
+        description: err.message || 'Could not reach derivative.ca',
+      });
+    } finally {
+      setFetchingTd(false);
     }
-
-    setName(`Owlette Agent v${latestInstallerVersion}`);
-    setSoftwareName('Owlette Agent');
-    setCategory('System');
-    setDescription('Remote process management and monitoring agent for Windows');
-    setIcon('🦉');
-    setInstallerName('OwletteInstaller.exe');
-    setInstallerUrl(latestInstallerUrl);
-    setSilentFlags('/VERYSILENT /NORESTART /SUPPRESSMSGBOXES');
-    setVerifyPath('C:\\Program Files\\Owlette\\OwletteService.exe');
-    setIsOwletteAgent(true);
-    setTimeoutSeconds(300);
-    setOrder(1);
-
-    toast.success('Auto-filled', {
-      description: `Owlette Agent v${latestInstallerVersion} preset ready to save.`,
-    });
   };
 
   const handleSave = async () => {
@@ -143,7 +145,7 @@ export default function SystemPresetDialog({
     }
     if (!installerUrl.trim()) {
       toast.error('Installer URL required', {
-        description: 'Please enter a download URL or use the auto-fill button for Owlette Agent.',
+        description: 'Please enter a direct download URL for the installer.',
       });
       return;
     }
@@ -159,7 +161,7 @@ export default function SystemPresetDialog({
         installer_name: installerName,
         installer_url: installerUrl,
         silent_flags: silentFlags,
-        is_owlette_agent: isOwletteAgent,
+        is_owlette_agent: false,
         timeout_seconds: timeoutSeconds,
         order,
       };
@@ -209,35 +211,35 @@ export default function SystemPresetDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="border-border bg-secondary text-white max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEditMode ? 'Edit Template' : 'Create Template'}</DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogTitle>{isEditMode ? 'edit template' : 'create template'}</DialogTitle>
+          <DialogDescription className="text-muted-foreground">
             {isEditMode
-              ? 'Update the template configuration.'
-              : 'Create a new software template for the deployment catalog.'}
+              ? 'update the template configuration.'
+              : 'create a new software template for the deployment catalog.'}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Quick Fill Button - Only show when creating new preset */}
+        {/* Auto-fill TouchDesigner - Only show when creating new preset */}
         {!isEditMode && (
-          <div className="pb-4 border-b border-slate-700">
+          <div className="pb-4 border-b border-border">
             <Button
               type="button"
               variant="outline"
-              onClick={handleAutoFillOwlette}
-              disabled={installerLoading || !latestInstallerUrl}
-              className="w-full border-blue-600 bg-blue-600/10 text-blue-400 hover:bg-blue-600/20 hover:text-blue-300 cursor-pointer"
+              onClick={handleAutoFillTd}
+              disabled={fetchingTd}
+              className="w-full border-accent-cyan/50 bg-accent-cyan/10 text-accent-cyan hover:bg-accent-cyan/20 hover:text-accent-cyan cursor-pointer"
             >
-              <Sparkles className="mr-2 h-4 w-4" />
-              {installerLoading
-                ? 'Loading...'
-                : latestInstallerUrl
-                ? `Auto-fill Owlette Agent v${latestInstallerVersion || '...'}`
-                : 'No Owlette Installer Available'}
+              {fetchingTd ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="mr-2 h-4 w-4" />
+              )}
+              {fetchingTd ? 'Fetching latest version...' : 'Auto-fill latest TouchDesigner'}
             </Button>
-            <p className="text-xs text-slate-500 text-center mt-2">
-              Automatically populate all fields for Owlette Agent deployment
+            <p className="text-xs text-muted-foreground text-center mt-2">
+              fetches the latest version from derivative.ca
             </p>
           </div>
         )}
@@ -246,61 +248,61 @@ export default function SystemPresetDialog({
           {/* Name */}
           <div className="space-y-2">
             <Label htmlFor="name" className="text-white">
-              Name *
+              name *
             </Label>
             <Input
               id="name"
               placeholder="e.g., TouchDesigner 2025.31550"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">Display name shown in UI</p>
+            <p className="text-xs text-muted-foreground">display name shown in UI</p>
           </div>
 
           {/* Software Name */}
           <div className="space-y-2">
             <Label htmlFor="softwareName" className="text-white">
-              Software Name *
+              software name *
             </Label>
             <Input
               id="softwareName"
               placeholder="e.g., TouchDesigner"
               value={softwareName}
               onChange={(e) => setSoftwareName(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">Short identifier for grouping</p>
+            <p className="text-xs text-muted-foreground">short identifier for grouping</p>
           </div>
 
           {/* Category */}
           <div className="space-y-2">
             <Label htmlFor="category" className="text-white">
-              Category *
+              category *
             </Label>
             <Select value={category} onValueChange={setCategory}>
-              <SelectTrigger className="border-slate-700 bg-slate-900 text-white">
-                <SelectValue placeholder="Select a category..." />
+              <SelectTrigger className="border-border bg-background text-white">
+                <SelectValue placeholder="select a category..." />
               </SelectTrigger>
-              <SelectContent className="border-slate-700 bg-slate-800">
+              <SelectContent className="border-border bg-secondary">
                 {predefinedCategories.map((cat) => (
                   <SelectItem
                     key={cat}
                     value={cat}
-                    className="text-white focus:bg-slate-700 focus:text-white"
+                    className="text-white focus:bg-accent focus:text-white"
                   >
                     {cat}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-slate-500">Used for filtering and organization</p>
+            <p className="text-xs text-muted-foreground">used for filtering and organization</p>
           </div>
 
           {/* Icon (optional) */}
           <div className="space-y-2">
             <Label htmlFor="icon" className="text-white">
-              Icon (Emoji)
+              icon (emoji)
             </Label>
             <Input
               id="icon"
@@ -308,15 +310,15 @@ export default function SystemPresetDialog({
               value={icon}
               onChange={(e) => setIcon(e.target.value)}
               maxLength={2}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">Optional emoji icon (one character)</p>
+            <p className="text-xs text-muted-foreground">optional emoji icon (one character)</p>
           </div>
 
           {/* Description (optional) */}
           <div className="space-y-2">
             <Label htmlFor="description" className="text-white">
-              Description
+              description
             </Label>
             <Textarea
               id="description"
@@ -324,55 +326,55 @@ export default function SystemPresetDialog({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
-              className="border-slate-700 bg-slate-900 text-white resize-none"
+              className="border-border bg-background text-white resize-none"
             />
           </div>
 
           {/* Installer Name */}
           <div className="space-y-2">
             <Label htmlFor="installerName" className="text-white">
-              Installer Filename *
+              installer filename *
             </Label>
             <Input
               id="installerName"
               placeholder="e.g., TouchDesigner.2025.31550.exe"
               value={installerName}
               onChange={(e) => setInstallerName(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white font-mono text-sm"
+              className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-slate-500">Name of the installer file</p>
+            <p className="text-xs text-muted-foreground">name of the installer file</p>
           </div>
 
           {/* Installer URL */}
           <div className="space-y-2">
             <Label htmlFor="installerUrl" className="text-white">
-              Installer URL *
+              installer URL *
             </Label>
             <Input
               id="installerUrl"
               placeholder="https://example.com/installer.exe"
               value={installerUrl}
               onChange={(e) => setInstallerUrl(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white font-mono text-sm"
+              className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-slate-500">
-              Direct download link for the installer
+            <p className="text-xs text-muted-foreground">
+              direct download link for the installer
             </p>
           </div>
 
           {/* Silent Flags */}
           <div className="space-y-2">
             <Label htmlFor="silentFlags" className="text-white">
-              Silent Install Flags *
+              silent install flags *
             </Label>
             <Input
               id="silentFlags"
               placeholder="/VERYSILENT /NORESTART /SUPPRESSMSGBOXES"
               value={silentFlags}
               onChange={(e) => setSilentFlags(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white font-mono text-sm"
+              className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               Command-line flags for silent installation. Include custom directory here (e.g., /DIR=&quot;C:\Custom\Path&quot;)
             </p>
           </div>
@@ -380,16 +382,16 @@ export default function SystemPresetDialog({
           {/* Verify Path (optional) */}
           <div className="space-y-2">
             <Label htmlFor="verifyPath" className="text-white">
-              Verification Path
+              verification path
             </Label>
             <Input
               id="verifyPath"
               placeholder='C:\\Program Files\\Software\\app.exe'
               value={verifyPath}
               onChange={(e) => setVerifyPath(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white font-mono text-sm"
+              className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-slate-500">Optional: File path to verify installation success</p>
+            <p className="text-xs text-muted-foreground">optional: file path to verify installation success</p>
           </div>
 
           {/* Advanced Options */}
@@ -397,7 +399,7 @@ export default function SystemPresetDialog({
             {/* Timeout */}
             <div className="space-y-2">
               <Label htmlFor="timeout" className="text-white">
-                Timeout (seconds)
+                timeout (seconds)
               </Label>
               <Input
                 id="timeout"
@@ -406,15 +408,15 @@ export default function SystemPresetDialog({
                 max="3600"
                 value={timeoutSeconds}
                 onChange={(e) => setTimeoutSeconds(parseInt(e.target.value) || 600)}
-                className="border-slate-700 bg-slate-900 text-white"
+                className="border-border bg-background text-white"
               />
-              <p className="text-xs text-slate-500">Max install time (default: 600)</p>
+              <p className="text-xs text-muted-foreground">Max install time (default: 600)</p>
             </div>
 
             {/* Order */}
             <div className="space-y-2">
               <Label htmlFor="order" className="text-white">
-                Display Order
+                display order
               </Label>
               <Input
                 id="order"
@@ -422,9 +424,9 @@ export default function SystemPresetDialog({
                 min="1"
                 value={order}
                 onChange={(e) => setOrder(parseInt(e.target.value) || 100)}
-                className="border-slate-700 bg-slate-900 text-white"
+                className="border-border bg-background text-white"
               />
-              <p className="text-xs text-slate-500">Sort priority (lower = first)</p>
+              <p className="text-xs text-muted-foreground">sort priority (lower = first)</p>
             </div>
           </div>
         </div>
@@ -434,22 +436,22 @@ export default function SystemPresetDialog({
             variant="outline"
             onClick={() => onOpenChange(false)}
             disabled={saving}
-            className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 cursor-pointer"
+            className="border-border bg-background text-white hover:bg-muted cursor-pointer"
           >
-            Cancel
+            cancel
           </Button>
           <Button
             onClick={handleSave}
             disabled={saving}
-            className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
           >
             {saving ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                {isEditMode ? 'Updating...' : 'Creating...'}
+                {isEditMode ? 'updating...' : 'creating...'}
               </>
             ) : (
-              isEditMode ? 'Update Template' : 'Create Template'
+              isEditMode ? 'update template' : 'create template'
             )}
           </Button>
         </DialogFooter>

@@ -6,6 +6,7 @@ import sys
 import os
 import datetime
 import logging
+import threading
 import time
 import signal
 
@@ -22,7 +23,12 @@ def signal_handler(signum, frame):
     global _service_instance
 
     # Log to both logger and stderr for visibility
-    msg = f"[SIGNAL HANDLER] Received signal {signum} ({signal.Signals(signum).name if hasattr(signal, 'Signals') else 'UNKNOWN'})"
+    try:
+        sig_name = signal.Signals(signum).name
+    except (ValueError, AttributeError):
+        # Windows console events (CTRL_SHUTDOWN_EVENT=6, etc.) aren't in signal.Signals
+        sig_name = f"CTRL_EVENT_{signum}"
+    msg = f"[SIGNAL HANDLER] Received signal {signum} ({sig_name})"
     logging.critical(msg)
     print(msg, file=sys.stderr, flush=True)
 
@@ -80,10 +86,16 @@ except ImportError as e:
 
 if __name__ == '__main__':
     # Initialize logging
-    shared_utils.initialize_logging("service")
+    log_level = shared_utils.get_log_level_from_config()
+    shared_utils.initialize_logging("service", level=log_level)
+
+    # Wire global exception hooks (after logging is configured)
+    from owlette_service import _handle_unhandled_exception, _handle_thread_exception
+    sys.excepthook = _handle_unhandled_exception
+    threading.excepthook = _handle_thread_exception
 
     logging.info("="*70)
-    logging.info("OWLETTE SERVICE STARTING (NSSM MODE)")
+    logging.info(f"OWLETTE SERVICE STARTING (NSSM MODE) — v{shared_utils.APP_VERSION}")
     logging.info("="*70)
 
     # Import the OwletteService class just to access its main() method
@@ -103,8 +115,27 @@ if __name__ == '__main__':
             logging.info(f"Config path: {shared_utils.CONFIG_PATH}")
             shared_utils.upgrade_config()
 
+            # --- STARTUP HEALTH PROBE ---
+            try:
+                from health_probe import HealthProbe
+                _api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
+                self._health_state = HealthProbe(
+                    config_path=shared_utils.CONFIG_PATH,
+                    api_base=_api_base,
+                ).run()
+                logging.info(f"Startup health probe: status={self._health_state.status}, results={self._health_state.probe_results}")
+                if not self._health_state.is_ok():
+                    logging.error(f"Health probe failed: {self._health_state.error_code} — {self._health_state.error_message}")
+            except Exception as e:
+                logging.error(f"Health probe error: {e}")
+                self._health_state = None
+
+            self._auth_manager = None
+            self._api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
+
             # Initialize all attributes from OwletteService.__init__
             self.is_alive = True
+            self._restart_exit_code = 0
             self.tray_icon_pid = None
             self.relaunch_attempts = {}
             self.first_start = True
@@ -115,6 +146,15 @@ if __name__ == '__main__':
             self.results = {}
             self.current_time = datetime.datetime.now()
             self.active_installations = {}
+            self.install_locks = {}
+            self.manual_overrides = {}
+            self._skip_launch_delay = set()
+            self._cached_site_timezone = None
+            self._last_scheduled_reboot_time = None
+            self._reboot_schedule_counter = 0
+            self._live_view_active = False
+            self._live_view_stop_time = 0
+            self.cortex_pid = None
 
             # Initialize Firebase client
             self.firebase_client = None
@@ -171,6 +211,12 @@ if __name__ == '__main__':
         _service_instance = object.__new__(OwletteService)
         _service_instance.__dict__.update(mock_service.__dict__)
 
+        # Write early health status so tray can show alerts before Firebase connects
+        try:
+            _service_instance._write_service_status_early()
+        except Exception as e:
+            logging.error(f"Failed to write early service status: {e}")
+
         # NOW register signal handlers (after _service_instance exists)
         signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
         signal.signal(signal.SIGTERM, signal_handler)  # Termination request
@@ -222,10 +268,13 @@ if __name__ == '__main__':
             else:
                 logging.info("Firebase client already stopped (by signal handler)")
 
-        # Exit cleanly with code 0 when service stops normally
-        # This tells NSSM not to restart (configured as AppExit 0 Exit)
-        logging.info("Service stopped cleanly")
-        sys.exit(0)
+        # Check if service requested a restart (exit code 42 triggers NSSM auto-restart)
+        exit_code = getattr(_service_instance, '_restart_exit_code', 0)
+        if exit_code:
+            logging.info(f"Service exiting with code {exit_code} for NSSM restart")
+        else:
+            logging.info("Service stopped cleanly (exit 0 — NSSM will not restart)")
+        sys.exit(exit_code)
 
     except KeyboardInterrupt:
         logging.info("Service stopped by user (Ctrl+C)")

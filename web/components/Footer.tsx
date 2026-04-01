@@ -37,39 +37,48 @@ export function Footer() {
 
   // Hide footer on admin pages (admin panel has its own footer)
   // Hide footer on landing page (has its own LandingFooter)
-  if (pathname?.startsWith('/admin') || pathname === '/') {
+  if (pathname?.startsWith('/admin') || pathname === '/' || pathname?.startsWith('/cortex')) {
     return null;
   }
 
   return (
-    <footer className="fixed bottom-0 left-0 right-0 w-full bg-gradient-to-t from-slate-950 via-slate-950/95 to-transparent pt-8 pb-6 z-10 pointer-events-none">
+    <footer className="fixed bottom-0 left-0 right-0 w-full bg-gradient-to-t from-background via-background/95 to-transparent pt-8 pb-6 z-10 pointer-events-none">
       <div className="container mx-auto px-4 pointer-events-auto">
-        <p className="text-center text-xs text-slate-500 flex items-center justify-center gap-1">
-          <span>Made with</span>
+        <p className="text-center text-xs text-muted-foreground flex items-center justify-center gap-1">
+          <span>made with</span>
           <span className="text-base leading-none -translate-y-0.4">{emoji}</span>
-          <span>in California by</span>
+          <span>in california by</span>
           <Link
             href="https://tec.design"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-slate-400 hover:text-slate-300 hover:underline transition-colors"
+            className="text-muted-foreground hover:text-muted-foreground hover:underline transition-colors"
           >
             TEC
           </Link>
         </p>
-        <p className="text-center text-xs text-slate-600 mt-2 flex items-center justify-center gap-2">
+        <p className="text-center text-xs text-muted-foreground mt-2 flex items-center justify-center gap-2">
           <Link
             href="/privacy"
-            className="hover:text-slate-400 transition-colors"
+            className="hover:text-muted-foreground transition-colors"
           >
-            Privacy
+            privacy
           </Link>
           <span>&middot;</span>
           <Link
             href="/terms"
-            className="hover:text-slate-400 transition-colors"
+            className="hover:text-muted-foreground transition-colors"
           >
-            Terms
+            terms
+          </Link>
+          <span>&middot;</span>
+          <Link
+            href="https://github.com/theexperiential/Owlette"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-muted-foreground transition-colors"
+          >
+            source (AGPL-3.0)
           </Link>
         </p>
       </div>

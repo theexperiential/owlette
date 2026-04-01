@@ -20,6 +20,7 @@ Uses centralized ConnectionManager for robust reconnection handling with:
 - Thread supervision and watchdog
 """
 
+import queue
 import threading
 import time
 import json
@@ -104,11 +105,22 @@ class FirebaseClient:
         self.metrics_thread: Optional[threading.Thread] = None
         self.running = False
 
+        # Stop events for listener polling threads (set to terminate on reconnect/shutdown)
+        self._command_listener_stop: Optional[threading.Event] = None
+        self._config_listener_stop: Optional[threading.Event] = None
+
         # =================================================================
         # Callbacks
         # =================================================================
         self.command_callback: Optional[Callable] = None
         self.config_update_callback: Optional[Callable] = None
+
+        # =================================================================
+        # Slow-command queue (installs, uninstalls, updates — serialised)
+        # Worker thread is started in start() after self.running = True
+        # =================================================================
+        self._slow_command_queue: queue.Queue = queue.Queue(maxsize=50)
+        self._slow_command_worker: Optional[threading.Thread] = None
 
         # =================================================================
         # Cached config for offline mode
@@ -117,6 +129,15 @@ class FirebaseClient:
 
         # Track last uploaded config to prevent processing our own writes
         self._last_uploaded_config_hash: Optional[str] = None
+
+        # Track processed commands across listener thread restarts.
+        # Must be an instance variable (not a closure local) so that when
+        # ConnectionManager restarts the listener thread after a network drop,
+        # already-processed commands aren't re-executed.
+        self._seen_commands: set = set()
+
+        # Cached site timezone (fetched from sites/{siteId} on connect)
+        self.site_timezone: Optional[str] = None
 
         # Track last synced software inventory hash to prevent unnecessary writes
         self._last_software_inventory_hash: Optional[str] = None
@@ -183,13 +204,16 @@ class FirebaseClient:
             return  # Don't send data if not started
 
         try:
+            # Fetch site timezone for schedule evaluation
+            self._fetch_site_timezone()
+
             # Send immediate heartbeat and metrics
             self._update_presence(True)
-            self.logger.info("Heartbeat sent after connection")
+            self.logger.debug("Heartbeat sent after connection")
 
             metrics = shared_utils.get_system_metrics()
             self._upload_metrics(metrics)
-            self.logger.info("Initial metrics uploaded after connection")
+            self.logger.debug("Initial metrics uploaded after connection")
         except Exception as e:
             self.logger.error(f"Failed to send initial data after connection: {e}")
             # Report error but don't fail - connection is still valid
@@ -252,6 +276,23 @@ class FirebaseClient:
         return threading.Thread(target=self._config_listener_loop, daemon=True)
 
     # =========================================================================
+    # Site Metadata
+    # =========================================================================
+
+    def _fetch_site_timezone(self):
+        """Fetch and cache the site timezone from Firestore."""
+        try:
+            if not self.db:
+                return
+            site_doc = self.db.get_document(f"sites/{self.site_id}")
+            if site_doc:
+                self.site_timezone = site_doc.get('timezone') or None
+                if self.site_timezone:
+                    self.logger.info(f"Site timezone: {self.site_timezone}")
+        except Exception as e:
+            self.logger.debug(f"Could not fetch site timezone: {e}")
+
+    # =========================================================================
     # Public Properties
     # =========================================================================
 
@@ -284,6 +325,14 @@ class FirebaseClient:
 
         self.running = True
 
+        # Start slow-command worker now that self.running is True
+        self._slow_command_worker = threading.Thread(
+            target=self._slow_command_worker_loop,
+            name="slow-cmd-worker",
+            daemon=True,
+        )
+        self._slow_command_worker.start()
+
         # Start watchdog for thread supervision
         self.connection_manager.start_watchdog()
 
@@ -295,7 +344,7 @@ class FirebaseClient:
 
                 metrics = shared_utils.get_system_metrics()
                 self._upload_metrics(metrics)
-                self.logger.info("Initial metrics uploaded")
+                self.logger.debug("Initial metrics uploaded")
 
                 # Report success to reset any failure counters
                 self.connection_manager.report_success()
@@ -303,25 +352,39 @@ class FirebaseClient:
                 self.logger.error(f"Failed to send initial heartbeat/metrics: {e}")
                 self.connection_manager.report_error(e, "Initial heartbeat/metrics")
 
-        self.logger.info("Heartbeat thread DISABLED - heartbeat data included in metrics")
+        self.logger.debug("Heartbeat thread DISABLED - heartbeat data included in metrics")
 
         # Start metrics thread (main loop with reconnection logic)
         self.metrics_thread = threading.Thread(target=self._metrics_loop, daemon=True)
         self.metrics_thread.start()
-        self.logger.info("Metrics thread started")
+        self.logger.debug("Metrics thread started")
 
         # Start listeners if connected (ConnectionManager will supervise these)
         if self.connected:
+            # Pre-populate seen commands from completed doc to prevent
+            # re-executing commands after a service restart (e.g., if the
+            # service crashed between writing "completed" and deleting "pending")
+            try:
+                completed_path = f"sites/{self.site_id}/machines/{self.machine_id}/commands/completed"
+                completed_data = self.db.get_document(completed_path)
+                if completed_data:
+                    self._seen_commands = set(completed_data.keys())
+                    self.logger.debug(f"Pre-populated {len(self._seen_commands)} seen commands from completed doc")
+            except Exception as e:
+                self.logger.warning(f"Could not pre-populate seen commands: {e}")
+
             # Trigger initial thread start via connection manager
             self.connection_manager._restart_all_threads()
-            self.logger.info("Listener threads started (supervised by ConnectionManager)")
+            self.logger.debug("Listener threads started (supervised by ConnectionManager)")
 
-            # Sync software inventory once on startup
-            try:
-                self._sync_software_inventory(force=True)
-                self.logger.info("Initial software inventory synced to Firestore")
-            except Exception as e:
-                self.logger.error(f"Failed to sync initial software inventory: {e}")
+            # Sync software inventory once on startup (in background — can be slow)
+            def _sync_inventory_bg():
+                try:
+                    self._sync_software_inventory(force=True)
+                    self.logger.info("Initial software inventory synced to Firestore")
+                except Exception as e:
+                    self.logger.error(f"Failed to sync initial software inventory: {e}")
+            threading.Thread(target=_sync_inventory_bg, daemon=True, name="InventorySync").start()
         else:
             self.logger.warning("Listener threads NOT started (offline mode)")
             self.logger.warning("Software inventory NOT synced (offline mode)")
@@ -357,11 +420,26 @@ class FirebaseClient:
             except Exception as e:
                 self.logger.error(f"[ERROR] Failed to set machine offline after {max_attempts} attempts: {e}")
 
+        # Stop listener polling threads before stopping supervised threads
+        if self._command_listener_stop is not None:
+            self._command_listener_stop.set()
+        if self._config_listener_stop is not None:
+            self._config_listener_stop.set()
+
+        # Unregister state listener to prevent leaks on re-init
+        self.connection_manager.remove_state_listener(self._on_connection_state_change)
+
         # Stop the background threads
         self.running = False
 
         # Shutdown connection manager (stops watchdog and supervised threads)
         self.connection_manager.shutdown()
+
+        # Join worker threads for clean shutdown
+        if self._slow_command_worker and self._slow_command_worker.is_alive():
+            self._slow_command_worker.join(timeout=5.0)
+        if self.metrics_thread and self.metrics_thread.is_alive():
+            self.metrics_thread.join(timeout=5.0)
 
         self.logger.info("Background threads stopped")
 
@@ -380,8 +458,11 @@ class FirebaseClient:
         - 30s when processes are running (active monitoring)
         - 120s when idle (minimal overhead)
         """
-        self.logger.info("[THREAD] Metrics loop started")
+        self.logger.debug("[THREAD] Metrics loop started")
 
+        last_mode = None
+        last_command_cleanup = 0  # epoch seconds — run cleanup on first connected cycle
+        first_loop = True  # Skip initial sleep so first metrics upload happens immediately
         try:
             while self.running:
                 interval = 60  # Default interval
@@ -412,30 +493,43 @@ class FirebaseClient:
                             mode = 'GUI active'
                         else:
                             processes = metrics.get('processes', {})
-                            any_process_running = any(
-                                proc.get('status') == 'RUNNING'
+                            any_process_active = any(
+                                proc.get('status') in ('RUNNING', 'LAUNCHING')
                                 for proc in processes.values()
                                 if isinstance(proc, dict)
                             )
 
-                            if any_process_running:
+                            if any_process_active:
                                 interval = 30
                                 mode = 'processes active'
                             else:
                                 interval = 120
                                 mode = 'idle'
 
-                        self.logger.info(f"Metrics uploaded - next in {interval}s ({mode})")
+                        if mode != last_mode:
+                            self.logger.info(f"Metrics interval changed to {interval}s ({mode})")
+                            last_mode = mode
+                        else:
+                            self.logger.debug(f"Metrics uploaded - next in {interval}s ({mode})")
+
+                        # Periodic command cleanup (~every 10 minutes)
+                        now = time.time()
+                        if now - last_command_cleanup > 600:
+                            last_command_cleanup = now
+                            try:
+                                self._cleanup_stale_commands()
+                            except Exception as e:
+                                self.logger.debug(f"Command cleanup failed (non-critical): {e}")
 
                     else:
                         # NOT CONNECTED - actively trigger reconnection attempt
                         state = self.connection_manager.state
                         reason = self.connection_manager.state_reason
-                        self.logger.info(f"[METRICS] Not connected (state={state.name}): {reason}")
+                        self.logger.debug(f"[METRICS] Not connected (state={state.name}): {reason}")
 
                         # Trigger reconnection if not already in progress
                         if state == ConnectionState.DISCONNECTED:
-                            self.logger.info("[METRICS] Triggering reconnection attempt...")
+                            self.logger.debug("[METRICS] Triggering reconnection attempt...")
                             self.connection_manager.force_reconnect("Metrics loop detected disconnect")
 
                         # Use shorter interval when disconnected
@@ -446,7 +540,13 @@ class FirebaseClient:
                     self.connection_manager.report_error(e, "Metrics upload")
                     interval = 60
 
-                time.sleep(interval)
+                # First iteration: skip sleep so metrics upload happens ASAP after
+                # the main service loop has populated process state (~5s after start)
+                if first_loop:
+                    first_loop = False
+                    time.sleep(5)  # Brief wait for process state to populate
+                else:
+                    time.sleep(interval)
 
         except Exception as e:
             self.logger.error(f"[THREAD] Metrics loop CRASHED with unexpected error: {e}")
@@ -459,23 +559,42 @@ class FirebaseClient:
 
     def _command_listener_loop(self):
         """Listen for commands from Firestore in real-time."""
-        self.logger.info("[THREAD] Command listener loop started")
+        self.logger.debug("[THREAD] Command listener loop started")
 
         if not self.connected:
             self.logger.warning("[THREAD] Command listener exiting - not connected")
             return
 
+        # Stop previous listener polling thread if still running (prevents double-polling on reconnect)
+        if self._command_listener_stop is not None:
+            self._command_listener_stop.set()
+
         try:
             commands_path = f"sites/{self.site_id}/machines/{self.machine_id}/commands/pending"
 
             def on_commands_changed(commands_data):
-                """Handle commands document changes."""
+                """Handle commands document changes, skipping already-processed commands."""
                 if commands_data:
                     for cmd_id, cmd_data in commands_data.items():
+                        if cmd_id in self._seen_commands:
+                            continue
+                        self._seen_commands.add(cmd_id)
                         self._process_command(cmd_id, cmd_data)
 
-            # Start listener (runs in separate thread, polls every 2 seconds)
-            self.db.listen_to_document(commands_path, on_commands_changed)
+                    # Prune seen set: remove IDs no longer in pending doc
+                    gone = self._seen_commands - set(commands_data.keys())
+                    self._seen_commands.difference_update(gone)
+
+                    # Safety cap to prevent unbounded growth during extended disconnects
+                    if len(self._seen_commands) > 1000:
+                        self._seen_commands = set(list(self._seen_commands)[-500:])
+
+            # Start listener with tight polling (2-5s) for fast command pickup
+            _thread, _wake, stop = self.db.listen_to_document(
+                commands_path, on_commands_changed,
+                min_interval=2.0, max_interval=5.0, backoff_multiplier=1.3
+            )
+            self._command_listener_stop = stop
 
             # Keep this thread alive while running and connected
             while self.running and self.connected:
@@ -486,34 +605,39 @@ class FirebaseClient:
             # Report error to connection manager for centralized handling
             self.connection_manager.report_error(e, "Command listener")
         finally:
-            self.logger.info(f"[THREAD] Command listener loop EXITED (running={self.running}, connected={self.connected})")
+            # Stop the polling thread when this supervised thread exits
+            if self._command_listener_stop is not None:
+                self._command_listener_stop.set()
+            self.logger.debug(f"[THREAD] Command listener loop EXITED (running={self.running}, connected={self.connected})")
 
     def _config_listener_loop(self):
         """Listen for config changes from Firestore in real-time."""
-        self.logger.info("[THREAD] Config listener loop started")
+        self.logger.debug("[THREAD] Config listener loop started")
 
         if not self.connected:
             self.logger.warning("[THREAD] Config listener exiting - not connected")
             return
 
+        # Stop previous listener polling thread if still running (prevents double-polling on reconnect)
+        if self._config_listener_stop is not None:
+            self._config_listener_stop.set()
+
         try:
             config_path = f"config/{self.site_id}/machines/{self.machine_id}"
-            first_snapshot = True
 
             def on_config_changed(config_data):
                 """Handle config document changes."""
-                nonlocal first_snapshot
-
-                if first_snapshot:
-                    first_snapshot = False
-                    self.logger.info("Config listener initialized (skipping initial snapshot)")
-                    return
-
-                if config_data:
+                if config_data is not None:
                     incoming_hash = hashlib.md5(json.dumps(config_data, sort_keys=True).encode()).hexdigest()
 
                     if incoming_hash == self._last_uploaded_config_hash:
                         self.logger.debug(f"Skipping self-originated config change (hash: {incoming_hash[:8]}...)")
+                        # Clear after one use — this is a one-time guard to prevent
+                        # re-processing the agent's own write. Without clearing, any
+                        # future Firestore change that coincidentally produces the same
+                        # hash (e.g. web sets mode back to what it was at startup)
+                        # would be silently dropped forever.
+                        self._last_uploaded_config_hash = None
                         return
 
                     self.logger.info(f"Config change detected in Firestore (hash: {incoming_hash[:8]}...)")
@@ -531,8 +655,12 @@ class FirebaseClient:
                     else:
                         self.logger.warning("No config update callback registered")
 
-            # Start listener
-            self.db.listen_to_document(config_path, on_config_changed)
+            # Start listener with tight polling for fast config pickup
+            _thread, _wake, stop = self.db.listen_to_document(
+                config_path, on_config_changed,
+                min_interval=2.0, max_interval=10.0, backoff_multiplier=1.3
+            )
+            self._config_listener_stop = stop
 
             # Keep this thread alive while running and connected
             while self.running and self.connected:
@@ -543,11 +671,45 @@ class FirebaseClient:
             # Report error to connection manager for centralized handling
             self.connection_manager.report_error(e, "Config listener")
         finally:
-            self.logger.info(f"[THREAD] Config listener loop EXITED (running={self.running}, connected={self.connected})")
+            # Stop the polling thread when this supervised thread exits
+            if self._config_listener_stop is not None:
+                self._config_listener_stop.set()
+            self.logger.debug(f"[THREAD] Config listener loop EXITED (running={self.running}, connected={self.connected})")
 
     # =========================================================================
     # Firestore Operations
     # =========================================================================
+
+    def write_health_to_firestore(self, status: str, error_code, error_message):
+        """
+        Write agent health status to the Firestore machine document.
+
+        Called when a health state change occurs (connection failure, recovery, etc.).
+        Only executes when connected — callers should guard with is_connected() if needed.
+
+        Args:
+            status: Health status string ('ok', 'connection_failure', etc.)
+            error_code: Short error code string, or None
+            error_message: Human-readable message, or None
+        """
+        if not self.connected or not self.db:
+            return
+        try:
+            machine_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+
+            machine_ref.set({
+                'health': {
+                    'status': status,
+                    'error_code': error_code,
+                    'error_message': error_message,
+                    'last_checked_at': SERVER_TIMESTAMP,
+                    'last_error_at': SERVER_TIMESTAMP if error_code else None,
+                }
+            }, merge=True)
+            self.logger.debug(f"[HEALTH] Wrote health to Firestore: status={status}")
+        except Exception as e:
+            self.logger.debug(f"[HEALTH] Failed to write health to Firestore: {e}")
 
     def _update_presence(self, online: bool):
         """Update machine presence/heartbeat in Firestore."""
@@ -586,28 +748,59 @@ class FirebaseClient:
             processes_data = metrics.get('processes', {})
             self.logger.debug(f"Uploading metrics with {len(processes_data)} processes: {list(processes_data.keys())}")
 
-            metrics_ref.set({
+            # Use update() with dot notation so metrics.processes is REPLACED
+            # entirely (not deep-merged). This ensures deleted processes don't
+            # persist as ghost entries in Firestore.
+            metrics_ref.update({
                 'online': True,
                 'lastHeartbeat': SERVER_TIMESTAMP,
                 'agent_version': shared_utils.APP_VERSION,
                 'machineId': self.machine_id,
                 'siteId': self.site_id,
-                'metrics': {
-                    'cpu': metrics.get('cpu', {}),
-                    'memory': metrics.get('memory', {}),
-                    'disk': metrics.get('disk', {}),
-                    'gpu': metrics.get('gpu', {}),
-                    'timestamp': SERVER_TIMESTAMP,
-                    'processes': processes_data
-                }
-            }, merge=True)
+                'metrics.cpu': metrics.get('cpu', {}),
+                'metrics.memory': metrics.get('memory', {}),
+                'metrics.disk': metrics.get('disk', {}),
+                'metrics.gpu': metrics.get('gpu', {}),
+                'metrics.network': metrics.get('network', {}),
+                'metrics.timestamp': SERVER_TIMESTAMP,
+                'metrics.processes': processes_data
+            })
 
         except Exception as e:
             self.logger.error(f"Error uploading metrics: {e}")
             self.connection_manager.report_error(e, "Metrics upload")
 
+    # Command types that execute fast (< 30s) and can run concurrently
+    _FAST_COMMAND_TYPES = frozenset({'mcp_tool_call', 'capture_screenshot'})
+
     def _process_command(self, cmd_id: str, cmd_data: Dict[str, Any]):
-        """Process a command received from Firestore."""
+        """Dispatch a command to the appropriate execution lane.
+
+        All commands run in threads so the polling callback is never blocked.
+        Fast commands (tool calls, screenshots) each get their own thread.
+        Slow commands (installs, uninstalls, updates) are serialised via a
+        single worker thread to prevent concurrent installs.
+        """
+        cmd_type = cmd_data.get('type')
+
+        if cmd_type in self._FAST_COMMAND_TYPES:
+            t = threading.Thread(
+                target=self._execute_command,
+                args=(cmd_id, cmd_data),
+                name=f"fast-cmd-{cmd_id[:20]}",
+                daemon=True,
+            )
+            t.start()
+        else:
+            # Slow commands go onto a serialised queue
+            try:
+                self._slow_command_queue.put_nowait((cmd_id, cmd_data))
+            except queue.Full:
+                self.logger.warning(f"Slow command queue full, rejecting command {cmd_id}")
+                self._mark_command_failed(cmd_id, "Command queue full — too many pending installs", cmd_data.get('deployment_id'), cmd_data.get('type'))
+
+    def _execute_command(self, cmd_id: str, cmd_data: Dict[str, Any]):
+        """Execute a command and write the result to Firestore."""
         try:
             cmd_type = cmd_data.get('type')
             self.logger.info(f"Processing command: {cmd_id} - Type: {cmd_type}")
@@ -625,12 +818,55 @@ class FirebaseClient:
                     self._mark_command_failed(cmd_id, result, deployment_id, cmd_type)
                 else:
                     self._mark_command_completed(cmd_id, result, deployment_id, cmd_type)
+
+                # Log deployment lifecycle events to site logs for audit trail
+                deployment_cmd_types = ('install_software', 'uninstall_software', 'update_owlette')
+                if cmd_type in deployment_cmd_types and deployment_id:
+                    software_name = cmd_data.get('installer_name') or cmd_data.get('software_name') or cmd_type
+                    if cmd_type == 'cancel_installation':
+                        self.log_event('deployment_cancelled', 'warning', software_name,
+                                       f"Deployment {deployment_id} cancelled: {result}")
+                    elif is_error:
+                        self.log_event('deployment_failed', 'error', software_name,
+                                       f"Deployment {deployment_id} failed: {result}")
+                    else:
+                        self.log_event('deployment_completed', 'info', software_name,
+                                       f"Deployment {deployment_id}: {result}")
+
+                # Immediate metrics push so web dashboard sees state change instantly
+                try:
+                    metrics = shared_utils.get_system_metrics()
+                    self._upload_metrics(metrics)
+                    self.logger.debug(f"Immediate metrics push after command {cmd_id}")
+                except Exception as me:
+                    self.logger.warning(f"Post-command metrics push failed: {me}")
             else:
                 self.logger.warning(f"No command callback registered, ignoring command {cmd_id}")
 
         except Exception as e:
             self.logger.error(f"Error processing command {cmd_id}: {e}")
             self._mark_command_failed(cmd_id, str(e), cmd_data.get('deployment_id'), cmd_data.get('type'))
+            # Log deployment failure from unhandled exception
+            cmd_type = cmd_data.get('type')
+            dep_id = cmd_data.get('deployment_id')
+            if cmd_type in ('install_software', 'uninstall_software', 'update_owlette') and dep_id:
+                software_name = cmd_data.get('installer_name') or cmd_data.get('software_name') or cmd_type
+                self.log_event('deployment_failed', 'error', software_name,
+                               f"Deployment {dep_id} failed: {e}")
+
+    def _slow_command_worker_loop(self):
+        """Drain the slow-command queue one at a time (serialised installs)."""
+        while self.running:
+            try:
+                cmd_id, cmd_data = self._slow_command_queue.get(timeout=2.0)
+            except queue.Empty:
+                continue
+            try:
+                self._execute_command(cmd_id, cmd_data)
+            except Exception as e:
+                self.logger.error(f"Slow command worker error: {e}")
+            finally:
+                self._slow_command_queue.task_done()
 
     def update_command_progress(self, cmd_id: str, status: str, deployment_id: Optional[str] = None, progress: Optional[int] = None):
         """
@@ -676,14 +912,6 @@ class FirebaseClient:
             return
 
         try:
-            pending_ref = self.db.collection('sites').document(self.site_id)\
-                .collection('machines').document(self.machine_id)\
-                .collection('commands').document('pending')
-
-            pending_ref.update({
-                cmd_id: DELETE_FIELD
-            })
-
             completed_ref = self.db.collection('sites').document(self.site_id)\
                 .collection('machines').document(self.machine_id)\
                 .collection('commands').document('completed')
@@ -700,9 +928,19 @@ class FirebaseClient:
             if cmd_type:
                 completed_data['type'] = cmd_type
 
+            # Write to completed FIRST — if this fails, command stays in pending
+            # (safe to retry). The reverse order risks losing the command entirely.
             completed_ref.set({
                 cmd_id: completed_data
             }, merge=True)
+
+            pending_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('commands').document('pending')
+
+            pending_ref.update({
+                cmd_id: DELETE_FIELD
+            })
 
             self.logger.info(f"Command {cmd_id} marked as completed")
 
@@ -715,14 +953,6 @@ class FirebaseClient:
             return
 
         try:
-            pending_ref = self.db.collection('sites').document(self.site_id)\
-                .collection('machines').document(self.machine_id)\
-                .collection('commands').document('pending')
-
-            pending_ref.update({
-                cmd_id: DELETE_FIELD
-            })
-
             completed_ref = self.db.collection('sites').document(self.site_id)\
                 .collection('machines').document(self.machine_id)\
                 .collection('commands').document('completed')
@@ -739,9 +969,18 @@ class FirebaseClient:
             if cmd_type:
                 failed_data['type'] = cmd_type
 
+            # Write to completed FIRST — see _mark_command_completed for rationale
             completed_ref.set({
                 cmd_id: failed_data
             }, merge=True)
+
+            pending_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('commands').document('pending')
+
+            pending_ref.update({
+                cmd_id: DELETE_FIELD
+            })
 
             self.logger.error(f"Command {cmd_id} marked as failed: {error}")
 
@@ -754,14 +993,6 @@ class FirebaseClient:
             return
 
         try:
-            pending_ref = self.db.collection('sites').document(self.site_id)\
-                .collection('machines').document(self.machine_id)\
-                .collection('commands').document('pending')
-
-            pending_ref.update({
-                cmd_id: DELETE_FIELD
-            })
-
             completed_ref = self.db.collection('sites').document(self.site_id)\
                 .collection('machines').document(self.machine_id)\
                 .collection('commands').document('completed')
@@ -778,14 +1009,72 @@ class FirebaseClient:
             if cmd_type:
                 cancelled_data['type'] = cmd_type
 
+            # Write to completed FIRST — see _mark_command_completed for rationale
             completed_ref.set({
                 cmd_id: cancelled_data
             }, merge=True)
+
+            pending_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('commands').document('pending')
+
+            pending_ref.update({
+                cmd_id: DELETE_FIELD
+            })
 
             self.logger.info(f"Command {cmd_id} marked as cancelled")
 
         except Exception as e:
             self.logger.error(f"Failed to mark command {cmd_id} as cancelled: {e}")
+
+    def _cleanup_stale_commands(self):
+        """Remove stale pending commands (>1h) and old completed commands (>24h).
+
+        Runs periodically from the metrics loop. Non-critical — failures are
+        logged at debug level and silently ignored.
+        """
+        if not self.connected or not self.db:
+            return
+
+        now_ms = int(time.time() * 1000)
+        pending_ttl_ms = 60 * 60 * 1000         # 1 hour
+        completed_ttl_ms = 24 * 60 * 60 * 1000  # 24 hours
+
+        base = f"sites/{self.site_id}/machines/{self.machine_id}/commands"
+
+        # Clean stale pending commands
+        pending_data = self.db.get_document(f"{base}/pending", _suppress_logging=True)
+        if pending_data:
+            stale_pending = [
+                cmd_id for cmd_id, cmd in pending_data.items()
+                if isinstance(cmd, dict) and isinstance(cmd.get('timestamp'), (int, float))
+                and (now_ms - cmd['timestamp']) > pending_ttl_ms
+            ]
+            if stale_pending:
+                pending_ref = self.db.collection('sites').document(self.site_id)\
+                    .collection('machines').document(self.machine_id)\
+                    .collection('commands').document('pending')
+                pending_ref.update({cmd_id: DELETE_FIELD for cmd_id in stale_pending})
+                # Also remove from seen set so they don't linger
+                self._seen_commands.difference_update(stale_pending)
+                self.logger.info(f"Cleaned {len(stale_pending)} stale pending command(s)")
+
+        # Clean old completed commands
+        completed_data = self.db.get_document(f"{base}/completed", _suppress_logging=True)
+        if completed_data:
+            old_completed = [
+                cmd_id for cmd_id, cmd in completed_data.items()
+                if isinstance(cmd, dict) and isinstance(cmd.get('timestamp'), (int, float))
+                and (now_ms - cmd['timestamp']) > completed_ttl_ms
+            ]
+            if old_completed:
+                completed_ref = self.db.collection('sites').document(self.site_id)\
+                    .collection('machines').document(self.machine_id)\
+                    .collection('commands').document('completed')
+                completed_ref.update({cmd_id: DELETE_FIELD for cmd_id in old_completed})
+                # Also remove from seen set
+                self._seen_commands.difference_update(old_completed)
+                self.logger.info(f"Cleaned {len(old_completed)} old completed command(s)")
 
     # =========================================================================
     # Configuration
@@ -803,9 +1092,8 @@ class FirebaseClient:
                 config_ref = self.db.collection('config').document(self.site_id)\
                     .collection('machines').document(self.machine_id)
 
-                doc = config_ref.get()
-                if doc.exists:
-                    config = doc.to_dict()
+                config = config_ref.get()
+                if config:
                     self._save_cached_config(config)
                     self.cached_config = config
                     return config
@@ -835,10 +1123,14 @@ class FirebaseClient:
             config_ref = self.db.collection('config').document(self.site_id)\
                 .collection('machines').document(self.machine_id)
 
-            config_ref.set(config, merge=True)
-
+            # Set hash BEFORE the write so the config listener (separate thread)
+            # can recognize this as a self-originated change and skip it.
+            # This closes a race window where the listener could fire between
+            # the write completing and the hash being set, causing an infinite loop.
             config_hash = hashlib.md5(json.dumps(config, sort_keys=True).encode()).hexdigest()
             self._last_uploaded_config_hash = config_hash
+
+            config_ref.set(config, merge=True)
 
             self.logger.info(f"Config uploaded to Firestore successfully (hash: {config_hash[:8]}...)")
 
@@ -846,8 +1138,59 @@ class FirebaseClient:
             self.cached_config = config
 
         except Exception as e:
+            # Clear the hash since the write failed — don't suppress future legitimate changes
+            self._last_uploaded_config_hash = None
             self.logger.error(f"Failed to upload config to Firestore: {e}")
             self.connection_manager.report_error(e, "Upload config")
+
+    def sync_config_on_startup(self) -> str:
+        """
+        Pull config from Firestore on startup (Firestore = source of truth).
+        If Firestore has no config for this machine, seed it with local config.
+
+        Returns:
+            'pulled'  - config was pulled from Firestore and applied locally
+            'seeded'  - local config was uploaded as seed (new machine)
+            'offline' - Firestore unreachable, using local config as-is
+        """
+        if not self.connected or not self.db:
+            self.logger.warning("Cannot sync config on startup - not connected to Firestore")
+            return 'offline'
+
+        try:
+            # One-time fetch from Firestore (source of truth)
+            firestore_config = self.get_config()
+
+            if firestore_config and 'processes' in firestore_config:
+                # Firestore has config — use it
+                config_hash = hashlib.md5(
+                    json.dumps(firestore_config, sort_keys=True).encode()
+                ).hexdigest()
+                self._last_uploaded_config_hash = config_hash
+                self.logger.info(f"Config pulled from Firestore (hash: {config_hash[:8]}...)")
+
+                # Apply to local config via the same callback used by the listener
+                if self.config_update_callback:
+                    self.config_update_callback(firestore_config)
+
+                return 'pulled'
+            else:
+                # Firestore has no config for this machine — seed it with local config
+                local_config = shared_utils.read_config()
+                if local_config:
+                    config_for_firestore = {
+                        k: v for k, v in local_config.items() if k != 'firebase'
+                    }
+                    self.upload_config(config_for_firestore)
+                    self.logger.info("New machine - seeded Firestore with local config")
+                    return 'seeded'
+                else:
+                    self.logger.warning("No local config to seed Firestore with")
+                    return 'offline'
+
+        except Exception as e:
+            self.logger.error(f"Failed to sync config on startup: {e}")
+            return 'offline'
 
     def _load_cached_config(self):
         """Load cached config from disk."""
@@ -855,7 +1198,7 @@ class FirebaseClient:
             if os.path.exists(self.config_cache_path):
                 with open(self.config_cache_path, 'r') as f:
                     self.cached_config = json.load(f)
-                self.logger.info(f"Loaded cached config from {self.config_cache_path}")
+                self.logger.debug(f"Loaded cached config from {self.config_cache_path}")
         except Exception as e:
             self.logger.error(f"Failed to load cached config: {e}")
 
@@ -881,7 +1224,7 @@ class FirebaseClient:
             callback: Function that takes (cmd_id, cmd_data) and returns result
         """
         self.command_callback = callback
-        self.logger.info("Command callback registered")
+        self.logger.debug("Command callback registered")
 
     def register_config_update_callback(self, callback: Callable):
         """
@@ -891,13 +1234,92 @@ class FirebaseClient:
             callback: Function that takes (config) and handles the update
         """
         self.config_update_callback = callback
-        self.logger.info("Config update callback registered")
+        self.logger.debug("Config update callback registered")
+
+    # =========================================================================
+    # Machine Flags (reboot, shutdown, reboot pending)
+    # =========================================================================
+
+    def set_machine_flag(self, flag_name, value):
+        """Set a flag on the machine's presence document (e.g., rebooting, shuttingDown)."""
+        if not self.connected or not self.db:
+            return
+
+        try:
+            machine_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+
+            machine_ref.set({flag_name: value}, merge=True)
+            self.logger.debug(f"[FLAG] Set {flag_name}={value} on machine document")
+        except Exception as e:
+            self.logger.error(f"Failed to set machine flag {flag_name}: {e}")
+
+    def set_reboot_pending(self, process_name, reason, timestamp):
+        """Write a reboot_pending object to the machine document when relaunch limit is exceeded."""
+        if not self.connected or not self.db:
+            return
+
+        try:
+            machine_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+
+            machine_ref.set({
+                'rebootPending': {
+                    'active': True,
+                    'processName': process_name,
+                    'reason': reason,
+                    'timestamp': timestamp
+                }
+            }, merge=True)
+            self.logger.info(f"[FLAG] Reboot pending set for process: {process_name}")
+        except Exception as e:
+            self.logger.error(f"Failed to set reboot pending: {e}")
+
+    def clear_reboot_pending(self):
+        """Clear the reboot_pending flag on the machine document."""
+        if not self.connected or not self.db:
+            return
+
+        try:
+            machine_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+
+            machine_ref.set({
+                'rebootPending': {
+                    'active': False,
+                    'processName': None,
+                    'reason': None,
+                    'timestamp': None
+                }
+            }, merge=True)
+            self.logger.debug("[FLAG] Reboot pending cleared")
+        except Exception as e:
+            self.logger.error(f"Failed to clear reboot pending: {e}")
+
+    def get_reboot_schedule(self):
+        """Read the rebootSchedule field from the machine document.
+
+        Returns:
+            dict with 'enabled' and 'schedules' keys, or None if not set.
+        """
+        if not self.connected or not self.db:
+            return None
+
+        try:
+            machine_path = f"sites/{self.site_id}/machines/{self.machine_id}"
+            machine_doc = self.db.get_document(machine_path)
+            if machine_doc:
+                return machine_doc.get('rebootSchedule')
+            return None
+        except Exception as e:
+            self.logger.debug(f"Could not read reboot schedule: {e}")
+            return None
 
     # =========================================================================
     # Event Logging
     # =========================================================================
 
-    def log_event(self, action: str, level: str, process_name: str = None, details: str = None, user_id: str = None):
+    def log_event(self, action: str, level: str, process_name: str = None, details: str = None, user_id: str = None, **kwargs):
         """
         Log a process event to Firestore for dashboard monitoring.
         Non-blocking - failures are silently ignored to prevent logging from crashing the app.
@@ -930,16 +1352,45 @@ class FirebaseClient:
                 event_data['details'] = details
             if user_id:
                 event_data['userId'] = user_id
+            if kwargs.get('screenshot_url'):
+                event_data['screenshotUrl'] = kwargs['screenshot_url']
 
             import uuid
             doc_id = str(uuid.uuid4())
             doc_ref = logs_ref.document(doc_id)
             doc_ref.set(event_data)
 
-            self.logger.info(f"[EVENT LOGGED] {action} - {process_name} ({level})")
+            self.logger.debug(f"[EVENT LOGGED] {action} - {process_name} ({level})")
 
         except Exception as e:
-            self.logger.info(f"[EVENT LOG FAILED] {action}: {e}")
+            self.logger.debug(f"[EVENT LOG FAILED] {action}: {e}")
+
+    def send_process_alert(self, process_name, error_message, event_type='process_crash'):
+        """Send process alert to web API. Non-blocking (fire and forget)."""
+        def _send():
+            try:
+                token = self.auth_manager.get_valid_token()
+                api_base = shared_utils.get_api_base_url()
+                import requests
+                requests.post(
+                    f"{api_base}/agent/alert",
+                    json={
+                        'siteId': self.site_id,
+                        'machineId': self.machine_id,
+                        'eventType': event_type,
+                        'processName': process_name,
+                        'errorMessage': error_message or 'Process exited unexpectedly',
+                        'agentVersion': shared_utils.APP_VERSION,
+                    },
+                    headers={'Authorization': f'Bearer {token}'},
+                    timeout=10
+                )
+                self.logger.info(f"[ALERT] Process alert sent: {event_type} - {process_name}")
+            except Exception as e:
+                self.logger.warning(f"Failed to send process alert: {e}")
+
+        thread = threading.Thread(target=_send, daemon=True)
+        thread.start()
 
     def ship_logs(self, log_entries: list):
         """
@@ -971,7 +1422,7 @@ class FirebaseClient:
             self.logger.debug(f"Shipped {len(log_entries)} log entries to Firebase")
 
         except Exception as e:
-            pass  # Silently fail
+            self.logger.debug(f"Log shipping failed: {e}")
 
     # =========================================================================
     # Software Inventory
@@ -986,7 +1437,7 @@ class FirebaseClient:
         """
         try:
             self._sync_software_inventory(force=True)
-            self.logger.info("Software inventory synced on-demand")
+            self.logger.debug("Software inventory synced on-demand")
         except Exception as e:
             self.logger.error(f"On-demand software inventory sync failed: {e}")
 
@@ -1051,6 +1502,7 @@ class FirebaseClient:
             try:
                 batch = self.db.batch()
                 batch_count = 0
+                committed_count = 0
 
                 for software in installed_software:
                     doc_id = f"{software['name']}_{software['version']}".replace('/', '_').replace('\\', '_')
@@ -1067,12 +1519,18 @@ class FirebaseClient:
                     batch_count += 1
 
                     if batch_count >= 500:
-                        batch.commit()
+                        try:
+                            batch.commit()
+                            committed_count += batch_count
+                        except Exception as mid_batch_error:
+                            self.logger.warning(f"Mid-batch commit failed after {committed_count} docs: {mid_batch_error}")
+                            raise
                         batch = self.db.batch()
                         batch_count = 0
 
                 if batch_count > 0:
                     batch.commit()
+                    committed_count += batch_count
 
                 self.logger.info(f"Synced {len(installed_software)} software packages to Firestore (batch write)")
                 self._last_software_inventory_hash = current_hash
@@ -1100,8 +1558,10 @@ class FirebaseClient:
                         self.logger.warning(f"Failed to write {software.get('name', 'unknown')}: {write_error}")
 
                 self.logger.info(f"Synced {success_count}/{len(installed_software)} software packages (individual writes)")
-                if success_count > 0:
+                if success_count == len(installed_software):
                     self._last_software_inventory_hash = current_hash
+                else:
+                    self.logger.warning(f"Partial software sync: {success_count}/{len(installed_software)} — will retry on next sync")
 
         except Exception as e:
             self.logger.error(f"Failed to sync software inventory: {e}")

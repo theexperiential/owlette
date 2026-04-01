@@ -3,6 +3,7 @@ import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import admin from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
+import logger from '@/lib/logger';
 
 /**
  * POST /api/agent/auth/refresh
@@ -150,8 +151,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       lastUsed: FieldValue.serverTimestamp(),
     });
 
-    // Log successful refresh (for monitoring)
-    console.log(`Token refreshed: site=${siteId}, machine=${machineId}`);
+    logger.info(`Token refreshed: site=${siteId}, machine=${machineId}`);
 
     return NextResponse.json(
       {

@@ -29,13 +29,13 @@ const Toaster = ({ theme, ...props }: ToasterProps) => {
           toast: "bg-slate-800 border-slate-700 text-white",
           title: "text-white font-medium",
           description: "text-slate-300",
-          actionButton: "bg-blue-600 text-white hover:bg-blue-700",
+          actionButton: "bg-accent-cyan text-gray-900 hover:bg-accent-cyan-hover",
           cancelButton: "bg-slate-700 text-white hover:bg-slate-600",
           closeButton: "bg-slate-700 text-white hover:bg-slate-600",
           error: "bg-red-900/90 border-red-700 text-white",
           success: "bg-green-900/90 border-green-700 text-white",
           warning: "bg-yellow-900/90 border-yellow-700 text-white",
-          info: "bg-blue-900/90 border-blue-700 text-white",
+          info: "bg-accent-cyan/15 border-accent-cyan/30 text-white",
         },
       }}
       {...props}

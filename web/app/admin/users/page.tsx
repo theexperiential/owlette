@@ -231,7 +231,7 @@ export default function UserManagementPage() {
                         )}
                         <p className="text-sm text-muted-foreground">{user.email}</p>
                         {user.uid === currentUser?.uid && (
-                          <Badge className="mt-1 bg-blue-600 text-xs">You</Badge>
+                          <Badge className="mt-1 bg-accent-cyan text-gray-900 text-xs">You</Badge>
                         )}
                       </div>
                     </td>
@@ -244,7 +244,7 @@ export default function UserManagementPage() {
                           Admin
                         </Badge>
                       ) : (
-                        <Badge className="bg-slate-600 flex items-center gap-1 w-fit">
+                        <Badge className="bg-muted flex items-center gap-1 w-fit">
                           <Users className="h-3 w-3" />
                           User
                         </Badge>
@@ -271,7 +271,7 @@ export default function UserManagementPage() {
                           <DropdownMenuTrigger asChild>
                             <Button
                               variant="ghost"
-                              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
                             >
                               <MoreVertical className="h-4 w-4" />
                             </Button>
@@ -279,7 +279,7 @@ export default function UserManagementPage() {
                           <DropdownMenuContent align="end" className="bg-card border-border">
                             <DropdownMenuItem
                               onClick={() => handleOpenManageSites(user.uid, user.email, user.role, user.sites || [])}
-                              className="text-foreground hover:bg-muted cursor-pointer focus:bg-muted focus:text-foreground"
+                              className="text-foreground hover:bg-accent cursor-pointer focus:bg-accent focus:text-foreground"
                             >
                               <Settings className="h-4 w-4 mr-2" />
                               Manage Sites
@@ -287,7 +287,7 @@ export default function UserManagementPage() {
                             <DropdownMenuItem
                               onClick={() => handleOpenRoleChangeDialog(user.uid, user.email, user.role)}
                               disabled={updatingUser === user.uid || user.uid === currentUser?.uid && user.role === 'admin'}
-                              className="text-foreground hover:bg-muted cursor-pointer focus:bg-muted focus:text-foreground"
+                              className="text-foreground hover:bg-accent cursor-pointer focus:bg-accent focus:text-foreground"
                             >
                               {updatingUser === user.uid ? (
                                 <>
@@ -338,8 +338,8 @@ export default function UserManagementPage() {
 
       {/* Info Box */}
       {!loading && !error && users.length > 0 && (
-        <div className="mt-6 bg-blue-900/30 border border-blue-700 rounded-lg p-4">
-          <p className="text-blue-300 text-sm">
+        <div className="mt-6 bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-4">
+          <p className="text-accent-cyan text-sm">
             <strong>Note:</strong> Admins have full access to the admin panel and can
             manage users, upload installer versions, and configure system settings. Regular users
             can only access the dashboard and their assigned sites.
@@ -378,8 +378,8 @@ export default function UserManagementPage() {
               <strong className="text-foreground">{userToChangeRole?.email}</strong> to {userToChangeRole?.newRole}?
             </DialogDescription>
           </DialogHeader>
-          <div className="bg-blue-950/30 border border-blue-900/50 rounded-lg p-4 my-4">
-            <p className="text-blue-300 text-sm">
+          <div className="bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-4 my-4">
+            <p className="text-accent-cyan text-sm">
               {userToChangeRole?.newRole === 'admin'
                 ? 'Admins have full access to the admin panel and can manage users, upload installer versions, and configure system settings.'
                 : 'Regular users can only access the dashboard and their assigned sites.'}
@@ -389,13 +389,13 @@ export default function UserManagementPage() {
             <Button
               variant="outline"
               onClick={() => setRoleChangeDialogOpen(false)}
-              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
+              className="border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
             >
               Cancel
             </Button>
             <Button
               onClick={handleConfirmRoleChange}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             >
               {userToChangeRole?.newRole === 'admin' ? (
                 <>
@@ -434,7 +434,7 @@ export default function UserManagementPage() {
             <Button
               variant="outline"
               onClick={() => setDeleteConfirmDialogOpen(false)}
-              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
+              className="border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
             >
               Cancel
             </Button>

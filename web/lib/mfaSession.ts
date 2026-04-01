@@ -60,7 +60,13 @@ export function isDeviceTrusted(userId: string): boolean {
     const stored = localStorage.getItem(MFA_TRUSTED_DEVICE_KEY);
     if (!stored) return false;
 
-    const data: TrustedDeviceData = JSON.parse(stored);
+    const data = JSON.parse(stored);
+
+    // Validate parsed data matches expected shape
+    if (!data || typeof data.userId !== 'string' || typeof data.expiresAt !== 'number') {
+      localStorage.removeItem(MFA_TRUSTED_DEVICE_KEY);
+      return false;
+    }
 
     // Check if it's the same user and not expired
     if (data.userId !== userId) return false;
@@ -71,8 +77,9 @@ export function isDeviceTrusted(userId: string): boolean {
     }
 
     return true;
-  } catch (error) {
-    console.error('Error checking trusted device:', error);
+  } catch {
+    // Corrupted or tampered data — remove it
+    localStorage.removeItem(MFA_TRUSTED_DEVICE_KEY);
     return false;
   }
 }

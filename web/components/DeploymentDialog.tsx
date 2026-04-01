@@ -7,13 +7,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Download, Loader2, Pencil, Trash2 } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Download, Loader2, Pencil, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useMachines } from '@/hooks/useFirestore';
+import { useMachines, Process } from '@/hooks/useFirestore';
 import { DeploymentTemplate, Deployment } from '@/hooks/useDeployments';
 import { Badge } from '@/components/ui/badge';
 import { useSystemPresets } from '@/hooks/useSystemPresets';
-import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 import { SelectGroup, SelectLabel } from '@/components/ui/select';
 
 interface DeploymentDialogProps {
@@ -27,11 +26,9 @@ interface DeploymentDialogProps {
   onDeleteTemplate: (templateId: string) => Promise<void>;
 }
 
-// Helper function to truncate text in the middle, preserving start and end
-const truncateMiddle = (text: string, startChars: number = 12, endChars: number = 12, maxLength: number = 28): string => {
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, startChars)}...${text.slice(-endChars)}`;
-};
+// Prefix constants for the unified select value
+const PRESET_PREFIX = 'preset:';
+const TEMPLATE_PREFIX = 'template:';
 
 export default function DeploymentDialog({
   open,
@@ -45,7 +42,6 @@ export default function DeploymentDialog({
 }: DeploymentDialogProps) {
   const { machines } = useMachines(siteId);
   const { presets, categories } = useSystemPresets();
-  const { version: latestInstallerVersion, downloadUrl: latestInstallerUrl } = useInstallerVersion();
 
   const [deploymentName, setDeploymentName] = useState('');
   const [installerName, setInstallerName] = useState('');
@@ -53,15 +49,44 @@ export default function DeploymentDialog({
   const [silentFlags, setSilentFlags] = useState('');
   const [verifyPath, setVerifyPath] = useState('');
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(new Set());
-  const [saveAsTemplate, setSaveAsTemplate] = useState(false);
   const [deploying, setDeploying] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('');
-  const [editingTemplate, setEditingTemplate] = useState<string>('');  // ID of template being edited
-  const [selectedPreset, setSelectedPreset] = useState<string>('');  // ID of selected system preset
+  const [selectedItem, setSelectedItem] = useState<string>('');  // 'preset:id' or 'template:id'
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showCloseProcesses, setShowCloseProcesses] = useState(false);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [additionalProcesses, setAdditionalProcesses] = useState('');
+  const [parallelInstall, setParallelInstall] = useState(false);
+  const [editingName, setEditingName] = useState(false);
 
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
+
+  // Derive selection type from the unified selectedItem
+  const isTemplateSelected = selectedItem.startsWith(TEMPLATE_PREFIX);
+  const isPresetSelected = selectedItem.startsWith(PRESET_PREFIX);
+  const selectedTemplateId = isTemplateSelected ? selectedItem.slice(TEMPLATE_PREFIX.length) : '';
+
+  // Filter out Owlette Agent presets from the library
+  const filteredPresets = presets.filter(p => !p.is_owlette_agent);
+  const filteredCategories = categories.filter(cat =>
+    filteredPresets.some(p => p.category === cat)
+  );
+
+  const hasItems = filteredPresets.length > 0 || templates.length > 0;
+
+  // Get display name for the selected item
+  const getSelectedLabel = (): string => {
+    if (!selectedItem) return '';
+    if (selectedItem.startsWith(PRESET_PREFIX)) {
+      const id = selectedItem.slice(PRESET_PREFIX.length);
+      return filteredPresets.find(p => p.id === id)?.name || '';
+    }
+    if (selectedItem.startsWith(TEMPLATE_PREFIX)) {
+      const id = selectedItem.slice(TEMPLATE_PREFIX.length);
+      return templates.find(t => t.id === id)?.name || '';
+    }
+    return '';
+  };
 
   // Reset form when modal opens
   useEffect(() => {
@@ -72,97 +97,123 @@ export default function DeploymentDialog({
       setSilentFlags('');
       setVerifyPath('');
       setSelectedMachines(new Set());
-      setSaveAsTemplate(false);
-      setSelectedTemplate('');
-      setEditingTemplate('');
-      setSelectedPreset('');
+      setSelectedItem('');
+      setShowCloseProcesses(false);
+      setSelectedProjectIds(new Set());
+      setAdditionalProcesses('');
+      setParallelInstall(false);
     }
   }, [open]);
 
-  const handleTemplateSelect = (templateId: string) => {
-    if (templateId === 'none') {
-      setSelectedTemplate('');
-      setEditingTemplate('');
+  const handleItemSelect = (value: string) => {
+    if (value === 'none') {
+      setSelectedItem('');
       return;
     }
 
-    const template = templates.find(t => t.id === templateId);
-    if (template) {
-      setSelectedTemplate(templateId);
-      setDeploymentName(template.name);
-      setInstallerName(template.installer_name);
-      setInstallerUrl(template.installer_url);
-      setSilentFlags(template.silent_flags);
-      setVerifyPath(template.verify_path || '');
-      setEditingTemplate('');
+    setSelectedItem(value);
 
-      // Clear preset selection when template is selected
-      setSelectedPreset('');
-    }
-  };
-
-  const handlePresetSelect = (presetId: string) => {
-    if (presetId === 'none') {
-      setSelectedPreset('');
-      return;
-    }
-
-    const preset = presets.find(p => p.id === presetId);
-    if (preset) {
-      setSelectedPreset(presetId);
-
-      // Populate form with preset data
-      if (preset.is_owlette_agent) {
-        // Special handling for Owlette Agent preset - fetch latest from installer_metadata
-        setDeploymentName(`Update Owlette to v${latestInstallerVersion || 'latest'}`);
-        setInstallerName(preset.installer_name);
-        setInstallerUrl(latestInstallerUrl || ''); // Dynamic URL from installer_metadata
-      } else {
-        // Standard preset
+    if (value.startsWith(PRESET_PREFIX)) {
+      const presetId = value.slice(PRESET_PREFIX.length);
+      const preset = filteredPresets.find(p => p.id === presetId);
+      if (preset) {
         setDeploymentName(`Deploy ${preset.software_name}`);
         setInstallerName(preset.installer_name);
         setInstallerUrl(preset.installer_url);
+        setSilentFlags(preset.silent_flags);
+        setVerifyPath(preset.verify_path || '');
+        setParallelInstall(preset.parallel_install || false);
+        if (preset.close_processes?.length) {
+          setAdditionalProcesses(preset.close_processes.join(', '));
+          setShowCloseProcesses(true);
+        } else {
+          setAdditionalProcesses('');
+        }
       }
-
-      setSilentFlags(preset.silent_flags);
-      setVerifyPath(preset.verify_path || '');
-
-      // Clear template selection when preset is selected
-      setSelectedTemplate('');
-      setEditingTemplate('');
+    } else if (value.startsWith(TEMPLATE_PREFIX)) {
+      const templateId = value.slice(TEMPLATE_PREFIX.length);
+      const template = templates.find(t => t.id === templateId);
+      if (template) {
+        setDeploymentName(template.name);
+        setInstallerName(template.installer_name);
+        setInstallerUrl(template.installer_url);
+        setSilentFlags(template.silent_flags);
+        setVerifyPath(template.verify_path || '');
+        setParallelInstall(template.parallel_install || false);
+        if (template.close_processes?.length) {
+          setAdditionalProcesses(template.close_processes.join(', '));
+          setShowCloseProcesses(true);
+        } else {
+          setAdditionalProcesses('');
+        }
+      }
     }
   };
 
-  const handleEditTemplate = () => {
-    if (selectedTemplate) {
-      if (editingTemplate === selectedTemplate) {
-        // Toggle off - cancel editing
-        setEditingTemplate('');
-        toast.info('Edit mode cancelled');
+  const handleSaveTemplate = async () => {
+    if (!deploymentName.trim()) {
+      // Switch to edit mode so user can type a name
+      setEditingName(true);
+      toast.error('Enter a name first');
+      return;
+    }
+
+    // Build close_processes for template
+    const templateCloseProcesses: string[] = [];
+    machines
+      .filter(m => selectedMachines.has(m.machineId))
+      .forEach(machine => {
+        (machine.processes || []).forEach((proc: Process) => {
+          if (selectedProjectIds.has(proc.id)) {
+            const exeName = proc.exe_path?.split(/[/\\]/).pop() || '';
+            if (exeName && !templateCloseProcesses.includes(exeName)) templateCloseProcesses.push(exeName);
+          }
+        });
+      });
+    const additionalNames = additionalProcesses.split(',').map(s => s.trim()).filter(Boolean);
+    additionalNames.forEach(name => {
+      if (!templateCloseProcesses.includes(name)) templateCloseProcesses.push(name);
+    });
+
+    const templateData: any = {
+      name: deploymentName,
+      installer_name: installerName,
+      installer_url: installerUrl,
+      silent_flags: silentFlags,
+      parallel_install: parallelInstall,
+    };
+    if (verifyPath?.trim()) templateData.verify_path = verifyPath.trim();
+    if (templateCloseProcesses.length > 0) templateData.close_processes = templateCloseProcesses;
+
+    try {
+      if (isTemplateSelected) {
+        // Update existing user-saved template
+        await onUpdateTemplate(selectedTemplateId, templateData);
+        toast.success('Template updated');
       } else {
-        // Toggle on - start editing
-        setEditingTemplate(selectedTemplate);
-        setSaveAsTemplate(false);
-        toast.info('Edit the template fields below and deploy to save changes');
+        // Save as new template (also covers system presets — never overwrite those)
+        const newId = await onCreateTemplate(templateData);
+        setSelectedItem(`${TEMPLATE_PREFIX}${newId}`);
+        toast.success('Saved as new template');
       }
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to save template');
     }
   };
 
   const handleDeleteTemplate = () => {
-    if (!selectedTemplate) return;
+    if (!selectedTemplateId) return;
     setShowDeleteConfirm(true);
   };
 
   const confirmDeleteTemplate = async () => {
-    if (!selectedTemplate) return;
+    if (!selectedTemplateId) return;
 
     try {
-      await onDeleteTemplate(selectedTemplate);
+      await onDeleteTemplate(selectedTemplateId);
       toast.success('Template deleted successfully');
 
-      // Clear form
-      setSelectedTemplate('');
-      setEditingTemplate('');
+      setSelectedItem('');
       setDeploymentName('');
       setInstallerName('');
       setInstallerUrl('');
@@ -198,14 +249,11 @@ export default function DeploymentDialog({
   };
 
   const handleDeploy = async () => {
-    // Validation
-    if (!deploymentName.trim()) {
-      toast.error('Please provide a deployment name');
-      return;
-    }
+    // Auto-derive deployment name if not set
+    const effectiveName = deploymentName.trim() || getSelectedLabel() || installerName || 'Deployment';
 
     if (!installerName.trim()) {
-      toast.error('Please provide an installer name');
+      toast.error('Please provide an installer URL');
       return;
     }
 
@@ -214,7 +262,6 @@ export default function DeploymentDialog({
       return;
     }
 
-    // Validate URL format
     try {
       new URL(installerUrl);
     } catch (e) {
@@ -230,52 +277,44 @@ export default function DeploymentDialog({
     setDeploying(true);
 
     try {
-      // Update existing template if in edit mode
-      if (editingTemplate) {
-        const templateData: any = {
-          name: deploymentName,
-          installer_name: installerName,
-          installer_url: installerUrl,
-          silent_flags: silentFlags,
-        };
-        if (verifyPath?.trim()) templateData.verify_path = verifyPath.trim();
-
-        await onUpdateTemplate(editingTemplate, templateData);
-        toast.success('Template updated successfully!');
-        setEditingTemplate('');
-      }
-      // Save as new template if requested
-      else if (saveAsTemplate) {
-        const templateData: any = {
-          name: deploymentName,
-          installer_name: installerName,
-          installer_url: installerUrl,
-          silent_flags: silentFlags,
-        };
-        if (verifyPath?.trim()) templateData.verify_path = verifyPath.trim();
-
-        await onCreateTemplate(templateData);
-        toast.success('Template saved successfully!');
-      }
-
-      // Check if this is an Owlette update deployment
-      const selectedPresetData = selectedPreset ? presets.find(p => p.id === selectedPreset) : null;
-      const isOwletteUpdate = selectedPresetData?.is_owlette_agent || false;
-
-      // Build deployment object, excluding undefined fields
+      // Build deployment object
       const deploymentData: any = {
-        name: deploymentName,
+        name: effectiveName,
         installer_name: installerName,
         installer_url: installerUrl,
         silent_flags: silentFlags,
-        targets: [],  // Will be filled by the hook
+        parallel_install: parallelInstall,
+        targets: [],
       };
 
-      // Only add optional fields if they have values (Firestore doesn't accept undefined)
       if (verifyPath?.trim()) deploymentData.verify_path = verifyPath.trim();
-      if (isOwletteUpdate) deploymentData.is_owlette_update = true;
 
-      // Create deployment
+      // Build close_processes and suppress_projects from UI selections
+      const closeProcesses: string[] = [];
+      const suppressProjects: string[] = [];
+
+      // Add exe names from selected managed projects
+      machines
+        .filter(m => selectedMachines.has(m.machineId))
+        .forEach(machine => {
+          (machine.processes || []).forEach((proc: Process) => {
+            if (selectedProjectIds.has(proc.id)) {
+              if (!suppressProjects.includes(proc.id)) suppressProjects.push(proc.id);
+              const exeName = proc.exe_path?.split(/[/\\]/).pop() || '';
+              if (exeName && !closeProcesses.includes(exeName)) closeProcesses.push(exeName);
+            }
+          });
+        });
+
+      // Add free-text process names
+      const additionalNames = additionalProcesses.split(',').map(s => s.trim()).filter(Boolean);
+      additionalNames.forEach(name => {
+        if (!closeProcesses.includes(name)) closeProcesses.push(name);
+      });
+
+      if (closeProcesses.length > 0) deploymentData.close_processes = closeProcesses;
+      if (suppressProjects.length > 0) deploymentData.suppress_projects = suppressProjects;
+
       const deploymentId = await onCreateDeployment(
         deploymentData,
         Array.from(selectedMachines)
@@ -283,15 +322,18 @@ export default function DeploymentDialog({
 
       toast.success(`Deployment started! Installing on ${selectedMachines.size} machine${selectedMachines.size > 1 ? 's' : ''}`);
 
-      // Reset form
       setDeploymentName('');
       setInstallerName('');
       setInstallerUrl('');
       setSilentFlags('');
       setVerifyPath('');
+      setParallelInstall(false);
+      setEditingName(false);
       setSelectedMachines(new Set());
-      setSaveAsTemplate(false);
-      setSelectedTemplate('');
+      setSelectedItem('');
+      setSelectedProjectIds(new Set());
+      setAdditionalProcesses('');
+      setShowCloseProcesses(false);
 
       onOpenChange(false);
     } catch (error: any) {
@@ -304,241 +346,362 @@ export default function DeploymentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-3xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
+      <DialogContent className="border-border bg-secondary text-white max-w-3xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
-          <DialogTitle className="text-white">Deploy Software</DialogTitle>
-          <DialogDescription className="text-slate-400">
-            Install software across multiple machines simultaneously
+          <DialogTitle className="text-white">deploy software</DialogTitle>
+          <DialogDescription className="text-muted-foreground">
+            install software across multiple machines simultaneously
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4 pr-2">
-          {/* Template Selections - Side by Side */}
-          {(templates.length > 0 || presets.length > 0) && (
-            <div className="flex gap-4">
-              {/* Template Library - Left */}
-              {presets.length > 0 && (
-                <div className="flex-1 space-y-2">
-                  <Label htmlFor="system-preset" className="text-white">Template Library</Label>
-                  <Select value={selectedPreset} onValueChange={handlePresetSelect}>
-                    <SelectTrigger className="border-slate-700 bg-slate-900 text-white overflow-hidden">
-                      {selectedPreset ? (
-                        <span className="truncate">
-                          {truncateMiddle(presets.find(p => p.id === selectedPreset)?.name || '')}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">Select a template...</span>
-                      )}
-                    </SelectTrigger>
-                    <SelectContent className="border-slate-700 bg-slate-800">
-                      <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
-                        None
-                      </SelectItem>
-                      {categories.map(category => {
-                        const categoryPresets = presets.filter(p => p.category === category);
-                        if (categoryPresets.length === 0) return null;
+          {/* Template — single row: dropdown/edit + pencil + save + trash */}
+          <div className="space-y-2">
+            <Label className="text-white">template</Label>
+            <div className="flex gap-2">
+              {editingName ? (
+                <Input
+                  placeholder="e.g., TouchDesigner 2025.32280"
+                  value={deploymentName}
+                  onChange={(e) => setDeploymentName(e.target.value)}
+                  className="border-border bg-background text-white flex-1"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setEditingName(false);
+                  }}
+                />
+              ) : (
+                <Select value={selectedItem} onValueChange={(value) => {
+                  handleItemSelect(value);
+                  setEditingName(false);
+                }}>
+                  <SelectTrigger className="border-border bg-background text-white flex-1 overflow-hidden">
+                    {selectedItem ? (
+                      <span className="truncate">{deploymentName || getSelectedLabel()}</span>
+                    ) : (
+                      <span className="text-muted-foreground">select or create template...</span>
+                    )}
+                  </SelectTrigger>
+                  <SelectContent className="border-border bg-secondary">
+                    <SelectItem value="none" className="text-white focus:bg-accent focus:text-white">
+                      none
+                    </SelectItem>
+                    {/* Library presets by category */}
+                    {filteredCategories.map(category => {
+                      const categoryPresets = filteredPresets.filter(p => p.category === category);
+                      if (categoryPresets.length === 0) return null;
 
-                        return (
-                          <SelectGroup key={category}>
-                            <SelectLabel className="text-slate-400">{category}</SelectLabel>
-                            {categoryPresets.map(preset => (
-                              <SelectItem
-                                key={preset.id}
-                                value={preset.id}
-                                className="text-white focus:bg-slate-700 focus:text-white"
-                              >
-                                <span className="flex items-center gap-2">
-                                  {preset.icon && <span>{preset.icon}</span>}
-                                  <span>{preset.name}</span>
-                                  {preset.is_owlette_agent && (
-                                    <Badge variant="outline" className="ml-2 border-blue-600 text-blue-400 text-xs">
-                                      Auto
-                                    </Badge>
-                                  )}
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-slate-500">
-                    Admin-curated software catalog (TouchDesigner, VLC, Owlette Agent, etc.)
-                  </p>
-                </div>
-              )}
-
-              {/* My Templates - Right */}
-              {templates.length > 0 && (
-                <div className="flex-1 space-y-2">
-                  <Label htmlFor="template" className="text-white">My Templates</Label>
-                  <div className="flex gap-2">
-                    <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
-                      <SelectTrigger className="border-slate-700 bg-slate-900 text-white flex-1 overflow-hidden">
-                        {selectedTemplate ? (
-                          <span className="truncate">
-                            {/* Use more relaxed truncation when Template Library isn't shown (full width available) */}
-                            {presets.length > 0
-                              ? truncateMiddle(templates.find(t => t.id === selectedTemplate)?.name || '', 7, 8, 20)
-                              : truncateMiddle(templates.find(t => t.id === selectedTemplate)?.name || '')}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">Select a template...</span>
-                        )}
-                      </SelectTrigger>
-                      <SelectContent className="border-slate-700 bg-slate-800">
-                        <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
-                          None
-                        </SelectItem>
+                      return (
+                        <SelectGroup key={category}>
+                          <SelectLabel className="text-muted-foreground">{category}</SelectLabel>
+                          {categoryPresets.map(preset => (
+                            <SelectItem
+                              key={preset.id}
+                              value={`${PRESET_PREFIX}${preset.id}`}
+                              className="text-white focus:bg-accent focus:text-white"
+                            >
+                              <span className="flex items-center gap-2">
+                                {preset.icon && <span>{preset.icon}</span>}
+                                <span>{preset.name}</span>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      );
+                    })}
+                    {/* User saved templates */}
+                    {templates.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel className="text-muted-foreground">Saved</SelectLabel>
                         {templates.map((template) => (
                           <SelectItem
                             key={template.id}
-                            value={template.id}
-                            className="text-white focus:bg-slate-700 focus:text-white"
+                            value={`${TEMPLATE_PREFIX}${template.id}`}
+                            className="text-white focus:bg-accent focus:text-white"
                           >
                             {template.name}
                           </SelectItem>
                         ))}
-                      </SelectContent>
-                    </Select>
-                    {selectedTemplate && (
-                      <>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={handleEditTemplate}
-                          className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
-                          title="Edit template"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={handleDeleteTemplate}
-                          className="border-slate-700 bg-slate-900 text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
-                          title="Delete template"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </>
+                      </SelectGroup>
                     )}
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Your custom deployment templates
-                  </p>
-                  {editingTemplate && (
-                    <div className="flex items-center gap-2 p-2 bg-blue-900/30 border border-blue-700 rounded text-sm">
-                      <Pencil className="h-3 w-3 text-blue-400" />
-                      <span className="text-blue-300">Editing template - changes will be saved when you deploy</span>
-                    </div>
+                  </SelectContent>
+                </Select>
+              )}
+              {/* Action buttons — hidden for system presets */}
+              {!isPresetSelected && (
+                <>
+                  {/* Pencil: toggle edit name mode */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => {
+                      if (!editingName && !deploymentName) {
+                        setDeploymentName(getSelectedLabel());
+                      }
+                      setEditingName(!editingName);
+                    }}
+                    className={`border-border bg-background cursor-pointer shrink-0 ${editingName ? 'text-accent-cyan hover:bg-accent-cyan/20 hover:text-accent-cyan' : 'text-white hover:bg-muted hover:text-white'}`}
+                    title={editingName ? 'Back to dropdown' : 'Edit name'}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  {/* Save template */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={handleSaveTemplate}
+                    className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer shrink-0"
+                    title={isTemplateSelected ? 'Save changes to template' : 'Save as new template'}
+                  >
+                    <Save className="h-4 w-4" />
+                  </Button>
+                  {/* Delete template */}
+                  {isTemplateSelected && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={handleDeleteTemplate}
+                      className="border-border bg-background text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer shrink-0"
+                      title="Delete template"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   )}
-                </div>
+                </>
               )}
             </div>
-          )}
-
-          {/* Deployment Name */}
-          <div className="space-y-2">
-            <Label htmlFor="deployment-name" className="text-white">Deployment Name</Label>
-            <Input
-              id="deployment-name"
-              placeholder="e.g., TouchDesigner 2023.11760"
-              value={deploymentName}
-              onChange={(e) => setDeploymentName(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
-            />
-          </div>
-
-          {/* Installer Name */}
-          <div className="space-y-2">
-            <Label htmlFor="installer-name" className="text-white">Installer Filename</Label>
-            <Input
-              id="installer-name"
-              placeholder="e.g., TouchDesigner.exe"
-              value={installerName}
-              onChange={(e) => setInstallerName(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
-            />
-            <p className="text-xs text-slate-500">The filename to save the installer as</p>
           </div>
 
           {/* Installer URL */}
           <div className="space-y-2">
-            <Label htmlFor="installer-url" className="text-white">Installer URL</Label>
+            <Label htmlFor="installer-url" className="text-white">installer URL</Label>
             <Input
               id="installer-url"
               placeholder="https://example.com/installer.exe"
               value={installerUrl}
-              onChange={(e) => setInstallerUrl(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white font-mono text-sm"
+              onChange={(e) => {
+                setInstallerUrl(e.target.value);
+                // Auto-derive installer filename from URL
+                try {
+                  const url = new URL(e.target.value);
+                  const filename = url.pathname.split('/').pop() || '';
+                  if (filename && filename.includes('.')) setInstallerName(filename);
+                } catch { /* ignore invalid URLs while typing */ }
+              }}
+              className="border-border bg-background text-white font-mono text-sm"
             />
-            <p className="text-xs text-slate-500">Direct download link to the installer</p>
+            {installerName && (
+              <p className="text-xs text-muted-foreground">filename: {installerName}</p>
+            )}
           </div>
 
           {/* Silent Flags */}
           <div className="space-y-2">
-            <Label htmlFor="silent-flags" className="text-white">Silent Install Flags</Label>
+            <Label htmlFor="silent-flags" className="text-white">silent install flags</Label>
             <Input
               id="silent-flags"
               placeholder='/VERYSILENT /DIR="C:\\Program Files\\App"'
               value={silentFlags}
               onChange={(e) => setSilentFlags(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-border bg-background text-white"
             />
-            <p className="text-xs text-slate-500">Command-line flags for silent installation</p>
+            <p className="text-xs text-muted-foreground">command-line flags for silent installation</p>
           </div>
 
-          {/* Verify Path (Optional) */}
-          <div className="space-y-2">
-            <Label htmlFor="verify-path" className="text-white">Verify Path (Optional)</Label>
-            <Input
-              id="verify-path"
-              placeholder='C:\\Program Files\\App\\app.exe'
-              value={verifyPath}
-              onChange={(e) => setVerifyPath(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+          {/* Parallel Install */}
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="parallel-install"
+              checked={parallelInstall}
+              onCheckedChange={(checked) => setParallelInstall(checked as boolean)}
+              className="cursor-pointer"
             />
-            <p className="text-xs text-slate-500">Path to verify after installation completes</p>
+            <div>
+              <Label htmlFor="parallel-install" className="text-white cursor-pointer">
+                parallel install (keep existing versions)
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                install alongside existing versions instead of replacing them
+              </p>
+            </div>
+          </div>
+
+          {/* Close Running Processes (collapsible) */}
+          <div className="space-y-2">
+            <button
+              type="button"
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-white transition-colors"
+              onClick={() => setShowCloseProcesses(!showCloseProcesses)}
+            >
+              {showCloseProcesses ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              close running processes before install
+              {(selectedProjectIds.size > 0 || additionalProcesses.trim()) && (
+                <Badge className="bg-amber-600 text-xs ml-1">active</Badge>
+              )}
+            </button>
+
+            {showCloseProcesses && (
+              <div className="space-y-3 pl-5">
+                {/* Managed projects from selected machines */}
+                {(() => {
+                  // Collect unique processes across selected machines
+                  const managedProcesses: { id: string; name: string; exeName: string; machineIds: string[] }[] = [];
+                  const seenNames = new Set<string>();
+
+                  machines
+                    .filter(m => selectedMachines.has(m.machineId))
+                    .forEach(machine => {
+                      (machine.processes || []).forEach((proc: Process) => {
+                        const exeName = proc.exe_path?.split(/[/\\]/).pop() || '';
+                        const key = `${proc.name}-${exeName}`;
+                        if (!seenNames.has(key)) {
+                          seenNames.add(key);
+                          managedProcesses.push({
+                            id: proc.id,
+                            name: proc.name,
+                            exeName,
+                            machineIds: [machine.machineId],
+                          });
+                        } else {
+                          const existing = managedProcesses.find(p => `${p.name}-${p.exeName}` === key);
+                          if (existing) existing.machineIds.push(machine.machineId);
+                        }
+                      });
+                    });
+
+                  if (managedProcesses.length === 0 && selectedMachines.size === 0) {
+                    return (
+                      <p className="text-xs text-muted-foreground">select target machines to see managed processes</p>
+                    );
+                  }
+
+                  if (managedProcesses.length === 0) {
+                    return (
+                      <p className="text-xs text-muted-foreground">no managed processes on selected machines</p>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">managed processes</Label>
+                      {managedProcesses.map(proc => (
+                        <div
+                          key={proc.id}
+                          className="flex items-center gap-2 cursor-pointer"
+                          onClick={() => {
+                            const newSet = new Set(selectedProjectIds);
+                            if (newSet.has(proc.id)) {
+                              newSet.delete(proc.id);
+                            } else {
+                              newSet.add(proc.id);
+                            }
+                            setSelectedProjectIds(newSet);
+                          }}
+                        >
+                          <Checkbox
+                            checked={selectedProjectIds.has(proc.id)}
+                            onCheckedChange={() => {
+                              const newSet = new Set(selectedProjectIds);
+                              if (newSet.has(proc.id)) {
+                                newSet.delete(proc.id);
+                              } else {
+                                newSet.add(proc.id);
+                              }
+                              setSelectedProjectIds(newSet);
+                            }}
+                            className="cursor-pointer"
+                          />
+                          <span className="text-white text-sm">{proc.name}</span>
+                          <span className="text-muted-foreground text-xs">({proc.exeName})</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* Additional process names (free text) */}
+                <div className="space-y-1">
+                  <Label htmlFor="additional-processes" className="text-xs text-muted-foreground">additional process names</Label>
+                  <Input
+                    id="additional-processes"
+                    placeholder="e.g., msiexec.exe, CodeMeter.exe"
+                    value={additionalProcesses}
+                    onChange={(e) => setAdditionalProcesses(e.target.value)}
+                    className="border-border bg-background text-white text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">comma-separated exe names for non-managed processes</p>
+                </div>
+
+                {/* Warning banner */}
+                {(selectedProjectIds.size > 0 || additionalProcesses.trim()) && (() => {
+                  const allProcessNames: string[] = [];
+                  machines
+                    .filter(m => selectedMachines.has(m.machineId))
+                    .forEach(machine => {
+                      (machine.processes || []).forEach((proc: Process) => {
+                        if (selectedProjectIds.has(proc.id)) {
+                          const exeName = proc.exe_path?.split(/[/\\]/).pop() || proc.name;
+                          if (!allProcessNames.includes(exeName)) allProcessNames.push(exeName);
+                        }
+                      });
+                    });
+                  const additionalNames = additionalProcesses.split(',').map(s => s.trim()).filter(Boolean);
+                  additionalNames.forEach(n => { if (!allProcessNames.includes(n)) allProcessNames.push(n); });
+
+                  return (
+                    <div className="flex items-start gap-2 p-2 bg-amber-900/30 border border-amber-600/40 rounded text-sm">
+                      <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+                      <div className="text-amber-200">
+                        <span className="font-medium">The following processes will be closed on target machines before installation: </span>
+                        <span>{allProcessNames.join(', ')}</span>
+                        {selectedProjectIds.size > 0 && (
+                          <span className="block text-xs text-amber-300/70 mt-1">Managed processes will restart automatically after installation.</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
 
           {/* Target Machines */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label className="text-white">Target Machines ({selectedMachines.size} selected)</Label>
+              <Label className="text-white">target machines ({selectedMachines.size} selected)</Label>
               <div className="flex gap-2">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={selectOnlyOnlineMachines}
-                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer text-xs"
+                  className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
                 >
-                  Online Only ({onlineMachines.length})
+                  online only ({onlineMachines.length})
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={toggleAllMachines}
-                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer text-xs"
+                  className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
                 >
-                  {allMachinesSelected ? 'Deselect All' : 'Select All'}
+                  {allMachinesSelected ? 'deselect all' : 'select all'}
                 </Button>
               </div>
             </div>
 
-            <div className="border border-slate-700 rounded-lg p-3 bg-slate-900 max-h-48 overflow-y-auto space-y-2">
+            <div className="border border-border rounded-lg p-3 bg-background max-h-48 overflow-y-auto space-y-2">
               {machines.length === 0 ? (
-                <p className="text-slate-400 text-sm text-center py-2">No machines available</p>
+                <p className="text-muted-foreground text-sm text-center py-2">no machines available</p>
               ) : (
                 machines.map((machine) => (
                   <div
                     key={machine.machineId}
-                    className="flex items-center justify-between p-2 rounded hover:bg-slate-800 cursor-pointer"
+                    className="flex items-center justify-between p-2 rounded hover:bg-secondary cursor-pointer"
                     onClick={() => toggleMachine(machine.machineId)}
                   >
                     <div className="flex items-center gap-3">
@@ -550,7 +713,7 @@ export default function DeploymentDialog({
                       <span className="text-white">{machine.machineId}</span>
                     </div>
                     <Badge className={`text-xs ${machine.online ? 'bg-green-600' : 'bg-red-600'}`}>
-                      {machine.online ? 'Online' : 'Offline'}
+                      {machine.online ? 'online' : 'offline'}
                     </Badge>
                   </div>
                 ))
@@ -558,43 +721,31 @@ export default function DeploymentDialog({
             </div>
           </div>
 
-          {/* Save as Template */}
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="save-template"
-              checked={saveAsTemplate}
-              onCheckedChange={(checked) => setSaveAsTemplate(checked as boolean)}
-              className="cursor-pointer"
-            />
-            <Label htmlFor="save-template" className="text-white cursor-pointer">
-              Save as template for future deployments
-            </Label>
-          </div>
         </div>
 
         <DialogFooter>
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
-            className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
             disabled={deploying}
           >
-            Cancel
+            cancel
           </Button>
           <Button
             onClick={handleDeploy}
-            className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             disabled={deploying}
           >
             {deploying ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Deploying...
+                deploying...
               </>
             ) : (
               <>
                 <Download className="h-4 w-4 mr-2" />
-                Deploy to {selectedMachines.size} Machine{selectedMachines.size !== 1 ? 's' : ''}
+                deploy to {selectedMachines.size} machine{selectedMachines.size !== 1 ? 's' : ''}
               </>
             )}
           </Button>
@@ -603,26 +754,26 @@ export default function DeploymentDialog({
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-md">
+        <DialogContent className="border-border bg-secondary text-white max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-white">Delete Template</DialogTitle>
-            <DialogDescription className="text-slate-400">
-              Delete template "{templates.find(t => t.id === selectedTemplate)?.name}"? This cannot be undone.
+            <DialogTitle className="text-white">delete template</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              delete template &ldquo;{templates.find(t => t.id === selectedTemplateId)?.name}&rdquo;? this cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2">
             <Button
               variant="outline"
               onClick={() => setShowDeleteConfirm(false)}
-              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+              className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
             >
-              Cancel
+              cancel
             </Button>
             <Button
               onClick={confirmDeleteTemplate}
               className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
             >
-              Delete
+              delete
             </Button>
           </DialogFooter>
         </DialogContent>

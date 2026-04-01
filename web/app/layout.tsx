@@ -1,21 +1,14 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, Inter, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { LazyAuthProvider } from "@/components/LazyAuthProvider";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Footer } from "@/components/Footer";
 
-const spaceGrotesk = Space_Grotesk({
-  variable: "--font-space-grotesk",
+const geist = Geist({
+  variable: "--font-geist",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
 });
 
 const geistMono = Geist_Mono({
@@ -23,25 +16,29 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const siteUrl = process.env.RAILWAY_PUBLIC_DOMAIN
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+  : 'https://owlette.app';
+
 export const metadata: Metadata = {
-  title: "Owlette - Always Watching",
-  description: "Cloud-connected Windows process management system for TouchDesigner, digital signage, and media servers. Remote monitoring, deployment, and control across your entire fleet.",
+  title: "owlette — attention is all you need",
+  description: "owlette gives your machines the attention they need — so you don't have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.",
   icons: {
-    icon: '/owlette-icon.png',
-    shortcut: '/owlette-icon.png',
+    icon: '/icon.svg',
+    shortcut: '/icon.svg',
     apple: '/owlette-icon.png',
   },
   openGraph: {
-    title: "Owlette - Always Watching",
-    description: "Cloud-connected Windows process management system for TouchDesigner, digital signage, and media servers. Remote monitoring, deployment, and control across your entire fleet.",
-    url: "https://owlette.app",
-    siteName: "Owlette",
+    title: "owlette — attention is all you need",
+    description: "owlette gives your machines the attention they need — so you don't have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.",
+    url: siteUrl,
+    siteName: "owlette",
     images: [
       {
-        url: '/owlette-icon.png',
-        width: 1024,
-        height: 1024,
-        alt: 'Owlette - Always Watching',
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'owlette dashboard — fleet monitoring and control',
       },
     ],
     locale: 'en_US',
@@ -49,11 +46,15 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: "Owlette - Always Watching",
-    description: "Cloud-connected Windows process management system for TouchDesigner, digital signage, and media servers. Remote monitoring, deployment, and control across your entire fleet.",
-    images: ['/owlette-icon.png'],
+    title: "owlette — attention is all you need",
+    description: "owlette gives your machines the attention they need — so you don't have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.",
+    images: ['/og-image.png'],
   },
-  metadataBase: new URL('https://owlette.app'),
+  metadataBase: new URL(siteUrl),
+  manifest: '/manifest.json',
+  other: {
+    'theme-color': '#0a0f1a',
+  },
 };
 
 export default function RootLayout({
@@ -70,14 +71,52 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark scroll-smooth">
       <body
-        className={`${inter.variable} ${spaceGrotesk.variable} ${geistMono.variable} font-sans antialiased bg-background text-foreground`}
+        className={`${geist.variable} ${geistMono.variable} font-sans antialiased text-foreground`}
       >
+        <span dangerouslySetInnerHTML={{ __html: `<!--
+
+
+    :::::..                           ...::::::--:::::::::::......
+    :::::....                              :.:::::-:::::::::.  ..:
+    ::---------:.                           .:*-.:-:::::::::.   .:
+    :::--------.                         :-=+??-.*+-::::::::.   .:
+    -::::-----               :-.       ...-**=:.:=**=:::::::.    .
+    -:::::--:               -*?*       :--+%=  =-=+*+-::::::.    .
+    -::.::-.                 .:.      .:..=?+  :-=+**=::::-:.
+    -:..::.                        ...    .*?*=-===***=::--:.
+    -::.:.                     ..::..      *%SS%%*=+**=-:--:.
+    -:::.                       ....      .?%SSSS%?***=----:.
+    --::                          .:-:::. :?%SSS%%%?*+------:
+    ---.                            .-===-+??*?*+***++=-----:
+    --:                              ::--+-====+++*+++=-----:.
+    -:                        ..:::-:--+===+=*+=??%**?=-----:.
+                               .:-++*?%%??S%?S%%SS?%%?=-----:.
+
+
+          ╔═══════════════════════════════════════════╗
+          ║                                           ║
+          ║          "Do you like our owl?"           ║
+          ║                                           ║
+          ║                     "It's artificial?"    ║
+          ║                                           ║
+          ║          "Of course it is."               ║
+          ║                                           ║
+          ║                     "Must be expensive."  ║
+          ║                                           ║
+          ║          "Very."                          ║
+          ║                                           ║
+          ╚═══════════════════════════════════════════╝
+
+                          — Blade Runner, 1982
+
+
+-->` }} style={{ display: 'none' }} />
         <ErrorBoundary>
-          <AuthProvider>
+          <LazyAuthProvider>
             {children}
             <Footer />
             <Toaster theme="dark" />
-          </AuthProvider>
+          </LazyAuthProvider>
         </ErrorBoundary>
       </body>
     </html>
