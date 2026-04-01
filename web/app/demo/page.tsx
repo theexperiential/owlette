@@ -222,7 +222,7 @@ export default function DemoPage() {
                   onToggleProcesses={toggleAllProcesses}
                   currentSiteId={DEMO_SITE_ID}
                   siteTimezone={DEMO_SITE.timezone}
-                  siteTimeFormat={DEMO_SITE.timeFormat}
+                  siteTimeFormat="12h"
                   onEditProcess={noop}
                   onCreateProcess={noop}
                   onKillProcess={noop}
@@ -250,7 +250,7 @@ export default function DemoPage() {
                         isExpanded={expandedMachineIds.has(machine.machineId)}
                         currentSiteId={DEMO_SITE_ID}
                         siteTimezone={DEMO_SITE.timezone}
-                        siteTimeFormat={DEMO_SITE.timeFormat}
+                        siteTimeFormat="12h"
                         userPreferences={{ temperatureUnit: 'C' }}
                         isAdmin={false}
                         onToggleExpanded={() => toggleMachineExpanded(machine.machineId)}

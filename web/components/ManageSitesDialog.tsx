@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Pencil, Trash2, Check, X, Plus, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
@@ -14,7 +13,6 @@ interface Site {
   id: string;
   name: string;
   timezone?: string;
-  timeFormat?: '12h' | '24h';
 }
 
 interface ManageSitesDialogProps {
@@ -23,7 +21,7 @@ interface ManageSitesDialogProps {
   sites: Site[];
   currentSiteId: string;
   machineCount?: number;
-  onUpdateSite: (siteId: string, updates: { name?: string; timezone?: string; timeFormat?: '12h' | '24h' }) => Promise<void>;
+  onUpdateSite: (siteId: string, updates: { name?: string; timezone?: string }) => Promise<void>;
   onDeleteSite: (siteId: string) => Promise<void>;
   onCreateSite: () => void;
 }
@@ -41,7 +39,6 @@ export function ManageSitesDialog({
   const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [editingTimezone, setEditingTimezone] = useState('UTC');
-  const [editingTimeFormat, setEditingTimeFormat] = useState<'12h' | '24h'>('12h');
   const [deletingDialogOpen, setDeletingDialogOpen] = useState(false);
   const [siteToDelete, setSiteToDelete] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -52,7 +49,6 @@ export function ManageSitesDialog({
       setEditingSiteId(null);
       setEditingName('');
       setEditingTimezone('UTC');
-      setEditingTimeFormat('12h');
     }
   }, [open]);
 
@@ -60,14 +56,12 @@ export function ManageSitesDialog({
     setEditingSiteId(site.id);
     setEditingName(site.name);
     setEditingTimezone(site.timezone || 'UTC');
-    setEditingTimeFormat(site.timeFormat || '12h');
   };
 
   const cancelEditingSite = () => {
     setEditingSiteId(null);
     setEditingName('');
     setEditingTimezone('UTC');
-    setEditingTimeFormat('12h');
   };
 
   const handleSaveSite = async (siteId: string) => {
@@ -82,19 +76,17 @@ export function ManageSitesDialog({
     // Check if anything changed
     const nameChanged = editingName.trim() !== site.name;
     const timezoneChanged = editingTimezone !== (site.timezone || 'UTC');
-    const timeFormatChanged = editingTimeFormat !== (site.timeFormat || '12h');
 
-    if (!nameChanged && !timezoneChanged && !timeFormatChanged) {
+    if (!nameChanged && !timezoneChanged) {
       cancelEditingSite();
       return;
     }
 
     setIsSaving(true);
     try {
-      const updates: { name?: string; timezone?: string; timeFormat?: '12h' | '24h' } = {};
+      const updates: { name?: string; timezone?: string } = {};
       if (nameChanged) updates.name = editingName.trim();
       if (timezoneChanged) updates.timezone = editingTimezone;
-      if (timeFormatChanged) updates.timeFormat = editingTimeFormat;
 
       await onUpdateSite(siteId, updates);
       toast.success('Site updated successfully!');
@@ -170,39 +162,16 @@ export function ManageSitesDialog({
                         autoFocus
                       />
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor={`timezone-${site.id}`} className="text-muted-foreground text-sm">
-                          timezone
-                        </Label>
-                        <TimezoneSelect
-                          id={`timezone-${site.id}`}
-                          value={editingTimezone}
-                          onValueChange={setEditingTimezone}
-                          className="border-border bg-accent text-white"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor={`timeformat-${site.id}`} className="text-muted-foreground text-sm">
-                          time format
-                        </Label>
-                        <Select value={editingTimeFormat} onValueChange={(v) => setEditingTimeFormat(v as '12h' | '24h')}>
-                          <SelectTrigger
-                            id={`timeformat-${site.id}`}
-                            className="border-border bg-accent text-white"
-                          >
-                            <SelectValue placeholder="select format" />
-                          </SelectTrigger>
-                          <SelectContent className="border-border bg-secondary">
-                            <SelectItem value="12h" className="text-white hover:bg-muted cursor-pointer">
-                              12-hour (3:30 PM)
-                            </SelectItem>
-                            <SelectItem value="24h" className="text-white hover:bg-muted cursor-pointer">
-                              24-hour (15:30)
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={`timezone-${site.id}`} className="text-muted-foreground text-sm">
+                        timezone
+                      </Label>
+                      <TimezoneSelect
+                        id={`timezone-${site.id}`}
+                        value={editingTimezone}
+                        onValueChange={setEditingTimezone}
+                        className="border-border bg-accent text-white"
+                      />
                     </div>
                     <div className="flex items-center justify-end gap-2 pt-2">
                       <Button

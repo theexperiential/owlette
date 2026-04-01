@@ -41,7 +41,6 @@ export const DEMO_SITE = {
   name: 'Horizon Museum of Science',
   createdAt: Date.now() - 90 * 24 * 3600 * 1000,
   timezone: 'America/Los_Angeles',
-  timeFormat: '12h' as const,
 };
 
 // ── Machine definitions ──────────────────────────────────────────────

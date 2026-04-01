@@ -101,7 +101,6 @@ export interface Site {
   name: string;
   createdAt: number;
   timezone?: string;  // IANA timezone, e.g., "America/New_York"
-  timeFormat?: '12h' | '24h';  // Time display format (default: '12h')
 }
 
 export function useSites(userId?: string, userSites?: string[], isAdmin?: boolean) {
