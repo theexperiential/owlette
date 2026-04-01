@@ -8,8 +8,8 @@ Distribute project files (ZIP archives) across your machines using your own file
 
 ```
 Your File Host              owlette Cloud              Agent Machines
-(Dropbox/Drive/etc.)       (Firestore)               (Windows)
-────────────────────────────────────────────────────────────────────
+(Dropbox/Drive/etc.)       (Firestore)                 (Windows)
+─────────────────────────────────────────────────────────────────────
 
 1. Upload ZIP to host
 
@@ -18,15 +18,15 @@ Your File Host              owlette Cloud              Agent Machines
 
 3. Send commands ────────────▶ Commands queued
 
-4.                                              Download ZIP
-   ◀─────────────────────────                  directly from host
-   (not through owlette!)                       Report progress ──▶
+4.                                                     Download ZIP
+   ◀───────────────────────────────────────────────────directly from host
+   (not through owlette!)                              Report progress ──▶
 
-5.                                              Extract to path
-                                                Report progress ──▶
+5.                                                     Extract to path
+                                                       Report progress ──▶
 
-6.                                              Verify files
-                                                Report complete ──▶
+6.                                                     Verify files
+                                                       Report complete ──▶
 ```
 
 **Key point**: Files download directly from your host to the machines — owlette never stores or proxies the files. This keeps costs near zero.

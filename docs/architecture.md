@@ -7,16 +7,16 @@ owlette uses a serverless, event-driven architecture where all communication flo
 ## System Overview
 
 ```
-┌─────────────────┐                                    ┌─────────────────┐
-│  Agent           │     ┌──────────────────────┐      │  Web Dashboard   │
-│  (Machine A)     │────▶│                      │◀─────│  (Next.js)       │
+┌──────────────────┐                                    ┌──────────────────┐
+│  Agent           │     ┌───────────────────────┐      │  Web Dashboard   │
+│  (Machine A)     │────▶│                       │◀─────│  (Next.js)       │
 │                  │     │   Cloud Firestore     │      │                  │
 │  Agent           │────▶│   (Real-time NoSQL)   │─────▶│  Users connect   │
-│  (Machine B)     │     │                      │      │  via browser     │
-│                  │◀────│                      │      │                  │
-│  Agent           │     └──────────────────────┘      └─────────────────┘
+│  (Machine B)     │     │                       │      │  via browser     │
+│                  │◀────│                       │      │                  │
+│  Agent           │     └───────────────────────┘      └──────────────────┘
 │  (Machine C)     │              │
-└─────────────────┘              │
+└──────────────────┘              │
                           ┌──────────────┐
                           │  Firebase     │
                           │  Auth         │
@@ -77,12 +77,12 @@ There are no Cloud Functions or custom backend servers — the web dashboard's N
 Agent                          Firestore                       Dashboard
   │                               │                               │
   │── presence (every 30s) ──────▶│                               │
-  │   {online: true,              │── onSnapshot ────────────────▶│
+  │   {online: true,              │── onSnapshot ──────────────────▶│
   │    lastHeartbeat: now}        │   Machine goes green          │
   │                               │                               │
   │── status (every 60s) ────────▶│                               │
-  │   {cpu: 45, memory: 60,      │── onSnapshot ────────────────▶│
-  │    disk: 30, gpu: 15,        │   Metrics update live         │
+  │   {cpu: 45, memory: 60,       │── onSnapshot ──────────────────▶│
+  │    disk: 30, gpu: 15,         │   Metrics update live         │
   │    processes: {...}}          │                               │
 ```
 
@@ -97,7 +97,7 @@ Dashboard                      Firestore                       Agent
   │                               │                               │── execute
   │                               │                               │
   │                               │◀── write to completed ────────│
-  │◀── onSnapshot ────────────────│   {result: "success"}         │
+  │◀── onSnapshot ──────────────────│   {result: "success"}         │
   │   UI updates                  │                               │
 ```
 

@@ -14,7 +14,7 @@ Dashboard                      Firestore                         Agent
   │                               │                                │── execute
   │                               │                                │
   │                               │◀── write to completed ─────────│
-  │◀── onSnapshot ────────────────│   commands/completed/{id}      │
+  │◀── onSnapshot ──────────────────│   commands/completed/{id}      │
   │   UI updates                  │                                │
 ```
 
