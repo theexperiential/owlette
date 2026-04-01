@@ -6,13 +6,13 @@ Cortex is an AI-powered chat interface that lets you interact with your machines
 
 ## Overview
 
-Cortex connects an LLM (Claude or OpenAI) to your machines via 24 specialized tools organized into three tiers:
+Cortex connects an LLM (Claude or OpenAI) to your machines via 29 specialized tools organized into three tiers:
 
 | Tier | Type | Approval | Tools |
 |------|------|----------|-------|
-| **Tier 1** | Read-only | Auto-approved | 10 tools — system info, process lists, logs, metrics |
+| **Tier 1** | Read-only | Auto-approved | 13 tools — system info, process lists, logs, metrics, GPU, site logs, presets |
 | **Tier 2** | Process management | Auto-approved | 5 tools — restart, kill, start, set launch mode, screenshot |
-| **Tier 3** | Privileged | Requires confirmation | 9 tools — run commands/scripts, read/write files, reboot/shutdown |
+| **Tier 3** | Privileged | Requires confirmation | 11 tools — run commands/scripts, read/write files, deploy software, reboot/shutdown |
 
 ---
 
@@ -85,9 +85,11 @@ These tools only read information and never modify anything:
 
 | Tool | Description |
 |------|-------------|
+| `get_site_logs` | Activity logs across all machines in the site (server-side) |
 | `get_system_info` | CPU, memory, disk, GPU, hostname, OS, uptime, agent version |
 | `get_process_list` | All Owlette-configured processes with status |
 | `get_running_processes` | All OS processes with CPU/memory usage (filterable) |
+| `get_gpu_processes` | Per-process GPU/VRAM usage, sorted by consumption |
 | `get_network_info` | Network interfaces, IP addresses, link status |
 | `get_disk_usage` | All drives with total/used/free space |
 | `get_event_logs` | Windows event logs (Application, System, Security) |
@@ -95,6 +97,7 @@ These tools only read information and never modify anything:
 | `get_agent_config` | Owlette agent configuration (tokens stripped) |
 | `get_agent_logs` | Recent agent log entries (filterable by level) |
 | `get_agent_health` | Connection state, health probe results |
+| `get_system_presets` | System presets for software deployments (server-side) |
 
 ### Tier 2: Process Management (Auto-Approved)
 
@@ -117,9 +120,11 @@ These tools require you to click **Confirm** before execution:
 | `run_command` | Execute a shell command (allowlist enforced) |
 | `run_powershell` | Execute a PowerShell command (allowlist enforced) |
 | `run_python` | Execute a Python script on the machine |
+| `execute_script` | Execute a PowerShell script with no command restrictions |
 | `read_file` | Read a file on the machine (max 100KB) |
 | `write_file` | Write content to a file |
 | `list_directory` | List directory contents with file sizes and dates |
+| `deploy_software` | Install or uninstall software using a system preset |
 | `reboot_machine` | Reboot the Windows machine |
 | `shutdown_machine` | Shut down the Windows machine |
 | `cancel_reboot` | Cancel a scheduled reboot or shutdown |

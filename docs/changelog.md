@@ -126,7 +126,7 @@ For the full version management workflow, see [Version Management](internal/vers
 ## [2.3.0] - 2026-03-22
 
 ### Added
-- **Cortex AI Chat** — AI-powered chat interface with 24 specialized tools across three tiers for machine management via natural language
+- **Cortex AI Chat** — AI-powered chat interface with 29 specialized tools across three tiers for machine management via natural language
   - Tier 1 (read-only): system info, process lists, logs, metrics, network, disk
   - Tier 2 (process management): restart, kill, start, set launch mode, screenshot
   - Tier 3 (privileged): run commands/scripts, read/write files, reboot/shutdown

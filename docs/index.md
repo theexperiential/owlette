@@ -33,7 +33,7 @@ Owlette is three things working together:
 
     ---
 
-    An AI-powered chat interface that connects to your machines through natural language. Query system info, restart processes, capture screenshots, and troubleshoot issues — all through conversation with 24 specialized tools. Autonomous mode auto-investigates crashes without human intervention.
+    An AI-powered chat interface that connects to your machines through natural language. Query system info, restart processes, capture screenshots, and troubleshoot issues — all through conversation with 29 specialized tools. Autonomous mode auto-investigates crashes without human intervention.
 
     [:octicons-arrow-right-24: Meet Cortex](dashboard/cortex.md)
 

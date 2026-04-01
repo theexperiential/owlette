@@ -17,7 +17,7 @@ Owlette uses **independent component versioning** for flexibility while maintain
 
 ### Product Version (`/VERSION`)
 
-**Current:** 2.0.4
+**Current:** 2.5.4
 
 **Tracks:** User-visible releases that bundle all components together.
 
@@ -30,7 +30,7 @@ Owlette uses **independent component versioning** for flexibility while maintain
 
 #### Agent Version (`agent/VERSION`)
 
-**Current:** 2.0.4
+**Current:** 2.5.4
 
 **Tracks:** Windows service agent code.
 
@@ -44,7 +44,7 @@ Owlette uses **independent component versioning** for flexibility while maintain
 
 #### Web Version (`web/package.json`)
 
-**Current:** 2.0.4
+**Current:** 2.5.4
 
 **Tracks:** Next.js web dashboard code.
 

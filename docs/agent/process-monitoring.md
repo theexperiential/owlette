@@ -40,7 +40,7 @@ Every configured process is in one of five states:
 
 ## Monitoring Loop
 
-Every 10 seconds, the agent runs through all configured processes:
+Every 5 seconds, the agent runs through all configured processes:
 
 ### 1. Check if Process is Running
 

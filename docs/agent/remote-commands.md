@@ -67,7 +67,7 @@ Dashboard                      Firestore                         Agent
 | `mcp_tool_call` | Execute a Cortex tool | `{tool_name, arguments, chat_id}` |
 
 !!! info "Cortex tool reference"
-    See the [Cortex Tools Reference](../reference/cortex-tools.md) for the complete list of 24 tools with parameters, tiers, and allowed commands.
+    See the [Cortex Tools Reference](../reference/cortex-tools.md) for the complete list of 29 tools with parameters, tiers, and allowed commands.
 
 ---
 
