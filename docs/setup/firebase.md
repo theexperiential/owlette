@@ -38,7 +38,7 @@ Firebase provides the real-time database (Firestore) and authentication backend 
 
 1. In Firebase Console → Project Settings (gear icon)
 2. Scroll to **"Your apps"**
-3. Click **"Add app"** → Select **Web** (</> icon)
+3. Click **"Add app"** → Select **Web** (&lt;/&gt; icon)
 4. Register the app (name: "Owlette Dashboard")
 5. Copy the 6 configuration values:
 
