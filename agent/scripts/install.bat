@@ -58,10 +58,14 @@ echo ProgramData directories created at: %DATA_DIR%
 :: Step 3: Stop and remove existing service (if any)
 :: ============================================================================
 echo [2/4] Checking for existing service...
-"%INSTALL_DIR%\tools\nssm.exe" status OwletteService >nul 2>&1
+:: Use registry to detect service — reliable regardless of running/stopped state.
+:: nssm status returns non-zero for stopped services, which previously caused
+:: this block to be skipped during upgrades, leaving the old registration in place
+:: and causing nssm install to fail (service already exists).
+reg query "HKLM\SYSTEM\CurrentControlSet\Services\OwletteService" >nul 2>&1
 if %errorLevel% equ 0 (
-    echo Stopping existing service...
-    "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService
+    echo Existing service found, stopping...
+    "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService >nul 2>&1
 
     :: Wait up to 10 seconds for service to stop gracefully
     :: This allows the service to cleanly set online=false in Firestore
@@ -71,14 +75,14 @@ if %errorLevel% equ 0 (
     "%INSTALL_DIR%\tools\nssm.exe" status OwletteService | findstr /C:"SERVICE_STOPPED" >nul 2>&1
     if !errorLevel! equ 0 goto SERVICE_STOPPED
 
-    timeout /t 1 /nobreak >nul
+    timeout /t 1 /nobreak >nul 2>&1
     set /a WAIT_COUNT+=1
     if !WAIT_COUNT! lss 10 goto WAIT_LOOP
 
     :: If service didn't stop after 10 seconds, force stop
     echo Service did not stop gracefully, forcing...
-    "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService
-    timeout /t 1 /nobreak >nul
+    "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService >nul 2>&1
+    timeout /t 1 /nobreak >nul 2>&1
 
     :SERVICE_STOPPED
     echo Service stopped successfully
@@ -87,7 +91,7 @@ if %errorLevel% equ 0 (
     :: This ensures Firestore has fully processed the online=false write
     :: and the web dashboard will show machine as offline
     echo Waiting for Firestore sync to complete...
-    timeout /t 3 /nobreak >nul
+    timeout /t 3 /nobreak >nul 2>&1
 
     echo Removing existing service...
     "%INSTALL_DIR%\tools\nssm.exe" remove OwletteService confirm
@@ -95,7 +99,7 @@ if %errorLevel% equ 0 (
     :: SAFETY MARGIN: Wait 2 seconds after removing service
     :: This prevents any race conditions between old/new service
     echo Preparing to install new service...
-    timeout /t 2 /nobreak >nul
+    timeout /t 2 /nobreak >nul 2>&1
 )
 
 :: ============================================================================
@@ -167,7 +171,7 @@ if %errorLevel% neq 0 (
 )
 
 :: Wait a moment and check status
-timeout /t 3 /nobreak >nul
+timeout /t 3 /nobreak >nul 2>&1
 "%INSTALL_DIR%\tools\nssm.exe" status OwletteService
 
 echo.

@@ -6,6 +6,109 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.5.2] - 2026-03-31
+
+### Changed
+- Version bump
+
+---
+
+## [2.5.1] - 2026-03-31
+
+### Added
+- Agent longevity hardening for 24/7 uptime — fixed resource leaks, unbounded queue growth, and error handling across all background threads
+- Windows console event signal handling (`CTRL_SHUTDOWN_EVENT` etc.) in the agent runner
+- Version number logged at service startup
+
+### Fixed
+- Dashboard machine online/offline status delay reduced from ~27s to ~4s
+- Slow command worker thread must start after `self.running = True` (previously caused worker to exit immediately)
+- Killed processes no longer trigger crash detection and relaunch
+- Parallel install support for Cortex `deploy_software` — existing registry keys hidden from installer to prevent unintended removal of previous versions
+- Cortex now requires explicit user confirmation before calling `deploy_software`
+- `install.bat` service detection switched to registry query — `nssm status` returned non-zero for stopped services, causing upgrade installs to skip removal and fail on re-registration
+
+### Performance
+- Landing page Lighthouse score improved from 69 to 89
+
+---
+
+## [2.4.4] - 2026-03-31
+
+### Added
+- **Cortex `deploy_software` tool** — AI-driven software deployment with full pipeline tracking (download, silent install, verify, Deployments page visibility). Server-side tool with user confirmation required
+- **Cortex `get_system_presets` tool** — Retrieves admin-configured software presets (installer URLs, silent flags, verification paths) for use with `deploy_software`
+- **12h/24h time format preference** — User preference persisted to Firestore, applied across schedule editor, time pickers, and dashboard
+- `listen_to_document` returns a `wake_event` for instant polling on Firestore writes
+
+### Fixed
+- `deploy_software` overrides `/DIR` flag to match the target version install path
+- Bidirectional config sync between agent and Firestore
+- Network metrics flickering on dashboard
+- Process list not detecting running processes; added Deployments link
+- Cortex sidebar categories sorted by recency, batch categorize fixed
+- Schedule editor time picker opens upward when near bottom of viewport
+- `timeFormat` preference not persisting due to missing equality check
+
+---
+
+## [2.4.2] - 2026-03-27
+
+### Added
+- **Feedback / Bug Reporting** — Report bugs from the web dashboard and the agent GUI (system tray → "Report Issue"), with log attachments and direct Firestore submission
+- **Branded email templates** — Dark-theme HTML emails with shared layout system (header, footer, logo, site name in all transactional emails)
+- **Landing page overhaul** — New hero with eye ignition animation, Blade Runner easter egg, rotating word, typewriter text, interactive background, use case and value prop sections, demo mode
+- **Demo mode** — Full dashboard preview with simulated data, no login required
+- SEO overhaul — new OG image, lowercase brand voice, sitemap, robots.txt, proper metadata
+- File path, arguments, and PID displayed on process rows in the dashboard
+- Download link in landing page nav; `/download` redirect route
+
+### Fixed
+- Agent Bearer token auth in bug-report API route
+- Email template: logo URL fallback, auto-link color, footer links, Gmail clipping
+- Landing page layout: 4K centering, mobile accordion, hero vertical alignment, subheadline jitter
+
+---
+
+## [2.4.1] - 2026-03-26
+
+### Changed
+- **Agent pairing replaces browser OAuth** — Agents now authenticate via QR code / device code flow. No browser window is opened on the target machine; users scan a QR code or enter a 3-word phrase in the dashboard
+- Installer publisher, URLs, and fallback version updated
+
+### Fixed
+- Installer pairing UX — auto-opens browser, improved colors, handles failure gracefully
+- Rate limits increased; pause added on pairing failure
+- Dashboard button and status badge hover states
+
+### Removed
+- Browser-based OAuth flow (replaced by device code pairing)
+
+---
+
+## [2.4.0] - 2026-03-25
+
+### Added
+- **Network Monitoring Dashboard** — Per-NIC throughput charts with historical data (upload/download MB/s per adapter)
+- **Agent GPU Process Monitoring** — Per-process VRAM usage via Windows Performance Counters (cross-vendor: NVIDIA, AMD, Intel)
+- **Cortex `execute_script` tool** — Unrestricted PowerShell execution on the remote machine (Tier 3, requires confirmation)
+- **Screenshot Vision Analysis** — Cortex can analyze captured screenshots and provide behavioral guidance
+- **Cortex Chat Improvements** — Markdown rendering, conversation categorization, process context awareness
+- **Live View** — Real-time screenshot stream modal in the dashboard
+- **Reboot Scheduling** — Schedule recurring reboots with cron-style configuration
+- **Threshold Alerts** — Configurable alerts when CPU, memory, or disk usage exceeds thresholds
+- **Webhook Platform Formatting** — Slack, Teams, and Discord formatted payloads for webhook notifications
+- **OpenAPI Documentation** — Auto-generated API docs via Scalar at `/docs/api`
+- **Admin Tools API** — REST endpoints for all Cortex tools, usable by external integrations
+- **Logs Improvements** — Infinite scroll, date range filters, auth re-render optimization
+- React Markdown rendering with GFM support in Cortex chat
+
+### Fixed
+- Screenshot max width increased to 8K; lower JPEG quality for reduced payload size
+- Cortex language and tone improvements
+
+---
+
 ## [2.3.1] - 2026-03-24
 
 ### Changed

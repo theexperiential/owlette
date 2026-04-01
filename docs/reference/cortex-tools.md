@@ -1,6 +1,6 @@
 # Cortex Tools Reference
 
-Complete reference for all 24 tools available in Cortex, organized by tier.
+Complete reference for all 29 tools available in Cortex, organized by tier.
 
 ---
 
@@ -8,13 +8,28 @@ Complete reference for all 24 tools available in Cortex, organized by tier.
 
 | Tier | Type | Approval | Count |
 |------|------|----------|-------|
-| **1** | Read-only | Auto-approved | 10 |
+| **1** | Read-only | Auto-approved | 13 |
 | **2** | Process & machine management | Auto-approved | 5 |
-| **3** | Privileged | Requires user confirmation | 9 |
+| **3** | Privileged | Requires user confirmation | 11 |
+
+> **Server-side tools** (`get_site_logs`, `get_system_presets`, `deploy_software`) execute on the server and query Firestore directly — they do not route through the agent.
 
 ---
 
 ## Tier 1: Read-Only Tools
+
+### get_site_logs
+
+Get activity logs across all machines in the site. Useful for finding errors, crashes, and events across the fleet. **Server-side** — queries Firestore directly.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `level` | string | No | Filter: `error`, `warning`, `info` |
+| `hours` | number | No | Look back this many hours (default: 24) |
+| `limit` | number | No | Max logs to return (default: 50) |
+| `action` | string | No | Filter by action type, e.g. `process_crash`, `agent_started` |
+
+---
 
 ### get_system_info
 
@@ -46,6 +61,16 @@ Get all running OS processes with CPU and memory usage. Can filter by name.
 | `limit` | number | No | Max results (default: 50, max: 200) |
 
 **Returns**: Processes sorted by memory usage with name, PID, CPU%, memory%.
+
+---
+
+### get_gpu_processes
+
+Get per-process GPU memory (VRAM) usage via Windows Performance Counters — same data source as Task Manager. Shows dedicated and shared GPU memory per process, sorted by usage. Works cross-vendor (NVIDIA, AMD, Intel) and for all GPU APIs (DirectX, OpenGL, CUDA, Vulkan).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| _(none)_ | | | |
 
 ---
 
@@ -122,6 +147,17 @@ Get agent health status including connection state and health probe results.
 
 ---
 
+### get_system_presets
+
+Get available software deployment presets managed by the site admin. Returns installer URLs, silent install flags, verification paths, and other deployment parameters for software like TouchDesigner, Unreal Engine, media players, etc. Use this before `deploy_software` to find the correct preset and parameters. **Server-side** — queries Firestore directly.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `software_name` | string | No | Filter by name (case-insensitive partial match), e.g. `TouchDesigner` |
+| `category` | string | No | Filter by category, e.g. `Creative Software`, `Media Server` |
+
+---
+
 ## Tier 2: Process & Machine Management Tools
 
 These wrap existing Owlette commands and execute immediately without user confirmation.
@@ -181,7 +217,7 @@ Set the launch mode for a process. Replaces the old `toggle_autolaunch` with thr
 
 ### capture_screenshot
 
-Capture a screenshot of the remote machine's desktop.
+Capture a screenshot of the remote machine's desktop. Returns the image for visual analysis — use to diagnose display issues, verify process state, or see what's currently on screen.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -271,6 +307,47 @@ List the contents of a directory with file sizes and modification dates.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `path` | string | **Yes** | Absolute directory path |
+
+---
+
+### execute_script
+
+Execute a PowerShell script on the remote machine with no command restrictions. Use for software installs, diagnostics, stress tests, service management, registry edits, or any other admin task.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `script` | string | **Yes** | PowerShell script to execute (can be multi-line) |
+| `timeout_seconds` | number | No | Timeout in seconds (default: 120) — set higher for long operations like installs |
+| `working_directory` | string | No | Optional working directory for script execution |
+
+**Returns**: stdout, stderr, exit code.
+
+---
+
+### deploy_software
+
+Deploy and install software on the remote machine using the full deployment pipeline: download installer, run silent install, verify installation, and track progress. Creates a tracked deployment visible on the Deployments page. **Server-side** — orchestrated by the server, not the agent directly.
+
+**Requires user confirmation before execution.** Cortex will summarize the deployment plan (software, version, install path, parallel install status, processes to close) and wait for explicit approval before proceeding.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `software_name` | string | **Yes** | Software name, e.g. `TouchDesigner`, `Unreal Engine` |
+| `version` | string | No | Version string, e.g. `2025.32280`. Required for version-specific software |
+| `preset_id` | string | No | System preset ID from `get_system_presets` |
+| `installer_url` | string | No | Direct HTTPS installer URL (overrides preset URL) |
+| `installer_name` | string | No | Installer filename (auto-derived from URL if omitted) |
+| `silent_flags` | string | No | Silent install flags (overrides preset value) |
+| `close_processes` | array | No | Process names to terminate before install, e.g. `["TouchDesigner.exe"]` |
+| `parallel_install` | boolean | No | Install alongside existing versions (auto-enabled for TouchDesigner) |
+| `timeout_minutes` | number | No | Max installation time in minutes (default: 40) |
+
+**TouchDesigner specifics:** Download URL is auto-constructed from version number. `parallel_install` is automatically enabled to prevent the installer from removing existing builds. Use the full installer, not the WebInstaller.
+
+**Silent flag formats by installer type:**
+- Inno Setup: `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="path"`
+- NSIS: `/S /D=path`
+- MSI: `/quiet /norestart INSTALLDIR="path"`
 
 ---
 

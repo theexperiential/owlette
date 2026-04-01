@@ -1865,6 +1865,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
             return
 
         last_info = self.last_started.get(process_list_id, {})
+
+        # Process was manually killed via dashboard — don't relaunch.
+        # The killed flag is set by kill_process and cleared when mode
+        # switches back to always/scheduled (via set_launch_mode which
+        # pops last_started) or by a manual start_process command.
+        if last_info.get('killed'):
+            return
+
         last_pid = last_info.get('pid')
 
         # Launch process if this is the first startup
@@ -2416,9 +2424,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             shared_utils.graceful_terminate(last_pid)
                             # Update status and sync to Firebase immediately
                             shared_utils.update_process_status_in_json(last_pid, 'KILLED', self.firebase_client, process_id=process_list_id)
-                            # Clear tracked PID so the main loop won't detect a "crash" and relaunch
-                            if process_list_id in self.last_started:
-                                del self.last_started[process_list_id]
+                            # Mark as killed (not deleted!) so handle_process() won't
+                            # treat an empty last_started as "untracked → needs launch".
+                            # This prevents the race where kill runs before the mode=off
+                            # config change has synced to local config.json.
+                            self.last_started[process_list_id] = {'killed': True, 'time': datetime.datetime.now()}
                             # Log process kill event (manual kill from dashboard)
                             if self.firebase_client and self.firebase_client.is_connected():
                                 self.firebase_client.log_event(
@@ -2682,13 +2692,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     except Exception as marker_err:
                         logging.warning(f"Could not read existing update marker, proceeding: {marker_err}")
 
-                logging.debug("="*60)
+                logging.info("="*60)
                 logging.info("OWLETTE SELF-UPDATE INITIATED")
-                logging.debug("="*60)
+                logging.info(f"Current version: {shared_utils.APP_VERSION}")
+                logging.info(f"Target version: {target_version}")
+                logging.info("="*60)
                 logging.debug(f"Installer URL: {installer_url}")
-                logging.debug(f"Target version: {target_version}")
                 logging.debug(f"Checksum: {expected_sha256[:16]}...")
-                logging.debug("Inno Setup will handle service stop/restart automatically")
 
                 try:
                     # ANTI-FRAGILE: Check disk space before downloading
@@ -3878,9 +3888,9 @@ with open(out_path, 'wb') as f:
             if not os.path.exists(update_marker_path):
                 return  # No update was in progress
 
-            logging.debug("=" * 60)
+            logging.info("=" * 60)
             logging.info("UPDATE STATUS CHECK")
-            logging.debug("=" * 60)
+            logging.info("=" * 60)
 
             import json
             with open(update_marker_path, 'r') as f:
@@ -3891,10 +3901,10 @@ with open(out_path, 'wb') as f:
             started_at = marker.get('started_at', 'unknown')
             current_version = shared_utils.APP_VERSION
 
-            logging.debug(f"Update started at: {started_at}")
-            logging.debug(f"Old version: {old_version}")
-            logging.debug(f"Target version: {target_version}")
-            logging.debug(f"Current version: {current_version}")
+            logging.info(f"Update started at: {started_at}")
+            logging.info(f"Old version: {old_version}")
+            logging.info(f"Target version: {target_version}")
+            logging.info(f"Current version: {current_version}")
 
             # ANTI-FRAGILE: Detect stale markers from updates that never completed
             # (e.g., power loss during install, BSOD, installer hung and was killed)
@@ -3903,7 +3913,7 @@ with open(out_path, 'wb') as f:
             try:
                 marker_time = datetime.strptime(started_at, '%Y-%m-%d %H:%M:%S')
                 marker_age_minutes = (datetime.now() - marker_time).total_seconds() / 60
-                logging.debug(f"Update marker age: {marker_age_minutes:.1f} minutes")
+                logging.info(f"Update marker age: {marker_age_minutes:.1f} minutes")
             except (ValueError, TypeError):
                 logging.warning(f"Could not parse marker timestamp: {started_at}")
 
@@ -3928,7 +3938,7 @@ with open(out_path, 'wb') as f:
                 self._pending_update_event = ('update_unknown', f'Unexpected version {current_version} after update from {old_version}', 'warning')
                 self._pending_update_completion = ('completed', command_id, deployment_id, f'Updated to {current_version} (expected {target_version})')
 
-            logging.debug("=" * 60)
+            logging.info("=" * 60)
 
             # Clean up marker file
             try:

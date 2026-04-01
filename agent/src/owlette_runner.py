@@ -23,7 +23,12 @@ def signal_handler(signum, frame):
     global _service_instance
 
     # Log to both logger and stderr for visibility
-    msg = f"[SIGNAL HANDLER] Received signal {signum} ({signal.Signals(signum).name if hasattr(signal, 'Signals') else 'UNKNOWN'})"
+    try:
+        sig_name = signal.Signals(signum).name
+    except (ValueError, AttributeError):
+        # Windows console events (CTRL_SHUTDOWN_EVENT=6, etc.) aren't in signal.Signals
+        sig_name = f"CTRL_EVENT_{signum}"
+    msg = f"[SIGNAL HANDLER] Received signal {signum} ({sig_name})"
     logging.critical(msg)
     print(msg, file=sys.stderr, flush=True)
 
@@ -90,7 +95,7 @@ if __name__ == '__main__':
     threading.excepthook = _handle_thread_exception
 
     logging.info("="*70)
-    logging.info("OWLETTE SERVICE STARTING (NSSM MODE)")
+    logging.info(f"OWLETTE SERVICE STARTING (NSSM MODE) — v{shared_utils.APP_VERSION}")
     logging.info("="*70)
 
     # Import the OwletteService class just to access its main() method
