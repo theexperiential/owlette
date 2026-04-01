@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,99 +39,108 @@ function formatTimeDisplay(value: string, use24h: boolean): string {
   return `${h12}:${m.toString().padStart(2, '0')} ${ampm}`;
 }
 
+/** Parse typed time input into "HH:MM" 24h format. Returns null if unrecognizable. */
+function parseTimeInput(input: string, use24h: boolean): string | null {
+  const s = input.trim().toLowerCase().replace(/\s+/g, ' ');
+
+  // "H:MM" or "HH:MM" with optional am/pm — e.g. "9:30", "17:00", "5:00 pm"
+  const colonMatch = s.match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/);
+  if (colonMatch) {
+    let h = parseInt(colonMatch[1]);
+    const m = parseInt(colonMatch[2]);
+    const ampm = colonMatch[3];
+    if (m > 59) return null;
+    if (ampm === 'pm' && h !== 12) h = Math.min(h + 12, 23);
+    else if (ampm === 'am' && h === 12) h = 0;
+    if (h > 23) return null;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  }
+
+  // "Ham" / "Hpm" — e.g. "5pm", "9 am"
+  const shortMatch = s.match(/^(\d{1,2})\s*(am|pm)$/);
+  if (shortMatch) {
+    let h = parseInt(shortMatch[1]);
+    const ampm = shortMatch[2];
+    if (h > 12 || h < 1) return null;
+    if (ampm === 'pm' && h !== 12) h += 12;
+    else if (ampm === 'am' && h === 12) h = 0;
+    return `${h.toString().padStart(2, '0')}:00`;
+  }
+
+  // "HHMM" compact — e.g. "1700", "900"
+  const compactMatch = s.match(/^(\d{3,4})$/);
+  if (compactMatch) {
+    const n = parseInt(compactMatch[1]);
+    const h = Math.floor(n / 100);
+    const m = n % 100;
+    if (h > 23 || m > 59) return null;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  }
+
+  return null;
+}
+
 function TimePicker({ value, onChange, compact }: TimePickerProps) {
   const { userPreferences } = useAuth();
   const use24h = (userPreferences.timeFormat || '12h') === '24h';
-  const [open, setOpen] = useState(false);
-  const [openAbove, setOpenAbove] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [draft, setDraft] = useState<string | null>(null);
 
   const [h, m] = value.split(':').map(Number);
-  const hour12 = h % 12 || 12;
-  const isPM = h >= 12;
 
-  useEffect(() => {
-    if (!open) return;
-    const handleClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [open]);
-
-  const handleToggle = () => {
-    if (!open && ref.current) {
-      const rect = ref.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenAbove(spaceBelow < 100);
-    }
-    setOpen(!open);
+  const adjust = (deltaMinutes: number): string => {
+    const total = ((h * 60 + m + deltaMinutes) % (24 * 60) + 24 * 60) % (24 * 60);
+    const newH = Math.floor(total / 60);
+    const newM = total % 60;
+    const newValue = `${newH.toString().padStart(2, '0')}:${newM.toString().padStart(2, '0')}`;
+    onChange(newValue);
+    return newValue;
   };
 
-  const setHour12 = (newH12: number) => {
-    const h24 = isPM ? (newH12 === 12 ? 12 : newH12 + 12) : (newH12 === 12 ? 0 : newH12);
-    onChange(`${h24.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
+  const commit = (text: string) => {
+    const parsed = parseTimeInput(text, use24h);
+    if (parsed) onChange(parsed);
+    setDraft(null);
   };
 
-  const setHour24 = (newH: number) => {
-    onChange(`${newH.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
-  };
-
-  const setMinute = (newM: number) => {
-    onChange(`${h.toString().padStart(2, '0')}:${newM.toString().padStart(2, '0')}`);
-  };
-
-  const toggleAmPm = () => {
-    const newH = isPM ? h - 12 : h + 12;
-    onChange(`${newH.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
-  };
-
-  const btnSize = compact ? 'text-[11px] px-2 py-1' : 'text-xs px-2.5 py-1.5';
+  const displayed = formatTimeDisplay(value, use24h);
+  const inputWidth = use24h ? 'w-14' : 'w-[4.5rem]';
+  const inputPy = compact ? 'py-0.5 text-[11px]' : 'py-1 text-xs';
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={handleToggle}
-        className={`${btnSize} rounded-md border border-border bg-background text-foreground font-medium cursor-pointer hover:bg-muted transition-colors whitespace-nowrap`}
-      >
-        {formatTimeDisplay(value, use24h)}
-      </button>
-      {open && (
-        <div className={`absolute z-50 bg-card border border-border rounded-lg shadow-lg p-2 flex gap-1 ${openAbove ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
-          {/* Hour column */}
-          <div className="flex flex-col items-center gap-0.5">
-            {use24h ? (
-              <>
-                <button type="button" onClick={() => setHour24((h + 1) % 24)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronUp className="h-3 w-3" /></button>
-                <span className="text-sm font-medium text-foreground w-6 text-center">{h.toString().padStart(2, '0')}</span>
-                <button type="button" onClick={() => setHour24((h - 1 + 24) % 24)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronDown className="h-3 w-3" /></button>
-              </>
-            ) : (
-              <>
-                <button type="button" onClick={() => setHour12(hour12 >= 12 ? 1 : hour12 + 1)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronUp className="h-3 w-3" /></button>
-                <span className="text-sm font-medium text-foreground w-6 text-center">{hour12}</span>
-                <button type="button" onClick={() => setHour12(hour12 <= 1 ? 12 : hour12 - 1)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronDown className="h-3 w-3" /></button>
-              </>
-            )}
-          </div>
-          <span className="text-sm text-muted-foreground self-center">:</span>
-          {/* Minute column */}
-          <div className="flex flex-col items-center gap-0.5">
-            <button type="button" onClick={() => setMinute((m + 5) % 60)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronUp className="h-3 w-3" /></button>
-            <span className="text-sm font-medium text-foreground w-6 text-center">{m.toString().padStart(2, '0')}</span>
-            <button type="button" onClick={() => setMinute((m - 5 + 60) % 60)} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronDown className="h-3 w-3" /></button>
-          </div>
-          {/* AM/PM toggle — only in 12h mode */}
-          {!use24h && (
-            <div className="flex flex-col items-center gap-0.5 ml-1">
-              <button type="button" onClick={toggleAmPm} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronUp className="h-3 w-3" /></button>
-              <span className="text-sm font-medium text-foreground w-6 text-center">{isPM ? 'pm' : 'am'}</span>
-              <button type="button" onClick={toggleAmPm} className="p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"><ChevronDown className="h-3 w-3" /></button>
-            </div>
-          )}
-        </div>
-      )}
+    <div className="flex items-center gap-0.5">
+      <input
+        type="text"
+        value={draft ?? displayed}
+        onChange={(e) => setDraft(e.target.value)}
+        onFocus={(e) => { setDraft(displayed); requestAnimationFrame(() => e.target.select()); }}
+        onBlur={(e) => commit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { commit((e.target as HTMLInputElement).value); e.currentTarget.blur(); }
+          if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+          if (e.key === 'ArrowUp') { e.preventDefault(); setDraft(formatTimeDisplay(adjust(60), use24h)); }
+          if (e.key === 'ArrowDown') { e.preventDefault(); setDraft(formatTimeDisplay(adjust(-60), use24h)); }
+        }}
+        className={`${inputPy} ${inputWidth} rounded-md border border-border bg-background text-foreground font-medium text-center cursor-text outline-none focus:border-muted-foreground transition-colors`}
+        title="Type a time (e.g. 9:00, 5pm, 17:00) or use ↑↓ arrows"
+      />
+      <div className="flex flex-col">
+        <button
+          type="button"
+          onMouseDown={(e) => { e.preventDefault(); setDraft(formatTimeDisplay(adjust(15), use24h)); }}
+          className="text-muted-foreground hover:text-foreground cursor-pointer leading-none py-px"
+          title="+15 min"
+        >
+          <ChevronUp className="h-2.5 w-2.5" />
+        </button>
+        <button
+          type="button"
+          onMouseDown={(e) => { e.preventDefault(); setDraft(formatTimeDisplay(adjust(-15), use24h)); }}
+          className="text-muted-foreground hover:text-foreground cursor-pointer leading-none py-px"
+          title="-15 min"
+        >
+          <ChevronDown className="h-2.5 w-2.5" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -306,42 +315,57 @@ export function ScheduleBlocksEditor({ blocks, onChange, compact }: ScheduleBloc
 
           {/* Time ranges */}
           <div className="space-y-2">
-            {block.ranges.map((range, rangeIndex) => (
-              <div key={rangeIndex} className="flex items-center gap-2">
-                <TimePicker
-                  value={range.start}
-                  onChange={(v) => updateRange(blockIndex, rangeIndex, 'start', v)}
-                  compact={compact}
-                />
-                <span className="text-muted-foreground text-xs">to</span>
-                <TimePicker
-                  value={range.stop}
-                  onChange={(v) => updateRange(blockIndex, rangeIndex, 'stop', v)}
-                  compact={compact}
-                />
-                {block.ranges.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeRange(blockIndex, rangeIndex)}
-                    className="h-6 w-6 rounded-md text-muted-foreground hover:text-red-400 hover:bg-muted transition-colors cursor-pointer flex items-center justify-center flex-shrink-0"
-                    title="remove time range"
-                  >
-                    <Minus className="h-3 w-3" />
-                  </button>
-                )}
-                {/* Add time range button on the last row */}
-                {rangeIndex === block.ranges.length - 1 && (
-                  <button
-                    type="button"
-                    onClick={() => addRange(blockIndex)}
-                    className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer flex items-center justify-center flex-shrink-0"
-                    title="add time range"
-                  >
-                    <Plus className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            ))}
+            {block.ranges.map((range, rangeIndex) => {
+              const isOvernight = range.start > range.stop;
+              return (
+                <div key={rangeIndex} className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <TimePicker
+                      value={range.start}
+                      onChange={(v) => updateRange(blockIndex, rangeIndex, 'start', v)}
+                      compact={compact}
+                    />
+                    <span className="text-muted-foreground text-xs">to</span>
+                    <TimePicker
+                      value={range.stop}
+                      onChange={(v) => updateRange(blockIndex, rangeIndex, 'stop', v)}
+                      compact={compact}
+                    />
+                    {isOvernight && (
+                      <span className="text-[10px] font-medium text-amber-400 bg-amber-400/10 border border-amber-400/30 rounded px-1.5 py-0.5 whitespace-nowrap">
+                        +1 day
+                      </span>
+                    )}
+                    {block.ranges.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeRange(blockIndex, rangeIndex)}
+                        className="h-6 w-6 rounded-md text-muted-foreground hover:text-red-400 hover:bg-muted transition-colors cursor-pointer flex items-center justify-center flex-shrink-0"
+                        title="remove time range"
+                      >
+                        <Minus className="h-3 w-3" />
+                      </button>
+                    )}
+                    {/* Add time range button on the last row */}
+                    {rangeIndex === block.ranges.length - 1 && (
+                      <button
+                        type="button"
+                        onClick={() => addRange(blockIndex)}
+                        className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer flex items-center justify-center flex-shrink-0"
+                        title="add time range"
+                      >
+                        <Plus className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                  {isOvernight && (
+                    <p className="text-[11px] text-amber-400/80 pl-0.5">
+                      ends the following day — schedule days control when it <em>starts</em>
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
         );
@@ -360,6 +384,35 @@ export function ScheduleBlocksEditor({ blocks, onChange, compact }: ScheduleBloc
   );
 }
 
+// ─── Schedule Window Check ───────────────────────────────────────────────────
+
+function isCurrentlyInSchedule(blocks: ScheduleBlock[], timezone?: string): boolean {
+  if (!blocks || blocks.length === 0) return true;
+  const now = timezone
+    ? new Date(new Date().toLocaleString('en-US', { timeZone: timezone }))
+    : new Date();
+  const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const currentDay = dayNames[now.getDay()];
+  const prevDay = dayNames[(now.getDay() + 6) % 7];
+  const currentMins = now.getHours() * 60 + now.getMinutes();
+  for (const block of blocks) {
+    const days = block.days || dayNames;
+    for (const range of block.ranges || []) {
+      const [sh, sm] = range.start.split(':').map(Number);
+      const [eh, em] = range.stop.split(':').map(Number);
+      const startMins = sh * 60 + sm;
+      const stopMins = eh * 60 + em;
+      if (startMins <= stopMins) {
+        if (days.includes(currentDay) && currentMins >= startMins && currentMins <= stopMins) return true;
+      } else {
+        if (days.includes(currentDay) && currentMins >= startMins) return true;
+        if (days.includes(prevDay) && currentMins <= stopMins) return true;
+      }
+    }
+  }
+  return false;
+}
+
 // ─── Dialog Wrapper ─────────────────────────────────────────────────────────
 
 interface ScheduleEditorProps {
@@ -369,6 +422,7 @@ interface ScheduleEditorProps {
   initialPresetId?: string | null;
   onChange: (schedules: ScheduleBlock[], presetId: string | null) => void;
   siteTimezone?: string;
+  currentLaunchMode?: 'off' | 'always' | 'scheduled';
   presets?: SchedulePreset[];
   onCreatePreset?: (name: string, blocks: ScheduleBlock[]) => Promise<void>;
   onDeletePreset?: (id: string) => Promise<void>;
@@ -376,7 +430,7 @@ interface ScheduleEditorProps {
 }
 
 export default function ScheduleEditor({
-  open, onOpenChange, schedules, initialPresetId, onChange, siteTimezone,
+  open, onOpenChange, schedules, initialPresetId, onChange, siteTimezone, currentLaunchMode,
   presets, onCreatePreset, onDeletePreset, onUpdatePreset,
 }: ScheduleEditorProps) {
   // Always show built-in presets, then append any custom presets from Firestore
@@ -416,7 +470,13 @@ export default function ScheduleEditor({
   };
 
   const applyPreset = (preset: SchedulePreset) => {
-    setBlocks(ensureBlockColors(preset.blocks.map(b => ({ ...b, days: [...b.days], ranges: b.ranges.map(r => ({ ...r })) }))));
+    // If switching back to the preset that was active when the dialog opened,
+    // restore the user's saved blocks rather than resetting to the preset template.
+    if (preset.id === detectedPresetId) {
+      setBlocks(initialBlocks);
+    } else {
+      setBlocks(ensureBlockColors(preset.blocks.map(b => ({ ...b, days: [...b.days], ranges: b.ranges.map(r => ({ ...r })) }))));
+    }
     setActivePresetId(preset.id);
   };
 
@@ -562,6 +622,12 @@ export default function ScheduleEditor({
         <div className="max-h-[60vh] overflow-y-auto pr-1">
           <ScheduleBlocksEditor blocks={blocks} onChange={setBlocks} />
         </div>
+
+        {currentLaunchMode === 'scheduled' && !isCurrentlyInSchedule(blocks, siteTimezone) && (
+          <p className="text-xs text-amber-400/90 bg-amber-400/10 border border-amber-400/20 rounded-md px-3 py-2">
+            Current time is outside this schedule. The process will be stopped shortly after saving.
+          </p>
+        )}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} className="cursor-pointer">

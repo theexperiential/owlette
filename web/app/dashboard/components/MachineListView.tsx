@@ -434,19 +434,19 @@ export function MachineRow({
                                         scheduled: 'bg-blue-600 text-white',
                                       };
 
-                                      if (mode === 'scheduled' && isScheduled) {
+                                      if (mode === 'scheduled') {
                                         return (
-                                          <span key={mode} className="flex items-stretch bg-blue-600 text-white">
+                                          <span key={mode} className={`flex items-stretch ${isActive ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground'}`}>
                                             <button
-                                              onClick={() => {}}
-                                              className="px-3 text-xs font-medium cursor-default"
+                                              onClick={() => !isActive && onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
+                                              className={`px-3 text-xs font-medium ${isActive ? 'cursor-default' : 'hover:bg-muted/50 cursor-pointer'} transition-colors`}
                                             >
                                               {labels[mode]}
                                             </button>
-                                            <span className="w-px bg-blue-400/50" />
+                                            <span className={`w-px ${isActive ? 'bg-blue-400/50' : 'bg-border'}`} />
                                             <button
                                               onClick={() => onConfigureSchedule?.(process)}
-                                              className="px-1.5 hover:bg-blue-500 transition-colors cursor-pointer flex items-center"
+                                              className={`px-1.5 transition-colors cursor-pointer flex items-center ${isActive ? 'hover:bg-blue-500' : 'hover:bg-muted/50'}`}
                                               title="Configure schedule"
                                             >
                                               <Settings2 className="h-3.5 w-3.5" />
@@ -520,15 +520,13 @@ export function MachineRow({
                                           Scheduled
                                         </DropdownMenuRadioItem>
                                       </DropdownMenuRadioGroup>
-                                      {isScheduled && (
-                                        <DropdownMenuItem
-                                          onClick={() => onConfigureSchedule?.(process)}
-                                          className="text-blue-400 focus:bg-blue-950/30 focus:text-blue-300 cursor-pointer pl-8"
-                                        >
-                                          <Settings2 className="mr-2 h-3.5 w-3.5" />
-                                          configure schedule
-                                        </DropdownMenuItem>
-                                      )}
+                                      <DropdownMenuItem
+                                        onClick={() => onConfigureSchedule?.(process)}
+                                        className="text-blue-400 focus:bg-blue-950/30 focus:text-blue-300 cursor-pointer pl-8"
+                                      >
+                                        <Settings2 className="mr-2 h-3.5 w-3.5" />
+                                        configure schedule
+                                      </DropdownMenuItem>
                                       <DropdownMenuSeparator className="bg-accent" />
                                       <DropdownMenuItem
                                         onClick={() => onEditProcess(process)}

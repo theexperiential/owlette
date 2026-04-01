@@ -1090,10 +1090,10 @@ def is_within_schedule(schedules, timezone_str=None):
     current_day = day_names[now.weekday()]
     current_time = now.time()
 
+    prev_day = day_names[(day_names.index(current_day) - 1) % 7]
+
     for block in schedules:
         days = block.get('days', day_names)
-        if current_day not in days:
-            continue
         for time_range in block.get('ranges', []):
             try:
                 start_h, start_m = map(int, time_range['start'].split(':'))
@@ -1103,10 +1103,16 @@ def is_within_schedule(schedules, timezone_str=None):
             start = dt_time(start_h, start_m)
             stop = dt_time(stop_h, stop_m)
             if start <= stop:
-                if start <= current_time <= stop:
+                # Normal range: current day must be in the schedule
+                if current_day in days and start <= current_time <= stop:
                     return True
-            else:  # Overnight (e.g., 22:00 - 06:00)
-                if current_time >= start or current_time <= stop:
+            else:
+                # Overnight range (e.g. 22:00 – 01:00): spans midnight.
+                # "Before midnight" portion — current day must be scheduled, time >= start
+                if current_day in days and current_time >= start:
+                    return True
+                # "After midnight" portion — the *previous* day must be scheduled, time <= stop
+                if prev_day in days and current_time <= stop:
                     return True
     return False
 

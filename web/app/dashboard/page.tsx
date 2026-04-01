@@ -75,7 +75,8 @@ export default function DashboardPage() {
   const handleScheduleApply = (schedules: ScheduleBlock[], presetId: string | null) => {
     if (scheduleEditorTarget) {
       const { machineId, process } = scheduleEditorTarget;
-      handleSetLaunchMode(machineId, process.id, process.name, 'scheduled', process.exe_path, schedules, presetId);
+      const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as 'off' | 'always' | 'scheduled';
+      handleSetLaunchMode(machineId, process.id, process.name, currentMode, process.exe_path, schedules, presetId, `Schedule saved for "${process.name}"`);
     }
     setScheduleEditorOpen(false);
     setScheduleEditorTarget(null);
@@ -362,7 +363,7 @@ export default function DashboardPage() {
     }
   };
 
-  const handleSetLaunchMode = async (machineId: string, processId: string, processName: string, mode: 'off' | 'always' | 'scheduled', exePath: string, schedules?: any[] | null, schedulePresetId?: string | null) => {
+  const handleSetLaunchMode = async (machineId: string, processId: string, processName: string, mode: 'off' | 'always' | 'scheduled', exePath: string, schedules?: any[] | null, schedulePresetId?: string | null, successMessage?: string) => {
     // Validate exe_path before enabling
     if (mode !== 'off' && (!exePath || exePath.trim() === '')) {
       toast.error(`cannot enable launch mode for "${processName}": executable path is not set. please edit the process and set a valid executable path.`);
@@ -376,7 +377,7 @@ export default function DashboardPage() {
         : schedules;
       await setLaunchMode(machineId, processId, processName, mode, effectiveSchedules, schedulePresetId);
       const modeLabels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
-      toast.success(`Launch mode set to ${modeLabels[mode]} for "${processName}"`);
+      toast.success(successMessage ?? `Launch mode set to ${modeLabels[mode]} for "${processName}"`);
     } catch (error: any) {
       console.error('handleSetLaunchMode error:', error);
       toast.error(error.message || 'Failed to set launch mode');
@@ -1246,6 +1247,7 @@ export default function DashboardPage() {
           initialPresetId={scheduleEditorTarget.process._optimisticPresetId ?? scheduleEditorTarget.process.schedulePresetId}
           onChange={handleScheduleApply}
           siteTimezone={currentSite?.timezone}
+          currentLaunchMode={(scheduleEditorTarget.process._optimisticLaunchMode ?? scheduleEditorTarget.process.launch_mode ?? (scheduleEditorTarget.process.autolaunch ? 'always' : 'off')) as 'off' | 'always' | 'scheduled'}
           presets={schedulePresets}
           onCreatePreset={handleCreatePreset}
           onDeletePreset={async (id) => { await deleteSchedulePreset(id); toast.success('Preset deleted'); }}
