@@ -1,0 +1,3413 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Cloud-connected Windows process management and remote deployment system">
+      
+      
+      
+        <link rel="canonical" href="https://theexperiential.github.io/owlette/internal/claude-system/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Claude Code Advanced Workflows - Implementation Guide - Owlette Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="cyan">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#claude-code-advanced-workflows-implementation-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Owlette Documentation" class="md-header__button md-logo" aria-label="Owlette Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Owlette Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Claude Code Advanced Workflows - Implementation Guide
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="cyan"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="cyan"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/theexperiential/owlette" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    owlette
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../getting-started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting Started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../agent/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Agent
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../dashboard/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Dashboard
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../troubleshooting/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Troubleshooting
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../setup/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Self-Hosting
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Owlette Documentation" class="md-nav__button md-logo" aria-label="Owlette Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Owlette Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/theexperiential/owlette" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    owlette
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../agent/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agent
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/process-monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Process Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/system-tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/remote-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Remote Commands
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/self-update/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Update
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../dashboard/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboard
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Dashboard
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/machine-monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Machine Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/process-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Process Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/deployments/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/project-distribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Distribution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/cortex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cortex (AI Chat)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/activity-logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Activity Logs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../dashboard/admin/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Admin
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/admin/user-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/admin/installer-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installer Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/admin/system-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/admin/token-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Token Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/admin/email-alerts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Email Alerts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/admin/webhooks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Webhooks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../setup/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Hosting
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Self-Hosting
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/firebase/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Firebase Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/firestore-rules/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Firestore Rules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/web-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/environment-variables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8_6" id="__nav_8_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_8_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    REST API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/firestore-data-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Firestore Data Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cortex-tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cortex Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/agent-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Commands
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table of Contents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-was-implemented" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Was Implemented
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What Was Implemented">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-infrastructure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Infrastructure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#supporting-infrastructure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supporting Infrastructure
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How It Works
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How It Works">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-magic-skills-auto-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Magic: Skills Auto-Activation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-safety-net-build-checking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Safety Net: Build Checking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-memory-dev-docs-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Memory: Dev Docs Workflow
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getting-started" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getting Started
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Getting Started">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-verify-installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Verify Installation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-test-skills-auto-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Test Skills Auto-Activation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-test-build-checker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Test Build Checker
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-test-dev-docs-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Test Dev Docs Workflow
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#daily-workflows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Daily Workflows
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Daily Workflows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#starting-your-day" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Starting Your Day
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#during-development" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        During Development
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="During Development">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#small-changes-3-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Small Changes (&lt; 3 files)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#large-features-multi-file-multi-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Large Features (multi-file, multi-session)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#before-committing-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Before Committing Code
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-build-errors-accumulate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When Build Errors Accumulate
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skills-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills System
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Skills System">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#available-skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Available Skills
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-skills-activate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How Skills Activate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-new-skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding New Skills
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hooks-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hooks System
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hooks System">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#user-prompt-submit-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        user-prompt-submit Hook
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stop-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        stop Hook
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-new-hooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding New Hooks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dev-docs-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dev Docs Workflow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dev Docs Workflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to Use
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-three-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Three Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workflow-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow Steps
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tips-for-effective-dev-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tips for Effective Dev Docs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slash-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slash Commands
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Slash Commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dev-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        /dev-docs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-dev-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        /create-dev-docs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#update-dev-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        /update-dev-docs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-and-fix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        /build-and-fix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specialized-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Specialized Agents
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Specialized Agents">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#strategic-plan-architect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        strategic-plan-architect
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#code-architecture-reviewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        code-architecture-reviewer
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#skills-not-auto-activating" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills Not Auto-Activating
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-checker-not-running" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build Checker Not Running
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dev-docs-workflow-broken" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dev Docs Workflow Broken
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slash-commands-not-working" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slash Commands Not Working
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next Steps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Next Steps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-core-testing-now" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Core Testing (Now)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-enhancements-week-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Enhancements (Week 2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-testing-infrastructure-week-3-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Testing Infrastructure (Week 3-4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-cicd-automation-week-4-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: CI/CD Automation (Week 4-5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-refinement-templates-ongoing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5: Refinement &amp; Templates (Ongoing)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reusability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reusability
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reusability">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#project-specific-customization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Project-Specific Customization
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shared-across-all-projects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared Across All Projects
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#template-repository-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template Repository Strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metrics-success-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metrics &amp; Success Criteria
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metrics &amp; Success Criteria">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#quality-improvements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quality Improvements
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#productivity-gains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Productivity Gains
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#developer-experience" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Developer Experience
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Support
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Support">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#getting-help" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getting Help
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reporting-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reporting Issues
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#contributing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contributing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="claude-code-advanced-workflows-implementation-guide">Claude Code Advanced Workflows - Implementation Guide<a class="headerlink" href="#claude-code-advanced-workflows-implementation-guide" title="Permanent link">&para;</a></h1>
+<p><strong>Version</strong>: 1.0.0
+<strong>Created</strong>: 2025-01-31
+<strong>Status</strong>: Production Ready</p>
+<p>This document explains the advanced Claude Code workflow system implemented for Owlette, based on battle-tested methodologies from 6 months of hardcore Claude Code usage.</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
+<ol>
+<li><a href="#what-was-implemented">What Was Implemented</a></li>
+<li><a href="#how-it-works">How It Works</a></li>
+<li><a href="#getting-started">Getting Started</a></li>
+<li><a href="#daily-workflows">Daily Workflows</a></li>
+<li><a href="#skills-system">Skills System</a></li>
+<li><a href="#hooks-system">Hooks System</a></li>
+<li><a href="#dev-docs-workflow">Dev Docs Workflow</a></li>
+<li><a href="#slash-commands">Slash Commands</a></li>
+<li><a href="#specialized-agents">Specialized Agents</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a></li>
+<li><a href="#next-steps">Next Steps</a></li>
+</ol>
+<hr />
+<h2 id="what-was-implemented">What Was Implemented<a class="headerlink" href="#what-was-implemented" title="Permanent link">&para;</a></h2>
+<h3 id="core-infrastructure">Core Infrastructure<a class="headerlink" href="#core-infrastructure" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>.claude/
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── CLAUDE.md                     # Project overview (16KB, comprehensive)
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├── IMPLEMENTATION_GUIDE.md       # This file
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├── skills/                       # Auto-activating skills (3 core skills)
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│   ├── frontend-dev-guidelines.md      # Next.js/React/TypeScript patterns
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│   ├── backend-dev-guidelines.md       # Python Windows service patterns
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│   ├── firebase-integration.md         # Firebase/Firestore patterns
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│   └── resources/                      # (empty, ready for detailed guides)
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>│
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>├── hooks/                        # TypeScript hooks (2 critical hooks)
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>│   ├── user-prompt-submit.ts           # Skills auto-activation
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>│   ├── stop.ts                         # Build checking + error reminders
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│   └── skill-rules.json                # Skill activation configuration
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>│
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>├── commands/                     # Slash commands (4 workflow commands)
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>│   ├── dev-docs.md                     # Create strategic plans
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>│   ├── create-dev-docs.md              # Convert plans to files
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>│   ├── update-dev-docs.md              # Update before compaction
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>│   └── build-and-fix.md                # Build both repos, fix errors
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>│
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>└── agents/                       # Specialized agents (2 quality agents)
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>    ├── strategic-plan-architect.md     # Comprehensive planning
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>    └── code-architecture-reviewer.md   # Code reviews
+</span></code></pre></div>
+<h3 id="supporting-infrastructure">Supporting Infrastructure<a class="headerlink" href="#supporting-infrastructure" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>dev/                              # Development task tracking
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>├── active/                       # Current tasks
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>├── completed/                    # Archived tasks
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>└── README.md                     # Workflow documentation
+</span></code></pre></div>
+<hr />
+<h2 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
+<h3 id="the-magic-skills-auto-activation">The Magic: Skills Auto-Activation<a class="headerlink" href="#the-magic-skills-auto-activation" title="Permanent link">&para;</a></h3>
+<p>The system's core innovation is <strong>automatic skill activation</strong>:</p>
+<ol>
+<li><strong>You prompt Claude</strong> → "Create a new dashboard component"</li>
+<li><strong>user-prompt-submit hook runs</strong> → Analyzes your prompt</li>
+<li><strong>Matches keywords/patterns</strong> → Finds "component", "dashboard"</li>
+<li><strong>Injects reminder</strong> → "🎯 Use frontend-dev-guidelines skill"</li>
+<li><strong>Claude sees reminder</strong> → Loads guidelines automatically</li>
+<li><strong>Consistent code</strong> → Follows established patterns</li>
+</ol>
+<p><strong>Without the hook, skills sit unused.</strong> The hook is the critical piece that makes everything work.</p>
+<h3 id="the-safety-net-build-checking">The Safety Net: Build Checking<a class="headerlink" href="#the-safety-net-build-checking" title="Permanent link">&para;</a></h3>
+<p>After Claude finishes responding:</p>
+<ol>
+<li><strong>stop hook runs</strong> → Detects edited files</li>
+<li><strong>Determines repos</strong> → web/ vs agent/</li>
+<li><strong>Runs builds</strong> → TypeScript check, Python syntax check</li>
+<li><strong>Shows errors</strong> → Immediately displays any errors found</li>
+<li><strong>Gentle reminders</strong> → Checks for risky patterns (try-catch, async, Firestore)</li>
+</ol>
+<p><strong>Result</strong>: Zero errors left behind. You catch issues immediately.</p>
+<h3 id="the-memory-dev-docs-workflow">The Memory: Dev Docs Workflow<a class="headerlink" href="#the-memory-dev-docs-workflow" title="Permanent link">&para;</a></h3>
+<p>For large features that survive context compaction:</p>
+<ol>
+<li><strong>Plan in plan mode</strong> → Use <code>/dev-docs</code> to research and plan</li>
+<li><strong>Create dev docs</strong> → Use <code>/create-dev-docs</code> to create 3 files</li>
+<li><strong>Implement</strong> → Work through tasks systematically</li>
+<li><strong>Before compaction</strong> → Use <code>/update-dev-docs</code> to capture progress</li>
+<li><strong>Continue fresh</strong> → New session picks up exactly where you left off</li>
+</ol>
+<p><strong>Result</strong>: Never lose the plot. Always know what you're building and why.</p>
+<hr />
+<h2 id="getting-started">Getting Started<a class="headerlink" href="#getting-started" title="Permanent link">&para;</a></h2>
+<h3 id="step-1-verify-installation">Step 1: Verify Installation<a class="headerlink" href="#step-1-verify-installation" title="Permanent link">&para;</a></h3>
+<p>Check that all files are in place:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Check main structure</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>ls<span class="w"> </span>.claude/
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Should show:</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># CLAUDE.md</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="c1"># IMPLEMENTATION_GUIDE.md</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># skills/</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># hooks/</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="c1"># commands/</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># agents/</span>
+</span></code></pre></div>
+<h3 id="step-2-test-skills-auto-activation">Step 2: Test Skills Auto-Activation<a class="headerlink" href="#step-2-test-skills-auto-activation" title="Permanent link">&para;</a></h3>
+<p><strong>In Claude Code, try this prompt:</strong></p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Create a new React component called TestComponent that displays &quot;Hello World&quot;
+</span></code></pre></div>
+<p><strong>Expected behavior:</strong>
+- Claude should see a skill activation reminder
+- Message includes "frontend-dev-guidelines"
+- Claude follows React 19 patterns automatically</p>
+<p><strong>If no skill activation:</strong>
+- Check that <code>user-prompt-submit.ts</code> exists in <code>.claude/hooks/</code>
+- Check that <code>skill-rules.json</code> exists and is valid JSON
+- Restart Claude Code to reload hooks</p>
+<h3 id="step-3-test-build-checker">Step 3: Test Build Checker<a class="headerlink" href="#step-3-test-build-checker" title="Permanent link">&para;</a></h3>
+<p><strong>Make a deliberate TypeScript error:</strong></p>
+<div class="language-typescript highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1">// In web/app/test.ts (create this file)</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kd">const</span><span class="w"> </span><span class="nx">x</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">123</span><span class="w">  </span><span class="c1">// Type error!</span>
+</span></code></pre></div>
+<p><strong>Ask Claude:</strong>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Check for build errors
+</span></code></pre></div></p>
+<p><strong>Expected behavior:</strong>
+- stop hook should run (or build manually to test)
+- TypeScript error should be detected
+- Error should be displayed with file and line number</p>
+<h3 id="step-4-test-dev-docs-workflow">Step 4: Test Dev Docs Workflow<a class="headerlink" href="#step-4-test-dev-docs-workflow" title="Permanent link">&para;</a></h3>
+<p><strong>Enter plan mode and ask:</strong>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Plan a new feature to add a settings page
+</span></code></pre></div></p>
+<p><strong>Use the <code>/dev-docs</code> command (it will research and create a plan)</strong></p>
+<p><strong>After reviewing the plan, use:</strong>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>/create-dev-docs
+</span></code></pre></div></p>
+<p><strong>Expected behavior:</strong>
+- Creates <code>dev/active/settings-page/</code> directory
+- Three files created: plan, context, tasks
+- Ready to begin implementation</p>
+<hr />
+<h2 id="daily-workflows">Daily Workflows<a class="headerlink" href="#daily-workflows" title="Permanent link">&para;</a></h2>
+<h3 id="starting-your-day">Starting Your Day<a class="headerlink" href="#starting-your-day" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Check active tasks:</strong>
+   <div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>ls<span class="w"> </span>dev/active/
+</span></code></pre></div></p>
+</li>
+<li>
+<p><strong>If continuing a task</strong>, tell Claude:
+   <div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Continue working on [task-name]. Read the dev docs to catch up.
+</span></code></pre></div></p>
+</li>
+<li>
+<p><strong>If starting fresh</strong>, use plan mode:
+   <div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Let&#39;s plan out [feature name]
+</span></code></pre></div></p>
+</li>
+</ol>
+<h3 id="during-development">During Development<a class="headerlink" href="#during-development" title="Permanent link">&para;</a></h3>
+<h4 id="small-changes-3-files">Small Changes (&lt; 3 files)<a class="headerlink" href="#small-changes-3-files" title="Permanent link">&para;</a></h4>
+<p>Just make the changes. Skills auto-activate. Build checker catches errors.</p>
+<h4 id="large-features-multi-file-multi-session">Large Features (multi-file, multi-session)<a class="headerlink" href="#large-features-multi-file-multi-session" title="Permanent link">&para;</a></h4>
+<ol>
+<li>Enter plan mode</li>
+<li>Use <code>/dev-docs</code> to create plan</li>
+<li>Review and approve plan</li>
+<li>Use <code>/create-dev-docs</code></li>
+<li>Implement systematically</li>
+<li>Mark tasks complete as you go</li>
+<li>Before running out of context: <code>/update-dev-docs</code></li>
+<li>Compact conversation</li>
+<li>Continue in fresh session</li>
+</ol>
+<h3 id="before-committing-code">Before Committing Code<a class="headerlink" href="#before-committing-code" title="Permanent link">&para;</a></h3>
+<p>Run a code review:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>/code-review
+</span></code></pre></div>
+<p>Or launch the agent:
+<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>Launch code-architecture-reviewer agent to review my recent changes
+</span></code></pre></div></p>
+<p>Fix any issues found before committing.</p>
+<h3 id="when-build-errors-accumulate">When Build Errors Accumulate<a class="headerlink" href="#when-build-errors-accumulate" title="Permanent link">&para;</a></h3>
+<p>If you suspect errors have accumulated:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>/build-and-fix
+</span></code></pre></div>
+<p>Claude will build both repos and systematically fix all errors.</p>
+<hr />
+<h2 id="skills-system">Skills System<a class="headerlink" href="#skills-system" title="Permanent link">&para;</a></h2>
+<h3 id="available-skills">Available Skills<a class="headerlink" href="#available-skills" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Skill</th>
+<th>Triggers</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>frontend-dev-guidelines</strong></td>
+<td><code>.tsx</code> files, "react", "component", "next"</td>
+<td>Next.js 16, React 19, TypeScript, shadcn/ui patterns</td>
+</tr>
+<tr>
+<td><strong>backend-dev-guidelines</strong></td>
+<td><code>.py</code> files, "python", "agent", "service"</td>
+<td>Python Windows service, psutil, Firebase Admin SDK</td>
+</tr>
+<tr>
+<td><strong>firebase-integration</strong></td>
+<td>Firebase imports, "firestore", "auth"</td>
+<td>Firestore CRUD, real-time listeners, Auth flows</td>
+</tr>
+</tbody>
+</table>
+<h3 id="how-skills-activate">How Skills Activate<a class="headerlink" href="#how-skills-activate" title="Permanent link">&para;</a></h3>
+<p><strong>Automatic</strong> (via hook):
+- Keywords in your prompt
+- Intent patterns (regex matching)
+- Recently edited files matching path patterns</p>
+<p><strong>Manual</strong> (you request):
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>Make sure to follow frontend-dev-guidelines skill
+</span></code></pre></div></p>
+<h3 id="adding-new-skills">Adding New Skills<a class="headerlink" href="#adding-new-skills" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Create <code>skills/[skill-name].md</code></li>
+<li>Keep main file &lt; 500 lines</li>
+<li>Add detailed guides to <code>skills/resources/</code></li>
+<li>Update <code>hooks/skill-rules.json</code> with triggers</li>
+<li>Test activation with relevant prompt</li>
+</ol>
+<p><strong>Template</strong> (see <code>skill-developer</code> skill for guidance):
+<div class="language-markdown highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="gh"># Skill Name</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="gs">**Version**</span>: 1.0.0
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="gs">**Last Updated**</span>: YYYY-MM-DD
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="gu">## Overview</span>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>[Brief description]
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="gu">## Core Principles</span>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>[Key patterns to follow]
+</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>
+</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="gu">## Common Patterns</span>
+</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>[Examples and anti-patterns]
+</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>
+</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="gu">## Resources</span>
+</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>[Links to detailed guides]
+</span><span id="__span-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>
+</span><span id="__span-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="gu">## When This Skill Activates</span>
+</span><span id="__span-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a>[Activation conditions]
+</span></code></pre></div></p>
+<hr />
+<h2 id="hooks-system">Hooks System<a class="headerlink" href="#hooks-system" title="Permanent link">&para;</a></h2>
+<h3 id="user-prompt-submit-hook">user-prompt-submit Hook<a class="headerlink" href="#user-prompt-submit-hook" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Make skills auto-activate</p>
+<p><strong>How it works</strong>:
+1. Reads <code>skill-rules.json</code>
+2. Analyzes your prompt for keywords and patterns
+3. Checks recently edited files (when implemented)
+4. Injects skill activation message into prompt
+5. Claude sees message before seeing your prompt</p>
+<p><strong>Critical</strong>: Without this hook, skills don't activate.</p>
+<p><strong>Configuration</strong>: <code>hooks/skill-rules.json</code></p>
+<p><strong>Customization</strong>:
+- Add keywords to match
+- Add intent patterns (regex)
+- Add file path patterns
+- Adjust priority levels</p>
+<h3 id="stop-hook">stop Hook<a class="headerlink" href="#stop-hook" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Catch build errors and remind about error handling</p>
+<p><strong>How it works</strong>:
+1. Runs after Claude finishes responding
+2. Detects which repos were modified (web vs agent)
+3. Runs appropriate builds
+4. Shows errors if found
+5. Checks for risky code patterns
+6. Displays gentle reminders</p>
+<p><strong>Configuration</strong>: Hardcoded in <code>hooks/stop.ts</code></p>
+<p><strong>Customization</strong>:
+- Modify build commands (lines 97, 113)
+- Add new risky patterns (lines 187-220)
+- Adjust error thresholds (line 268)</p>
+<h3 id="adding-new-hooks">Adding New Hooks<a class="headerlink" href="#adding-new-hooks" title="Permanent link">&para;</a></h3>
+<p>Claude Code supports several hook types:
+- <code>user-prompt-submit</code> - Before Claude sees prompt
+- <code>stop</code> - After Claude finishes responding
+- <code>post-tool-use</code> - After each tool call</p>
+<p>Create new hooks as TypeScript files in <code>.claude/hooks/</code>.</p>
+<p><strong>Important</strong>: Hooks must export a <code>run()</code> function:
+<div class="language-typescript highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="k">export</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="kd">function</span><span class="w"> </span><span class="nx">run</span><span class="p">(</span><span class="nx">input</span><span class="o">:</span><span class="w"> </span><span class="kt">any</span><span class="p">)</span><span class="o">:</span><span class="w"> </span><span class="nb">Promise</span><span class="o">&lt;</span><span class="nx">any</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="c1">// Hook logic</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="nx">result</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="p">}</span>
+</span></code></pre></div></p>
+<hr />
+<h2 id="dev-docs-workflow">Dev Docs Workflow<a class="headerlink" href="#dev-docs-workflow" title="Permanent link">&para;</a></h2>
+<h3 id="when-to-use">When to Use<a class="headerlink" href="#when-to-use" title="Permanent link">&para;</a></h3>
+<p>✅ <strong>Use dev docs for</strong>:
+- Multi-file features spanning web + agent
+- Architecture changes or refactors
+- Features taking multiple sessions
+- Complex bug investigations</p>
+<p>❌ <strong>Skip dev docs for</strong>:
+- Single-file tweaks
+- Documentation updates
+- Minor styling fixes</p>
+<h3 id="the-three-files">The Three Files<a class="headerlink" href="#the-three-files" title="Permanent link">&para;</a></h3>
+<p>Every task gets three files:</p>
+<ol>
+<li><strong>[task]-plan.md</strong> - The complete strategic plan</li>
+<li>Executive summary</li>
+<li>Implementation phases</li>
+<li>Detailed tasks</li>
+<li>Files to modify</li>
+<li>
+<p>Risks and timeline</p>
+</li>
+<li>
+<p><strong>[task]-context.md</strong> - Quick reference context</p>
+</li>
+<li>Key files involved</li>
+<li>Architectural decisions</li>
+<li>Integration points</li>
+<li>
+<p>Next steps</p>
+</li>
+<li>
+<p><strong>[task]-tasks.md</strong> - Checkli</p>
+</li>
+</ol>
+<p>st of work
+   - Phase-by-phase tasks
+   - Testing tasks
+   - Documentation tasks
+   - Progress notes</p>
+<h3 id="workflow-steps">Workflow Steps<a class="headerlink" href="#workflow-steps" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>┌─────────────────────────────────────────┐
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>│ 1. Enter plan mode                      │
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>│    Use /dev-docs to research &amp; plan     │
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>└───────────────┬─────────────────────────┘
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>                ↓
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>┌─────────────────────────────────────────┐
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>│ 2. Review plan                          │
+</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>│    Check for mistakes, approve          │
+</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>└───────────────┬─────────────────────────┘
+</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>                ↓
+</span><span id="__span-17-11"><a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a>┌─────────────────────────────────────────┐
+</span><span id="__span-17-12"><a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>│ 3. Create dev docs                      │
+</span><span id="__span-17-13"><a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a>│    Use /create-dev-docs                 │
+</span><span id="__span-17-14"><a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a>└───────────────┬─────────────────────────┘
+</span><span id="__span-17-15"><a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a>                ↓
+</span><span id="__span-17-16"><a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a>┌─────────────────────────────────────────┐
+</span><span id="__span-17-17"><a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a>│ 4. Implement                            │
+</span><span id="__span-17-18"><a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a>│    Work through tasks systematically    │
+</span><span id="__span-17-19"><a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a>│    Mark complete as you go              │
+</span><span id="__span-17-20"><a id="__codelineno-17-20" name="__codelineno-17-20" href="#__codelineno-17-20"></a>└───────────────┬─────────────────────────┘
+</span><span id="__span-17-21"><a id="__codelineno-17-21" name="__codelineno-17-21" href="#__codelineno-17-21"></a>                ↓
+</span><span id="__span-17-22"><a id="__codelineno-17-22" name="__codelineno-17-22" href="#__codelineno-17-22"></a>┌─────────────────────────────────────────┐
+</span><span id="__span-17-23"><a id="__codelineno-17-23" name="__codelineno-17-23" href="#__codelineno-17-23"></a>│ 5. Update before compaction             │
+</span><span id="__span-17-24"><a id="__codelineno-17-24" name="__codelineno-17-24" href="#__codelineno-17-24"></a>│    Use /update-dev-docs                 │
+</span><span id="__span-17-25"><a id="__codelineno-17-25" name="__codelineno-17-25" href="#__codelineno-17-25"></a>└───────────────┬─────────────────────────┘
+</span><span id="__span-17-26"><a id="__codelineno-17-26" name="__codelineno-17-26" href="#__codelineno-17-26"></a>                ↓
+</span><span id="__span-17-27"><a id="__codelineno-17-27" name="__codelineno-17-27" href="#__codelineno-17-27"></a>┌─────────────────────────────────────────┐
+</span><span id="__span-17-28"><a id="__codelineno-17-28" name="__codelineno-17-28" href="#__codelineno-17-28"></a>│ 6. Compact &amp; continue                   │
+</span><span id="__span-17-29"><a id="__codelineno-17-29" name="__codelineno-17-29" href="#__codelineno-17-29"></a>│    Fresh session reads dev docs         │
+</span><span id="__span-17-30"><a id="__codelineno-17-30" name="__codelineno-17-30" href="#__codelineno-17-30"></a>│    Picks up exactly where you left off  │
+</span><span id="__span-17-31"><a id="__codelineno-17-31" name="__codelineno-17-31" href="#__codelineno-17-31"></a>└─────────────────────────────────────────┘
+</span></code></pre></div>
+<h3 id="tips-for-effective-dev-docs">Tips for Effective Dev Docs<a class="headerlink" href="#tips-for-effective-dev-docs" title="Permanent link">&para;</a></h3>
+<p><strong>Plans:</strong>
+- Be thorough - think of everything
+- Be specific - no vague tasks
+- Be realistic about time</p>
+<p><strong>Context:</strong>
+- Keep it concise - just key info
+- Update as decisions are made
+- "Next Steps" should be crystal clear</p>
+<p><strong>Tasks:</strong>
+- Every task should have a checkbox
+- Mark complete immediately
+- Add new tasks as you discover them
+- Include testing and docs tasks</p>
+<hr />
+<h2 id="slash-commands">Slash Commands<a class="headerlink" href="#slash-commands" title="Permanent link">&para;</a></h2>
+<h3 id="dev-docs">/dev-docs<a class="headerlink" href="#dev-docs" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Create comprehensive strategic plan</p>
+<p><strong>Usage</strong>:
+<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>In plan mode:
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>/dev-docs
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>[Then describe what you want to build]
+</span></code></pre></div></p>
+<p><strong>What it does</strong>:
+- Researches codebase thoroughly
+- Creates detailed implementation plan
+- Includes phases, tasks, risks, timeline</p>
+<p><strong>When to use</strong>: Beginning of every large feature</p>
+<hr />
+<h3 id="create-dev-docs">/create-dev-docs<a class="headerlink" href="#create-dev-docs" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Convert approved plan to dev doc files</p>
+<p><strong>Usage</strong>:
+<div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>After plan is approved:
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>/create-dev-docs
+</span></code></pre></div></p>
+<p><strong>What it does</strong>:
+- Creates <code>dev/active/[task-name]/</code> directory
+- Creates plan.md (full plan)
+- Creates context.md (quick reference)
+- Creates tasks.md (checklist)</p>
+<p><strong>When to use</strong>: Immediately after plan approval</p>
+<hr />
+<h3 id="update-dev-docs">/update-dev-docs<a class="headerlink" href="#update-dev-docs" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Update dev docs before context compaction</p>
+<p><strong>Usage</strong>:
+<div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>When running low on context:
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>/update-dev-docs
+</span></code></pre></div></p>
+<p><strong>What it does</strong>:
+- Marks completed tasks
+- Updates context with new decisions
+- Adds "Next Steps" section
+- Updates timestamps</p>
+<p><strong>When to use</strong>: Before compacting conversation</p>
+<hr />
+<h3 id="build-and-fix">/build-and-fix<a class="headerlink" href="#build-and-fix" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Build both repos and fix all errors</p>
+<p><strong>Usage</strong>:
+<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>/build-and-fix
+</span></code></pre></div></p>
+<p><strong>What it does</strong>:
+- Runs <code>npm run build</code> (web)
+- Runs <code>python -m py_compile</code> (agent)
+- Shows all errors
+- Fixes them systematically
+- Re-runs builds to verify</p>
+<p><strong>When to use</strong>:
+- Periodically to catch accumulated errors
+- Before committing code
+- After major refactors</p>
+<hr />
+<h2 id="specialized-agents">Specialized Agents<a class="headerlink" href="#specialized-agents" title="Permanent link">&para;</a></h2>
+<h3 id="strategic-plan-architect">strategic-plan-architect<a class="headerlink" href="#strategic-plan-architect" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Create comprehensive implementation plans</p>
+<p><strong>Subagent Type</strong>: Plan
+<strong>Model</strong>: Sonnet</p>
+<p><strong>When to use</strong>:
+- Beginning of large features
+- Architecture changes
+- Complex refactors</p>
+<p><strong>How to launch</strong>:
+<div class="language-text highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>In plan mode:
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>Launch strategic-plan-architect agent to plan [feature description]
+</span></code></pre></div></p>
+<p><strong>What it returns</strong>:
+- 12-section comprehensive plan
+- All files to modify/create
+- Risks and mitigations
+- Timeline and phases
+- Testing strategy</p>
+<p><strong>Compared to /dev-docs</strong>:
+- Agent is more thorough (can run longer)
+- Command is faster (part of main conversation)
+- Agent runs in background
+- Use agent for very complex features</p>
+<hr />
+<h3 id="code-architecture-reviewer">code-architecture-reviewer<a class="headerlink" href="#code-architecture-reviewer" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Review code for quality, patterns, security</p>
+<p><strong>Subagent Type</strong>: general-purpose
+<strong>Model</strong>: Sonnet</p>
+<p><strong>When to use</strong>:
+- Before committing code
+- After implementing a feature
+- Reviewing PRs
+- Periodic code quality checks</p>
+<p><strong>How to launch</strong>:
+<div class="language-text highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>Launch code-architecture-reviewer agent to review my recent changes
+</span></code></pre></div></p>
+<p><strong>What it reviews</strong>:
+- Architecture and design patterns
+- Skills guideline adherence
+- Code quality and maintainability
+- Security vulnerabilities
+- Performance concerns
+- Error handling completeness
+- Test coverage gaps</p>
+<p><strong>What it returns</strong>:
+- Structured review report
+- Critical/high/medium/low issues
+- Specific fixes suggested
+- Positive observations
+- Recommendations summary</p>
+<hr />
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
+<h3 id="skills-not-auto-activating">Skills Not Auto-Activating<a class="headerlink" href="#skills-not-auto-activating" title="Permanent link">&para;</a></h3>
+<p><strong>Symptoms</strong>: Claude doesn't reference skills, doesn't follow patterns</p>
+<p><strong>Fixes</strong>:
+1. Check <code>user-prompt-submit.ts</code> exists in <code>.claude/hooks/</code>
+2. Check <code>skill-rules.json</code> is valid JSON (use JSON validator)
+3. Restart Claude Code to reload hooks
+4. Test with explicit keywords (e.g., "create component")
+5. Check Claude Code console for hook errors</p>
+<p><strong>Debug</strong>:
+<div class="language-typescript highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="c1">// Add to user-prompt-submit.ts after line 46:</span>
+</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;Activated skills:&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">topMatches</span><span class="p">.</span><span class="nx">map</span><span class="p">(</span><span class="nx">m</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">skillName</span><span class="p">))</span>
+</span></code></pre></div></p>
+<hr />
+<h3 id="build-checker-not-running">Build Checker Not Running<a class="headerlink" href="#build-checker-not-running" title="Permanent link">&para;</a></h3>
+<p><strong>Symptoms</strong>: No build errors shown after editing files</p>
+<p><strong>Fixes</strong>:
+1. Check <code>stop.ts</code> exists in <code>.claude/hooks/</code>
+2. Verify npm/python are in PATH
+3. Test builds manually:
+   <div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="nb">cd</span><span class="w"> </span>web<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>npx<span class="w"> </span>tsc<span class="w"> </span>--noEmit
+</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="nb">cd</span><span class="w"> </span>agent<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>py_compile<span class="w"> </span>src/*.py
+</span></code></pre></div>
+4. Check Claude Code console for hook errors</p>
+<p><strong>Note</strong>: File tracking (lines 109-125 in stop.ts) is not fully implemented. Build checker will run if you manually trigger it, but automatic detection requires implementing file edit tracking.</p>
+<hr />
+<h3 id="dev-docs-workflow-broken">Dev Docs Workflow Broken<a class="headerlink" href="#dev-docs-workflow-broken" title="Permanent link">&para;</a></h3>
+<p><strong>Symptoms</strong>: Commands not found, files not created</p>
+<p><strong>Fixes</strong>:
+1. Check commands exist in <code>.claude/commands/</code>
+2. Verify markdown frontmatter is correct:
+   <div class="language-markdown highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>---
+</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="gu">description: Command description</span>
+</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="gu">---</span>
+</span></code></pre></div>
+3. Restart Claude Code to reload commands
+4. Ensure <code>dev/</code> directory exists</p>
+<hr />
+<h3 id="slash-commands-not-working">Slash Commands Not Working<a class="headerlink" href="#slash-commands-not-working" title="Permanent link">&para;</a></h3>
+<p><strong>Symptoms</strong>: <code>/command</code> doesn't expand</p>
+<p><strong>Fixes</strong>:
+1. Commands must be in <code>.claude/commands/</code> as <code>.md</code> files
+2. Must have YAML frontmatter with description
+3. Restart Claude Code after adding new commands
+4. Check for syntax errors in markdown</p>
+<hr />
+<h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-core-testing-now">Phase 1: Core Testing (Now)<a class="headerlink" href="#phase-1-core-testing-now" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Test skills auto-activation with various prompts</li>
+<li>[ ] Test build checker by introducing deliberate errors</li>
+<li>[ ] Create a test feature using dev docs workflow</li>
+<li>[ ] Launch agents and review their output</li>
+<li>[ ] Verify slash commands work correctly</li>
+</ul>
+<h3 id="phase-2-enhancements-week-2">Phase 2: Enhancements (Week 2)<a class="headerlink" href="#phase-2-enhancements-week-2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Create resource files for detailed skill content</li>
+<li>[ ] Add testing-guidelines skill</li>
+<li>[ ] Implement file edit tracking for build checker</li>
+<li>[ ] Create additional agents (build-error-resolver, test-architect)</li>
+<li>[ ] Add more slash commands as needed</li>
+</ul>
+<h3 id="phase-3-testing-infrastructure-week-3-4">Phase 3: Testing Infrastructure (Week 3-4)<a class="headerlink" href="#phase-3-testing-infrastructure-week-3-4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Set up Jest + React Testing Library (web)</li>
+<li>[ ] Set up pytest (agent)</li>
+<li>[ ] Configure Firebase emulator</li>
+<li>[ ] Write first batch of tests</li>
+<li>[ ] Create test-related skills/commands</li>
+</ul>
+<h3 id="phase-4-cicd-automation-week-4-5">Phase 4: CI/CD Automation (Week 4-5)<a class="headerlink" href="#phase-4-cicd-automation-week-4-5" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Create GitHub Actions workflows</li>
+<li>[ ] Automated testing on PRs</li>
+<li>[ ] Build verification</li>
+<li>[ ] Deployment automation</li>
+</ul>
+<h3 id="phase-5-refinement-templates-ongoing">Phase 5: Refinement &amp; Templates (Ongoing)<a class="headerlink" href="#phase-5-refinement-templates-ongoing" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Extract reusable templates from Owlette setup</li>
+<li>[ ] Document learnings and best practices</li>
+<li>[ ] Create contribution guidelines</li>
+<li>[ ] Share with other projects</li>
+</ul>
+<hr />
+<h2 id="reusability">Reusability<a class="headerlink" href="#reusability" title="Permanent link">&para;</a></h2>
+<p>This <code>.claude/</code> infrastructure is designed to be <strong>highly reusable</strong> across projects.</p>
+<h3 id="project-specific-customization">Project-Specific Customization<a class="headerlink" href="#project-specific-customization" title="Permanent link">&para;</a></h3>
+<p>Each project should customize:
+- <strong>CLAUDE.md</strong> - Project overview, tech stack, commands
+- <strong>skill-rules.json</strong> - Activation keywords and patterns
+- <strong>Project-specific skills</strong> - Unique domain skills</p>
+<h3 id="shared-across-all-projects">Shared Across All Projects<a class="headerlink" href="#shared-across-all-projects" title="Permanent link">&para;</a></h3>
+<p>These can be reused as-is:
+- <strong>Hook templates</strong> (<code>user-prompt-submit.ts</code>, <code>stop.ts</code>)
+- <strong>Core commands</strong> (<code>/dev-docs</code>, <code>/create-dev-docs</code>, <code>/update-dev-docs</code>)
+- <strong>Generic agents</strong> (<code>strategic-plan-architect</code>, <code>code-architecture-reviewer</code>)
+- <strong>skill-developer</strong> meta-skill</p>
+<h3 id="template-repository-strategy">Template Repository Strategy<a class="headerlink" href="#template-repository-strategy" title="Permanent link">&para;</a></h3>
+<p>Consider creating <code>.claude-templates/</code> directory:
+<div class="language-text highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>.claude-templates/
+</span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>├── skills/
+</span><span id="__span-27-3"><a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>│   ├── nextjs-skill-template.md
+</span><span id="__span-27-4"><a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a>│   ├── python-skill-template.md
+</span><span id="__span-27-5"><a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a>│   └── testing-skill-template.md
+</span><span id="__span-27-6"><a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a>├── hooks/
+</span><span id="__span-27-7"><a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a>│   ├── build-checker-template.ts
+</span><span id="__span-27-8"><a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a>│   └── skill-activation-template.ts
+</span><span id="__span-27-9"><a id="__codelineno-27-9" name="__codelineno-27-9" href="#__codelineno-27-9"></a>├── agents/
+</span><span id="__span-27-10"><a id="__codelineno-27-10" name="__codelineno-27-10" href="#__codelineno-27-10"></a>│   └── reviewer-template.md
+</span><span id="__span-27-11"><a id="__codelineno-27-11" name="__codelineno-27-11" href="#__codelineno-27-11"></a>└── README.md
+</span></code></pre></div></p>
+<p>Copy templates to new projects and customize for that project's needs.</p>
+<hr />
+<h2 id="metrics-success-criteria">Metrics &amp; Success Criteria<a class="headerlink" href="#metrics-success-criteria" title="Permanent link">&para;</a></h2>
+<h3 id="quality-improvements">Quality Improvements<a class="headerlink" href="#quality-improvements" title="Permanent link">&para;</a></h3>
+<p>✅ <strong>Zero errors left behind</strong> - Build checker catches all TypeScript/Python errors
+✅ <strong>Consistent code patterns</strong> - Skills auto-activate and guide implementation
+✅ <strong>Comprehensive reviews</strong> - Agents review code before human review
+✅ <strong>Test coverage</strong> - Test-related workflows ensure adequate testing</p>
+<h3 id="productivity-gains">Productivity Gains<a class="headerlink" href="#productivity-gains" title="Permanent link">&para;</a></h3>
+<p>✅ <strong>Planning time reduced</strong> - Agents create comprehensive plans quickly
+✅ <strong>Context loss eliminated</strong> - Dev docs survive compaction
+✅ <strong>Debugging faster</strong> - Build checker catches errors immediately
+✅ <strong>Repetitive tasks automated</strong> - Slash commands reduce typing</p>
+<h3 id="developer-experience">Developer Experience<a class="headerlink" href="#developer-experience" title="Permanent link">&para;</a></h3>
+<p>✅ <strong>Claude "remembers"</strong> - Skills provide consistent guidance
+✅ <strong>No manual log copying</strong> - Hooks automate error checking
+✅ <strong>Clear task tracking</strong> - Dev docs provide visibility
+✅ <strong>Confidence in quality</strong> - Automated reviews reduce bugs</p>
+<hr />
+<h2 id="credits">Credits<a class="headerlink" href="#credits" title="Permanent link">&para;</a></h2>
+<p>This implementation is based on methodologies shared in the blog post "Claude Code is a Beast – Tips from 6 Months of Hardcore Use" by u/diet103 on Reddit (January 2025).</p>
+<p>Key concepts adapted:
+- Skills auto-activation via hooks
+- Dev docs workflow for large tasks
+- Automated build checking
+- Specialized agents for quality
+- Progressive disclosure pattern for skills</p>
+<p><strong>Customizations for Owlette</strong>:
+- Adapted for Next.js 16 + Python monorepo
+- Firebase/Firestore integration patterns
+- Windows service-specific guidelines
+- Owlette-specific architecture</p>
+<hr />
+<h2 id="support">Support<a class="headerlink" href="#support" title="Permanent link">&para;</a></h2>
+<h3 id="getting-help">Getting Help<a class="headerlink" href="#getting-help" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Read this guide first</strong> - Most questions are answered here</li>
+<li><strong>Check troubleshooting section</strong> - Common issues and fixes</li>
+<li><strong>Review CLAUDE.md</strong> - Project-specific context</li>
+<li><strong>Check individual skill files</strong> - Detailed patterns and examples</li>
+</ol>
+<h3 id="reporting-issues">Reporting Issues<a class="headerlink" href="#reporting-issues" title="Permanent link">&para;</a></h3>
+<p>If you encounter bugs or have suggestions:
+1. Check if it's a known issue in troubleshooting
+2. Verify your setup matches the expected structure
+3. Check Claude Code console for errors
+4. Document steps to reproduce
+5. Consider if it's Claude Code or our implementation</p>
+<h3 id="contributing">Contributing<a class="headerlink" href="#contributing" title="Permanent link">&para;</a></h3>
+<p>To improve this system:
+1. Create new skills following skill-developer guidelines
+2. Add new slash commands as <code>.md</code> files in commands/
+3. Create new agents with clear purposes
+4. Document your improvements
+5. Share learnings with the team</p>
+<hr />
+<p><strong>Version</strong>: 1.0.0
+<strong>Last Updated</strong>: 2025-01-31
+<strong>Status</strong>: Production Ready</p>
+<p>Happy coding with Claude! 🚀</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/theexperiential/owlette" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
