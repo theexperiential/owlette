@@ -7,8 +7,9 @@
  * IMPORTANT: Server-side only — never import this in client components.
  */
 
-import { getSiteAlertEmailsWithCc } from '@/lib/adminUtils.server';
-import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
+import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.server';
+import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
+import { getResend, FROM_EMAIL, ENV_LABEL, isProduction } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@/lib/emailTemplates.server';
 
 /**
@@ -21,7 +22,7 @@ export async function escalate(
   processName: string,
   cortexResponse: string
 ): Promise<boolean> {
-  const { to: recipients, cc } = await getSiteAlertEmailsWithCc(siteId, 'healthAlerts');
+  const recipients = await getSiteAlertRecipients(siteId, 'healthAlerts');
   if (recipients.length === 0) {
     console.warn(`[cortex/escalation] No admin emails found for site ${siteId}`);
     return false;
@@ -33,24 +34,36 @@ export async function escalate(
     return false;
   }
 
-  const subject = `[${ENV_LABEL}] Cortex Escalation: ${processName} on ${machineName}`;
-  const html = buildEscalationEmail(siteId, machineName, processName, cortexResponse, eventId);
+  const tz = await getMachineTimezone(siteId, machineName);
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || (isProduction ? 'https://owlette.app' : 'https://dev.owlette.app');
+  const subject = `Cortex Escalation: ${processName} on ${machineName}`;
 
-  const result = await resend.emails.send({
-    from: FROM_EMAIL,
-    to: recipients,
-    ...(cc.length > 0 ? { cc } : {}),
-    subject,
-    html,
-  });
+  let anySent = false;
+  for (const recipient of recipients) {
+    const unsubscribeUrl = recipient.userId !== 'fallback'
+      ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
+      : undefined;
+    const html = buildEscalationEmail(siteId, machineName, processName, cortexResponse, eventId, { unsubscribeUrl, timezone: tz });
 
-  if (result.error) {
-    console.error('[cortex/escalation] Resend error:', result.error);
-    return false;
+    const result = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: [recipient.email],
+      ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
+      subject,
+      html,
+    });
+
+    if (result.error) {
+      console.error(`[cortex/escalation] Resend error for ${recipient.email}:`, result.error);
+    } else {
+      anySent = true;
+    }
   }
 
-  console.log(`[cortex/escalation] Escalation sent for ${processName} on ${machineName} (${eventId})`);
-  return true;
+  if (anySent) {
+    console.log(`[cortex/escalation] Escalation sent for ${processName} on ${machineName} (${eventId})`);
+  }
+  return anySent;
 }
 
 function buildEscalationEmail(
@@ -58,8 +71,10 @@ function buildEscalationEmail(
   machineName: string,
   processName: string,
   cortexResponse: string,
-  eventId: string
+  eventId: string,
+  options: { unsubscribeUrl?: string; timezone?: string } = {}
 ): string {
+  const { unsubscribeUrl, timezone } = options;
   // Truncate Cortex response for email (keep it readable)
   const truncatedResponse = cortexResponse.length > 2000
     ? cortexResponse.slice(0, 2000) + '\n\n... (truncated)'
@@ -81,7 +96,7 @@ function buildEscalationEmail(
       { label: 'machine', value: machineName },
       { label: 'process', value: processName },
       { label: 'event id', value: eventId },
-      { label: 'time', value: emailTimestamp() },
+      { label: 'time', value: emailTimestamp(new Date(), timezone) },
       { label: 'environment', value: ENV_LABEL },
     ])}
 
@@ -93,5 +108,5 @@ function buildEscalationEmail(
     <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">review the autonomous conversation in the cortex dashboard for full details.</p>
   `;
 
-  return wrapEmailLayout(content, { preheader: `cortex escalation: ${processName} on ${machineName}` });
+  return wrapEmailLayout(content, { preheader: `cortex escalation: ${processName} on ${machineName}`, unsubscribeUrl });
 }

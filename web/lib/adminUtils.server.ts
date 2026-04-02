@@ -156,7 +156,10 @@ export async function getSiteProcessAlertEmails(siteId: string): Promise<string[
  * Look up site recipients with userId + email for personalized emails (e.g., unsubscribe links).
  * Filters by healthAlerts preference by default.
  */
-export async function getSiteAlertRecipients(siteId: string): Promise<SiteRecipient[]> {
+export async function getSiteAlertRecipients(
+  siteId: string,
+  filterPreference?: 'healthAlerts' | 'processAlerts'
+): Promise<SiteRecipient[]> {
   const db = getAdminDb();
   const recipients: SiteRecipient[] = [];
   const seenIds = new Set<string>();
@@ -175,7 +178,7 @@ export async function getSiteAlertRecipients(siteId: string): Promise<SiteRecipi
       const data = doc.data();
       const email = data?.email as string | undefined;
       if (!email) continue;
-      if (data?.preferences?.healthAlerts === false) continue;
+      if (filterPreference && data?.preferences?.[filterPreference] === false) continue;
       recipients.push({ userId: doc.id, email, ccEmails: data?.preferences?.alertCcEmails || [] });
     }
 
@@ -184,7 +187,7 @@ export async function getSiteAlertRecipients(siteId: string): Promise<SiteRecipi
         const ownerDoc = await db.collection('users').doc(ownerId).get();
         const data = ownerDoc.data();
         const email = data?.email as string | undefined;
-        if (email && data?.preferences?.healthAlerts !== false) {
+        if (email && !(filterPreference && data?.preferences?.[filterPreference] === false)) {
           recipients.push({ userId: ownerId, email, ccEmails: data?.preferences?.alertCcEmails || [] });
         }
       } catch {
@@ -263,4 +266,14 @@ export async function getSiteAlertEmailsWithCc(
     to: Array.from(toEmails),
     cc: Array.from(ccEmails).filter(cc => !toEmails.has(cc)),
   };
+}
+
+export async function getMachineTimezone(siteId: string, machineId: string): Promise<string | undefined> {
+  try {
+    const db = getAdminDb();
+    const machineDoc = await db.collection('sites').doc(siteId).collection('machines').doc(machineId).get();
+    return machineDoc.data()?.machine_timezone as string | undefined;
+  } catch {
+    return undefined;
+  }
 }

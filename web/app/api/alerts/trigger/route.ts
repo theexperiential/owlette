@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { getSiteAlertEmailsWithCc } from '@/lib/adminUtils.server';
+import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.server';
+import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, SEVERITY_COLORS, METRIC_LABELS } from '@/lib/emailTemplates.server';
 import { fireWebhooks } from '@/lib/webhookSender.server';
@@ -63,34 +64,52 @@ export async function POST(request: NextRequest) {
     if (channels.includes('email')) {
       const resendClient = getResend();
       if (resendClient) {
-        const { to: recipients, cc } = await getSiteAlertEmailsWithCc(siteId, 'healthAlerts');
+        const recipients = await getSiteAlertRecipients(siteId, 'healthAlerts');
+        const tz = await getMachineTimezone(siteId, machineId);
+        const baseUrl = request.nextUrl.origin;
 
         if (recipients.length > 0) {
           const severityLabel = severity.toUpperCase();
-          const subject = `[${ENV_LABEL}] [${severityLabel}] ${ruleName} — ${machineId}`;
-          const html = buildThresholdAlertEmail({
-            siteId,
-            machineId,
-            ruleName,
-            metric,
-            value,
-            threshold,
-            operator,
-            severity,
-          });
+          const subject = `[${severityLabel}] ${ruleName} — ${machineId}`;
 
-          const result = await resendClient.emails.send({
-            from: FROM_EMAIL,
-            to: recipients,
-            ...(cc.length > 0 ? { cc } : {}),
-            subject,
-            html,
-          });
+          for (const recipient of recipients) {
+            try {
+              const unsubscribeUrl = recipient.userId !== 'fallback'
+                ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
+                : undefined;
 
-          if (result.error) {
-            console.error('[alerts/trigger] Resend error:', result.error);
-          } else {
-            emailSent = true;
+              const html = buildThresholdAlertEmail({
+                siteId,
+                machineId,
+                ruleName,
+                metric,
+                value,
+                threshold,
+                operator,
+                severity,
+                unsubscribeUrl,
+                timezone: tz,
+              });
+
+              const result = await resendClient.emails.send({
+                from: FROM_EMAIL,
+                to: [recipient.email],
+                ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
+                subject,
+                html,
+              });
+
+              if (result.error) {
+                console.error(`[alerts/trigger] Resend error for ${recipient.email}:`, result.error);
+              } else {
+                emailSent = true;
+              }
+            } catch (emailError) {
+              console.error(`[alerts/trigger] Failed to send to ${recipient.email}:`, emailError);
+            }
+          }
+
+          if (emailSent) {
             console.log(`[alerts/trigger] Email sent to ${recipients.length} recipient(s) for ${ruleName}`);
           }
         }
@@ -146,8 +165,10 @@ function buildThresholdAlertEmail(params: {
   threshold: number;
   operator: string;
   severity: string;
+  unsubscribeUrl?: string;
+  timezone?: string;
 }): string {
-  const { siteId, machineId, ruleName, metric, value, threshold, operator, severity } = params;
+  const { siteId, machineId, ruleName, metric, value, threshold, operator, severity, unsubscribeUrl, timezone } = params;
   const color = SEVERITY_COLORS[severity] || SEVERITY_COLORS.warning;
   const metricLabel = METRIC_LABELS[metric] || metric;
 
@@ -162,10 +183,10 @@ function buildThresholdAlertEmail(params: {
       { label: 'condition', value: `${metricLabel} ${operator} ${threshold}` },
       { label: 'current value', value: String(value), highlight: color },
       { label: 'severity', value: severity.toUpperCase(), highlight: color },
-      { label: 'time', value: emailTimestamp() },
+      { label: 'time', value: emailTimestamp(new Date(), timezone) },
       { label: 'environment', value: ENV_LABEL },
     ])}
     <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check the machine and service metrics for more details.</p>
   `;
-  return wrapEmailLayout(content, { preheader: `${severity.toUpperCase()}: ${ruleName} on ${machineId}` });
+  return wrapEmailLayout(content, { unsubscribeUrl, preheader: `${severity.toUpperCase()}: ${ruleName} on ${machineId}` });
 }

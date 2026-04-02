@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertRecipients } from '@/lib/adminUtils.server';
-import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
-import { wrapEmailLayout, EMAIL_COLORS } from '@/lib/emailTemplates.server';
+import { getResend, FROM_EMAIL } from '@/lib/resendClient.server';
+import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { fireWebhooks } from '@/lib/webhookSender.server';
 
@@ -35,6 +35,7 @@ interface OfflineAlert {
   machineId: string;
   lastHeartbeatMs: number;
   heartbeatAgeMinutes: number;
+  timezone?: string;
 }
 
 function buildOfflineEmail(siteId: string, alerts: OfflineAlert[], unsubscribeUrl?: string): string {
@@ -61,6 +62,7 @@ function buildOfflineEmail(siteId: string, alerts: OfflineAlert[], unsubscribeUr
       <tbody>${rows}</tbody>
     </table>
     <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check each machine and verify that the owlette service is running.</p>
+    <p style="margin:8px 0 0;color:${EMAIL_COLORS.border};font-size:11px;">checked at ${emailTimestamp(new Date(), alerts[0]?.timezone)}</p>
     <p style="margin:8px 0 0;color:${EMAIL_COLORS.border};font-size:11px;">alerts are sent at most once per hour per machine.</p>
   `;
 
@@ -127,6 +129,7 @@ export async function GET(request: NextRequest) {
           machineId: machineDoc.id,
           lastHeartbeatMs,
           heartbeatAgeMinutes: Math.floor(heartbeatAge / 60000),
+          timezone: machine.machine_timezone || undefined,
         });
       }
     }
@@ -180,7 +183,7 @@ export async function GET(request: NextRequest) {
             from: FROM_EMAIL,
             to: [recipient.email],
             ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
-            subject: `[${ENV_LABEL}] ${siteAlerts.length} machine(s) offline in ${siteId}`,
+            subject: `${siteAlerts.length} machine(s) offline in ${siteId}`,
             html: buildOfflineEmail(siteId, siteAlerts, unsubscribeUrl),
           });
 

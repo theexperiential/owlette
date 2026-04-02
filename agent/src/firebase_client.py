@@ -755,6 +755,7 @@ class FirebaseClient:
                 'online': True,
                 'lastHeartbeat': SERVER_TIMESTAMP,
                 'agent_version': shared_utils.APP_VERSION,
+                'machine_timezone': shared_utils.get_machine_timezone(),
                 'machineId': self.machine_id,
                 'siteId': self.site_id,
                 'metrics.cpu': metrics.get('cpu', {}),

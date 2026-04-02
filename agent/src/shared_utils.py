@@ -117,6 +117,14 @@ class _CrossProcessLock:
 def get_hostname():
     return socket.gethostname()
 
+def get_machine_timezone():
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r'SYSTEM\CurrentControlSet\Control\TimeZoneInformation') as key:
+            return winreg.QueryValueEx(key, 'TimeZoneKeyName')[0]
+    except Exception:
+        return None
+
 def get_cpu_name():
     """
     Get CPU model name with multi-layered fallback for maximum reliability.

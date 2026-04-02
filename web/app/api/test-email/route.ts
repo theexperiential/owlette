@@ -37,7 +37,7 @@ export type EmailTemplateId = (typeof EMAIL_TEMPLATES)[number]['id'];
 /* ------------------------------------------------------------------ */
 
 function buildTemplateEmail(templateId: string): { subject: string; html: string } {
-  const ts = emailTimestamp();
+  const ts = emailTimestamp(new Date(), 'America/New_York');
 
   switch (templateId) {
     case 'process_crash': {
@@ -57,8 +57,8 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check the machine and service logs for more details.</p>
       `;
       return {
-        subject: `[${ENV_LABEL}] process crashed: TouchDesigner on LOBBY-PC-01`,
-        html: wrapEmailLayout(content, { preheader: 'process crashed: TouchDesigner on LOBBY-PC-01' }),
+        subject: `process crashed: TouchDesigner on LOBBY-PC-01`,
+        html: wrapEmailLayout(content, { preheader: 'process crashed: TouchDesigner on LOBBY-PC-01', unsubscribeUrl: '#unsubscribe-preview' }),
       };
     }
 
@@ -79,8 +79,8 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check the machine and service logs for more details.</p>
       `;
       return {
-        subject: `[${ENV_LABEL}] process failed to start: Resolume Arena on STAGE-PC-03`,
-        html: wrapEmailLayout(content, { preheader: 'process failed to start: Resolume Arena on STAGE-PC-03' }),
+        subject: `process failed to start: Resolume Arena on STAGE-PC-03`,
+        html: wrapEmailLayout(content, { preheader: 'process failed to start: Resolume Arena on STAGE-PC-03', unsubscribeUrl: '#unsubscribe-preview' }),
       };
     }
 
@@ -100,8 +100,8 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check the machine and service logs for more details.</p>
       `;
       return {
-        subject: `[${ENV_LABEL}] [ALERT] owlette agent error on KIOSK-02`,
-        html: wrapEmailLayout(content),
+        subject: `[ALERT] owlette agent error on KIOSK-02`,
+        html: wrapEmailLayout(content, { unsubscribeUrl: '#unsubscribe-preview' }),
       };
     }
 
@@ -126,8 +126,8 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check the machine and service metrics for more details.</p>
       `;
       return {
-        subject: `[${ENV_LABEL}] [CRITICAL] high CPU usage — RENDER-NODE-01`,
-        html: wrapEmailLayout(content, { preheader: 'CRITICAL: high CPU usage on RENDER-NODE-01' }),
+        subject: `[CRITICAL] high CPU usage — RENDER-NODE-01`,
+        html: wrapEmailLayout(content, { preheader: 'CRITICAL: high CPU usage on RENDER-NODE-01', unsubscribeUrl: '#unsubscribe-preview' }),
       };
     }
 
@@ -162,8 +162,8 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         <p style="margin:8px 0 0;color:${EMAIL_COLORS.border};font-size:11px;">alerts are sent at most once per hour per machine.</p>
       `;
       return {
-        subject: `[${ENV_LABEL}] 2 machine(s) offline in downtown-gallery`,
-        html: wrapEmailLayout(content, { preheader: '2 machine(s) offline in downtown-gallery' }),
+        subject: `2 machine(s) offline in downtown-gallery`,
+        html: wrapEmailLayout(content, { preheader: '2 machine(s) offline in downtown-gallery', unsubscribeUrl: '#unsubscribe-preview' }),
       };
     }
 
@@ -194,8 +194,8 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">review the autonomous conversation in the cortex dashboard for full details.</p>
       `;
       return {
-        subject: `[${ENV_LABEL}] cortex escalation: TouchDesigner on LOBBY-PC-01`,
-        html: wrapEmailLayout(content, { preheader: 'cortex escalation: TouchDesigner on LOBBY-PC-01' }),
+        subject: `cortex escalation: TouchDesigner on LOBBY-PC-01`,
+        html: wrapEmailLayout(content, { preheader: 'cortex escalation: TouchDesigner on LOBBY-PC-01', unsubscribeUrl: '#unsubscribe-preview' }),
       };
     }
 
@@ -238,7 +238,7 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         ])}
       `;
       return {
-        subject: `[${ENV_LABEL}] new owlette user signup`,
+        subject: `new owlette user signup`,
         html: wrapEmailLayout(content),
       };
     }
@@ -255,7 +255,7 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         ])}
       `;
       return {
-        subject: `[${ENV_LABEL}] owlette email test`,
+        subject: `owlette email test`,
         html: wrapEmailLayout(content),
       };
     }
@@ -325,7 +325,7 @@ export async function POST(request: NextRequest) {
       to: toAddresses,
       ...(bodyCc ? { cc: bodyCc } : {}),
       environment: ENV_LABEL,
-      timestamp: emailTimestamp(),
+      timestamp: emailTimestamp(new Date(), 'America/New_York'),
     });
 
   } catch (error) {
