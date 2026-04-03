@@ -103,7 +103,7 @@ def load_icon(status='normal'):
 
     Single icon design that works on both light and dark taskbars.
     Status indicated by center dot color:
-    - normal: White dot (everything OK, Always Watching)
+    - normal: White dot (everything OK, connected)
     - warning: Orange dot (Firebase connection issues)
     - error: Red dot (service stopped/disconnected)
     """

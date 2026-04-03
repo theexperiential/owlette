@@ -23,7 +23,7 @@ icons/
 
 ### Icon Design
 
-All icons follow the HAL 9000 "Always Watching" design:
+All icons follow the HAL 9000 eye design:
 
 - **Grey circular fill**: `RGB(60, 60, 60)` - Background circle
 - **Outer circle**: Pure white `RGB(255, 255, 255)` with thicker stroke (width 4px)

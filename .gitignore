@@ -20,6 +20,10 @@ ENV/
 .venv/
 agent/.venv/
 
+# Dev planning artifacts
+dev/completed/
+dev/active/
+
 # IDE
 .vscode/
 .idea/

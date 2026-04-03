@@ -5,7 +5,7 @@ hide:
 
 # owlette
 
-### Always Watching
+### attention is all you need
 
 owlette is a cloud-connected Windows process management and remote deployment system. Built for managing TouchDesigner installations, digital signage, kiosks, and media servers — it keeps your machines running and your processes alive, from anywhere.
 
