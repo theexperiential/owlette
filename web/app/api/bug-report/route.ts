@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { requireSession, ApiAuthError } from '@/lib/apiAuth.server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
@@ -142,7 +143,7 @@ export const POST = withRateLimit(
         title: title.trim(),
         description: description.trim(),
         status: 'new',
-        createdAt: new Date(),
+        createdAt: FieldValue.serverTimestamp(),
         userId,
         userEmail,
         browserUA: ua,

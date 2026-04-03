@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, getDocs, runTransaction } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
 
@@ -65,7 +65,7 @@ export interface Machine {
   };
   lastScreenshot?: {
     url: string;       // Firebase Storage public URL
-    timestamp: number;
+    timestamp: any;    // Firestore Timestamp (new) or number (legacy)
     sizeKB: number;
   };
   liveView?: {
@@ -99,7 +99,7 @@ export interface Machine {
 export interface Site {
   id: string;
   name: string;
-  createdAt: number;
+  createdAt: any; // Firestore Timestamp (new) or number (legacy)
   timezone?: string;  // IANA timezone, e.g., "America/New_York"
 }
 
@@ -226,7 +226,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
     try {
       await setDoc(siteRef, {
         name,
-        createdAt: Date.now(),
+        createdAt: serverTimestamp(),
         owner: userId,
         timezone: timezone || 'UTC',
       });
@@ -562,7 +562,7 @@ export function useMachines(siteId: string) {
     const commandData = {
       type: 'kill_process',
       process_name: processName,
-      timestamp: Date.now(),
+      timestamp: serverTimestamp(),
       status: 'pending',
     };
 
@@ -946,7 +946,7 @@ export function useMachines(siteId: string) {
     const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
     const commandData = {
       type: commandType,
-      timestamp: Date.now(),
+      timestamp: serverTimestamp(),
       status: 'pending',
       ...extraData,
     };

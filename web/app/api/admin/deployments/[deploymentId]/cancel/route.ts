@@ -3,6 +3,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError } from '@/lib/apiAuth.server';
 import { requireAdminWithSiteAccess, getRouteParam } from '@/lib/apiHelpers.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import logger from '@/lib/logger';
 
 /**
@@ -82,15 +83,16 @@ export const POST = withRateLimit(
           type: 'cancel_installation',
           installer_name,
           deployment_id: deploymentId,
-          timestamp: Date.now(),
+          timestamp: FieldValue.serverTimestamp(),
         },
       }, { merge: true });
+      const now = Timestamp.now();
       const updatedTargets = (deploymentData.targets || []).map((target: any) => {
         if (target.machineId === machineId) {
           return {
             ...target,
             status: 'cancelled',
-            cancelledAt: Date.now(),
+            cancelledAt: now,
           };
         }
         return target;
@@ -104,7 +106,7 @@ export const POST = withRateLimit(
 
       const updatePayload: Record<string, unknown> = {
         targets: updatedTargets,
-        updatedAt: Date.now(),
+        updatedAt: FieldValue.serverTimestamp(),
       };
 
       if (allTerminal) {
@@ -116,7 +118,7 @@ export const POST = withRateLimit(
         } else {
           updatePayload.status = 'partial';
         }
-        updatePayload.completedAt = Date.now();
+        updatePayload.completedAt = FieldValue.serverTimestamp();
       }
 
       await deploymentRef.update(updatePayload);

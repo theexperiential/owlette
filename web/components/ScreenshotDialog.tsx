@@ -28,7 +28,7 @@ interface ScreenshotDialogProps {
   onCaptureScreenshot: () => Promise<void>;
   lastScreenshot?: {
     url: string;
-    timestamp: number;
+    timestamp: any;   // Firestore Timestamp (new) or number (legacy)
     sizeKB: number;
   };
   hasActiveDeployment?: boolean;
@@ -237,8 +237,8 @@ export function ScreenshotDialog({
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const formatTimestamp = (ts: number) => {
-    const d = new Date(ts);
+  const formatTimestamp = (ts: any) => {
+    const d = ts?.toDate ? ts.toDate() : new Date(ts);
     return d.toLocaleString(undefined, {
       month: 'short',
       day: 'numeric',
@@ -337,7 +337,7 @@ export function ScreenshotDialog({
                           >
                             <div className="font-medium truncate">{formatTimestamp(hs.timestamp)}</div>
                             <div className="text-[10px] mt-0.5 opacity-70">
-                              {formatRelativeTime(hs.timestamp / 1000)} · {hs.sizeKB}KB
+                              {formatRelativeTime(hs.timestamp?.seconds ?? Math.floor((typeof hs.timestamp === 'number' ? hs.timestamp : 0) / 1000))} · {hs.sizeKB}KB
                             </div>
                           </button>
                           <button

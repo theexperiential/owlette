@@ -36,9 +36,9 @@ export interface DeploymentTarget {
   status: string;
   progress?: number;
   error?: string;
-  completedAt?: number;
-  cancelledAt?: number;
-  uninstalledAt?: number;
+  completedAt?: number | FirebaseFirestore.Timestamp;
+  cancelledAt?: number | FirebaseFirestore.Timestamp;
+  uninstalledAt?: number | FirebaseFirestore.Timestamp;
 }
 
 /* -------------------------------------------------------------------------- */

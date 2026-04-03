@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 
 /**
  * POST /api/admin/keys/create
@@ -38,7 +39,7 @@ export const POST = withRateLimit(
           name,
           keyHash,
           keyPrefix: rawKey.slice(0, 11), // "owk_" + first 7 chars for display
-          createdAt: Date.now(),
+          createdAt: FieldValue.serverTimestamp(),
           lastUsedAt: null,
         }
       );

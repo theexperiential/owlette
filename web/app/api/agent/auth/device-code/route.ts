@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { generatePairPhrase } from '@/lib/pairPhrases';
 import logger from '@/lib/logger';
@@ -56,7 +57,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const protocol = host.includes('localhost') ? 'http' : 'https';
     const baseUrl = `${protocol}://${host}`;
 
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const expiresAt = Timestamp.fromDate(new Date(Date.now() + 10 * 60 * 1000)); // 10 minutes
 
     // Store device code in Firestore
     await adminDb.collection('device_codes').doc(pairPhrase).set({
@@ -64,7 +65,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       machineId: machineId || null,
       version: version || null,
       status: 'pending', // pending → authorized → (deleted on poll or expiry)
-      createdAt: new Date(),
+      createdAt: FieldValue.serverTimestamp(),
       expiresAt,
       // These fields are populated when authorized:
       siteId: null,

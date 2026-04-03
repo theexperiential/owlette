@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import { requireSession } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { createModel, buildSystemPrompt, type ProcessSummary } from '@/lib/llm';
 import { getToolsByTier } from '@/lib/mcp-tools';
 import {
@@ -239,7 +240,7 @@ async function handleLocalCortex(
       ...(images.length > 0 ? { images } : {}),
       status: 'pending',
       response: { content: '', complete: false, parts: [] },
-      updatedAt: new Date(),
+      updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: false },
   );

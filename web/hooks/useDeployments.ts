@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, getDocs, deleteDoc, deleteField, query, orderBy, limit, runTransaction } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, getDocs, deleteDoc, deleteField, query, orderBy, limit, runTransaction, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export interface DeploymentTemplate {
@@ -13,7 +13,7 @@ export interface DeploymentTemplate {
   verify_path?: string;
   close_processes?: string[];
   parallel_install?: boolean;
-  createdAt: number;
+  createdAt: any; // Firestore Timestamp (new) or number (legacy)
 }
 
 export interface DeploymentTarget {
@@ -21,9 +21,9 @@ export interface DeploymentTarget {
   status: 'pending' | 'closing_processes' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled' | 'uninstalled';
   progress?: number;
   error?: string;
-  completedAt?: number;
-  cancelledAt?: number;
-  uninstalledAt?: number;
+  completedAt?: any;
+  cancelledAt?: any;
+  uninstalledAt?: any;
 }
 
 export interface Deployment {
@@ -37,8 +37,8 @@ export interface Deployment {
   suppress_projects?: string[];
   parallel_install?: boolean;
   targets: DeploymentTarget[];
-  createdAt: number;
-  completedAt?: number;
+  createdAt: any; // Firestore Timestamp (new) or number (legacy)
+  completedAt?: any;
   status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial' | 'uninstalled';
 }
 
@@ -78,7 +78,7 @@ export function useDeploymentTemplates(siteId: string) {
           });
 
           // Sort by created date (newest first)
-          templateData.sort((a, b) => b.createdAt - a.createdAt);
+          templateData.sort((a, b) => (b.createdAt?.toMillis?.() ?? b.createdAt ?? 0) - (a.createdAt?.toMillis?.() ?? a.createdAt ?? 0));
 
           setTemplates(templateData);
           setLoading(false);
@@ -105,7 +105,7 @@ export function useDeploymentTemplates(siteId: string) {
 
     await setDoc(templateRef, {
       ...template,
-      createdAt: Date.now(),
+      createdAt: serverTimestamp(),
     });
 
     return templateId;
@@ -173,7 +173,7 @@ export function useDeployments(siteId: string) {
           });
 
           // Sort by created date (newest first)
-          deploymentData.sort((a, b) => b.createdAt - a.createdAt);
+          deploymentData.sort((a, b) => (b.createdAt?.toMillis?.() ?? b.createdAt ?? 0) - (a.createdAt?.toMillis?.() ?? a.createdAt ?? 0));
 
           setDeployments(deploymentData);
           setLoading(false);
@@ -284,7 +284,7 @@ export function useDeployments(siteId: string) {
                         return {
                           ...target,
                           status: 'uninstalled' as const,
-                          uninstalledAt: command.completedAt || Date.now()
+                          uninstalledAt: command.completedAt || Timestamp.now()
                         };
                       }
                       return target;
@@ -305,7 +305,7 @@ export function useDeployments(siteId: string) {
                         return {
                           ...rest,
                           status: 'completed' as const,
-                          completedAt: command.completedAt || Date.now()
+                          completedAt: command.completedAt || Timestamp.now()
                         };
                       }
                       return target;
@@ -318,7 +318,7 @@ export function useDeployments(siteId: string) {
                     transaction.set(deploymentRef, {
                       targets: updatedTargets,
                       status: newStatus,
-                      ...(allCompleted ? { completedAt: Date.now() } : {}),
+                      ...(allCompleted ? { completedAt: serverTimestamp() } : {}),
                     }, { merge: true });
                   } else if (command.status === 'failed') {
                     const updatedTargets = deployment.targets.map(target => {
@@ -328,7 +328,7 @@ export function useDeployments(siteId: string) {
                           ...rest,
                           status: 'failed' as const,
                           ...(command.error ? { error: command.error } : {}),
-                          completedAt: command.completedAt || Date.now()
+                          completedAt: command.completedAt || Timestamp.now()
                         };
                       }
                       return target;
@@ -341,12 +341,12 @@ export function useDeployments(siteId: string) {
                     transaction.set(deploymentRef, {
                       targets: updatedTargets,
                       status: newStatus,
-                      ...(allDone ? { completedAt: Date.now() } : {}),
+                      ...(allDone ? { completedAt: serverTimestamp() } : {}),
                     }, { merge: true });
                   } else if (command.status === 'cancelled') {
                     const updatedTargets = deployment.targets.map(target =>
                       target.machineId === machineId
-                        ? { ...target, status: 'cancelled' as const, cancelledAt: command.completedAt || Date.now() }
+                        ? { ...target, status: 'cancelled' as const, cancelledAt: command.completedAt || Timestamp.now() }
                         : target
                     );
 
@@ -369,7 +369,7 @@ export function useDeployments(siteId: string) {
                     transaction.set(deploymentRef, {
                       targets: updatedTargets,
                       status: newStatus,
-                      ...(remainingTargets.length === 0 || (allCompleted && !anyInProgress) ? { completedAt: Date.now() } : {}),
+                      ...(remainingTargets.length === 0 || (allCompleted && !anyInProgress) ? { completedAt: serverTimestamp() } : {}),
                     }, { merge: true });
                   } else if (command.status === 'closing_processes' || command.status === 'downloading' || command.status === 'installing') {
                     const updatedTargets = deployment.targets.map(target =>
@@ -456,7 +456,7 @@ export function useDeployments(siteId: string) {
       installer_url: deployment.installer_url,
       silent_flags: deployment.silent_flags,
       targets,
-      createdAt: Date.now(),
+      createdAt: serverTimestamp(),
       status: 'pending',
     };
 
@@ -493,7 +493,7 @@ export function useDeployments(siteId: string) {
         installer_name: deployment.installer_name,
         silent_flags: deployment.silent_flags,
         deployment_id: deploymentId,
-        timestamp: Date.now(),
+        timestamp: serverTimestamp(),
         status: 'pending',
       };
 
@@ -547,13 +547,14 @@ export function useDeployments(siteId: string) {
           type: 'cancel_installation',
           installer_name: installer_name,
           deployment_id: deploymentId,
-          timestamp: Date.now(),
+          timestamp: serverTimestamp(),
         }
       }, { merge: true });
 
       // Update deployment target status to 'cancelled' inside a transaction
       // to avoid overwriting concurrent agent progress updates
       const deploymentRef = doc(db!, 'sites', siteId, 'deployments', deploymentId);
+      const now = Timestamp.now();
       await runTransaction(db!, async (transaction) => {
         const deploymentSnap = await transaction.get(deploymentRef);
 
@@ -568,7 +569,7 @@ export function useDeployments(siteId: string) {
             return {
               ...target,
               status: 'cancelled',
-              cancelledAt: Date.now(),
+              cancelledAt: now,
             };
           }
           return target;
@@ -577,7 +578,7 @@ export function useDeployments(siteId: string) {
         // Update the deployment with the new target status
         transaction.update(deploymentRef, {
           targets: updatedTargets,
-          updatedAt: Date.now(),
+          updatedAt: serverTimestamp(),
         });
       });
 

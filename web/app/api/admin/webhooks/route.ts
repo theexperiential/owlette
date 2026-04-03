@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 
 /**
  * GET /api/admin/webhooks?siteId=xxx
@@ -74,7 +75,7 @@ export async function POST(request: NextRequest) {
       events,
       enabled: true,
       secret,
-      createdAt: new Date(),
+      createdAt: FieldValue.serverTimestamp(),
       createdBy: userId,
       lastTriggered: null,
       lastStatus: 0,

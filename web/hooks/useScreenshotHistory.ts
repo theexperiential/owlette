@@ -7,7 +7,7 @@ import { db } from '@/lib/firebase';
 export interface ScreenshotRecord {
   id: string;
   url: string;
-  timestamp: number;
+  timestamp: any; // Firestore Timestamp (new) or number (legacy)
   sizeKB: number;
 }
 

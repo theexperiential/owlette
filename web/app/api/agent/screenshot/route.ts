@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb, getAdminStorage } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 
 /**
@@ -119,7 +120,7 @@ export const POST = withRateLimit(
         {
           lastScreenshot: {
             url: urlWithCacheBuster,
-            timestamp: Date.now(),
+            timestamp: FieldValue.serverTimestamp(),
             sizeKB,
           },
         },
@@ -127,7 +128,7 @@ export const POST = withRateLimit(
       );
 
       // --- Screenshot history ---
-      const captureTimestamp = Date.now();
+      const captureTimestamp = Date.now(); // Used for storage path only
 
       // Upload history copy with timestamped path
       const historyPath = `screenshots/${siteId}/${machineId}/history/${captureTimestamp}.jpg`;
@@ -146,7 +147,7 @@ export const POST = withRateLimit(
       const screenshotsCol = machineRef.collection('screenshots');
       await screenshotsCol.add({
         url: historyUrl,
-        timestamp: captureTimestamp,
+        timestamp: FieldValue.serverTimestamp(),
         sizeKB,
       });
 

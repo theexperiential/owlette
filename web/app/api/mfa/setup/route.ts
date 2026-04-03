@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateTOTPSecret, generateQRCode } from '@/lib/totp';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
 
@@ -64,8 +65,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       await db.collection('mfa_pending').doc(userId).set({
         secret,
         email,
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+        createdAt: FieldValue.serverTimestamp(),
+        expiresAt: Timestamp.fromDate(new Date(Date.now() + 10 * 60 * 1000)), // 10 minutes
       });
     } catch (e) {
       console.error('[MFA Setup] Firestore write failed:', e);

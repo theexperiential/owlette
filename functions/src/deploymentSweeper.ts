@@ -14,6 +14,7 @@
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import * as admin from 'firebase-admin';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import {
   calculateDeploymentStatus,
   TARGET_TERMINAL_STATUSES,
@@ -56,9 +57,14 @@ export const sweepStaleDeployments = onSchedule(
       for (const deploymentDoc of deploymentsSnap.docs) {
         const data = deploymentDoc.data();
         const targets: DeploymentTarget[] = data.targets || [];
-        const createdAt: number = data.createdAt || 0;
+        // Handle both numeric (legacy) and Timestamp (new) createdAt
+        const rawCreatedAt = data.createdAt;
+        const createdAtMs: number = typeof rawCreatedAt === 'number'
+          ? rawCreatedAt
+          : rawCreatedAt?.toMillis?.() || 0;
 
         let changed = false;
+        const tsNow = Timestamp.now();
         const updatedTargets = targets.map((target) => {
           // Skip targets that are already terminal
           if (TARGET_TERMINAL_STATUSES.has(target.status)) {
@@ -67,7 +73,7 @@ export const sweepStaleDeployments = onSchedule(
 
           // Determine the relevant timestamp for this target
           // Use createdAt as the baseline (when the deployment was created)
-          const targetAge = now - createdAt;
+          const targetAge = now - createdAtMs;
 
           if (target.status === 'pending' && targetAge > PENDING_TIMEOUT_MS) {
             changed = true;
@@ -75,7 +81,7 @@ export const sweepStaleDeployments = onSchedule(
               ...target,
               status: 'failed',
               error: `Timed out: agent did not start after ${Math.round(PENDING_TIMEOUT_MS / 60000)} minutes`,
-              completedAt: now,
+              completedAt: tsNow,
             };
           }
 
@@ -88,7 +94,7 @@ export const sweepStaleDeployments = onSchedule(
               ...target,
               status: 'failed',
               error: `Timed out: agent stalled during ${target.status} after ${Math.round(ACTIVE_TIMEOUT_MS / 60000)} minutes`,
-              completedAt: now,
+              completedAt: tsNow,
             };
           }
 
@@ -104,12 +110,12 @@ export const sweepStaleDeployments = onSchedule(
         const updatePayload: Record<string, unknown> = {
           targets: updatedTargets,
           status: newStatus,
-          updatedAt: now,
+          updatedAt: FieldValue.serverTimestamp(),
         };
 
         // Set completedAt if deployment just became terminal
         if (!wasTerminal && DEPLOYMENT_TERMINAL_STATUSES.has(newStatus)) {
-          updatePayload.completedAt = now;
+          updatePayload.completedAt = FieldValue.serverTimestamp();
         }
 
         await deploymentDoc.ref.update(updatePayload);

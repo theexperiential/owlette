@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import logger from '@/lib/logger';
 
 const COMMAND_POLL_INTERVAL_MS = 1500;
@@ -59,7 +60,7 @@ export const POST = withRateLimit(
           [commandId]: {
             type: command,
             ...data,
-            timestamp: Date.now(),
+            timestamp: FieldValue.serverTimestamp(),
             status: 'pending',
           },
         },

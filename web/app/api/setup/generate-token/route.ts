@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase-admin';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, assertUserHasSiteAccess, requireSession } from '@/lib/apiAuth.server';
 import logger from '@/lib/logger';
@@ -39,13 +40,12 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const registrationCode = codeBytes.toString('base64url');
 
     // Save registration code to Firestore
-    const expiresAt = new Date();
-    expiresAt.setHours(expiresAt.getHours() + 24); // 24 hour expiry
+    const expiresAt = Timestamp.fromDate(new Date(Date.now() + 24 * 60 * 60 * 1000)); // 24 hour expiry
 
     await adminDb.value.collection('agent_tokens').doc(registrationCode).set({
       siteId,
       createdBy: userId,
-      createdAt: new Date(),
+      createdAt: FieldValue.serverTimestamp(),
       expiresAt,
       used: false,
     });

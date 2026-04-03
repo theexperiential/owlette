@@ -3,6 +3,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError } from '@/lib/apiAuth.server';
 import { requireAdminWithSiteAccess } from '@/lib/apiHelpers.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import logger from '@/lib/logger';
 
 /**
@@ -110,7 +111,7 @@ export const POST = withRateLimit(
                 installer_url: downloadUrl,
                 target_version: targetVersion,
                 checksum_sha256: checksumSha256,
-                timestamp: Date.now(),
+                timestamp: FieldValue.serverTimestamp(),
                 status: 'pending',
               },
             },

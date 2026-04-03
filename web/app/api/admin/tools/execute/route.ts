@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { getToolByName, EXISTING_COMMAND_MAPPINGS } from '@/lib/mcp-tools';
 import logger from '@/lib/logger';
 
@@ -92,7 +93,7 @@ export const POST = withRateLimit(
             [commandId]: {
               type: existingCmd,
               ...toolParams,
-              timestamp: Date.now(),
+              timestamp: FieldValue.serverTimestamp(),
               status: 'pending',
             },
           },
@@ -106,7 +107,7 @@ export const POST = withRateLimit(
               type: 'mcp_tool_call',
               tool_name: toolName,
               tool_params: toolParams,
-              timestamp: Date.now(),
+              timestamp: FieldValue.serverTimestamp(),
               status: 'pending',
               timeout_seconds: Math.min(timeout || DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S),
             },
