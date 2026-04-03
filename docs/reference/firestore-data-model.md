@@ -1,4 +1,4 @@
-# Firestore Data Model
+# firestore data model
 
 Complete schema for all Firestore collections and documents.
 
@@ -12,14 +12,17 @@ firestore/
 │   ├── machines/{machineId}/
 │   │   ├── presence              (single document)
 │   │   ├── status                (single document)
-│   │   └── commands/
-│   │       ├── pending/{cmdId}
-│   │       └── completed/{cmdId}
+│   │   ├── commands/
+│   │   │   ├── pending/{cmdId}
+│   │   │   └── completed/{cmdId}
+│   │   ├── screenshots/{screenshotId}
+│   │   ├── installed_software/{softwareId}
+│   │   └── metrics_history/{bucketId}   (YYYY-MM-DD daily buckets)
 │   ├── deployments/{deployId}
 │   ├── project_distributions/{distId}
 │   ├── installer_templates/{tplId}
 │   ├── project_templates/{tplId}
-│   ├── activity_logs/{logId}
+│   ├── logs/{logId}
 │   ├── webhooks/{webhookId}       (webhook notification configs)
 │   ├── settings/
 │   │   ├── llm                   (single document)
@@ -29,19 +32,27 @@ firestore/
 │       └── lock                  (single document, concurrency control)
 │
 ├── config/{siteId}/
-│   └── machines/{machineId}      (single document)
+│   ├── machines/{machineId}      (single document)
+│   └── schedule_presets/{presetId}
 │
 ├── users/{userId}
-│   ├── passkeys/{credentialId}    (WebAuthn credentials)
+│   ├── passkeys/{credentialId}   (WebAuthn credentials)
+│   ├── apiKeys/{keyId}
 │   └── settings/
 │       ├── llm
 │       └── preferences
 │
-├── chats/{chatId}                  (Cortex conversations)
+├── chats/{chatId}                (Cortex conversations)
+│   └── messages/{messageId}
+├── system_presets/{presetId}     (global deployment presets)
+├── apiKeys/{keyHash}             (fast-lookup index for user API keys)
 ├── agent_tokens/{registrationCode}
 ├── agent_refresh_tokens/{tokenHash}
+├── device_codes/{phrase}         (QR/device-code pairing)
 ├── mfa_pending/{userId}
 ├── webauthn_challenges/{challengeId}
+├── installer_uploads/{uploadId}  (temporary, during installer upload)
+├── bug_reports/{reportId}
 └── installer_metadata/
     ├── latest                    (single document)
     └── data/versions/{version}
@@ -129,6 +140,72 @@ Completed command result.
 
 ---
 
+## sites/{siteId}/machines/{machineId}/screenshots/{screenshotId}
+
+Screenshot captures from remote machines.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | string | Public Firebase Storage URL to the screenshot image |
+| `timestamp` | number | Capture time (Unix milliseconds) |
+| `sizeKB` | number | File size in kilobytes |
+
+---
+
+## sites/{siteId}/machines/{machineId}/installed_software/{softwareId}
+
+Windows software inventory synced from the agent via registry scan.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Display name from Windows registry |
+| `version` | string | Version string (may be empty) |
+| `publisher` | string | Publisher/manufacturer name |
+| `install_location` | string | Installation directory path |
+| `uninstall_command` | string | Uninstall command from registry |
+| `installer_type` | string | Detected type: `inno`, `nsis`, `msi`, `custom` |
+| `registry_key` | string | Registry subkey name for reference |
+| `detected_at` | timestamp | Server timestamp of detection |
+
+---
+
+## sites/{siteId}/machines/{machineId}/metrics_history/{bucketId}
+
+Time-series metrics for sparkline charts. One document per day, keyed by `YYYY-MM-DD`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `samples` | array | Time-series metric samples (see below) |
+| `meta.lastSample` | timestamp | Last sample timestamp |
+| `meta.sampleCount` | number | Total samples in bucket |
+| `meta.resolution` | string | Aggregation resolution |
+
+### sample object
+
+```json
+{
+  "t": 1712000000000,
+  "c": 42.1,
+  "m": 61.3,
+  "d": 55.0,
+  "g": 12.4,
+  "ct": 68.0,
+  "gt": 54.0
+}
+```
+
+| Key | Description |
+|-----|-------------|
+| `t` | Timestamp (Unix ms) |
+| `c` | CPU usage (%) |
+| `m` | Memory usage (%) |
+| `d` | Disk usage (%) |
+| `g` | GPU usage (%) |
+| `ct` | CPU temperature (°C) |
+| `gt` | GPU temperature (°C) |
+
+---
+
 ## config/{siteId}/machines/{machineId}
 
 Process configuration synced between agent and dashboard.
@@ -154,6 +231,21 @@ Process configuration synced between agent and dashboard.
   "relaunch_attempts": 5
 }
 ```
+
+---
+
+## config/{siteId}/schedule_presets/{presetId}
+
+Reusable process schedule presets scoped to a site.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Preset display name |
+| `schedule.days` | array[string] | Days of week: `["mon", "tue", ...]` |
+| `schedule.time` | string | Time in `HH:MM` format |
+| `enabled` | boolean | Whether the preset is active |
+| `createdAt` | timestamp | Creation time |
+| `updatedAt` | timestamp | Last update time |
 
 ---
 
@@ -188,6 +280,18 @@ WebAuthn credential for passkey authentication.
 | `createdAt` | timestamp | Registration date |
 | `lastUsedAt` | timestamp | Last authentication date |
 
+### users/{userId}/apiKeys/{keyId}
+
+User-scoped API keys for external integrations.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Human-readable label |
+| `keyHash` | string | SHA-256 hash of the actual key value |
+| `keyPrefix` | string | First 11 chars of key for display (e.g., `owk_abc1234`) |
+| `createdAt` | number | Creation timestamp (Unix ms) |
+| `lastUsedAt` | number\|null | Last usage timestamp (null if never used) |
+
 ### users/{userId}/settings/preferences
 
 | Field | Type | Description |
@@ -204,6 +308,20 @@ WebAuthn credential for passkey authentication.
 | `encryptedApiKey` | string | AES-encrypted API key |
 | `model` | string | Model ID (optional) |
 | `updatedAt` | timestamp | Last update time |
+
+---
+
+## apiKeys/{keyHash}
+
+Fast-lookup index for API key authentication. Keyed by SHA-256 hash of the raw key.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `userId` | string | Owner's user ID |
+| `keyId` | string | Reference to `users/{userId}/apiKeys/{keyId}` |
+
+!!! warning "Server-only"
+    Not accessible from any client. Only the server API can read/write.
 
 ---
 
@@ -243,6 +361,29 @@ Hashed refresh tokens for agent authentication.
 
 ---
 
+## device_codes/{phrase}
+
+Device code pairing state for the QR code / 3-word phrase auth flow.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `deviceCodeHash` | string | SHA-256 hash of the opaque device code |
+| `machineId` | string\|null | Machine hostname (populated at poll time) |
+| `version` | string\|null | Agent version |
+| `status` | string | `"pending"`, `"authorized"`, `"consumed"`, or `"expired"` |
+| `createdAt` | timestamp | Creation time |
+| `expiresAt` | timestamp | Expiry (10 minutes) |
+| `siteId` | string\|null | Site ID (populated on authorization) |
+| `authorizedBy` | string\|null | Admin UID who authorized |
+| `authorizedAt` | timestamp\|null | Authorization timestamp |
+| `accessToken` | string\|null | Generated Firebase access token for agent |
+| `refreshToken` | string\|null | Generated refresh token for agent |
+
+!!! warning "Server-only"
+    Not accessible from any client. Only the server API can read/write.
+
+---
+
 ## mfa_pending/{userId}
 
 Temporary MFA setup state.
@@ -270,6 +411,26 @@ Temporary WebAuthn challenge for passkey registration or authentication.
 
 !!! warning "Single-use"
     Challenges are deleted immediately after verification. Expired challenges are also rejected.
+
+---
+
+## installer_uploads/{uploadId}
+
+Temporary document tracking an in-progress installer upload. Cleaned up after finalization.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `version` | string | Semver version string (e.g., `"2.5.5"`) |
+| `fileName` | string | Installer filename (must end in `.exe`) |
+| `storagePath` | string | Firebase Storage destination path |
+| `userId` | string | Admin UID who initiated the upload |
+| `releaseNotes` | string\|null | Optional release notes |
+| `setAsLatest` | boolean | Whether to mark as latest on finalization |
+| `status` | string | `"pending"`, `"completed"`, or `"expired"` |
+| `createdAt` | number | Creation timestamp (Unix ms) |
+| `expiresAt` | number | Signed URL expiry timestamp |
+| `completedAt` | number | Finalization timestamp (added on completion) |
+| `file_size` | number | File size in bytes (added on finalization) |
 
 ---
 
@@ -324,7 +485,7 @@ Project file distribution record.
 
 ---
 
-## sites/{siteId}/activity_logs/{logId}
+## sites/{siteId}/logs/{logId}
 
 Event log entries.
 
@@ -407,6 +568,27 @@ Concurrency control for autonomous sessions.
 
 ---
 
+## system_presets/{presetId}
+
+Global software deployment presets (e.g., Owlette Agent self-update, TouchDesigner). Admin-managed, read-only to users.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Human-readable preset name |
+| `software_name` | string | Name of the software being deployed |
+| `category` | string | Software category |
+| `description` | string | Description of what the preset installs |
+| `installer_name` | string | Installer filename |
+| `installer_url` | string | Download URL (must be HTTPS) |
+| `silent_flags` | string | Silent installation flags |
+| `verify_path` | string\|null | Path to verify installation success |
+| `close_processes` | array[string] | Processes to close before installing |
+| `timeout_seconds` | number\|null | Installation timeout override |
+| `order` | number | Sort order in UI |
+| `createdAt` | timestamp | Creation time |
+
+---
+
 ## chats/{chatId}
 
 Cortex conversation records (both user-initiated and autonomous).
@@ -422,5 +604,34 @@ Cortex conversation records (both user-initiated and autonomous).
 | `source` | string | `user` or `autonomous` |
 | `eventId` | string\|null | Links to `cortex-events/{eventId}` (autonomous only) |
 | `autonomousSummary` | string\|null | Quick outcome summary (autonomous only) |
+| `category` | string\|null | LLM-generated topic category |
 | `createdAt` | timestamp | When the chat started |
 | `updatedAt` | timestamp | Last activity |
+
+### chats/{chatId}/messages/{messageId}
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `role` | string | `"user"` or `"assistant"` |
+| `content` | string | Message text content |
+| `createdAt` | timestamp | Message creation time |
+
+---
+
+## bug_reports/{reportId}
+
+Bug reports and feedback submissions from users and agents.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | string | `"agent"` or `"web"` |
+| `category` | string | `"bug"`, `"feature_request"`, `"other"`, `"compliment"`, `"rant"` |
+| `title` | string | Report title (max 200 chars) |
+| `description` | string | Full description (max 50,000 chars) |
+| `status` | string | `"new"` |
+| `createdAt` | timestamp | Submission time |
+| `userId` | string | Reporting user ID |
+| `userEmail` | string | User email (empty for agent reports) |
+| `browserUA` | string | Browser user agent string |
+| `pageUrl` | string | Page URL at time of report |
+| `appVersion` | string | App version at time of report |
