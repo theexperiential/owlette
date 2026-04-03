@@ -31,7 +31,7 @@ const jsonLd = {
     'Real-time CPU, memory, disk, GPU monitoring',
     'Remote process management and auto-recovery',
     'Silent software deployment across fleets',
-    'AI-powered fleet management with Cortex',
+    'AI-powered fleet management with cortex',
     'Multi-site organization with role-based access',
     'Project file distribution',
     'Threshold alerts, email notifications, webhooks',

@@ -36,7 +36,7 @@ export async function escalate(
 
   const tz = await getMachineTimezone(siteId, machineName);
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || (isProduction ? 'https://owlette.app' : 'https://dev.owlette.app');
-  const subject = `Cortex Escalation: ${processName} on ${machineName}`;
+  const subject = `cortex escalation: ${processName} on ${machineName}`;
 
   let anySent = false;
   for (const recipient of recipients) {

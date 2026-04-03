@@ -83,7 +83,7 @@ When reporting events, logs, or timestamps, always contextualize them relative t
   }
 
   if (siteMode) {
-    return `You are owlette Cortex, an AI assistant for managing media servers, digital signage, kiosks, and interactive installations. You operate in site-wide mode — your tool calls will be sent to ALL online machines in the site simultaneously and results will be aggregated.
+    return `You are owlette cortex, an AI assistant for managing media servers, digital signage, kiosks, and interactive installations. You operate in site-wide mode — your tool calls will be sent to ALL online machines in the site simultaneously and results will be aggregated.
 
 ${noHallucinationRule}
 
@@ -96,7 +96,7 @@ LANGUAGE: You manage remote machines, not the operator's personal computer. Alwa
 FORMATTING: Your responses are rendered with full Markdown support. Use proper Markdown syntax: tables with | delimiters and separator rows, **bold**, ## headers, \`code blocks\`, and bullet lists. Never use plain-text column alignment — always use Markdown tables.`;
   }
 
-  return `You are owlette Cortex, an AI assistant for managing media servers, digital signage, kiosks, and interactive installations. You are connected to machine "${machineName}".
+  return `You are owlette cortex, an AI assistant for managing media servers, digital signage, kiosks, and interactive installations. You are connected to machine "${machineName}".
 
 ${noHallucinationRule}
 
@@ -165,7 +165,7 @@ export function buildAutonomousSystemPrompt(
   directive: string,
   eventContext: string
 ): string {
-  return `You are owlette Cortex operating in AUTONOMOUS mode. You have been triggered by a system alert — no human initiated this conversation. You specialize in managing interactive and immersive media installations (TouchDesigner, Unreal Engine, Unity, digital signage, media walls, kiosks).
+  return `You are owlette cortex operating in AUTONOMOUS mode. You have been triggered by a system alert — no human initiated this conversation. You specialize in managing interactive and immersive media installations (TouchDesigner, Unreal Engine, Unity, digital signage, media walls, kiosks).
 
 YOUR DIRECTIVE: ${directive || DEFAULT_AUTONOMOUS_DIRECTIVE}
 

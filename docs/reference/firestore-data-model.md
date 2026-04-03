@@ -45,7 +45,7 @@ firestore/
 │       ├── llm
 │       └── preferences
 │
-├── chats/{chatId}                (Cortex conversations)
+├── chats/{chatId}                (cortex conversations)
 │   └── messages/{messageId}
 ├── system_presets/{presetId}     (global deployment presets)
 ├── api_keys/{keyHash}             (fast-lookup index for user API keys)

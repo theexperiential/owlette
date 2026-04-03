@@ -54,7 +54,7 @@ export async function resolveLlmConfig(
         };
       } catch {
         throw new Error(
-          'Failed to decrypt your LLM API key. This usually means the server encryption key has changed since the key was saved. Please re-enter your API key in Account Settings → Cortex.'
+          'Failed to decrypt your LLM API key. This usually means the server encryption key has changed since the key was saved. Please re-enter your API key in Account Settings → cortex.'
         );
       }
     }
@@ -77,7 +77,7 @@ export async function resolveLlmConfig(
       throw new Error(
         options?.autonomous
           ? 'Failed to decrypt site-level LLM API key. The server encryption key may have changed — re-save the key in Admin Settings.'
-          : 'Failed to decrypt the site LLM API key. The server encryption key may have changed. Please ask your admin to re-save the key, or set your own in Account Settings → Cortex.'
+          : 'Failed to decrypt the site LLM API key. The server encryption key may have changed. Please ask your admin to re-save the key, or set your own in Account Settings → cortex.'
       );
     }
     const config: LlmConfig = {
@@ -96,7 +96,7 @@ export async function resolveLlmConfig(
 
   throw new Error(
     options?.autonomous
-      ? 'No site-level LLM API key configured. Autonomous Cortex requires a site-level key.'
+      ? 'No site-level LLM API key configured. Autonomous cortex requires a site-level key.'
       : 'No LLM API key configured. Add one in Account Settings or ask your admin to set a site-level key.'
   );
 }

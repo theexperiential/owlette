@@ -255,7 +255,7 @@ async function handleLocalCortex(
     start(controller) {
       // Timeout
       timeoutId = setTimeout(() => {
-        controller.enqueue(encoder.encode(`3:"Cortex response timed out"\n`));
+        controller.enqueue(encoder.encode(`3:"cortex response timed out"\n`));
         controller.close();
         unsubscribe?.();
       }, LOCAL_CORTEX_TIMEOUT_MS);
@@ -295,7 +295,7 @@ async function handleLocalCortex(
           // Error
           if (status === 'error') {
             controller.enqueue(
-              encoder.encode(`3:${JSON.stringify(content || 'Cortex error')}\n`),
+              encoder.encode(`3:${JSON.stringify(content || 'cortex error')}\n`),
             );
             if (timeoutId) clearTimeout(timeoutId);
             unsubscribe?.();

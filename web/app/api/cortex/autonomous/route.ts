@@ -238,7 +238,7 @@ async function runAutonomousInvestigation(
       if (settings.escalationEmail !== false) {
         await escalate(
           siteId, eventId, machineName, processName,
-          `Machine "${machineName}" is offline. Process "${processName}" ${eventType === 'process_start_failed' ? 'failed to start' : 'crashed'} but Cortex cannot reach the machine to investigate.\n\nError: ${errorMessage}`
+          `Machine "${machineName}" is offline. Process "${processName}" ${eventType === 'process_start_failed' ? 'failed to start' : 'crashed'} but cortex cannot reach the machine to investigate.\n\nError: ${errorMessage}`
         );
       }
 
@@ -288,7 +288,7 @@ async function runAutonomousInvestigation(
     // Extract summary from structured output
     const summaryMatch = finalText.match(/OUTCOME:\s*(.+)/i);
     const summary = summaryMatch?.[1]?.trim()
-      || (needsEscalation ? 'Escalated — Cortex could not resolve the issue' : 'Issue investigated and addressed');
+      || (needsEscalation ? 'Escalated — cortex could not resolve the issue' : 'Issue investigated and addressed');
 
     // Collect actions from tool call steps
     const actions = result.steps?.flatMap(step =>
