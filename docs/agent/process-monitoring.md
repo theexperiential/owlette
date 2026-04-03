@@ -137,7 +137,7 @@ Each process has a configurable `relaunch_attempts` limit (default: 5). When the
 
 ## metrics collection
 
-Every 60 seconds, the agent collects and reports:
+At each heartbeat interval, the agent collects and reports (5s when the system tray is open, 30s when processes are active, 120s when idle):
 
 | Metric | Source | Description |
 |--------|--------|-------------|

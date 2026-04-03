@@ -29,8 +29,7 @@ The agent runs as a Windows service managed by [NSSM](https://nssm.cc/) (Non-Suc
 
 - **Monitors processes** every 5 seconds — detects crashes, stalls, and exits
 - **Auto-restarts** crashed applications using Task Scheduler or CreateProcessAsUser
-- **Sends heartbeats** every 30 seconds to mark the machine as online
-- **Reports metrics** every 60 seconds — CPU, memory, disk, GPU usage
+- **Sends heartbeats & reports metrics** (CPU, memory, disk, GPU, network) at an adaptive interval — 5s when the system tray GUI is open, 30s when processes are running, 120s when idle
 - **Executes commands** from the dashboard — restart process, install software, reboot, etc.
 - **Syncs configuration** bidirectionally between local GUI and cloud
 - **Runs offline** — continues monitoring even without internet, syncs when reconnected
@@ -75,8 +74,7 @@ flowchart LR
     FS[("Firestore")]
     Dashboard["Web Dashboard"]
 
-    Agent -->|"presence every 30s"| FS
-    Agent -->|"status every 60s\ncpu, memory, disk, gpu"| FS
+    Agent -->|"metrics + heartbeat\n5s / 30s / 120s adaptive"| FS
     FS -->|"onSnapshot"| Dashboard
 ```
 

@@ -123,8 +123,8 @@ Security rules check permissions on every read/write — no client-side bypass i
 sites/{siteId}/
   ├── name, createdAt, owner
   └── machines/{machineId}/
-      ├── presence/    (heartbeat every 30s)
-      ├── status/      (metrics every 60s)
+      ├── presence/    (heartbeat: 5s / 30s / 120s adaptive)
+      ├── status/      (metrics: same adaptive interval)
       └── commands/    (pending/ + completed/)
 
 config/{siteId}/machines/{machineId}/

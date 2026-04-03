@@ -8,7 +8,7 @@ The dashboard provides real-time visibility into all your machines' health, perf
 
 ### online/offline detection
 
-The agent sends a **heartbeat** to Firestore every 30 seconds. The dashboard considers a machine:
+The agent sends a **heartbeat** to Firestore at an adaptive interval — every 5 seconds when the system tray is open, 30 seconds when processes are running, or 120 seconds when idle. The dashboard considers a machine:
 
 | Status | Condition | Indicator |
 |--------|-----------|-----------|
@@ -24,7 +24,7 @@ Each machine shows a "last seen" timestamp. For offline machines, this tells you
 
 ## system metrics
 
-Metrics are reported by the agent every 60 seconds:
+Metrics are reported by the agent alongside each heartbeat (see adaptive interval above):
 
 | Metric | Range | Source |
 |--------|-------|--------|

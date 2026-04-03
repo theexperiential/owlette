@@ -77,7 +77,7 @@ Top-level site document.
 
 ## sites/{siteId}/machines/{machineId}/presence
 
-Agent heartbeat — updated every 30 seconds.
+Agent heartbeat — updated at an adaptive interval (5s / 30s / 120s depending on activity).
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -90,7 +90,7 @@ Agent heartbeat — updated every 30 seconds.
 
 ## sites/{siteId}/machines/{machineId}/status
 
-System metrics — updated every 60 seconds.
+System metrics — updated alongside each heartbeat (adaptive interval).
 
 | Field | Type | Description |
 |-------|------|-------------|
