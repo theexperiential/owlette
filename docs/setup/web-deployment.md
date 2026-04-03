@@ -1,18 +1,18 @@
-# Web Deployment
+# web deployment
 
 The owlette dashboard is a Next.js application. This guide covers deploying to Railway (recommended) and general Node.js hosting.
 
 ---
 
-## Railway Deployment (Recommended)
+## railway deployment (recommended)
 
-### Step 1: Create Railway Project
+### step 1: create railway project
 
 1. Go to [railway.app](https://railway.app) and sign up with GitHub
 2. Click **"New Project"** → **"Deploy from GitHub repo"**
 3. Select the owlette repository
 
-### Step 2: Configure Service
+### step 2: configure service
 
 1. Click on your service → **Settings**
 2. Set **Root Directory**: `web`
@@ -32,17 +32,17 @@ restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 ```
 
-### Step 3: Add Environment Variables
+### step 3: add environment variables
 
 In Railway → your service → **Variables** tab, add all variables listed in [Environment Variables](environment-variables.md).
 
-### Step 4: Deploy
+### step 4: deploy
 
 Railway deploys automatically after variables are configured. Monitor the build in the **Deployments** tab.
 
 **Expected build time**: 2-5 minutes.
 
-### Step 5: Configure Firebase Auth Domain
+### step 5: configure firebase auth domain
 
 1. Copy your Railway deployment URL
 2. Go to Firebase Console → Authentication → Settings → **Authorized Domains**
@@ -51,7 +51,7 @@ Railway deploys automatically after variables are configured. Monitor the build 
 !!! warning "Required"
     Without this step, users cannot log in — Firebase rejects auth requests from unauthorized domains.
 
-### Step 6: Custom Domain (Optional)
+### step 6: custom domain (optional)
 
 1. Railway → Settings → Networking → **"Add Custom Domain"**
 2. Add CNAME or A record as instructed
@@ -60,11 +60,11 @@ Railway deploys automatically after variables are configured. Monitor the build 
 
 ---
 
-## Cron Health Checks
+## cron health checks
 
 Set up the machine offline detection cron:
 
-### Step 1: Add CRON_SECRET
+### step 1: add cron_secret
 
 ```bash
 # Generate a secret
@@ -73,7 +73,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 Add as `CRON_SECRET` in Railway Variables.
 
-### Step 2: Configure Cron Schedule
+### step 2: configure cron schedule
 
 1. Railway → your service → Settings → **"Cron Schedule"**
 2. Enter: `*/5 * * * *` (every 5 minutes)
@@ -83,7 +83,7 @@ Add as `CRON_SECRET` in Railway Variables.
 
 ---
 
-## Two-Branch Deployment
+## two-branch deployment
 
 owlette uses two branches with separate Railway deployments:
 
@@ -96,7 +96,7 @@ Each has its own Railway service, environment variables, and (optionally) Fireba
 
 ---
 
-## General Node.js Hosting
+## general node.js hosting
 
 For non-Railway deployments:
 
@@ -116,16 +116,16 @@ npm start
 
 ---
 
-## Deployment Checklist
+## deployment checklist
 
-### Pre-Deployment
+### pre-deployment
 
 - [ ] `npm run build` succeeds locally
 - [ ] `npm test` passes
 - [ ] `npx tsc --noEmit` has no errors
 - [ ] All environment variables documented
 
-### Railway Setup
+### railway setup
 
 - [ ] Repository linked
 - [ ] Root directory set to `web`
@@ -134,7 +134,7 @@ npm start
 - [ ] `CRON_SECRET` configured
 - [ ] Cron schedule set (`*/5 * * * *`)
 
-### Post-Deployment
+### post-deployment
 
 - [ ] Railway domain added to Firebase Authorized Domains
 - [ ] Registration works
@@ -145,27 +145,27 @@ npm start
 
 ---
 
-## Troubleshooting
+## troubleshooting
 
-### Build Fails
+### build fails
 
 - **Missing env var**: Verify all `NEXT_PUBLIC_*` variables are set
 - **TypeScript errors**: Run `npm run build` locally first
 - **Dependency issues**: Ensure `package-lock.json` is committed
 
-### App Crashes After Deploy
+### app crashes after deploy
 
 - Check runtime logs in Railway Deployments tab
 - Look for env var validation errors (`ERROR: Missing required environment variables`)
 - Verify Firebase config values are correct (no quotes around values)
 
-### Auth Not Working
+### auth not working
 
 - Add Railway domain to Firebase Authorized Domains
 - Clear browser cache and cookies
 - Check browser console for Firebase error details
 
-### Slow Performance
+### slow performance
 
 - **Cold starts**: Upgrade to Railway Pro (no cold starts)
 - **Bundle size**: Run `npm run build` and check `.next/static` output
@@ -173,16 +173,16 @@ npm start
 
 ---
 
-## Cost
+## cost
 
-### Railway Pricing
+### railway pricing
 
 | Plan | Cost | Key Features |
 |------|------|-------------|
 | **Hobby** | $5/month | 500 hours, cold starts |
 | **Pro** | $20/month | Unlimited, no cold starts, priority support |
 
-### Optimization
+### optimization
 
 - Use Hobby for development, Pro for production
 - Optimize bundle size for faster cold starts

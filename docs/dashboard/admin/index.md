@@ -1,10 +1,10 @@
-# Admin Panel
+# admin panel
 
 The Admin Panel provides management tools for users, agent installers, system presets, schedule presets, tokens, alerts, webhooks, and email settings. Only users with the **admin** role can access these features.
 
 ---
 
-## Becoming an Admin
+## becoming an admin
 
 The first admin must be created manually:
 
@@ -18,7 +18,7 @@ After that, admins can promote other users from the Admin Panel.
 
 ---
 
-## Access
+## access
 
 - **Profile menu** → "Admin Panel"
 - **Direct URLs**: `/admin/users`, `/admin/installers`, `/admin/presets`, `/admin/schedules`, `/admin/tokens`, `/admin/alerts`, `/admin/webhooks`, `/admin/email`
@@ -27,7 +27,7 @@ Non-admin users are redirected to the dashboard with an error message.
 
 ---
 
-## Admin vs User Permissions
+## admin vs user permissions
 
 | Capability | User | Admin |
 |-----------|------|-------|
@@ -51,7 +51,7 @@ Non-admin users are redirected to the dashboard with an error message.
 
 ---
 
-## In This Section
+## in this section
 
 - [**User Management**](user-management.md) — View users, assign roles, manage site access
 - [**Installer Management**](installer-management.md) — Upload and manage agent versions

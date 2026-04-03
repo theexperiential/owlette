@@ -297,7 +297,7 @@ Version 2.0.0 transforms owlette from a standalone Windows process manager to a 
 
 ---
 
-## [0.4.2b] - Legacy
+## [0.4.2b] - legacy
 
 ### standalone architecture
 

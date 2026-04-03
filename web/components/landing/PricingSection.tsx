@@ -19,7 +19,7 @@ export function PricingSection() {
     <section id="pricing" className="pt-16 sm:pt-24 pb-32 sm:pb-48 px-4 sm:px-6">
       <div className="max-w-3xl mx-auto text-center">
         <h2 className="section-headline text-foreground mb-4">
-          simple, per-machine pricing
+          simple, per-machine pricing.
         </h2>
         <p className="section-subheadline mb-10">
           no tiers, no seats, no hidden fees. pay only for what you run.

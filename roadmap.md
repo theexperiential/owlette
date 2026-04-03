@@ -22,6 +22,13 @@ Roughly prioritized. Not a commitment — just a living list of what's next.
 
 ---
 
+## support
+
+- **Send logs** — "Send logs to Owlette" button on the agent tray/GUI that pushes recent agent logs to Firestore, viewable in the dashboard. Eliminates back-and-forth asking users to find log files.
+- **In-app chat** — embed a support chat widget (Intercom, Crisp, or Plain) in the web dashboard. Automatically attach user + machine context so support has full visibility without asking.
+
+---
+
 ## billing
 
 - **Stripe integration** — $10/machine/month post-beta. Metered billing based on active machine count.

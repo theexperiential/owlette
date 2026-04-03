@@ -41,7 +41,7 @@ owlette is three things working together:
 
 ---
 
-## What You Can Do
+## what you can do
 
 | | Capability | Description |
 |---|-----------|-------------|
@@ -57,7 +57,7 @@ owlette is three things working together:
 
 ---
 
-## Key Features
+## key features
 
 | | Feature | Description |
 |---|---------|-------------|
@@ -74,7 +74,7 @@ owlette is three things working together:
 
 ---
 
-## Requirements
+## requirements
 
 - **Agent**: Windows 10 or later
 - **Dashboard**: Any modern browser (deployed to Railway or self-hosted)
@@ -83,7 +83,7 @@ owlette is three things working together:
 
 ---
 
-## Quick Start
+## quick start
 
 1. **Create an account** at [owlette.app](https://owlette.app)
 2. **Create a site** — Organize your machines by location or project
@@ -95,3 +95,10 @@ owlette is three things working together:
 
 !!! info "Want to self-host?"
     You can run your own owlette instance with your own Firebase project. See the [Self-Hosting](setup/index.md) guide.
+
+---
+
+## support
+
+- Email us at [support@owlette.app](mailto:support@owlette.app)
+- File a bug or feature request on [GitHub](https://github.com/theexperiential/owlette/issues)

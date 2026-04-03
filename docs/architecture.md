@@ -27,7 +27,7 @@ flowchart LR
 
 The agent runs as a Windows service managed by [NSSM](https://nssm.cc/) (Non-Sucking Service Manager). It:
 
-- **Monitors processes** every 10 seconds — detects crashes, stalls, and exits
+- **Monitors processes** every 5 seconds — detects crashes, stalls, and exits
 - **Auto-restarts** crashed applications using Task Scheduler or CreateProcessAsUser
 - **Sends heartbeats** every 30 seconds to mark the machine as online
 - **Reports metrics** every 60 seconds — CPU, memory, disk, GPU usage

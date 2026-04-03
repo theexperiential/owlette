@@ -4,7 +4,7 @@ Get your first machine monitored in under 5 minutes.
 
 ---
 
-## Step 1: Create an Account
+## step 1: create an account
 
 1. Go to [owlette.app](https://owlette.app)
 2. Click **Register** and create an account with email/password or Google sign-in
@@ -12,7 +12,7 @@ Get your first machine monitored in under 5 minutes.
 
 ---
 
-## Step 2: Create a Site
+## step 2: create a site
 
 Sites organize your machines — think of them as locations, departments, or projects.
 
@@ -23,14 +23,14 @@ Sites organize your machines — think of them as locations, departments, or pro
 
 ---
 
-## Step 3: Install the Agent
+## step 3: install the agent
 
-### Download
+### download
 
 1. Click the **download button** in the dashboard header to get the latest agent installer
 2. Transfer the installer to the Windows machine you want to monitor
 
-### Install & Connect
+### install & connect
 
 1. Run the installer **as Administrator** on your target machine
 2. Follow the setup wizard
@@ -43,7 +43,7 @@ Sites organize your machines — think of them as locations, departments, or pro
 
 ---
 
-## Step 4: Verify
+## step 4: verify
 
 Within 30 seconds of installation, your machine should appear in the dashboard:
 
@@ -55,7 +55,7 @@ Within 30 seconds of installation, your machine should appear in the dashboard:
 
 ---
 
-## Step 5: Add Processes to Monitor
+## step 5: add processes to monitor
 
 Now that your machine is connected, tell owlette which applications to watch:
 
@@ -70,7 +70,7 @@ The agent immediately begins monitoring the process. If it crashes, owlette rest
 
 ---
 
-## What's Next?
+## what's next?
 
 You're up and running. Here's what else you can do:
 
@@ -84,8 +84,9 @@ You're up and running. Here's what else you can do:
 
 ---
 
-## Need Help?
+## need help?
 
 - Check the [Troubleshooting](troubleshooting.md) guide for common issues
 - Review [Agent Troubleshooting](agent/troubleshooting.md) for agent-specific problems
 - Open an issue on [GitHub](https://github.com/theexperiential/owlette/issues)
+- Email us at [support@owlette.app](mailto:support@owlette.app)

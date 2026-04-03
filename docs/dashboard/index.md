@@ -4,7 +4,7 @@ The owlette web dashboard is a Next.js application that provides real-time monit
 
 ---
 
-## Pages
+## pages
 
 | Page | URL | Description |
 |------|-----|-------------|
@@ -31,7 +31,7 @@ The owlette web dashboard is a Next.js application that provides real-time monit
 
 ---
 
-## Technology
+## technology
 
 - **Framework**: Next.js 16 with App Router
 - **UI**: React 19, TypeScript, Tailwind CSS 4, shadcn/ui (Radix primitives)
@@ -44,7 +44,7 @@ The owlette web dashboard is a Next.js application that provides real-time monit
 
 ---
 
-## In This Section
+## in this section
 
 - [**Getting Started**](getting-started.md) — First login, site creation, adding machines
 - [**Machine Monitoring**](machine-monitoring.md) — Real-time metrics and status

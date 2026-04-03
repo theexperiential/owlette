@@ -4,7 +4,7 @@ Complete schema for all Firestore collections and documents.
 
 ---
 
-## Collection Hierarchy
+## collection hierarchy
 
 ```
 firestore/
@@ -215,7 +215,7 @@ Process configuration synced between agent and dashboard.
 | `version` | string | Config schema version |
 | `processes` | array | Array of process objects |
 
-### Process object
+### process object
 
 ```json
 {

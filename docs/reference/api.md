@@ -1,4 +1,4 @@
-# REST API Reference
+# rest api reference
 
 > **Note:** This document has been superseded by the interactive API documentation at
 > [`/docs/api`](https://owlette.app/docs/api) (or `localhost:3000/docs/api` in development).
@@ -9,7 +9,7 @@ All HTTP endpoints exposed by the owlette web dashboard. 51 route files under `w
 
 ---
 
-## Table of Contents
+## table of contents
 
 - [Authentication APIs](#authentication-apis) (3 endpoints)
 - [MFA APIs](#mfa-apis) (3 endpoints)
@@ -36,9 +36,9 @@ All HTTP endpoints exposed by the owlette web dashboard. 51 route files under `w
 
 ---
 
-## Authentication APIs
+## authentication apis
 
-### Create Session
+### create session
 
 Creates a server-side session after Firebase authentication.
 
@@ -69,7 +69,7 @@ Sets an HTTPOnly `session` cookie (iron-session, encrypted).
 
 ---
 
-### Destroy Session
+### destroy session
 
 Signs the user out by clearing the session cookie.
 
@@ -89,7 +89,7 @@ Signs the user out by clearing the session cookie.
 
 ---
 
-### Get Session Status
+### get session status
 
 Returns current session information (for debugging).
 
@@ -111,9 +111,9 @@ Returns current session information (for debugging).
 
 ---
 
-## MFA APIs
+## mfa apis
 
-### Setup MFA
+### setup mfa
 
 Generates TOTP secret and QR code for 2FA setup.
 
@@ -137,7 +137,7 @@ Stores pending setup in Firestore `mfa_pending/{userId}` with 10-minute expiry.
 
 ---
 
-### Verify MFA Setup
+### verify mfa setup
 
 Confirms TOTP code during initial 2FA setup.
 
@@ -168,7 +168,7 @@ Encrypts secret and stores in user document. Hashes backup codes.
 
 ---
 
-### Verify MFA Login
+### verify mfa login
 
 Verifies TOTP or backup code during login.
 
@@ -196,9 +196,9 @@ Verifies TOTP or backup code during login.
 
 ---
 
-## Passkey APIs
+## passkey apis
 
-### Register Passkey Options
+### register passkey options
 
 Generates WebAuthn credential creation options for registering a new passkey.
 
@@ -222,7 +222,7 @@ Returns `PublicKeyCredentialCreationOptions` object. Challenge stored in Firesto
 
 ---
 
-### Register Passkey Verify
+### register passkey verify
 
 Verifies and stores the newly created passkey credential.
 
@@ -253,7 +253,7 @@ Verifies and stores the newly created passkey credential.
 
 ---
 
-### Authenticate Passkey Options
+### authenticate passkey options
 
 Generates WebAuthn authentication options for login. Called before the user is authenticated.
 
@@ -274,7 +274,7 @@ Generates WebAuthn authentication options for login. Called before the user is a
 
 ---
 
-### Authenticate Passkey Verify
+### authenticate passkey verify
 
 Verifies a passkey assertion and creates a session. Bypasses MFA.
 
@@ -307,7 +307,7 @@ Creates a session cookie. Passkey login bypasses MFA entirely.
 
 ---
 
-### List Passkeys
+### list passkeys
 
 Returns all registered passkeys for a user.
 
@@ -334,7 +334,7 @@ Returns all registered passkeys for a user.
 
 ---
 
-### Rename Passkey
+### rename passkey
 
 Updates the friendly name of a registered passkey.
 
@@ -363,7 +363,7 @@ Updates the friendly name of a registered passkey.
 
 ---
 
-### Delete Passkey
+### delete passkey
 
 Removes a registered passkey.
 
@@ -383,9 +383,9 @@ Removes a registered passkey.
 
 ---
 
-## Agent Authentication APIs
+## agent authentication apis
 
-### Exchange Registration Code
+### exchange registration code
 
 Exchanges a one-time registration code for OAuth tokens.
 
@@ -421,7 +421,7 @@ Marks the registration code as used. Creates agent UID in Firebase Auth.
 
 ---
 
-### Refresh Access Token
+### refresh access token
 
 Refreshes an expired access token using the long-lived refresh token.
 
@@ -455,7 +455,7 @@ Validates machine ID matches the token's original machine.
 
 ---
 
-### Generate Installer
+### generate installer
 
 Generates a registration code for agent installation.
 
@@ -487,9 +487,9 @@ Code expires in 24 hours.
 
 ---
 
-## Agent Alert API
+## agent alert api
 
-### Send Alert
+### send alert
 
 Agent-authenticated endpoint for sending alert notifications.
 
@@ -528,9 +528,9 @@ Agent-authenticated endpoint for sending alert notifications.
 
 ---
 
-## Agent Screenshot API
+## agent screenshot api
 
-### Upload Screenshot
+### upload screenshot
 
 Agent uploads a screenshot (base64 JPEG) for a machine. Stores the latest screenshot plus a history of up to 20 entries in Firebase Storage.
 
@@ -565,9 +565,9 @@ The `screenshot` field is a base64-encoded JPEG image.
 
 ---
 
-## Admin Machine APIs
+## admin machine apis
 
-### List Machines
+### list machines
 
 | | |
 |---|---|
@@ -594,7 +594,7 @@ The `screenshot` field is a base64-encoded JPEG image.
 
 ---
 
-### Get Machine Status
+### get machine status
 
 | | |
 |---|---|
@@ -606,7 +606,7 @@ Returns detailed machine info including metrics, processes, health, and agent ve
 
 ---
 
-### Trigger Agent Self-Update
+### trigger agent self-update
 
 Sends an `update_owlette` command to a machine to trigger a self-update.
 
@@ -629,9 +629,9 @@ Sends an `update_owlette` command to a machine to trigger a self-update.
 
 ---
 
-## Admin Command APIs
+## admin command apis
 
-### Send Command
+### send command
 
 Send a command to a machine via Firestore.
 
@@ -658,7 +658,7 @@ When `wait: true`, polls for completion and returns the result. Timeout: 30-120 
 
 ---
 
-### Clear Commands
+### clear commands
 
 Clears pending commands for a machine.
 
@@ -670,9 +670,9 @@ Clears pending commands for a machine.
 
 ---
 
-## Admin Software Inventory API
+## admin software inventory api
 
-### Get Software Inventory
+### get software inventory
 
 Returns the installed software list for a machine.
 
@@ -684,9 +684,9 @@ Returns the installed software list for a machine.
 
 ---
 
-## Admin Process APIs
+## admin process apis
 
-### List Processes
+### list processes
 
 Returns all configured processes for a machine.
 
@@ -714,7 +714,7 @@ Returns all configured processes for a machine.
 
 ---
 
-### Add Process
+### add process
 
 Adds a new monitored process configuration for a machine.
 
@@ -745,7 +745,7 @@ Adds a new monitored process configuration for a machine.
 
 ---
 
-### Update Process
+### update process
 
 Updates fields on an existing process configuration.
 
@@ -776,7 +776,7 @@ Updates fields on an existing process configuration.
 
 ---
 
-### Delete Process
+### delete process
 
 Removes a process configuration from a machine.
 
@@ -796,7 +796,7 @@ Removes a process configuration from a machine.
 
 ---
 
-### Update Process Launch Mode
+### update process launch mode
 
 Sets the launch mode and optional schedule for a process.
 
@@ -835,9 +835,9 @@ Sets the launch mode and optional schedule for a process.
 
 ---
 
-## Admin Deployment APIs
+## admin deployment apis
 
-### List Deployments
+### list deployments
 
 Returns deployments for a site, ordered by creation date.
 
@@ -865,7 +865,7 @@ Returns deployments for a site, ordered by creation date.
 
 ---
 
-### Create Deployment
+### create deployment
 
 Creates a new deployment targeting specified machines.
 
@@ -911,7 +911,7 @@ Creates a new deployment targeting specified machines.
 
 ---
 
-### Get Deployment Status
+### get deployment status
 
 Returns full deployment details including per-machine status.
 
@@ -945,7 +945,7 @@ Returns full deployment details including per-machine status.
 
 ---
 
-### Delete Deployment
+### delete deployment
 
 Deletes a deployment record. Only allowed for deployments in terminal states (completed, failed, partial, cancelled, uninstalled).
 
@@ -965,7 +965,7 @@ Deletes a deployment record. Only allowed for deployments in terminal states (co
 
 ---
 
-### Cancel Deployment
+### cancel deployment
 
 Cancels a running deployment for a specific machine. The target must exist in the deployment and be in a cancellable state (`pending`, `downloading`, or `installing`).
 
@@ -1012,9 +1012,9 @@ Cancels a running deployment for a specific machine. The target must exist in th
 
 ---
 
-## Admin Installer APIs
+## admin installer apis
 
-### Get Latest Installer
+### get latest installer
 
 Returns metadata for the latest available agent installer.
 
@@ -1038,7 +1038,7 @@ Returns metadata for the latest available agent installer.
 
 ---
 
-### List Installer Versions
+### list installer versions
 
 Returns all available installer versions.
 
@@ -1065,7 +1065,7 @@ Returns all available installer versions.
 
 ---
 
-### Upload Installer (Initiate)
+### upload installer (initiate)
 
 Initiates an installer upload and returns a signed upload URL.
 
@@ -1098,7 +1098,7 @@ Initiates an installer upload and returns a signed upload URL.
 
 ---
 
-### Upload Installer (Finalize)
+### upload installer (finalize)
 
 Finalizes an installer upload after the binary has been uploaded to the signed URL.
 
@@ -1128,9 +1128,9 @@ Finalizes an installer upload after the binary has been uploaded to the signed U
 
 ---
 
-## Admin Site APIs
+## admin site apis
 
-### List Sites
+### list sites
 
 Returns all sites accessible to the authenticated user.
 
@@ -1156,9 +1156,9 @@ Returns all sites accessible to the authenticated user.
 
 ---
 
-## Admin Token APIs
+## admin token apis
 
-### List Agent Tokens
+### list agent tokens
 
 | | |
 |---|---|
@@ -1170,7 +1170,7 @@ Returns all agent refresh tokens for a site.
 
 ---
 
-### Revoke Agent Tokens
+### revoke agent tokens
 
 | | |
 |---|---|
@@ -1207,9 +1207,9 @@ Returns all agent refresh tokens for a site.
 
 ---
 
-## Admin Log API
+## admin log api
 
-### Get Activity Logs
+### get activity logs
 
 | | |
 |---|---|
@@ -1221,9 +1221,9 @@ All query parameters except `siteId` are optional.
 
 ---
 
-## Admin Event API
+## admin event api
 
-### Simulate Event
+### simulate event
 
 Trigger alert emails without requiring a real event.
 
@@ -1252,9 +1252,9 @@ Trigger alert emails without requiring a real event.
 
 ---
 
-## Admin Webhook APIs
+## admin webhook apis
 
-### List Webhooks
+### list webhooks
 
 Returns all configured webhooks for a site.
 
@@ -1282,7 +1282,7 @@ Returns all configured webhooks for a site.
 
 ---
 
-### Create Webhook
+### create webhook
 
 Registers a new webhook endpoint for a site.
 
@@ -1316,7 +1316,7 @@ The `secret` is used for verifying webhook payloads via HMAC signature. Shown on
 
 ---
 
-### Delete Webhook
+### delete webhook
 
 Removes a webhook configuration.
 
@@ -1336,7 +1336,7 @@ Removes a webhook configuration.
 
 ---
 
-### Test Webhook
+### test webhook
 
 Sends a test payload to a configured webhook to verify connectivity.
 
@@ -1366,9 +1366,9 @@ Sends a test payload to a configured webhook to verify connectivity.
 
 ---
 
-## Admin API Key APIs
+## admin api key apis
 
-### List API Keys
+### list api keys
 
 Returns all API keys for the authenticated admin.
 
@@ -1396,7 +1396,7 @@ Returns all API keys for the authenticated admin.
 
 ---
 
-### Create API Key
+### create api key
 
 Generates a new API key. The full key is returned only once at creation time.
 
@@ -1427,7 +1427,7 @@ The `key` value is shown **once** and cannot be retrieved again.
 
 ---
 
-### Revoke API Key
+### revoke api key
 
 Permanently revokes an API key.
 
@@ -1455,9 +1455,9 @@ Permanently revokes an API key.
 
 ---
 
-## Setup API
+## setup api
 
-### Generate Token
+### generate token
 
 | | |
 |---|---|
@@ -1485,9 +1485,9 @@ Permanently revokes an API key.
 
 ---
 
-## Cortex APIs
+## cortex apis
 
-### Chat
+### chat
 
 Streaming chat endpoint with tool execution.
 
@@ -1514,7 +1514,7 @@ Resolves LLM config (user key, then site key fallback). Streams response with to
 
 ---
 
-### Autonomous Cortex
+### autonomous cortex
 
 Internal endpoint for autonomous AI-driven event investigation. Called by the system when events occur (e.g., process crashes) to perform background analysis.
 
@@ -1551,7 +1551,7 @@ Fire-and-forget. The background investigation runs asynchronously after the resp
 
 ---
 
-### Provision Cortex Key
+### provision cortex key
 
 Provisions an LLM API key to a machine's local Cortex agent. Writes a command to Firestore and polls for completion.
 
@@ -1590,7 +1590,7 @@ Provisions an LLM API key to a machine's local Cortex agent. Writes a command to
 
 ---
 
-### Process Escalations
+### process escalations
 
 Processes pending Cortex escalation flags and sends escalation emails to site admins. Called periodically by cron or triggered internally.
 
@@ -1612,9 +1612,9 @@ Processes pending Cortex escalation flags and sends escalation emails to site ad
 
 ---
 
-## LLM Settings APIs
+## llm settings apis
 
-### User LLM Key
+### user llm key
 
 | Method | URL | Description |
 |--------|-----|-------------|
@@ -1622,7 +1622,7 @@ Processes pending Cortex escalation flags and sends escalation emails to site ad
 | `GET` | `/api/settings/llm-key` | Check if key is configured |
 | `DELETE` | `/api/settings/llm-key` | Remove user's key |
 
-### Site LLM Key (Admin)
+### site llm key (admin)
 
 | Method | URL | Description |
 |--------|-----|-------------|
@@ -1632,9 +1632,9 @@ Processes pending Cortex escalation flags and sends escalation emails to site ad
 
 ---
 
-## Utility APIs
+## utility apis
 
-### Health Check (Cron)
+### health check (cron)
 
 | | |
 |---|---|
@@ -1644,7 +1644,7 @@ Processes pending Cortex escalation flags and sends escalation emails to site ad
 
 Scans all machines for stale heartbeats. Sends email alerts. 1-hour cooldown per machine.
 
-### Test Email
+### test email
 
 | | |
 |---|---|
@@ -1652,7 +1652,7 @@ Scans all machines for stale heartbeats. Sends email alerts. 1-hour cooldown per
 | **URL** | `/api/test-email` |
 | **Auth** | Session cookie (admin) |
 
-### User Created Webhook
+### user created webhook
 
 | | |
 |---|---|
@@ -1662,7 +1662,7 @@ Scans all machines for stale heartbeats. Sends email alerts. 1-hour cooldown per
 
 Sends admin notification and optional welcome email when a new user registers.
 
-### Unsubscribe
+### unsubscribe
 
 | | |
 |---|---|

@@ -4,7 +4,7 @@ The owlette agent is a Python Windows service that runs in the background, monit
 
 ---
 
-## What the Agent Does
+## what the agent does
 
 | Function | Frequency | Description |
 |----------|-----------|-------------|
@@ -17,7 +17,7 @@ The owlette agent is a Python Windows service that runs in the background, monit
 
 ---
 
-## How It Runs
+## how it runs
 
 The agent runs as a Windows service managed by [NSSM](https://nssm.cc/) (Non-Sucking Service Manager). NSSM ensures the service starts automatically on boot and restarts on failure.
 
@@ -42,9 +42,9 @@ owlette_tray.py (System Tray Icon — separate process)
 
 ---
 
-## Service Lifecycle
+## service lifecycle
 
-### Startup
+### startup
 
 1. Initialize logging (RotatingFileHandler, 10 MB per file, 5 backups)
 2. Upgrade config schema if needed (automatic migration)
@@ -53,14 +53,14 @@ owlette_tray.py (System Tray Icon — separate process)
 5. Launch system tray icon as user process
 6. Enter main loop
 
-### Main Loop (every 5 seconds)
+### main loop (every 5 seconds)
 
 1. Check all configured processes — detect crashes, stalls, exits
 2. Auto-restart any crashed processes (if autolaunch enabled)
 3. Process any pending commands from Firestore
 4. Check for Firebase state changes (enable/disable)
 
-### Shutdown
+### shutdown
 
 1. Mark machine offline in Firestore
 2. Stop Firebase client and background threads
@@ -68,7 +68,7 @@ owlette_tray.py (System Tray Icon — separate process)
 
 ---
 
-## Key Directories
+## key directories
 
 | Path | Contents |
 |------|----------|
@@ -81,7 +81,7 @@ owlette_tray.py (System Tray Icon — separate process)
 
 ---
 
-## In This Section
+## in this section
 
 - [**Installation**](installation.md) — How to install the agent (automatic, remote, manual)
 - [**Configuration**](configuration.md) — GUI tool, config.json, process settings

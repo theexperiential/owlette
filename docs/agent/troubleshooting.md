@@ -200,3 +200,10 @@ sc qc OwletteService
 ```
 
 All commands require **Administrator** privileges.
+
+---
+
+## getting help
+
+- Email us at [support@owlette.app](mailto:support@owlette.app)
+- File a bug or feature request on [GitHub](https://github.com/theexperiential/owlette/issues)

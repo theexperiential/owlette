@@ -1,10 +1,10 @@
-# Project Distribution
+# project distribution
 
 Distribute project files (ZIP archives) across your machines using your own file hosting. owlette handles the download, extraction, and verification — you just provide the URL.
 
 ---
 
-## How It Works
+## how it works
 
 ```
 Your File Host              owlette Cloud              Agent Machines
@@ -33,7 +33,7 @@ Your File Host              owlette Cloud              Agent Machines
 
 ---
 
-## Creating a Distribution
+## creating a distribution
 
 1. Navigate to **Projects** from the dashboard menu
 2. Click **"New Distribution"**
@@ -52,7 +52,7 @@ Your File Host              owlette Cloud              Agent Machines
 
 ---
 
-## File Hosting Options
+## file hosting options
 
 | Host | Free Storage | Direct Download URL |
 |------|-------------|-------------------|
@@ -64,7 +64,7 @@ Your File Host              owlette Cloud              Agent Machines
 !!! tip "Best for large files"
     Backblaze B2 is the cheapest option for large files: $0.005/GB storage with free egress (up to 3x your storage).
 
-### Cost Comparison (100 GB project to 10 machines)
+### cost comparison (100 gb project to 10 machines)
 
 | Host | Storage | Bandwidth | Total/Month |
 |------|---------|-----------|-------------|
@@ -76,7 +76,7 @@ owlette infrastructure cost: **~$0.001** per distribution (Firestore operations 
 
 ---
 
-## Distribution Progress
+## distribution progress
 
 Real-time status per machine:
 
@@ -89,7 +89,7 @@ Real-time status per machine:
 
 ---
 
-## File Verification
+## file verification
 
 Specify files to check after extraction:
 
@@ -101,7 +101,7 @@ The agent checks that each file or folder exists relative to the extraction path
 
 ---
 
-## Templates
+## templates
 
 Save distribution configurations for reuse:
 
@@ -114,9 +114,9 @@ Useful for recurring content updates (e.g., monthly signage content).
 
 ---
 
-## Examples
+## examples
 
-### TouchDesigner Project
+### touchdesigner project
 
 ```
 Name: Art Installation - March 2026
@@ -125,7 +125,7 @@ Extract To: C:\TouchDesigner\Projects
 Verify: ArtInstall.toe, Assets/videos/, config.json
 ```
 
-### Digital Signage Content
+### digital signage content
 
 ```
 Name: March Signage Content
@@ -136,7 +136,7 @@ Verify: videos/promo1.mp4, images/background.png
 
 ---
 
-## Troubleshooting
+## troubleshooting
 
 | Issue | Cause | Fix |
 |-------|-------|-----|

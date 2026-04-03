@@ -1,10 +1,10 @@
-# Cortex Tools Reference
+# cortex tools reference
 
 Complete reference for all 29 tools available in Cortex, organized by tier.
 
 ---
 
-## Tier System
+## tier system
 
 | Tier | Type | Approval | Count |
 |------|------|----------|-------|
@@ -16,7 +16,7 @@ Complete reference for all 29 tools available in Cortex, organized by tier.
 
 ---
 
-## Tier 1: Read-Only Tools
+## tier 1: read-only tools
 
 ### get_site_logs
 
@@ -158,7 +158,7 @@ Get available software deployment presets managed by the site admin. Returns ins
 
 ---
 
-## Tier 2: Process & Machine Management Tools
+## tier 2: process & machine management tools
 
 These wrap existing owlette commands and execute immediately without user confirmation.
 
@@ -227,7 +227,7 @@ Capture a screenshot of the remote machine's desktop. Returns the image for visu
 
 ---
 
-## Tier 3: Privileged Tools
+## tier 3: privileged tools
 
 These require explicit user confirmation before execution.
 
@@ -381,9 +381,9 @@ Cancel a pending reboot or shutdown. Must be called within the 30-second countdo
 
 ---
 
-## Security Model
+## security model
 
-### Tool Execution Flow
+### tool execution flow
 
 ```
 LLM decides to call a tool
@@ -402,11 +402,11 @@ LLM decides to call a tool
           └── User clicks Deny → tool returns "denied by user"
 ```
 
-### Command Allowlists
+### command allowlists
 
 Tier 3 tools (`run_command`, `run_powershell`) enforce allowlists on the **agent side**. Even if a command is sent via Firestore, the agent rejects it if the first command/cmdlet isn't in the allowlist. This prevents LLM prompt injection from executing arbitrary commands.
 
-### Agent-Side Limits
+### agent-side limits
 
 - **Subprocess timeout**: 25 seconds
 - **Max output size**: 50KB

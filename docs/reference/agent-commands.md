@@ -1,10 +1,10 @@
-# Agent Commands Reference
+# agent commands reference
 
 Complete reference for all command types the agent accepts via Firestore.
 
 ---
 
-## Command Lifecycle
+## command lifecycle
 
 ```
 1. Dashboard/API writes to:
@@ -22,9 +22,9 @@ Complete reference for all command types the agent accepts via Firestore.
 
 ---
 
-## Command Document Schema
+## command document schema
 
-### Pending
+### pending
 
 ```json
 {
@@ -35,7 +35,7 @@ Complete reference for all command types the agent accepts via Firestore.
 }
 ```
 
-### Completed (Success)
+### completed (success)
 
 ```json
 {
@@ -46,7 +46,7 @@ Complete reference for all command types the agent accepts via Firestore.
 }
 ```
 
-### Completed (Failure)
+### completed (failure)
 
 ```json
 {
@@ -59,7 +59,7 @@ Complete reference for all command types the agent accepts via Firestore.
 
 ---
 
-## Process Commands
+## process commands
 
 ### restart_process
 
@@ -118,7 +118,7 @@ Capture a screenshot of the machine's desktop.
 
 ---
 
-## Configuration Commands
+## configuration commands
 
 ### update_config
 
@@ -131,7 +131,7 @@ Update process configuration from Firestore.
 
 ---
 
-## Deployment Commands
+## deployment commands
 
 ### install_software
 
@@ -198,7 +198,7 @@ Download and extract a project ZIP.
 
 ---
 
-## System Commands
+## system commands
 
 ### reboot_machine
 
@@ -276,7 +276,7 @@ Cancel an in-progress software uninstall.
 
 ---
 
-## AI/Cortex Commands
+## ai/cortex commands
 
 ### mcp_tool_call
 

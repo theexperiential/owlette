@@ -111,6 +111,12 @@
   margin-top: 2px;
 }
 
+/* Tighten logo → title gap */
+.md-header__button.md-logo {
+  margin-right: 0;
+  padding-right: 4px;
+}
+
 /* Lowercase nav + search chrome */
 .md-tabs__link,
 .md-nav__link,

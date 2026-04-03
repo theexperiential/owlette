@@ -1,10 +1,10 @@
-# Troubleshooting
+# troubleshooting
 
 Cross-cutting troubleshooting guide for common issues across the entire owlette system.
 
 ---
 
-## Agent Won't Connect to Cloud
+## agent won't connect to cloud
 
 **Symptoms**: Machine shows offline in dashboard, agent logs show connection errors.
 
@@ -27,7 +27,7 @@ Cross-cutting troubleshooting guide for common issues across the entire owlette 
 
 ---
 
-## Dashboard Shows Machine Offline
+## dashboard shows machine offline
 
 **Symptoms**: Agent is running but dashboard shows offline.
 
@@ -39,7 +39,7 @@ Cross-cutting troubleshooting guide for common issues across the entire owlette 
 
 ---
 
-## Processes Not Auto-Restarting
+## processes not auto-restarting
 
 1. Verify `autolaunch` is `true` for the process
 2. Check if `relaunch_attempts` limit was reached (reboot prompt should appear)
@@ -49,9 +49,9 @@ Cross-cutting troubleshooting guide for common issues across the entire owlette 
 
 ---
 
-## OAuth Token Issues
+## oauth token issues
 
-### "Agent not authenticated - no refresh token found"
+### "agent not authenticated - no refresh token found"
 
 The encrypted token file is missing or unreadable.
 
@@ -61,7 +61,7 @@ The encrypted token file is missing or unreadable.
 2. Run the pairing flow: `C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\configure_site.py`
 3. Authorize on the web page that opens, then restart the service
 
-### Token refresh failing
+### token refresh failing
 
 Check `service.log` for refresh errors. Common causes:
 
@@ -71,7 +71,7 @@ Check `service.log` for refresh errors. Common causes:
 
 ---
 
-## Deployment Stuck
+## deployment stuck
 
 **Symptoms**: Deployment shows "downloading" or "installing" indefinitely.
 
@@ -83,7 +83,7 @@ Check `service.log` for refresh errors. Common causes:
 
 ---
 
-## Project Distribution Failed
+## project distribution failed
 
 1. **Download failed** — Test URL in browser; ensure it's a direct download link
 2. **Extraction failed** — Verify the ZIP is valid; check disk space
@@ -92,17 +92,17 @@ Check `service.log` for refresh errors. Common causes:
 
 ---
 
-## MFA Issues
+## mfa issues
 
-### Lost Authenticator
+### lost authenticator
 
 Use one of your **backup codes** at the MFA prompt. Each code can only be used once.
 
-### No Backup Codes
+### no backup codes
 
 Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `mfaSecret`, and `mfaBackupCodes` fields in your Firestore user document.
 
-### Code Not Working
+### code not working
 
 - Ensure your device's clock is synchronized (TOTP is time-based)
 - Codes expire every 30 seconds — enter the current one
@@ -110,7 +110,7 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 
 ---
 
-## Cortex Not Responding
+## cortex not responding
 
 1. **No LLM key configured** — Check Cortex settings for API key
 2. **Invalid API key** — Verify the key is correct and has credits
@@ -120,7 +120,7 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 
 ---
 
-## Email Alerts Not Working
+## email alerts not working
 
 1. Verify `RESEND_API_KEY` environment variable is set in Railway
 2. Check that the Resend API key is valid
@@ -131,15 +131,15 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 
 ---
 
-## Dashboard Performance Issues
+## dashboard performance issues
 
-### Slow Loading
+### slow loading
 
 - **Cold starts** (Railway Hobby plan) — Upgrade to Pro for no cold starts
 - **Large dataset** — Many machines/processes increase Firestore reads
 - **Bundle size** — Check `.next/static` output during build
 
-### Real-Time Updates Not Working
+### real-time updates not working
 
 - Check browser console for Firestore listener errors
 - Verify Firebase config is correct
@@ -148,9 +148,9 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 
 ---
 
-## Log Locations
+## log locations
 
-### Agent Logs
+### agent logs
 
 | Log | Path |
 |-----|------|
@@ -159,7 +159,7 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 | Tray | `C:\ProgramData\Owlette\logs\tray.log` |
 | Installer | `C:\ProgramData\Owlette\logs\setup.log` |
 
-### Dashboard Logs
+### dashboard logs
 
 | Log | Location |
 |-----|----------|
@@ -167,7 +167,7 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 | Runtime logs | Railway → Deployments → [latest] → Logs |
 | Client errors | Browser → F12 → Console |
 
-### Firestore Logs
+### firestore logs
 
 | Log | Location |
 |-----|----------|
@@ -177,7 +177,7 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 
 ---
 
-## Debug Mode
+## debug mode
 
 Run the agent in debug mode for detailed console output:
 
@@ -190,9 +190,10 @@ Requires an elevated (Administrator) command prompt. Shows real-time logging of 
 
 ---
 
-## Getting Help
+## getting help
 
 1. Check the relevant section of this documentation
 2. Review agent logs and browser console for specific error messages
 3. Check the [Firestore Data Model](reference/firestore-data-model.md) to verify data structure
 4. Open an issue on [GitHub](https://github.com/theexperiential/owlette/issues)
+5. Email us at [support@owlette.app](mailto:support@owlette.app)
