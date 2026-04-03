@@ -97,6 +97,13 @@ nav:
       - Token Management: dashboard/admin/token-management.md
       - Email Alerts: dashboard/admin/email-alerts.md
       - Webhooks: dashboard/admin/webhooks.md
+  - API:
+    - reference/index.md
+    - REST API: reference/api.md
+    - Webhooks: dashboard/admin/webhooks.md
+    - Authentication: reference/authentication.md
+    - Cortex Tools: reference/cortex-tools.md
+    - Agent Commands: reference/agent-commands.md
   - Architecture: architecture.md
   - Troubleshooting: troubleshooting.md
   - Changelog: changelog.md
@@ -106,13 +113,7 @@ nav:
     - Firestore Rules: setup/firestore-rules.md
     - Web Deployment: setup/web-deployment.md
     - Environment Variables: setup/environment-variables.md
-    - Reference:
-      - reference/index.md
-      - REST API: reference/api.md
-      - Firestore Data Model: reference/firestore-data-model.md
-      - Authentication: reference/authentication.md
-      - Cortex Tools: reference/cortex-tools.md
-      - Agent Commands: reference/agent-commands.md
+    - Firestore Data Model: reference/firestore-data-model.md
 
 extra:
   social:
