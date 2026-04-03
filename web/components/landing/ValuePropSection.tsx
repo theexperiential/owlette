@@ -120,7 +120,7 @@ export function ValuePropSection() {
           />
         </Link>
       </div>
-      <div className="text-center mt-16 mb-16 sm:mb-20">
+      <div className="text-center mt-12 mb-16 sm:mb-20">
         <Link
           href="/demo"
           target="_blank"
