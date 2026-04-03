@@ -363,24 +363,27 @@ Hashed refresh tokens for agent authentication.
 
 ## device_codes/{phrase}
 
-Device code pairing state for the QR code / 3-word phrase auth flow.
+Device code pairing state for the QR code / 3-word phrase auth flow. Documents are **ephemeral** — they are created when the agent requests a pairing phrase and deleted atomically when the agent polls and consumes the tokens, or when the code expires.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `deviceCodeHash` | string | SHA-256 hash of the opaque device code |
-| `machineId` | string\|null | Machine hostname (populated at poll time) |
+| `machineId` | string\|null | Machine hostname (null for pre-authorized codes) |
 | `version` | string\|null | Agent version |
-| `status` | string | `"pending"`, `"authorized"`, `"consumed"`, or `"expired"` |
+| `status` | string | `"pending"` or `"authorized"` (document deleted on consumption or expiry) |
 | `createdAt` | timestamp | Creation time |
 | `expiresAt` | timestamp | Expiry (10 minutes) |
 | `siteId` | string\|null | Site ID (populated on authorization) |
 | `authorizedBy` | string\|null | Admin UID who authorized |
 | `authorizedAt` | timestamp\|null | Authorization timestamp |
-| `accessToken` | string\|null | Generated Firebase access token for agent |
-| `refreshToken` | string\|null | Generated refresh token for agent |
+| `accessToken` | string\|null | Firebase access token (populated on authorization, never persisted — document deleted on poll) |
+| `refreshToken` | string\|null | Refresh token (populated on authorization, never persisted — document deleted on poll) |
 
 !!! warning "Server-only"
     Not accessible from any client. Only the server API can read/write.
+
+!!! info "Lifecycle"
+    `pending` → `authorized` (tokens written) → **deleted** (agent polls and consumes tokens). Expired documents are also deleted on first access. No documents should persist in this collection long-term.
 
 ---
 
