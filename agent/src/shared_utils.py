@@ -846,10 +846,119 @@ def initialize_logging(log_file_name, level=logging.INFO):
     logger.addHandler(log_handler)
 
     # Log an initial message with clear separator for new service start
-    logging.info("="*60)
-    logging.info(f"Starting {log_file_name}...")
-    logging.info(f"Log level: {logging.getLevelName(level)}")
-    logging.info("="*60)
+    _log_startup_banner(log_file_name, level, log_file_path)
+
+
+def _get_windows_version_string():
+    """Return friendly Windows version e.g. 'Windows 11 Pro 23H2 (Build 22631)'.
+    Falls back to platform.version() if registry read fails."""
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                             r'SOFTWARE\Microsoft\Windows NT\CurrentVersion')
+        product = winreg.QueryValueEx(key, 'ProductName')[0]
+        display = winreg.QueryValueEx(key, 'DisplayVersion')[0]
+        build   = winreg.QueryValueEx(key, 'CurrentBuildNumber')[0]
+        winreg.CloseKey(key)
+        return f"{product} {display} (Build {build})"
+    except Exception:
+        return platform.version()
+
+
+def _log_startup_banner(log_file_name, level, log_file_path):
+    """Rich startup banner logged immediately after logging is configured."""
+    import sys
+    sep = "=" * 70
+    logging.info(sep)
+    logging.info(f"  OWLETTE AGENT STARTING  —  v{APP_VERSION}")
+    logging.info(sep)
+    logging.info(f"  Hostname     : {get_hostname()}")
+    logging.info(f"  Timezone     : {get_machine_timezone() or 'unknown'}")
+    logging.info(f"  Environment  : {get_environment()}")
+    logging.info(f"  API base     : {get_api_base_url()}")
+    logging.info(f"  Python       : {sys.version.split()[0]}  ({sys.executable})")
+    logging.info(f"  Windows      : {_get_windows_version_string()}")
+    logging.info(f"  Install path : {get_path()}")
+    logging.info(f"  Data path    : {get_data_path()}")
+    logging.info(f"  Log file     : {log_file_path}")
+    logging.info(f"  Log level    : {logging.getLevelName(level)}")
+    logging.info(sep)
+
+
+def log_startup_system_snapshot():
+    """Log CPU, RAM, disk, GPU, and IP info at startup. Non-fatal if anything fails."""
+    try:
+        cpu_name = get_cpu_name()
+        cpu_logical = psutil.cpu_count(logical=True)
+        cpu_physical = psutil.cpu_count(logical=False)
+        mem_gb = round(psutil.virtual_memory().total / (1024 ** 3), 1)
+
+        try:
+            sys_disk = psutil.disk_usage('C:\\')
+            disk_str = f"{round(sys_disk.free / (1024**3), 1)} GB free of {round(sys_disk.total / (1024**3), 1)} GB"
+        except Exception:
+            disk_str = "unavailable"
+
+        ips = _get_primary_ips()
+
+        sep = "-" * 70
+        logging.info(sep)
+        logging.info("  SYSTEM SNAPSHOT")
+        logging.info(sep)
+        logging.info(f"  CPU          : {cpu_name}")
+        logging.info(f"  Cores        : {cpu_physical} physical / {cpu_logical} logical")
+        logging.info(f"  RAM          : {mem_gb} GB total")
+        logging.info(f"  Disk (C:\\)   : {disk_str}")
+        try:
+            gpus = GPUtil.getGPUs()
+            if gpus:
+                for i, gpu in enumerate(gpus):
+                    vram_gb = round(gpu.memoryTotal / 1024, 1)
+                    logging.info(f"  GPU {i}         : {gpu.name}  ({vram_gb} GB VRAM)")
+            else:
+                logging.info("  GPU           : none detected")
+        except Exception:
+            logging.info("  GPU           : detection failed")
+        logging.info(f"  IP address(es): {', '.join(ips) if ips else 'unavailable'}")
+        logging.info(sep)
+    except Exception as e:
+        logging.warning(f"System snapshot failed (non-fatal): {e}")
+
+
+def _get_primary_ips():
+    """Return list of non-loopback IPv4 addresses."""
+    ips = []
+    try:
+        for _iface, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                if addr.family == socket.AF_INET and not addr.address.startswith('127.'):
+                    ips.append(addr.address)
+    except Exception:
+        pass
+    return ips
+
+
+def log_startup_config_summary():
+    """Log key config values at startup. Non-fatal if config unreadable."""
+    try:
+        config = read_config()
+        if not config:
+            logging.warning("Config summary: config.json not readable")
+            return
+        fb = config.get('firebase', {})
+        lg = config.get('logging', {})
+        sep = "-" * 70
+        logging.info(sep)
+        logging.info("  CONFIG SUMMARY")
+        logging.info(sep)
+        logging.info(f"  Firebase enabled : {fb.get('enabled', False)}")
+        logging.info(f"  Site ID          : {fb.get('site_id', 'not set')}")
+        logging.info(f"  Log level (cfg)  : {lg.get('level', 'INFO')}")
+        logging.info(f"  Processes        : {len(config.get('processes', []))} configured")
+        logging.info(f"  Cortex enabled   : {config.get('cortex', {}).get('enabled', False)}")
+        logging.info(sep)
+    except Exception as e:
+        logging.warning(f"Config summary failed (non-fatal): {e}")
+
 
 # Firebase log handler for centralized logging
 class FirebaseLogHandler(logging.Handler):

@@ -105,6 +105,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
+        self._service_start_time = time.time()
 
         # Initialize logging and shared resources with configurable log level
         log_level = shared_utils.get_log_level_from_config()
@@ -124,12 +125,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
         shared_utils.upgrade_config()
 
         # --- STARTUP HEALTH PROBE ---
+        _t0 = time.time()
         api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
         self._health_state: HealthState = HealthProbe(
             config_path=shared_utils.CONFIG_PATH,
             api_base=api_base
         ).run()
-        logging.debug(f"Startup health probe: status={self._health_state.status}, results={self._health_state.probe_results}")
+        logging.info(f"Health probe: status={self._health_state.status}  ({round(time.time() - _t0, 3)}s)")
         if not self._health_state.is_ok():
             logging.error(f"Health probe failed: {self._health_state.error_code} — {self._health_state.error_message}")
 
@@ -194,13 +196,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         self.firebase_client = None
                     else:
                         # Initialize Firebase client with OAuth
+                        _t0 = time.time()
                         self.firebase_client = FirebaseClient(
                             auth_manager=auth_manager,
                             project_id=project_id,
                             site_id=site_id,
                             config_cache_path=cache_path
                         )
-                        logging.info(f"Firebase client initialized for site: {site_id}")
+                        logging.info(f"Firebase client initialized for site: {site_id}  ({round(time.time() - _t0, 3)}s)")
 
                 except Exception as e:
                     logging.error(f"Failed to initialize Firebase client: {e}")
@@ -4013,6 +4016,8 @@ with open(out_path, 'wb') as f:
         self._try_launch_tray()
 
         logging.info("Service initialization complete")
+        shared_utils.log_startup_system_snapshot()
+        shared_utils.log_startup_config_summary()
 
         # Check for update marker (indicates a self-update was in progress)
         self._check_update_status()
@@ -4046,8 +4051,9 @@ with open(out_path, 'wb') as f:
 
                 # NOW start Firebase background threads (including config listener)
                 # At this point, Firestore has our local config, and the hash is set
+                _t0 = time.time()
                 self.firebase_client.start()
-                logging.info("Firebase client started successfully")
+                logging.info(f"Firebase client started successfully  ({round(time.time() - _t0, 3)}s)")
 
                 # Cache site timezone for schedule evaluation
                 self._cached_site_timezone = self.firebase_client.site_timezone
@@ -4125,6 +4131,24 @@ with open(out_path, 'wb') as f:
             'site_id': shared_utils.read_config(['firebase', 'site_id']) if self.firebase_client else None
         }
 
+        # --- STARTUP COMPLETE ---
+        _total = round(time.time() - self._service_start_time, 2)
+        if self.firebase_client and self.firebase_client.is_connected():
+            _fb_status = "connected"
+        elif self.firebase_client:
+            _fb_status = "offline (client initialized, not connected)"
+        else:
+            _fb_status = "disabled" if not shared_utils.read_config(['firebase', 'enabled']) else "failed to initialize"
+        _proc_count = len(shared_utils.read_config(['processes']) or [])
+        _sep = "=" * 70
+        logging.info(_sep)
+        logging.info("  STARTUP COMPLETE")
+        logging.info(_sep)
+        logging.info(f"  Version          : {shared_utils.APP_VERSION}")
+        logging.info(f"  Total startup    : {_total}s")
+        logging.info(f"  Firebase         : {_fb_status}")
+        logging.info(f"  Processes        : {_proc_count} configured")
+        logging.info(_sep)
         logging.info("Starting main service loop...")
 
         try:

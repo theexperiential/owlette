@@ -11,6 +11,13 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.5.9] - 2026-04-03
+
+### added
+- Rich startup diagnostics logged on every service start: version banner (hostname, timezone, environment, Python version, Windows edition + build, install/data paths), system snapshot (CPU model + cores, RAM, disk free space, GPU name + VRAM, IP addresses), config summary (Firebase enabled, site ID, process count, Cortex status), startup phase timings (health probe, Firebase init, Firebase start), and a startup-complete summary block (version, total elapsed time, Firebase status, process count)
+
+---
+
 ## [2.5.8] - 2026-04-03
 
 ### fixed
