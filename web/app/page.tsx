@@ -11,6 +11,7 @@ import {
 // Note: ValuePropSection stays static because it contains the LCP image (dashboard.png)
 const UseCaseSection = dynamic(() => import('@/components/landing/UseCaseSection').then(m => ({ default: m.UseCaseSection })));
 const FeatureGrid = dynamic(() => import('@/components/landing/FeatureGrid').then(m => ({ default: m.FeatureGrid })));
+const FAQSection = dynamic(() => import('@/components/landing/FAQSection').then(m => ({ default: m.FAQSection })));
 
 const jsonLd = {
   '@context': 'https://schema.org',
@@ -53,6 +54,7 @@ export default function LandingPage() {
         <UseCaseSection />
         <FeatureGrid />
         <PricingSection />
+        <FAQSection />
       </main>
       <LandingFooter />
     </div>

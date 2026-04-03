@@ -25,6 +25,9 @@ export function LandingHeader() {
             <a href="#pricing">pricing</a>
           </Button>
           <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
+            <a href="https://theexperiential.github.io/owlette/" target="_blank" rel="noopener noreferrer">docs</a>
+          </Button>
+          <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
             <Link href="/download">download</Link>
           </Button>
           <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">

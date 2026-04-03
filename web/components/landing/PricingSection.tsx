@@ -21,7 +21,7 @@ export function PricingSection() {
         <h2 className="section-headline text-foreground mb-4">
           simple, per-machine pricing
         </h2>
-        <p className="text-base sm:text-lg text-muted-foreground mb-10">
+        <p className="section-subheadline mb-10">
           no tiers, no seats, no hidden fees. pay only for what you run.
         </p>
 
@@ -37,11 +37,8 @@ export function PricingSection() {
                 /machine/month
               </span>
             </div>
-            <p className="text-accent-warm font-semibold text-xl mb-1">
+            <p className="text-accent-warm font-semibold text-xl">
               free during beta
-            </p>
-            <p className="text-base text-muted-foreground">
-              $10/machine/month after beta — no credit card required to start
             </p>
           </div>
 
@@ -51,7 +48,7 @@ export function PricingSection() {
           <div className="py-8">
             <ul className="grid sm:grid-cols-2 gap-x-8 gap-y-4 text-left mb-4">
               {included.map(({ label, asterisk }) => (
-                <li key={label} className="flex items-center gap-2.5 text-base text-foreground/80">
+                <li key={label} className="flex items-center gap-2.5 text-base sm:text-lg text-foreground/80 text-pretty">
                   <Check className="w-4 h-4 text-accent-cyan shrink-0" />
                   {label}{asterisk && <span className="text-muted-foreground text-xs align-super -ml-1">*</span>}
                 </li>
@@ -61,7 +58,7 @@ export function PricingSection() {
 
           <hr className="border-border/50" />
 
-          <p className="py-8 text-base font-medium text-foreground">
+          <p className="py-8 text-base sm:text-lg font-medium text-foreground">
             everything included — no feature limits, no hidden tiers.
           </p>
 
@@ -78,13 +75,13 @@ export function PricingSection() {
           </div>
         </div>
 
-        <p className="mt-10 text-base text-muted-foreground">
+        <p className="mt-10 section-subheadline">
           need volume pricing or an enterprise agreement?{' '}
           <a href="mailto:support@owlette.app" className="text-foreground hover:underline underline-offset-4">
             get in touch
           </a>
         </p>
-        <p className="mt-2 text-sm text-muted-foreground/60">
+        <p className="mt-10 text-sm text-muted-foreground/60">
           * cortex requires your own API key (OpenAI, Anthropic, or compatible)
         </p>
       </div>

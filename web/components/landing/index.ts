@@ -5,6 +5,7 @@ export { FeatureGrid } from './FeatureGrid';
 export { ValuePropSection } from './ValuePropSection';
 export { CTASection } from './CTASection';
 export { PricingSection } from './PricingSection';
+export { FAQSection } from './FAQSection';
 export { LandingFooter } from './LandingFooter';
 export { InteractiveBackground } from './InteractiveBackground';
 export { TypewriterText } from './TypewriterText';

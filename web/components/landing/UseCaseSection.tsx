@@ -54,7 +54,7 @@ export function UseCaseSection() {
             <div key={cap.label}>
               <button
                 onClick={() => toggle(i)}
-                className="w-full text-center group cursor-pointer rounded-lg p-4 transition-all duration-300 hover:bg-card/50"
+                className={`w-full text-center group cursor-pointer rounded-lg p-4 transition-all duration-300 border ${openIndex === i ? 'bg-card/60 border-border' : 'border-transparent hover:bg-card/50'}`}
               >
                 <cap.icon className={`w-8 h-8 mx-auto mb-3 transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-muted-foreground group-hover:text-accent-cyan'}`} />
                 <div className="flex items-center justify-center gap-1.5 mb-2">
@@ -104,7 +104,7 @@ export function UseCaseSection() {
               <button
                 key={cap.label}
                 onClick={() => toggle(i)}
-                className="text-center group cursor-pointer rounded-lg p-4 transition-all duration-300 hover:bg-card/50"
+                className={`text-center group cursor-pointer rounded-lg p-4 transition-all duration-300 border ${openIndex === i ? 'bg-card/60 border-border' : 'border-transparent hover:bg-card/50'}`}
               >
                 <cap.icon className={`w-8 h-8 mx-auto mb-3 transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-muted-foreground group-hover:text-accent-cyan'}`} />
                 <div className="flex items-center justify-center gap-1.5 mb-2">
