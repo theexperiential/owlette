@@ -17,7 +17,10 @@ firestore/
 │   │   │   └── completed/{cmdId}
 │   │   ├── screenshots/{screenshotId}
 │   │   ├── installed_software/{softwareId}
-│   │   └── metrics_history/{bucketId}   (YYYY-MM-DD daily buckets)
+│   │   ├── metrics_history/{bucketId}   (YYYY-MM-DD daily buckets)
+│   │   ├── logs/{logId}                 (machine-level application logs)
+│   │   └── cortex/
+│   │       └── active-chat              (single document, local Cortex streaming)
 │   ├── deployments/{deployId}
 │   ├── project_distributions/{distId}
 │   ├── installer_templates/{tplId}
@@ -37,7 +40,7 @@ firestore/
 │
 ├── users/{userId}
 │   ├── passkeys/{credentialId}   (WebAuthn credentials)
-│   ├── apiKeys/{keyId}
+│   ├── api_keys/{keyId}
 │   └── settings/
 │       ├── llm
 │       └── preferences
@@ -45,7 +48,7 @@ firestore/
 ├── chats/{chatId}                (Cortex conversations)
 │   └── messages/{messageId}
 ├── system_presets/{presetId}     (global deployment presets)
-├── apiKeys/{keyHash}             (fast-lookup index for user API keys)
+├── api_keys/{keyHash}             (fast-lookup index for user API keys)
 ├── agent_tokens/{registrationCode}
 ├── agent_refresh_tokens/{tokenHash}
 ├── device_codes/{phrase}         (device-code pairing)
@@ -278,7 +281,7 @@ WebAuthn credential for passkey authentication.
 | `createdAt` | timestamp | Registration date |
 | `lastUsedAt` | timestamp | Last authentication date |
 
-### users/{userId}/apiKeys/{keyId}
+### users/{userId}/api_keys/{keyId}
 
 User-scoped API keys for external integrations.
 
@@ -309,14 +312,14 @@ User-scoped API keys for external integrations.
 
 ---
 
-## apiKeys/{keyHash}
+## api_keys/{keyHash}
 
 Fast-lookup index for API key authentication. Keyed by SHA-256 hash of the raw key.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `userId` | string | Owner's user ID |
-| `keyId` | string | Reference to `users/{userId}/apiKeys/{keyId}` |
+| `keyId` | string | Reference to `users/{userId}/api_keys/{keyId}` |
 
 !!! warning "Server-only"
     Not accessible from any client. Only the server API can read/write.

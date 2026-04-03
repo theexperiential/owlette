@@ -67,7 +67,7 @@ export async function requireAdmin(request: NextRequest): Promise<string> {
 
 /**
  * Resolve a user ID from an API key (owk_...).
- * Looks up the SHA-256 hash in the top-level apiKeys collection (hash as doc ID → userId).
+ * Looks up the SHA-256 hash in the top-level api_keys collection (hash as doc ID → userId).
  * Updates lastUsedAt on the user's subcollection entry (fire-and-forget).
  */
 async function resolveApiKey(rawKey: string): Promise<string> {
@@ -75,7 +75,7 @@ async function resolveApiKey(rawKey: string): Promise<string> {
   const db = getAdminDb();
 
   // Single document read — no collection group query, no index needed
-  const lookupDoc = await db.collection('apiKeys').doc(keyHash).get();
+  const lookupDoc = await db.collection('api_keys').doc(keyHash).get();
 
   if (!lookupDoc.exists) {
     throw new ApiAuthError(401, 'Unauthorized: Invalid API key');
@@ -84,7 +84,7 @@ async function resolveApiKey(rawKey: string): Promise<string> {
   const { userId, keyId } = lookupDoc.data() as { userId: string; keyId: string };
 
   // Update lastUsedAt on the user's subcollection entry (fire-and-forget)
-  db.collection('users').doc(userId).collection('apiKeys').doc(keyId)
+  db.collection('users').doc(userId).collection('api_keys').doc(keyId)
     .update({ lastUsedAt: Date.now() }).catch(() => {});
 
   return userId;

@@ -34,7 +34,7 @@ export const POST = withRateLimit(
 
       // User's subcollection entry (for listing/management)
       batch.set(
-        db.collection('users').doc(userId).collection('apiKeys').doc(keyId),
+        db.collection('users').doc(userId).collection('api_keys').doc(keyId),
         {
           name,
           keyHash,
@@ -46,7 +46,7 @@ export const POST = withRateLimit(
 
       // Top-level lookup entry (for fast auth resolution — single doc read)
       batch.set(
-        db.collection('apiKeys').doc(keyHash),
+        db.collection('api_keys').doc(keyHash),
         { userId, keyId }
       );
 
