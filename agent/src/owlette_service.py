@@ -4056,7 +4056,7 @@ with open(out_path, 'wb') as f:
                 if hasattr(self, '_pending_update_event') and self._pending_update_event:
                     event_type, message, level = self._pending_update_event
                     try:
-                        self.firebase_client.log_event(event_type, message, level)
+                        self.firebase_client.log_event(event_type, level, details=message)
                         logging.info(f"Update event logged to Firebase: {event_type}")
                     except Exception as e:
                         logging.warning(f"Failed to log update event to Firebase: {e}")
