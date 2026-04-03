@@ -1,10 +1,10 @@
-# Deployments
+# deployments
 
 Deploy software remotely to one or many machines. owlette downloads and silently installs applications, tracking progress in real-time.
 
 ---
 
-## Overview
+## overview
 
 The deployment system allows you to:
 
@@ -16,7 +16,7 @@ The deployment system allows you to:
 
 ---
 
-## Creating a Deployment
+## creating a deployment
 
 1. Navigate to **Deployments** from the dashboard menu
 2. Click **"New Deployment"**
@@ -35,7 +35,7 @@ The deployment system allows you to:
 
 ---
 
-## Silent Installation Flags
+## silent installation flags
 
 Different installer frameworks use different flags:
 
@@ -51,7 +51,7 @@ Different installer frameworks use different flags:
 
 ---
 
-## Deployment Progress
+## deployment progress
 
 The dashboard shows real-time status for each machine:
 
@@ -79,7 +79,7 @@ Overall deployment status is calculated automatically:
 
 ---
 
-## Deployment Templates
+## deployment templates
 
 Save frequently-used configurations:
 
@@ -90,7 +90,7 @@ Save frequently-used configurations:
 
 ---
 
-## Cancelling a Deployment
+## cancelling a deployment
 
 To cancel an in-progress deployment:
 
@@ -104,7 +104,7 @@ To cancel an in-progress deployment:
 
 ---
 
-## Deployment Flow
+## deployment flow
 
 ```
 Dashboard creates deployment record in Firestore
@@ -132,23 +132,23 @@ Dashboard creates deployment record in Firestore
 
 ---
 
-## Troubleshooting
+## troubleshooting
 
-### "Download failed"
+### "download failed"
 
 - Test the URL in a browser — it should directly download the file
 - Ensure the URL is a direct download link (not a web page)
 - Check that the agent machine has internet access
 - For Dropbox: change `?dl=0` to `?dl=1`
 
-### Installation Fails
+### installation fails
 
 - Verify silent flags are correct for the installer type
 - Check if the installer requires specific prerequisites (e.g., .NET Framework)
-- Review agent logs: `C:\ProgramData\owlette\logs\service.log`
+- Review agent logs: `C:\ProgramData\Owlette\logs\service.log`
 - Try installing manually with the same flags to diagnose
 
-### Timeout
+### timeout
 
 The default installation timeout is 40 minutes. Very large installers on slow connections may need the agent-side timeout adjusted in `installer_utils.py`.
 
@@ -162,7 +162,7 @@ The default installation timeout is 40 minutes. Very large installers on slow co
 
 ---
 
-## Security
+## security
 
 - Only deploy from **trusted sources** — the system does not verify installer signatures
 - **HTTPS URLs are required** — the API rejects HTTP, `file://`, and other non-HTTPS protocols

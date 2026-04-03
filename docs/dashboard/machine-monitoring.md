@@ -1,12 +1,12 @@
-# Machine Monitoring
+# machine monitoring
 
 The dashboard provides real-time visibility into all your machines' health, performance, and process status.
 
 ---
 
-## Machine Status
+## machine status
 
-### Online/Offline Detection
+### online/offline detection
 
 The agent sends a **heartbeat** to Firestore every 30 seconds. The dashboard considers a machine:
 
@@ -16,13 +16,13 @@ The agent sends a **heartbeat** to Firestore every 30 seconds. The dashboard con
 | **Offline** | No heartbeat for 3+ minutes | Red/grey dot |
 | **Stale** | Heartbeat is older than expected but within threshold | Yellow dot |
 
-### Last Seen
+### last seen
 
 Each machine shows a "last seen" timestamp. For offline machines, this tells you when the machine last communicated.
 
 ---
 
-## System Metrics
+## system metrics
 
 Metrics are reported by the agent every 60 seconds:
 
@@ -33,7 +33,7 @@ Metrics are reported by the agent every 60 seconds:
 | **Disk** | 0-100% | Primary disk usage |
 | **GPU** | 0-100% | GPU utilization (NVIDIA via NVML, others via WinTmp) |
 
-### Color Coding
+### color coding
 
 Metrics use traffic-light colors:
 
@@ -45,9 +45,9 @@ Metrics use traffic-light colors:
 
 ---
 
-## View Modes
+## view modes
 
-### Card View
+### card view
 
 The default view displays each machine as a card:
 
@@ -59,7 +59,7 @@ The default view displays each machine as a card:
 
 Click a machine card to expand details.
 
-### List View
+### list view
 
 A compact table view with sortable columns:
 
@@ -74,17 +74,17 @@ Useful when managing many machines.
 
 ---
 
-## Sparkline Charts
+## sparkline charts
 
 Each metric in card view shows a tiny sparkline chart representing recent values. These give you an at-a-glance trend without clicking into the machine.
 
 ---
 
-## Historical Metrics
+## historical metrics
 
 Click on a machine to view detailed historical metrics:
 
-### Time Ranges
+### time ranges
 
 | Range | Resolution | Data Points |
 |-------|-----------|-------------|
@@ -92,7 +92,7 @@ Click on a machine to view detailed historical metrics:
 | **7 days** | 15 minutes | ~672 points |
 | **30 days** | 1 hour | ~720 points |
 
-### Charts
+### charts
 
 The metrics detail panel shows interactive Recharts line graphs for:
 
@@ -105,7 +105,7 @@ Hover over data points for exact values and timestamps.
 
 ---
 
-## Process Status
+## process status
 
 Each machine card shows its configured processes with status badges:
 
@@ -121,7 +121,7 @@ Click a process to open the [Process Dialog](process-management.md) for manageme
 
 ---
 
-## Machine Information
+## machine information
 
 Each machine reports additional details:
 

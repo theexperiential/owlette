@@ -1,4 +1,4 @@
-# Getting Started
+# getting started
 
 Get your first machine monitored in under 5 minutes.
 

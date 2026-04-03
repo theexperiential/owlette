@@ -1,30 +1,30 @@
-# Dashboard Getting Started
+# dashboard getting started
 
 This guide walks you through your first experience with the owlette dashboard — from login to seeing your first machine.
 
 ---
 
-## First Login
+## first login
 
-### Email/Password
+### email/password
 
 1. Navigate to your dashboard URL (e.g., `https://owlette.app` or `https://dev.owlette.app`)
 2. Click **Register** and create an account
 3. After registration, you're automatically logged in
 
-### Google OAuth
+### google oauth
 
 1. Click **"Sign in with Google"** on the login page
 2. Select your Google account
 3. You're automatically registered and logged in
 
-### Passkey (Passwordless)
+### passkey (passwordless)
 
 If you've registered a passkey, click **"Sign in with passkey"** on the login page. Authenticate with your device's biometric (Touch ID, Windows Hello, or phone) — no password or 2FA code needed.
 
 ---
 
-## Set Up Two-Factor Authentication
+## set up two-factor authentication
 
 After your first login, you'll be prompted to set up 2FA:
 
@@ -38,7 +38,7 @@ After your first login, you'll be prompted to set up 2FA:
 
 ---
 
-## Create Your First Site
+## create your first site
 
 Sites are the top-level organizational unit — think of them as locations, departments, or projects.
 
@@ -51,7 +51,7 @@ You're automatically assigned as the owner with full access.
 
 ---
 
-## Add Your First Machine
+## add your first machine
 
 1. Download the agent installer (download button in the dashboard header)
 2. Run the installer on your target Windows machine
@@ -67,9 +67,9 @@ Within 30 seconds, the machine appears in your dashboard:
 
 ---
 
-## Understanding the Dashboard Layout
+## understanding the dashboard layout
 
-### Machine Cards
+### machine cards
 
 Each machine is displayed as a card showing:
 
@@ -79,12 +79,12 @@ Each machine is displayed as a card showing:
 - **Process list** — configured processes with status indicators
 - **Agent version**
 
-### View Modes
+### view modes
 
 - **Card View** — Visual grid of machine cards with sparkline charts
 - **List View** — Compact table with sortable columns
 
-### Navigation
+### navigation
 
 - **Dashboard** — Main monitoring view
 - **Deployments** — Software deployment management
@@ -94,7 +94,7 @@ Each machine is displayed as a card showing:
 
 ---
 
-## Next Steps
+## next steps
 
 - [**Add processes**](process-management.md) — Configure applications for monitoring
 - [**Deploy software**](deployments.md) — Push installers to machines

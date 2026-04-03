@@ -1,16 +1,16 @@
-# Activity Logs
+# activity logs
 
 The Activity Logs page shows a timeline of events across your machines — process starts, crashes, command executions, and system events.
 
 ---
 
-## Accessing Logs
+## accessing logs
 
 Navigate to **Logs** from the dashboard menu, or go directly to `/logs`.
 
 ---
 
-## Event Types
+## event types
 
 | Action | Level | Description |
 |--------|-------|-------------|
@@ -25,7 +25,7 @@ Navigate to **Logs** from the dashboard menu, or go directly to `/logs`.
 
 ---
 
-## Filtering
+## filtering
 
 Filter logs by:
 
@@ -37,7 +37,7 @@ Filter logs by:
 
 ---
 
-## Log Entry Details
+## log entry details
 
 Each log entry shows:
 
@@ -52,13 +52,13 @@ Each log entry shows:
 
 ---
 
-## Pagination
+## pagination
 
 Logs are paginated at 50 entries per page. Use the **Next** and **Previous** buttons to navigate.
 
 ---
 
-## Log Sources
+## log sources
 
 Events are logged by two sources:
 
@@ -67,7 +67,7 @@ Events are logged by two sources:
 
 ---
 
-## Retention
+## retention
 
 Activity logs are stored in Firestore indefinitely. There is no automatic cleanup — delete old logs manually from the Firestore Console if storage is a concern.
 

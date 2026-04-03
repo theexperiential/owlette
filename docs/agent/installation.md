@@ -1,14 +1,14 @@
-# Installation
+# installation
 
 There are three ways to install and authenticate the owlette agent on a Windows machine.
 
 ---
 
-## Method 1: Interactive Install (Recommended)
+## method 1: interactive install (recommended)
 
 Download the installer, run it, and pair from your phone or browser.
 
-### Steps
+### steps
 
 1. Log into the owlette dashboard
 2. Click the **download button** in the header bar (shows the latest version)
@@ -24,11 +24,11 @@ The entire flow takes under a minute. Credentials are stored encrypted on disk �
 
 ---
 
-## Method 2: Silent Install with `/ADD=` (Bulk Deployment)
+## method 2: silent install with `/ADD=` (bulk deployment)
 
 Deploy to many machines without any interaction. Generate a pairing phrase from the dashboard, then run the installer silently.
 
-### Steps
+### steps
 
 1. On the dashboard, click the **"+"** button next to the view toggle
 2. Select the **"Generate Code"** tab
@@ -42,7 +42,7 @@ Owlette-Installer-v2.4.1.exe /ADD=silver-compass-drift /SILENT
 !!! info "Phrase expiry"
     Generated phrases expire after **10 minutes**. Generate a new one from the dashboard if needed.
 
-### Silent Installation Flags
+### silent installation flags
 
 | Flag | Description |
 |------|-------------|
@@ -61,7 +61,7 @@ Owlette-Installer-v2.4.1.exe /ADD=silver-compass-drift /VERYSILENT /SUPPRESSMSGB
 
 ---
 
-## Method 3: Remote Deployment (Upgrades)
+## method 3: remote deployment (upgrades)
 
 Deploy agent updates to machines that already have owlette installed.
 
@@ -71,7 +71,7 @@ Deploy agent updates to machines that already have owlette installed.
     - **Name**: e.g., "owlette Agent v2.4.1"
     - **Installer URL**: Direct download link to the installer `.exe`
     - **Silent Flags**: `/VERYSILENT /SUPPRESSMSGBOXES`
-    - **Verify Path**: `C:\ProgramData\owlette\agent\src\owlette_service.py`
+    - **Verify Path**: `C:\ProgramData\Owlette\agent\src\owlette_service.py`
 4. Select target machines
 5. Click **Deploy**
 
@@ -80,7 +80,7 @@ Deploy agent updates to machines that already have owlette installed.
 
 ---
 
-## Method 4: Manual Installation (Development)
+## method 4: manual installation (development)
 
 For development or custom setups:
 
@@ -106,13 +106,13 @@ The install script:
 After installing, run the pairing flow manually:
 
 ```bash
-cd C:\ProgramData\owlette\agent\src
+cd C:\ProgramData\Owlette\agent\src
 python configure_site.py
 ```
 
 ---
 
-## How Pairing Works
+## how pairing works
 
 When the agent connects for the first time, it authenticates via a device code flow:
 
@@ -136,7 +136,7 @@ Server generates tokens → agent polls and receives them
     └── Refresh Token (never expires, admin-revocable)
     │
     ▼
-Tokens encrypted to C:\ProgramData\owlette\.tokens.enc
+Tokens encrypted to C:\ProgramData\Owlette\.tokens.enc
 Agent authenticated — starts syncing
 ```
 
@@ -150,20 +150,20 @@ Three ways to authorize:
 
 ---
 
-## Post-Installation Verification
+## post-installation verification
 
 After installation, verify the agent is running:
 
-### Check Windows Services
+### check windows services
 
 1. Open Services (`Win + R` → `services.msc`)
 2. Find **"OwletteService"**
 3. Status should be **"Running"**
 
-### Check Logs
+### check logs
 
 ```
-C:\ProgramData\owlette\logs\service.log
+C:\ProgramData\Owlette\logs\service.log
 ```
 
 Look for:
@@ -174,7 +174,7 @@ INFO: Firebase client initialized for site: your_site_id
 INFO: Firebase client started successfully
 ```
 
-### Check Dashboard
+### check dashboard
 
 The machine should appear in your site's dashboard within 30 seconds with:
 
@@ -182,13 +182,13 @@ The machine should appear in your site's dashboard within 30 seconds with:
 - CPU, memory, disk metrics populating
 - Agent version displayed
 
-### Check System Tray
+### check system tray
 
 An owl icon should appear in the Windows system tray. Right-click it for status and options.
 
 ---
 
-## Uninstallation
+## uninstallation
 
 **Windows Settings** → **Apps** → **owlette** → **Uninstall**
 
@@ -197,14 +197,14 @@ The uninstaller will:
 1. Stop the owlette service
 2. Remove the NSSM service wrapper
 3. Remove Windows Defender exclusions
-4. Delete program files from `C:\ProgramData\owlette`
+4. Delete program files from `C:\ProgramData\Owlette`
 
 !!! note "Data preservation"
-    Configuration, tokens, and logs in `C:\ProgramData\owlette\` are preserved by default. To fully remove all data after uninstalling: `rd /s /q C:\ProgramData\owlette`
+    Configuration, tokens, and logs in `C:\ProgramData\Owlette\` are preserved by default. To fully remove all data after uninstalling: `rd /s /q C:\ProgramData\Owlette`
 
 ---
 
-## Installer Details
+## installer details
 
 The owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php) and bundles:
 
@@ -218,7 +218,7 @@ The owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.p
 
 ---
 
-## System Requirements
+## system requirements
 
 | Requirement | Minimum |
 |-------------|---------|

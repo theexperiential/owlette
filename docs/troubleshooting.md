@@ -12,7 +12,7 @@ Cross-cutting troubleshooting guide for common issues across the entire owlette 
 
 1. Verify internet connectivity on the agent machine
 2. Check firewall rules — outbound HTTPS (port 443) must be allowed to `*.googleapis.com` and `*.firebaseio.com`
-3. Check `C:\ProgramData\owlette\logs\service.log` for specific errors
+3. Check `C:\ProgramData\Owlette\logs\service.log` for specific errors
 4. Verify `firebase.enabled` is `true` in config.json
 5. Verify `firebase.site_id` matches a site that exists in Firestore
 
@@ -57,8 +57,8 @@ The encrypted token file is missing or unreadable.
 
 **Fix**: Re-pair the agent:
 
-1. Delete the token file: `del C:\ProgramData\owlette\.tokens.enc`
-2. Run the pairing flow: `C:\ProgramData\owlette\python\python.exe C:\ProgramData\owlette\agent\src\configure_site.py`
+1. Delete the token file: `del C:\ProgramData\Owlette\.tokens.enc`
+2. Run the pairing flow: `C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\configure_site.py`
 3. Authorize on the web page that opens, then restart the service
 
 ### Token refresh failing
@@ -154,10 +154,10 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 
 | Log | Path |
 |-----|------|
-| Service | `C:\ProgramData\owlette\logs\service.log` |
-| GUI | `C:\ProgramData\owlette\logs\gui.log` |
-| Tray | `C:\ProgramData\owlette\logs\tray.log` |
-| Installer | `C:\ProgramData\owlette\logs\setup.log` |
+| Service | `C:\ProgramData\Owlette\logs\service.log` |
+| GUI | `C:\ProgramData\Owlette\logs\gui.log` |
+| Tray | `C:\ProgramData\Owlette\logs\tray.log` |
+| Installer | `C:\ProgramData\Owlette\logs\setup.log` |
 
 ### Dashboard Logs
 
@@ -182,7 +182,7 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 Run the agent in debug mode for detailed console output:
 
 ```bash
-cd C:\ProgramData\owlette\agent\src
+cd C:\ProgramData\Owlette\agent\src
 python owlette_service.py debug
 ```
 

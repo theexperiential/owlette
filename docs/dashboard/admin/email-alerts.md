@@ -1,10 +1,10 @@
-# Email Alerts
+# email alerts
 
 owlette sends email notifications when machines go offline, processes crash, or connections fail.
 
 ---
 
-## Alert Types
+## alert types
 
 | Alert | Trigger | Recipients |
 |-------|---------|------------|
@@ -15,9 +15,9 @@ owlette sends email notifications when machines go offline, processes crash, or 
 
 ---
 
-## Machine Offline Alerts
+## machine offline alerts
 
-### How It Works
+### how it works
 
 A Railway cron job runs every 5 minutes, calling `GET /api/cron/health-check`:
 
@@ -27,7 +27,7 @@ A Railway cron job runs every 5 minutes, calling `GET /api/cron/health-check`:
 4. Writes `health.lastCronAlertAt` to Firestore to prevent repeat alerts
 5. **Cooldown**: 1 hour per machine — won't send another alert for the same machine within an hour
 
-### Email Content
+### email content
 
 The email includes:
 
@@ -37,7 +37,7 @@ The email includes:
 
 ---
 
-## Process Crash Alerts
+## process crash alerts
 
 When the agent detects a process crash:
 
@@ -45,22 +45,22 @@ When the agent detects a process crash:
 2. Server looks up users subscribed to process alerts for that site
 3. Sends email with process name, machine name, and error details
 
-### Rate Limiting
+### rate limiting
 
 - **Process alerts**: 3 per hour per process per machine
 - **Connection failures**: 5 per hour per IP
 
 ---
 
-## Setting Up Alerts
+## setting up alerts
 
-### Prerequisites
+### prerequisites
 
 1. **Resend API key** — Set `RESEND_API_KEY` environment variable in Railway
 2. **Admin email** — Set `ADMIN_EMAIL_PROD` (production) or `ADMIN_EMAIL_DEV` (development)
 3. **Cron job** — Configure Railway cron schedule (see below)
 
-### Configuring the Cron Job
+### configuring the cron job
 
 1. In Railway dashboard, open your web service
 2. Go to **Settings** → **"Cron Schedule"**
@@ -70,22 +70,22 @@ When the agent detects a process crash:
     python -c "import secrets; print(secrets.token_hex(32))"
     ```
 
-### User Preferences
+### user preferences
 
 Users can control their alert preferences:
 
 - **Health alerts**: Opt in/out of machine offline notifications
 - **Process alerts**: Opt in/out of process crash notifications
 
-### Unsubscribe
+### unsubscribe
 
 Each alert email contains a one-click unsubscribe link that disables health alerts for that user.
 
 ---
 
-## Testing Emails
+## testing emails
 
-### Test Email Page
+### test email page
 
 Admins can send test emails from **Admin Panel → Email Test** (`/admin/test-email`):
 
@@ -94,7 +94,7 @@ Admins can send test emails from **Admin Panel → Email Test** (`/admin/test-em
 3. Click **"Send Test Email"**
 4. Verify delivery in your inbox
 
-### Simulate Events
+### simulate events
 
 Test the full alert pipeline from **`/api/admin/events/simulate`**:
 
@@ -118,7 +118,7 @@ This triggers the same email alert flow as a real event, without requiring a rea
 
 ---
 
-## Environment Variables
+## environment variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -129,9 +129,9 @@ This triggers the same email alert flow as a real event, without requiring a rea
 
 ---
 
-## Troubleshooting
+## troubleshooting
 
-### No Emails Received
+### no emails received
 
 1. Check `RESEND_API_KEY` is set in Railway environment variables
 2. Verify the Resend API key is valid (test at resend.com)
@@ -139,11 +139,11 @@ This triggers the same email alert flow as a real event, without requiring a rea
 4. Use the test email page to verify delivery
 5. Check Railway logs for email-related errors
 
-### Duplicate Alerts
+### duplicate alerts
 
 The system has built-in cooldowns (1 hour per machine for offline alerts, rate limits for process alerts). If you're getting duplicates, check that the cron job isn't running more frequently than expected.
 
-### Cron Not Running
+### cron not running
 
 1. Verify Railway cron schedule is set: `*/5 * * * *`
 2. Check that `CRON_SECRET` matches between the env var and the cron configuration

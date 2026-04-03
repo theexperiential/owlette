@@ -1,28 +1,28 @@
-# Agent Troubleshooting
+# agent troubleshooting
 
 Common issues and how to resolve them.
 
 ---
 
-## Log Locations
+## log locations
 
 | Log | Path | Contents |
 |-----|------|----------|
-| **Service** | `C:\ProgramData\owlette\logs\service.log` | Main service operations, Firebase sync, command execution |
-| **GUI** | `C:\ProgramData\owlette\logs\gui.log` | Configuration GUI operations |
-| **Tray** | `C:\ProgramData\owlette\logs\tray.log` | System tray icon operations |
-| **Installer** | `C:\ProgramData\owlette\logs\setup.log` | Installation/setup logging |
+| **Service** | `C:\ProgramData\Owlette\logs\service.log` | Main service operations, Firebase sync, command execution |
+| **GUI** | `C:\ProgramData\Owlette\logs\gui.log` | Configuration GUI operations |
+| **Tray** | `C:\ProgramData\Owlette\logs\tray.log` | System tray icon operations |
+| **Installer** | `C:\ProgramData\Owlette\logs\setup.log` | Installation/setup logging |
 
 Logs use rotating file handlers: 10 MB per file, 5 backups. Old logs are auto-deleted after 90 days (configurable).
 
 ---
 
-## Debug Mode
+## debug mode
 
 Run the service in debug mode to see real-time console output:
 
 ```bash
-cd C:\ProgramData\owlette\agent\src
+cd C:\ProgramData\Owlette\agent\src
 python owlette_service.py debug
 ```
 
@@ -31,9 +31,9 @@ python owlette_service.py debug
 
 ---
 
-## Common Issues
+## common issues
 
-### Agent Won't Start
+### agent won't start
 
 **Symptoms**: Service fails to start, or starts and immediately stops.
 
@@ -41,11 +41,11 @@ python owlette_service.py debug
 
 1. Run in debug mode to see the error:
     ```bash
-    cd C:\ProgramData\owlette\agent\src
+    cd C:\ProgramData\Owlette\agent\src
     python owlette_service.py debug
     ```
 2. Check `service.log` for startup errors
-3. Verify Python is installed: `C:\ProgramData\owlette\python\python.exe --version`
+3. Verify Python is installed: `C:\ProgramData\Owlette\python\python.exe --version`
 4. Verify config.json is valid JSON
 
 **Common causes**:
@@ -56,7 +56,7 @@ python owlette_service.py debug
 
 ---
 
-### Agent Shows Offline in Dashboard
+### agent shows offline in dashboard
 
 **Symptoms**: Machine shows offline (red/grey) despite the service running.
 
@@ -76,7 +76,7 @@ python owlette_service.py debug
 
 ---
 
-### "Agent not authenticated" Error
+### "agent not authenticated" error
 
 **Symptoms**: Log shows "Agent not authenticated - no refresh token found"
 
@@ -86,17 +86,17 @@ python owlette_service.py debug
 
 1. Delete the token file and re-pair:
     ```
-    del C:\ProgramData\owlette\.tokens.enc
+    del C:\ProgramData\Owlette\.tokens.enc
     ```
 2. Run the pairing flow:
     ```
-    C:\ProgramData\owlette\python\python.exe C:\ProgramData\owlette\agent\src\configure_site.py
+    C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\configure_site.py
     ```
 3. Authorize on the web page that opens, then restart the service
 
 ---
 
-### Processes Not Auto-Restarting
+### processes not auto-restarting
 
 **Symptoms**: Configured processes crash but aren't restarted.
 
@@ -116,7 +116,7 @@ python owlette_service.py debug
 
 ---
 
-### ConnectionManager States
+### connectionmanager states
 
 The agent's connection to Firestore follows a state machine. Check `service.log` for the current state:
 
@@ -136,7 +136,7 @@ If stuck in `BACKOFF`:
 
 ---
 
-### High CPU/Memory Usage
+### high cpu/memory usage
 
 **Symptoms**: The owlette service itself uses excessive resources.
 
@@ -150,23 +150,23 @@ If stuck in `BACKOFF`:
 
 ---
 
-### GUI Won't Open
+### gui won't open
 
 **Symptoms**: Clicking "Open GUI" from tray does nothing, or GUI crashes immediately.
 
 **Check**:
 
 1. Look at `gui.log` for errors
-2. Verify GUI file exists: `C:\ProgramData\owlette\agent\src\owlette_gui.py`
+2. Verify GUI file exists: `C:\ProgramData\Owlette\agent\src\owlette_gui.py`
 3. Try launching manually:
     ```bash
-    "C:\ProgramData\owlette\python\pythonw.exe" "C:\ProgramData\owlette\agent\src\owlette_gui.py"
+    "C:\ProgramData\Owlette\python\pythonw.exe" "C:\ProgramData\Owlette\agent\src\owlette_gui.py"
     ```
 4. Check for CustomTkinter import errors (missing dependency)
 
 ---
 
-### Windows Defender Blocking
+### windows defender blocking
 
 **Symptoms**: Agent files quarantined, service won't start after update.
 
@@ -175,12 +175,12 @@ If stuck in `BACKOFF`:
 **Fix**: The installer should add a Defender exclusion automatically. If it didn't:
 
 ```powershell
-Add-MpPreference -ExclusionPath "C:\ProgramData\owlette"
+Add-MpPreference -ExclusionPath "C:\ProgramData\Owlette"
 ```
 
 ---
 
-## Service Management Commands
+## service management commands
 
 ```bash
 # Check service status

@@ -1,10 +1,10 @@
-# Self-Update
+# self-update
 
 The owlette agent can update itself remotely — no physical access to the machine required.
 
 ---
 
-## How It Works
+## how it works
 
 The self-update is handled directly by the service's command handler in `owlette_service.py`:
 
@@ -18,9 +18,9 @@ The self-update is handled directly by the service's command handler in `owlette
 
 ---
 
-## Triggering an Update
+## triggering an update
 
-### From the Dashboard
+### from the dashboard
 
 1. Navigate to your machine in the dashboard
 2. Click the **"Update owlette"** button
@@ -29,7 +29,7 @@ The self-update is handled directly by the service's command handler in `owlette
 
 The dashboard sends an `update_owlette` command with the installer URL and target version.
 
-### What Gets Preserved
+### what gets preserved
 
 | Preserved | Not Preserved |
 |-----------|---------------|
@@ -41,7 +41,7 @@ The installer backs up `config.json` before upgrading and restores it afterward.
 
 ---
 
-## Update Command Payload
+## update command payload
 
 ```json
 {
@@ -54,7 +54,7 @@ The installer backs up `config.json` before upgrading and restores it afterward.
 
 ---
 
-## Version Verification
+## version verification
 
 After the update completes:
 
@@ -65,17 +65,17 @@ After the update completes:
 
 ---
 
-## Troubleshooting Updates
+## troubleshooting updates
 
-### Update Stuck
+### update stuck
 
 If the machine goes offline and doesn't come back:
 
 1. **Check physically** — the machine may need manual intervention
-2. **Check logs** at `C:\ProgramData\owlette\logs\service.log`
+2. **Check logs** at `C:\ProgramData\Owlette\logs\service.log`
 3. **Restart service** manually: `net start OwletteService`
 
-### Version Didn't Change
+### version didn't change
 
 If the agent reports the same version after update:
 
@@ -83,7 +83,7 @@ If the agent reports the same version after update:
 2. Check for Inno Setup log files in the temp directory
 3. Verify the installer URL was accessible from the target machine
 
-### Rollback
+### rollback
 
 To rollback to a previous version:
 

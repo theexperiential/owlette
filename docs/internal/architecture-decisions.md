@@ -1,12 +1,12 @@
-# owlette 2.0 - Architecture Decisions
+# owlette 2.0 - architecture decisions
 
 This document outlines key architectural decisions for owlette 2.0.
 
 ---
 
-## Repository Structure
+## repository structure
 
-### Recommended: Monorepo with Clear Separation
+### recommended: monorepo with clear separation
 
 We'll use a **monorepo** structure with clear directories for each component:
 
@@ -57,7 +57,7 @@ owlette/
 └── LICENSE
 ```
 
-### Why Monorepo?
+### why monorepo?
 
 **Advantages:**
 - ✅ Single source of truth for the entire product
@@ -77,18 +77,18 @@ owlette/
 
 ---
 
-## Site ID Management
+## site id management
 
-### What is a Site ID?
+### what is a site id?
 
 A **site_id** is a unique identifier for a physical location or logical grouping of machines. Examples:
 - `nyc_office_001`
 - `london_studio`
 - `client_acme_venue_a`
 
-### Development vs Production
+### development vs production
 
-#### Development (Phase 1 - Current)
+#### development (phase 1 - current)
 **Manual Configuration:**
 1. You manually set `site_id` in `config/config.json`:
    ```json
@@ -100,7 +100,7 @@ A **site_id** is a unique identifier for a physical location or logical grouping
 2. The agent reads this on startup and registers to that site
 3. This is fine for testing and development
 
-#### Production (Phase 4 - Machine Onboarding)
+#### production (phase 4 - machine onboarding)
 **Automated from Web Portal:**
 
 1. **Admin creates site in web dashboard:**
@@ -119,7 +119,7 @@ A **site_id** is a unique identifier for a physical location or logical grouping
    - Machine appears in web dashboard under "NYC Office" immediately
    - **No manual configuration needed**
 
-### Site ID Generation Strategy
+### site id generation strategy
 
 **Format:** `site_` + 8-character alphanumeric hash
 
@@ -140,7 +140,7 @@ function generateSiteId(): string {
 
 Example: `site_l8xk9p2qr4`
 
-### Site Hierarchy in Firestore
+### site hierarchy in firestore
 
 ```
 sites/
@@ -175,7 +175,7 @@ users/
     sites: ["site_abc123xyz", "site_def456uvw"]
 ```
 
-### Site Assignment Flow
+### site assignment flow
 
 ```
 Web Portal                    Firestore                    Agent
@@ -213,44 +213,44 @@ Web Portal                    Firestore                    Agent
 
 ---
 
-## Migration Path
+## migration path
 
-### Current State (Phase 1)
+### current state (phase 1)
 - Manual `site_id` in config.json
 - For development and testing
 
-### Phase 2-3 (Web Portal + Config Management)
+### phase 2-3 (web portal + config management)
 - Web portal exists
 - Can create sites manually
 - Still manual config.json editing on machines
 
-### Phase 4 (Machine Onboarding)
+### phase 4 (machine onboarding)
 - **Full automation**
 - Generate installers from portal
 - Zero manual configuration
 - Production-ready deployment
 
-### Phase 5 (Software Distribution) ✅
+### phase 5 (software distribution) ✅
 - Remote software installation across multiple machines
 - Deployment templates and verification
 - Real-time installation tracking
 
-### Phase 6 (Project File Distribution) ✅
+### phase 6 (project file distribution) ✅
 - Distribute project files (ZIPs, .toe files, media assets)
 - URL-based architecture (zero infrastructure cost)
 - Automatic extraction and file verification
 - Support for multi-GB TouchDesigner projects
 
-### Phase 7+ (Future)
+### phase 7+ (future)
 - Version management and rollback
 - Git integration for project files
 - Full SaaS product features
 
 ---
 
-## File Locations
+## file locations
 
-### Firebase Credentials
+### firebase credentials
 
 **Location:** `config/firebase-credentials.json`
 
@@ -265,7 +265,7 @@ Web Portal                    Firestore                    Agent
 - Permissions: Only SYSTEM and Administrators should have access
 - In production installers: Embedded in a protected location
 
-### Config Files
+### config files
 
 ```
 config/
@@ -276,16 +276,16 @@ config/
 
 ---
 
-## Development Workflow
+## development workflow
 
-### For Agent Development
+### for agent development
 
 ```bash
 cd agent/src
 python owlette_service.py
 ```
 
-### For Portal Development
+### for portal development
 
 ```bash
 cd portal
@@ -293,7 +293,7 @@ npm install
 npm run dev
 ```
 
-### For Full Stack Testing
+### for full stack testing
 
 **Terminal 1 (Agent):**
 ```bash
@@ -310,26 +310,26 @@ npm run dev
 
 ---
 
-## Deployment Strategy
+## deployment strategy
 
-### Agent Deployment
+### agent deployment
 - Build: `agent/build.bat`
 - Output: `agent/dist/owlette_service.exe`
 - Installer: `agent/installer/owlette_setup.exe`
 - Distribution: Downloaded from web dashboard (Phase 4)
 
-### Portal Deployment
+### portal deployment
 - Build: `cd portal && npm run build`
 - Deploy to: Vercel (recommended) or Firebase Hosting
 - URL: `https://owlette.your-domain.com`
 
-### Firebase Deployment
+### firebase deployment
 - Rules: `firebase deploy --only firestore:rules`
 - Indexes: Automatically created or use `firebase/firestore.indexes.json`
 
 ---
 
-## Summary
+## summary
 
 **Site ID:**
 - Development: Manually set in config.json (current)

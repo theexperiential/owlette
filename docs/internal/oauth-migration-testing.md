@@ -1,4 +1,4 @@
-# OAuth Authentication Migration - Testing Guide
+# oauth authentication migration - testing guide
 
 !!! warning "Deprecated"
     This document is from the v2.1.0 OAuth browser flow, which was **replaced in v2.4.1** with the device code / QR pairing flow. The browser-based OAuth, localhost:8765 callback, and Windows Credential Manager references below are no longer accurate.
@@ -15,7 +15,7 @@
 
 ---
 
-## Overview
+## overview
 
 This document provides a comprehensive testing plan for the OAuth authentication migration that eliminates service account credentials from the owlette agent.
 
@@ -28,9 +28,9 @@ This document provides a comprehensive testing plan for the OAuth authentication
 
 ---
 
-## Pre-Testing Setup
+## pre-testing setup
 
-### 1. Deploy Firestore Security Rules
+### 1. deploy firestore security rules
 
 **Firebase Console Method:**
 1. Go to [Firebase Console](https://console.firebase.google.com/)
@@ -53,7 +53,7 @@ firebase firestore:rules --project owlette-dev-3838a
 
 ---
 
-### 2. Configure Web Backend Environment Variables
+### 2. configure web backend environment variables
 
 **Railway (Development):**
 
@@ -87,7 +87,7 @@ Should return: `{"registrationCode": "...", "expiresAt": "...", "siteId": "..."}
 
 ---
 
-### 3. Rebuild Agent Installer
+### 3. rebuild agent installer
 
 **Prerequisites:**
 - Inno Setup 6.x installed
@@ -129,9 +129,9 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 
 ---
 
-## Testing Checklist
+## testing checklist
 
-### Phase 1: Fresh Installation (OAuth Flow)
+### phase 1: fresh installation (oauth flow)
 
 **Test Environment:**
 - Clean Windows 10/11 machine (VM recommended)
@@ -208,7 +208,7 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 
 ---
 
-### Phase 2: Token Refresh (Long-Running Test)
+### phase 2: token refresh (long-running test)
 
 **Purpose:** Verify automatic token refresh after access token expires (1 hour).
 
@@ -238,7 +238,7 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 
 ---
 
-### Phase 3: Machine Removal (Token Revocation)
+### phase 3: machine removal (token revocation)
 
 **Purpose:** Verify token revocation when machine is removed from dashboard.
 
@@ -279,7 +279,7 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 
 ---
 
-### Phase 4: Offline Mode & Reconnection
+### phase 4: offline mode & reconnection
 
 **Purpose:** Verify agent works offline and reconnects when network restored.
 
@@ -315,7 +315,7 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 
 ---
 
-### Phase 5: Upgrade from Old Version
+### phase 5: upgrade from old version
 
 **Purpose:** Verify migration from service account auth to OAuth auth.
 
@@ -353,9 +353,9 @@ dir build\installer_package\agent\src\firestore_rest_client.py
 
 ---
 
-## Security Audit
+## security audit
 
-### 1. Secret Scanning
+### 1. secret scanning
 
 **Scan codebase for leaked secrets:**
 
@@ -378,7 +378,7 @@ type security-scan.json | findstr "verified"
 
 ---
 
-### 2. Build Artifact Verification
+### 2. build artifact verification
 
 **Verify installer contains no secrets:**
 
@@ -400,7 +400,7 @@ findstr /S /I "service_account" *.json
 
 ---
 
-### 3. Token Storage Verification
+### 3. token storage verification
 
 **Verify tokens are encrypted:**
 
@@ -424,7 +424,7 @@ type C:\Users\%USERNAME%\AppData\Local\Microsoft\Credentials\*
 
 ---
 
-### 4. Firestore Security Rules Testing
+### 4. firestore security rules testing
 
 **Test rule enforcement via Firebase Console Rules Playground:**
 
@@ -460,9 +460,9 @@ type C:\Users\%USERNAME%\AppData\Local\Microsoft\Credentials\*
 
 ---
 
-## Performance Testing
+## performance testing
 
-### 1. Token Refresh Overhead
+### 1. token refresh overhead
 
 **Measure impact of REST API vs Admin SDK:**
 
@@ -485,7 +485,7 @@ logger.debug(f"Firestore operation took {elapsed*1000:.2f}ms")
 
 ---
 
-### 2. Memory Usage
+### 2. memory usage
 
 **Monitor agent memory consumption:**
 
@@ -503,11 +503,11 @@ tasklist /FI "IMAGENAME eq python.exe" /FO TABLE
 
 ---
 
-## Rollback Plan
+## rollback plan
 
 If critical issues are found:
 
-### Quick Rollback (Emergency)
+### quick rollback (emergency)
 
 1. **Revert Firestore Rules:**
    ```bash
@@ -527,7 +527,7 @@ If critical issues are found:
 
 ---
 
-### Full Rollback (Code Revert)
+### full rollback (code revert)
 
 ```bash
 # Revert all OAuth changes
@@ -542,9 +542,9 @@ build.bat
 
 ---
 
-## Known Issues & Workarounds
+## known issues & workarounds
 
-### Issue 1: Port 8765 Already in Use
+### issue 1: port 8765 already in use
 
 **Symptom:** OAuth callback server fails to start during installation.
 
@@ -554,7 +554,7 @@ build.bat
 
 ---
 
-### Issue 2: Browser Doesn't Open
+### issue 2: browser doesn't open
 
 **Symptom:** Browser doesn't open automatically during OAuth flow.
 
@@ -565,7 +565,7 @@ build.bat
 
 ---
 
-### Issue 3: Token Refresh Fails After 30 Days
+### issue 3: token refresh fails after 30 days
 
 **Symptom:** Agent stops syncing after 30 days (refresh token expired).
 
@@ -577,7 +577,7 @@ build.bat
 
 ---
 
-## Success Criteria
+## success criteria
 
 **All tests must pass before production deployment:**
 
@@ -595,7 +595,7 @@ build.bat
 
 ---
 
-## Sign-Off
+## sign-off
 
 **Before deploying to production:**
 

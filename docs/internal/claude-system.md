@@ -1,4 +1,4 @@
-# Claude Code Advanced Workflows - Implementation Guide
+# claude code advanced workflows - implementation guide
 
 **Version**: 1.0.0
 **Created**: 2025-01-31
@@ -8,7 +8,7 @@ This document explains the advanced Claude Code workflow system implemented for 
 
 ---
 
-## Table of Contents
+## table of contents
 
 1. [What Was Implemented](#what-was-implemented)
 2. [How It Works](#how-it-works)
@@ -24,9 +24,9 @@ This document explains the advanced Claude Code workflow system implemented for 
 
 ---
 
-## What Was Implemented
+## what was implemented
 
-### Core Infrastructure
+### core infrastructure
 
 ```
 .claude/
@@ -55,7 +55,7 @@ This document explains the advanced Claude Code workflow system implemented for 
     └── code-architecture-reviewer.md   # Code reviews
 ```
 
-### Supporting Infrastructure
+### supporting infrastructure
 
 ```
 dev/                              # Development task tracking
@@ -66,9 +66,9 @@ dev/                              # Development task tracking
 
 ---
 
-## How It Works
+## how it works
 
-### The Magic: Skills Auto-Activation
+### the magic: skills auto-activation
 
 The system's core innovation is **automatic skill activation**:
 
@@ -81,7 +81,7 @@ The system's core innovation is **automatic skill activation**:
 
 **Without the hook, skills sit unused.** The hook is the critical piece that makes everything work.
 
-### The Safety Net: Build Checking
+### the safety net: build checking
 
 After Claude finishes responding:
 
@@ -93,7 +93,7 @@ After Claude finishes responding:
 
 **Result**: Zero errors left behind. You catch issues immediately.
 
-### The Memory: Dev Docs Workflow
+### the memory: dev docs workflow
 
 For large features that survive context compaction:
 
@@ -107,9 +107,9 @@ For large features that survive context compaction:
 
 ---
 
-## Getting Started
+## getting started
 
-### Step 1: Verify Installation
+### step 1: verify installation
 
 Check that all files are in place:
 
@@ -126,7 +126,7 @@ ls .claude/
 # agents/
 ```
 
-### Step 2: Test Skills Auto-Activation
+### step 2: test skills auto-activation
 
 **In Claude Code, try this prompt:**
 
@@ -144,7 +144,7 @@ Create a new React component called TestComponent that displays "Hello World"
 - Check that `skill-rules.json` exists and is valid JSON
 - Restart Claude Code to reload hooks
 
-### Step 3: Test Build Checker
+### step 3: test build checker
 
 **Make a deliberate TypeScript error:**
 
@@ -163,7 +163,7 @@ Check for build errors
 - TypeScript error should be detected
 - Error should be displayed with file and line number
 
-### Step 4: Test Dev Docs Workflow
+### step 4: test dev docs workflow
 
 **Enter plan mode and ask:**
 ```
@@ -184,9 +184,9 @@ Plan a new feature to add a settings page
 
 ---
 
-## Daily Workflows
+## daily workflows
 
-### Starting Your Day
+### starting your day
 
 1. **Check active tasks:**
    ```bash
@@ -203,12 +203,12 @@ Plan a new feature to add a settings page
    Let's plan out [feature name]
    ```
 
-### During Development
+### during development
 
-#### Small Changes (< 3 files)
+#### small changes (< 3 files)
 Just make the changes. Skills auto-activate. Build checker catches errors.
 
-#### Large Features (multi-file, multi-session)
+#### large features (multi-file, multi-session)
 1. Enter plan mode
 2. Use `/dev-docs` to create plan
 3. Review and approve plan
@@ -219,7 +219,7 @@ Just make the changes. Skills auto-activate. Build checker catches errors.
 8. Compact conversation
 9. Continue in fresh session
 
-### Before Committing Code
+### before committing code
 
 Run a code review:
 
@@ -234,7 +234,7 @@ Launch code-architecture-reviewer agent to review my recent changes
 
 Fix any issues found before committing.
 
-### When Build Errors Accumulate
+### when build errors accumulate
 
 If you suspect errors have accumulated:
 
@@ -246,9 +246,9 @@ Claude will build both repos and systematically fix all errors.
 
 ---
 
-## Skills System
+## skills system
 
-### Available Skills
+### available skills
 
 | Skill | Triggers | Purpose |
 |-------|----------|---------|
@@ -256,7 +256,7 @@ Claude will build both repos and systematically fix all errors.
 | **backend-dev-guidelines** | `.py` files, "python", "agent", "service" | Python Windows service, psutil, Firebase Admin SDK |
 | **firebase-integration** | Firebase imports, "firestore", "auth" | Firestore CRUD, real-time listeners, Auth flows |
 
-### How Skills Activate
+### how skills activate
 
 **Automatic** (via hook):
 - Keywords in your prompt
@@ -268,7 +268,7 @@ Claude will build both repos and systematically fix all errors.
 Make sure to follow frontend-dev-guidelines skill
 ```
 
-### Adding New Skills
+### adding new skills
 
 1. Create `skills/[skill-name].md`
 2. Keep main file < 500 lines
@@ -301,9 +301,9 @@ Make sure to follow frontend-dev-guidelines skill
 
 ---
 
-## Hooks System
+## hooks system
 
-### user-prompt-submit Hook
+### user-prompt-submit hook
 
 **Purpose**: Make skills auto-activate
 
@@ -324,7 +324,7 @@ Make sure to follow frontend-dev-guidelines skill
 - Add file path patterns
 - Adjust priority levels
 
-### stop Hook
+### stop hook
 
 **Purpose**: Catch build errors and remind about error handling
 
@@ -343,7 +343,7 @@ Make sure to follow frontend-dev-guidelines skill
 - Add new risky patterns (lines 187-220)
 - Adjust error thresholds (line 268)
 
-### Adding New Hooks
+### adding new hooks
 
 Claude Code supports several hook types:
 - `user-prompt-submit` - Before Claude sees prompt
@@ -362,9 +362,9 @@ export async function run(input: any): Promise<any> {
 
 ---
 
-## Dev Docs Workflow
+## dev docs workflow
 
-### When to Use
+### when to use
 
 ✅ **Use dev docs for**:
 - Multi-file features spanning web + agent
@@ -377,7 +377,7 @@ export async function run(input: any): Promise<any> {
 - Documentation updates
 - Minor styling fixes
 
-### The Three Files
+### the three files
 
 Every task gets three files:
 
@@ -402,7 +402,7 @@ st of work
    - Documentation tasks
    - Progress notes
 
-### Workflow Steps
+### workflow steps
 
 ```
 ┌─────────────────────────────────────────┐
@@ -438,7 +438,7 @@ st of work
 └─────────────────────────────────────────┘
 ```
 
-### Tips for Effective Dev Docs
+### tips for effective dev docs
 
 **Plans:**
 - Be thorough - think of everything
@@ -458,7 +458,7 @@ st of work
 
 ---
 
-## Slash Commands
+## slash commands
 
 ### /dev-docs
 
@@ -543,7 +543,7 @@ When running low on context:
 
 ---
 
-## Specialized Agents
+## specialized agents
 
 ### strategic-plan-architect
 
@@ -614,9 +614,9 @@ Launch code-architecture-reviewer agent to review my recent changes
 
 ---
 
-## Troubleshooting
+## troubleshooting
 
-### Skills Not Auto-Activating
+### skills not auto-activating
 
 **Symptoms**: Claude doesn't reference skills, doesn't follow patterns
 
@@ -635,7 +635,7 @@ console.log('Activated skills:', topMatches.map(m => m.skillName))
 
 ---
 
-### Build Checker Not Running
+### build checker not running
 
 **Symptoms**: No build errors shown after editing files
 
@@ -653,7 +653,7 @@ console.log('Activated skills:', topMatches.map(m => m.skillName))
 
 ---
 
-### Dev Docs Workflow Broken
+### dev docs workflow broken
 
 **Symptoms**: Commands not found, files not created
 
@@ -670,7 +670,7 @@ console.log('Activated skills:', topMatches.map(m => m.skillName))
 
 ---
 
-### Slash Commands Not Working
+### slash commands not working
 
 **Symptoms**: `/command` doesn't expand
 
@@ -682,9 +682,9 @@ console.log('Activated skills:', topMatches.map(m => m.skillName))
 
 ---
 
-## Next Steps
+## next steps
 
-### Phase 1: Core Testing (Now)
+### phase 1: core testing (now)
 
 - [ ] Test skills auto-activation with various prompts
 - [ ] Test build checker by introducing deliberate errors
@@ -692,7 +692,7 @@ console.log('Activated skills:', topMatches.map(m => m.skillName))
 - [ ] Launch agents and review their output
 - [ ] Verify slash commands work correctly
 
-### Phase 2: Enhancements (Week 2)
+### phase 2: enhancements (week 2)
 
 - [ ] Create resource files for detailed skill content
 - [ ] Add testing-guidelines skill
@@ -700,7 +700,7 @@ console.log('Activated skills:', topMatches.map(m => m.skillName))
 - [ ] Create additional agents (build-error-resolver, test-architect)
 - [ ] Add more slash commands as needed
 
-### Phase 3: Testing Infrastructure (Week 3-4)
+### phase 3: testing infrastructure (week 3-4)
 
 - [ ] Set up Jest + React Testing Library (web)
 - [ ] Set up pytest (agent)
@@ -708,14 +708,14 @@ console.log('Activated skills:', topMatches.map(m => m.skillName))
 - [ ] Write first batch of tests
 - [ ] Create test-related skills/commands
 
-### Phase 4: CI/CD Automation (Week 4-5)
+### phase 4: ci/cd automation (week 4-5)
 
 - [ ] Create GitHub Actions workflows
 - [ ] Automated testing on PRs
 - [ ] Build verification
 - [ ] Deployment automation
 
-### Phase 5: Refinement & Templates (Ongoing)
+### phase 5: refinement & templates (ongoing)
 
 - [ ] Extract reusable templates from owlette setup
 - [ ] Document learnings and best practices
@@ -724,18 +724,18 @@ console.log('Activated skills:', topMatches.map(m => m.skillName))
 
 ---
 
-## Reusability
+## reusability
 
 This `.claude/` infrastructure is designed to be **highly reusable** across projects.
 
-### Project-Specific Customization
+### project-specific customization
 
 Each project should customize:
 - **CLAUDE.md** - Project overview, tech stack, commands
 - **skill-rules.json** - Activation keywords and patterns
 - **Project-specific skills** - Unique domain skills
 
-### Shared Across All Projects
+### shared across all projects
 
 These can be reused as-is:
 - **Hook templates** (`user-prompt-submit.ts`, `stop.ts`)
@@ -743,7 +743,7 @@ These can be reused as-is:
 - **Generic agents** (`strategic-plan-architect`, `code-architecture-reviewer`)
 - **skill-developer** meta-skill
 
-### Template Repository Strategy
+### template repository strategy
 
 Consider creating `.claude-templates/` directory:
 ```
@@ -764,23 +764,23 @@ Copy templates to new projects and customize for that project's needs.
 
 ---
 
-## Metrics & Success Criteria
+## metrics & success criteria
 
-### Quality Improvements
+### quality improvements
 
 ✅ **Zero errors left behind** - Build checker catches all TypeScript/Python errors
 ✅ **Consistent code patterns** - Skills auto-activate and guide implementation
 ✅ **Comprehensive reviews** - Agents review code before human review
 ✅ **Test coverage** - Test-related workflows ensure adequate testing
 
-### Productivity Gains
+### productivity gains
 
 ✅ **Planning time reduced** - Agents create comprehensive plans quickly
 ✅ **Context loss eliminated** - Dev docs survive compaction
 ✅ **Debugging faster** - Build checker catches errors immediately
 ✅ **Repetitive tasks automated** - Slash commands reduce typing
 
-### Developer Experience
+### developer experience
 
 ✅ **Claude "remembers"** - Skills provide consistent guidance
 ✅ **No manual log copying** - Hooks automate error checking
@@ -789,7 +789,7 @@ Copy templates to new projects and customize for that project's needs.
 
 ---
 
-## Credits
+## credits
 
 This implementation is based on methodologies shared in the blog post "Claude Code is a Beast – Tips from 6 Months of Hardcore Use" by u/diet103 on Reddit (January 2025).
 
@@ -808,16 +808,16 @@ Key concepts adapted:
 
 ---
 
-## Support
+## support
 
-### Getting Help
+### getting help
 
 1. **Read this guide first** - Most questions are answered here
 2. **Check troubleshooting section** - Common issues and fixes
 3. **Review CLAUDE.md** - Project-specific context
 4. **Check individual skill files** - Detailed patterns and examples
 
-### Reporting Issues
+### reporting issues
 
 If you encounter bugs or have suggestions:
 1. Check if it's a known issue in troubleshooting
@@ -826,7 +826,7 @@ If you encounter bugs or have suggestions:
 4. Document steps to reproduce
 5. Consider if it's Claude Code or our implementation
 
-### Contributing
+### contributing
 
 To improve this system:
 1. Create new skills following skill-developer guidelines

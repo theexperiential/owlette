@@ -1,4 +1,4 @@
-# Process Monitoring
+# process monitoring
 
 The agent monitors configured processes every 5 seconds, detecting crashes, stalls, and exits. When a process goes down, the agent automatically restarts it (if autolaunch is enabled).
 

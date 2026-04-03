@@ -1,18 +1,18 @@
-# Configuration
+# configuration
 
 The agent can be configured locally via the GUI, remotely from the web dashboard, or by editing `config.json` directly. Changes from any source sync to all others within ~1-2 seconds.
 
 ---
 
-## Configuration GUI
+## configuration gui
 
 The GUI is a CustomTkinter application that runs as a separate process from the service. Launch it from:
 
 - **System tray** → Right-click → "Open GUI"
 - **Start Menu** → owlette
-- **Directly**: `C:\ProgramData\owlette\python\pythonw.exe C:\ProgramData\owlette\agent\src\owlette_gui.py`
+- **Directly**: `C:\ProgramData\Owlette\python\pythonw.exe C:\ProgramData\Owlette\agent\src\owlette_gui.py`
 
-### GUI Features
+### gui features
 
 | Section | Controls |
 |---------|----------|
@@ -25,9 +25,9 @@ The GUI is a CustomTkinter application that runs as a separate process from the 
 
 ## config.json
 
-The configuration file is stored at `C:\ProgramData\owlette\agent\config\config.json`.
+The configuration file is stored at `C:\ProgramData\Owlette\agent\config\config.json`.
 
-### Top-Level Structure
+### top-level structure
 
 ```json
 {
@@ -47,7 +47,7 @@ The configuration file is stored at `C:\ProgramData\owlette\agent\config\config.
 }
 ```
 
-### Configuration Fields
+### configuration fields
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -63,7 +63,7 @@ The configuration file is stored at `C:\ProgramData\owlette\agent\config\config.
 
 ---
 
-## Process Configuration
+## process configuration
 
 Each process in the `processes` array has these settings:
 
@@ -82,7 +82,7 @@ Each process in the `processes` array has these settings:
 }
 ```
 
-### Process Fields
+### process fields
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -97,7 +97,7 @@ Each process in the `processes` array has these settings:
 | `init_time` | number | `10` | Seconds to wait after launch before monitoring responsiveness |
 | `relaunch_attempts` | number | `5` | Max restart attempts before prompting for system reboot |
 
-### Priority Options
+### priority options
 
 | Value | Description |
 |-------|-------------|
@@ -108,7 +108,7 @@ Each process in the `processes` array has these settings:
 | `"High"` | High priority — use with caution |
 | `"Realtime"` | Highest priority — can starve other processes |
 
-### Visibility Options
+### visibility options
 
 | Value | Description |
 |-------|-------------|
@@ -117,7 +117,7 @@ Each process in the `processes` array has these settings:
 
 ---
 
-## Web-Based Configuration
+## web-based configuration
 
 From the dashboard, you can edit process settings remotely:
 
@@ -130,7 +130,7 @@ Changes propagate through Firestore to the agent within ~1-2 seconds. The agent 
 
 ---
 
-## Configuration Sync
+## configuration sync
 
 ```
                     ┌─────────────────┐

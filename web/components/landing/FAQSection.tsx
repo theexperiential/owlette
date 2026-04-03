@@ -23,7 +23,7 @@ const faqs: { q: string; a: React.ReactNode }[] = [
   },
   {
     q: "do i need to open firewall ports or set up a vpn?",
-    a: "no. agents connect outbound — no inbound ports, no vpn, no network config changes. if your machine can reach the internet, it works.",
+    a: "no inbound ports, no vpn. agents connect outbound over https (port 443) to google's firebase infrastructure. if your network allows general internet access, it just works. locked-down environments may need to whitelist *.googleapis.com and *.firebaseio.com.",
   },
   {
     q: "how fast does auto-recovery happen?",

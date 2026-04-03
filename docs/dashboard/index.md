@@ -1,4 +1,4 @@
-# Dashboard
+# dashboard
 
 The owlette web dashboard is a Next.js application that provides real-time monitoring and remote control of all your machines. Access it from any browser — desktop, tablet, or mobile.
 

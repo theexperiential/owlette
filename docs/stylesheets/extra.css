@@ -96,6 +96,30 @@
   background-color: #141e3580;
 }
 
+/* Active tab indicator */
+.md-tabs__item--active .md-tabs__link,
+.md-tabs__link:hover {
+  color: #22c3d6 !important;
+}
+
+.md-tabs__item--active .md-tabs__link::after {
+  content: '';
+  display: block;
+  height: 2px;
+  background: #22c3d6;
+  border-radius: 1px;
+  margin-top: 2px;
+}
+
+/* Lowercase nav + search chrome */
+.md-tabs__link,
+.md-nav__link,
+.md-nav__title,
+.md-header__title,
+.md-search__input::placeholder {
+  text-transform: lowercase;
+}
+
 /* Scrollbar — matches web app's blue-tinted scrollbars */
 [data-md-color-scheme="slate"] ::-webkit-scrollbar {
   width: 8px;

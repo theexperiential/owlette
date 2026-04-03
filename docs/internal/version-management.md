@@ -1,10 +1,10 @@
-# Version Management Guide
+# version management guide
 
-## Overview
+## overview
 
 owlette uses **independent component versioning** for flexibility while maintaining a unified product version.
 
-## Version Files
+## version files
 
 | File | Purpose | Scope |
 |------|---------|-------|
