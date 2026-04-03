@@ -8,7 +8,7 @@ owlette uses a serverless, event-driven architecture where all communication flo
 
 ```mermaid
 flowchart LR
-    Agents["Agents\n(Windows Machines)"]
+    Agents["Desktop Services\n(Agents)"]
     FS[("Cloud Firestore\nReal-time NoSQL")]
     Dashboard["Web Dashboard\n(Next.js)"]
     Auth["Firebase Auth"]
@@ -71,7 +71,7 @@ There are no Cloud Functions or custom backend servers — the web dashboard's N
 
 ```mermaid
 flowchart LR
-    Agent["Agent"]
+    Agent["Desktop Service\n(Agent)"]
     FS[("Firestore")]
     Dashboard["Dashboard"]
 
@@ -86,7 +86,7 @@ flowchart LR
 flowchart LR
     Dashboard["Dashboard"]
     FS[("Firestore")]
-    Agent["Agent"]
+    Agent["Desktop Service\n(Agent)"]
 
     Dashboard -->|"1. write command\nto pending"| FS
     FS -->|"2. listener\ndetects"| Agent
@@ -98,7 +98,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    GUI["Tray Icon /\nDesktop GUI"] -->|"1. write"| FS[("Firestore")]
+    GUI["Tray Icon /\nGUI (Agent)"] -->|"1. write"| FS[("Firestore")]
     FS -->|"2. onSnapshot"| Dashboard["Dashboard"]
     Dashboard -->|"3. write"| FS
     FS -->|"4. listener"| Agent["Agent"]
