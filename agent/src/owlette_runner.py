@@ -104,6 +104,8 @@ if __name__ == '__main__':
     # Create a minimal mock service object with just what main() needs
     class MockService:
         def __init__(self):
+            self._service_start_time = time.time()
+
             # Initialize results file if it doesn't exist
             import os
             if not os.path.exists(shared_utils.RESULT_FILE_PATH):
