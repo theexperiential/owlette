@@ -12,7 +12,7 @@ Navigate to **Logs** from the dashboard menu, or go directly to `/logs`.
 
 ## event types
 
-| Action | Level | Description |
+| action | level | description |
 |--------|-------|-------------|
 | `process_started` | Info | A configured process was launched |
 | `process_start_failed` | Error | A process failed to start |
@@ -29,7 +29,7 @@ Navigate to **Logs** from the dashboard menu, or go directly to `/logs`.
 
 Filter logs by:
 
-| Filter | Options |
+| filter | options |
 |--------|---------|
 | **Action** | Any event type from the list above |
 | **Machine** | Specific machine name |
@@ -41,7 +41,7 @@ Filter logs by:
 
 Each log entry shows:
 
-| Field | Description |
+| field | description |
 |-------|-------------|
 | **Timestamp** | When the event occurred |
 | **Action** | Event type (color-coded badge) |

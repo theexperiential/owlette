@@ -19,7 +19,7 @@ The icon is pure white with a grey background, designed for visibility in both l
 
 Right-clicking the tray icon shows:
 
-| Menu Item | Description |
+| menu item | description |
 |-----------|-------------|
 | **Service: Running/Stopped** | Current service status (read-only) |
 | **Firebase: Connected/Disconnected** | Current cloud connection status (read-only) |

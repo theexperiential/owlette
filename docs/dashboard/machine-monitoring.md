@@ -10,7 +10,7 @@ The dashboard provides real-time visibility into all your machines' health, perf
 
 The agent sends a **heartbeat** to Firestore at an adaptive interval — every 5 seconds when the system tray is open, 30 seconds when processes are running, or 120 seconds when idle. The dashboard considers a machine:
 
-| Status | Condition | Indicator |
+| status | condition | indicator |
 |--------|-----------|-----------|
 | **Online** | Heartbeat within last 3 minutes | Green dot |
 | **Offline** | No heartbeat for 3+ minutes | Red/grey dot |
@@ -26,7 +26,7 @@ Each machine shows a "last seen" timestamp. For offline machines, this tells you
 
 Metrics are reported by the agent alongside each heartbeat (see adaptive interval above):
 
-| Metric | Range | Source |
+| metric | range | source |
 |--------|-------|--------|
 | **CPU** | 0-100% | Overall CPU utilization |
 | **Memory** | 0-100% | RAM usage percentage |
@@ -37,7 +37,7 @@ Metrics are reported by the agent alongside each heartbeat (see adaptive interva
 
 Metrics use traffic-light colors:
 
-| Color | Threshold | Meaning |
+| color | threshold | meaning |
 |-------|-----------|---------|
 | Green | 0-60% | Healthy |
 | Yellow | 60-80% | Warning |
@@ -86,7 +86,7 @@ Click on a machine to view detailed historical metrics:
 
 ### time ranges
 
-| Range | Resolution | Data Points |
+| range | resolution | data points |
 |-------|-----------|-------------|
 | **24 hours** | 1 minute | ~1,440 points |
 | **7 days** | 15 minutes | ~672 points |
@@ -109,7 +109,7 @@ Hover over data points for exact values and timestamps.
 
 Each machine card shows its configured processes with status badges:
 
-| Badge | State | Meaning |
+| badge | state | meaning |
 |-------|-------|---------|
 | Green | RUNNING | Process is alive and responding |
 | Yellow | STALLED | Process exists but not responding |
@@ -125,7 +125,7 @@ Click a process to open the [Process Dialog](process-management.md) for manageme
 
 Each machine reports additional details:
 
-| Field | Description |
+| field | description |
 |-------|-------------|
 | **Hostname** | Windows computer name (used as machine ID) |
 | **OS** | Windows version (e.g., "Windows 11 Pro 10.0.22631") |

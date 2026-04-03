@@ -121,7 +121,10 @@ nav:
     - environment variables: setup/environment-variables.md
     - firestore data model: reference/firestore-data-model.md
 
+copyright: built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">AGPL-3.0</a>
+
 extra:
+  generator: false
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/theexperiential/owlette

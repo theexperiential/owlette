@@ -46,7 +46,7 @@ Expected output:
 
 ### key functions
 
-| Function | Purpose |
+| function | purpose |
 |----------|---------|
 | `isAuthenticated()` | User has a valid Firebase Auth token |
 | `isAdmin()` | User's role is "admin" in Firestore |
@@ -57,7 +57,7 @@ Expected output:
 
 ### access matrix
 
-| Collection | User | Admin | Agent |
+| collection | user | admin | agent |
 |-----------|------|-------|-------|
 | `sites/{siteId}/**` | Read if site in `sites[]` | Read/Write all | Read/Write own machine only |
 | `config/{siteId}/**` | Read if site access | Read/Write | Read/Write own machine |

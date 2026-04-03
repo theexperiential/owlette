@@ -106,7 +106,7 @@ firebase deploy --only firestore:indexes
 
 owlette enforces site-based access at the Firestore security rules level:
 
-| Role | Access |
+| role | access |
 |------|--------|
 | **Site creators** | Automatically assigned as owner with full access |
 | **Regular users** | Can only access sites in their `sites` array |

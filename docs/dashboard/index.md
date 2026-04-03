@@ -6,7 +6,7 @@ The owlette web dashboard is a Next.js application that provides real-time monit
 
 ## pages
 
-| Page | URL | Description |
+| page | url | description |
 |------|-----|-------------|
 | **Landing** | `/` | Marketing page with features overview |
 | **Demo** | `/demo` | Interactive dashboard demo (no login required) |

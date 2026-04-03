@@ -28,7 +28,7 @@ owlette generates an **HMAC-SHA256 signing secret** — save this to verify webh
 
 ## event types
 
-| Event | Description |
+| event | description |
 |-------|-------------|
 | `process.crashed` | A configured process exited unexpectedly |
 | `machine.offline` | A machine's heartbeat went stale (3+ minutes) |
@@ -93,7 +93,7 @@ function verifyWebhook(body, signature, secret) {
 
 ## managing webhooks
 
-| Action | Description |
+| action | description |
 |--------|-------------|
 | **Enable/Disable** | Toggle a webhook on or off without deleting |
 | **Delete** | Remove a webhook permanently |
@@ -111,7 +111,7 @@ To re-enable: fix the endpoint, then toggle the webhook back on.
 
 ## webhook vs email alerts
 
-| | Email Alerts | Webhooks |
+| | email alerts | webhooks |
 |---|---|---|
 | **Setup** | Built-in, Resend API key only | Custom endpoint required |
 | **Speed** | 1-2 minutes | Near-instant |

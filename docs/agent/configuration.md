@@ -14,7 +14,7 @@ The GUI is a CustomTkinter application that runs as a separate process from the 
 
 ### gui features
 
-| Section | Controls |
+| section | controls |
 |---------|----------|
 | **Site Connection** | Join/Leave site, connection status, site ID |
 | **Processes** | Add, edit, remove monitored processes |
@@ -49,7 +49,7 @@ The configuration file is stored at `C:\ProgramData\Owlette\agent\config\config.
 
 ### configuration fields
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `version` | string | Config schema version (auto-upgraded) |
 | `environment` | string | `"production"` (owlette.app) or `"development"` (dev.owlette.app) |
@@ -84,7 +84,7 @@ Each process in the `processes` array has these settings:
 
 ### process fields
 
-| Field | Type | Default | Description |
+| field | type | default | description |
 |-------|------|---------|-------------|
 | `name` | string | required | Display name for the process |
 | `exe_path` | string | required | Full path to the executable |
@@ -99,7 +99,7 @@ Each process in the `processes` array has these settings:
 
 ### priority options
 
-| Value | Description |
+| value | description |
 |-------|-------------|
 | `"Idle"` | Lowest priority — only runs when CPU is idle |
 | `"Below Normal"` | Lower than normal |
@@ -110,7 +110,7 @@ Each process in the `processes` array has these settings:
 
 ### visibility options
 
-| Value | Description |
+| value | description |
 |-------|-------------|
 | `"Normal"` | Standard visible window |
 | `"Hidden"` | No visible window (uses VBScript wrapper for console apps) |

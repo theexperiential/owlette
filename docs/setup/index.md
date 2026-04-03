@@ -15,7 +15,7 @@ owlette is available as a hosted service at [owlette.app](https://owlette.app) â
 
 ## what you'll need
 
-| Requirement | Purpose |
+| requirement | purpose |
 |-------------|---------|
 | **Firebase account** | Database and authentication backend (free tier works) |
 | **Railway account** (or any Node.js host) | Web dashboard hosting |

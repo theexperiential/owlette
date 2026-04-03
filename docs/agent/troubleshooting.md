@@ -6,7 +6,7 @@ Common issues and how to resolve them.
 
 ## log locations
 
-| Log | Path | Contents |
+| log | path | contents |
 |-----|------|----------|
 | **Service** | `C:\ProgramData\Owlette\logs\service.log` | Main service operations, Firebase sync, command execution |
 | **GUI** | `C:\ProgramData\Owlette\logs\gui.log` | Configuration GUI operations |
@@ -120,7 +120,7 @@ python owlette_service.py debug
 
 The agent's connection to Firestore follows a state machine. Check `service.log` for the current state:
 
-| State | Meaning | Action |
+| state | meaning | action |
 |-------|---------|--------|
 | `DISCONNECTED` | No connection, not trying | Will attempt on next cycle |
 | `CONNECTING` | Actively establishing connection | Wait |

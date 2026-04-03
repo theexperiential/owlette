@@ -13,29 +13,29 @@ owlette is three things working together:
 
 <div class="grid cards" markdown>
 
--   :material-monitor-dashboard:{ .lg .middle } **Agent** — Process Guardian
+-   :material-monitor-dashboard:{ .lg .middle } **agent** — process guardian
 
     ---
 
     A lightweight Windows service that monitors your processes every 5 seconds, auto-restarts crashed applications, collects system metrics, and syncs everything to the cloud. Configure locally via GUI or remotely from the web.
 
-    [:octicons-arrow-right-24: Learn about the agent](agent/index.md)
+    [:octicons-arrow-right-24: learn about the agent](agent/index.md)
 
--   :material-web:{ .lg .middle } **Dashboard** — Remote Control
+-   :material-web:{ .lg .middle } **dashboard** — remote control
 
     ---
 
     A real-time web dashboard for monitoring machines, managing processes, deploying software, and distributing project files across your entire fleet. Built with Next.js and Firebase for instant updates.
 
-    [:octicons-arrow-right-24: Explore the dashboard](dashboard/index.md)
+    [:octicons-arrow-right-24: explore the dashboard](dashboard/index.md)
 
--   :material-robot:{ .lg .middle } **Cortex** — AI Assistant
+-   :material-brain:{ .lg .middle } **cortex** — ai assistant
 
     ---
 
     An AI-powered chat interface that connects to your machines through natural language. Query system info, restart processes, capture screenshots, and troubleshoot issues — all through conversation with 29 specialized tools. Autonomous mode auto-investigates crashes without human intervention.
 
-    [:octicons-arrow-right-24: Meet Cortex](dashboard/cortex.md)
+    [:octicons-arrow-right-24: meet cortex](dashboard/cortex.md)
 
 </div>
 
@@ -43,7 +43,7 @@ owlette is three things working together:
 
 ## what you can do
 
-| | Capability | Description |
+| | capability | description |
 |---|-----------|-------------|
 | :material-restart: | **Auto-restart crashed processes** | Agent detects crashes within 10 seconds and restarts applications automatically |
 | :material-monitor: | **Monitor machines remotely** | Real-time CPU, memory, disk, and GPU metrics from any browser |
@@ -59,7 +59,7 @@ owlette is three things working together:
 
 ## key features
 
-| | Feature | Description |
+| | feature | description |
 |---|---------|-------------|
 | :material-sync: | **Real-Time Sync** | Bidirectional Firestore sync between agents, dashboard, and GUI — changes propagate in ~1-2 seconds |
 | :material-shield-lock: | **OAuth Security** | Two-token agent authentication with automatic refresh, encrypted storage, and machine-scoped access |
@@ -91,7 +91,7 @@ owlette is three things working together:
 4. **Add processes** — Tell owlette which applications to monitor
 5. **Start managing** — Your machines appear in the dashboard within seconds
 
-[:octicons-arrow-right-24: Full getting started guide](getting-started.md)
+[:octicons-arrow-right-24: full getting started guide](getting-started.md)
 
 !!! info "Want to self-host?"
     You can run your own owlette instance with your own Firebase project. See the [Self-Hosting](setup/index.md) guide.

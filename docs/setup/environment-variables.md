@@ -8,7 +8,7 @@ Complete reference for all environment variables used by the owlette web dashboa
 
 These are exposed to the browser (client-side). The `NEXT_PUBLIC_` prefix is required by Next.js.
 
-| Variable | Example | Source |
+| variable | example | source |
 |----------|---------|--------|
 | `NEXT_PUBLIC_FIREBASE_API_KEY` | `AIzaSy...` | Firebase Console → Project Settings → Web App |
 | `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | `my-project.firebaseapp.com` | Same |
@@ -26,7 +26,7 @@ These are exposed to the browser (client-side). The `NEXT_PUBLIC_` prefix is req
 
 Server-side only — used for generating agent OAuth tokens and verifying sessions. Use three separate variables (not a JSON blob).
 
-| Variable | Format | Source |
+| variable | format | source |
 |----------|--------|--------|
 | `FIREBASE_PROJECT_ID` | `my-project-id` | Firebase Console → Project Settings → General |
 | `FIREBASE_CLIENT_EMAIL` | `firebase-adminsdk-xxx@my-project.iam.gserviceaccount.com` | Firebase Console → Service Accounts → Generate Key |
@@ -39,7 +39,7 @@ Server-side only — used for generating agent OAuth tokens and verifying sessio
 
 ## session management (required)
 
-| Variable | Format | Description |
+| variable | format | description |
 |----------|--------|-------------|
 | `SESSION_SECRET` | 32+ character string | Encryption key for iron-session HTTPOnly cookies |
 | `MFA_ENCRYPTION_KEY` | 32+ character string | Encryption key for 2FA secrets stored in Firestore |
@@ -54,7 +54,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 ## email (required for alerts)
 
-| Variable | Description |
+| variable | description |
 |----------|-------------|
 | `RESEND_API_KEY` | API key from [Resend](https://resend.com) for sending emails |
 | `RESEND_FROM_EMAIL` | Verified sender address (e.g. `alerts@owlette.app`) |
@@ -68,7 +68,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 Owlette uses [Upstash](https://upstash.com) Redis for API rate limiting. Create a free Serverless Redis database and copy the REST connection details.
 
-| Variable | Description |
+| variable | description |
 |----------|-------------|
 | `UPSTASH_REDIS_REST_URL` | REST API URL for your Upstash Redis instance |
 | `UPSTASH_REDIS_REST_TOKEN` | Authentication token for Upstash Redis |
@@ -77,7 +77,7 @@ Owlette uses [Upstash](https://upstash.com) Redis for API rate limiting. Create 
 
 ## url configuration (required in production)
 
-| Variable | Description |
+| variable | description |
 |----------|-------------|
 | `NEXT_PUBLIC_BASE_URL` | Public base URL used in email links and agent callbacks (e.g. `https://owlette.app`) |
 | `RAILWAY_PUBLIC_DOMAIN` | Railway deployment domain — auto-injected by Railway, override if using a custom domain |
@@ -86,7 +86,7 @@ Owlette uses [Upstash](https://upstash.com) Redis for API rate limiting. Create 
 
 ## cron (required for health checks)
 
-| Variable | Description |
+| variable | description |
 |----------|-------------|
 | `CRON_SECRET` | Shared secret for authenticating cron health-check requests |
 
@@ -100,7 +100,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 ## encryption (required for llm keys)
 
-| Variable | Description |
+| variable | description |
 |----------|-------------|
 | `LLM_ENCRYPTION_KEY` | 32-byte hex key for encrypting stored LLM API keys |
 
@@ -114,7 +114,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 ## autonomous cortex (optional)
 
-| Variable | Description |
+| variable | description |
 |----------|-------------|
 | `CORTEX_INTERNAL_SECRET` | Shared secret for internal auth between alert route and autonomous Cortex endpoint |
 
@@ -130,7 +130,7 @@ Required only if you want autonomous Cortex (AI auto-investigates process crashe
 
 ## environment (auto-set)
 
-| Variable | Value | Set By |
+| variable | value | set by |
 |----------|-------|--------|
 | `NODE_ENV` | `production` | `railway.toml` |
 | `PORT` | `3000` | Railway (auto-injected) |

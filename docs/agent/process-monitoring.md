@@ -28,7 +28,7 @@ Every configured process is in one of five states:
 
 ### state definitions
 
-| State | Description | Dashboard Indicator |
+| state | description | dashboard indicator |
 |-------|-------------|---------------------|
 | **RUNNING** | Process is alive and responsive | Green |
 | **STALLED** | Process exists but is not responding (hang detected) | Yellow |
@@ -62,7 +62,7 @@ A process is considered crashed when:
 
 The agent uses a progressive approach to detect frozen applications:
 
-| Stage | Time | Action |
+| stage | time | action |
 |-------|------|--------|
 | **Detection** | 0-10s | `owlette_scout.py` sends `WM_NULL` to the process window |
 | **Wait** | 10-15s | If no response, wait for possible recovery |
@@ -139,7 +139,7 @@ Each process has a configurable `relaunch_attempts` limit (default: 5). When the
 
 At each heartbeat interval, the agent collects and reports (5s when the system tray is open, 30s when processes are active, 120s when idle):
 
-| Metric | Source | Description |
+| metric | source | description |
 |--------|--------|-------------|
 | **CPU** | `psutil.cpu_percent()` | Overall CPU usage percentage |
 | **Memory** | `psutil.virtual_memory()` | RAM usage percentage |

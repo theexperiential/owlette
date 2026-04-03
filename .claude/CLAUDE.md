@@ -79,11 +79,14 @@ Agents authenticate via a device code flow — no browser login on the target ma
 
 **Web**: Push to `dev`/`main` triggers Railway auto-deploy.
 
-**IMPORTANT: Always version up BEFORE building the installer.** Bump with `node scripts/sync-versions.js X.Y.Z` and commit BEFORE running `build_installer_full.bat` — the installer bakes the version into the exe filename and binary.
+**IMPORTANT: Always version up AND update the changelog BEFORE building the installer.** Bump with `node scripts/sync-versions.js X.Y.Z` and commit BEFORE running `build_installer_full.bat` — the installer bakes the version into the exe filename and binary.
+
+**IMPORTANT: `docs/changelog.md` MUST be updated before every installer build.** Add a new `## [X.Y.Z] - YYYY-MM-DD` section summarising all changes since the last release. Never build or upload an installer without a matching changelog entry.
 
 **Agent Installer Release** (build + upload to Firebase):
 ```bash
-# 1. Bump version, commit, push
+# 1. Update changelog, bump version, commit, push
+# Edit docs/changelog.md → add [X.Y.Z] section
 node scripts/sync-versions.js X.Y.Z
 git add -A && git commit -m "chore: bump version to X.Y.Z" && git push origin dev
 

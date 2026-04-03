@@ -6,7 +6,7 @@ Complete reference for all 29 tools available in Cortex, organized by tier.
 
 ## tier system
 
-| Tier | Type | Approval | Count |
+| tier | type | approval | count |
 |------|------|----------|-------|
 | **1** | Read-only | Auto-approved | 13 |
 | **2** | Process & machine management | Auto-approved | 5 |
@@ -22,7 +22,7 @@ Complete reference for all 29 tools available in Cortex, organized by tier.
 
 Get activity logs across all machines in the site. Useful for finding errors, crashes, and events across the fleet. **Server-side** — queries Firestore directly.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `level` | string | No | Filter: `error`, `warning`, `info` |
 | `hours` | number | No | Look back this many hours (default: 24) |
@@ -35,7 +35,7 @@ Get activity logs across all machines in the site. Useful for finding errors, cr
 
 Get comprehensive system information including hostname, OS (with correct Windows 10/11 detection), CPU model and usage, memory (used/total GB), disk (used/total GB), GPU model, driver version, VRAM (used/total GB), GPU load %, uptime, and agent version.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | _(none)_ | | | |
 
@@ -45,7 +45,7 @@ Get comprehensive system information including hostname, OS (with correct Window
 
 Get all owlette-configured processes with their current status, PID, launch mode, and whether they are running.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | _(none)_ | | | |
 
@@ -55,7 +55,7 @@ Get all owlette-configured processes with their current status, PID, launch mode
 
 Get all running OS processes with CPU and memory usage. Can filter by name.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `name_filter` | string | No | Filter by process name (case-insensitive) |
 | `limit` | number | No | Max results (default: 50, max: 200) |
@@ -68,7 +68,7 @@ Get all running OS processes with CPU and memory usage. Can filter by name.
 
 Get per-process GPU memory (VRAM) usage via Windows Performance Counters — same data source as Task Manager. Shows dedicated and shared GPU memory per process, sorted by usage. Works cross-vendor (NVIDIA, AMD, Intel) and for all GPU APIs (DirectX, OpenGL, CUDA, Vulkan).
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | _(none)_ | | | |
 
@@ -78,7 +78,7 @@ Get per-process GPU memory (VRAM) usage via Windows Performance Counters — sam
 
 Get network interfaces with IP addresses, netmasks, and link status.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | _(none)_ | | | |
 
@@ -88,7 +88,7 @@ Get network interfaces with IP addresses, netmasks, and link status.
 
 Get disk usage for all drives including total, used, free space and percentage.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | _(none)_ | | | |
 
@@ -98,7 +98,7 @@ Get disk usage for all drives including total, used, free space and percentage.
 
 Get Windows event log entries from Application, System, or Security logs.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `log_name` | string | No | `Application`, `System`, or `Security` (default: Application) |
 | `max_events` | number | No | Max entries (default: 20, max: 100) |
@@ -110,7 +110,7 @@ Get Windows event log entries from Application, System, or Security logs.
 
 Get the status of a Windows service by name.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `service_name` | string | **Yes** | Windows service name to query |
 
@@ -120,7 +120,7 @@ Get the status of a Windows service by name.
 
 Get the current owlette agent configuration (sensitive fields stripped).
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | _(none)_ | | | |
 
@@ -130,7 +130,7 @@ Get the current owlette agent configuration (sensitive fields stripped).
 
 Get recent owlette agent log entries.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `max_lines` | number | No | Max lines (default: 100, max: 500) |
 | `level` | string | No | Filter: `ERROR`, `WARNING`, `INFO`, `DEBUG` |
@@ -141,7 +141,7 @@ Get recent owlette agent log entries.
 
 Get agent health status including connection state and health probe results.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | _(none)_ | | | |
 
@@ -151,7 +151,7 @@ Get agent health status including connection state and health probe results.
 
 Get available software deployment presets managed by the site admin. Returns installer URLs, silent install flags, verification paths, and other deployment parameters for software like TouchDesigner, Unreal Engine, media players, etc. Use this before `deploy_software` to find the correct preset and parameters. **Server-side** — queries Firestore directly.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `software_name` | string | No | Filter by name (case-insensitive partial match), e.g. `TouchDesigner` |
 | `category` | string | No | Filter by category, e.g. `Creative Software`, `Media Server` |
@@ -166,7 +166,7 @@ These wrap existing owlette commands and execute immediately without user confir
 
 Restart an owlette-configured process by name.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `process_name` | string | **Yes** | Must match a configured process name |
 
@@ -176,7 +176,7 @@ Restart an owlette-configured process by name.
 
 Kill/stop a running process.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `process_name` | string | **Yes** | Must match a configured process name |
 
@@ -186,7 +186,7 @@ Kill/stop a running process.
 
 Start a stopped process.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `process_name` | string | **Yes** | Must match a configured process name |
 
@@ -196,7 +196,7 @@ Start a stopped process.
 
 Set the launch mode for a process. Replaces the old `toggle_autolaunch` with three modes.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `process_name` | string | **Yes** | Must match a configured process name |
 | `mode` | string | **Yes** | `off` (not managed), `always` (24/7 with crash recovery), or `scheduled` |
@@ -219,7 +219,7 @@ Set the launch mode for a process. Replaces the old `toggle_autolaunch` with thr
 
 Capture a screenshot of the remote machine's desktop. Returns the image for visual analysis — use to diagnose display issues, verify process state, or see what's currently on screen.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `monitor` | number | No | `0` = all monitors combined (default), `1` = primary, `2` = second, etc. |
 
@@ -235,7 +235,7 @@ These require explicit user confirmation before execution.
 
 Execute a shell command on the remote machine.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `command` | string | **Yes** | Must start with an allowed command |
 | `user_session` | boolean | No | Run in the logged-in user's desktop session (needed for GUI/display access) |
@@ -252,7 +252,7 @@ Execute a shell command on the remote machine.
 
 Execute a PowerShell command on the remote machine.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `script` | string | **Yes** | First cmdlet must be in the allow-list |
 | `user_session` | boolean | No | Run in the logged-in user's desktop session |
@@ -269,7 +269,7 @@ Execute a PowerShell command on the remote machine.
 
 Execute Python code on the remote machine in the user's desktop session.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `code` | string | **Yes** | Python code to execute |
 
@@ -283,7 +283,7 @@ The code runs in the agent's Python environment with access to installed package
 
 Read the contents of a file on the remote machine.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `path` | string | **Yes** | Absolute file path (max 100KB) |
 
@@ -293,7 +293,7 @@ Read the contents of a file on the remote machine.
 
 Write content to a file on the remote machine.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `path` | string | **Yes** | Absolute file path |
 | `content` | string | **Yes** | Content to write |
@@ -304,7 +304,7 @@ Write content to a file on the remote machine.
 
 List the contents of a directory with file sizes and modification dates.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `path` | string | **Yes** | Absolute directory path |
 
@@ -314,7 +314,7 @@ List the contents of a directory with file sizes and modification dates.
 
 Execute a PowerShell script on the remote machine with no command restrictions. Use for software installs, diagnostics, stress tests, service management, registry edits, or any other admin task.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `script` | string | **Yes** | PowerShell script to execute (can be multi-line) |
 | `timeout_seconds` | number | No | Timeout in seconds (default: 120) — set higher for long operations like installs |
@@ -330,7 +330,7 @@ Deploy and install software on the remote machine using the full deployment pipe
 
 **Requires user confirmation before execution.** Cortex will summarize the deployment plan (software, version, install path, parallel install status, processes to close) and wait for explicit approval before proceeding.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `software_name` | string | **Yes** | Software name, e.g. `TouchDesigner`, `Unreal Engine` |
 | `version` | string | No | Version string, e.g. `2025.32280`. Required for version-specific software |
@@ -355,7 +355,7 @@ Deploy and install software on the remote machine using the full deployment pipe
 
 Reboot the remote machine with a 30-second countdown delay. Can be cancelled within the countdown window.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | _(none)_ | | | |
 
@@ -365,7 +365,7 @@ Reboot the remote machine with a 30-second countdown delay. Can be cancelled wit
 
 Shut down the remote machine with a 30-second countdown delay. The machine will NOT automatically restart.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | _(none)_ | | | |
 
@@ -375,7 +375,7 @@ Shut down the remote machine with a 30-second countdown delay. The machine will 
 
 Cancel a pending reboot or shutdown. Must be called within the 30-second countdown window.
 
-| Parameter | Type | Required | Description |
+| parameter | type | required | description |
 |-----------|------|----------|-------------|
 | _(none)_ | | | |
 

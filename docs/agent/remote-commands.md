@@ -24,7 +24,7 @@ Dashboard                      Firestore                         Agent
 
 ### process management
 
-| Command | Description | Data Payload |
+| command | description | data payload |
 |---------|-------------|--------------|
 | `restart_process` | Kill and restart a process | `{process_name: string}` |
 | `kill_process` | Terminate a process | `{process_name: string}` |
@@ -34,26 +34,26 @@ Dashboard                      Firestore                         Agent
 
 ### configuration
 
-| Command | Description | Data Payload |
+| command | description | data payload |
 |---------|-------------|--------------|
 | `update_config` | Update process configuration from cloud | `{processes: [...]}` |
 
 ### software deployment
 
-| Command | Description | Data Payload |
+| command | description | data payload |
 |---------|-------------|--------------|
 | `install_software` | Download and install software | `{installer_url, installer_name, silent_flags, verify_path, deployment_id}` |
 | `cancel_installation` | Cancel in-progress installation | `{deployment_id}` |
 
 ### project distribution
 
-| Command | Description | Data Payload |
+| command | description | data payload |
 |---------|-------------|--------------|
 | `distribute_project` | Download and extract project files | `{project_url, project_name, extract_path, verify_files, distribution_id}` |
 
 ### system commands
 
-| Command | Description | Data Payload |
+| command | description | data payload |
 |---------|-------------|--------------|
 | `reboot_machine` | Reboot the machine | `{delay: number}` (seconds, default: 0) |
 | `shutdown_machine` | Shut down the machine | `{delay: number}` (seconds, default: 0) |
@@ -62,7 +62,7 @@ Dashboard                      Firestore                         Agent
 
 ### ai/cortex tools
 
-| Command | Description | Data Payload |
+| command | description | data payload |
 |---------|-------------|--------------|
 | `mcp_tool_call` | Execute a Cortex tool | `{tool_name, arguments, chat_id}` |
 
@@ -146,7 +146,7 @@ The `install_software` command triggers a multi-step process:
 
 ### supported installer types
 
-| Type | Silent Flag | Example |
+| type | silent flag | example |
 |------|-------------|---------|
 | **Inno Setup** | `/VERYSILENT /SUPPRESSMSGBOXES` | owlette itself |
 | **NSIS** | `/S` | Notepad++ |

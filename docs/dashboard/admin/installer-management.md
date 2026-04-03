@@ -30,7 +30,7 @@ Upload, manage, and distribute agent installer versions.
 
 Each version shows:
 
-| Column | Description |
+| column | description |
 |--------|-------------|
 | **Version** | Version number (e.g., 2.1.8) |
 | **File Size** | Installer file size |

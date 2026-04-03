@@ -87,7 +87,7 @@ Add as `CRON_SECRET` in Railway Variables.
 
 owlette uses two branches with separate Railway deployments:
 
-| Branch | Deployment | URL |
+| branch | deployment | url |
 |--------|-----------|-----|
 | `dev` | Development | `dev.owlette.app` |
 | `main` | Production | `owlette.app` |
@@ -177,7 +177,7 @@ npm start
 
 ### railway pricing
 
-| Plan | Cost | Key Features |
+| plan | cost | key features |
 |------|------|-------------|
 | **Hobby** | $5/month | 500 hours, cold starts |
 | **Pro** | $20/month | Unlimited, no cold starts, priority support |

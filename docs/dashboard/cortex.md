@@ -8,7 +8,7 @@ Cortex is an AI-powered chat interface that lets you interact with your machines
 
 Cortex connects an LLM (Claude or OpenAI) to your machines via 29 specialized tools organized into three tiers:
 
-| Tier | Type | Approval | Tools |
+| tier | type | approval | tools |
 |------|------|----------|-------|
 | **Tier 1** | Read-only | Auto-approved | 13 tools — system info, process lists, logs, metrics, GPU, site logs, presets |
 | **Tier 2** | Process management | Auto-approved | 5 tools — restart, kill, start, set launch mode, screenshot |
@@ -83,7 +83,7 @@ Admins can set a shared API key for the entire site:
 
 These tools only read information and never modify anything:
 
-| Tool | Description |
+| tool | description |
 |------|-------------|
 | `get_site_logs` | Activity logs across all machines in the site (server-side) |
 | `get_system_info` | CPU, memory, disk, GPU, hostname, OS, uptime, agent version |
@@ -103,7 +103,7 @@ These tools only read information and never modify anything:
 
 These wrap existing owlette commands:
 
-| Tool | Description |
+| tool | description |
 |------|-------------|
 | `restart_process` | Restart an owlette-configured process |
 | `kill_process` | Kill/stop a process |
@@ -115,7 +115,7 @@ These wrap existing owlette commands:
 
 These tools require you to click **Confirm** before execution:
 
-| Tool | Description |
+| tool | description |
 |------|-------------|
 | `run_command` | Execute a shell command (allowlist enforced) |
 | `run_powershell` | Execute a PowerShell command (allowlist enforced) |
@@ -219,7 +219,7 @@ Custom directives can be set per-site in Firestore (`sites/{siteId}/settings/cor
 
 ### configuration options
 
-| Setting | Default | Description |
+| setting | default | description |
 |---------|---------|-------------|
 | `autonomousEnabled` | `false` | Master switch — must be `true` for autonomous mode |
 | `directive` | *(see above)* | Custom mission text for the AI |

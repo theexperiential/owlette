@@ -6,7 +6,7 @@ owlette sends email notifications when machines go offline, processes crash, or 
 
 ## alert types
 
-| Alert | Trigger | Recipients |
+| alert | trigger | recipients |
 |-------|---------|------------|
 | **Machine Offline** | Heartbeat missing for 3+ minutes | All site users with `healthAlerts` enabled |
 | **Process Crash** | Configured process exits unexpectedly | Users subscribed to process alerts for that site |
@@ -120,7 +120,7 @@ This triggers the same email alert flow as a real event, without requiring a rea
 
 ## environment variables
 
-| Variable | Required | Description |
+| variable | required | description |
 |----------|----------|-------------|
 | `RESEND_API_KEY` | Yes | API key from [Resend](https://resend.com) |
 | `CRON_SECRET` | Yes | Shared secret for cron authentication |

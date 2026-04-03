@@ -40,7 +40,7 @@ Changes propagate through Firestore to the agent immediately.
 
 From the Process Dialog or machine card, you can:
 
-| Action | Description | Requires |
+| action | description | requires |
 |--------|-------------|----------|
 | **Start** | Launch the process | Process must be stopped |
 | **Stop / Kill** | Terminate the process | Process must be running |
@@ -54,7 +54,7 @@ All actions send commands to the agent via Firestore and complete within seconds
 
 ## process settings reference
 
-| Setting | Type | Default | Description |
+| setting | type | default | description |
 |---------|------|---------|-------------|
 | **Name** | string | required | Display name for identification |
 | **Executable Path** | string | required | Full path to `.exe` (e.g., `C:\Program Files\App\app.exe`) |

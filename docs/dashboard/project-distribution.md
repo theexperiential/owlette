@@ -39,7 +39,7 @@ Your File Host              owlette Cloud              Agent Machines
 2. Click **"New Distribution"**
 3. Fill in the configuration:
 
-| Field | Required | Description |
+| field | required | description |
 |-------|----------|-------------|
 | **Name** | Yes | Descriptive name (e.g., "Summer Show 2024") |
 | **Project URL** | Yes | Direct download link to ZIP file |
@@ -54,7 +54,7 @@ Your File Host              owlette Cloud              Agent Machines
 
 ## file hosting options
 
-| Host | Free Storage | Direct Download URL |
+| host | free storage | direct download url |
 |------|-------------|-------------------|
 | **Dropbox** | 2 GB | Change `?dl=0` to `?dl=1` in share link |
 | **Google Drive** | 15 GB | `https://drive.google.com/uc?export=download&id=FILE_ID` |
@@ -66,7 +66,7 @@ Your File Host              owlette Cloud              Agent Machines
 
 ### cost comparison (100 gb project to 10 machines)
 
-| Host | Storage | Bandwidth | Total/Month |
+| host | storage | bandwidth | total/month |
 |------|---------|-----------|-------------|
 | Dropbox | $11.99 (2TB plan) | Included | **$11.99** |
 | Google Drive | $9.99 (2TB plan) | Included | **$9.99** |
@@ -80,7 +80,7 @@ owlette infrastructure cost: **~$0.001** per distribution (Firestore operations 
 
 Real-time status per machine:
 
-| Status | Description |
+| status | description |
 |--------|-------------|
 | **Downloading** | Downloading ZIP (shows percentage) |
 | **Extracting** | Extracting files (shows percentage) |
@@ -138,7 +138,7 @@ Verify: videos/promo1.mp4, images/background.png
 
 ## troubleshooting
 
-| Issue | Cause | Fix |
+| issue | cause | fix |
 |-------|-------|-----|
 | Download failed | Bad URL or no internet | Test URL in browser; verify it directly downloads |
 | Extraction failed | Corrupt ZIP or no disk space | Re-upload ZIP; check disk space |

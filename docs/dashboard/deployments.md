@@ -22,7 +22,7 @@ The deployment system allows you to:
 2. Click **"New Deployment"**
 3. Fill in the deployment configuration:
 
-| Field | Required | Description |
+| field | required | description |
 |-------|----------|-------------|
 | **Name** | Yes | Descriptive name (e.g., "TouchDesigner 2025") |
 | **Installer URL** | Yes | Direct HTTPS download link to the `.exe` installer |
@@ -39,7 +39,7 @@ The deployment system allows you to:
 
 Different installer frameworks use different flags:
 
-| Installer Type | Silent Flags | Example Software |
+| installer type | silent flags | example software |
 |----------------|--------------|-----------------|
 | **Inno Setup** | `/VERYSILENT /SUPPRESSMSGBOXES` | owlette, many open-source tools |
 | **NSIS** | `/S` | Notepad++, 7-Zip |
@@ -55,7 +55,7 @@ Different installer frameworks use different flags:
 
 The dashboard shows real-time status for each machine:
 
-| Status | Description |
+| status | description |
 |--------|-------------|
 | **Pending** | Command queued, waiting for agent |
 | **Downloading** | Agent downloading installer (shows %) |
@@ -67,7 +67,7 @@ The dashboard shows real-time status for each machine:
 
 Overall deployment status is calculated automatically:
 
-| Overall Status | Meaning |
+| overall status | meaning |
 |----------------|---------|
 | **Pending** | All targets still pending |
 | **In Progress** | At least one target downloading or installing |

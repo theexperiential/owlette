@@ -10,7 +10,7 @@ Manage user accounts, roles, and site assignments from the Admin Panel.
 
 The user management page shows all registered users with:
 
-| Column | Description |
+| column | description |
 |--------|-------------|
 | **Email** | User's email address |
 | **Display Name** | Full name (if provided during registration) |
@@ -72,7 +72,7 @@ Control which sites a user can access.
 
 ### access rules
 
-| Role | Site Access |
+| role | site access |
 |------|-------------|
 | **User** | Only sites in their `sites` array |
 | **Admin** | All sites (regardless of assignment) |

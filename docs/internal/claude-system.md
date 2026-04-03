@@ -250,7 +250,7 @@ Claude will build both repos and systematically fix all errors.
 
 ### available skills
 
-| Skill | Triggers | Purpose |
+| skill | triggers | purpose |
 |-------|----------|---------|
 | **frontend-dev-guidelines** | `.tsx` files, "react", "component", "next" | Next.js 16, React 19, TypeScript, shadcn/ui patterns |
 | **backend-dev-guidelines** | `.py` files, "python", "agent", "service" | Python Windows service, psutil, Firebase Admin SDK |

@@ -29,7 +29,7 @@ Non-admin users are redirected to the dashboard with an error message.
 
 ## admin vs user permissions
 
-| Capability | User | Admin |
+| capability | user | admin |
 |-----------|------|-------|
 | View assigned sites | Yes | Yes (all sites) |
 | Monitor machines | Yes | Yes |

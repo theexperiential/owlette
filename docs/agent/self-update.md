@@ -31,7 +31,7 @@ The dashboard sends an `update_owlette` command with the installer URL and targe
 
 ### what gets preserved
 
-| Preserved | Not Preserved |
+| preserved | not preserved |
 |-----------|---------------|
 | `config.json` (process settings, site connection) | Old agent source code |
 | OAuth tokens (encrypted) | Old Python packages |

@@ -1616,7 +1616,7 @@ Processes pending Cortex escalation flags and sends escalation emails to site ad
 
 ### user llm key
 
-| Method | URL | Description |
+| method | url | description |
 |--------|-----|-------------|
 | `POST` | `/api/settings/llm-key` | Set user's LLM API key (encrypted) |
 | `GET` | `/api/settings/llm-key` | Check if key is configured |
@@ -1624,7 +1624,7 @@ Processes pending Cortex escalation flags and sends escalation emails to site ad
 
 ### site llm key (admin)
 
-| Method | URL | Description |
+| method | url | description |
 |--------|-----|-------------|
 | `POST` | `/api/settings/site-llm-key` | Set site's LLM API key (admin) |
 | `GET` | `/api/settings/site-llm-key?siteId=xxx` | Check if site key is configured |

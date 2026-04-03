@@ -6,7 +6,7 @@ owlette uses **independent component versioning** for flexibility while maintain
 
 ## version files
 
-| File | Purpose | Scope |
+| file | purpose | scope |
 |------|---------|-------|
 | `/VERSION` | Product release version | User-facing releases |
 | `agent/VERSION` | Agent binary version | Windows service |

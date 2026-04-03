@@ -10,7 +10,7 @@ View and revoke agent OAuth tokens. Each agent has a refresh token that allows i
 
 The token management page shows all active agent refresh tokens for a site:
 
-| Column | Description |
+| column | description |
 |--------|-------------|
 | **Machine ID** | The machine's hostname |
 | **Agent UID** | Firebase UID assigned to the agent |

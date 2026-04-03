@@ -30,7 +30,7 @@ Browser                     Firebase Auth              Dashboard API
 
 Sessions use [iron-session](https://github.com/vvo/iron-session) — encrypted, signed, HTTPOnly cookies.
 
-| Property | Value |
+| property | value |
 |----------|-------|
 | **Cookie name** | `session` |
 | **HTTPOnly** | Yes (not accessible from JavaScript) |
@@ -88,7 +88,7 @@ Agent detects token nearing expiry (~5 min before)
 
 ### token security
 
-| Aspect | Implementation |
+| aspect | implementation |
 |--------|---------------|
 | **Refresh token storage** | Encrypted with Fernet AES, key derived from Windows `MachineGuid` |
 | **Refresh token in Firestore** | Stored as SHA-256 hash (not plaintext) |
@@ -164,7 +164,7 @@ Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passke
 
 ### security
 
-| Aspect | Implementation |
+| aspect | implementation |
 |--------|---------------|
 | **RP ID** | `owlette.app` (prod), `localhost` (dev) |
 | **Challenge lifetime** | 10 minutes, single-use, deleted after verification |
@@ -228,7 +228,7 @@ Optional TOTP-based two-factor authentication. Passkey login bypasses MFA entire
 
 ### roles
 
-| Role | Access |
+| role | access |
 |------|--------|
 | **user** | Assigned sites only, no admin features |
 | **admin** | All sites, admin panel, user management |

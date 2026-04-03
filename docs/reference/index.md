@@ -6,7 +6,7 @@ Technical reference documentation for owlette's APIs, data model, authentication
 
 ## in this section
 
-| Document | Description |
+| document | description |
 |----------|-------------|
 | [**REST API**](api.md) | All 65+ HTTP endpoints with request/response schemas |
 | [**Firestore Data Model**](firestore-data-model.md) | Complete collection and document schema |

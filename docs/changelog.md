@@ -11,6 +11,65 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.5.8] - 2026-04-03
+
+### fixed
+- `requireAdmin` middleware now accepts both API keys and Firebase ID tokens — previously only one auth method worked depending on route
+- Firestore collection renamed from `apiKeys` to `api_keys` for naming consistency
+- Cortex lowercase enforced across all user-facing text
+- Phantom QR code references removed from device pairing flow
+- Firestore timestamps standardised to `serverTimestamp()` across all writes
+- Dead `presence?.online` fallback patterns removed from web reads
+- Device code documents now deleted on consumption/expiry instead of being marked with a status field
+
+---
+
+## [2.5.7] - 2026-04-02
+
+### added
+- FAQ section on landing page
+- Pricing section on landing page
+
+### fixed
+- Update log event no longer writes version string into the `level` field
+- Update log messages lowercased; version strings prefixed with `v`
+- "Updating owlette" label shown in dashboard while agent update is in progress
+- Landing page explore link spacing polished
+
+---
+
+## [2.5.6] - 2026-04-02
+
+### added
+- API and Webhooks promoted to top-level nav section in docs
+
+### fixed
+- `presence?.online` dead fallback patterns removed from web dashboard reads
+
+---
+
+## [2.5.5] - 2026-04-02
+
+### added
+- Per-user alert emails — each user receives alerts for their own assigned machines
+- Timezone labels in email alerts
+- Centered unsubscribe link in alert emails
+
+### fixed
+- Missing Firestore indexes added; `claude-agent-sdk` dependency pinned
+
+---
+
+## [2.5.4] - 2026-04-01
+
+### added
+- **Process scheduling UX overhaul** — redesigned schedule editor with overnight schedule support (e.g. 22:00–06:00 spanning midnight)
+
+### fixed
+- Site members can now access machine controls without requiring admin role
+
+---
+
 ## [2.5.3] - 2026-04-01
 
 ### fixed

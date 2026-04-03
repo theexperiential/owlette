@@ -65,7 +65,7 @@ Complete reference for all command types the agent accepts via Firestore.
 
 Kill and relaunch a configured process.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"restart_process"` | |
 | `process_name` | string | Must match a configured process name |
@@ -76,7 +76,7 @@ Kill and relaunch a configured process.
 
 Terminate a running process.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"kill_process"` | |
 | `process_name` | string | Must match a configured process name |
@@ -87,7 +87,7 @@ Terminate a running process.
 
 Start a stopped process (same as restart for stopped processes).
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"start_process"` | |
 | `process_name` | string | Must match a configured process name |
@@ -98,7 +98,7 @@ Start a stopped process (same as restart for stopped processes).
 
 Set the launch mode for a process: off, always, or scheduled.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"set_launch_mode"` | |
 | `process_name` | string | Must match a configured process name |
@@ -111,7 +111,7 @@ Set the launch mode for a process: off, always, or scheduled.
 
 Capture a screenshot of the machine's desktop.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"capture_screenshot"` | |
 | `monitor` | number | `0` = all monitors (default), `1` = primary, `2` = second, etc. |
@@ -124,7 +124,7 @@ Capture a screenshot of the machine's desktop.
 
 Update process configuration from Firestore.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"update_config"` | |
 | `processes` | array | New process configuration array |
@@ -137,7 +137,7 @@ Update process configuration from Firestore.
 
 Download and silently install software.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"install_software"` | |
 | `installer_url` | string | Direct HTTPS download URL |
@@ -156,7 +156,7 @@ The agent downloads the installer to `%TEMP%\owlette_installers\`, optionally ve
 
 Cancel an in-progress installation. Terminates the installer process tree (parent + children) and cleans up the temporary installer file.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"cancel_installation"` | |
 | `installer_name` | string | Filename of the installer to cancel (must match an active installation) |
@@ -168,7 +168,7 @@ Cancel an in-progress installation. Terminates the installer process tree (paren
 
 Uninstall software from the machine using registry uninstall commands.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"uninstall_software"` | |
 | `software_name` | string | Display name of the software |
@@ -187,7 +187,7 @@ The agent parses the uninstall command, appends silent flags, executes the unins
 
 Download and extract a project ZIP.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"distribute_project"` | |
 | `project_url` | string | Direct download URL |
@@ -204,7 +204,7 @@ Download and extract a project ZIP.
 
 Reboot the Windows machine.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"reboot_machine"` | |
 | `delay` | number | Seconds before reboot (default: 0) |
@@ -215,7 +215,7 @@ Reboot the Windows machine.
 
 Shut down the Windows machine.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"shutdown_machine"` | |
 | `delay` | number | Seconds before shutdown (default: 0) |
@@ -226,7 +226,7 @@ Shut down the Windows machine.
 
 Self-update the agent.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"update_owlette"` | |
 | `installer_url` | string | URL to new installer |
@@ -238,7 +238,7 @@ Self-update the agent.
 
 Cancel a scheduled reboot or shutdown.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"cancel_reboot"` | |
 
@@ -248,7 +248,7 @@ Cancel a scheduled reboot or shutdown.
 
 Refresh the software inventory snapshot for this machine.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"refresh_software_inventory"` | |
 
@@ -258,7 +258,7 @@ Refresh the software inventory snapshot for this machine.
 
 Cancel an in-progress project distribution.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"cancel_distribution"` | |
 | `distribution_id` | string | Distribution to cancel |
@@ -269,7 +269,7 @@ Cancel an in-progress project distribution.
 
 Cancel an in-progress software uninstall.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"cancel_uninstall"` | |
 | `deployment_id` | string | Deployment to cancel uninstall for |
@@ -282,7 +282,7 @@ Cancel an in-progress software uninstall.
 
 Execute an MCP tool call from Cortex.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"mcp_tool_call"` | |
 | `tool_name` | string | MCP tool name (e.g., "get_system_info") |
@@ -297,7 +297,7 @@ Execute an MCP tool call from Cortex.
 
 Provision an LLM API key for local Cortex (on-machine AI agent).
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | `"provision_cortex_key"` | |
 | `api_key` | string | Encrypted LLM API key |

@@ -44,7 +44,7 @@ Owlette-Installer-v2.4.1.exe /ADD=silver-compass-drift /SILENT
 
 ### silent installation flags
 
-| Flag | Description |
+| flag | description |
 |------|-------------|
 | `/ADD=phrase` | Pre-authorized pairing phrase (skips interactive pairing) |
 | `/SILENT` | Minimal UI (shows progress bar only) |
@@ -142,7 +142,7 @@ Agent authenticated — starts syncing
 
 Three ways to authorize:
 
-| Method | When to use |
+| method | when to use |
 |--------|------------|
 | **Browser auto-open** | Default — browser opens on the machine with phrase pre-filled |
 | **Dashboard "+" button** | Enter the phrase on the dashboard from any device |
@@ -208,7 +208,7 @@ The uninstaller will:
 
 The owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php) and bundles:
 
-| Component | Purpose |
+| component | purpose |
 |-----------|---------|
 | **Embedded Python** | Python 3.11 interpreter (no system Python needed) |
 | **NSSM** | Service manager for reliable Windows service operation |
@@ -220,7 +220,7 @@ The owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.p
 
 ## system requirements
 
-| Requirement | Minimum |
+| requirement | minimum |
 |-------------|---------|
 | **OS** | Windows 10 or later (64-bit) |
 | **RAM** | 50 MB (agent overhead) |
