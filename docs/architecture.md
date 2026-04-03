@@ -73,7 +73,7 @@ There are no Cloud Functions or custom backend servers — the web dashboard's N
 flowchart LR
     Agent["Desktop Service\n(Agent)"]
     FS[("Firestore")]
-    Dashboard["Dashboard"]
+    Dashboard["Web Dashboard"]
 
     Agent -->|"presence every 30s"| FS
     Agent -->|"status every 60s\ncpu, memory, disk, gpu"| FS
@@ -84,7 +84,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    Dashboard["Dashboard"]
+    Dashboard["Web Dashboard"]
     FS[("Firestore")]
     Agent["Desktop Service\n(Agent)"]
 
@@ -99,9 +99,9 @@ flowchart LR
 ```mermaid
 flowchart LR
     GUI["Tray Icon /\nGUI (Agent)"] -->|"1. write"| FS[("Firestore")]
-    FS -->|"2. onSnapshot"| Dashboard["Dashboard"]
+    FS -->|"2. onSnapshot"| Dashboard["Web Dashboard"]
     Dashboard -->|"3. write"| FS
-    FS -->|"4. listener"| Agent["Agent"]
+    FS -->|"4. listener"| Agent["Desktop Service\n(Agent)"]
     Agent -->|"5. update\nconfig.json"| GUI
 ```
 
