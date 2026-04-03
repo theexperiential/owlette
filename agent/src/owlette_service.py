@@ -3923,19 +3923,19 @@ with open(out_path, 'wb') as f:
             # Store result for Firebase logging + command completion after client starts
             if current_version == target_version:
                 logging.info("[SUCCESS] Self-update completed successfully!")
-                self._pending_update_event = ('update_success', f'Updated from {old_version} to {current_version}', 'info')
-                self._pending_update_completion = ('completed', command_id, deployment_id, f'Updated to {current_version}')
+                self._pending_update_event = ('update_success', f'updated owlette agent from v{old_version} to v{current_version}', 'info')
+                self._pending_update_completion = ('completed', command_id, deployment_id, f'updated to v{current_version}')
             elif current_version == old_version:
                 logging.error(f"[FAILED] Self-update FAILED - still on version {old_version}")
                 logging.error("Check installer_update.log for details")
                 if marker_age_minutes > 30:
                     logging.error(f"Marker is {marker_age_minutes:.0f}m old - update likely crashed or hung")
-                self._pending_update_event = ('update_failed', f'Failed to update from {old_version} to {target_version}', 'error')
-                self._pending_update_completion = ('failed', command_id, deployment_id, f'Still on {old_version}, target was {target_version}')
+                self._pending_update_event = ('update_failed', f'failed to update owlette agent from v{old_version} to v{target_version}', 'error')
+                self._pending_update_completion = ('failed', command_id, deployment_id, f'still on v{old_version}, target was v{target_version}')
             else:
                 logging.warning(f"[PARTIAL?] Unexpected version {current_version} after update")
                 logging.warning(f"Expected {target_version}, was {old_version}")
-                self._pending_update_event = ('update_unknown', f'Unexpected version {current_version} after update from {old_version}', 'warning')
+                self._pending_update_event = ('update_unknown', f'unexpected version v{current_version} after update from v{old_version}', 'warning')
                 self._pending_update_completion = ('completed', command_id, deployment_id, f'Updated to {current_version} (expected {target_version})')
 
             logging.info("=" * 60)
