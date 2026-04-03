@@ -22,6 +22,9 @@ export function LandingHeader() {
         {/* Right side */}
         <div className="flex items-center gap-2 sm:gap-3">
           <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
+            <a href="#pricing">pricing</a>
+          </Button>
+          <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
             <Link href="/download">download</Link>
           </Button>
           <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">

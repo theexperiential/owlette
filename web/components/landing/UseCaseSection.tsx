@@ -65,14 +65,14 @@ export function UseCaseSection() {
                     className={`w-4 h-4 text-muted-foreground transition-transform duration-300 ${openIndex === i ? 'rotate-180' : ''}`}
                   />
                 </div>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-base text-muted-foreground">
                   {cap.detail}
                 </p>
               </button>
 
               {/* Expanded content inline below the card */}
               <div className={`overflow-hidden transition-all duration-500 ease-out ${openIndex === i ? 'max-h-[800px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                <p className="text-xs text-muted-foreground/80 leading-relaxed text-center px-6 pb-4 animate-in fade-in duration-300">
+                <p className="text-sm text-muted-foreground/80 leading-relaxed text-center px-6 pb-4 animate-in fade-in duration-300">
                   {cap.expanded}
                 </p>
                 <div className="px-2 pb-4">
@@ -115,7 +115,7 @@ export function UseCaseSection() {
                     className={`w-4 h-4 text-muted-foreground transition-transform duration-300 ${openIndex === i ? 'rotate-180' : ''}`}
                   />
                 </div>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-base text-muted-foreground">
                   {cap.detail}
                 </p>
               </button>
@@ -128,7 +128,7 @@ export function UseCaseSection() {
               {capabilities.map((cap, i) => (
                 <div key={cap.label} className={i === openIndex ? 'animate-in fade-in duration-300' : ''}>
                   {i === openIndex && (
-                    <p className="text-xs text-muted-foreground/80 leading-relaxed text-center px-2">
+                    <p className="text-sm text-muted-foreground/80 leading-relaxed text-center px-2">
                       {cap.expanded}
                     </p>
                   )}

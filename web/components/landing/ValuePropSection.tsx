@@ -124,7 +124,7 @@ export function ValuePropSection() {
         <Link
           href="/demo"
           target="_blank"
-          className="inline-flex items-center gap-1.5 text-sm text-accent-cyan hover:text-accent-cyan-hover transition-colors group"
+          className="inline-flex items-center gap-1.5 text-base text-accent-cyan hover:text-accent-cyan-hover transition-colors group"
         >
           explore the live demo
           <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />

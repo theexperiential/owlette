@@ -3,7 +3,7 @@ import {
   LandingHeader,
   HeroSection,
   ValuePropSection,
-  CTASection,
+  PricingSection,
   LandingFooter,
 } from '@/components/landing';
 
@@ -52,7 +52,7 @@ export default function LandingPage() {
         <ValuePropSection />
         <UseCaseSection />
         <FeatureGrid />
-        <CTASection />
+        <PricingSection />
       </main>
       <LandingFooter />
     </div>
