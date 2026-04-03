@@ -1,3 +1,8 @@
+---
+hide:
+  - navigation
+---
+
 # troubleshooting
 
 Cross-cutting troubleshooting guide for common issues across the entire owlette system.
@@ -18,7 +23,7 @@ Cross-cutting troubleshooting guide for common issues across the entire owlette 
 
 **Common errors**:
 
-| Log Message | Cause | Fix |
+| log message | cause | fix |
 |-------------|-------|-----|
 | "Agent not authenticated" | Missing or corrupt tokens | Re-register with a new code |
 | "HTTP error 403" | Firestore rules blocking access | Verify security rules are deployed |
@@ -152,7 +157,7 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 
 ### agent logs
 
-| Log | Path |
+| log | path |
 |-----|------|
 | Service | `C:\ProgramData\Owlette\logs\service.log` |
 | GUI | `C:\ProgramData\Owlette\logs\gui.log` |
@@ -161,7 +166,7 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 
 ### dashboard logs
 
-| Log | Location |
+| log | location |
 |-----|----------|
 | Build logs | Railway → Deployments → [deployment] → Logs |
 | Runtime logs | Railway → Deployments → [latest] → Logs |
@@ -169,7 +174,7 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 
 ### firestore logs
 
-| Log | Location |
+| log | location |
 |-----|----------|
 | Rule evaluations | Firebase Console → Firestore → Rules → Monitoring |
 | Usage metrics | Firebase Console → Firestore → Usage |

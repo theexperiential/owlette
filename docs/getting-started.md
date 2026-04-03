@@ -1,3 +1,8 @@
+---
+hide:
+  - navigation
+---
+
 # getting started
 
 Get your first machine monitored in under 5 minutes.
@@ -47,7 +52,7 @@ Sites organize your machines — think of them as locations, departments, or pro
 
 Within 30 seconds of installation, your machine should appear in the dashboard:
 
-| Check | What to Look For |
+| check | what to look for |
 |-------|-----------------|
 | **Machine visible** | Machine card appears in your site with a green "Online" indicator |
 | **Metrics flowing** | CPU, memory, disk percentages updating |

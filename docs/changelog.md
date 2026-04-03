@@ -1,3 +1,8 @@
+---
+hide:
+  - navigation
+---
+
 # changelog
 
 All notable changes to owlette are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/) and this project adheres to [Semantic Versioning](https://semver.org/).
@@ -313,7 +318,7 @@ The original owlette — a standalone Windows service with local configuration.
 
 ## migration guide: v0.4.2b to v2.0.0
 
-| v0.4.2b Feature | v2.0.0 Equivalent |
+| v0.4.2b feature | v2.0.0 equivalent |
 |-----------------|-------------------|
 | Gmail notifications | Web dashboard alerts + email via Resend |
 | Slack notifications | Web dashboard alerts |

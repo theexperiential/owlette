@@ -111,10 +111,27 @@
   margin-top: 2px;
 }
 
+/* Sidebar section titles — stronger color contrast from child links */
+.md-sidebar--primary .md-nav__item--nested > .md-nav__link,
+.md-sidebar--primary .md-nav__item--section > .md-nav__link {
+  color: var(--md-default-fg-color) !important;
+  font-weight: 600;
+}
+
+/* Section spacing — more breathing room between major sections */
+.md-typeset hr {
+  margin: 2.5em 0;
+}
+
 /* Tighten logo → title gap */
 .md-header__button.md-logo {
-  margin-right: 0;
-  padding-right: 4px;
+  margin: 0 !important;
+  padding: 0.4rem 10px !important;
+}
+
+.md-header__title {
+  margin-left: 0 !important;
+  padding-left: 0 !important;
 }
 
 /* Lowercase nav + search chrome */

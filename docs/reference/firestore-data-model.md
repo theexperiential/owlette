@@ -67,7 +67,7 @@ firestore/
 
 Top-level site document.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `name` | string | Display name (e.g., "NYC Office") |
 | `owner` | string | UID of the user who created the site |
@@ -79,7 +79,7 @@ Top-level site document.
 
 Agent heartbeat — updated at an adaptive interval (5s / 30s / 120s depending on activity).
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `online` | boolean | Whether the machine is connected |
 | `lastHeartbeat` | timestamp | Last heartbeat time (server timestamp) |
@@ -92,7 +92,7 @@ Agent heartbeat — updated at an adaptive interval (5s / 30s / 120s depending o
 
 System metrics — updated alongside each heartbeat (adaptive interval).
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `cpu` | number | CPU usage percentage (0-100) |
 | `memory` | number | RAM usage percentage (0-100) |
@@ -119,7 +119,7 @@ System metrics — updated alongside each heartbeat (adaptive interval).
 
 Pending command from dashboard.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | string | Command type (see [Agent Commands](agent-commands.md)) |
 | `timestamp` | number | Unix timestamp (milliseconds) |
@@ -132,7 +132,7 @@ Pending command from dashboard.
 
 Completed command result.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | string | Original command type |
 | `result` | string | Result message or error |
@@ -145,7 +145,7 @@ Completed command result.
 
 Screenshot captures from remote machines.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `url` | string | Public Firebase Storage URL to the screenshot image |
 | `timestamp` | number | Capture time (Unix milliseconds) |
@@ -157,7 +157,7 @@ Screenshot captures from remote machines.
 
 Windows software inventory synced from the agent via registry scan.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `name` | string | Display name from Windows registry |
 | `version` | string | Version string (may be empty) |
@@ -174,7 +174,7 @@ Windows software inventory synced from the agent via registry scan.
 
 Time-series metrics for sparkline charts. One document per day, keyed by `YYYY-MM-DD`.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `samples` | array | Time-series metric samples (see below) |
 | `meta.lastSample` | timestamp | Last sample timestamp |
@@ -195,7 +195,7 @@ Time-series metrics for sparkline charts. One document per day, keyed by `YYYY-M
 }
 ```
 
-| Key | Description |
+| key | description |
 |-----|-------------|
 | `t` | Timestamp (Unix ms) |
 | `c` | CPU usage (%) |
@@ -211,7 +211,7 @@ Time-series metrics for sparkline charts. One document per day, keyed by `YYYY-M
 
 Process configuration synced between agent and dashboard.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `version` | string | Config schema version |
 | `processes` | array | Array of process objects |
@@ -239,7 +239,7 @@ Process configuration synced between agent and dashboard.
 
 Reusable process schedule presets scoped to a site.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `name` | string | Preset display name |
 | `schedule.days` | array[string] | Days of week: `["mon", "tue", ...]` |
@@ -254,7 +254,7 @@ Reusable process schedule presets scoped to a site.
 
 User account document.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `email` | string | User's email address |
 | `displayName` | string | Full name (optional) |
@@ -270,7 +270,7 @@ User account document.
 
 WebAuthn credential for passkey authentication.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `credentialPublicKey` | string | Base64URL-encoded public key |
 | `counter` | number | Signature counter (for clone detection) |
@@ -285,7 +285,7 @@ WebAuthn credential for passkey authentication.
 
 User-scoped API keys for external integrations.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `name` | string | Human-readable label |
 | `keyHash` | string | SHA-256 hash of the actual key value |
@@ -295,7 +295,7 @@ User-scoped API keys for external integrations.
 
 ### users/{userId}/settings/preferences
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `temperatureUnit` | string | `"celsius"` or `"fahrenheit"` |
 | `healthAlerts` | boolean | Receive machine offline emails |
@@ -303,7 +303,7 @@ User-scoped API keys for external integrations.
 
 ### users/{userId}/settings/llm
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `provider` | string | `"anthropic"` or `"openai"` |
 | `encryptedApiKey` | string | AES-encrypted API key |
@@ -316,7 +316,7 @@ User-scoped API keys for external integrations.
 
 Fast-lookup index for API key authentication. Keyed by SHA-256 hash of the raw key.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `userId` | string | Owner's user ID |
 | `keyId` | string | Reference to `users/{userId}/api_keys/{keyId}` |
@@ -330,7 +330,7 @@ Fast-lookup index for API key authentication. Keyed by SHA-256 hash of the raw k
 
 One-time registration code for agent OAuth.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `siteId` | string | Target site |
 | `createdBy` | string | UID of admin who created it |
@@ -348,7 +348,7 @@ One-time registration code for agent OAuth.
 
 Hashed refresh tokens for agent authentication.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `siteId` | string | Agent's site |
 | `machineId` | string | Agent's machine hostname |
@@ -366,7 +366,7 @@ Hashed refresh tokens for agent authentication.
 
 Device code pairing state for the 3-word phrase auth flow. Documents are **ephemeral** — they are created when the agent requests a pairing phrase and deleted atomically when the agent polls and consumes the tokens, or when the code expires.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `deviceCodeHash` | string | SHA-256 hash of the opaque device code |
 | `machineId` | string\|null | Machine hostname (null for pre-authorized codes) |
@@ -392,7 +392,7 @@ Device code pairing state for the 3-word phrase auth flow. Documents are **ephem
 
 Temporary MFA setup state.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `secret` | string | TOTP secret (plaintext, temporary) |
 | `email` | string | User's email |
@@ -405,7 +405,7 @@ Temporary MFA setup state.
 
 Temporary WebAuthn challenge for passkey registration or authentication.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `challenge` | string | Base64URL-encoded challenge |
 | `userId` | string\|null | User ID (null for authentication, userId for registration) |
@@ -422,7 +422,7 @@ Temporary WebAuthn challenge for passkey registration or authentication.
 
 Temporary document tracking an in-progress installer upload. Cleaned up after finalization.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `version` | string | Semver version string (e.g., `"2.5.5"`) |
 | `fileName` | string | Installer filename (must end in `.exe`) |
@@ -442,7 +442,7 @@ Temporary document tracking an in-progress installer upload. Cleaned up after fi
 
 Current latest installer version.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `version` | string | Version number (e.g., "2.1.8") |
 | `download_url` | string | Firebase Storage download URL |
@@ -458,7 +458,7 @@ Current latest installer version.
 
 Software deployment record.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `name` | string | Deployment name |
 | `installer_name` | string | Filename |
@@ -476,7 +476,7 @@ Software deployment record.
 
 Project file distribution record.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `name` | string | Distribution name |
 | `project_name` | string | ZIP filename (from URL) |
@@ -493,7 +493,7 @@ Project file distribution record.
 
 Event log entries.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `timestamp` | timestamp | Event time |
 | `action` | string | Event type (e.g., `process_crashed`) |
@@ -508,7 +508,7 @@ Event log entries.
 
 Webhook notification configurations.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `url` | string | Webhook delivery URL (must be HTTPS) |
 | `name` | string | Display name |
@@ -527,7 +527,7 @@ Webhook notification configurations.
 
 Autonomous Cortex configuration. Created per-site, disabled by default.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `autonomousEnabled` | boolean | Whether autonomous mode is active |
 | `directive` | string | Custom directive text (empty = use default) |
@@ -544,7 +544,7 @@ Autonomous Cortex configuration. Created per-site, disabled by default.
 
 Autonomous investigation records — one per triggered event.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `machineId` | string | Machine that triggered the event |
 | `machineName` | string | Machine display name |
@@ -565,7 +565,7 @@ Autonomous investigation records — one per triggered event.
 
 Concurrency control for autonomous sessions.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `activeSessions` | number | Currently running autonomous investigations |
 | `lastUpdated` | timestamp | Last lock update |
@@ -576,7 +576,7 @@ Concurrency control for autonomous sessions.
 
 Global software deployment presets (e.g., Owlette Agent self-update, TouchDesigner). Admin-managed, read-only to users.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `name` | string | Human-readable preset name |
 | `software_name` | string | Name of the software being deployed |
@@ -597,7 +597,7 @@ Global software deployment presets (e.g., Owlette Agent self-update, TouchDesign
 
 Cortex conversation records (both user-initiated and autonomous).
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `userId` | string | User who created the chat (absent for autonomous) |
 | `siteId` | string | Site context |
@@ -614,7 +614,7 @@ Cortex conversation records (both user-initiated and autonomous).
 
 ### chats/{chatId}/messages/{messageId}
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `role` | string | `"user"` or `"assistant"` |
 | `content` | string | Message text content |
@@ -626,7 +626,7 @@ Cortex conversation records (both user-initiated and autonomous).
 
 Bug reports and feedback submissions from users and agents.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `source` | string | `"agent"` or `"web"` |
 | `category` | string | `"bug"`, `"feature_request"`, `"other"`, `"compliment"`, `"rant"` |

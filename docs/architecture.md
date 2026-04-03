@@ -1,3 +1,8 @@
+---
+hide:
+  - navigation
+---
+
 # architecture
 
 owlette uses a serverless, event-driven architecture where all communication flows through Cloud Firestore. There is no direct connection between agents and the dashboard — Firestore acts as the message bus.
@@ -109,7 +114,7 @@ flowchart LR
 
 This is the most important architectural distinction:
 
-| | Web Dashboard | Python Agent |
+| | web dashboard | python agent |
 |---|---|---|
 | **SDK** | Firebase Client SDK (`firebase/firestore`) | Custom REST client (`firestore_rest_client.py`) |
 | **Auth** | Firebase Auth (email/password, Google OAuth) | OAuth two-token system (custom token + refresh token) |
@@ -157,7 +162,7 @@ flowchart TD
 
 All data is scoped to **sites**. Users can only access sites they are assigned to.
 
-| Role | Access |
+| role | access |
 |------|--------|
 | **User** | Sites listed in their `users/{uid}/sites` array |
 | **Admin** | All sites |
@@ -199,7 +204,7 @@ stateDiagram-v2
 
 ## technology stack
 
-| Layer | Technology |
+| layer | technology |
 |-------|-----------|
 | **Agent** | Python 3.9+, pywin32, psutil, CustomTkinter, NSSM |
 | **Web** | Next.js 16, React 19, TypeScript 5, Tailwind CSS 4 |
