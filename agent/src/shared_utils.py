@@ -869,7 +869,7 @@ def _log_startup_banner(log_file_name, level, log_file_path):
     import sys
     sep = "=" * 70
     logging.info(sep)
-    logging.info(f"  OWLETTE AGENT STARTING  —  v{APP_VERSION}")
+    logging.info(f"  OWLETTE AGENT STARTING - v{APP_VERSION}")
     logging.info(sep)
     logging.info(f"  Hostname     : {get_hostname()}")
     logging.info(f"  Timezone     : {get_machine_timezone() or 'unknown'}")

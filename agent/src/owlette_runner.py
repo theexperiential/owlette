@@ -94,9 +94,7 @@ if __name__ == '__main__':
     sys.excepthook = _handle_unhandled_exception
     threading.excepthook = _handle_thread_exception
 
-    logging.info("="*70)
-    logging.info(f"OWLETTE SERVICE STARTING (NSSM MODE) — v{shared_utils.APP_VERSION}")
-    logging.info("="*70)
+    logging.info("Running as NSSM service (not win32serviceutil)")
 
     # Import the OwletteService class just to access its main() method
     from owlette_service import OwletteService
