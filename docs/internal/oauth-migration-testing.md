@@ -1,7 +1,7 @@
 # oauth authentication migration - testing guide
 
 !!! warning "Deprecated"
-    This document is from the v2.1.0 OAuth browser flow, which was **replaced in v2.4.1** with the device code / QR pairing flow. The browser-based OAuth, localhost:8765 callback, and Windows Credential Manager references below are no longer accurate.
+    This document is from the v2.1.0 OAuth browser flow, which was **replaced in v2.4.1** with the device code pairing flow. The browser-based OAuth, localhost:8765 callback, and Windows Credential Manager references below are no longer accurate.
 
     **Current auth flow:** See [Agent Installation](../agent/installation.md#how-pairing-works).
 

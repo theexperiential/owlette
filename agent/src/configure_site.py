@@ -1,18 +1,18 @@
 """
-owlette Site Configuration - Device Code / QR Pairing Flow
+owlette Site Configuration - Device Code Pairing Flow
 
 Runs during installer to configure Firebase site_id via device code authentication.
 
 This script:
 1. Requests a pairing phrase from the server (3 random words, e.g., "silver-compass-drift")
-2. Displays a QR code + the phrase in the console (or GUI)
-3. User scans QR code with phone or enters phrase on owlette.app/add (or dashboard)
+2. Displays the phrase in the console and optionally opens the pairing page in a browser
+3. User selects a site on owlette.app/add (or enters phrase on the dashboard)
 4. Agent polls for authorization until the user approves
 5. Receives and stores OAuth tokens securely (C:\\ProgramData\\owlette\\.tokens.enc)
 6. Writes minimal configuration to config.json (site_id, project_id, api_base)
 
 Three authorization methods:
-- QR Code: Scan with phone → owlette.app/add pre-filled → select site → authorize
+- Browser: Installer auto-opens owlette.app/add with phrase pre-filled → select site → authorize
 - Manual: Visit owlette.app/add → enter phrase → select site → authorize
 - Dashboard: Click "+" on dashboard → enter phrase → authorize
 
@@ -23,7 +23,7 @@ Usage:
     python configure_site.py [--url URL] [--add PHRASE]
 
     --url URL        Override the API base URL
-    --add PHRASE     Pre-authorized pairing phrase (skips QR display, polls immediately)
+    --add PHRASE     Pre-authorized pairing phrase (skips browser, polls immediately)
 """
 
 import json
@@ -326,7 +326,7 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
             return (False, "Timed out waiting for authorization", None)
 
         else:
-            # Interactive mode: request device code and display QR
+            # Interactive mode: request device code and open pairing page
             if show_prompts:
                 print(f"  {DIM}requesting pairing code from server...{RESET}")
                 print()
@@ -336,7 +336,7 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
             pair_phrase = device_data['pairPhrase']
             device_code = device_data['deviceCode']
             verification_uri = device_data['verificationUri']
-            qr_url = device_data['qrUrl']
+            pairing_url = device_data.get('pairingUrl') or device_data.get('qrUrl', '')
             interval = device_data.get('interval', 5)
             expires_in = device_data.get('expiresIn', 600)
 
@@ -353,11 +353,19 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                 print(f"{DIM}{'=' * 60}{RESET}")
                 print()
 
-                # Auto-open browser with phrase pre-filled
-                if _open_browser(qr_url):
-                    print(f"  {DIM}browser opened — select a site and authorize{RESET}")
+                # Ask user whether to open browser locally or use phrase on another device
+                try:
+                    choice = input(f"  {BOLD}open browser on this machine? [y/N]{RESET} ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    choice = ''
+
+                if choice in ('y', 'yes'):
+                    if _open_browser(pairing_url):
+                        print(f"  {DIM}browser opened — select a site and authorize{RESET}")
+                    else:
+                        print(f"  {DIM}couldn't open browser — enter the phrase on another device{RESET}")
                 else:
-                    print(f"  {DIM}couldn't open browser — visit the url above manually{RESET}")
+                    print(f"  {DIM}enter the phrase on your phone or another computer{RESET}")
                 print()
                 print(f"  waiting for authorization...")
 

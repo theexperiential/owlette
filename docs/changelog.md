@@ -80,7 +80,7 @@ For the full version management workflow, see [Version Management](internal/vers
 ## [2.4.1] - 2026-03-26
 
 ### changed
-- **Agent pairing replaces browser OAuth** — Agents now authenticate via QR code / device code flow. No browser window is opened on the target machine; users scan a QR code or enter a 3-word phrase in the dashboard
+- **Agent pairing replaces browser OAuth** — Agents now authenticate via device code flow. The installer displays a 3-word pairing phrase, auto-opens the pairing page in a browser, or users enter the phrase on the dashboard
 - Installer publisher, URLs, and fallback version updated
 
 ### fixed

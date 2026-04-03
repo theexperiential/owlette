@@ -30,7 +30,7 @@ export default function AddMachinePage() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [machineId, setMachineId] = useState<string | null>(null);
 
-  // Get pairing phrase from URL query params (from QR code scan)
+  // Get pairing phrase from URL query params (from agent browser auto-open)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);

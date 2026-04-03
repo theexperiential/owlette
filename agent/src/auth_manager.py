@@ -228,7 +228,7 @@ class AuthManager:
         Request a new device code (pairing phrase) from the server.
 
         Returns:
-            dict with keys: pairPhrase, deviceCode, verificationUri, qrUrl, expiresIn, interval
+            dict with keys: pairPhrase, deviceCode, verificationUri, pairingUrl, expiresIn, interval
 
         Raises:
             AuthenticationError: If request fails

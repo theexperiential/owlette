@@ -14,7 +14,7 @@ The owlette web dashboard is a Next.js application that provides real-time monit
 | **Register** | `/register` | Create a new account |
 | **2FA Setup** | `/setup-2fa` | Configure TOTP two-factor authentication |
 | **2FA Verify** | `/verify-2fa` | TOTP verification step during login |
-| **Add Machine** | `/add` | QR code / device code machine pairing target |
+| **Add Machine** | `/add` | Device code machine pairing target |
 | **Dashboard** | `/dashboard` | Main machine and process monitoring view |
 | **Cortex** | `/cortex` | AI chat interface for natural language machine management |
 | **Deployments** | `/deployments` | Remote software deployment management |

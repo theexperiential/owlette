@@ -48,7 +48,7 @@ firestore/
 ├── apiKeys/{keyHash}             (fast-lookup index for user API keys)
 ├── agent_tokens/{registrationCode}
 ├── agent_refresh_tokens/{tokenHash}
-├── device_codes/{phrase}         (QR/device-code pairing)
+├── device_codes/{phrase}         (device-code pairing)
 ├── mfa_pending/{userId}
 ├── webauthn_challenges/{challengeId}
 ├── installer_uploads/{uploadId}  (temporary, during installer upload)
@@ -361,7 +361,7 @@ Hashed refresh tokens for agent authentication.
 
 ## device_codes/{phrase}
 
-Device code pairing state for the QR code / 3-word phrase auth flow. Documents are **ephemeral** — they are created when the agent requests a pairing phrase and deleted atomically when the agent polls and consumes the tokens, or when the code expires.
+Device code pairing state for the 3-word phrase auth flow. Documents are **ephemeral** — they are created when the agent requests a pairing phrase and deleted atomically when the agent polls and consumes the tokens, or when the code expires.
 
 | Field | Type | Description |
 |-------|------|-------------|

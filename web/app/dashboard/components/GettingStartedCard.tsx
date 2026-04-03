@@ -126,7 +126,7 @@ export function GettingStartedCard({
             <div className="rounded-lg border border-border bg-background p-4">
               <h3 className="font-semibold text-white">Step 2: Run the Installer</h3>
               <p className="text-sm text-muted-foreground">
-                A QR code and pairing phrase will appear. Scan the QR code with your phone, or enter the phrase on this dashboard using the <strong className="text-white">+ add machine</strong> button.
+                A pairing phrase will appear and a browser window will open. Select your site and authorize, or enter the phrase on this dashboard using the <strong className="text-white">+ add machine</strong> button.
               </p>
             </div>
             <div className="rounded-lg border border-border bg-background p-4">

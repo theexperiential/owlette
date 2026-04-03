@@ -53,21 +53,21 @@ Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules
 
 ---
 
-## Agent Authentication (Device Code / QR Pairing)
+## Agent Authentication (Device Code Pairing)
 
 Agents authenticate via a device code flow — no browser login on the target machine.
 
 **3 Ways to Add a Machine:**
 
-1. **QR Code** (single machine): Run installer → QR code appears → scan with phone → owlette.app/add → select site → authorize
+1. **Browser** (single machine): Run installer → pairing phrase appears → browser auto-opens owlette.app/add → select site → authorize
 2. **Dashboard** (manual): Run installer → note 3-word phrase → dashboard "+" button → "Enter Code" → authorize
 3. **Silent Install** (bulk deploy): Dashboard "+" → "Generate Code" → copy phrase → `Owlette-Installer.exe /ADD=silver-compass-drift /SILENT`
 
 **Key files:**
 - `web/app/api/agent/auth/device-code/` — generate phrase, poll, authorize endpoints
-- `web/app/add/page.tsx` — mobile pairing page (QR code target)
+- `web/app/add/page.tsx` — pairing page (phrase pre-filled via URL param)
 - `web/app/dashboard/components/AddMachineButton.tsx` — dashboard "+" button + modal
-- `agent/src/configure_site.py` — agent-side pairing flow (QR display + polling)
+- `agent/src/configure_site.py` — agent-side pairing flow (browser open + polling)
 - `agent/src/auth_manager.py` — token exchange, refresh, device code polling
 - `web/lib/pairPhrases.ts` / `agent/src/pair_phrases.py` — shared word list (must stay in sync)
 
