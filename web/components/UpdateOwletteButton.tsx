@@ -130,7 +130,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
         className="border-orange-600 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950 cursor-pointer"
       >
         <RefreshCw className={`h-4 w-4 mr-2 ${inProgressCount > 0 ? 'animate-spin' : ''}`} />
-        update owlette
+        {inProgressCount > 0 ? 'updating owlette' : 'update owlette'}
         {latestVersion && (
           <span className="ml-2 text-xs">to v{latestVersion}</span>
         )}
