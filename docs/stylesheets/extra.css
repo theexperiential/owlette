@@ -123,6 +123,60 @@
   margin: 2.5em 0;
 }
 
+/* ------------------------------------------------------------------ */
+/*  API endpoint cards                                                 */
+/* ------------------------------------------------------------------ */
+.endpoint-card {
+  margin: 1.5em 0;
+  border: 1px solid #293a5c;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.endpoint-card > h3 {
+  margin: 0;
+  padding: 0.65em 1em;
+  background-color: #141e35;
+  border-bottom: 1px solid #293a5c;
+  border-left: 3px solid #22c3d6;
+  border-radius: 0;
+  font-size: 1em;
+}
+
+.endpoint-card > *:not(h3) {
+  margin-left: 1em;
+  margin-right: 1em;
+}
+
+.endpoint-card > *:last-child {
+  margin-bottom: 1em;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Right-side TOC: section headers (h2) vs endpoint items (h3)       */
+/* ------------------------------------------------------------------ */
+
+/* h2-level TOC entries — section group labels */
+.md-nav--secondary > .md-nav__list > .md-nav__item > .md-nav__link {
+  color: var(--md-default-fg-color) !important;
+  font-weight: 600;
+  margin-top: 0.5em;
+}
+
+/* h3-level TOC entries — individual endpoints */
+.md-nav--secondary .md-nav__item .md-nav__item .md-nav__link {
+  color: var(--md-default-fg-color--light);
+  font-size: 0.85em;
+  padding-left: 1em;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Left sidebar: indent sub-items under section titles               */
+/* ------------------------------------------------------------------ */
+.md-sidebar--primary .md-nav--nested .md-nav__item {
+  padding-left: 0.6rem;
+}
+
 /* Tighten logo → title gap */
 .md-header__button.md-logo {
   margin: 0 !important;

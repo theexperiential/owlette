@@ -9,34 +9,34 @@ All HTTP endpoints exposed by the owlette web dashboard. 51 route files under `w
 
 ---
 
-## table of contents
+**table of contents**
 
-- [Authentication APIs](#authentication-apis) (3 endpoints)
-- [MFA APIs](#mfa-apis) (3 endpoints)
-- [Passkey APIs](#passkey-apis) (7 endpoints)
-- [Agent Authentication APIs](#agent-authentication-apis) (3 endpoints)
-- [Agent Alert API](#agent-alert-api) (1 endpoint)
-- [Agent Screenshot API](#agent-screenshot-api) (1 endpoint)
-- [Admin Machine APIs](#admin-machine-apis) (3 endpoints)
-- [Admin Command APIs](#admin-command-apis) (2 endpoints)
-- [Admin Software Inventory API](#admin-software-inventory-api) (1 endpoint)
-- [Admin Process APIs](#admin-process-apis) (5 endpoints)
-- [Admin Deployment APIs](#admin-deployment-apis) (5 endpoints)
-- [Admin Installer APIs](#admin-installer-apis) (4 endpoints)
-- [Admin Site APIs](#admin-site-apis) (1 endpoint)
-- [Admin Token APIs](#admin-token-apis) (2 endpoints)
-- [Admin Log API](#admin-log-api) (1 endpoint)
-- [Admin Event API](#admin-event-api) (1 endpoint)
-- [Admin Webhook APIs](#admin-webhook-apis) (4 endpoints)
-- [Admin API Key APIs](#admin-api-key-apis) (3 endpoints)
-- [Setup API](#setup-api) (1 endpoint)
-- [Cortex APIs](#cortex-apis) (4 endpoints)
-- [LLM Settings APIs](#llm-settings-apis) (6 endpoints)
-- [Utility APIs](#utility-apis) (4 endpoints)
+- [authentication](#authentication) (3 endpoints)
+- [mfa](#mfa) (3 endpoints)
+- [passkeys](#passkeys) (7 endpoints)
+- [agent authentication](#agent-authentication) (3 endpoints)
+- [agent alerts](#agent-alerts) (1 endpoint)
+- [agent screenshots](#agent-screenshots) (1 endpoint)
+- [machines](#machines) (3 endpoints)
+- [commands](#commands) (2 endpoints)
+- [software inventory](#software-inventory) (1 endpoint)
+- [processes](#processes) (5 endpoints)
+- [deployments](#deployments) (5 endpoints)
+- [installers](#installers) (4 endpoints)
+- [sites](#sites) (1 endpoint)
+- [tokens](#tokens) (2 endpoints)
+- [logs](#logs) (1 endpoint)
+- [events](#events) (1 endpoint)
+- [webhooks](#webhooks) (4 endpoints)
+- [api keys](#api-keys) (3 endpoints)
+- [setup](#setup) (1 endpoint)
+- [cortex](#cortex) (4 endpoints)
+- [llm settings](#llm-settings) (6 endpoints)
+- [utilities](#utilities) (4 endpoints)
 
 ---
 
-## authentication apis
+## authentication
 
 ### create session
 
@@ -111,7 +111,7 @@ Returns current session information (for debugging).
 
 ---
 
-## mfa apis
+## mfa
 
 ### setup mfa
 
@@ -196,7 +196,7 @@ Verifies TOTP or backup code during login.
 
 ---
 
-## passkey apis
+## passkeys
 
 ### register passkey options
 
@@ -383,7 +383,7 @@ Removes a registered passkey.
 
 ---
 
-## agent authentication apis
+## agent authentication
 
 ### exchange registration code
 
@@ -487,7 +487,7 @@ Code expires in 24 hours.
 
 ---
 
-## agent alert api
+## agent alerts
 
 ### send alert
 
@@ -528,7 +528,7 @@ Agent-authenticated endpoint for sending alert notifications.
 
 ---
 
-## agent screenshot api
+## agent screenshots
 
 ### upload screenshot
 
@@ -565,7 +565,7 @@ The `screenshot` field is a base64-encoded JPEG image.
 
 ---
 
-## admin machine apis
+## machines
 
 ### list machines
 
@@ -629,7 +629,7 @@ Sends an `update_owlette` command to a machine to trigger a self-update.
 
 ---
 
-## admin command apis
+## commands
 
 ### send command
 
@@ -670,7 +670,7 @@ Clears pending commands for a machine.
 
 ---
 
-## admin software inventory api
+## software inventory
 
 ### get software inventory
 
@@ -684,7 +684,7 @@ Returns the installed software list for a machine.
 
 ---
 
-## admin process apis
+## processes
 
 ### list processes
 
@@ -835,7 +835,7 @@ Sets the launch mode and optional schedule for a process.
 
 ---
 
-## admin deployment apis
+## deployments
 
 ### list deployments
 
@@ -1012,7 +1012,7 @@ Cancels a running deployment for a specific machine. The target must exist in th
 
 ---
 
-## admin installer apis
+## installers
 
 ### get latest installer
 
@@ -1128,7 +1128,7 @@ Finalizes an installer upload after the binary has been uploaded to the signed U
 
 ---
 
-## admin site apis
+## sites
 
 ### list sites
 
@@ -1156,7 +1156,7 @@ Returns all sites accessible to the authenticated user.
 
 ---
 
-## admin token apis
+## tokens
 
 ### list agent tokens
 
@@ -1207,7 +1207,7 @@ Returns all agent refresh tokens for a site.
 
 ---
 
-## admin log api
+## logs
 
 ### get activity logs
 
@@ -1221,7 +1221,7 @@ All query parameters except `siteId` are optional.
 
 ---
 
-## admin event api
+## events
 
 ### simulate event
 
@@ -1252,7 +1252,7 @@ Trigger alert emails without requiring a real event.
 
 ---
 
-## admin webhook apis
+## webhooks
 
 ### list webhooks
 
@@ -1366,7 +1366,7 @@ Sends a test payload to a configured webhook to verify connectivity.
 
 ---
 
-## admin api key apis
+## api keys
 
 ### list api keys
 
@@ -1455,7 +1455,7 @@ Permanently revokes an API key.
 
 ---
 
-## setup api
+## setup
 
 ### generate token
 
@@ -1485,7 +1485,7 @@ Permanently revokes an API key.
 
 ---
 
-## cortex apis
+## cortex
 
 ### chat
 
@@ -1612,7 +1612,7 @@ Processes pending Cortex escalation flags and sends escalation emails to site ad
 
 ---
 
-## llm settings apis
+## llm settings
 
 ### user llm key
 
@@ -1632,7 +1632,7 @@ Processes pending Cortex escalation flags and sends escalation emails to site ad
 
 ---
 
-## utility apis
+## utilities
 
 ### health check (cron)
 

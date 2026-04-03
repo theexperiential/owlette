@@ -43,6 +43,9 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+extra_javascript:
+  - javascripts/docs.js
+
 plugins:
   - search
   - tags
@@ -103,9 +106,9 @@ nav:
       - token management: dashboard/admin/token-management.md
       - email alerts: dashboard/admin/email-alerts.md
       - webhooks: dashboard/admin/webhooks.md
-  - API:
+  - api:
     - reference/index.md
-    - REST API: reference/api.md
+    - rest api: reference/api.md
     - webhooks: dashboard/admin/webhooks.md
     - authentication: reference/authentication.md
     - cortex tools: reference/cortex-tools.md
