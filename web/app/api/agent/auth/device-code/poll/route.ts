@@ -74,7 +74,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       docRef = snapshot.docs[0].ref;
     }
 
-    // Use a transaction to atomically check status and mark as consumed,
+    // Use a transaction to atomically read tokens and delete the document,
     // preventing race conditions where two concurrent poll requests both
     // read 'authorized' and both receive the tokens.
     const result = await adminDb.runTransaction(async (transaction) => {
