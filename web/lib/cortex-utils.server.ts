@@ -142,7 +142,7 @@ export async function isMachineOnline(
   if (!presenceDoc.exists) return false;
 
   const data = presenceDoc.data()!;
-  const online = data.online ?? data.presence?.online ?? false;
+  const online = data.online ?? false;
   return !!online;
 }
 
@@ -162,7 +162,7 @@ export async function getOnlineMachines(
   const onlineMachines: string[] = [];
   for (const doc of machinesSnapshot.docs) {
     const data = doc.data();
-    const online = data.online ?? data.presence?.online ?? false;
+    const online = data.online ?? false;
     if (online) {
       onlineMachines.push(doc.id);
     }

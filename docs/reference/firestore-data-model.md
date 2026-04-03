@@ -97,8 +97,6 @@ System metrics — updated every 60 seconds.
 | `gpu` | number | GPU usage percentage (0-100) |
 | `cpu_model` | string | CPU model name |
 | `processes` | map | Per-process status map (see below) |
-| `online` | boolean | Redundant online flag (for atomic updates) |
-| `lastHeartbeat` | timestamp | Redundant heartbeat (for atomic updates) |
 
 ### processes map
 

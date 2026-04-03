@@ -45,12 +45,12 @@ export const GET = withRateLimit(
 
       const machines = machinesSnap.docs.map((doc) => {
         const data = doc.data();
-        const lastHeartbeat = data.presence?.last_seen || data.last_seen || null;
+        const lastHeartbeat = data.lastHeartbeat || null;
 
         return {
           id: doc.id,
           name: data.name || data.machine_name || doc.id,
-          online: !!(data.online ?? data.presence?.online),
+          online: !!data.online,
           lastHeartbeat: lastHeartbeat ? new Date(lastHeartbeat).toISOString() : null,
           agentVersion: data.agent_version || data.presence?.agent_version || null,
           os: data.os || data.presence?.os || null,

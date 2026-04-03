@@ -63,12 +63,12 @@ export const GET = withRateLimit(
 
       const configData = configDoc.exists ? configDoc.data() : null;
 
-      const lastHeartbeat = machineData.presence?.last_seen || machineData.last_seen || null;
+      const lastHeartbeat = machineData.lastHeartbeat || null;
 
       const machine = {
         id: machineId,
         name: machineData.name || machineData.machine_name || machineId,
-        online: !!(machineData.online ?? machineData.presence?.online),
+        online: !!machineData.online,
         lastHeartbeat: lastHeartbeat ? new Date(lastHeartbeat).toISOString() : null,
         metrics: machineData.metrics || machineData.status?.metrics || null,
         processes: machineData.processes || machineData.status?.processes || configData?.processes || [],
