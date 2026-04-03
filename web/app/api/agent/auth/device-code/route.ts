@@ -63,7 +63,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       deviceCodeHash,
       machineId: machineId || null,
       version: version || null,
-      status: 'pending', // pending → authorized → consumed | expired
+      status: 'pending', // pending → authorized → (deleted on poll or expiry)
       createdAt: new Date(),
       expiresAt,
       // These fields are populated when authorized:

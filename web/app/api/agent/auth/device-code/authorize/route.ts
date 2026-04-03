@@ -70,7 +70,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       // Check expiry
       const expiresAt = data.expiresAt?.toMillis?.() || data.expiresAt?.getTime?.() || 0;
       if (Date.now() > expiresAt) {
-        transaction.update(docRef, { status: 'expired' });
+        transaction.delete(docRef);
         return { error: 'Pairing phrase has expired. Please generate a new one on the target machine.', status: 404 } as const;
       }
 
