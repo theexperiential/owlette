@@ -75,7 +75,6 @@ flowchart LR
     FS[("Firestore")]
     Dashboard["Dashboard"]
 
-    Agent -->|"process monitor every 10s\ndetect crashes & auto-restart"| FS
     Agent -->|"presence every 30s"| FS
     Agent -->|"status every 60s\ncpu, memory, disk, gpu"| FS
     FS -->|"onSnapshot"| Dashboard
