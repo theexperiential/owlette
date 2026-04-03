@@ -98,7 +98,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    GUI["GUI"] -->|"1. write"| FS[("Firestore")]
+    GUI["Tray Icon /\nDesktop GUI"] -->|"1. write"| FS[("Firestore")]
     FS -->|"2. onSnapshot"| Dashboard["Dashboard"]
     Dashboard -->|"3. write"| FS
     FS -->|"4. listener"| Agent["Agent"]
