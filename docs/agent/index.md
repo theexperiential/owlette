@@ -94,14 +94,3 @@ Launched on demand:
 | `C:\ProgramData\Owlette\python\` | Embedded Python interpreter |
 | `C:\ProgramData\Owlette\nssm\` | NSSM service manager binary |
 
----
-
-## in this section
-
-- [**Installation**](installation.md) — How to install the agent (automatic, remote, manual)
-- [**Configuration**](configuration.md) — GUI tool, config.json, process settings
-- [**Process Monitoring**](process-monitoring.md) — State machine, crash detection, auto-restart
-- [**System Tray**](system-tray.md) — Tray icon behavior and menu
-- [**Remote Commands**](remote-commands.md) — All commands the agent accepts
-- [**Self-Update**](self-update.md) — Remote agent updates
-- [**Troubleshooting**](troubleshooting.md) — Common issues and log locations

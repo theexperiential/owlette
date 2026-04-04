@@ -42,15 +42,3 @@ The owlette web dashboard is a Next.js application that provides real-time monit
 - **Hosting**: Railway (auto-deploy from GitHub)
 - **AI**: Vercel AI SDK with Anthropic Claude / OpenAI
 
----
-
-## in this section
-
-- [**Getting Started**](getting-started.md) — First login, site creation, adding machines
-- [**Machine Monitoring**](machine-monitoring.md) — Real-time metrics and status
-- [**Process Management**](process-management.md) — Add, edit, and control processes
-- [**Deployments**](deployments.md) — Remote software installation
-- [**Project Distribution**](project-distribution.md) — ZIP file distribution
-- [**Cortex**](cortex.md) — AI chat interface + autonomous crash investigation
-- [**Activity Logs**](activity-logs.md) — Event monitoring
-- [**Admin Panel**](admin/index.md) — User, installer, and token management

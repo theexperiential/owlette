@@ -49,15 +49,3 @@ Non-admin users are redirected to the dashboard with an error message.
 | **Set site-level LLM keys** | No | **Yes** |
 | **Simulate events** | No | **Yes** |
 
----
-
-## in this section
-
-- [**User Management**](user-management.md) — View users, assign roles, manage site access
-- [**Installer Management**](installer-management.md) — Upload and manage agent versions
-- [**System Presets**](system-presets.md) — Save and apply process configurations
-- **Schedule Presets** (`/admin/schedules`) — Reusable schedule configurations for process launch times
-- [**Token Management**](token-management.md) — View and revoke agent tokens
-- **Threshold Alerts** (`/admin/alerts`) — CPU, memory, disk, and process alert rules
-- [**Webhooks**](webhooks.md) — Outbound HTTP webhooks for external integrations
-- [**Email Alerts**](email-alerts.md) — Email notification settings and testing

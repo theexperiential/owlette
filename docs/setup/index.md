@@ -39,19 +39,3 @@ owlette is available as a hosted service at [owlette.app](https://owlette.app) �
 5. Agent Installation      → Download + install on target machines
 ```
 
----
-
-## in this section
-
-- [**Firebase Setup**](firebase.md) — Create project, enable services, generate credentials
-- [**Firestore Rules**](firestore-rules.md) — Deploy and test security rules
-- [**Web Deployment**](web-deployment.md) — Deploy to Railway with environment configuration
-- [**Environment Variables**](environment-variables.md) — Complete reference for all configuration variables
-
-## technical reference
-
-- [**REST API**](../reference/api.md) — All HTTP endpoints with request/response schemas
-- [**Firestore Data Model**](../reference/firestore-data-model.md) — Complete collection and document schema
-- [**Authentication**](../reference/authentication.md) — User auth, agent OAuth, MFA, and session management
-- [**Cortex Tools**](../reference/cortex-tools.md) — All 29 MCP tools with parameters and tiers
-- [**Agent Commands**](../reference/agent-commands.md) — Firestore command types and payloads

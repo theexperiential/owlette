@@ -156,11 +156,24 @@
 /*  Right-side TOC: section headers (h2) vs endpoint items (h3)       */
 /* ------------------------------------------------------------------ */
 
+/* Divider below "table of contents" heading */
+.md-nav--secondary > .md-nav__title {
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  padding-bottom: 0.4em;
+  margin-bottom: 0.4em;
+}
+
 /* h2-level TOC entries — section group labels */
 .md-nav--secondary > .md-nav__list > .md-nav__item > .md-nav__link {
   color: var(--md-default-fg-color) !important;
   font-weight: 600;
   margin-top: 0.5em;
+}
+
+/* Active TOC entry — cyan accent on scroll (must beat h2/h3 specificity) */
+.md-nav--secondary > .md-nav__list > .md-nav__item > .md-nav__link.toc-active,
+.md-nav--secondary .md-nav__item .md-nav__item .md-nav__link.toc-active {
+  color: var(--md-accent-fg-color) !important;
 }
 
 /* h3-level TOC entries — individual endpoints */
@@ -175,6 +188,13 @@
 /* ------------------------------------------------------------------ */
 .md-sidebar--primary .md-nav--nested .md-nav__item {
   padding-left: 0.6rem;
+}
+
+/* Divider below section titles in left sidebar */
+.md-sidebar--primary .md-nav__item--section > .md-nav__link {
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  padding-bottom: 0.4em;
+  margin-bottom: 0.4em;
 }
 
 /* Tighten logo → title gap */
