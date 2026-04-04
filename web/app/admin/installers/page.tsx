@@ -5,7 +5,9 @@ import { useInstallerManagement } from '@/hooks/useInstallerManagement';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Package, Plus, Loader2, Download, Trash2, CheckCircle, Copy } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Package, Plus, Loader2, Download, Trash2, CheckCircle, Copy, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import UploadInstallerDialog from '@/components/admin/UploadInstallerDialog';
 import { formatFileSize } from '@/lib/storageUtils';
@@ -29,6 +31,8 @@ export default function InstallerVersionsPage() {
     uploadVersion,
     setAsLatest,
     deleteVersion,
+    getCleanupCandidates,
+    cleanupVersions,
   } = useInstallerManagement();
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [deletingVersion, setDeletingVersion] = useState<string | null>(null);
@@ -37,6 +41,9 @@ export default function InstallerVersionsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [versionToSetLatest, setVersionToSetLatest] = useState<string>('');
   const [versionToDelete, setVersionToDelete] = useState<string>('');
+  const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
+  const [cleaningUp, setCleaningUp] = useState(false);
+  const [cleanupRetentionDays, setCleanupRetentionDays] = useState(30);
 
   const handleSetAsLatest = (version: string) => {
     if (latestVersion?.version === version) {
@@ -112,6 +119,27 @@ export default function InstallerVersionsPage() {
     });
   };
 
+  const cleanupCandidates = cleanupDialogOpen ? getCleanupCandidates(cleanupRetentionDays) : [];
+
+  const handleCleanup = async () => {
+    setCleaningUp(true);
+    try {
+      const count = await cleanupVersions(cleanupCandidates);
+      toast.success('Cleanup Complete', {
+        description: `Deleted ${count} old installer${count !== 1 ? 's' : ''}.`,
+      });
+      setCleanupDialogOpen(false);
+    } catch (err: any) {
+      toast.error('Cleanup Failed', {
+        description: err.message || 'Failed to clean up versions.',
+      });
+    } finally {
+      setCleaningUp(false);
+    }
+  };
+
+  const totalCleanupSize = cleanupCandidates.reduce((sum, v) => sum + (v.file_size || 0), 0);
+
   const copyDownloadLink = async (downloadUrl: string, version: string) => {
     try {
       await navigator.clipboard.writeText(downloadUrl);
@@ -134,13 +162,24 @@ export default function InstallerVersionsPage() {
           <h1 className="text-3xl font-bold text-foreground mb-2">Installers</h1>
           <p className="text-muted-foreground">Manage owlette Agent installer versions and downloads</p>
         </div>
-        <Button
-          onClick={() => setUploadDialogOpen(true)}
-          className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Upload New Version
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button
+            onClick={() => setCleanupDialogOpen(true)}
+            variant="outline"
+            className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
+            disabled={versions.length < 2}
+          >
+            <Sparkles className="h-4 w-4 mr-2" />
+            Clean Up
+          </Button>
+          <Button
+            onClick={() => setUploadDialogOpen(true)}
+            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Upload New Version
+          </Button>
+        </div>
       </div>
 
       {/* Stats Card */}
@@ -420,6 +459,88 @@ export default function InstallerVersionsPage() {
               className="bg-red-600 hover:bg-red-700 text-foreground cursor-pointer"
             >
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cleanup Dialog */}
+      <Dialog open={cleanupDialogOpen} onOpenChange={(open) => { if (!cleaningUp) setCleanupDialogOpen(open); }}>
+        <DialogContent className="border-border bg-card text-foreground sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">Clean Up Old Installers</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              Remove superseded patch versions while keeping the latest patch per minor release,
+              the current latest version, and anything uploaded within the retention window.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="flex items-center gap-3">
+              <Label htmlFor="retention-days" className="text-foreground whitespace-nowrap">
+                Keep uploads from last
+              </Label>
+              <Input
+                id="retention-days"
+                type="number"
+                min={0}
+                max={365}
+                value={cleanupRetentionDays}
+                onChange={(e) => setCleanupRetentionDays(Math.max(0, parseInt(e.target.value) || 0))}
+                className="w-20 border-border bg-background text-foreground"
+              />
+              <span className="text-muted-foreground text-sm">days</span>
+            </div>
+
+            {cleanupCandidates.length === 0 ? (
+              <div className="bg-green-900/20 border border-green-700/30 rounded-lg p-4">
+                <p className="text-green-400 text-sm">Nothing to clean up — all versions are either the latest patch in their series or within the retention window.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="bg-red-900/20 border border-red-700/30 rounded-lg p-4">
+                  <p className="text-red-400 text-sm font-medium mb-2">
+                    {cleanupCandidates.length} version{cleanupCandidates.length !== 1 ? 's' : ''} will
+                    be permanently deleted ({formatFileSize(totalCleanupSize)}):
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {cleanupCandidates.map((v) => (
+                      <Badge
+                        key={v.version}
+                        variant="outline"
+                        className="border-red-700/50 text-red-400 text-xs"
+                      >
+                        v{v.version}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCleanupDialogOpen(false)}
+              disabled={cleaningUp}
+              className="border-border bg-card text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCleanup}
+              disabled={cleanupCandidates.length === 0 || cleaningUp}
+              className="bg-red-600 hover:bg-red-700 text-foreground cursor-pointer"
+            >
+              {cleaningUp ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                `Delete ${cleanupCandidates.length} Version${cleanupCandidates.length !== 1 ? 's' : ''}`
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
