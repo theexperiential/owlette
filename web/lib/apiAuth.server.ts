@@ -34,7 +34,7 @@ export async function requireSessionOrIdToken(
     return await requireSession(request);
   } catch (error) {
     const authHeader = request.headers.get('authorization') || '';
-    const match = authHeader.match(/^Bearer\\s+(.+)$/i);
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
     if (!match) {
       if (error instanceof ApiAuthError) {
         throw error;

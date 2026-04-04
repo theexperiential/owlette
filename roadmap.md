@@ -29,6 +29,17 @@ Roughly prioritized. Not a commitment — just a living list of what's next.
 
 ---
 
+## testing
+
+- **Cortex API route tests** — complex async flows (tool execution, streaming, conversation management). Needs mocking for SSE streams and tool call chains.
+- **Alert system tests** — email dispatch + webhook dispatch for process crash alerts and threshold breaches. Mock external HTTP calls, verify retry logic.
+- **Screenshot API tests** — storage CRUD, concurrent upload handling, history cleanup. Low risk, good for expanding coverage.
+- **Agent service main loop tests** — `owlette_service.py` (4400 lines). Needs integration testing framework with mocked Firestore + psutil. Large effort, high value.
+- **React component/hook tests** — hooks (`web/hooks/`), pages, contexts. Requires React Testing Library + Firebase context providers.
+- **E2E tests** — Playwright for critical user flows (login, add machine, dashboard). Requires test Firebase project with seeded data.
+
+---
+
 ## billing
 
 - **Stripe integration** — $10/machine/month post-beta. Metered billing based on active machine count.

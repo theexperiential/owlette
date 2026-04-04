@@ -3,6 +3,7 @@
  *
  * Before git commit/push, checks session-edits.json for recently edited files.
  * Runs TypeScript check for web/ changes, Python syntax check for agent/ changes.
+ * Runs Jest tests for web/ changes, pytest for agent/ changes.
  * Blocks the commit if errors are found.
  */
 
@@ -85,6 +86,44 @@ try {
         errors.push(`Agent: syntax error in ${file.split(/[/\\]/).pop()}`)
         if (msg) errors.push(`  ${msg}`)
       }
+    }
+  }
+
+  // Jest tests for web changes
+  if (hasWeb) {
+    try {
+      execSync('npx jest --bail --forceExit', {
+        cwd: join(PROJECT_ROOT, 'web'),
+        timeout: 90000,
+        stdio: 'pipe'
+      })
+    } catch (err) {
+      const output = (err.stdout?.toString() || '') + (err.stderr?.toString() || '')
+      const lines = output.split('\n')
+      const summary = lines.find(l => /Tests:\s+/.test(l))
+      const failSuites = lines.filter(l => /^FAIL\s/.test(l))
+      errors.push(`Web: ${summary?.trim() || 'Jest tests failed'}`)
+      failSuites.slice(0, 5).forEach(s => errors.push(`  ${s.trim()}`))
+      if (failSuites.length > 5) errors.push(`  ... and ${failSuites.length - 5} more`)
+    }
+  }
+
+  // Pytest for agent changes
+  if (hasAgent) {
+    try {
+      execSync('python -m pytest agent/tests/ -x -q --tb=line', {
+        cwd: PROJECT_ROOT,
+        timeout: 60000,
+        stdio: 'pipe'
+      })
+    } catch (err) {
+      const output = (err.stdout?.toString() || '') + (err.stderr?.toString() || '')
+      const lines = output.split('\n')
+      const summary = lines.find(l => /\d+ (failed|passed|error)/.test(l))
+      const failTests = lines.filter(l => /^FAILED\s/.test(l))
+      errors.push(`Agent: ${summary?.trim() || 'pytest failed'}`)
+      failTests.slice(0, 5).forEach(t => errors.push(`  ${t.trim()}`))
+      if (failTests.length > 5) errors.push(`  ... and ${failTests.length - 5} more`)
     }
   }
 

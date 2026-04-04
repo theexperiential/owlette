@@ -25,7 +25,7 @@ jest.mock('@/lib/apiAuth.server', () => {
   };
 });
 
-const { requireAdmin, ApiAuthError } = jest.requireMock('@/lib/apiAuth.server');
+const { requireAdminOrIdToken, ApiAuthError } = jest.requireMock('@/lib/apiAuth.server');
 
 const mockGet = jest.fn();
 const mockSet = jest.fn().mockResolvedValue(undefined);
@@ -97,7 +97,7 @@ function makePutRequest(body: Record<string, unknown>) {
 describe('POST /api/admin/installer/upload', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (requireAdmin as jest.Mock).mockResolvedValue('test-admin');
+    (requireAdminOrIdToken as jest.Mock).mockResolvedValue('test-admin');
     mockGetSignedUrl.mockResolvedValue(['https://storage.example.com/signed-upload']);
   });
 
@@ -147,7 +147,7 @@ describe('POST /api/admin/installer/upload', () => {
   });
 
   it('returns 401 when unauthorized', async () => {
-    (requireAdmin as jest.Mock).mockRejectedValueOnce(
+    (requireAdminOrIdToken as jest.Mock).mockRejectedValueOnce(
       new ApiAuthError(401, 'Unauthorized')
     );
 
@@ -164,7 +164,7 @@ describe('POST /api/admin/installer/upload', () => {
 describe('PUT /api/admin/installer/upload', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (requireAdmin as jest.Mock).mockResolvedValue('test-admin');
+    (requireAdminOrIdToken as jest.Mock).mockResolvedValue('test-admin');
     mockExists.mockResolvedValue([true]);
     mockGetMetadata.mockResolvedValue([{ size: '1048576' }]);
     mockGetSignedUrl.mockResolvedValue(['https://storage.example.com/signed-download']);
