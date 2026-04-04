@@ -11,6 +11,21 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.6.0] - 2026-04-04
+
+### added
+- Sentry error monitoring for both web dashboard and agent — captures unhandled exceptions with full stack traces, machine identity tags (hostname, site_id, project_id), and user context
+- Agent Sentry events include structured machine context (hostname, site, version) for quick triage
+- Sentry tunnel route on web to bypass ad-blockers
+- `sentry` config section in agent config.json (disabled by default, preserved during Firestore sync)
+
+### fixed
+- Firestore config sync now preserves local-only keys (`firebase`, `sentry`) via `LOCAL_ONLY_KEYS`
+- Sentry init added to NSSM runner (owlette_runner.py) — previously only in unused OwletteService.__init__
+- Pre-existing stale test failures fixed: apiAuth NextRequest type, installer_utils terminate vs kill, shared_utils config/metrics API mismatches, removed deleted sanitize_process_name test
+
+---
+
 ## [2.5.9] - 2026-04-03
 
 ### added
