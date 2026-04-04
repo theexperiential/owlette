@@ -37,12 +37,18 @@ def initialize_sentry(config, version):
         import socket
         hostname = socket.gethostname()
 
+        from sentry_sdk.integrations.logging import LoggingIntegration
+
         sentry_sdk.init(
             dsn=dsn,
             environment=environment,
             release=f"owlette-agent@{version}",
             traces_sample_rate=0,  # Free plan: errors only
-            default_integrations=True,
+            integrations=[
+                # Only capture CRITICAL log messages (unhandled exceptions),
+                # not routine ERROR/WARNING logs from normal service lifecycle
+                LoggingIntegration(level=None, event_level=logging.CRITICAL),
+            ],
         )
 
         project_id = config.get("firebase", {}).get("project_id", "unknown")
