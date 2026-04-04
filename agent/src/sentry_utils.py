@@ -45,12 +45,21 @@ def initialize_sentry(config, version):
             default_integrations=True,
         )
 
+        project_id = config.get("firebase", {}).get("project_id", "unknown")
+
         sentry_sdk.set_user({
             "id": f"{site_id}/{hostname}",
             "username": hostname,
         })
         sentry_sdk.set_tag("site_id", site_id)
         sentry_sdk.set_tag("hostname", hostname)
+        sentry_sdk.set_tag("project_id", project_id)
+        sentry_sdk.set_context("machine", {
+            "hostname": hostname,
+            "site_id": site_id,
+            "project_id": project_id,
+            "agent_version": version,
+        })
 
         _sentry_initialized = True
         logging.info(f"Sentry: initialized (env={environment}, site={site_id})")
@@ -59,6 +68,31 @@ def initialize_sentry(config, version):
         logging.warning("Sentry: sentry-sdk not installed, skipping")
     except Exception as e:
         logging.warning(f"Sentry: failed to initialize: {e}")
+
+
+def enrich_context(machine_name=None, site_name=None, owner_email=None):
+    """Enrich Sentry context with data available after Firebase connects."""
+    if not _sentry_initialized:
+        return
+    try:
+        import sentry_sdk
+        if owner_email:
+            sentry_sdk.set_tag("owner", owner_email)
+        if machine_name:
+            sentry_sdk.set_tag("machine_name", machine_name)
+        if site_name:
+            sentry_sdk.set_tag("site_name", site_name)
+        context = {}
+        if machine_name:
+            context["display_name"] = machine_name
+        if site_name:
+            context["site_name"] = site_name
+        if owner_email:
+            context["owner"] = owner_email
+        if context:
+            sentry_sdk.set_context("machine", context)
+    except Exception:
+        pass
 
 
 def capture_exception(exc_info=None):
