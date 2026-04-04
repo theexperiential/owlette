@@ -31,6 +31,7 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@scalar/nextjs-api-reference": "^0.10.5",
+    "@sentry/nextjs": "^10.47.0",
     "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.3.0",
     "@tailwindcss/typography": "^0.5.19",

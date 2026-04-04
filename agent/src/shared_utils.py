@@ -1364,6 +1364,10 @@ def generate_config_file(existing_config=None):
                 "enabled": False,
                 "ship_errors_only": True
             }
+        },
+        "sentry": {
+            "enabled": False,
+            "dsn": ""
         }
     }
 

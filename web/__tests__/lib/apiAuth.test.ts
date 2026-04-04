@@ -48,7 +48,7 @@ import {
 } from '@/lib/apiAuth.server';
 
 function makeRequest(url = 'http://localhost/test', init?: RequestInit) {
-  return new NextRequest(new URL(url), init);
+  return new NextRequest(new URL(url), init as any);
 }
 
 function validSession(overrides = {}) {

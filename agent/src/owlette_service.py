@@ -46,6 +46,9 @@ except ImportError as e:
 # Health probe (stdlib-only module, safe to import unconditionally)
 from health_probe import HealthProbe, HealthState, STATUS_OK
 
+# Error monitoring (optional, no-ops if not configured)
+import sentry_utils
+
 
 def _handle_unhandled_exception(exc_type, exc_value, exc_tb):
     """Log unhandled exceptions before NSSM restarts the service."""
@@ -56,6 +59,8 @@ def _handle_unhandled_exception(exc_type, exc_value, exc_tb):
         "UNHANDLED EXCEPTION — service will be restarted by NSSM:",
         exc_info=(exc_type, exc_value, exc_tb)
     )
+    sentry_utils.capture_exception((exc_type, exc_value, exc_tb))
+    sentry_utils.flush(timeout=2)
 
 
 def _handle_thread_exception(args):
@@ -64,6 +69,7 @@ def _handle_thread_exception(args):
         f"UNHANDLED THREAD EXCEPTION in {args.thread!r}:",
         exc_info=(args.exc_type, args.exc_value, args.exc_traceback)
     )
+    sentry_utils.capture_exception((args.exc_type, args.exc_value, args.exc_traceback))
 
 
 """
@@ -110,6 +116,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Initialize logging and shared resources with configurable log level
         log_level = shared_utils.get_log_level_from_config()
         shared_utils.initialize_logging("service", level=log_level)
+
+        # Initialize Sentry error monitoring (after logging, before exception hooks)
+        sentry_utils.initialize_sentry(shared_utils.read_config(), shared_utils.APP_VERSION)
 
         # Wire global exception hooks (after logging is configured)
         sys.excepthook = _handle_unhandled_exception

@@ -21,6 +21,7 @@ import { handleError } from '@/lib/errorHandler';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { toast } from 'sonner';
 import { clearMfaSession } from '@/lib/mfaSession';
+import * as Sentry from '@sentry/nextjs';
 
 // Shallow-compare two arrays by value (for string arrays like userSites)
 function arraysEqual(a: string[], b: string[]): boolean {
@@ -206,6 +207,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
+
+      // Set Sentry user context for error attribution
+      if (user) {
+        Sentry.setUser({ id: user.uid, email: user.email || undefined });
+      } else {
+        Sentry.setUser(null);
+      }
 
       // Clean up previous user document listener
       if (userDocUnsubscribe) {

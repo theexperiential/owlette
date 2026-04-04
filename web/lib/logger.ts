@@ -4,6 +4,8 @@
  * - Production: Only logs warnings and errors to minimize console noise
  */
 
+import * as Sentry from '@sentry/nextjs';
+
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 interface LogOptions {
@@ -54,10 +56,12 @@ class Logger {
   error(message: string, options?: LogOptions): void {
     this.log('error', message, options);
 
-    // In production, you could send to error tracking service
     if (!this.isDevelopment) {
-      // Example: Send to Sentry, LogRocket, or other service
-      // Sentry.captureMessage(message, { level: 'error', ...options });
+      Sentry.captureMessage(message, {
+        level: 'error',
+        extra: options?.data ? { data: options.data } : undefined,
+        tags: options?.context ? { context: options.context } : undefined,
+      });
     }
   }
 

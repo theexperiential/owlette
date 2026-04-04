@@ -1,6 +1,7 @@
 'use client';
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
+import * as Sentry from '@sentry/nextjs';
 
 interface Props {
   children: ReactNode;
@@ -63,8 +64,11 @@ export class ErrorBoundary extends Component<Props, State> {
       this.props.onError(error, errorInfo);
     }
 
-    // In production, you might want to send this to an error reporting service
-    // Example: Sentry.captureException(error, { contexts: { react: { componentStack: errorInfo.componentStack } } });
+    // Report to Sentry (no-op if DSN not configured)
+    Sentry.withScope((scope) => {
+      scope.setContext('react', { componentStack: errorInfo.componentStack });
+      Sentry.captureException(error);
+    });
   }
 
   handleReset = () => {
