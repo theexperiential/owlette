@@ -2122,20 +2122,20 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Read old config before overwriting (for diffing)
             old_config = shared_utils.read_config()
 
-            # CRITICAL: Preserve local firebase authentication config
-            # The firebase section contains local authentication settings (site_id, OAuth tokens, api_base)
+            # CRITICAL: Preserve local-only config sections during Firestore sync
+            # These keys contain local settings that don't exist in Firestore
             # and should NEVER be overwritten by Firestore config updates
-            if old_config and 'firebase' in old_config:
-                new_config['firebase'] = old_config['firebase']
-                logging.debug("Preserved local firebase authentication config during Firestore sync")
+            LOCAL_ONLY_KEYS = ('firebase', 'sentry')
+            if old_config:
+                for key in LOCAL_ONLY_KEYS:
+                    if key in old_config:
+                        new_config[key] = old_config[key]
+                logging.debug(f"Preserved local-only keys during Firestore sync: {[k for k in LOCAL_ONLY_KEYS if k in old_config]}")
             else:
-                # SAFETY CHECK: If we somehow failed to read the old config or it's missing firebase section,
-                # DO NOT proceed with the write - this would wipe out authentication
-                if old_config is None:
-                    logging.error("CRITICAL: Cannot read old config - aborting Firestore config sync to prevent data loss")
-                    return
-                else:
-                    logging.warning("Old config exists but has no firebase section - proceeding with Firestore sync")
+                # SAFETY CHECK: If we somehow failed to read the old config,
+                # DO NOT proceed with the write - this would wipe out local-only settings
+                logging.error("CRITICAL: Cannot read old config - aborting Firestore config sync to prevent data loss")
+                return
 
             # Merge launch_mode/schedules: if Firestore processes don't have launch_mode,
             # preserve the local values (GUI may have set them before Firestore caught up)

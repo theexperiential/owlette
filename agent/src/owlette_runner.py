@@ -89,6 +89,10 @@ if __name__ == '__main__':
     log_level = shared_utils.get_log_level_from_config()
     shared_utils.initialize_logging("service", level=log_level)
 
+    # Initialize Sentry error monitoring (after logging, before exception hooks)
+    import sentry_utils
+    sentry_utils.initialize_sentry(shared_utils.read_config(), shared_utils.APP_VERSION)
+
     # Wire global exception hooks (after logging is configured)
     from owlette_service import _handle_unhandled_exception, _handle_thread_exception
     sys.excepthook = _handle_unhandled_exception
