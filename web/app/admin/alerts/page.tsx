@@ -363,7 +363,7 @@ export default function AlertsPage() {
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="cursor-pointer" disabled={saving}>
+                  <Button variant="outline" className="hover:bg-accent! hover:text-foreground! cursor-pointer" disabled={saving}>
                     <Zap className="h-4 w-4 mr-2" />
                     presets
                   </Button>
@@ -405,7 +405,7 @@ export default function AlertsPage() {
             <div className="flex gap-3">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="cursor-pointer">
+                  <Button variant="outline" className="hover:bg-accent! hover:text-foreground! cursor-pointer">
                     <Zap className="h-4 w-4 mr-2" />
                     add from presets
                   </Button>
@@ -475,7 +475,7 @@ export default function AlertsPage() {
                     setDeleteDialogOpen(true);
                   }}
                   disabled={saving}
-                  className="bg-card border-border text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer"
+                  className="bg-card border-border text-red-400 hover:bg-red-900! hover:border-red-800! hover:text-red-200! cursor-pointer"
                 >
                   <Trash2 className="h-3 w-3" />
                 </Button>
@@ -620,7 +620,7 @@ export default function AlertsPage() {
             <Button
               variant="outline"
               onClick={() => setDialogOpen(false)}
-              className="cursor-pointer"
+              className="hover:bg-accent! hover:text-foreground! cursor-pointer"
             >
               cancel
             </Button>
@@ -650,7 +650,7 @@ export default function AlertsPage() {
             <Button
               variant="outline"
               onClick={() => setDeleteDialogOpen(false)}
-              className="cursor-pointer"
+              className="hover:bg-accent! hover:text-foreground! cursor-pointer"
             >
               cancel
             </Button>

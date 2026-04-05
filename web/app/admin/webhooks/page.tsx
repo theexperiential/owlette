@@ -35,11 +35,11 @@ export default function WebhooksPage() {
     <div className="p-6 lg:p-8 max-w-6xl mx-auto">
       <div className="mb-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-2">
-          <h1 className="text-2xl font-bold text-foreground">Webhook Notifications</h1>
+          <h1 className="text-2xl font-bold text-foreground">webhook notifications</h1>
           <div className="flex items-center gap-2">
             <Select value={selectedSiteId} onValueChange={handleSiteChange}>
               <SelectTrigger className="w-[180px] bg-card border-border text-foreground">
-                <SelectValue placeholder="Select site" />
+                <SelectValue placeholder="select site" />
               </SelectTrigger>
               <SelectContent className="bg-card border-border">
                 {sites.map((site) => (
@@ -60,10 +60,10 @@ export default function WebhooksPage() {
       {selectedSiteId && (
         <div className="flex flex-col items-center justify-center py-12">
           <Webhook className="h-16 w-16 text-muted-foreground/50 mb-4" />
-          <p className="text-muted-foreground mb-4">Manage webhook integrations for this site</p>
+          <p className="text-muted-foreground mb-4">manage webhook integrations for this site</p>
           <Button onClick={() => setDialogOpen(true)}>
             <Webhook className="h-4 w-4 mr-2" />
-            Manage Webhooks
+            manage webhooks
           </Button>
         </div>
       )}

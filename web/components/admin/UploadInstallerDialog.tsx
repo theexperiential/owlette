@@ -153,7 +153,7 @@ export default function UploadInstallerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="border-border bg-secondary text-white max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="text-white">Upload New Installer Version</DialogTitle>
+          <DialogTitle className="text-white">upload new installer version</DialogTitle>
           <DialogDescription className="text-muted-foreground">
             Upload a new owlette Agent installer version to Firebase Storage
           </DialogDescription>
@@ -162,7 +162,7 @@ export default function UploadInstallerDialog({
         <div className="space-y-4 py-4">
           {/* File Upload Area */}
           <div className="space-y-2">
-            <Label className="text-white">Installer File</Label>
+            <Label className="text-white">installer file</Label>
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -175,7 +175,7 @@ export default function UploadInstallerDialog({
               {!file ? (
                 <div>
                   <FileUp className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                  <p className="text-white mb-2">Drag & drop installer file here</p>
+                  <p className="text-white mb-2">drag & drop installer file here</p>
                   <p className="text-sm text-muted-foreground mb-4">or</p>
                   <label htmlFor="file-upload">
                     <AdminButton
@@ -185,7 +185,7 @@ export default function UploadInstallerDialog({
                       onClick={() => document.getElementById('file-upload')?.click()}
                     >
                       <Upload className="h-4 w-4 mr-2" />
-                      Choose File
+                      choose file
                     </AdminButton>
                   </label>
                   <input
@@ -223,7 +223,7 @@ export default function UploadInstallerDialog({
 
           {/* Version Input */}
           <div className="space-y-2">
-            <Label htmlFor="version" className="text-white">Version Number</Label>
+            <Label htmlFor="version" className="text-white">version number</Label>
             <Input
               id="version"
               placeholder="2.0.0"
@@ -237,7 +237,7 @@ export default function UploadInstallerDialog({
 
           {/* Release Notes */}
           <div className="space-y-2">
-            <Label htmlFor="release-notes" className="text-white">Release Notes (Optional)</Label>
+            <Label htmlFor="release-notes" className="text-white">release notes (optional)</Label>
             <Textarea
               id="release-notes"
               placeholder="What's new in this version?"
@@ -267,7 +267,7 @@ export default function UploadInstallerDialog({
           {uploading && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Uploading...</span>
+                <span className="text-muted-foreground">uploading...</span>
                 <span className="text-white font-medium">{uploadProgress}%</span>
               </div>
               <div className="w-full bg-background rounded-full h-2">
@@ -297,12 +297,12 @@ export default function UploadInstallerDialog({
             {uploading ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Uploading...
+                uploading...
               </>
             ) : (
               <>
                 <Upload className="h-4 w-4 mr-2" />
-                Upload Installer
+                upload installer
               </>
             )}
           </Button>

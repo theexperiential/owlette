@@ -59,12 +59,13 @@ export default function SchedulePopover({
     setBlocks(preset.blocks.map(b => ({ ...b, days: [...b.days], ranges: b.ranges.map(r => ({ ...r })) })));
   }, []);
 
-  // Always show built-in presets, then append custom presets
-  const builtInAsPresets = BUILT_IN_PRESETS.map((bp, i) => ({
-    id: `builtin-${i}`, ...bp, isBuiltIn: true, order: i, createdBy: '', createdAt: null as any,
-  }));
-  const customPresets = (presets || []).filter(p => !p.isBuiltIn);
-  const displayPresets = [...builtInAsPresets, ...customPresets];
+  // Use presets from hook (already includes built-ins merged client-side),
+  // fall back to hardcoded defaults if no presets prop provided
+  const displayPresets = (presets && presets.length > 0)
+    ? presets
+    : BUILT_IN_PRESETS.map((bp, i) => ({
+        id: `builtin-${i}`, ...bp, isBuiltIn: true, order: i, createdBy: '', createdAt: null as any,
+      }));
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

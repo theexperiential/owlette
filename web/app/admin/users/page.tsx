@@ -139,8 +139,8 @@ export default function UserManagementPage() {
       <div className="max-w-screen-2xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground mb-2">User Management</h1>
-        <p className="text-muted-foreground">Manage user roles and permissions</p>
+        <h1 className="text-3xl font-bold text-foreground mb-2">user management</h1>
+        <p className="text-muted-foreground">manage user roles and permissions</p>
       </div>
 
       {/* Stats Cards */}
@@ -152,7 +152,7 @@ export default function UserManagementPage() {
             </div>
             <div>
               <p className="text-2xl font-bold text-foreground">{counts.total}</p>
-              <p className="text-sm text-muted-foreground">Total Users</p>
+              <p className="text-sm text-muted-foreground">total users</p>
             </div>
           </div>
         </div>
@@ -164,7 +164,7 @@ export default function UserManagementPage() {
             </div>
             <div>
               <p className="text-2xl font-bold text-foreground">{counts.admins}</p>
-              <p className="text-sm text-muted-foreground">Administrators</p>
+              <p className="text-sm text-muted-foreground">administrators</p>
             </div>
           </div>
         </div>
@@ -176,7 +176,7 @@ export default function UserManagementPage() {
             </div>
             <div>
               <p className="text-2xl font-bold text-foreground">{counts.users}</p>
-              <p className="text-sm text-muted-foreground">Regular Users</p>
+              <p className="text-sm text-muted-foreground">regular users</p>
             </div>
           </div>
         </div>
@@ -193,7 +193,7 @@ export default function UserManagementPage() {
       {loading && (
         <div className="flex justify-center items-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-accent-cyan" />
-          <span className="ml-3 text-muted-foreground">Loading users...</span>
+          <span className="ml-3 text-muted-foreground">loading users...</span>
         </div>
       )}
 
@@ -203,11 +203,11 @@ export default function UserManagementPage() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-border bg-background/50">
-                <th className="text-left p-4 text-sm font-medium text-foreground">User</th>
-                <th className="text-left p-4 text-sm font-medium text-foreground">Role</th>
-                <th className="text-left p-4 text-sm font-medium text-foreground">Sites</th>
-                <th className="text-left p-4 text-sm font-medium text-foreground">Joined</th>
-                <th className="text-right p-4 text-sm font-medium text-foreground">Actions</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">user</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">role</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">sites</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">joined</th>
+                <th className="text-right p-4 text-sm font-medium text-foreground">actions</th>
               </tr>
             </thead>
             <tbody>
@@ -241,12 +241,12 @@ export default function UserManagementPage() {
                       {user.role === 'admin' ? (
                         <Badge className="bg-green-600 flex items-center gap-1 w-fit">
                           <ShieldAlert className="h-3 w-3" />
-                          Admin
+                          admin
                         </Badge>
                       ) : (
-                        <Badge className="bg-muted flex items-center gap-1 w-fit">
+                        <Badge className="bg-secondary border border-border text-muted-foreground flex items-center gap-1 w-fit">
                           <Users className="h-3 w-3" />
-                          User
+                          user
                         </Badge>
                       )}
                     </td>
@@ -271,7 +271,7 @@ export default function UserManagementPage() {
                           <DropdownMenuTrigger asChild>
                             <Button
                               variant="ghost"
-                              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+                              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground! hover:bg-accent! cursor-pointer"
                             >
                               <MoreVertical className="h-4 w-4" />
                             </Button>
@@ -282,7 +282,7 @@ export default function UserManagementPage() {
                               className="text-foreground hover:bg-accent cursor-pointer focus:bg-accent focus:text-foreground"
                             >
                               <Settings className="h-4 w-4 mr-2" />
-                              Manage Sites
+                              manage sites
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => handleOpenRoleChangeDialog(user.uid, user.email, user.role)}
@@ -297,12 +297,12 @@ export default function UserManagementPage() {
                               ) : user.role === 'admin' ? (
                                 <>
                                   <UserMinus className="h-4 w-4 mr-2" />
-                                  Demote to User
+                                  demote to user
                                 </>
                               ) : (
                                 <>
                                   <UserCog className="h-4 w-4 mr-2" />
-                                  Promote to Admin
+                                  promote to admin
                                 </>
                               )}
                             </DropdownMenuItem>
@@ -310,7 +310,7 @@ export default function UserManagementPage() {
                             <DropdownMenuItem
                               onClick={() => handleOpenDeleteDialog(user.uid, user.email)}
                               disabled={deletingUser === user.uid || user.uid === currentUser?.uid}
-                              className="text-red-400 hover:bg-red-950/30 hover:text-red-300 cursor-pointer focus:bg-red-950/30 focus:text-red-300"
+                              className="text-red-400 hover:bg-red-950/30! hover:text-red-300! cursor-pointer focus:bg-red-950/30 focus:text-red-300"
                             >
                               {deletingUser === user.uid ? (
                                 <>
@@ -320,7 +320,7 @@ export default function UserManagementPage() {
                               ) : (
                                 <>
                                   <Trash2 className="h-4 w-4 mr-2" />
-                                  Delete User
+                                  delete user
                                 </>
                               )}
                             </DropdownMenuItem>
@@ -371,7 +371,7 @@ export default function UserManagementPage() {
               ) : (
                 <UserMinus className="h-5 w-5 text-muted-foreground" />
               )}
-              {userToChangeRole?.newRole === 'admin' ? 'Promote to Admin' : 'Demote to User'}
+              {userToChangeRole?.newRole === 'admin' ? 'promote to admin' : 'demote to user'}
             </DialogTitle>
             <DialogDescription className="text-foreground">
               Are you sure you want to {userToChangeRole?.newRole === 'admin' ? 'promote' : 'demote'}{' '}
@@ -389,9 +389,9 @@ export default function UserManagementPage() {
             <Button
               variant="outline"
               onClick={() => setRoleChangeDialogOpen(false)}
-              className="border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
+              className="border-border bg-background text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
             >
-              Cancel
+              cancel
             </Button>
             <Button
               onClick={handleConfirmRoleChange}
@@ -400,12 +400,12 @@ export default function UserManagementPage() {
               {userToChangeRole?.newRole === 'admin' ? (
                 <>
                   <UserCog className="h-4 w-4 mr-2" />
-                  Promote to Admin
+                  promote to admin
                 </>
               ) : (
                 <>
                   <UserMinus className="h-4 w-4 mr-2" />
-                  Demote to User
+                  demote to user
                 </>
               )}
             </Button>
@@ -419,7 +419,7 @@ export default function UserManagementPage() {
           <DialogHeader>
             <DialogTitle className="text-foreground flex items-center gap-2">
               <Trash2 className="h-5 w-5 text-red-400" />
-              Delete User
+              delete user
             </DialogTitle>
             <DialogDescription className="text-foreground">
               Are you sure you want to delete <strong className="text-foreground">{userToDelete?.email}</strong>?
@@ -427,23 +427,23 @@ export default function UserManagementPage() {
           </DialogHeader>
           <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-4 my-4">
             <p className="text-red-300 text-sm">
-              This action cannot be undone. All user data will be permanently removed.
+              this action cannot be undone. All user data will be permanently removed.
             </p>
           </div>
           <DialogFooter className="gap-2">
             <Button
               variant="outline"
               onClick={() => setDeleteConfirmDialogOpen(false)}
-              className="border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
+              className="border-border bg-background text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
             >
-              Cancel
+              cancel
             </Button>
             <Button
               onClick={handleConfirmDelete}
               className="bg-red-600 hover:bg-red-700 text-foreground cursor-pointer"
             >
               <Trash2 className="h-4 w-4 mr-2" />
-              Delete User
+              delete user
             </Button>
           </DialogFooter>
         </DialogContent>

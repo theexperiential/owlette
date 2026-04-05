@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { db } from '@/lib/firebase';
 import {
   collection,
@@ -14,6 +14,11 @@ import {
 } from 'firebase/firestore';
 import type { ScheduleBlock } from '@/hooks/useFirestore';
 import { BUILT_IN_PRESETS } from '@/lib/scheduleDefaults';
+
+/** Deterministic ID for a built-in preset */
+function builtInId(name: string): string {
+  return `builtin-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+}
 
 export interface SchedulePreset {
   id: string;
@@ -34,15 +39,17 @@ export interface UseSchedulePresetsReturn {
   createPreset: (preset: Omit<SchedulePreset, 'id' | 'createdAt' | 'updatedAt'>) => Promise<string>;
   updatePreset: (id: string, updates: Partial<SchedulePreset>) => Promise<void>;
   deletePreset: (id: string) => Promise<void>;
-  seedBuiltInPresets: (userId: string) => Promise<void>;
 }
 
 /**
  * Hook to manage schedule presets scoped to a site.
  * Firestore path: config/{siteId}/schedule_presets/{presetId}
+ *
+ * Built-in presets are always present (merged client-side from BUILT_IN_PRESETS).
+ * If an admin edits a built-in, the override is saved to Firestore and takes precedence.
  */
 export function useSchedulePresets(siteId: string | null): UseSchedulePresetsReturn {
-  const [presets, setPresets] = useState<SchedulePreset[]>([]);
+  const [firestorePresets, setFirestorePresets] = useState<SchedulePreset[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,13 +69,7 @@ export function useSchedulePresets(siteId: string | null): UseSchedulePresetsRet
           snapshot.forEach((docSnap) => {
             data.push({ id: docSnap.id, ...docSnap.data() } as SchedulePreset);
           });
-
-          data.sort((a, b) => {
-            if (a.order !== b.order) return a.order - b.order;
-            return a.name.localeCompare(b.name);
-          });
-
-          setPresets(data);
+          setFirestorePresets(data);
           setLoading(false);
           setError(null);
         },
@@ -85,6 +86,39 @@ export function useSchedulePresets(siteId: string | null): UseSchedulePresetsRet
       setLoading(false);
     }
   }, [siteId]);
+
+  // Merge built-in defaults with Firestore overrides + custom presets
+  const presets = useMemo(() => {
+    const firestoreById = new Map(firestorePresets.map(p => [p.id, p]));
+
+    // Built-ins: use Firestore override if it exists, otherwise the hardcoded default
+    const builtIns: SchedulePreset[] = BUILT_IN_PRESETS.map((bp, i) => {
+      const id = builtInId(bp.name);
+      const override = firestoreById.get(id);
+      if (override) return override;
+      return {
+        id,
+        name: bp.name,
+        description: bp.description,
+        blocks: bp.blocks,
+        isBuiltIn: true,
+        order: i,
+        createdBy: '',
+        createdAt: null as any,
+      };
+    });
+
+    // Custom presets: everything in Firestore that isn't a built-in override
+    const builtInIds = new Set(BUILT_IN_PRESETS.map(bp => builtInId(bp.name)));
+    const custom = firestorePresets
+      .filter(p => !builtInIds.has(p.id))
+      .sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order;
+        return a.name.localeCompare(b.name);
+      });
+
+    return [...builtIns, ...custom];
+  }, [firestorePresets]);
 
   const createPreset = useCallback(async (
     preset: Omit<SchedulePreset, 'id' | 'createdAt' | 'updatedAt'>
@@ -109,10 +143,20 @@ export function useSchedulePresets(siteId: string | null): UseSchedulePresetsRet
     if (!db || !siteId) throw new Error('Firebase not configured');
 
     const presetRef = doc(db, 'config', siteId, 'schedule_presets', id);
-    await updateDoc(presetRef, {
-      ...updates,
-      updatedAt: serverTimestamp(),
-    });
+
+    if (id.startsWith('builtin-')) {
+      // Built-in: use setDoc with merge so it creates the override doc on first edit
+      await setDoc(presetRef, {
+        ...updates,
+        isBuiltIn: true,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    } else {
+      await updateDoc(presetRef, {
+        ...updates,
+        updatedAt: serverTimestamp(),
+      });
+    }
   }, [siteId]);
 
   const deletePreset = useCallback(async (id: string): Promise<void> => {
@@ -122,30 +166,6 @@ export function useSchedulePresets(siteId: string | null): UseSchedulePresetsRet
     await deleteDoc(presetRef);
   }, [siteId]);
 
-  /**
-   * Seed built-in presets if the collection is empty.
-   * Called once when admin first accesses schedule presets.
-   */
-  const seedBuiltInPresets = useCallback(async (userId: string): Promise<void> => {
-    if (!db || !siteId) throw new Error('Firebase not configured');
-
-    for (let i = 0; i < BUILT_IN_PRESETS.length; i++) {
-      const bp = BUILT_IN_PRESETS[i];
-      const presetId = `builtin-${bp.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-      const presetRef = doc(db, 'config', siteId, 'schedule_presets', presetId);
-
-      await setDoc(presetRef, {
-        name: bp.name,
-        description: bp.description,
-        blocks: bp.blocks,
-        isBuiltIn: true,
-        order: i,
-        createdBy: userId,
-        createdAt: serverTimestamp(),
-      });
-    }
-  }, [siteId]);
-
   return {
     presets,
     loading,
@@ -153,6 +173,5 @@ export function useSchedulePresets(siteId: string | null): UseSchedulePresetsRet
     createPreset,
     updatePreset,
     deletePreset,
-    seedBuiltInPresets,
   };
 }

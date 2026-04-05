@@ -81,7 +81,7 @@ export default function SystemPresetsPage() {
       <div className="flex items-center justify-center min-h-screen">
         <div className="flex items-center gap-3 text-foreground">
           <Loader2 className="h-6 w-6 animate-spin" />
-          <span>Loading presets...</span>
+          <span>loading presets...</span>
         </div>
       </div>
     );
@@ -91,7 +91,7 @@ export default function SystemPresetsPage() {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
-          <p className="text-red-400 font-medium mb-2">Error loading presets</p>
+          <p className="text-red-400 font-medium mb-2">error loading presets</p>
           <p className="text-muted-foreground text-sm">{error}</p>
         </div>
       </div>
@@ -105,7 +105,7 @@ export default function SystemPresetsPage() {
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h1 className="text-3xl font-bold text-foreground mb-2">Template Library</h1>
+              <h1 className="text-3xl font-bold text-foreground mb-2">template library</h1>
               <p className="text-muted-foreground">
                 Admin-curated software catalog for deployments (TouchDesigner, VLC, owlette Agent, etc.)
               </p>
@@ -115,7 +115,7 @@ export default function SystemPresetsPage() {
               className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             >
               <Plus className="h-5 w-5 mr-2" />
-              Add Template
+              add template
             </Button>
           </div>
 
@@ -128,10 +128,10 @@ export default function SystemPresetsPage() {
               className={
                 selectedCategory === 'All'
                   ? 'bg-accent-cyan text-gray-900 cursor-pointer'
-                  : 'border-border bg-card text-foreground hover:bg-accent hover:text-foreground cursor-pointer'
+                  : 'border-border bg-card text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer'
               }
             >
-              All ({presets.length})
+              all ({presets.length})
             </Button>
             {categories.map(category => {
               const count = presets.filter(p => p.category === category).length;
@@ -144,7 +144,7 @@ export default function SystemPresetsPage() {
                   className={
                     selectedCategory === category
                       ? 'bg-accent-cyan text-gray-900 cursor-pointer'
-                      : 'border-border bg-card text-foreground hover:bg-accent hover:text-foreground cursor-pointer'
+                      : 'border-border bg-card text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer'
                   }
                 >
                   {category} ({count})
@@ -158,7 +158,7 @@ export default function SystemPresetsPage() {
         {filteredPresets.length === 0 ? (
           <div className="bg-card border border-border rounded-lg p-12 text-center">
             <Package className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-xl font-medium text-foreground mb-2">No Presets Found</h3>
+            <h3 className="text-xl font-medium text-foreground mb-2">no presets found</h3>
             <p className="text-muted-foreground mb-6">
               {selectedCategory === 'All'
                 ? 'Create your first system preset to get started.'
@@ -170,7 +170,7 @@ export default function SystemPresetsPage() {
                 className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
               >
                 <Plus className="h-5 w-5 mr-2" />
-                Add First Preset
+                add first preset
               </Button>
             )}
           </div>
@@ -183,19 +183,19 @@ export default function SystemPresetsPage() {
                   <thead className="bg-muted/50 border-b border-border">
                     <tr>
                       <th className="px-4 xl:px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        Preset
+                        preset
                       </th>
                       <th className="px-4 xl:px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        Category
+                        category
                       </th>
                       <th className="px-4 xl:px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        Installer
+                        installer
                       </th>
                       <th className="hidden xl:table-cell px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        Flags
+                        flags
                       </th>
                       <th className="px-4 xl:px-6 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        Actions
+                        actions
                       </th>
                     </tr>
                   </thead>
@@ -244,7 +244,7 @@ export default function SystemPresetsPage() {
                               variant="outline"
                               size="sm"
                               onClick={() => handleEdit(preset)}
-                              className="border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
+                              className="border-border bg-background text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
                               title="Edit"
                             >
                               <Pencil className="h-4 w-4" />
@@ -253,7 +253,7 @@ export default function SystemPresetsPage() {
                               variant="outline"
                               size="sm"
                               onClick={() => handleDelete(preset)}
-                              className="border-red-700 bg-red-900/20 text-red-400 hover:bg-red-900/40 hover:text-red-300 cursor-pointer"
+                              className="border-red-700 bg-red-900/20 text-red-400 hover:bg-red-900/40! hover:text-red-300! cursor-pointer"
                               title="Delete"
                             >
                               <Trash2 className="h-4 w-4" />
@@ -318,7 +318,7 @@ export default function SystemPresetsPage() {
                       variant="outline"
                       size="sm"
                       onClick={() => handleEdit(preset)}
-                      className="flex-1 border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
+                      className="flex-1 border-border bg-background text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
                     >
                       <Pencil className="h-4 w-4 mr-2" />
                       Edit
@@ -327,7 +327,7 @@ export default function SystemPresetsPage() {
                       variant="outline"
                       size="sm"
                       onClick={() => handleDelete(preset)}
-                      className="flex-1 border-red-700 bg-red-900/20 text-red-400 hover:bg-red-900/40 hover:text-red-300 cursor-pointer"
+                      className="flex-1 border-red-700 bg-red-900/20 text-red-400 hover:bg-red-900/40! hover:text-red-300! cursor-pointer"
                     >
                       <Trash2 className="h-4 w-4 mr-2" />
                       Delete
@@ -350,7 +350,7 @@ export default function SystemPresetsPage() {
         <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <DialogContent className="border-border bg-card text-foreground">
             <DialogHeader>
-              <DialogTitle>Delete Preset</DialogTitle>
+              <DialogTitle>delete preset</DialogTitle>
               <DialogDescription className="text-muted-foreground">
                 Are you sure you want to delete "{presetToDelete?.name}"? This action cannot be undone.
               </DialogDescription>
@@ -363,9 +363,9 @@ export default function SystemPresetsPage() {
                   setPresetToDelete(null);
                 }}
                 disabled={deleting}
-                className="border-border bg-background text-foreground hover:bg-accent cursor-pointer"
+                className="border-border bg-background text-foreground hover:bg-accent! cursor-pointer"
               >
-                Cancel
+                cancel
               </Button>
               <Button
                 onClick={confirmDelete}
@@ -378,7 +378,7 @@ export default function SystemPresetsPage() {
                     Deleting...
                   </>
                 ) : (
-                  'Delete Preset'
+                  'delete preset'
                 )}
               </Button>
             </DialogFooter>
