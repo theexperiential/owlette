@@ -5,6 +5,7 @@ import { version } from "./package.json";
 const isDev = process.env.NODE_ENV === 'development';
 
 const nextConfig: NextConfig = {
+  reactStrictMode: false,
   env: {
     NEXT_PUBLIC_APP_VERSION: version,
   },

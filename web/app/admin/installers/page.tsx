@@ -365,16 +365,16 @@ export default function InstallerVersionsPage() {
                             </Button>
                             {!isLatest ? (
                               <Button
-                                size="sm"
-                                variant="outline"
+                                variant="ghost"
+                                size="icon"
                                 onClick={() => handleDelete(version.version)}
                                 disabled={isDeleting || isSetting}
-                                className="border-border bg-background text-red-400 hover:bg-red-900! hover:border-red-800! hover:text-red-200! cursor-pointer"
+                                className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
                               >
                                 {isDeleting ? (
-                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                 ) : (
-                                  <Trash2 className="h-3 w-3" />
+                                  <Trash2 className="h-3.5 w-3.5" />
                                 )}
                               </Button>
                             ) : (

@@ -11,7 +11,7 @@ export function LandingHeader() {
   };
 
   return (
-    <header className="fixed top-0 inset-x-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-md">
+    <header className="fixed top-0 inset-x-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-md hero-enter-nav">
       <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
         {/* Logo */}
         <a href="#" onClick={scrollToTop} className="flex items-center gap-1.5 group cursor-pointer">

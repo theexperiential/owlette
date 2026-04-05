@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -184,12 +184,18 @@ export default function TokensPage() {
   };
 
   return (
-    <div className="p-6 lg:p-8 max-w-6xl mx-auto">
+    <div className="p-8">
+      <div className="max-w-screen-2xl mx-auto">
       {/* Header with inline site selector */}
-      <div className="mb-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-2">
-          <h1 className="text-3xl font-bold text-foreground">agent tokens</h1>
-          <div className="flex items-center gap-2">
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground mb-2">agent tokens</h1>
+            <p className="text-muted-foreground">
+              view and revoke agent authentication tokens
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
             <Select value={selectedSiteId} onValueChange={handleSiteChange}>
               <SelectTrigger className="w-[180px] bg-card border-border text-foreground">
                 <SelectValue placeholder="select site" />
@@ -211,37 +217,25 @@ export default function TokensPage() {
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
-          </div>
-        </div>
-        <p className="text-muted-foreground text-sm">
-          View and revoke agent authentication tokens. Revoking a token will disconnect the agent and require re-registration.
-        </p>
-      </div>
-
-      {/* Tokens Table */}
-      {selectedSiteId && (
-        <Card className="bg-card border-border">
-          <CardHeader className="pb-4 flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-foreground text-lg flex items-center gap-2">
-                <KeyRound className="h-5 w-5" />
-                active tokens ({tokens.length})
-              </CardTitle>
-              <CardDescription>agent refresh tokens for this site</CardDescription>
-            </div>
             {tokens.length > 0 && (
               <Button
                 variant="destructive"
                 size="sm"
                 onClick={() => setRevokeAllDialogOpen(true)}
-                className="bg-red-600 hover:bg-red-700"
+                className="bg-red-600 hover:bg-red-700 cursor-pointer"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
                 revoke all
               </Button>
             )}
-          </CardHeader>
-          <CardContent>
+          </div>
+        </div>
+      </div>
+
+      {/* Tokens Table */}
+      {selectedSiteId && (
+        <Card className="bg-card border-border">
+          <CardContent className="pt-6">
             {loading ? (
               <div className="text-center py-8 text-muted-foreground">loading tokens...</div>
             ) : tokens.length === 0 ? (
@@ -369,6 +363,7 @@ export default function TokensPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

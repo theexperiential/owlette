@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
@@ -54,35 +55,6 @@ function buildAlertEmail(
     <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check the machine and service logs for more details.</p>
   `;
   return wrapEmailLayout(content, { unsubscribeUrl });
-}
-
-function buildProcessAlertEmail(
-  siteId: string,
-  machineId: string,
-  processName: string,
-  errorMessage: string,
-  agentVersion: string,
-  eventType: string,
-  unsubscribeUrl?: string,
-  timezone?: string
-): string {
-  const eventLabel = eventType === 'process_start_failed' ? 'failed to start' : 'crashed';
-  const content = `
-    <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">process ${eventLabel}: ${processName}</h2>
-    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a monitored process has ${eventLabel} on one of your machines.</p>
-    ${emailDataTable([
-      { label: 'site', value: siteId },
-      { label: 'machine', value: machineId },
-      { label: 'process', value: processName },
-      { label: 'event', value: eventLabel },
-      { label: 'error', value: errorMessage },
-      { label: 'agent version', value: agentVersion },
-      { label: 'time', value: emailTimestamp(new Date(), timezone) },
-      { label: 'environment', value: ENV_LABEL },
-    ])}
-    <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check the machine and service logs for more details.</p>
-  `;
-  return wrapEmailLayout(content, { preheader: `process ${eventLabel}: ${processName} on ${machineId}`, unsubscribeUrl });
 }
 
 export const POST = withRateLimit(
@@ -161,16 +133,64 @@ export const POST = withRateLimit(
         }
       }
 
-      // Check Resend is configured
+      const db = getAdminDb();
+
+      // Determine webhook event type (used by both process and connection paths)
+      const webhookEvent = resolvedEventType === 'process_crash' ? 'process.crashed'
+        : resolvedEventType === 'process_start_failed' ? 'process.restarted'
+        : 'machine.offline';
+
+      // --- Process events: queue for batched digest email ---
+      if (isProcessEvent) {
+        // Write to pending_process_alerts for batched delivery by cron
+        await db.collection('pending_process_alerts').add({
+          siteId,
+          machineId,
+          processName,
+          errorMessage: errorMessage || 'Process exited unexpectedly',
+          agentVersion: agentVersion || '',
+          eventType: resolvedEventType,
+          timestamp: FieldValue.serverTimestamp(),
+        });
+
+        console.log(`[agent/alert] Queued process alert: ${resolvedEventType} - ${processName} on ${machineId} (${siteId})`);
+
+        // Fire webhooks immediately (non-blocking)
+        const siteDoc = await db.collection('sites').doc(siteId).get();
+        const siteName = siteDoc.data()?.name || siteId;
+        fireWebhooks(siteId, siteName, webhookEvent, {
+          machine: { id: machineId, name: machineId },
+          process: { name: processName, error: errorMessage || '' },
+        }).catch(console.error);
+
+        // Trigger autonomous Cortex investigation immediately (non-blocking)
+        const localCortexRunning = await isLocalCortexRunning(db, siteId, machineId);
+        if (localCortexRunning) {
+          console.log(`[agent/alert] Local Cortex is running on ${machineId} — skipping server-side investigation`);
+        } else {
+          triggerAutonomousCortex(db, {
+            siteId,
+            machineId,
+            machineName: machineId,
+            eventType: resolvedEventType,
+            processName: processName || '',
+            errorMessage: errorMessage || '',
+            agentVersion: agentVersion || '',
+          }).catch(err => console.error('[agent/alert] Cortex trigger failed:', err));
+        }
+
+        return NextResponse.json({ success: true, queued: true });
+      }
+
+      // --- Connection failure events: send email immediately (unchanged) ---
       const resendClient = getResend();
       if (!resendClient) {
         console.warn('[agent/alert] RESEND_API_KEY not configured — alert not sent');
         return NextResponse.json({ success: true, emailSent: false, reason: 'Resend not configured' });
       }
 
-      // Get recipient list and machine timezone
       const [recipients, tz] = await Promise.all([
-        getSiteAlertRecipients(siteId, isProcessEvent ? 'processAlerts' : 'healthAlerts'),
+        getSiteAlertRecipients(siteId, 'healthAlerts'),
         getMachineTimezone(siteId, machineId),
       ]);
 
@@ -179,16 +199,7 @@ export const POST = withRateLimit(
         return NextResponse.json({ success: true, emailSent: false, reason: 'No recipients' });
       }
 
-      // Build subject based on event type
-      let subject: string;
-      if (isProcessEvent) {
-        const eventLabel = resolvedEventType === 'process_start_failed' ? 'failed to start' : 'crashed';
-        subject = `Process ${eventLabel}: ${processName} on ${machineId}`;
-      } else {
-        subject = `[ALERT] owlette agent error on ${machineId}`;
-      }
-
-      // Send individual emails so each user gets their own unsubscribe link
+      const subject = `[ALERT] owlette agent error on ${machineId}`;
       const baseUrl = request.nextUrl.origin;
       let emailsSent = 0;
 
@@ -198,12 +209,7 @@ export const POST = withRateLimit(
             ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
             : undefined;
 
-          let html: string;
-          if (isProcessEvent) {
-            html = buildProcessAlertEmail(siteId, machineId, processName, errorMessage || '', agentVersion || '', resolvedEventType, unsubscribeUrl, tz);
-          } else {
-            html = buildAlertEmail(siteId, machineId, errorCode, errorMessage || '', agentVersion || '', unsubscribeUrl, tz);
-          }
+          const html = buildAlertEmail(siteId, machineId, errorCode, errorMessage || '', agentVersion || '', unsubscribeUrl, tz);
 
           const result = await resendClient.emails.send({
             from: FROM_EMAIL,
@@ -223,38 +229,14 @@ export const POST = withRateLimit(
         }
       }
 
-      console.log(`[agent/alert] Alert sent for ${machineId} (${siteId}): ${resolvedEventType}${isProcessEvent ? ` - ${processName}` : ''}, ${recipients.length} recipient(s)`);
+      console.log(`[agent/alert] Alert sent for ${machineId} (${siteId}): ${resolvedEventType}, ${recipients.length} recipient(s)`);
 
-      // Fire webhooks (non-blocking — don't delay the response)
-      const webhookEvent = resolvedEventType === 'process_crash' ? 'process.crashed'
-        : resolvedEventType === 'process_start_failed' ? 'process.restarted'
-        : 'machine.offline';
-      const db = getAdminDb();
+      // Fire webhooks (non-blocking)
       const siteDoc = await db.collection('sites').doc(siteId).get();
       const siteName = siteDoc.data()?.name || siteId;
       fireWebhooks(siteId, siteName, webhookEvent, {
         machine: { id: machineId, name: machineId },
-        ...(processName ? { process: { name: processName, error: errorMessage || '' } } : {}),
       }).catch(console.error);
-
-      // Trigger autonomous Cortex investigation (non-blocking, process events only)
-      // Skip if local Cortex is running — it handles investigation via IPC events
-      if (isProcessEvent) {
-        const localCortexRunning = await isLocalCortexRunning(db, siteId, machineId);
-        if (localCortexRunning) {
-          console.log(`[agent/alert] Local Cortex is running on ${machineId} — skipping server-side investigation`);
-        } else {
-          triggerAutonomousCortex(db, {
-            siteId,
-            machineId,
-            machineName: machineId,
-            eventType: resolvedEventType,
-            processName: processName || '',
-            errorMessage: errorMessage || '',
-            agentVersion: agentVersion || '',
-          }).catch(err => console.error('[agent/alert] Cortex trigger failed:', err));
-        }
-      }
 
       return NextResponse.json({ success: true, emailSent: emailsSent > 0, recipients: emailsSent });
     } catch (error: unknown) {

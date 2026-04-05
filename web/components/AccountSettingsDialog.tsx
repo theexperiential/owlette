@@ -9,14 +9,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, Loader2, User, Bell, Mail, Trash2, Key, Copy, Plus, X, Code } from 'lucide-react';
+import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, Loader2, User, Bell, BellOff, Trash2, Key, Copy, Plus, X, Code } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { PasskeyManager } from '@/components/PasskeyManager';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 
-type SettingsSection = 'profile' | 'preferences' | 'notifications' | 'cortex' | 'security' | 'api' | 'danger';
+type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'cortex' | 'security' | 'api' | 'danger';
 
 const AVAILABLE_MODELS: Record<'anthropic' | 'openai', { id: string; name: string }[]> = {
   anthropic: [
@@ -42,7 +42,7 @@ const AVAILABLE_MODELS: Record<'anthropic' | 'openai', { id: string; name: strin
 const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[] = [
   { id: 'profile', label: 'profile', icon: User },
   { id: 'preferences', label: 'preferences', icon: Bell },
-  { id: 'notifications', label: 'notifications', icon: Mail },
+  { id: 'alerts', label: 'alerts', icon: Bell },
   { id: 'cortex', label: 'cortex', icon: Brain },
   { id: 'security', label: 'security', icon: Shield },
   { id: 'api', label: 'api', icon: Code },
@@ -73,6 +73,8 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [timeFormat, setTimeFormat] = useState<'12h' | '24h'>('12h');
   const [healthAlerts, setHealthAlerts] = useState(true);
   const [processAlerts, setProcessAlerts] = useState(true);
+  const [thresholdAlerts, setThresholdAlerts] = useState(true);
+  const [cortexAlerts, setCortexAlerts] = useState(true);
   const [alertCcEmails, setAlertCcEmails] = useState<string[]>([]);
   const [newCcEmail, setNewCcEmail] = useState('');
   const [ccEmailError, setCcEmailError] = useState('');
@@ -153,6 +155,8 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setTimeFormat(userPreferences.timeFormat || '12h');
       setHealthAlerts(userPreferences.healthAlerts);
       setProcessAlerts(userPreferences.processAlerts);
+      setThresholdAlerts(userPreferences.thresholdAlerts);
+      setCortexAlerts(userPreferences.cortexAlerts);
       setAlertCcEmails(userPreferences.alertCcEmails || []);
       setNewCcEmail('');
       setCcEmailError('');
@@ -266,9 +270,11 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         || timeFormat !== (userPreferences.timeFormat || '12h')
         || healthAlerts !== userPreferences.healthAlerts
         || processAlerts !== userPreferences.processAlerts
+        || thresholdAlerts !== userPreferences.thresholdAlerts
+        || cortexAlerts !== userPreferences.cortexAlerts
         || JSON.stringify(alertCcEmails) !== JSON.stringify(userPreferences.alertCcEmails || []);
       if (prefsChanged) {
-        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, healthAlerts, processAlerts, alertCcEmails });
+        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts, alertCcEmails });
       }
       if (showPasswordSection && (currentPassword || newPassword || confirmPassword)) {
         if (!validatePassword()) {
@@ -459,10 +465,10 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
               )}
 
               {/* ─── Notifications ─── */}
-              {activeSection === 'notifications' && (
+              {activeSection === 'alerts' && (
                 <div className="space-y-5">
                   <div>
-                    <h3 className="text-base font-medium text-white">notifications</h3>
+                    <h3 className="text-base font-medium text-white">alerts</h3>
                     <p className="text-xs text-muted-foreground mt-1">configure email alerts for machine and process events</p>
                   </div>
 
@@ -488,6 +494,32 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       id="processAlerts"
                       checked={processAlerts}
                       onCheckedChange={setProcessAlerts}
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="thresholdAlerts" className="text-white">threshold alerts</Label>
+                      <p className="text-xs text-muted-foreground">receive email alerts when health metrics (CPU, GPU temp, disk, etc.) exceed configured thresholds</p>
+                    </div>
+                    <Switch
+                      id="thresholdAlerts"
+                      checked={thresholdAlerts}
+                      onCheckedChange={setThresholdAlerts}
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="cortexAlerts" className="text-white">cortex escalation alerts</Label>
+                      <p className="text-xs text-muted-foreground">receive email alerts when automated diagnostics can&apos;t resolve an issue</p>
+                    </div>
+                    <Switch
+                      id="cortexAlerts"
+                      checked={cortexAlerts}
+                      onCheckedChange={setCortexAlerts}
                       disabled={loading}
                     />
                   </div>
@@ -544,6 +576,38 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       <p className="text-[11px] text-muted-foreground">these addresses will be CC&apos;d on all alert emails. max 5.</p>
                     </div>
                   </div>
+
+                  {userPreferences.mutedMachines.length > 0 && (
+                    <div className="rounded-md border border-border bg-card/50 p-4 space-y-3">
+                      <div className="space-y-0.5">
+                        <Label className="text-white flex items-center gap-1.5">
+                          <BellOff className="h-3.5 w-3.5" />
+                          muted machines
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          alerts are silenced for these machines. unmute from the machine&apos;s context menu on the dashboard.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {userPreferences.mutedMachines.map((machineId) => (
+                          <span key={machineId} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/30 text-xs text-white">
+                            {machineId}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const mutedMachines = userPreferences.mutedMachines.filter(id => id !== machineId);
+                                updateUserPreferences({ mutedMachines }, { silent: true });
+                              }}
+                              disabled={loading}
+                              className="cursor-pointer text-muted-foreground hover:text-white"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     if (channels.includes('email')) {
       const resendClient = getResend();
       if (resendClient) {
-        const recipients = await getSiteAlertRecipients(siteId, 'healthAlerts');
+        const recipients = await getSiteAlertRecipients(siteId, 'thresholdAlerts');
         const tz = await getMachineTimezone(siteId, machineId);
         const baseUrl = request.nextUrl.origin;
 
@@ -73,6 +73,9 @@ export async function POST(request: NextRequest) {
           const subject = `[${severityLabel}] ${ruleName} — ${machineId}`;
 
           for (const recipient of recipients) {
+            // Skip if user has muted this machine
+            if (recipient.mutedMachines.includes(machineId)) continue;
+
             try {
               const unsubscribeUrl = recipient.userId !== 'fallback'
                 ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`

@@ -11,6 +11,20 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.6.1] - 2026-04-05
+
+### added
+- Batched process alert emails — crash alerts are queued for 2 minutes then grouped by site into a single digest email, preventing spam when multiple machines restart simultaneously
+- New cron endpoint `/api/cron/process-alerts` drains the alert queue every 3 minutes and sends one digest email per site with a table of all affected machines/processes
+- Digest email adapts: single alert uses the familiar single-process layout, multiple alerts show a grouped table
+
+### fixed
+- Owlette's built-in process restart (kill-and-relaunch for hung processes) no longer triggers false "process crashed" emails — writes KILLED status before terminating
+- Scheduled and dashboard-initiated machine reboots/shutdowns no longer trigger crash alert emails — agent suppresses alerts during the shutdown window
+- Removed unused `buildProcessAlertEmail` from alert route (moved to cron digest)
+
+---
+
 ## [2.6.0] - 2026-04-04
 
 ### added

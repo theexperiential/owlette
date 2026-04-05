@@ -168,6 +168,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self._cached_site_timezone = None  # Cached from firebase_client
         self._last_scheduled_reboot_time = None  # Tracks when we last triggered a scheduled reboot
         self._reboot_schedule_counter = 0  # Check reboot schedule every ~60s (6 iterations)
+        self._shutting_down = False  # Suppresses crash alerts during reboot/shutdown
         self._live_view_active = False
         self._live_view_stop_time = 0
 
@@ -1685,6 +1686,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         process_name = Util.get_process_name(process)
         if not self.reached_max_relaunch_attempts(process):
             try:
+                # Mark as KILLED before terminating so crash detection skips the alert
+                shared_utils.update_process_status_in_json(pid, 'KILLED', self.firebase_client, process_id=process.get('id'))
+
                 # Gracefully terminate (WM_CLOSE then hard kill)
                 shared_utils.graceful_terminate(pid)
 
@@ -1973,8 +1977,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         logging.warning(f"Error checking manual kill status: {e}")
                         was_manually_killed = False
 
-                    # Only log crash if it wasn't manually killed
-                    if not was_manually_killed:
+                    # Only log crash if it wasn't manually killed and not shutting down
+                    if not was_manually_killed and not self._shutting_down:
                         process_name = Util.get_process_name(process)
 
                         # Best-effort screenshot capture before relaunch
@@ -1996,6 +2000,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash'
                             )
                         self._write_cortex_event(process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash')
+                    elif self._shutting_down:
+                        logging.debug(f"Process {last_pid} stopped during reboot/shutdown - skipping crash alert")
                     else:
                         logging.debug(f"Process {last_pid} was manually killed - skipping crash log")
 
@@ -3297,6 +3303,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 details='Scheduled reboot initiated by reboot schedule'
             )
 
+            self._shutting_down = True
             self.firebase_client.set_machine_flag('rebooting', True)
 
             import subprocess
@@ -3318,7 +3325,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 details='Remote reboot initiated from dashboard'
             )
 
-            # Set rebooting flag so dashboard shows "Rebooting..."
+            # Set rebooting flag so dashboard shows "Rebooting..." and suppress crash alerts
+            self._shutting_down = True
             self.firebase_client.set_machine_flag('rebooting', True)
 
             # Schedule reboot with 30-second delay (gives agent time to complete Firestore writes)
@@ -3341,6 +3349,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 details='Remote shutdown initiated from dashboard'
             )
 
+            self._shutting_down = True
             self.firebase_client.set_machine_flag('shuttingDown', True)
 
             import subprocess
@@ -3359,6 +3368,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             import subprocess
             subprocess.run(['shutdown', '/a'], check=True, timeout=15)
 
+            self._shutting_down = False
             self.firebase_client.set_machine_flag('rebooting', False)
             self.firebase_client.set_machine_flag('shuttingDown', False)
             self.firebase_client.log_event(

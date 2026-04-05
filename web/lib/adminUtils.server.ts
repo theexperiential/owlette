@@ -11,6 +11,7 @@ export interface SiteRecipient {
   userId: string;
   email: string;
   ccEmails: string[];
+  mutedMachines: string[];
 }
 
 const isProduction =
@@ -154,11 +155,11 @@ export async function getSiteProcessAlertEmails(siteId: string): Promise<string[
 
 /**
  * Look up site recipients with userId + email for personalized emails (e.g., unsubscribe links).
- * Filters by healthAlerts preference by default.
+ * Optionally filters by a specific alert preference field.
  */
 export async function getSiteAlertRecipients(
   siteId: string,
-  filterPreference?: 'healthAlerts' | 'processAlerts'
+  filterPreference?: 'healthAlerts' | 'processAlerts' | 'thresholdAlerts' | 'cortexAlerts'
 ): Promise<SiteRecipient[]> {
   const db = getAdminDb();
   const recipients: SiteRecipient[] = [];
@@ -179,7 +180,7 @@ export async function getSiteAlertRecipients(
       const email = data?.email as string | undefined;
       if (!email) continue;
       if (filterPreference && data?.preferences?.[filterPreference] === false) continue;
-      recipients.push({ userId: doc.id, email, ccEmails: data?.preferences?.alertCcEmails || [] });
+      recipients.push({ userId: doc.id, email, ccEmails: data?.preferences?.alertCcEmails || [], mutedMachines: data?.preferences?.mutedMachines || [] });
     }
 
     if (ownerId && !seenIds.has(ownerId)) {
@@ -188,7 +189,7 @@ export async function getSiteAlertRecipients(
         const data = ownerDoc.data();
         const email = data?.email as string | undefined;
         if (email && !(filterPreference && data?.preferences?.[filterPreference] === false)) {
-          recipients.push({ userId: ownerId, email, ccEmails: data?.preferences?.alertCcEmails || [] });
+          recipients.push({ userId: ownerId, email, ccEmails: data?.preferences?.alertCcEmails || [], mutedMachines: data?.preferences?.mutedMachines || [] });
         }
       } catch {
         // Skip
@@ -200,7 +201,7 @@ export async function getSiteAlertRecipients(
 
   // Fallback to ADMIN_EMAIL env var if no recipients found
   if (recipients.length === 0 && ADMIN_EMAIL) {
-    recipients.push({ userId: 'fallback', email: ADMIN_EMAIL, ccEmails: [] });
+    recipients.push({ userId: 'fallback', email: ADMIN_EMAIL, ccEmails: [], mutedMachines: [] });
   }
 
   return recipients;

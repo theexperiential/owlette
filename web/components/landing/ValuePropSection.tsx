@@ -89,7 +89,7 @@ export function ValuePropSection() {
   return (
     <section className="pt-0 sm:pt-0 pb-0 px-4 sm:px-6 -mt-32 sm:-mt-48">
       {/* Product screenshot with mouse-reactive 3D tilt */}
-      <div ref={containerRef} className="max-w-6xl mx-auto mb-6 sm:mb-8" style={{ perspective: '1800px' }}>
+      <div ref={containerRef} className="max-w-6xl mx-auto mb-6 sm:mb-8 hero-enter-delay-3" style={{ perspective: '1800px' }}>
         <Link
           ref={tiltRef}
           href="/demo"

@@ -99,7 +99,7 @@ export default function SystemPresetsPage() {
   }
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="p-8">
       <div className="max-w-screen-2xl mx-auto">
         {/* Header */}
         <div className="mb-8">
@@ -241,22 +241,22 @@ export default function SystemPresetsPage() {
                         <td className="px-4 xl:px-6 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">
                             <Button
-                              variant="outline"
-                              size="sm"
+                              variant="ghost"
+                              size="icon"
                               onClick={() => handleEdit(preset)}
-                              className="border-border bg-background text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
                               title="Edit"
                             >
-                              <Pencil className="h-4 w-4" />
+                              <Pencil className="h-3.5 w-3.5" />
                             </Button>
                             <Button
-                              variant="outline"
-                              size="sm"
+                              variant="ghost"
+                              size="icon"
                               onClick={() => handleDelete(preset)}
-                              className="border-red-700 bg-red-900/20 text-red-400 hover:bg-red-900/40! hover:text-red-300! cursor-pointer"
+                              className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
                               title="Delete"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         </td>
@@ -315,22 +315,20 @@ export default function SystemPresetsPage() {
                   {/* Actions */}
                   <div className="flex gap-2 pt-3 border-t border-border">
                     <Button
-                      variant="outline"
-                      size="sm"
+                      variant="ghost"
+                      size="icon"
                       onClick={() => handleEdit(preset)}
-                      className="flex-1 border-border bg-background text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
+                      className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
                     >
-                      <Pencil className="h-4 w-4 mr-2" />
-                      Edit
+                      <Pencil className="h-3.5 w-3.5" />
                     </Button>
                     <Button
-                      variant="outline"
-                      size="sm"
+                      variant="ghost"
+                      size="icon"
                       onClick={() => handleDelete(preset)}
-                      className="flex-1 border-red-700 bg-red-900/20 text-red-400 hover:bg-red-900/40! hover:text-red-300! cursor-pointer"
+                      className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
                     >
-                      <Trash2 className="h-4 w-4 mr-2" />
-                      Delete
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                 </div>

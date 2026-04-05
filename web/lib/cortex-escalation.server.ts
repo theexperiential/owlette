@@ -22,7 +22,7 @@ export async function escalate(
   processName: string,
   cortexResponse: string
 ): Promise<boolean> {
-  const recipients = await getSiteAlertRecipients(siteId, 'healthAlerts');
+  const recipients = await getSiteAlertRecipients(siteId, 'cortexAlerts');
   if (recipients.length === 0) {
     console.warn(`[cortex/escalation] No admin emails found for site ${siteId}`);
     return false;
@@ -40,6 +40,9 @@ export async function escalate(
 
   let anySent = false;
   for (const recipient of recipients) {
+    // Skip if user has muted this machine
+    if (recipient.mutedMachines.includes(machineName)) continue;
+
     const unsubscribeUrl = recipient.userId !== 'fallback'
       ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
       : undefined;

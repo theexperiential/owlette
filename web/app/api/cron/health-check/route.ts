@@ -161,7 +161,7 @@ export async function GET(request: NextRequest) {
 
   for (const [siteId, siteAlerts] of alertsBySite) {
     try {
-      const recipients = await getSiteAlertRecipients(siteId);
+      const recipients = await getSiteAlertRecipients(siteId, 'healthAlerts');
       if (recipients.length === 0) {
         console.warn(`[cron/health-check] No recipients for site ${siteId}`);
         continue;
@@ -175,6 +175,10 @@ export async function GET(request: NextRequest) {
       // Send individual emails so each user gets their own unsubscribe link
       for (const recipient of recipients) {
         try {
+          // Filter out alerts for machines this user has muted
+          const userAlerts = siteAlerts.filter(a => !recipient.mutedMachines.includes(a.machineId));
+          if (userAlerts.length === 0) continue;
+
           const unsubscribeUrl = recipient.userId !== 'fallback'
             ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
             : undefined;
@@ -183,8 +187,8 @@ export async function GET(request: NextRequest) {
             from: FROM_EMAIL,
             to: [recipient.email],
             ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
-            subject: `${siteAlerts.length} machine(s) offline in ${siteId}`,
-            html: buildOfflineEmail(siteId, siteAlerts, unsubscribeUrl),
+            subject: `${userAlerts.length} machine(s) offline in ${siteId}`,
+            html: buildOfflineEmail(siteId, userAlerts, unsubscribeUrl),
           });
 
           if (result.error) {

@@ -57,13 +57,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       name: 'alerts',
       href: '/admin/alerts',
       icon: Bell,
-      description: 'threshold-based metric alerts',
+      description: 'manage alert rules',
     },
     {
       name: 'webhooks',
       href: '/admin/webhooks',
       icon: Webhook,
-      description: 'configure webhook notifications',
+      description: 'configure webhook integrations',
     },
     {
       name: 'email',

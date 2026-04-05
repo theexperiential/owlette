@@ -38,6 +38,7 @@ import {
   XCircle,
   AlertTriangle,
   Loader2,
+  Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -56,37 +57,24 @@ interface WebhookData {
 }
 
 const SUPPORTED_EVENTS = [
-  { id: 'machine.offline', label: 'Machine Offline', description: 'Machine stops sending heartbeats' },
-  { id: 'process.crashed', label: 'Process Crashed', description: 'A monitored process crashes' },
-  { id: 'process.restarted', label: 'Process Restarted', description: 'A monitored process is restarted' },
-  { id: 'machine.online', label: 'Machine Online', description: 'Machine comes back online (future)' },
-  { id: 'deployment.completed', label: 'Deployment Completed', description: 'Software deployment succeeds (future)' },
-  { id: 'deployment.failed', label: 'Deployment Failed', description: 'Software deployment fails (future)' },
+  { id: 'machine.offline', label: 'machine offline', description: 'machine stops sending heartbeats' },
+  { id: 'process.crashed', label: 'process crashed', description: 'a monitored process crashes' },
+  { id: 'process.restarted', label: 'process restarted', description: 'a monitored process is restarted' },
+  { id: 'machine.online', label: 'machine online', description: 'machine comes back online (future)' },
+  { id: 'deployment.completed', label: 'deployment completed', description: 'software deployment succeeds (future)' },
+  { id: 'deployment.failed', label: 'deployment failed', description: 'software deployment fails (future)' },
 ];
 
-interface WebhookSettingsDialogProps {
-  siteId: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}
+/* -------------------------------------------------------------------------- */
+/*  Shared hook for webhook data                                               */
+/* -------------------------------------------------------------------------- */
 
-export default function WebhookSettingsDialog({ siteId, open, onOpenChange }: WebhookSettingsDialogProps) {
+function useWebhooks(siteId: string) {
   const [webhooks, setWebhooks] = useState<WebhookData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newUrl, setNewUrl] = useState('');
-  const [newEvents, setNewEvents] = useState<string[]>(['machine.offline', 'process.crashed']);
-  const [saving, setSaving] = useState(false);
-  const [testingId, setTestingId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set());
-  const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
 
-  // Listen to webhooks subcollection
   useEffect(() => {
-    if (!siteId || !open) return;
+    if (!siteId) return;
 
     const q = query(collection(db!, `sites/${siteId}/webhooks`));
     const unsub = onSnapshot(q, (snapshot) => {
@@ -111,66 +99,73 @@ export default function WebhookSettingsDialog({ siteId, open, onOpenChange }: We
     });
 
     return () => unsub();
-  }, [siteId, open]);
+  }, [siteId]);
 
-  const handleAdd = useCallback(async () => {
-    if (!newName.trim() || !newUrl.trim()) {
-      toast.error('Name and URL are required');
+  return { webhooks, loading };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Webhook list (renders inline on the page)                                  */
+/* -------------------------------------------------------------------------- */
+
+export function WebhookList({ siteId }: { siteId: string }) {
+  const { webhooks, loading } = useWebhooks(siteId);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set());
+  const [editingWebhook, setEditingWebhook] = useState<WebhookData | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editUrl, setEditUrl] = useState('');
+  const [editEvents, setEditEvents] = useState<string[]>([]);
+  const [editSaving, setEditSaving] = useState(false);
+
+  const openEdit = (webhook: WebhookData) => {
+    setEditingWebhook(webhook);
+    setEditName(webhook.name);
+    setEditUrl(webhook.url);
+    setEditEvents([...webhook.events]);
+  };
+
+  const handleEditSave = async () => {
+    if (!editingWebhook || !editName.trim() || !editUrl.trim()) {
+      toast.error('name and URL are required');
       return;
     }
-
-    if (!newUrl.startsWith('https://')) {
+    if (!editUrl.startsWith('https://')) {
       toast.error('URL must start with https://');
       return;
     }
-
-    if (newEvents.length === 0) {
-      toast.error('Select at least one event');
+    if (editEvents.length === 0) {
+      toast.error('select at least one event');
       return;
     }
-
-    setSaving(true);
+    setEditSaving(true);
     try {
-      // Generate secret client-side (it's visible to the admin who creates it)
-      const array = new Uint8Array(32);
-      crypto.getRandomValues(array);
-      const secret = Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
-
-      const webhookRef = doc(collection(db!, `sites/${siteId}/webhooks`));
-      await setDoc(webhookRef, {
-        url: newUrl.trim(),
-        name: newName.trim(),
-        events: newEvents,
-        enabled: true,
-        secret,
-        createdAt: new Date(),
-        createdBy: '', // filled by security rules context
-        lastTriggered: null,
-        lastStatus: 0,
-        failCount: 0,
-      });
-
-      setGeneratedSecret(secret);
-      setNewName('');
-      setNewUrl('');
-      setNewEvents(['machine.offline', 'process.crashed']);
-      setShowAddForm(false);
-      toast.success('Webhook created');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Failed to create webhook';
-      toast.error(message);
+      const ref = doc(db!, `sites/${siteId}/webhooks`, editingWebhook.id);
+      await updateDoc(ref, { name: editName.trim(), url: editUrl.trim(), events: editEvents });
+      toast.success('webhook updated');
+      setEditingWebhook(null);
+    } catch {
+      toast.error('failed to update webhook');
     } finally {
-      setSaving(false);
+      setEditSaving(false);
     }
-  }, [siteId, newName, newUrl, newEvents]);
+  };
+
+  const toggleEditEvent = (eventId: string) => {
+    setEditEvents((prev) =>
+      prev.includes(eventId) ? prev.filter((e) => e !== eventId) : [...prev, eventId]
+    );
+  };
 
   const handleToggle = async (webhook: WebhookData) => {
     try {
       const ref = doc(db!, `sites/${siteId}/webhooks`, webhook.id);
       await updateDoc(ref, { enabled: !webhook.enabled, failCount: 0 });
-      toast.success(webhook.enabled ? 'Webhook disabled' : 'Webhook enabled');
+      toast.success(webhook.enabled ? 'webhook disabled' : 'webhook enabled');
     } catch {
-      toast.error('Failed to update webhook');
+      toast.error('failed to update webhook');
     }
   };
 
@@ -178,10 +173,10 @@ export default function WebhookSettingsDialog({ siteId, open, onOpenChange }: We
     setDeletingId(webhookId);
     try {
       await deleteDoc(doc(db!, `sites/${siteId}/webhooks`, webhookId));
-      toast.success('Webhook deleted');
+      toast.success('webhook deleted');
       setDeleteConfirmId(null);
     } catch {
-      toast.error('Failed to delete webhook');
+      toast.error('failed to delete webhook');
     } finally {
       setDeletingId(null);
     }
@@ -198,14 +193,14 @@ export default function WebhookSettingsDialog({ siteId, open, onOpenChange }: We
       const data = await res.json();
 
       if (data.success) {
-        toast.success(`Test delivered (HTTP ${data.status})`);
+        toast.success(`test delivered (HTTP ${data.status})`);
       } else if (data.error) {
-        toast.error(`Test failed: ${data.error}`);
+        toast.error(`test failed: ${data.error}`);
       } else {
-        toast.error(`Test failed with HTTP ${data.status}`);
+        toast.error(`test failed with HTTP ${data.status}`);
       }
     } catch {
-      toast.error('Failed to send test');
+      toast.error('failed to send test');
     } finally {
       setTestingId(null);
     }
@@ -213,8 +208,300 @@ export default function WebhookSettingsDialog({ siteId, open, onOpenChange }: We
 
   const copySecret = (secret: string) => {
     navigator.clipboard.writeText(secret);
-    toast.success('Secret copied to clipboard');
+    toast.success('secret copied to clipboard');
   };
+
+  const getStatusBadge = (webhook: WebhookData) => {
+    if (!webhook.lastTriggered) {
+      return <Badge variant="outline" className="text-muted-foreground border-border">never triggered</Badge>;
+    }
+    if (webhook.failCount >= 10) {
+      return <Badge className="bg-red-500/20 text-red-400 border-red-500/30">auto-disabled</Badge>;
+    }
+    if (webhook.lastStatus >= 200 && webhook.lastStatus < 300) {
+      return <Badge className="bg-green-500/20 text-green-400 border-green-500/30"><CheckCircle className="h-3 w-3 mr-1" />{webhook.lastStatus}</Badge>;
+    }
+    if (webhook.lastStatus === 0) {
+      return <Badge className="bg-red-500/20 text-red-400 border-red-500/30"><XCircle className="h-3 w-3 mr-1" />network error</Badge>;
+    }
+    return <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30"><AlertTriangle className="h-3 w-3 mr-1" />{webhook.lastStatus}</Badge>;
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12 text-muted-foreground gap-2">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>loading webhooks...</span>
+      </div>
+    );
+  }
+
+  if (webhooks.length === 0) {
+    return (
+      <div className="text-center py-16 text-muted-foreground">
+        <Webhook className="h-16 w-16 mx-auto mb-4 opacity-30" />
+        <p className="text-lg">no webhooks configured</p>
+        <p className="text-sm mt-1">add a webhook to receive event notifications via slack, discord, or any HTTPS endpoint</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {webhooks.map((webhook) => (
+        <div
+          key={webhook.id}
+          className={`flex items-center gap-4 p-4 rounded-lg border border-border bg-card ${!webhook.enabled ? 'opacity-50' : ''}`}
+        >
+          <Switch
+            checked={webhook.enabled}
+            onCheckedChange={() => handleToggle(webhook)}
+          />
+
+          {/* Left: name inline, url + pills stacked below */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="text-foreground font-medium">{webhook.name}</span>
+              {webhook.url.includes('hooks.slack.com') && (
+                <Badge className="bg-[#4A154B]/20 text-[#E01E5A] border-[#4A154B]/40 text-[10px] flex-shrink-0">slack</Badge>
+              )}
+              {webhook.url.includes('discord.com/api/webhooks') && (
+                <Badge className="bg-[#5865F2]/20 text-[#5865F2] border-[#5865F2]/40 text-[10px] flex-shrink-0">discord</Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground font-mono truncate mb-1.5">{webhook.url}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {webhook.events.map((evt) => (
+                <Badge key={evt} variant="outline" className="text-xs border-border">
+                  {evt.replace('.', ' ')}
+                </Badge>
+              ))}
+            </div>
+          </div>
+
+          {/* Center-right: status + date */}
+          <div className="flex items-center gap-4 flex-shrink-0">
+            <div className="text-right">
+              <div>{getStatusBadge(webhook)}</div>
+              {webhook.failCount > 0 && webhook.failCount < 10 && (
+                <p className="text-[10px] text-amber-400 mt-0.5">{webhook.failCount} failures</p>
+              )}
+            </div>
+            <span className="text-xs text-muted-foreground w-36 text-right">
+              {webhook.lastTriggered
+                ? webhook.lastTriggered.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })
+                : '—'}
+            </span>
+          </div>
+
+          {/* Right: actions */}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleTest(webhook)}
+              disabled={testingId === webhook.id || !webhook.enabled}
+              className="text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+            >
+              test
+              {testingId === webhook.id ? (
+                <Loader2 className="h-3.5 w-3.5 ml-1 animate-spin" />
+              ) : (
+                <Send className="h-3.5 w-3.5 ml-1" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => openEdit(webhook)}
+              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            {deleteConfirmId === webhook.id ? (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => handleDelete(webhook.id)}
+                  disabled={deletingId === webhook.id}
+                  className="cursor-pointer"
+                >
+                  {deletingId === webhook.id ? 'deleting...' : 'confirm'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDeleteConfirmId(null)}
+                  className="border-border hover:bg-accent hover:text-foreground cursor-pointer"
+                >
+                  cancel
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setDeleteConfirmId(webhook.id)}
+                className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {/* Edit webhook dialog */}
+      <Dialog open={!!editingWebhook} onOpenChange={(open) => { if (!open) setEditingWebhook(null); }}>
+        <DialogContent className="bg-background border-border max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5" />
+              edit webhook
+            </DialogTitle>
+            <DialogDescription>
+              update webhook configuration. the signing secret cannot be changed.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>name</Label>
+              <Input
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                className="bg-background border-border"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>URL (https required)</Label>
+              <Input
+                value={editUrl}
+                onChange={(e) => setEditUrl(e.target.value)}
+                className="bg-background border-border"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>events</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {SUPPORTED_EVENTS.map((evt) => (
+                  <label
+                    key={evt.id}
+                    className="flex items-start gap-2 p-2 rounded-md hover:bg-muted/50 cursor-pointer"
+                  >
+                    <Checkbox
+                      checked={editEvents.includes(evt.id)}
+                      onCheckedChange={() => toggleEditEvent(evt.id)}
+                      className="mt-0.5"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{evt.label}</p>
+                      <p className="text-xs text-muted-foreground">{evt.description}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEditingWebhook(null)}
+              className="border-border hover:bg-accent hover:text-foreground cursor-pointer"
+            >
+              cancel
+            </Button>
+            <Button onClick={handleEditSave} disabled={editSaving} className="cursor-pointer">
+              {editSaving ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Pencil className="h-4 w-4 mr-2" />
+              )}
+              save changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Add webhook dialog (only for creating new webhooks)                        */
+/* -------------------------------------------------------------------------- */
+
+interface AddWebhookDialogProps {
+  siteId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebhookDialogProps) {
+  const [newName, setNewName] = useState('');
+  const [newUrl, setNewUrl] = useState('');
+  const [newEvents, setNewEvents] = useState<string[]>(['machine.offline', 'process.crashed']);
+  const [saving, setSaving] = useState(false);
+  const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
+
+  // Reset form when dialog opens
+  useEffect(() => {
+    if (open) {
+      setNewName('');
+      setNewUrl('');
+      setNewEvents(['machine.offline', 'process.crashed']);
+    }
+  }, [open]);
+
+  const handleAdd = useCallback(async () => {
+    if (!newName.trim() || !newUrl.trim()) {
+      toast.error('name and URL are required');
+      return;
+    }
+
+    if (!newUrl.startsWith('https://')) {
+      toast.error('URL must start with https://');
+      return;
+    }
+
+    if (newEvents.length === 0) {
+      toast.error('select at least one event');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const array = new Uint8Array(32);
+      crypto.getRandomValues(array);
+      const secret = Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
+
+      const webhookRef = doc(collection(db!, `sites/${siteId}/webhooks`));
+      await setDoc(webhookRef, {
+        url: newUrl.trim(),
+        name: newName.trim(),
+        events: newEvents,
+        enabled: true,
+        secret,
+        createdAt: new Date(),
+        createdBy: '',
+        lastTriggered: null,
+        lastStatus: 0,
+        failCount: 0,
+      });
+
+      setGeneratedSecret(secret);
+      onOpenChange(false);
+      toast.success('webhook created');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to create webhook';
+      toast.error(message);
+    } finally {
+      setSaving(false);
+    }
+  }, [siteId, newName, newUrl, newEvents, onOpenChange]);
 
   const toggleEventSelection = (eventId: string) => {
     setNewEvents((prev) =>
@@ -222,279 +509,89 @@ export default function WebhookSettingsDialog({ siteId, open, onOpenChange }: We
     );
   };
 
-  const getStatusBadge = (webhook: WebhookData) => {
-    if (!webhook.lastTriggered) {
-      return <Badge variant="outline" className="text-muted-foreground border-border">Never triggered</Badge>;
-    }
-    if (webhook.failCount >= 10) {
-      return <Badge className="bg-red-500/20 text-red-400 border-red-500/30">Auto-disabled</Badge>;
-    }
-    if (webhook.lastStatus >= 200 && webhook.lastStatus < 300) {
-      return <Badge className="bg-green-500/20 text-green-400 border-green-500/30"><CheckCircle className="h-3 w-3 mr-1" />{webhook.lastStatus}</Badge>;
-    }
-    if (webhook.lastStatus === 0) {
-      return <Badge className="bg-red-500/20 text-red-400 border-red-500/30"><XCircle className="h-3 w-3 mr-1" />Network Error</Badge>;
-    }
-    return <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30"><AlertTriangle className="h-3 w-3 mr-1" />{webhook.lastStatus}</Badge>;
-  };
-
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="bg-background border-border max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-background border-border max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Webhook className="h-5 w-5" />
-              Webhook Settings
+              add webhook
             </DialogTitle>
             <DialogDescription>
-              Configure webhook URLs to receive event notifications for this site.
-              Webhooks deliver JSON payloads with HMAC-SHA256 signatures.
+              configure a webhook URL to receive JSON event payloads with HMAC-SHA256 signatures.
             </DialogDescription>
           </DialogHeader>
 
-          {loading ? (
-            <div className="text-center py-8 text-muted-foreground">Loading webhooks...</div>
-          ) : (
-            <div className="space-y-4">
-              {/* Existing webhooks */}
-              {webhooks.length === 0 && !showAddForm && (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Webhook className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                  <p>No webhooks configured</p>
-                  <p className="text-sm mt-1">Add a webhook to receive event notifications</p>
-                </div>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>name</Label>
+              <Input
+                placeholder='e.g. "Slack #alerts"'
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="bg-background border-border"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>URL (https required)</Label>
+              <Input
+                placeholder="https://hooks.slack.com/services/..."
+                value={newUrl}
+                onChange={(e) => setNewUrl(e.target.value)}
+                className="bg-background border-border"
+              />
+              {newUrl.includes('hooks.slack.com') && (
+                <Badge className="bg-[#4A154B]/20 text-[#E01E5A] border-[#4A154B]/40 text-xs">
+                  slack detected — payload will be auto-formatted
+                </Badge>
               )}
-
-              {webhooks.map((webhook) => (
-                <Card key={webhook.id} className={`bg-card border-border ${!webhook.enabled ? 'opacity-60' : ''}`}>
-                  <CardContent className="p-4 space-y-3">
-                    {/* Header row */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <Switch
-                          checked={webhook.enabled}
-                          onCheckedChange={() => handleToggle(webhook)}
-                        />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="font-medium text-foreground truncate">{webhook.name}</p>
-                            {webhook.url.includes('hooks.slack.com') && (
-                              <Badge className="bg-[#4A154B]/20 text-[#E01E5A] border-[#4A154B]/40 text-xs flex-shrink-0">Slack</Badge>
-                            )}
-                            {webhook.url.includes('discord.com/api/webhooks') && (
-                              <Badge className="bg-[#5865F2]/20 text-[#5865F2] border-[#5865F2]/40 text-xs flex-shrink-0">Discord</Badge>
-                            )}
-                          </div>
-                          <p className="text-xs text-muted-foreground truncate font-mono">{webhook.url}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        {getStatusBadge(webhook)}
-                      </div>
-                    </div>
-
-                    {/* Events */}
-                    <div className="flex flex-wrap gap-1">
-                      {webhook.events.map((evt) => (
-                        <Badge key={evt} variant="outline" className="text-xs border-border">
-                          {evt}
-                        </Badge>
-                      ))}
-                    </div>
-
-                    {/* Fail count warning */}
-                    {webhook.failCount > 0 && webhook.failCount < 10 && (
-                      <p className="text-xs text-amber-400">
-                        {webhook.failCount} consecutive failure(s) — auto-disables at 10
-                      </p>
-                    )}
-
-                    {/* Last triggered */}
-                    {webhook.lastTriggered && (
-                      <p className="text-xs text-muted-foreground">
-                        Last triggered: {webhook.lastTriggered.toLocaleString()}
-                      </p>
-                    )}
-
-                    {/* Secret */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">Secret:</span>
-                      <code className="text-xs font-mono text-muted-foreground">
-                        {revealedSecrets.has(webhook.id)
-                          ? webhook.secret
-                          : '••••••••••••••••'}
-                      </code>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => {
-                          setRevealedSecrets((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(webhook.id)) next.delete(webhook.id);
-                            else next.add(webhook.id);
-                            return next;
-                          });
-                        }}
-                      >
-                        {revealedSecrets.has(webhook.id) ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => copySecret(webhook.secret)}
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-2 pt-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleTest(webhook)}
-                        disabled={testingId === webhook.id || !webhook.enabled}
-                        className="border-border"
-                      >
-                        {testingId === webhook.id ? (
-                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                        ) : (
-                          <Send className="h-3 w-3 mr-1" />
-                        )}
-                        Test
-                      </Button>
-                      {deleteConfirmId === webhook.id ? (
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => handleDelete(webhook.id)}
-                            disabled={deletingId === webhook.id}
-                          >
-                            {deletingId === webhook.id ? 'Deleting...' : 'Confirm Delete'}
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setDeleteConfirmId(null)}
-                            className="border-border"
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleteConfirmId(webhook.id)}
-                          className="text-red-400 hover:text-red-300 hover:bg-red-950/30"
-                        >
-                          <Trash2 className="h-3 w-3 mr-1" />
-                          Delete
-                        </Button>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-
-              {/* Add form */}
-              {showAddForm && (
-                <Card className="bg-card border-accent-cyan/30">
-                  <CardContent className="p-4 space-y-4">
-                    <div className="space-y-2">
-                      <Label>Name</Label>
-                      <Input
-                        placeholder='e.g. "Slack #alerts"'
-                        value={newName}
-                        onChange={(e) => setNewName(e.target.value)}
-                        className="bg-background border-border"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>URL (HTTPS required)</Label>
-                      <Input
-                        placeholder="https://hooks.slack.com/services/..."
-                        value={newUrl}
-                        onChange={(e) => setNewUrl(e.target.value)}
-                        className="bg-background border-border"
-                      />
-                      {newUrl.includes('hooks.slack.com') && (
-                        <Badge className="bg-[#4A154B]/20 text-[#E01E5A] border-[#4A154B]/40 text-xs">
-                          Slack detected — payload will be auto-formatted
-                        </Badge>
-                      )}
-                      {newUrl.includes('discord.com/api/webhooks') && (
-                        <Badge className="bg-[#5865F2]/20 text-[#5865F2] border-[#5865F2]/40 text-xs">
-                          Discord detected — payload will be auto-formatted
-                        </Badge>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Events</Label>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {SUPPORTED_EVENTS.map((evt) => (
-                          <label
-                            key={evt.id}
-                            className="flex items-start gap-2 p-2 rounded-md hover:bg-muted/50 cursor-pointer"
-                          >
-                            <Checkbox
-                              checked={newEvents.includes(evt.id)}
-                              onCheckedChange={() => toggleEventSelection(evt.id)}
-                              className="mt-0.5"
-                            />
-                            <div>
-                              <p className="text-sm font-medium text-foreground">{evt.label}</p>
-                              <p className="text-xs text-muted-foreground">{evt.description}</p>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <Button onClick={handleAdd} disabled={saving}>
-                        {saving ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                          <Plus className="h-4 w-4 mr-2" />
-                        )}
-                        Create Webhook
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => setShowAddForm(false)}
-                        className="border-border"
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Add button */}
-              {!showAddForm && (
-                <Button
-                  variant="outline"
-                  onClick={() => setShowAddForm(true)}
-                  className="w-full border-dashed border-border"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Webhook
-                </Button>
+              {newUrl.includes('discord.com/api/webhooks') && (
+                <Badge className="bg-[#5865F2]/20 text-[#5865F2] border-[#5865F2]/40 text-xs">
+                  discord detected — payload will be auto-formatted
+                </Badge>
               )}
             </div>
-          )}
+
+            <div className="space-y-2">
+              <Label>events</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {SUPPORTED_EVENTS.map((evt) => (
+                  <label
+                    key={evt.id}
+                    className="flex items-start gap-2 p-2 rounded-md hover:bg-muted/50 cursor-pointer"
+                  >
+                    <Checkbox
+                      checked={newEvents.includes(evt.id)}
+                      onCheckedChange={() => toggleEventSelection(evt.id)}
+                      className="mt-0.5"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{evt.label}</p>
+                      <p className="text-xs text-muted-foreground">{evt.description}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)} className="border-border">
-              Close
+            <Button
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              className="border-border hover:bg-accent hover:text-foreground cursor-pointer"
+            >
+              cancel
+            </Button>
+            <Button onClick={handleAdd} disabled={saving} className="cursor-pointer">
+              {saving ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4 mr-2" />
+              )}
+              create webhook
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -504,10 +601,10 @@ export default function WebhookSettingsDialog({ siteId, open, onOpenChange }: We
       <Dialog open={!!generatedSecret} onOpenChange={() => setGeneratedSecret(null)}>
         <DialogContent className="bg-background border-border">
           <DialogHeader>
-            <DialogTitle>Webhook Created</DialogTitle>
+            <DialogTitle>webhook created</DialogTitle>
             <DialogDescription>
-              Save this signing secret — it will not be shown again in full.
-              Use it to verify webhook signatures on the receiving end.
+              save this signing secret — it will not be shown again in full.
+              use it to verify webhook signatures on the receiving end.
             </DialogDescription>
           </DialogHeader>
           <div className="p-3 bg-muted rounded-lg">
@@ -518,14 +615,14 @@ export default function WebhookSettingsDialog({ siteId, open, onOpenChange }: We
               variant="outline"
               onClick={() => {
                 if (generatedSecret) navigator.clipboard.writeText(generatedSecret);
-                toast.success('Secret copied');
+                toast.success('secret copied');
               }}
-              className="border-border"
+              className="border-border hover:bg-accent hover:text-foreground cursor-pointer"
             >
               <Copy className="h-4 w-4 mr-2" />
-              Copy Secret
+              copy secret
             </Button>
-            <Button onClick={() => setGeneratedSecret(null)}>Done</Button>
+            <Button onClick={() => setGeneratedSecret(null)} className="cursor-pointer">done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

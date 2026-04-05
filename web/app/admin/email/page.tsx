@@ -89,10 +89,11 @@ export default function EmailPage() {
   const currentTemplate = EMAIL_TEMPLATES.find(t => t.id === selectedTemplate);
 
   return (
-    <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-6">
+    <div className="p-8">
+      <div className="max-w-screen-2xl mx-auto space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-foreground">email</h1>
-        <p className="text-muted-foreground mt-1">
+        <h1 className="text-3xl font-bold text-foreground mb-2">email</h1>
+        <p className="text-muted-foreground">
           Email notification configuration and testing
         </p>
       </div>
@@ -245,6 +246,7 @@ export default function EmailPage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }
