@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Package, Plus, Loader2, Download, Trash2, CheckCircle, Copy, Sparkles } from 'lucide-react';
+import { Package, Plus, Loader2, Download, Trash2, CheckCircle, Copy, Sparkles, Paintbrush } from 'lucide-react';
 import { toast } from 'sonner';
 import UploadInstallerDialog from '@/components/admin/UploadInstallerDialog';
 import { formatFileSize } from '@/lib/storageUtils';
@@ -169,7 +169,7 @@ export default function InstallerVersionsPage() {
             className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
             disabled={versions.length < 2}
           >
-            <Sparkles className="h-4 w-4 mr-2" />
+            <Paintbrush className="h-4 w-4 mr-2" />
             clean up
           </Button>
           <Button
@@ -325,19 +325,22 @@ export default function InstallerVersionsPage() {
                           <div className="min-w-[100px]">
                             {!isLatest && (
                               <Button
+                                variant="ghost"
                                 size="sm"
-                                variant="outline"
                                 onClick={() => handleSetAsLatest(version.version)}
                                 disabled={isSetting || isDeleting}
-                                className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer text-xs"
+                                className="text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer text-sm"
                               >
                                 {isSetting ? (
                                   <>
-                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                    Setting...
+                                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                                    setting...
                                   </>
                                 ) : (
-                                  'set as latest'
+                                  <>
+                                    <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                                    set as latest
+                                  </>
                                 )}
                               </Button>
                             )}
@@ -346,22 +349,22 @@ export default function InstallerVersionsPage() {
                           {/* Right side: Icon buttons (always aligned) */}
                           <div className="flex items-center gap-2">
                             <Button
-                              size="sm"
-                              variant="outline"
+                              variant="ghost"
+                              size="icon"
                               onClick={() => window.open(version.download_url, '_blank')}
-                              className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
                               title={`Download owlette Agent v${version.version}`}
                             >
-                              <Download className="h-3 w-3" />
+                              <Download className="h-3.5 w-3.5" />
                             </Button>
                             <Button
-                              size="sm"
-                              variant="outline"
+                              variant="ghost"
+                              size="icon"
                               onClick={() => copyDownloadLink(version.download_url, version.version)}
-                              className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
                               title={`Copy download link for owlette Agent v${version.version}`}
                             >
-                              <Copy className="h-3 w-3" />
+                              <Copy className="h-3.5 w-3.5" />
                             </Button>
                             {!isLatest ? (
                               <Button
