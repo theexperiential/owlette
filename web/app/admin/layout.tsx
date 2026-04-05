@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import RequireAdmin from '@/components/RequireAdmin';
 import { Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook, Clock, Bell } from 'lucide-react';
@@ -20,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
  */
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
@@ -73,19 +74,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     },
   ];
 
-  // Determine back button destination based on current page
-  const getBackHref = () => {
-    if (pathname === '/admin/installers' || pathname === '/admin/presets') {
-      return '/deployments';
-    }
-    return '/dashboard';
-  };
+  const [backLabel, setBackLabel] = useState('go back');
 
-  const getBackLabel = () => {
-    if (pathname === '/admin/installers' || pathname === '/admin/presets') {
-      return 'back to deployments';
+  useEffect(() => {
+    const prev = sessionStorage.getItem('owlette_pre_admin_path');
+    if (prev) {
+      const name = prev.replace(/^\//, '').split('/')[0] || 'dashboard';
+      setBackLabel(`back to ${name}`);
     }
-    return 'back to dashboard';
+  }, []);
+
+  const handleBack = () => {
+    if (window.history.length > 1) {
+      router.back();
+    } else {
+      router.push('/dashboard');
+    }
   };
 
   return (
@@ -152,19 +156,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             {/* Back Button */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <Link href={getBackHref()}>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full border-border bg-background text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer lg:px-2 xl:px-3"
-                  >
-                    <ArrowLeft className="h-4 w-4 lg:mr-0 xl:mr-2" />
-                    <span className="lg:hidden xl:inline">{getBackLabel()}</span>
-                  </Button>
-                </Link>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleBack}
+                  className="w-full border-border bg-background text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer lg:px-2 xl:px-3"
+                >
+                  <ArrowLeft className="h-4 w-4 lg:mr-0 xl:mr-2" />
+                  <span className="lg:hidden xl:inline">{backLabel}</span>
+                </Button>
               </TooltipTrigger>
               <TooltipContent side="right" className="hidden lg:block xl:hidden">
-                <p>{getBackLabel()}</p>
+                <p>{backLabel}</p>
               </TooltipContent>
             </Tooltip>
           </div>
