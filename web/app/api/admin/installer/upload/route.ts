@@ -196,6 +196,7 @@ export const PUT = withRateLimit(
         release_notes: uploadData.releaseNotes || null,
         file_size: fileSize,
         uploaded_at: now,
+        release_date: Timestamp.fromMillis(now),
         uploaded_by: uploadData.userId,
       };
 

@@ -10,6 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Upload, FileUp, X, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { isValidVersion, formatFileSize } from '@/lib/storageUtils';
+import { AdminButton } from './AdminButton';
 
 // Extract version from filename (e.g., "owlette-Installer-v2.0.10.exe" -> "2.0.10")
 const extractVersionFromFilename = (filename: string): string | null => {
@@ -168,7 +169,7 @@ export default function UploadInstallerDialog({
               onDrop={handleDrop}
               className={`
                 border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
-                ${isDragging ? 'border-accent-cyan bg-accent-cyan/10' : 'border-border hover:border-border'}
+                ${isDragging ? 'border-accent-cyan bg-accent-cyan/10' : 'border-border hover:border-muted-foreground'}
               `}
             >
               {!file ? (
@@ -177,15 +178,15 @@ export default function UploadInstallerDialog({
                   <p className="text-white mb-2">Drag & drop installer file here</p>
                   <p className="text-sm text-muted-foreground mb-4">or</p>
                   <label htmlFor="file-upload">
-                    <Button
+                    <AdminButton
+                      adminVariant="outline"
                       type="button"
-                      variant="outline"
-                      className="border-border bg-background text-white hover:bg-muted cursor-pointer"
+                      className="cursor-pointer"
                       onClick={() => document.getElementById('file-upload')?.click()}
                     >
                       <Upload className="h-4 w-4 mr-2" />
                       Choose File
-                    </Button>
+                    </AdminButton>
                   </label>
                   <input
                     id="file-upload"
@@ -211,7 +212,7 @@ export default function UploadInstallerDialog({
                     size="sm"
                     onClick={() => setFile(null)}
                     disabled={uploading}
-                    className="hover:bg-secondary cursor-pointer"
+                    className="hover:bg-secondary! cursor-pointer"
                   >
                     <X className="h-4 w-4 text-muted-foreground" />
                   </Button>
@@ -280,14 +281,14 @@ export default function UploadInstallerDialog({
         </div>
 
         <DialogFooter>
-          <Button
-            variant="outline"
+          <AdminButton
+            adminVariant="card"
             onClick={() => onOpenChange(false)}
             disabled={uploading}
-            className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
+            className="cursor-pointer"
           >
             Cancel
-          </Button>
+          </AdminButton>
           <Button
             onClick={handleUpload}
             disabled={uploading || !file || !version}
