@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { Activity, Brain, ChevronDown, Power, Rocket, type LucideIcon } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Activity, Brain, ChevronDown, Power, Rocket, X, type LucideIcon } from 'lucide-react';
 import Image from 'next/image';
 
 const capabilities: { label: string; detail: string; expanded: string; preview: string; icon: LucideIcon }[] = [
@@ -37,10 +37,100 @@ const capabilities: { label: string; detail: string; expanded: string; preview: 
 
 export function UseCaseSection() {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [scale, setScale] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const imgRef = useRef<HTMLImageElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ dragging: boolean; didDrag: boolean; startX: number; startY: number; startPanX: number; startPanY: number }>({
+    dragging: false, didDrag: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0,
+  });
+  const touchRef = useRef<{ startDist: number; startScale: number; startX: number; startY: number; startPanX: number; startPanY: number; didInteract: boolean }>({
+    startDist: 0, startScale: 1, startX: 0, startY: 0, startPanX: 0, startPanY: 0, didInteract: false,
+  });
+  const isZoomed = scale > 1;
 
   const toggle = (i: number) => {
     setOpenIndex(openIndex === i ? null : i);
   };
+
+  const closeLightbox = useCallback(() => {
+    setLightboxSrc(null);
+    setScale(1);
+    setPan({ x: 0, y: 0 });
+  }, []);
+
+  useEffect(() => {
+    if (!lightboxSrc) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeLightbox();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [lightboxSrc, closeLightbox]);
+
+  // Scroll wheel zoom — block page scroll while lightbox is open
+  useEffect(() => {
+    if (!lightboxSrc) return;
+    const el = overlayRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.15 : 0.15;
+      setScale((prev) => {
+        const next = Math.max(1, Math.min(prev + delta * prev, 10));
+        if (next === 1) setPan({ x: 0, y: 0 });
+        return next;
+      });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [lightboxSrc]);
+
+  // Touch: pinch-to-zoom + single-finger pan
+  useEffect(() => {
+    if (!lightboxSrc) return;
+    const el = overlayRef.current;
+    if (!el) return;
+
+    const dist = (a: Touch, b: Touch) =>
+      Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const d = dist(e.touches[0], e.touches[1]);
+        touchRef.current = { startDist: d, startScale: scale, startX: 0, startY: 0, startPanX: pan.x, startPanY: pan.y, didInteract: false };
+      } else if (e.touches.length === 1 && scale > 1) {
+        e.preventDefault();
+        touchRef.current = { startDist: 0, startScale: scale, startX: e.touches[0].clientX, startY: e.touches[0].clientY, startPanX: pan.x, startPanY: pan.y, didInteract: false };
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const d = dist(e.touches[0], e.touches[1]);
+        const newScale = Math.max(1, Math.min(touchRef.current.startScale * (d / touchRef.current.startDist), 10));
+        touchRef.current.didInteract = true;
+        setScale(newScale);
+        if (newScale === 1) setPan({ x: 0, y: 0 });
+      } else if (e.touches.length === 1 && scale > 1) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - touchRef.current.startX;
+        const dy = e.touches[0].clientY - touchRef.current.startY;
+        touchRef.current.didInteract = true;
+        setPan({ x: touchRef.current.startPanX + dx, y: touchRef.current.startPanY + dy });
+      }
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+    };
+  }, [lightboxSrc, scale, pan]);
 
   const activePreview = openIndex !== null ? capabilities[openIndex].preview : undefined;
 
@@ -76,11 +166,13 @@ export function UseCaseSection() {
                   {cap.expanded}
                 </p>
                 <div className="px-2 pb-4">
-                  <div className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5"
+                  <div
+                    className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 cursor-zoom-in"
                     style={{
                       maskImage: 'linear-gradient(to bottom, black 80%, transparent)',
                       WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent)',
                     }}
+                    onClick={() => setLightboxSrc(cap.preview)}
                   >
                     <Image
                       src={cap.preview}
@@ -141,13 +233,15 @@ export function UseCaseSection() {
           <div
             className={`overflow-hidden transition-all duration-500 ease-out ${activePreview ? 'max-h-[800px] opacity-100 mt-8' : 'max-h-0 opacity-0 mt-0'}`}
           >
-            <div className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5"
+            <div
+              className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 cursor-zoom-in"
               style={{
                 maskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
                 maskComposite: 'intersect',
                 WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
                 WebkitMaskComposite: 'source-in',
               }}
+              onClick={() => activePreview && setLightboxSrc(activePreview)}
             >
               <div className="relative">
                 {capabilities.map((cap) => (
@@ -179,6 +273,66 @@ export function UseCaseSection() {
         </div>
 
       </div>
+
+      {/* Lightbox overlay */}
+      {lightboxSrc && (
+        <div
+          ref={overlayRef}
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center overflow-hidden touch-none animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeLightbox();
+          }}
+          onMouseDown={(e) => {
+            if (!isZoomed) return;
+            e.preventDefault();
+            dragRef.current = { dragging: true, didDrag: false, startX: e.clientX, startY: e.clientY, startPanX: pan.x, startPanY: pan.y };
+          }}
+          onMouseMove={(e) => {
+            if (!dragRef.current.dragging) return;
+            const dx = e.clientX - dragRef.current.startX;
+            const dy = e.clientY - dragRef.current.startY;
+            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragRef.current.didDrag = true;
+            setPan({ x: dragRef.current.startPanX + dx, y: dragRef.current.startPanY + dy });
+          }}
+          onMouseUp={() => { dragRef.current.dragging = false; }}
+          onMouseLeave={() => { dragRef.current.dragging = false; }}
+        >
+          <button
+            onClick={closeLightbox}
+            className="absolute top-4 right-4 z-10 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors cursor-pointer"
+          >
+            <X className="w-6 h-6 text-white" />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            ref={imgRef}
+            src={lightboxSrc}
+            alt="full-size preview"
+            draggable={false}
+            className={`select-none max-w-[95vw] max-h-[95vh] object-contain ${
+              isZoomed
+                ? 'cursor-grab active:cursor-grabbing'
+                : 'cursor-zoom-in animate-in zoom-in-95 duration-200'
+            }`}
+            style={{
+              transformOrigin: 'center center',
+              transition: dragRef.current.dragging ? 'none' : 'transform 0.2s ease-out',
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (dragRef.current.didDrag) return;
+              if (!isZoomed && imgRef.current) {
+                setScale(imgRef.current.naturalWidth / imgRef.current.clientWidth);
+                setPan({ x: 0, y: 0 });
+              } else {
+                setScale(1);
+                setPan({ x: 0, y: 0 });
+              }
+            }}
+          />
+        </div>
+      )}
     </section>
   );
 }
