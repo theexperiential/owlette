@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, Brain, ChevronDown, Power, Rocket, X, type LucideIcon } from 'lucide-react';
+import { Activity, Brain, ChevronDown, ChevronLeft, ChevronRight, Power, Rocket, X, type LucideIcon } from 'lucide-react';
 import Image from 'next/image';
 
 const capabilities: { label: string; detail: string; expanded: string; preview: string; icon: LucideIcon }[] = [
@@ -37,7 +37,7 @@ const capabilities: { label: string; detail: string; expanded: string; preview: 
 
 export function UseCaseSection() {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const imgRef = useRef<HTMLImageElement>(null);
@@ -49,29 +49,62 @@ export function UseCaseSection() {
     startDist: 0, startScale: 1, startX: 0, startY: 0, startPanX: 0, startPanY: 0, didInteract: false,
   });
   const isZoomed = scale > 1;
+  const lightboxOpen = lightboxIndex !== null;
+  const lightboxSrc = lightboxOpen ? capabilities[lightboxIndex].preview : null;
 
   const toggle = (i: number) => {
     setOpenIndex(openIndex === i ? null : i);
   };
 
   const closeLightbox = useCallback(() => {
-    setLightboxSrc(null);
+    setLightboxIndex(null);
     setScale(1);
     setPan({ x: 0, y: 0 });
+    dragRef.current = { dragging: false, didDrag: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 };
+  }, []);
+
+  const goTo = useCallback((index: number) => {
+    setLightboxIndex(index);
+    setOpenIndex(index);
+    setScale(1);
+    setPan({ x: 0, y: 0 });
+    dragRef.current = { dragging: false, didDrag: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 };
   }, []);
 
   useEffect(() => {
-    if (!lightboxSrc) return;
+    if (!lightboxOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeLightbox();
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        setLightboxIndex((prev) => {
+          if (prev === null) return null;
+          const next = (prev + 1) % capabilities.length;
+          setOpenIndex(next);
+          return next;
+        });
+        setScale(1);
+        setPan({ x: 0, y: 0 });
+      }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setLightboxIndex((prev) => {
+          if (prev === null) return null;
+          const next = (prev - 1 + capabilities.length) % capabilities.length;
+          setOpenIndex(next);
+          return next;
+        });
+        setScale(1);
+        setPan({ x: 0, y: 0 });
+      }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [lightboxSrc, closeLightbox]);
+  }, [lightboxOpen, closeLightbox]);
 
   // Scroll wheel zoom — block page scroll while lightbox is open
   useEffect(() => {
-    if (!lightboxSrc) return;
+    if (!lightboxOpen) return;
     const el = overlayRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
@@ -85,11 +118,11 @@ export function UseCaseSection() {
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [lightboxSrc]);
+  }, [lightboxOpen]);
 
   // Touch: pinch-to-zoom + single-finger pan
   useEffect(() => {
-    if (!lightboxSrc) return;
+    if (!lightboxOpen) return;
     const el = overlayRef.current;
     if (!el) return;
 
@@ -130,7 +163,7 @@ export function UseCaseSection() {
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
     };
-  }, [lightboxSrc, scale, pan]);
+  }, [lightboxOpen, scale, pan]);
 
   const activePreview = openIndex !== null ? capabilities[openIndex].preview : undefined;
 
@@ -172,7 +205,7 @@ export function UseCaseSection() {
                       maskImage: 'linear-gradient(to bottom, black 80%, transparent)',
                       WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent)',
                     }}
-                    onClick={() => setLightboxSrc(cap.preview)}
+                    onClick={() => setLightboxIndex(i)}
                   >
                     <Image
                       src={cap.preview}
@@ -241,7 +274,7 @@ export function UseCaseSection() {
                 WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
                 WebkitMaskComposite: 'source-in',
               }}
-              onClick={() => activePreview && setLightboxSrc(activePreview)}
+              onClick={() => openIndex !== null && setLightboxIndex(openIndex)}
             >
               <div className="relative">
                 {capabilities.map((cap) => (
@@ -275,7 +308,7 @@ export function UseCaseSection() {
       </div>
 
       {/* Lightbox overlay */}
-      {lightboxSrc && (
+      {lightboxOpen && lightboxSrc && (
         <div
           ref={overlayRef}
           className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center overflow-hidden touch-none animate-in fade-in duration-200"
@@ -303,11 +336,26 @@ export function UseCaseSection() {
           >
             <X className="w-6 h-6 text-white" />
           </button>
+
+          {/* Prev / Next arrows */}
+          <button
+            onClick={(e) => { e.stopPropagation(); goTo((lightboxIndex - 1 + capabilities.length) % capabilities.length); }}
+            className="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors cursor-pointer"
+          >
+            <ChevronLeft className="w-6 h-6 text-white" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); goTo((lightboxIndex + 1) % capabilities.length); }}
+            className="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors cursor-pointer"
+          >
+            <ChevronRight className="w-6 h-6 text-white" />
+          </button>
+
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             ref={imgRef}
             src={lightboxSrc}
-            alt="full-size preview"
+            alt={`${capabilities[lightboxIndex].label} preview`}
             draggable={false}
             className={`select-none max-w-[95vw] max-h-[95vh] object-contain ${
               isZoomed
@@ -331,6 +379,24 @@ export function UseCaseSection() {
               }
             }}
           />
+
+          {/* Caption under image */}
+          <p className="absolute bottom-14 left-1/2 -translate-x-1/2 z-10 text-lg text-white/70 text-center whitespace-nowrap">
+            {capabilities[lightboxIndex].detail}
+          </p>
+
+          {/* Dot indicators */}
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex gap-2">
+            {capabilities.map((cap, i) => (
+              <button
+                key={cap.label}
+                onClick={(e) => { e.stopPropagation(); goTo(i); }}
+                className={`w-2 h-2 rounded-full transition-all cursor-pointer ${
+                  i === lightboxIndex ? 'bg-accent-cyan w-6' : 'bg-white/30 hover:bg-white/50'
+                }`}
+              />
+            ))}
+          </div>
         </div>
       )}
     </section>
