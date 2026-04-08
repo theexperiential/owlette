@@ -3,7 +3,7 @@ import {
   LandingHeader,
   HeroSection,
   ValuePropSection,
-  CTASection,
+  PricingSection,
   LandingFooter,
 } from '@/components/landing';
 
@@ -11,11 +11,12 @@ import {
 // Note: ValuePropSection stays static because it contains the LCP image (dashboard.png)
 const UseCaseSection = dynamic(() => import('@/components/landing/UseCaseSection').then(m => ({ default: m.UseCaseSection })));
 const FeatureGrid = dynamic(() => import('@/components/landing/FeatureGrid').then(m => ({ default: m.FeatureGrid })));
+const FAQSection = dynamic(() => import('@/components/landing/FAQSection').then(m => ({ default: m.FAQSection })));
 
 const jsonLd = {
   '@context': 'https://schema.org',
   '@type': 'SoftwareApplication',
-  name: 'Owlette',
+  name: 'owlette',
   applicationCategory: 'BusinessApplication',
   operatingSystem: 'Windows',
   url: 'https://owlette.app',
@@ -30,7 +31,7 @@ const jsonLd = {
     'Real-time CPU, memory, disk, GPU monitoring',
     'Remote process management and auto-recovery',
     'Silent software deployment across fleets',
-    'AI-powered fleet management with Cortex',
+    'AI-powered fleet management with cortex',
     'Multi-site organization with role-based access',
     'Project file distribution',
     'Threshold alerts, email notifications, webhooks',
@@ -52,7 +53,8 @@ export default function LandingPage() {
         <ValuePropSection />
         <UseCaseSection />
         <FeatureGrid />
-        <CTASection />
+        <PricingSection />
+        <FAQSection />
       </main>
       <LandingFooter />
     </div>

@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { escalate } from '@/lib/cortex-escalation.server';
 
 /**
@@ -52,7 +53,7 @@ async function processEscalations(): Promise<{ processed: number; errors: number
           await eventDoc.ref.update({
             escalationPending: false,
             escalationSent: sent,
-            escalationProcessedAt: new Date(),
+            escalationProcessedAt: FieldValue.serverTimestamp(),
           });
 
           if (sent) {

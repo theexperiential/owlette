@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import { requireSession } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { createModel, buildSystemPrompt, type ProcessSummary } from '@/lib/llm';
 import { getToolsByTier } from '@/lib/mcp-tools';
 import {
@@ -239,7 +240,7 @@ async function handleLocalCortex(
       ...(images.length > 0 ? { images } : {}),
       status: 'pending',
       response: { content: '', complete: false, parts: [] },
-      updatedAt: new Date(),
+      updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: false },
   );
@@ -254,7 +255,7 @@ async function handleLocalCortex(
     start(controller) {
       // Timeout
       timeoutId = setTimeout(() => {
-        controller.enqueue(encoder.encode(`3:"Cortex response timed out"\n`));
+        controller.enqueue(encoder.encode(`3:"cortex response timed out"\n`));
         controller.close();
         unsubscribe?.();
       }, LOCAL_CORTEX_TIMEOUT_MS);
@@ -294,7 +295,7 @@ async function handleLocalCortex(
           // Error
           if (status === 'error') {
             controller.enqueue(
-              encoder.encode(`3:${JSON.stringify(content || 'Cortex error')}\n`),
+              encoder.encode(`3:${JSON.stringify(content || 'cortex error')}\n`),
             );
             if (timeoutId) clearTimeout(timeoutId);
             unsubscribe?.();

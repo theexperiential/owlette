@@ -1,20 +1,20 @@
-# Configuration
+# configuration
 
 The agent can be configured locally via the GUI, remotely from the web dashboard, or by editing `config.json` directly. Changes from any source sync to all others within ~1-2 seconds.
 
 ---
 
-## Configuration GUI
+## configuration gui
 
 The GUI is a CustomTkinter application that runs as a separate process from the service. Launch it from:
 
 - **System tray** → Right-click → "Open GUI"
-- **Start Menu** → Owlette
+- **Start Menu** → owlette
 - **Directly**: `C:\ProgramData\Owlette\python\pythonw.exe C:\ProgramData\Owlette\agent\src\owlette_gui.py`
 
-### GUI Features
+### gui features
 
-| Section | Controls |
+| section | controls |
 |---------|----------|
 | **Site Connection** | Join/Leave site, connection status, site ID |
 | **Processes** | Add, edit, remove monitored processes |
@@ -27,7 +27,7 @@ The GUI is a CustomTkinter application that runs as a separate process from the 
 
 The configuration file is stored at `C:\ProgramData\Owlette\agent\config\config.json`.
 
-### Top-Level Structure
+### top-level structure
 
 ```json
 {
@@ -47,9 +47,9 @@ The configuration file is stored at `C:\ProgramData\Owlette\agent\config\config.
 }
 ```
 
-### Configuration Fields
+### configuration fields
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `version` | string | Config schema version (auto-upgraded) |
 | `environment` | string | `"production"` (owlette.app) or `"development"` (dev.owlette.app) |
@@ -63,7 +63,7 @@ The configuration file is stored at `C:\ProgramData\Owlette\agent\config\config.
 
 ---
 
-## Process Configuration
+## process configuration
 
 Each process in the `processes` array has these settings:
 
@@ -82,9 +82,9 @@ Each process in the `processes` array has these settings:
 }
 ```
 
-### Process Fields
+### process fields
 
-| Field | Type | Default | Description |
+| field | type | default | description |
 |-------|------|---------|-------------|
 | `name` | string | required | Display name for the process |
 | `exe_path` | string | required | Full path to the executable |
@@ -97,9 +97,9 @@ Each process in the `processes` array has these settings:
 | `init_time` | number | `10` | Seconds to wait after launch before monitoring responsiveness |
 | `relaunch_attempts` | number | `5` | Max restart attempts before prompting for system reboot |
 
-### Priority Options
+### priority options
 
-| Value | Description |
+| value | description |
 |-------|-------------|
 | `"Idle"` | Lowest priority — only runs when CPU is idle |
 | `"Below Normal"` | Lower than normal |
@@ -108,16 +108,16 @@ Each process in the `processes` array has these settings:
 | `"High"` | High priority — use with caution |
 | `"Realtime"` | Highest priority — can starve other processes |
 
-### Visibility Options
+### visibility options
 
-| Value | Description |
+| value | description |
 |-------|-------------|
 | `"Normal"` | Standard visible window |
 | `"Hidden"` | No visible window (uses VBScript wrapper for console apps) |
 
 ---
 
-## Web-Based Configuration
+## web-based configuration
 
 From the dashboard, you can edit process settings remotely:
 
@@ -130,7 +130,7 @@ Changes propagate through Firestore to the agent within ~1-2 seconds. The agent 
 
 ---
 
-## Configuration Sync
+## configuration sync
 
 ```
                     ┌─────────────────┐

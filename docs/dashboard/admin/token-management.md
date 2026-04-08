@@ -1,4 +1,4 @@
-# Token Management
+# token management
 
 View and revoke agent OAuth tokens. Each agent has a refresh token that allows it to authenticate with Firestore.
 
@@ -6,11 +6,11 @@ View and revoke agent OAuth tokens. Each agent has a refresh token that allows i
 
 ---
 
-## Token List
+## token list
 
 The token management page shows all active agent refresh tokens for a site:
 
-| Column | Description |
+| column | description |
 |--------|-------------|
 | **Machine ID** | The machine's hostname |
 | **Agent UID** | Firebase UID assigned to the agent |
@@ -20,7 +20,7 @@ The token management page shows all active agent refresh tokens for a site:
 
 ---
 
-## Token Lifecycle
+## token lifecycle
 
 ```
 1. Admin generates registration code (24h expiry)
@@ -34,22 +34,22 @@ The token management page shows all active agent refresh tokens for a site:
 
 ---
 
-## Revoking Tokens
+## revoking tokens
 
-### Revoke Single Token
+### revoke single token
 
 1. Find the token in the list
 2. Click **"Revoke"**
 3. The agent loses access and goes offline
 
-### Revoke All Tokens for a Machine
+### revoke all tokens for a machine
 
 If a machine has multiple tokens (e.g., from reinstallation):
 
 1. Click **"Revoke All"** for the machine
 2. All tokens for that machine ID are deleted
 
-### Revoke All Tokens for a Site
+### revoke all tokens for a site
 
 Nuclear option — revokes every agent token for the site:
 
@@ -62,7 +62,7 @@ Nuclear option — revokes every agent token for the site:
 
 ---
 
-## When to Revoke
+## when to revoke
 
 - **Decommissioning a machine** — Revoke its token to clean up
 - **Security concern** — If a machine is compromised, revoke immediately

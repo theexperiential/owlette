@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
-import { getSiteAlertEmailsWithCc } from '@/lib/adminUtils.server';
+import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@/lib/emailTemplates.server';
+import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { checkRateLimit, processAlertRateLimit } from '@/lib/rateLimit';
 import { fireWebhooks } from '@/lib/webhookSender.server';
@@ -34,7 +36,9 @@ function buildAlertEmail(
   machineId: string,
   errorCode: string,
   errorMessage: string,
-  agentVersion: string
+  agentVersion: string,
+  unsubscribeUrl?: string,
+  timezone?: string
 ): string {
   const content = `
     <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">agent alert</h2>
@@ -45,39 +49,12 @@ function buildAlertEmail(
       { label: 'error code', value: errorCode },
       { label: 'message', value: errorMessage },
       { label: 'agent version', value: agentVersion },
-      { label: 'time', value: emailTimestamp() },
+      { label: 'time', value: emailTimestamp(new Date(), timezone) },
       { label: 'environment', value: ENV_LABEL },
     ])}
     <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check the machine and service logs for more details.</p>
   `;
-  return wrapEmailLayout(content);
-}
-
-function buildProcessAlertEmail(
-  siteId: string,
-  machineId: string,
-  processName: string,
-  errorMessage: string,
-  agentVersion: string,
-  eventType: string
-): string {
-  const eventLabel = eventType === 'process_start_failed' ? 'failed to start' : 'crashed';
-  const content = `
-    <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">process ${eventLabel}: ${processName}</h2>
-    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a monitored process has ${eventLabel} on one of your machines.</p>
-    ${emailDataTable([
-      { label: 'site', value: siteId },
-      { label: 'machine', value: machineId },
-      { label: 'process', value: processName },
-      { label: 'event', value: eventLabel },
-      { label: 'error', value: errorMessage },
-      { label: 'agent version', value: agentVersion },
-      { label: 'time', value: emailTimestamp() },
-      { label: 'environment', value: ENV_LABEL },
-    ])}
-    <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check the machine and service logs for more details.</p>
-  `;
-  return wrapEmailLayout(content, { preheader: `process ${eventLabel}: ${processName} on ${machineId}` });
+  return wrapEmailLayout(content, { unsubscribeUrl });
 }
 
 export const POST = withRateLimit(
@@ -156,68 +133,37 @@ export const POST = withRateLimit(
         }
       }
 
-      // Check Resend is configured
-      const resendClient = getResend();
-      if (!resendClient) {
-        console.warn('[agent/alert] RESEND_API_KEY not configured — alert not sent');
-        return NextResponse.json({ success: true, emailSent: false, reason: 'Resend not configured' });
-      }
+      const db = getAdminDb();
 
-      // Get recipient emails based on event type
-      const { to: recipients, cc } = await getSiteAlertEmailsWithCc(
-        siteId,
-        isProcessEvent ? 'processAlerts' : 'healthAlerts'
-      );
-
-      if (recipients.length === 0) {
-        console.warn(`[agent/alert] No recipients found for site ${siteId}`);
-        return NextResponse.json({ success: true, emailSent: false, reason: 'No recipients' });
-      }
-
-      // Build email based on event type
-      let subject: string;
-      let html: string;
-
-      if (isProcessEvent) {
-        const eventLabel = resolvedEventType === 'process_start_failed' ? 'failed to start' : 'crashed';
-        subject = `[${ENV_LABEL}] Process ${eventLabel}: ${processName} on ${machineId}`;
-        html = buildProcessAlertEmail(siteId, machineId, processName, errorMessage || '', agentVersion || '', resolvedEventType);
-      } else {
-        subject = `[${ENV_LABEL}] [ALERT] Owlette agent error on ${machineId}`;
-        html = buildAlertEmail(siteId, machineId, errorCode, errorMessage || '', agentVersion || '');
-      }
-
-      // Send alert email
-      const result = await resendClient.emails.send({
-        from: FROM_EMAIL,
-        to: recipients,
-        ...(cc.length > 0 ? { cc } : {}),
-        subject,
-        html,
-      });
-
-      if (result.error) {
-        console.error('[agent/alert] Resend error:', result.error);
-        return NextResponse.json({ error: 'Email delivery failed' }, { status: 500 });
-      }
-
-      console.log(`[agent/alert] Alert sent for ${machineId} (${siteId}): ${resolvedEventType}${isProcessEvent ? ` - ${processName}` : ''}`);
-
-      // Fire webhooks (non-blocking — don't delay the response)
+      // Determine webhook event type (used by both process and connection paths)
       const webhookEvent = resolvedEventType === 'process_crash' ? 'process.crashed'
         : resolvedEventType === 'process_start_failed' ? 'process.restarted'
         : 'machine.offline';
-      const db = getAdminDb();
-      const siteDoc = await db.collection('sites').doc(siteId).get();
-      const siteName = siteDoc.data()?.name || siteId;
-      fireWebhooks(siteId, siteName, webhookEvent, {
-        machine: { id: machineId, name: machineId },
-        ...(processName ? { process: { name: processName, error: errorMessage || '' } } : {}),
-      }).catch(console.error);
 
-      // Trigger autonomous Cortex investigation (non-blocking, process events only)
-      // Skip if local Cortex is running — it handles investigation via IPC events
+      // --- Process events: queue for batched digest email ---
       if (isProcessEvent) {
+        // Write to pending_process_alerts for batched delivery by cron
+        await db.collection('pending_process_alerts').add({
+          siteId,
+          machineId,
+          processName,
+          errorMessage: errorMessage || 'Process exited unexpectedly',
+          agentVersion: agentVersion || '',
+          eventType: resolvedEventType,
+          timestamp: FieldValue.serverTimestamp(),
+        });
+
+        console.log(`[agent/alert] Queued process alert: ${resolvedEventType} - ${processName} on ${machineId} (${siteId})`);
+
+        // Fire webhooks immediately (non-blocking)
+        const siteDoc = await db.collection('sites').doc(siteId).get();
+        const siteName = siteDoc.data()?.name || siteId;
+        fireWebhooks(siteId, siteName, webhookEvent, {
+          machine: { id: machineId, name: machineId },
+          process: { name: processName, error: errorMessage || '' },
+        }).catch(console.error);
+
+        // Trigger autonomous Cortex investigation immediately (non-blocking)
         const localCortexRunning = await isLocalCortexRunning(db, siteId, machineId);
         if (localCortexRunning) {
           console.log(`[agent/alert] Local Cortex is running on ${machineId} — skipping server-side investigation`);
@@ -232,9 +178,67 @@ export const POST = withRateLimit(
             agentVersion: agentVersion || '',
           }).catch(err => console.error('[agent/alert] Cortex trigger failed:', err));
         }
+
+        return NextResponse.json({ success: true, queued: true });
       }
 
-      return NextResponse.json({ success: true, emailSent: true, recipients: recipients.length });
+      // --- Connection failure events: send email immediately (unchanged) ---
+      const resendClient = getResend();
+      if (!resendClient) {
+        console.warn('[agent/alert] RESEND_API_KEY not configured — alert not sent');
+        return NextResponse.json({ success: true, emailSent: false, reason: 'Resend not configured' });
+      }
+
+      const [recipients, tz] = await Promise.all([
+        getSiteAlertRecipients(siteId, 'healthAlerts'),
+        getMachineTimezone(siteId, machineId),
+      ]);
+
+      if (recipients.length === 0) {
+        console.warn(`[agent/alert] No recipients found for site ${siteId}`);
+        return NextResponse.json({ success: true, emailSent: false, reason: 'No recipients' });
+      }
+
+      const subject = `[ALERT] owlette agent error on ${machineId}`;
+      const baseUrl = request.nextUrl.origin;
+      let emailsSent = 0;
+
+      for (const recipient of recipients) {
+        try {
+          const unsubscribeUrl = recipient.userId !== 'fallback'
+            ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
+            : undefined;
+
+          const html = buildAlertEmail(siteId, machineId, errorCode, errorMessage || '', agentVersion || '', unsubscribeUrl, tz);
+
+          const result = await resendClient.emails.send({
+            from: FROM_EMAIL,
+            to: [recipient.email],
+            ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
+            subject,
+            html,
+          });
+
+          if (result.error) {
+            console.error(`[agent/alert] Resend error for ${recipient.email}:`, result.error);
+          } else {
+            emailsSent++;
+          }
+        } catch (emailError) {
+          console.error(`[agent/alert] Failed to send to ${recipient.email}:`, emailError);
+        }
+      }
+
+      console.log(`[agent/alert] Alert sent for ${machineId} (${siteId}): ${resolvedEventType}, ${recipients.length} recipient(s)`);
+
+      // Fire webhooks (non-blocking)
+      const siteDoc = await db.collection('sites').doc(siteId).get();
+      const siteName = siteDoc.data()?.name || siteId;
+      fireWebhooks(siteId, siteName, webhookEvent, {
+        machine: { id: machineId, name: machineId },
+      }).catch(console.error);
+
+      return NextResponse.json({ success: true, emailSent: emailsSent > 0, recipients: emailsSent });
     } catch (error: unknown) {
       console.error('[agent/alert] Unhandled error:', error);
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

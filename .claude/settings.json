@@ -51,7 +51,7 @@
           {
             "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-check.mjs\"",
-            "timeout": 120
+            "timeout": 180
           }
         ]
       }

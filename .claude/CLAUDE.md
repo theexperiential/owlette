@@ -2,7 +2,7 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. Monorepo: Python Windows service (agent) + Next.js web dashboard (web) + Firebase/Firestore backend.
 
-**Version**: 2.5.4 | **License**: AGPL-3.0
+**Version**: 2.6.1 | **License**: AGPL-3.0
 
 ---
 
@@ -53,21 +53,21 @@ Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules
 
 ---
 
-## Agent Authentication (Device Code / QR Pairing)
+## Agent Authentication (Device Code Pairing)
 
 Agents authenticate via a device code flow — no browser login on the target machine.
 
 **3 Ways to Add a Machine:**
 
-1. **QR Code** (single machine): Run installer → QR code appears → scan with phone → owlette.app/add → select site → authorize
+1. **Browser** (single machine): Run installer → pairing phrase appears → browser auto-opens owlette.app/add → select site → authorize
 2. **Dashboard** (manual): Run installer → note 3-word phrase → dashboard "+" button → "Enter Code" → authorize
 3. **Silent Install** (bulk deploy): Dashboard "+" → "Generate Code" → copy phrase → `Owlette-Installer.exe /ADD=silver-compass-drift /SILENT`
 
 **Key files:**
 - `web/app/api/agent/auth/device-code/` — generate phrase, poll, authorize endpoints
-- `web/app/add/page.tsx` — mobile pairing page (QR code target)
+- `web/app/add/page.tsx` — pairing page (phrase pre-filled via URL param)
 - `web/app/dashboard/components/AddMachineButton.tsx` — dashboard "+" button + modal
-- `agent/src/configure_site.py` — agent-side pairing flow (QR display + polling)
+- `agent/src/configure_site.py` — agent-side pairing flow (browser open + polling)
 - `agent/src/auth_manager.py` — token exchange, refresh, device code polling
 - `web/lib/pairPhrases.ts` / `agent/src/pair_phrases.py` — shared word list (must stay in sync)
 
@@ -79,11 +79,14 @@ Agents authenticate via a device code flow — no browser login on the target ma
 
 **Web**: Push to `dev`/`main` triggers Railway auto-deploy.
 
-**IMPORTANT: Always version up BEFORE building the installer.** Bump with `node scripts/sync-versions.js X.Y.Z` and commit BEFORE running `build_installer_full.bat` — the installer bakes the version into the exe filename and binary.
+**IMPORTANT: Always version up AND update the changelog BEFORE building the installer.** Bump with `node scripts/sync-versions.js X.Y.Z` and commit BEFORE running `build_installer_full.bat` — the installer bakes the version into the exe filename and binary.
+
+**IMPORTANT: `docs/changelog.md` MUST be updated before every installer build.** Add a new `## [X.Y.Z] - YYYY-MM-DD` section summarising all changes since the last release. Never build or upload an installer without a matching changelog entry.
 
 **Agent Installer Release** (build + upload to Firebase):
 ```bash
-# 1. Bump version, commit, push
+# 1. Update changelog, bump version, commit, push
+# Edit docs/changelog.md → add [X.Y.Z] section
 node scripts/sync-versions.js X.Y.Z
 git add -A && git commit -m "chore: bump version to X.Y.Z" && git push origin dev
 
@@ -196,4 +199,4 @@ Be real, not flattering. If something was mid, say so. If it was genuinely great
 
 ---
 
-**Last Updated**: 2026-03-22
+**Last Updated**: 2026-04-01

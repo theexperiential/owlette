@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { generatePairPhrase } from '@/lib/pairPhrases';
 import logger from '@/lib/logger';
@@ -8,7 +9,7 @@ import logger from '@/lib/logger';
  * POST /api/agent/auth/device-code
  *
  * Generate a pairing phrase and device code for agent registration.
- * The agent displays the phrase (+ QR code) and polls for authorization.
+ * The agent displays the phrase and polls for authorization.
  *
  * Request body:
  * - machineId: string - Machine hostname (optional for pre-authorized codes)
@@ -18,7 +19,7 @@ import logger from '@/lib/logger';
  * - pairPhrase: string - 3-word human-readable phrase (e.g., "silver-compass-drift")
  * - deviceCode: string - Opaque code for polling (64 bytes, base64url)
  * - verificationUri: string - URL to visit for authorization
- * - qrUrl: string - Full URL with phrase pre-filled (for QR code)
+ * - pairingUrl: string - Full URL with phrase pre-filled (for browser auto-open)
  * - expiresIn: number - Seconds until expiry (600 = 10 minutes)
  * - interval: number - Minimum polling interval in seconds (5)
  */
@@ -56,15 +57,15 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const protocol = host.includes('localhost') ? 'http' : 'https';
     const baseUrl = `${protocol}://${host}`;
 
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const expiresAt = Timestamp.fromDate(new Date(Date.now() + 10 * 60 * 1000)); // 10 minutes
 
     // Store device code in Firestore
     await adminDb.collection('device_codes').doc(pairPhrase).set({
       deviceCodeHash,
       machineId: machineId || null,
       version: version || null,
-      status: 'pending', // pending → authorized → consumed | expired
-      createdAt: new Date(),
+      status: 'pending', // pending → authorized → (deleted on poll or expiry)
+      createdAt: FieldValue.serverTimestamp(),
       expiresAt,
       // These fields are populated when authorized:
       siteId: null,
@@ -81,7 +82,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       pairPhrase,
       deviceCode,
       verificationUri: `${baseUrl}/add`,
-      qrUrl: `${baseUrl}/add?code=${encodeURIComponent(pairPhrase)}`,
+      pairingUrl: `${baseUrl}/add?code=${encodeURIComponent(pairPhrase)}`,
       expiresIn: 600, // 10 minutes
       interval: 5, // poll every 5 seconds
     });

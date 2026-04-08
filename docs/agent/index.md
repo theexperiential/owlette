@@ -1,12 +1,12 @@
-# Agent
+# agent
 
-The Owlette agent is a Python Windows service that runs in the background, monitoring your processes, collecting system metrics, and syncing everything to the cloud. It's the core of the Owlette system — every machine you want to manage needs an agent installed.
+The owlette agent is a Python Windows service that runs in the background, monitoring your processes, collecting system metrics, and syncing everything to the cloud. It's the core of the owlette system — every machine you want to manage needs an agent installed.
 
 ---
 
-## What the Agent Does
+## what the agent does
 
-| Function | Frequency | Description |
+| function | frequency | description |
 |----------|-----------|-------------|
 | **Process monitoring** | Every 5s | Checks if configured processes are running, detects crashes and stalls |
 | **Auto-restart** | On crash | Restarts crashed processes using Task Scheduler or CreateProcessAsUser |
@@ -17,7 +17,7 @@ The Owlette agent is a Python Windows service that runs in the background, monit
 
 ---
 
-## How It Runs
+## how it runs
 
 The agent runs as a Windows service managed by [NSSM](https://nssm.cc/) (Non-Sucking Service Manager). NSSM ensures the service starts automatically on boot and restarts on failure.
 
@@ -30,47 +30,62 @@ NSSM (Service Manager)
               │     ├── firestore_rest_client.py (REST API)
               │     └── connection_manager.py (State Machine)
               ├── shared_utils.py (Config, Logging, Metrics)
+              ├── health_probe.py (Startup Health Checks)
               ├── installer_utils.py (Remote Deployment)
-              ├── health_probe.py (Health Monitoring)
-              ├── process_launcher.py (Process Launch Strategy)
-              ├── session_exec.py (User Session Execution)
-              └── project_utils.py (Project Distribution)
+              ├── project_utils.py (Project Distribution)
+              ├── registry_utils.py (Software Inventory)
+              └── mcp_tools.py (Remote Command Execution)
 
-owlette_gui.py (Configuration GUI — separate process)
-owlette_tray.py (System Tray Icon — separate process)
+Spawned into user session by the service:
+  ├── owlette_tray.py (System Tray Icon)
+  ├── owlette_cortex.py (Local AI Agent)
+  │     ├── cortex_firestore.py (Message Polling & Response Writing)
+  │     ├── cortex_tools.py (MCP Tool Server for Agent SDK)
+  │     └── mcp_tools.py (19 Tool Implementations)
+  ├── process_launcher.py (Application Launcher)
+  └── session_exec.py (User Session Command Executor)
+
+Launched on demand:
+  ├── owlette_gui.py (Configuration GUI)
+  ├── configure_site.py (Device Code Pairing)
+  └── report_issue.py (Bug Report Dialog)
 ```
 
 ---
 
-## Service Lifecycle
+## service lifecycle
 
-### Startup
+### startup
 
 1. Initialize logging (RotatingFileHandler, 10 MB per file, 5 backups)
 2. Upgrade config schema if needed (automatic migration)
 3. Initialize Firebase client (lazy, soft-fail if no credentials)
 4. Recover running processes (adopt PIDs from previous session)
 5. Launch system tray icon as user process
-6. Enter main loop
+6. Launch Cortex process as user process (if enabled)
+7. Enter main loop
 
-### Main Loop (every 5 seconds)
+### main loop (every 5 seconds)
 
 1. Check all configured processes — detect crashes, stalls, exits
 2. Auto-restart any crashed processes (if autolaunch enabled)
 3. Process any pending commands from Firestore
-4. Check for Firebase state changes (enable/disable)
+4. Ensure Cortex is running (if enabled)
+5. Process Cortex IPC commands (Tier 2 tool calls)
+6. Check for Firebase state changes (enable/disable)
 
-### Shutdown
+### shutdown
 
 1. Mark machine offline in Firestore
-2. Stop Firebase client and background threads
-3. Clean up resources
+2. Terminate Cortex process
+3. Stop Firebase client and background threads
+4. Clean up resources
 
 ---
 
-## Key Directories
+## key directories
 
-| Path | Contents |
+| path | contents |
 |------|----------|
 | `C:\ProgramData\Owlette\` | Installation root |
 | `C:\ProgramData\Owlette\agent\src\` | Python source code |
@@ -79,14 +94,3 @@ owlette_tray.py (System Tray Icon — separate process)
 | `C:\ProgramData\Owlette\python\` | Embedded Python interpreter |
 | `C:\ProgramData\Owlette\nssm\` | NSSM service manager binary |
 
----
-
-## In This Section
-
-- [**Installation**](installation.md) — How to install the agent (automatic, remote, manual)
-- [**Configuration**](configuration.md) — GUI tool, config.json, process settings
-- [**Process Monitoring**](process-monitoring.md) — State machine, crash detection, auto-restart
-- [**System Tray**](system-tray.md) — Tray icon behavior and menu
-- [**Remote Commands**](remote-commands.md) — All commands the agent accepts
-- [**Self-Update**](self-update.md) — Remote agent updates
-- [**Troubleshooting**](troubleshooting.md) — Common issues and log locations

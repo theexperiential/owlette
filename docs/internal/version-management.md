@@ -1,23 +1,23 @@
-# Version Management Guide
+# version management guide
 
-## Overview
+## overview
 
-Owlette uses **independent component versioning** for flexibility while maintaining a unified product version.
+owlette uses **independent component versioning** for flexibility while maintaining a unified product version.
 
-## Version Files
+## version files
 
-| File | Purpose | Scope |
+| file | purpose | scope |
 |------|---------|-------|
 | `/VERSION` | Product release version | User-facing releases |
 | `agent/VERSION` | Agent binary version | Windows service |
 | `web/package.json` | Web app version | Dashboard |
 | `firestore.rules` | Security schema version | Database rules |
 
-## Version Philosophy
+## version philosophy
 
-### Product Version (`/VERSION`)
+### product version (`/VERSION`)
 
-**Current:** 2.0.4
+**Current:** 2.5.4
 
 **Tracks:** User-visible releases that bundle all components together.
 
@@ -26,11 +26,11 @@ Owlette uses **independent component versioning** for flexibility while maintain
 - Creating a release tag
 - Updating installers or documentation
 
-### Component Versions
+### component versions
 
-#### Agent Version (`agent/VERSION`)
+#### agent version (`agent/VERSION`)
 
-**Current:** 2.0.4
+**Current:** 2.5.4
 
 **Tracks:** Windows service agent code.
 
@@ -42,9 +42,9 @@ Owlette uses **independent component versioning** for flexibility while maintain
 
 **Read by:** `agent/src/shared_utils.py` → `get_app_version()`
 
-#### Web Version (`web/package.json`)
+#### web version (`web/package.json`)
 
-**Current:** 2.0.4
+**Current:** 2.5.4
 
 **Tracks:** Next.js web dashboard code.
 
@@ -56,7 +56,7 @@ Owlette uses **independent component versioning** for flexibility while maintain
 
 **Standard:** Follows npm semantic versioning
 
-#### Firestore Rules Version (`firestore.rules`)
+#### firestore rules version (`firestore.rules`)
 
 **Current:** 2.2.0
 
@@ -75,7 +75,7 @@ Owlette uses **independent component versioning** for flexibility while maintain
 - 2.1.0 - Agent custom tokens
 - 2.2.0 - Multi-user site access control
 
-## Semantic Versioning
+## semantic versioning
 
 All versions follow semantic versioning: `MAJOR.MINOR.PATCH`
 
@@ -83,9 +83,9 @@ All versions follow semantic versioning: `MAJOR.MINOR.PATCH`
 - **MINOR:** New features, backward compatible (2.0.0 → 2.1.0)
 - **PATCH:** Bug fixes, backward compatible (2.0.0 → 2.0.1)
 
-## Syncing Versions
+## syncing versions
 
-### Option 1: Sync Script (Recommended)
+### option 1: sync script (recommended)
 
 Sync product, agent, and web versions together:
 
@@ -100,7 +100,7 @@ node scripts/sync-versions.js 2.1.0
 python scripts/sync_versions.py 2.1.0
 ```
 
-### Option 2: Manual Update
+### option 2: manual update
 
 Update each file individually:
 
@@ -127,15 +127,15 @@ echo "2.1.0" > agent/VERSION
 // Last Updated: YYYY-MM-DD
 ```
 
-## Release Workflow
+## release workflow
 
-### 1. Before Release
+### 1. before release
 
 - [ ] All tests passing
 - [ ] Changelog updated
 - [ ] Version numbers decided
 
-### 2. Bump Versions
+### 2. bump versions
 
 ```bash
 # Sync product + components
@@ -145,7 +145,7 @@ node scripts/sync-versions.js 2.1.0
 # (Only if schema/security rules changed)
 ```
 
-### 3. Update Changelog
+### 3. update changelog
 
 ```bash
 # Edit CHANGELOG.md
@@ -161,7 +161,7 @@ node scripts/sync-versions.js 2.1.0
 - Bug fix description
 ```
 
-### 4. Commit and Tag
+### 4. commit and tag
 
 ```bash
 # Commit version bump
@@ -175,7 +175,7 @@ git tag v2.1.0
 git push origin main --tags
 ```
 
-### 5. Build Release Artifacts
+### 5. build release artifacts
 
 ```bash
 # Build agent installer
@@ -187,14 +187,14 @@ cd web
 npm run build
 ```
 
-### 6. Deploy
+### 6. deploy
 
 - **Agent:** Upload installer to Firebase Storage (via Admin Panel)
 - **Web:** Auto-deploys via Railway on tag push
 
-## Version in Code
+## version in code
 
-### Reading Versions
+### reading versions
 
 **Agent (Python):**
 ```python
@@ -214,7 +214,7 @@ const version = packageJson.version;  // Reads from package.json
 // Version: 2.2.0
 ```
 
-### Displaying Versions
+### displaying versions
 
 **In UI:**
 - Agent GUI: Shows in title bar
@@ -225,9 +225,9 @@ const version = packageJson.version;  // Reads from package.json
 - Agent logs version on startup
 - Web logs version in browser console (dev mode)
 
-## FAQ
+## faq
 
-### Why separate Firestore rules version?
+### why separate firestore rules version?
 
 Firestore rules track **security schema**, not features. A UI update (2.0.0 → 2.1.0) doesn't require new security rules.
 
@@ -237,7 +237,7 @@ Firestore rules track **security schema**, not features. A UI update (2.0.0 → 
 - Web: 2.1.0 (new feature)
 - **Firestore: 2.2.0** (no change - still multi-user access)
 
-### Should I bump all versions together?
+### should i bump all versions together?
 
 **Yes, for releases:**
 - Product, agent, and web stay in sync
@@ -248,7 +248,7 @@ Firestore rules track **security schema**, not features. A UI update (2.0.0 → 
 - Only bump when security model changes
 - Independent evolution
 
-### What about pre-releases?
+### what about pre-releases?
 
 Use semantic versioning pre-release tags:
 
@@ -266,7 +266,7 @@ node scripts/sync-versions.js 2.1.0-rc.1
 node scripts/sync-versions.js 2.1.0
 ```
 
-### Can I version components independently?
+### can i version components independently?
 
 **Yes**, but not recommended for typical releases:
 
@@ -283,7 +283,7 @@ git commit -am "fix(agent): Emergency Windows 11 compatibility fix"
 git tag v2.0.5-agent
 ```
 
-## Best Practices
+## best practices
 
 1. **Sync regularly:** Use sync script for normal releases
 2. **Update changelog:** Document all version changes
@@ -293,7 +293,7 @@ git tag v2.0.5-agent
 6. **Semantic versioning:** Follow MAJOR.MINOR.PATCH strictly
 7. **Document changes:** Update docs when versions change
 
-## Migration from Old System
+## migration from old system
 
 **Before (inconsistent):**
 - Hardcoded versions in multiple files
@@ -306,7 +306,7 @@ git tag v2.0.5-agent
 - Firestore rules independently versioned
 - Clear upgrade path
 
-## Related Documentation
+## related documentation
 
 - [CHANGELOG.md](../CHANGELOG.md) - Release history
 - [.claude/CLAUDE.md](../.claude/CLAUDE.md) - Development guide

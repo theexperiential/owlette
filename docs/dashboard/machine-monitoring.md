@@ -1,43 +1,43 @@
-# Machine Monitoring
+# machine monitoring
 
 The dashboard provides real-time visibility into all your machines' health, performance, and process status.
 
 ---
 
-## Machine Status
+## machine status
 
-### Online/Offline Detection
+### online/offline detection
 
-The agent sends a **heartbeat** to Firestore every 30 seconds. The dashboard considers a machine:
+The agent sends a **heartbeat** to Firestore at an adaptive interval — every 5 seconds when the system tray is open, 30 seconds when processes are running, or 120 seconds when idle. The dashboard considers a machine:
 
-| Status | Condition | Indicator |
+| status | condition | indicator |
 |--------|-----------|-----------|
 | **Online** | Heartbeat within last 3 minutes | Green dot |
 | **Offline** | No heartbeat for 3+ minutes | Red/grey dot |
 | **Stale** | Heartbeat is older than expected but within threshold | Yellow dot |
 
-### Last Seen
+### last seen
 
 Each machine shows a "last seen" timestamp. For offline machines, this tells you when the machine last communicated.
 
 ---
 
-## System Metrics
+## system metrics
 
-Metrics are reported by the agent every 60 seconds:
+Metrics are reported by the agent alongside each heartbeat (see adaptive interval above):
 
-| Metric | Range | Source |
+| metric | range | source |
 |--------|-------|--------|
 | **CPU** | 0-100% | Overall CPU utilization |
 | **Memory** | 0-100% | RAM usage percentage |
 | **Disk** | 0-100% | Primary disk usage |
 | **GPU** | 0-100% | GPU utilization (NVIDIA via NVML, others via WinTmp) |
 
-### Color Coding
+### color coding
 
 Metrics use traffic-light colors:
 
-| Color | Threshold | Meaning |
+| color | threshold | meaning |
 |-------|-----------|---------|
 | Green | 0-60% | Healthy |
 | Yellow | 60-80% | Warning |
@@ -45,9 +45,9 @@ Metrics use traffic-light colors:
 
 ---
 
-## View Modes
+## view modes
 
-### Card View
+### card view
 
 The default view displays each machine as a card:
 
@@ -59,7 +59,7 @@ The default view displays each machine as a card:
 
 Click a machine card to expand details.
 
-### List View
+### list view
 
 A compact table view with sortable columns:
 
@@ -74,25 +74,25 @@ Useful when managing many machines.
 
 ---
 
-## Sparkline Charts
+## sparkline charts
 
 Each metric in card view shows a tiny sparkline chart representing recent values. These give you an at-a-glance trend without clicking into the machine.
 
 ---
 
-## Historical Metrics
+## historical metrics
 
 Click on a machine to view detailed historical metrics:
 
-### Time Ranges
+### time ranges
 
-| Range | Resolution | Data Points |
+| range | resolution | data points |
 |-------|-----------|-------------|
 | **24 hours** | 1 minute | ~1,440 points |
 | **7 days** | 15 minutes | ~672 points |
 | **30 days** | 1 hour | ~720 points |
 
-### Charts
+### charts
 
 The metrics detail panel shows interactive Recharts line graphs for:
 
@@ -105,11 +105,11 @@ Hover over data points for exact values and timestamps.
 
 ---
 
-## Process Status
+## process status
 
 Each machine card shows its configured processes with status badges:
 
-| Badge | State | Meaning |
+| badge | state | meaning |
 |-------|-------|---------|
 | Green | RUNNING | Process is alive and responding |
 | Yellow | STALLED | Process exists but not responding |
@@ -121,14 +121,14 @@ Click a process to open the [Process Dialog](process-management.md) for manageme
 
 ---
 
-## Machine Information
+## machine information
 
 Each machine reports additional details:
 
-| Field | Description |
+| field | description |
 |-------|-------------|
 | **Hostname** | Windows computer name (used as machine ID) |
 | **OS** | Windows version (e.g., "Windows 11 Pro 10.0.22631") |
 | **CPU Model** | Processor name (e.g., "Intel Core i9-9900X") |
-| **Agent Version** | Installed Owlette version (e.g., "2.1.8") |
+| **Agent Version** | Installed owlette version (e.g., "2.1.8") |
 | **Uptime** | Time since last agent start |

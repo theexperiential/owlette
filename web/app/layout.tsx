@@ -5,6 +5,7 @@ import { LazyAuthProvider } from "@/components/LazyAuthProvider";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Footer } from "@/components/Footer";
+import SentryInit from "@/components/SentryInit";
 
 const geist = Geist({
   variable: "--font-geist",
@@ -111,6 +112,7 @@ export default function RootLayout({
 
 
 -->` }} style={{ display: 'none' }} />
+        <SentryInit />
         <ErrorBoundary>
           <LazyAuthProvider>
             {children}

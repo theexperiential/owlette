@@ -1,15 +1,15 @@
-# Project Distribution
+# project distribution
 
-Distribute project files (ZIP archives) across your machines using your own file hosting. Owlette handles the download, extraction, and verification — you just provide the URL.
+Distribute project files (ZIP archives) across your machines using your own file hosting. owlette handles the download, extraction, and verification — you just provide the URL.
 
 ---
 
-## How It Works
+## how it works
 
 ```
-Your File Host              Owlette Cloud              Agent Machines
-(Dropbox/Drive/etc.)       (Firestore)               (Windows)
-────────────────────────────────────────────────────────────────────
+Your File Host              owlette Cloud              Agent Machines
+(Dropbox/Drive/etc.)       (Firestore)                 (Windows)
+─────────────────────────────────────────────────────────────────────
 
 1. Upload ZIP to host
 
@@ -18,28 +18,28 @@ Your File Host              Owlette Cloud              Agent Machines
 
 3. Send commands ────────────▶ Commands queued
 
-4.                                              Download ZIP
-   ◀─────────────────────────                  directly from host
-   (not through Owlette!)                       Report progress ──▶
+4.                                                     Download ZIP
+   ◀───────────────────────────────────────────────────directly from host
+   (not through owlette!)                              Report progress ──▶
 
-5.                                              Extract to path
-                                                Report progress ──▶
+5.                                                     Extract to path
+                                                       Report progress ──▶
 
-6.                                              Verify files
-                                                Report complete ──▶
+6.                                                     Verify files
+                                                       Report complete ──▶
 ```
 
-**Key point**: Files download directly from your host to the machines — Owlette never stores or proxies the files. This keeps costs near zero.
+**Key point**: Files download directly from your host to the machines — owlette never stores or proxies the files. This keeps costs near zero.
 
 ---
 
-## Creating a Distribution
+## creating a distribution
 
 1. Navigate to **Projects** from the dashboard menu
 2. Click **"New Distribution"**
 3. Fill in the configuration:
 
-| Field | Required | Description |
+| field | required | description |
 |-------|----------|-------------|
 | **Name** | Yes | Descriptive name (e.g., "Summer Show 2024") |
 | **Project URL** | Yes | Direct download link to ZIP file |
@@ -52,9 +52,9 @@ Your File Host              Owlette Cloud              Agent Machines
 
 ---
 
-## File Hosting Options
+## file hosting options
 
-| Host | Free Storage | Direct Download URL |
+| host | free storage | direct download url |
 |------|-------------|-------------------|
 | **Dropbox** | 2 GB | Change `?dl=0` to `?dl=1` in share link |
 | **Google Drive** | 15 GB | `https://drive.google.com/uc?export=download&id=FILE_ID` |
@@ -64,23 +64,23 @@ Your File Host              Owlette Cloud              Agent Machines
 !!! tip "Best for large files"
     Backblaze B2 is the cheapest option for large files: $0.005/GB storage with free egress (up to 3x your storage).
 
-### Cost Comparison (100 GB project to 10 machines)
+### cost comparison (100 gb project to 10 machines)
 
-| Host | Storage | Bandwidth | Total/Month |
+| host | storage | bandwidth | total/month |
 |------|---------|-----------|-------------|
 | Dropbox | $11.99 (2TB plan) | Included | **$11.99** |
 | Google Drive | $9.99 (2TB plan) | Included | **$9.99** |
 | Backblaze B2 | $0.50 | Free (3x rule) | **$0.50** |
 
-Owlette infrastructure cost: **~$0.001** per distribution (Firestore operations only).
+owlette infrastructure cost: **~$0.001** per distribution (Firestore operations only).
 
 ---
 
-## Distribution Progress
+## distribution progress
 
 Real-time status per machine:
 
-| Status | Description |
+| status | description |
 |--------|-------------|
 | **Downloading** | Downloading ZIP (shows percentage) |
 | **Extracting** | Extracting files (shows percentage) |
@@ -89,7 +89,7 @@ Real-time status per machine:
 
 ---
 
-## File Verification
+## file verification
 
 Specify files to check after extraction:
 
@@ -101,7 +101,7 @@ The agent checks that each file or folder exists relative to the extraction path
 
 ---
 
-## Templates
+## templates
 
 Save distribution configurations for reuse:
 
@@ -114,9 +114,9 @@ Useful for recurring content updates (e.g., monthly signage content).
 
 ---
 
-## Examples
+## examples
 
-### TouchDesigner Project
+### touchdesigner project
 
 ```
 Name: Art Installation - March 2026
@@ -125,7 +125,7 @@ Extract To: C:\TouchDesigner\Projects
 Verify: ArtInstall.toe, Assets/videos/, config.json
 ```
 
-### Digital Signage Content
+### digital signage content
 
 ```
 Name: March Signage Content
@@ -136,9 +136,9 @@ Verify: videos/promo1.mp4, images/background.png
 
 ---
 
-## Troubleshooting
+## troubleshooting
 
-| Issue | Cause | Fix |
+| issue | cause | fix |
 |-------|-------|-----|
 | Download failed | Bad URL or no internet | Test URL in browser; verify it directly downloads |
 | Extraction failed | Corrupt ZIP or no disk space | Re-upload ZIP; check disk space |

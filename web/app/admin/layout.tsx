@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import RequireAdmin from '@/components/RequireAdmin';
-import { Shield, Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook, Clock, Bell } from 'lucide-react';
+import { Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook, Clock, Bell } from 'lucide-react';
+import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -19,72 +20,76 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
  */
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
     {
-      name: 'Installers',
+      name: 'installers',
       href: '/admin/installers',
       icon: Package,
-      description: 'Manage agent installer versions',
+      description: 'manage agent installer versions',
     },
     {
-      name: 'Template Library',
+      name: 'template library',
       href: '/admin/presets',
       icon: Settings,
-      description: 'Manage software catalog',
+      description: 'manage software catalog',
     },
     {
-      name: 'User Management',
+      name: 'user management',
       href: '/admin/users',
       icon: Users,
-      description: 'Manage user roles and permissions',
+      description: 'manage user roles and permissions',
     },
     {
-      name: 'Agent Tokens',
+      name: 'agent tokens',
       href: '/admin/tokens',
       icon: KeyRound,
-      description: 'View and revoke agent tokens',
+      description: 'view and revoke agent tokens',
     },
     {
-      name: 'Schedules',
+      name: 'schedules',
       href: '/admin/schedules',
       icon: Clock,
-      description: 'Manage schedule presets',
+      description: 'manage schedule presets',
     },
     {
-      name: 'Alerts',
+      name: 'alerts',
       href: '/admin/alerts',
       icon: Bell,
-      description: 'Threshold-based metric alerts',
+      description: 'manage alert rules',
     },
     {
-      name: 'Webhooks',
+      name: 'webhooks',
       href: '/admin/webhooks',
       icon: Webhook,
-      description: 'Configure webhook notifications',
+      description: 'configure webhook integrations',
     },
     {
-      name: 'Email',
+      name: 'email',
       href: '/admin/email',
       icon: Mail,
-      description: 'Email configuration & testing',
+      description: 'email configuration & testing',
     },
   ];
 
-  // Determine back button destination based on current page
-  const getBackHref = () => {
-    if (pathname === '/admin/installers' || pathname === '/admin/presets') {
-      return '/deployments';
-    }
-    return '/dashboard';
-  };
+  const [backLabel, setBackLabel] = useState('go back');
 
-  const getBackLabel = () => {
-    if (pathname === '/admin/installers' || pathname === '/admin/presets') {
-      return 'Back to Deployments';
+  useEffect(() => {
+    const prev = sessionStorage.getItem('owlette_pre_admin_path');
+    if (prev) {
+      const name = prev.replace(/^\//, '').split('/')[0] || 'dashboard';
+      setBackLabel(`back to ${name}`);
     }
-    return 'Back to Dashboard';
+  }, []);
+
+  const handleBack = () => {
+    if (window.history.length > 1) {
+      router.back();
+    } else {
+      router.push('/dashboard');
+    }
   };
 
   return (
@@ -98,7 +103,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               variant="outline"
               size="sm"
               onClick={() => setMobileMenuOpen(true)}
-              className="border-border bg-muted/95 backdrop-blur-sm text-foreground hover:bg-muted cursor-pointer shadow-lg"
+              className="border-border bg-muted/95 backdrop-blur-sm text-foreground hover:bg-muted! cursor-pointer shadow-lg"
             >
               <Menu className="h-5 w-5 stroke-[2.5]" />
             </Button>
@@ -125,45 +130,44 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             {/* Mobile Header */}
             <div className="lg:hidden mb-4">
               <div className="flex items-center justify-between mb-2">
-                <h1 className="text-xl font-bold text-foreground">Admin Panel</h1>
+                <h1 className="text-xl font-bold text-foreground">admin panel</h1>
                 <button
                   onClick={() => setMobileMenuOpen(false)}
-                  className="p-2 hover:bg-muted rounded-lg transition-colors cursor-pointer"
+                  className="p-2 hover:bg-muted! rounded-lg transition-colors cursor-pointer"
                   aria-label="Close menu"
                 >
                   <X className="h-5 w-5 text-muted-foreground hover:text-foreground" />
                 </button>
               </div>
-              <p className="text-sm text-muted-foreground">System Management</p>
+              <p className="text-sm text-muted-foreground">system management</p>
             </div>
 
             {/* Desktop/Tablet Header */}
             <div className="hidden lg:flex items-center gap-3 mb-4 lg:justify-center xl:justify-start">
-              <div className="p-2 bg-accent-cyan rounded-lg flex-shrink-0">
-                <Shield className="h-6 w-6 text-foreground" />
+              <div className="flex-shrink-0">
+                <Image src="/owlette-icon.png" alt="Owlette" width={40} height={40} />
               </div>
               <div className="hidden xl:block">
-                <h1 className="text-xl font-bold text-foreground">Admin Panel</h1>
-                <p className="text-xs text-muted-foreground">System Management</p>
+                <h1 className="text-xl font-bold text-foreground">admin panel</h1>
+                <p className="text-xs text-muted-foreground">system management</p>
               </div>
             </div>
 
             {/* Back Button */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <Link href={getBackHref()}>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full border-border bg-background text-foreground hover:bg-accent hover:text-foreground cursor-pointer lg:px-2 xl:px-3"
-                  >
-                    <ArrowLeft className="h-4 w-4 lg:mr-0 xl:mr-2" />
-                    <span className="lg:hidden xl:inline">{getBackLabel()}</span>
-                  </Button>
-                </Link>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleBack}
+                  className="w-full border-border bg-background text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer lg:px-2 xl:px-3"
+                >
+                  <ArrowLeft className="h-4 w-4 lg:mr-0 xl:mr-2" />
+                  <span className="lg:hidden xl:inline">{backLabel}</span>
+                </Button>
               </TooltipTrigger>
               <TooltipContent side="right" className="hidden lg:block xl:hidden">
-                <p>{getBackLabel()}</p>
+                <p>{backLabel}</p>
               </TooltipContent>
             </Tooltip>
           </div>
@@ -184,7 +188,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           ${
                             isActive
                               ? 'bg-accent-cyan/15 text-accent-cyan border border-accent-cyan/30'
-                              : 'text-foreground hover:bg-accent hover:text-foreground'
+                              : 'text-foreground hover:bg-accent! hover:text-foreground!'
                           }
                         `}
                       >

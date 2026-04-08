@@ -1,5 +1,5 @@
 """
-Startup Health Probe for Owlette Agent
+Startup Health Probe for owlette Agent
 
 Runs a series of pre-flight checks at service startup to detect common
 failure modes before any network or Firebase initialization is attempted.
@@ -157,7 +157,7 @@ class HealthProbe:
         if not isinstance(config, dict) or 'firebase' not in config:
             return True, False, (
                 "Config missing 'firebase' section — agent is not registered. "
-                "Please run the Owlette installer again."
+                "Please run the owlette installer again."
             )
 
         firebase = config.get('firebase', {})
@@ -191,7 +191,7 @@ class HealthProbe:
         if not has_token:
             return False, (
                 "No authentication token found. Agent is not registered with a site. "
-                "Please run the Owlette installer again."
+                "Please run the owlette installer again."
             )
 
         return True, ""

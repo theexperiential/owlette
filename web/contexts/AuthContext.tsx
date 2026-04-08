@@ -21,6 +21,7 @@ import { handleError } from '@/lib/errorHandler';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { toast } from 'sonner';
 import { clearMfaSession } from '@/lib/mfaSession';
+import * as Sentry from '@sentry/nextjs';
 
 // Shallow-compare two arrays by value (for string arrays like userSites)
 function arraysEqual(a: string[], b: string[]): boolean {
@@ -81,6 +82,9 @@ export interface UserPreferences {
   timeFormat: '12h' | '24h'; // Time display format. Default: '12h'
   healthAlerts: boolean; // Receive email alerts when machines go offline. Default: true
   processAlerts: boolean; // Receive email alerts when processes crash or fail to start. Default: true
+  thresholdAlerts: boolean; // Receive email alerts when health metrics exceed thresholds. Default: true
+  cortexAlerts: boolean; // Receive email alerts when Cortex AI escalates unresolved issues. Default: true
+  mutedMachines: string[]; // Machine IDs to suppress all alerts for. Default: []
   alertCcEmails: string[]; // Additional CC recipients for alert emails. Default: []
   statsExpanded: boolean; // Whether stats section is expanded in card view. Default: false
   processesExpanded: boolean; // Whether process list is expanded in card view. Default: false
@@ -119,7 +123,7 @@ const AuthContext = createContext<AuthContextType>({
   lastMachineIds: {},
   requiresMfaSetup: false,
   passkeyEnrolled: false,
-  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', healthAlerts: true, processAlerts: true, alertCcEmails: [], statsExpanded: true, processesExpanded: true },
+  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
   signIn: async () => {},
   signUp: async () => {},
   signInWithGoogle: async () => {},
@@ -147,7 +151,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
   const [passkeyEnrolled, setPasskeyEnrolled] = useState(false);
-  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', healthAlerts: true, processAlerts: true, alertCcEmails: [], statsExpanded: true, processesExpanded: true });
+  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
   const [lastSiteId, setLastSiteId] = useState<string | null>(null);
   const [lastMachineIds, setLastMachineIds] = useState<Record<string, string>>({});
 
@@ -207,6 +211,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
 
+      // Set Sentry user context for error attribution
+      if (user) {
+        Sentry.setUser({ id: user.uid, email: user.email || undefined });
+      } else {
+        Sentry.setUser(null);
+      }
+
       // Clean up previous user document listener
       if (userDocUnsubscribe) {
         userDocUnsubscribe();
@@ -255,6 +266,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   timeFormat: preferences.timeFormat || '12h',
                   healthAlerts: preferences.healthAlerts !== false, // Default: true
                   processAlerts: preferences.processAlerts !== false, // Default: true
+                  thresholdAlerts: preferences.thresholdAlerts !== false, // Default: true
+                  cortexAlerts: preferences.cortexAlerts !== false, // Default: true
+                  mutedMachines: preferences.mutedMachines || [], // Default: []
                   alertCcEmails: preferences.alertCcEmails || [], // Default: []
                   statsExpanded: preferences.statsExpanded ?? true, // Default: expanded
                   processesExpanded: preferences.processesExpanded ?? true, // Default: expanded
@@ -266,8 +280,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     prev.timeFormat === newPrefs.timeFormat &&
                     prev.healthAlerts === newPrefs.healthAlerts &&
                     prev.processAlerts === newPrefs.processAlerts &&
+                    prev.thresholdAlerts === newPrefs.thresholdAlerts &&
+                    prev.cortexAlerts === newPrefs.cortexAlerts &&
                     prev.statsExpanded === newPrefs.statsExpanded &&
                     prev.processesExpanded === newPrefs.processesExpanded &&
+                    arraysEqual(prev.mutedMachines, newPrefs.mutedMachines) &&
                     arraysEqual(prev.alertCcEmails, newPrefs.alertCcEmails)
                   ) return prev;
                   return newPrefs;

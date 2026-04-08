@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyTOTP, hashBackupCode } from '@/lib/totp';
 import { encrypt, isEncryptionConfigured } from '@/lib/encryption.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
 
@@ -109,7 +110,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       mfaEnrolled: true,
       mfaSecret: encryptedSecret, // Now encrypted!
       backupCodes: hashedBackupCodes,
-      mfaEnrolledAt: new Date(),
+      mfaEnrolledAt: FieldValue.serverTimestamp(),
       requiresMfaSetup: false,
     });
 

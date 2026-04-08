@@ -258,6 +258,69 @@ export function useInstallerManagement() {
     }
   }, []);
 
+  /**
+   * Identify versions eligible for cleanup.
+   * Keeps: latest patch per minor series, anything uploaded within retentionDays, and the current latest.
+   */
+  const getCleanupCandidates = useCallback(
+    (retentionDays: number = 30): InstallerVersion[] => {
+      if (!latestVersion) return [];
+
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - retentionDays);
+
+      // Group versions by major.minor
+      const groups = new Map<string, InstallerVersion[]>();
+      for (const v of versions) {
+        const parts = v.version.split('.');
+        if (parts.length !== 3) continue;
+        const key = `${parts[0]}.${parts[1]}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(v);
+      }
+
+      // Find the highest patch per minor group
+      const keepVersions = new Set<string>();
+      keepVersions.add(latestVersion.version);
+
+      for (const [, group] of groups) {
+        let highest = group[0];
+        for (const v of group) {
+          const patchA = parseInt(v.version.split('.')[2], 10);
+          const patchB = parseInt(highest.version.split('.')[2], 10);
+          if (patchA > patchB) highest = v;
+        }
+        keepVersions.add(highest.version);
+      }
+
+      return versions.filter((v) => {
+        if (keepVersions.has(v.version)) return false;
+        // Keep if uploaded within retention window
+        const uploadDate = v.release_date?.toDate
+          ? v.release_date.toDate()
+          : new Date(v.release_date as any);
+        if (uploadDate > cutoff) return false;
+        return true;
+      });
+    },
+    [versions, latestVersion]
+  );
+
+  /**
+   * Delete all cleanup candidate versions
+   */
+  const cleanupVersions = useCallback(
+    async (candidates: InstallerVersion[]): Promise<number> => {
+      let deleted = 0;
+      for (const v of candidates) {
+        await deleteVersion(v.version);
+        deleted++;
+      }
+      return deleted;
+    },
+    [deleteVersion]
+  );
+
   return {
     versions,
     latestVersion,
@@ -266,5 +329,7 @@ export function useInstallerManagement() {
     uploadVersion,
     setAsLatest,
     deleteVersion,
+    getCleanupCandidates,
+    cleanupVersions,
   };
 }

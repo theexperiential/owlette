@@ -3,6 +3,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError } from '@/lib/apiAuth.server';
 import { requireAdminWithSiteAccess } from '@/lib/apiHelpers.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import logger from '@/lib/logger';
 
 /**
@@ -135,7 +136,7 @@ export const POST = withRateLimit(
         installer_url,
         silent_flags,
         targets,
-        createdAt: Date.now(),
+        createdAt: FieldValue.serverTimestamp(),
         status: 'pending',
       };
 
@@ -166,7 +167,7 @@ export const POST = withRateLimit(
           installer_name,
           silent_flags,
           deployment_id: deploymentId,
-          timestamp: Date.now(),
+          timestamp: FieldValue.serverTimestamp(),
           status: 'pending',
         };
 

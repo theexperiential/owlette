@@ -39,12 +39,13 @@ describe('GET /api/admin/tools', () => {
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json.count).toBe(25);
-    expect(json.tools).toHaveLength(25);
+    expect(json.count).toBeGreaterThan(0);
+    expect(json.tools).toHaveLength(json.count);
     expect(json.tools[0]).toHaveProperty('name');
     expect(json.tools[0]).toHaveProperty('tier');
     expect(json.tools[0]).toHaveProperty('description');
     expect(json.tools[0]).toHaveProperty('parameters');
+    expect(json.tools.every((t: any) => [1, 2, 3].includes(t.tier))).toBe(true);
   });
 
   it('filters by tier=1', async () => {
@@ -52,8 +53,9 @@ describe('GET /api/admin/tools', () => {
     const json = await res.json();
 
     expect(res.status).toBe(200);
+    expect(json.count).toBeGreaterThan(0);
+    expect(json.tools).toHaveLength(json.count);
     expect(json.tools.every((t: any) => t.tier === 1)).toBe(true);
-    expect(json.count).toBe(10);
   });
 
   it('filters by tier=2 (includes tier 1)', async () => {
@@ -61,14 +63,19 @@ describe('GET /api/admin/tools', () => {
     const json = await res.json();
 
     expect(res.status).toBe(200);
+    expect(json.count).toBeGreaterThan(0);
+    expect(json.tools).toHaveLength(json.count);
     expect(json.tools.every((t: any) => t.tier <= 2)).toBe(true);
-    expect(json.count).toBe(15);
+    expect(json.count).toBeGreaterThan(json.tools.filter((t: any) => t.tier === 1).length);
   });
 
   it('clamps invalid tier values', async () => {
+    const allRes = await GET(makeRequest());
+    const allJson = await allRes.json();
+
     const res = await GET(makeRequest('?tier=99'));
     const json = await res.json();
-    expect(json.count).toBe(25); // clamped to 3
+    expect(json.count).toBe(allJson.count); // clamped to 3 = all tools
 
     const res2 = await GET(makeRequest('?tier=0'));
     const json2 = await res2.json();

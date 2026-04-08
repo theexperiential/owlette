@@ -74,7 +74,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       docRef = snapshot.docs[0].ref;
     }
 
-    // Use a transaction to atomically check status and mark as consumed,
+    // Use a transaction to atomically read tokens and delete the document,
     // preventing race conditions where two concurrent poll requests both
     // read 'authorized' and both receive the tokens.
     const result = await adminDb.runTransaction(async (transaction) => {
@@ -89,8 +89,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       // Check expiry
       const expiresAt = data.expiresAt?.toMillis?.() || data.expiresAt?.getTime?.() || 0;
       if (Date.now() > expiresAt) {
-        // Clean up expired document
-        transaction.update(docRef, { status: 'expired' });
+        // Clean up expired document — no reason to retain it
+        transaction.delete(docRef);
         return { error: 'expired', status: 410 } as const;
       }
 
@@ -100,8 +100,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       }
 
       if (data.status === 'authorized' && data.accessToken && data.refreshToken) {
-        // Atomically mark as consumed (single-use) within the transaction
-        transaction.update(docRef, { status: 'consumed' });
+        // Atomically delete (single-use) within the transaction — tokens are
+        // sensitive and must not persist in Firestore after being consumed.
+        transaction.delete(docRef);
 
         return {
           body: {

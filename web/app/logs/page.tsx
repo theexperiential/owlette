@@ -130,15 +130,16 @@ const ACTION_TYPES = [
 
 // Level badges styling
 const getLevelBadge = (level: string) => {
+  const base = "inline-flex items-center rounded-full px-1.5 text-[11px] font-medium leading-5 whitespace-nowrap";
   switch (level.toLowerCase()) {
     case 'error':
-      return <Badge variant="destructive" className="text-xs">error</Badge>;
+      return <span className={`${base} bg-destructive text-white`}>error</span>;
     case 'warning':
-      return <Badge variant="default" className="bg-yellow-600 text-xs">warning</Badge>;
+      return <span className={`${base} bg-yellow-600 text-white`}>warning</span>;
     case 'info':
-      return <Badge variant="default" className="bg-accent-cyan text-gray-900 text-xs">info</Badge>;
+      return <span className={`${base} bg-accent-cyan text-gray-900`}>info</span>;
     default:
-      return <Badge variant="outline" className="text-xs">{level}</Badge>;
+      return <span className={`${base} border border-border text-foreground`}>{level}</span>;
   }
 };
 
@@ -729,8 +730,8 @@ export default function LogsPage() {
                           className="group/expand flex items-center gap-3 cursor-pointer hover:opacity-80 flex-shrink-0"
                         >
                           <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
-                          <div className="w-[52px] flex-shrink-0">{getLevelBadge(log.level)}</div>
-                          <span className="text-foreground font-medium whitespace-nowrap w-[140px] flex-shrink-0 text-left">
+                          <div className="w-[60px] flex-shrink-0">{getLevelBadge(log.level)}</div>
+                          <span className="text-foreground font-medium truncate max-w-[140px] flex-shrink-0 text-left">
                             {formatAction(log.action)}
                           </span>
                         </button>
@@ -751,7 +752,7 @@ export default function LogsPage() {
                         {!isExpanded && log.details && (
                           <>
                             <span className="text-muted-foreground">•</span>
-                            <span className="text-muted-foreground truncate">{log.details}</span>
+                            <span className="text-muted-foreground truncate min-w-0">{log.details}</span>
                           </>
                         )}
                       </div>

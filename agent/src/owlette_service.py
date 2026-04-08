@@ -46,6 +46,9 @@ except ImportError as e:
 # Health probe (stdlib-only module, safe to import unconditionally)
 from health_probe import HealthProbe, HealthState, STATUS_OK
 
+# Error monitoring (optional, no-ops if not configured)
+import sentry_utils
+
 
 def _handle_unhandled_exception(exc_type, exc_value, exc_tb):
     """Log unhandled exceptions before NSSM restarts the service."""
@@ -56,6 +59,8 @@ def _handle_unhandled_exception(exc_type, exc_value, exc_tb):
         "UNHANDLED EXCEPTION — service will be restarted by NSSM:",
         exc_info=(exc_type, exc_value, exc_tb)
     )
+    sentry_utils.capture_exception((exc_type, exc_value, exc_tb))
+    sentry_utils.flush(timeout=2)
 
 
 def _handle_thread_exception(args):
@@ -64,6 +69,7 @@ def _handle_thread_exception(args):
         f"UNHANDLED THREAD EXCEPTION in {args.thread!r}:",
         exc_info=(args.exc_type, args.exc_value, args.exc_traceback)
     )
+    sentry_utils.capture_exception((args.exc_type, args.exc_value, args.exc_traceback))
 
 
 """
@@ -98,17 +104,21 @@ class Util:
         return process.get('name', 'Error retrieving process name')
 
 
-# Main Owlette Windows Service logic
+# Main owlette Windows Service logic
 class OwletteService(win32serviceutil.ServiceFramework):
     _svc_name_ = 'OwletteService'
-    _svc_display_name_ = 'Owlette Service'
+    _svc_display_name_ = 'owlette Service'
 
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
+        self._service_start_time = time.time()
 
         # Initialize logging and shared resources with configurable log level
         log_level = shared_utils.get_log_level_from_config()
         shared_utils.initialize_logging("service", level=log_level)
+
+        # Initialize Sentry error monitoring (after logging, before exception hooks)
+        sentry_utils.initialize_sentry(shared_utils.read_config(), shared_utils.APP_VERSION)
 
         # Wire global exception hooks (after logging is configured)
         sys.excepthook = _handle_unhandled_exception
@@ -124,12 +134,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
         shared_utils.upgrade_config()
 
         # --- STARTUP HEALTH PROBE ---
+        _t0 = time.time()
         api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
         self._health_state: HealthState = HealthProbe(
             config_path=shared_utils.CONFIG_PATH,
             api_base=api_base
         ).run()
-        logging.debug(f"Startup health probe: status={self._health_state.status}, results={self._health_state.probe_results}")
+        logging.info(f"Health probe: status={self._health_state.status}  ({round(time.time() - _t0, 3)}s)")
         if not self._health_state.is_ok():
             logging.error(f"Health probe failed: {self._health_state.error_code} — {self._health_state.error_message}")
 
@@ -157,6 +168,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self._cached_site_timezone = None  # Cached from firebase_client
         self._last_scheduled_reboot_time = None  # Tracks when we last triggered a scheduled reboot
         self._reboot_schedule_counter = 0  # Check reboot schedule every ~60s (6 iterations)
+        self._shutting_down = False  # Suppresses crash alerts during reboot/shutdown
         self._live_view_active = False
         self._live_view_stop_time = 0
 
@@ -194,13 +206,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         self.firebase_client = None
                     else:
                         # Initialize Firebase client with OAuth
+                        _t0 = time.time()
                         self.firebase_client = FirebaseClient(
                             auth_manager=auth_manager,
                             project_id=project_id,
                             site_id=site_id,
                             config_cache_path=cache_path
                         )
-                        logging.info(f"Firebase client initialized for site: {site_id}")
+                        logging.info(f"Firebase client initialized for site: {site_id}  ({round(time.time() - _t0, 3)}s)")
 
                 except Exception as e:
                     logging.error(f"Failed to initialize Firebase client: {e}")
@@ -351,7 +364,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         """
         Write current service status to file for tray icon to read.
 
-        Creates/updates C:\\ProgramData\\Owlette\\tmp\\service_status.json with:
+        Creates/updates C:\\ProgramData\\owlette\\tmp\\service_status.json with:
         - Service running state
         - Firebase enabled/connected state
         - Site ID
@@ -518,7 +531,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             except Exception as e:
                 logging.error(f"[ERROR] Error stopping Firebase client: {e}")
 
-        # Close any open Owlette windows (GUI, prompts, etc.)
+        # Close any open owlette windows (GUI, prompts, etc.)
         self.close_owlette_windows()
 
         self.terminate_tray_icon()
@@ -541,9 +554,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         except Exception as e:
             logging.error(f"An unhandled exception occurred: {e}")
 
-    # Close all Owlette windows
+    # Close all owlette windows
     def close_owlette_windows(self):
-        """Close all Owlette GUI windows (config, prompts, etc.) when service stops."""
+        """Close all owlette GUI windows (config, prompts, etc.) when service stops."""
         try:
             for key, window_title in shared_utils.WINDOW_TITLES.items():
                 try:
@@ -556,7 +569,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 except Exception as e:
                     logging.debug(f"Could not close window '{window_title}': {e}")
         except Exception as e:
-            logging.error(f"Error closing Owlette windows: {e}")
+            logging.error(f"Error closing owlette windows: {e}")
 
     # Recover PIDs from previous session
     def recover_running_processes(self):
@@ -1673,6 +1686,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         process_name = Util.get_process_name(process)
         if not self.reached_max_relaunch_attempts(process):
             try:
+                # Mark as KILLED before terminating so crash detection skips the alert
+                shared_utils.update_process_status_in_json(pid, 'KILLED', self.firebase_client, process_id=process.get('id'))
+
                 # Gracefully terminate (WM_CLOSE then hard kill)
                 shared_utils.graceful_terminate(pid)
 
@@ -1961,8 +1977,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         logging.warning(f"Error checking manual kill status: {e}")
                         was_manually_killed = False
 
-                    # Only log crash if it wasn't manually killed
-                    if not was_manually_killed:
+                    # Only log crash if it wasn't manually killed and not shutting down
+                    if not was_manually_killed and not self._shutting_down:
                         process_name = Util.get_process_name(process)
 
                         # Best-effort screenshot capture before relaunch
@@ -1984,6 +2000,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash'
                             )
                         self._write_cortex_event(process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash')
+                    elif self._shutting_down:
+                        logging.debug(f"Process {last_pid} stopped during reboot/shutdown - skipping crash alert")
                     else:
                         logging.debug(f"Process {last_pid} was manually killed - skipping crash log")
 
@@ -2110,20 +2128,20 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Read old config before overwriting (for diffing)
             old_config = shared_utils.read_config()
 
-            # CRITICAL: Preserve local firebase authentication config
-            # The firebase section contains local authentication settings (site_id, OAuth tokens, api_base)
+            # CRITICAL: Preserve local-only config sections during Firestore sync
+            # These keys contain local settings that don't exist in Firestore
             # and should NEVER be overwritten by Firestore config updates
-            if old_config and 'firebase' in old_config:
-                new_config['firebase'] = old_config['firebase']
-                logging.debug("Preserved local firebase authentication config during Firestore sync")
+            LOCAL_ONLY_KEYS = ('firebase', 'sentry')
+            if old_config:
+                for key in LOCAL_ONLY_KEYS:
+                    if key in old_config:
+                        new_config[key] = old_config[key]
+                logging.debug(f"Preserved local-only keys during Firestore sync: {[k for k in LOCAL_ONLY_KEYS if k in old_config]}")
             else:
-                # SAFETY CHECK: If we somehow failed to read the old config or it's missing firebase section,
-                # DO NOT proceed with the write - this would wipe out authentication
-                if old_config is None:
-                    logging.error("CRITICAL: Cannot read old config - aborting Firestore config sync to prevent data loss")
-                    return
-                else:
-                    logging.warning("Old config exists but has no firebase section - proceeding with Firestore sync")
+                # SAFETY CHECK: If we somehow failed to read the old config,
+                # DO NOT proceed with the write - this would wipe out local-only settings
+                logging.error("CRITICAL: Cannot read old config - aborting Firestore config sync to prevent data loss")
+                return
 
             # Merge launch_mode/schedules: if Firestore processes don't have launch_mode,
             # preserve the local values (GUI may have set them before Firestore caught up)
@@ -2281,7 +2299,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         Args:
             close_processes: List of exe names to kill (e.g., ["TouchDesigner.exe"])
-            suppress_projects: List of Owlette project config IDs to lock from relaunching
+            suppress_projects: List of owlette project config IDs to lock from relaunching
             deployment_id: Deployment ID for logging and lock tracking
             cmd_id: Command ID for progress reporting
 
@@ -2650,7 +2668,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         logging.warning(f"Error in cleanup finally block: {cleanup_error}")
 
             elif cmd_type == 'update_owlette':
-                # Self-update command: Downloads and installs new Owlette version
+                # Self-update command: Downloads and installs new owlette version
                 # Uses installer_utils for robust download (retries + backoff) and checksum verification
                 # Launches via Task Scheduler so installer survives service stop
                 # Recovery watchdog task ensures service comes back after update
@@ -2674,7 +2692,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                 # ANTI-FRAGILE: Idempotency guard - prevent concurrent update execution
                 import json
-                update_marker_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'logs', 'update_in_progress.json')
+                update_marker_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'owlette', 'logs', 'update_in_progress.json')
                 if os.path.exists(update_marker_path):
                     try:
                         with open(update_marker_path, 'r') as f:
@@ -2717,9 +2735,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                     # Download installer to our own temp directory (not WINDOWS\TEMP)
                     # Some security software blocks execution from system temp directories
-                    owlette_tmp_dir = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'tmp')
+                    owlette_tmp_dir = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'owlette', 'tmp')
                     os.makedirs(owlette_tmp_dir, exist_ok=True)
-                    temp_installer_path = os.path.join(owlette_tmp_dir, 'Owlette-Update.exe')
+                    temp_installer_path = os.path.join(owlette_tmp_dir, 'owlette-Update.exe')
 
                     # Use installer_utils for robust download with retries and progress
                     logging.info("Downloading installer (3 retries with exponential backoff)...")
@@ -2780,7 +2798,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                     # Launch installer via Windows Task Scheduler (survives service stop)
                     # This ensures installer keeps running even when Inno Setup kills the service
-                    log_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'logs', 'installer_update.log')
+                    log_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'owlette', 'logs', 'installer_update.log')
                     silent_flags = f'/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS /LOG="{log_path}"'
                     task_name = f"OwletteUpdate_{int(time.time())}"
 
@@ -3285,11 +3303,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 details='Scheduled reboot initiated by reboot schedule'
             )
 
+            self._shutting_down = True
             self.firebase_client.set_machine_flag('rebooting', True)
 
             import subprocess
             subprocess.run(
-                ['shutdown', '/r', '/t', '30', '/c', 'Owlette scheduled reboot'],
+                ['shutdown', '/r', '/t', '30', '/c', 'owlette scheduled reboot'],
                 check=True, timeout=15
             )
             logging.info("Scheduled reboot command issued (30-second delay)")
@@ -3306,13 +3325,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 details='Remote reboot initiated from dashboard'
             )
 
-            # Set rebooting flag so dashboard shows "Rebooting..."
+            # Set rebooting flag so dashboard shows "Rebooting..." and suppress crash alerts
+            self._shutting_down = True
             self.firebase_client.set_machine_flag('rebooting', True)
 
             # Schedule reboot with 30-second delay (gives agent time to complete Firestore writes)
             import subprocess
             subprocess.run(
-                ['shutdown', '/r', '/t', '30', '/c', 'Owlette remote reboot requested'],
+                ['shutdown', '/r', '/t', '30', '/c', 'owlette remote reboot requested'],
                 check=True, timeout=15
             )
 
@@ -3329,11 +3349,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 details='Remote shutdown initiated from dashboard'
             )
 
+            self._shutting_down = True
             self.firebase_client.set_machine_flag('shuttingDown', True)
 
             import subprocess
             subprocess.run(
-                ['shutdown', '/s', '/t', '30', '/c', 'Owlette remote shutdown requested'],
+                ['shutdown', '/s', '/t', '30', '/c', 'owlette remote shutdown requested'],
                 check=True, timeout=15
             )
 
@@ -3347,6 +3368,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             import subprocess
             subprocess.run(['shutdown', '/a'], check=True, timeout=15)
 
+            self._shutting_down = False
             self.firebase_client.set_machine_flag('rebooting', False)
             self.firebase_client.set_machine_flag('shuttingDown', False)
             self.firebase_client.log_event(
@@ -3882,7 +3904,7 @@ with open(out_path, 'wb') as f:
         try:
             update_marker_path = os.path.join(
                 os.environ.get('ProgramData', 'C:\\ProgramData'),
-                'Owlette', 'logs', 'update_in_progress.json'
+                'owlette', 'logs', 'update_in_progress.json'
             )
 
             if not os.path.exists(update_marker_path):
@@ -3923,19 +3945,19 @@ with open(out_path, 'wb') as f:
             # Store result for Firebase logging + command completion after client starts
             if current_version == target_version:
                 logging.info("[SUCCESS] Self-update completed successfully!")
-                self._pending_update_event = ('update_success', f'Updated from {old_version} to {current_version}', 'info')
-                self._pending_update_completion = ('completed', command_id, deployment_id, f'Updated to {current_version}')
+                self._pending_update_event = ('update_success', f'updated owlette agent from v{old_version} to v{current_version}', 'info')
+                self._pending_update_completion = ('completed', command_id, deployment_id, f'updated to v{current_version}')
             elif current_version == old_version:
                 logging.error(f"[FAILED] Self-update FAILED - still on version {old_version}")
                 logging.error("Check installer_update.log for details")
                 if marker_age_minutes > 30:
                     logging.error(f"Marker is {marker_age_minutes:.0f}m old - update likely crashed or hung")
-                self._pending_update_event = ('update_failed', f'Failed to update from {old_version} to {target_version}', 'error')
-                self._pending_update_completion = ('failed', command_id, deployment_id, f'Still on {old_version}, target was {target_version}')
+                self._pending_update_event = ('update_failed', f'failed to update owlette agent from v{old_version} to v{target_version}', 'error')
+                self._pending_update_completion = ('failed', command_id, deployment_id, f'still on v{old_version}, target was v{target_version}')
             else:
                 logging.warning(f"[PARTIAL?] Unexpected version {current_version} after update")
                 logging.warning(f"Expected {target_version}, was {old_version}")
-                self._pending_update_event = ('update_unknown', f'Unexpected version {current_version} after update from {old_version}', 'warning')
+                self._pending_update_event = ('update_unknown', f'unexpected version v{current_version} after update from v{old_version}', 'warning')
                 self._pending_update_completion = ('completed', command_id, deployment_id, f'Updated to {current_version} (expected {target_version})')
 
             logging.info("=" * 60)
@@ -3973,7 +3995,7 @@ with open(out_path, 'wb') as f:
             try:
                 update_marker_path = os.path.join(
                     os.environ.get('ProgramData', 'C:\\ProgramData'),
-                    'Owlette', 'logs', 'update_in_progress.json'
+                    'owlette', 'logs', 'update_in_progress.json'
                 )
                 if os.path.exists(update_marker_path):
                     os.remove(update_marker_path)
@@ -4013,6 +4035,8 @@ with open(out_path, 'wb') as f:
         self._try_launch_tray()
 
         logging.info("Service initialization complete")
+        shared_utils.log_startup_system_snapshot()
+        shared_utils.log_startup_config_summary()
 
         # Check for update marker (indicates a self-update was in progress)
         self._check_update_status()
@@ -4046,8 +4070,9 @@ with open(out_path, 'wb') as f:
 
                 # NOW start Firebase background threads (including config listener)
                 # At this point, Firestore has our local config, and the hash is set
+                _t0 = time.time()
                 self.firebase_client.start()
-                logging.info("Firebase client started successfully")
+                logging.info(f"Firebase client started successfully  ({round(time.time() - _t0, 3)}s)")
 
                 # Cache site timezone for schedule evaluation
                 self._cached_site_timezone = self.firebase_client.site_timezone
@@ -4056,7 +4081,7 @@ with open(out_path, 'wb') as f:
                 if hasattr(self, '_pending_update_event') and self._pending_update_event:
                     event_type, message, level = self._pending_update_event
                     try:
-                        self.firebase_client.log_event(event_type, message, level)
+                        self.firebase_client.log_event(event_type, level, details=message)
                         logging.info(f"Update event logged to Firebase: {event_type}")
                     except Exception as e:
                         logging.warning(f"Failed to log update event to Firebase: {e}")
@@ -4070,12 +4095,12 @@ with open(out_path, 'wb') as f:
                             if status == 'completed':
                                 self.firebase_client._mark_command_completed(cmd_id, result_msg, deployment_id, 'update_owlette')
                                 if deployment_id:
-                                    self.firebase_client.log_event('deployment_completed', 'info', 'Owlette Update',
+                                    self.firebase_client.log_event('deployment_completed', 'info', 'owlette Update',
                                                                    f"Deployment {deployment_id}: {result_msg}")
                             else:
                                 self.firebase_client._mark_command_failed(cmd_id, result_msg, deployment_id, 'update_owlette')
                                 if deployment_id:
-                                    self.firebase_client.log_event('deployment_failed', 'error', 'Owlette Update',
+                                    self.firebase_client.log_event('deployment_failed', 'error', 'owlette Update',
                                                                    f"Deployment {deployment_id} failed: {result_msg}")
                             logging.info(f"Update command {cmd_id} marked as {status} in Firestore")
                         except Exception as e:
@@ -4116,7 +4141,7 @@ with open(out_path, 'wb') as f:
             except Exception as e:
                 logging.warning(f"Failed to clear stale flags on startup: {e}")
 
-        # The heart of Owlette
+        # The heart of owlette
         cleanup_counter = 0  # Counter for periodic cleanup
         log_cleanup_counter = 0  # Counter for log cleanup (runs less frequently)
         firebase_check_counter = 0  # Counter for Firebase state check (runs every minute)
@@ -4125,6 +4150,24 @@ with open(out_path, 'wb') as f:
             'site_id': shared_utils.read_config(['firebase', 'site_id']) if self.firebase_client else None
         }
 
+        # --- STARTUP COMPLETE ---
+        _total = round(time.time() - self._service_start_time, 2)
+        if self.firebase_client and self.firebase_client.is_connected():
+            _fb_status = "connected"
+        elif self.firebase_client:
+            _fb_status = "offline (client initialized, not connected)"
+        else:
+            _fb_status = "disabled" if not shared_utils.read_config(['firebase', 'enabled']) else "failed to initialize"
+        _proc_count = len(shared_utils.read_config(['processes']) or [])
+        _sep = "=" * 70
+        logging.info(_sep)
+        logging.info("  STARTUP COMPLETE")
+        logging.info(_sep)
+        logging.info(f"  Version          : {shared_utils.APP_VERSION}")
+        logging.info(f"  Total startup    : {_total}s")
+        logging.info(f"  Firebase         : {_fb_status}")
+        logging.info(f"  Processes        : {_proc_count} configured")
+        logging.info(_sep)
         logging.info("Starting main service loop...")
 
         try:
@@ -4230,7 +4273,7 @@ with open(out_path, 'wb') as f:
                     self._check_scheduled_reboot()
 
                 if self.first_start:
-                    logging.info('Owlette initialized')
+                    logging.info('owlette initialized')
 
                     # Log Agent Started event to Firestore
                     if self.firebase_client and self.firebase_client.is_connected():
@@ -4240,7 +4283,7 @@ with open(out_path, 'wb') as f:
                                 action='agent_started',
                                 level='info',
                                 process_name=None,
-                                details=f'Owlette agent v{version} started successfully'
+                                details=f'owlette agent v{version} started successfully'
                             )
                             logging.debug("Logged agent_started event to Firestore")
                         except Exception as log_err:
@@ -4363,10 +4406,10 @@ with open(out_path, 'wb') as f:
                 except Exception as e:
                     logging.error(f"[ERROR] Error during cleanup: {e}")
 
-            # Close any open Owlette windows
+            # Close any open owlette windows
             try:
                 self.close_owlette_windows()
-                logging.info("[OK] Owlette windows closed")
+                logging.info("[OK] owlette windows closed")
             except Exception as e:
                 logging.error(f"Error closing windows: {e}")
 
@@ -4387,7 +4430,7 @@ if __name__ == '__main__':
     if len(sys.argv) == 1:
         # No arguments - running under NSSM or direct execution
         # Run the service main loop directly
-        print("Starting Owlette service (NSSM mode)...")
+        print("Starting owlette service (NSSM mode)...")
         service = OwletteService(None)
         service.SvcDoRun()
     else:

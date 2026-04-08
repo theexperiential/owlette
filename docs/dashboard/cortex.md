@@ -1,28 +1,28 @@
-# Cortex (AI Chat)
+# cortex (ai chat)
 
 Cortex is an AI-powered chat interface that lets you interact with your machines through natural language. Ask questions, run diagnostics, manage processes, and execute commands — all through conversation.
 
 ---
 
-## Overview
+## overview
 
-Cortex connects an LLM (Claude or OpenAI) to your machines via 24 specialized tools organized into three tiers:
+Cortex connects an LLM (Claude or OpenAI) to your machines via 29 specialized tools organized into three tiers:
 
-| Tier | Type | Approval | Tools |
+| tier | type | approval | tools |
 |------|------|----------|-------|
-| **Tier 1** | Read-only | Auto-approved | 10 tools — system info, process lists, logs, metrics |
+| **Tier 1** | Read-only | Auto-approved | 13 tools — system info, process lists, logs, metrics, GPU, site logs, presets |
 | **Tier 2** | Process management | Auto-approved | 5 tools — restart, kill, start, set launch mode, screenshot |
-| **Tier 3** | Privileged | Requires confirmation | 9 tools — run commands/scripts, read/write files, reboot/shutdown |
+| **Tier 3** | Privileged | Requires confirmation | 11 tools — run commands/scripts, read/write files, deploy software, reboot/shutdown |
 
 ---
 
-## Setup
+## setup
 
-### Configure an LLM Provider
+### configure an llm provider
 
 Cortex needs an API key from either **Anthropic (Claude)** or **OpenAI**.
 
-#### User-Level Key
+#### user-level key
 
 1. In the dashboard, open Cortex
 2. Click the **settings gear** icon
@@ -33,7 +33,7 @@ Cortex needs an API key from either **Anthropic (Claude)** or **OpenAI**.
 
 Your key is encrypted and stored in Firestore — it's never exposed to the client.
 
-#### Site-Level Key (Admin)
+#### site-level key (admin)
 
 Admins can set a shared API key for the entire site:
 
@@ -47,13 +47,13 @@ Admins can set a shared API key for the entire site:
 
 ---
 
-## Using Cortex
+## using cortex
 
 1. Open Cortex from the dashboard
 2. Select a **machine** to talk to
 3. Type a message in natural language
 
-### Example Conversations
+### example conversations
 
 **Check system health:**
 > "How's the system doing? Any issues?"
@@ -77,49 +77,54 @@ Admins can set a shared API key for the entire site:
 
 ---
 
-## Tool Tiers
+## tool tiers
 
-### Tier 1: Read-Only (Auto-Approved)
+### tier 1: read-only (auto-approved)
 
 These tools only read information and never modify anything:
 
-| Tool | Description |
+| tool | description |
 |------|-------------|
+| `get_site_logs` | Activity logs across all machines in the site (server-side) |
 | `get_system_info` | CPU, memory, disk, GPU, hostname, OS, uptime, agent version |
-| `get_process_list` | All Owlette-configured processes with status |
+| `get_process_list` | All owlette-configured processes with status |
 | `get_running_processes` | All OS processes with CPU/memory usage (filterable) |
+| `get_gpu_processes` | Per-process GPU/VRAM usage, sorted by consumption |
 | `get_network_info` | Network interfaces, IP addresses, link status |
 | `get_disk_usage` | All drives with total/used/free space |
 | `get_event_logs` | Windows event logs (Application, System, Security) |
 | `get_service_status` | Status of any Windows service |
-| `get_agent_config` | Owlette agent configuration (tokens stripped) |
+| `get_agent_config` | owlette agent configuration (tokens stripped) |
 | `get_agent_logs` | Recent agent log entries (filterable by level) |
 | `get_agent_health` | Connection state, health probe results |
+| `get_system_presets` | System presets for software deployments (server-side) |
 
-### Tier 2: Process Management (Auto-Approved)
+### tier 2: process management (auto-approved)
 
-These wrap existing Owlette commands:
+These wrap existing owlette commands:
 
-| Tool | Description |
+| tool | description |
 |------|-------------|
-| `restart_process` | Restart an Owlette-configured process |
+| `restart_process` | Restart an owlette-configured process |
 | `kill_process` | Kill/stop a process |
 | `start_process` | Start a stopped process |
 | `set_launch_mode` | Set launch mode (off, always, scheduled) |
 | `capture_screenshot` | Capture a screenshot of the machine's desktop |
 
-### Tier 3: Privileged (Requires Confirmation)
+### tier 3: privileged (requires confirmation)
 
 These tools require you to click **Confirm** before execution:
 
-| Tool | Description |
+| tool | description |
 |------|-------------|
 | `run_command` | Execute a shell command (allowlist enforced) |
 | `run_powershell` | Execute a PowerShell command (allowlist enforced) |
 | `run_python` | Execute a Python script on the machine |
+| `execute_script` | Execute a PowerShell script with no command restrictions |
 | `read_file` | Read a file on the machine (max 100KB) |
 | `write_file` | Write content to a file |
 | `list_directory` | List directory contents with file sizes and dates |
+| `deploy_software` | Install or uninstall software using a system preset |
 | `reboot_machine` | Reboot the Windows machine |
 | `shutdown_machine` | Shut down the Windows machine |
 | `cancel_reboot` | Cancel a scheduled reboot or shutdown |
@@ -129,7 +134,7 @@ These tools require you to click **Confirm** before execution:
 
 ---
 
-## How It Works
+## how it works
 
 ```
 User types message
@@ -158,11 +163,11 @@ LLM decides to call a tool
 
 ---
 
-## Autonomous Mode
+## autonomous mode
 
 Cortex can operate autonomously as a **cluster manager** — when a process crashes or fails to start, Cortex automatically investigates and attempts remediation without human intervention.
 
-### How It Works
+### how it works
 
 ```
 Agent detects process crash
@@ -196,7 +201,7 @@ POST /api/agent/alert (existing alert system)
           └── Escalated → email admins
 ```
 
-### The Directive
+### the directive
 
 Every autonomous investigation is guided by a **directive** — a customizable instruction that tells Cortex its mission. The default directive:
 
@@ -204,7 +209,7 @@ Every autonomous investigation is guided by a **directive** — a customizable i
 
 Custom directives can be set per-site in Firestore (`sites/{siteId}/settings/cortex` → `directive` field).
 
-### Enabling Autonomous Mode
+### enabling autonomous mode
 
 1. **Set the internal secret**: Add `CORTEX_INTERNAL_SECRET` environment variable in Railway (see [Environment Variables](../setup/environment-variables.md))
 2. **Configure a site-level LLM key**: Autonomous mode uses the site key, not user keys (Cortex Settings → Site Key tab)
@@ -212,9 +217,9 @@ Custom directives can be set per-site in Firestore (`sites/{siteId}/settings/cor
     - Navigate to `sites/{your-site-id}/settings/cortex`
     - Set `autonomousEnabled` to `true`
 
-### Configuration Options
+### configuration options
 
-| Setting | Default | Description |
+| setting | default | description |
 |---------|---------|-------------|
 | `autonomousEnabled` | `false` | Master switch — must be `true` for autonomous mode |
 | `directive` | *(see above)* | Custom mission text for the AI |
@@ -224,7 +229,7 @@ Custom directives can be set per-site in Firestore (`sites/{siteId}/settings/cor
 | `maxEventsPerHour` | `10` | Max incoming events processed per hour per site |
 | `escalationEmail` | `true` | Email site admins when Cortex escalates |
 
-### Guardrails
+### guardrails
 
 Autonomous Cortex has multiple safety layers:
 
@@ -236,13 +241,13 @@ Autonomous Cortex has multiple safety layers:
 - **Tier restriction** — default Tier 2 (no shell commands unless admin overrides)
 - **Offline detection** — if the machine is offline, Cortex immediately escalates instead of wasting LLM calls
 
-### Reviewing Autonomous Actions
+### reviewing autonomous actions
 
 Autonomous conversations appear in the Cortex sidebar with a **⚡ auto** badge. Click to view exactly what Cortex investigated, which tools it called, and what actions it took.
 
 Event records are stored in Firestore at `sites/{siteId}/cortex-events/` with full audit trails including tool calls, timestamps, and outcome summaries.
 
-### Escalation
+### escalation
 
 When Cortex can't resolve an issue (restart fails, unexpected errors, machine offline), it:
 
@@ -255,7 +260,7 @@ When Cortex can't resolve an issue (restart fails, unexpected errors, machine of
 
 ---
 
-## Security
+## security
 
 - **Allowlisted commands**: `run_command` and `run_powershell` only allow specific commands (e.g., `ipconfig`, `systeminfo`, `Get-Process`)
 - **File size limits**: `read_file` limited to 100KB

@@ -2,6 +2,7 @@
  * Error sanitization utility
  * Provides user-friendly error messages while hiding internal implementation details
  */
+import * as Sentry from '@sentry/nextjs';
 
 interface FirebaseError {
   code?: string;
@@ -118,9 +119,15 @@ export const logError = (error: unknown, context?: string): void => {
   if (isDevelopment) {
     console.error(`[Error${context ? ` - ${context}` : ''}]`, error);
   } else {
-    // In production, you could send to error tracking service (Sentry, LogRocket, etc.)
-    // Example: Sentry.captureException(error);
     console.error('[Error]', context || 'An error occurred');
+    if (error instanceof Error) {
+      Sentry.captureException(error, { tags: context ? { context } : undefined });
+    } else {
+      Sentry.captureMessage(String(error), {
+        level: 'error',
+        tags: context ? { context } : undefined,
+      });
+    }
   }
 };
 

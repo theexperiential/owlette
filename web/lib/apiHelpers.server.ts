@@ -67,7 +67,7 @@ async function resolveUserId(request: NextRequest): Promise<string> {
   if (apiKey && apiKey.startsWith('owk_')) {
     const keyHash = crypto.createHash('sha256').update(apiKey).digest('hex');
     const db = getAdminDb();
-    const lookupDoc = await db.collection('apiKeys').doc(keyHash).get();
+    const lookupDoc = await db.collection('api_keys').doc(keyHash).get();
 
     if (!lookupDoc.exists) {
       throw new ApiAuthError(401, 'Unauthorized: Invalid API key');
@@ -76,7 +76,7 @@ async function resolveUserId(request: NextRequest): Promise<string> {
     const { userId, keyId } = lookupDoc.data() as { userId: string; keyId: string };
 
     // Update lastUsedAt (fire-and-forget)
-    db.collection('users').doc(userId).collection('apiKeys').doc(keyId)
+    db.collection('users').doc(userId).collection('api_keys').doc(keyId)
       .update({ lastUsedAt: Date.now() }).catch(() => {});
 
     return userId;

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { MoreVertical, Trash2, KeyRound, RotateCcw, Power, Camera, Settings2, Eye } from 'lucide-react';
+import { MoreVertical, Trash2, KeyRound, RotateCcw, Power, Camera, Settings2, Eye, BellOff, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 import RebootScheduleDialog from '@/components/RebootScheduleDialog';
 import type { ScheduleBlock } from '@/hooks/useFirestore';
 
@@ -58,6 +59,18 @@ export function MachineContextMenu({
   const [isRevoking, setIsRevoking] = useState(false);
   const [isSendingCommand, setIsSendingCommand] = useState(false);
   const [showRebootScheduleDialog, setShowRebootScheduleDialog] = useState(false);
+  const { userPreferences, updateUserPreferences } = useAuth();
+  const isMuted = userPreferences.mutedMachines.includes(machineId);
+
+  const handleToggleMute = async () => {
+    const mutedMachines = isMuted
+      ? userPreferences.mutedMachines.filter(id => id !== machineId)
+      : [...userPreferences.mutedMachines, machineId];
+    await updateUserPreferences({ mutedMachines }, { silent: true });
+    toast.success(isMuted ? `Alerts unmuted for ${machineName}` : `Alerts muted for ${machineName}`, {
+      description: isMuted ? 'You will receive alerts for this machine again.' : 'You will no longer receive email alerts for this machine.',
+    });
+  };
 
   const handleRevokeToken = async () => {
     setIsRevoking(true);
@@ -193,6 +206,17 @@ export function MachineContextMenu({
               <DropdownMenuSeparator className="bg-accent" />
             </>
           )}
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              handleToggleMute();
+            }}
+            className="text-muted-foreground focus:bg-accent focus:text-white cursor-pointer"
+          >
+            {isMuted ? <Bell className="mr-2 h-4 w-4" /> : <BellOff className="mr-2 h-4 w-4" />}
+            {isMuted ? 'unmute alerts' : 'mute alerts'}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator className="bg-accent" />
           <DropdownMenuItem
             onClick={(e) => {
               e.stopPropagation();

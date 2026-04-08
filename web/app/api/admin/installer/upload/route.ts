@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdminOrIdToken } from '@/lib/apiAuth.server';
 import { getAdminDb, getAdminStorage } from '@/lib/firebase-admin';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import logger from '@/lib/logger';
 
 const VERSION_REGEX = /^\d+\.\d+\.\d+$/;
@@ -67,8 +68,8 @@ export const POST = withRateLimit(
         releaseNotes: releaseNotes || null,
         setAsLatest: setAsLatest !== false, // default true
         status: 'pending',
-        createdAt: Date.now(),
-        expiresAt: expiresAt.getTime(),
+        createdAt: FieldValue.serverTimestamp(),
+        expiresAt: Timestamp.fromDate(expiresAt),
       });
 
       logger.info(`Installer upload initiated for v${version} by ${userId}`, {
@@ -140,7 +141,8 @@ export const PUT = withRateLimit(
         );
       }
 
-      if (Date.now() > uploadData.expiresAt) {
+      const expiresAtMs = uploadData.expiresAt?.toMillis?.() ?? uploadData.expiresAt;
+      if (Date.now() > expiresAtMs) {
         await db.collection('installer_uploads').doc(uploadId).update({ status: 'expired' });
         return NextResponse.json(
           { error: 'Upload has expired. Please request a new upload URL.' },
@@ -194,6 +196,7 @@ export const PUT = withRateLimit(
         release_notes: uploadData.releaseNotes || null,
         file_size: fileSize,
         uploaded_at: now,
+        release_date: Timestamp.fromMillis(now),
         uploaded_by: uploadData.userId,
       };
 

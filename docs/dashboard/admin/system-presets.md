@@ -1,4 +1,4 @@
-# System Presets
+# system presets
 
 System presets let you save and apply process configurations across multiple machines. Define a set of processes once, then apply the preset to any machine to instantly configure it.
 
@@ -6,7 +6,7 @@ System presets let you save and apply process configurations across multiple mac
 
 ---
 
-## What's in a Preset
+## what's in a preset
 
 A preset contains a list of process configurations:
 
@@ -23,7 +23,7 @@ A preset contains a list of process configurations:
 
 ---
 
-## Creating a Preset
+## creating a preset
 
 1. Navigate to **System Presets** in the Admin Panel
 2. Click **"New Preset"**
@@ -33,7 +33,7 @@ A preset contains a list of process configurations:
 
 ---
 
-## Applying a Preset
+## applying a preset
 
 1. Select a machine in the dashboard
 2. Open the **System Preset Dialog**
@@ -46,7 +46,7 @@ A preset contains a list of process configurations:
 
 ---
 
-## Use Cases
+## use cases
 
 - **Standardize configurations** — Ensure all signage machines run the same processes
 - **Quick setup** — Apply a preset to new machines instead of configuring each one manually

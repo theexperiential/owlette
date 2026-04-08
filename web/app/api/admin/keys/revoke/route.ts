@@ -29,7 +29,7 @@ export const DELETE = withRateLimit(
       const keyRef = db
         .collection('users')
         .doc(userId)
-        .collection('apiKeys')
+        .collection('api_keys')
         .doc(keyId);
 
       const keyDoc = await keyRef.get();
@@ -42,7 +42,7 @@ export const DELETE = withRateLimit(
       batch.delete(keyRef);
       // Remove top-level lookup entry
       if (keyHash) {
-        batch.delete(db.collection('apiKeys').doc(keyHash));
+        batch.delete(db.collection('api_keys').doc(keyHash));
       }
       await batch.commit();
 

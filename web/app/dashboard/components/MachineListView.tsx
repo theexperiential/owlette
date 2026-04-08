@@ -25,7 +25,7 @@ import { Label } from '@/components/ui/label';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -133,6 +133,8 @@ export function MachineRow({
   onLiveView,
 }: MachineRowProps) {
   const isDemo = !!useDemoContext();
+  const { userPreferences: fullPrefs } = useAuth();
+  const isMuted = fullPrefs.mutedMachines.includes(machine.machineId);
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
   // Format heartbeat time with timezone and time format support
@@ -165,6 +167,7 @@ export function MachineRow({
           <div className="flex items-center gap-2">
             <Monitor className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
             <span className="truncate">{machine.machineId}</span>
+            {isMuted && <span title="alerts muted"><BellOff className="h-3 w-3 text-muted-foreground flex-shrink-0" /></span>}
           </div>
         </TableCell>
         <TableCell className="w-[72px] p-2">

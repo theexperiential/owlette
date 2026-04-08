@@ -864,7 +864,7 @@ export default function DashboardPage() {
                       try {
                         window.open(downloadUrl, '_blank');
                         toast.success('download started', {
-                          description: `downloading Owlette v${version}`,
+                          description: `downloading owlette v${version}`,
                         });
                       } catch (err) {
                         toast.error('download failed', {

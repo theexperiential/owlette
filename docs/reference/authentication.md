@@ -1,12 +1,12 @@
-# Authentication
+# authentication
 
-Owlette uses four authentication mechanisms: user auth (Firebase Auth), agent auth (device code pairing), passkey authentication (WebAuthn), and optional MFA (TOTP).
+owlette uses four authentication mechanisms: user auth (Firebase Auth), agent auth (device code pairing), passkey authentication (WebAuthn), and optional MFA (TOTP).
 
 ---
 
-## User Authentication
+## user authentication
 
-### Sign-In Flow
+### sign-in flow
 
 ```
 Browser                     Firebase Auth              Dashboard API
@@ -26,28 +26,28 @@ Browser                     Firebase Auth              Dashboard API
   │── Subsequent requests use cookie ───────────────────────▶│
 ```
 
-### Session Management
+### session management
 
 Sessions use [iron-session](https://github.com/vvo/iron-session) — encrypted, signed, HTTPOnly cookies.
 
-| Property | Value |
+| property | value |
 |----------|-------|
 | **Cookie name** | `session` |
 | **HTTPOnly** | Yes (not accessible from JavaScript) |
 | **Secure** | Yes (HTTPS only in production) |
 | **Encryption** | AES-256-GCM via `SECRET_COOKIE_PASSWORD` |
 
-### Sign-Out
+### sign-out
 
 `DELETE /api/auth/session` clears the session cookie.
 
 ---
 
-## Agent Authentication (Device Code Pairing)
+## agent authentication (device code pairing)
 
 Agents authenticate using a device code flow with a two-token system. No Firebase service account keys are stored on client machines.
 
-### Pairing Flow
+### pairing flow
 
 ```
 1. Agent requests pairing phrase (POST /api/agent/auth/device-code)
@@ -71,7 +71,7 @@ Agents authenticate using a device code flow with a two-token system. No Firebas
    └── Refresh token: encrypted locally with Fernet AES (machine-bound key)
 ```
 
-### Token Refresh Flow
+### token refresh flow
 
 ```
 Agent detects token nearing expiry (~5 min before)
@@ -86,9 +86,9 @@ Agent detects token nearing expiry (~5 min before)
   └── Returns: new customToken + idToken
 ```
 
-### Token Security
+### token security
 
-| Aspect | Implementation |
+| aspect | implementation |
 |--------|---------------|
 | **Refresh token storage** | Encrypted with Fernet AES, key derived from Windows `MachineGuid` |
 | **Refresh token in Firestore** | Stored as SHA-256 hash (not plaintext) |
@@ -96,7 +96,7 @@ Agent detects token nearing expiry (~5 min before)
 | **Machine binding** | Refresh validates `machineId` matches — prevents token theft |
 | **Token collections** | `device_codes`, `agent_tokens`, and `agent_refresh_tokens` are server-side only (no client access) |
 
-### Custom Token Claims
+### custom token claims
 
 ```json
 {
@@ -110,11 +110,11 @@ Firestore security rules use these claims to scope agent access to a single site
 
 ---
 
-## Passkey Authentication (WebAuthn)
+## passkey authentication (webauthn)
 
 Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passkey replaces both the password and 2FA — it's a single biometric/PIN step.
 
-### Registration Flow
+### registration flow
 
 ```
 1. User is logged in, navigates to passkey management
@@ -133,7 +133,7 @@ Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passke
        └── Delete challenge
 ```
 
-### Login with Passkey
+### login with passkey
 
 ```
 1. User clicks "passkey" on login page
@@ -154,7 +154,7 @@ Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passke
    └── MFA is bypassed (passkey IS the second factor)
 ```
 
-### Passkey Management
+### passkey management
 
 - Users can register multiple passkeys (e.g., laptop + phone)
 - Each passkey has a friendly name, device type, creation date, last used date
@@ -162,9 +162,9 @@ Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passke
 - Delete: `DELETE /api/passkeys/{credentialId}`
 - List: `GET /api/passkeys/list?userId=...`
 
-### Security
+### security
 
-| Aspect | Implementation |
+| aspect | implementation |
 |--------|---------------|
 | **RP ID** | `owlette.app` (prod), `localhost` (dev) |
 | **Challenge lifetime** | 10 minutes, single-use, deleted after verification |
@@ -175,11 +175,11 @@ Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passke
 
 ---
 
-## Multi-Factor Authentication (MFA)
+## multi-factor authentication (mfa)
 
 Optional TOTP-based two-factor authentication. Passkey login bypasses MFA entirely.
 
-### Setup Flow
+### setup flow
 
 ```
 1. User initiates 2FA setup
@@ -202,7 +202,7 @@ Optional TOTP-based two-factor authentication. Passkey login bypasses MFA entire
 5. (Optional) User registers a passkey for faster future logins
 ```
 
-### Login with MFA
+### login with mfa
 
 ```
 1. User logs in normally (email/password or Google)
@@ -215,7 +215,7 @@ Optional TOTP-based two-factor authentication. Passkey login bypasses MFA entire
    └── Return success
 ```
 
-### Backup Codes
+### backup codes
 
 - 8 backup codes generated during setup
 - Each is single-use
@@ -224,23 +224,23 @@ Optional TOTP-based two-factor authentication. Passkey login bypasses MFA entire
 
 ---
 
-## Role-Based Access Control
+## role-based access control
 
-### Roles
+### roles
 
-| Role | Access |
+| role | access |
 |------|--------|
 | **user** | Assigned sites only, no admin features |
 | **admin** | All sites, admin panel, user management |
 | **agent** | Single site + single machine (custom token claims) |
 
-### Enforcement Layers
+### enforcement layers
 
 1. **Firestore Security Rules** — Database-level enforcement (cannot be bypassed)
 2. **API Route Middleware** — Server-side session and role verification
 3. **React Components** — `RequireAdmin` component for client-side UI gating
 
-### How Role is Determined
+### how role is determined
 
 ```
 User logs in → Firebase Auth ID token
@@ -252,7 +252,7 @@ User logs in → Firebase Auth ID token
 
 ---
 
-## Security Architecture
+## security architecture
 
 ```
                           ┌─────────────┐

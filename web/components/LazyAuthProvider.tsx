@@ -1,21 +1,23 @@
 'use client';
 
-import { type ReactNode, useEffect, useState, type ComponentType } from 'react';
+import { type ReactNode, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
+import { AuthProvider } from '@/contexts/AuthContext';
 
 /**
- * Lazily loads AuthProvider so Firebase SDK isn't in the initial page bundle.
- * Children render immediately with default auth context (user: null, loading: true).
- * Once the dynamic import resolves, children are wrapped in the real AuthProvider.
+ * Wraps children in AuthProvider. Previously lazy-loaded to defer Firebase SDK,
+ * but dynamic import caused a tree-structure change (Fragment → Provider) that
+ * unmounted/remounted the entire child tree, restarting all CSS animations.
  */
 export function LazyAuthProvider({ children }: { children: ReactNode }) {
-  const [Provider, setProvider] = useState<ComponentType<{ children: ReactNode }> | null>(null);
+  const pathname = usePathname();
 
+  // Track last non-admin path so the admin panel back button can show "back to X"
   useEffect(() => {
-    import('@/contexts/AuthContext').then(mod => {
-      setProvider(() => mod.AuthProvider);
-    });
-  }, []);
+    if (pathname && !pathname.startsWith('/admin')) {
+      sessionStorage.setItem('owlette_pre_admin_path', pathname);
+    }
+  }, [pathname]);
 
-  if (Provider) return <Provider>{children}</Provider>;
-  return <>{children}</>;
+  return <AuthProvider>{children}</AuthProvider>;
 }

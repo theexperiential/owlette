@@ -1,4 +1,4 @@
-site_name: Owlette Documentation
+site_name: owlette docs
 site_description: Cloud-connected Windows process management and remote deployment system
 site_url: https://theexperiential.github.io/owlette/
 repo_url: https://github.com/theexperiential/owlette
@@ -35,11 +35,16 @@ theme:
     - content.code.copy
     - content.tabs.link
     - toc.follow
+  logo: owlette.svg
+  favicon: owlette.svg
   icon:
     repo: fontawesome/brands/github
 
 extra_css:
   - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/docs.js
 
 plugins:
   - search
@@ -48,7 +53,11 @@ plugins:
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.highlight:
@@ -69,52 +78,56 @@ markdown_extensions:
       permalink: true
 
 nav:
-  - Home: index.md
-  - Getting Started: getting-started.md
-  - Agent:
+  - home: index.md
+  - getting started: getting-started.md
+  - agent:
     - agent/index.md
-    - Installation: agent/installation.md
-    - Configuration: agent/configuration.md
-    - Process Monitoring: agent/process-monitoring.md
-    - System Tray: agent/system-tray.md
-    - Remote Commands: agent/remote-commands.md
-    - Self-Update: agent/self-update.md
-    - Troubleshooting: agent/troubleshooting.md
-  - Dashboard:
+    - installation: agent/installation.md
+    - configuration: agent/configuration.md
+    - process monitoring: agent/process-monitoring.md
+    - system tray: agent/system-tray.md
+    - remote commands: agent/remote-commands.md
+    - self-update: agent/self-update.md
+    - troubleshooting: agent/troubleshooting.md
+  - dashboard:
     - dashboard/index.md
-    - Getting Started: dashboard/getting-started.md
-    - Machine Monitoring: dashboard/machine-monitoring.md
-    - Process Management: dashboard/process-management.md
-    - Deployments: dashboard/deployments.md
-    - Project Distribution: dashboard/project-distribution.md
-    - Cortex (AI Chat): dashboard/cortex.md
-    - Activity Logs: dashboard/activity-logs.md
-    - Admin:
+    - getting started: dashboard/getting-started.md
+    - machine monitoring: dashboard/machine-monitoring.md
+    - process management: dashboard/process-management.md
+    - deployments: dashboard/deployments.md
+    - project distribution: dashboard/project-distribution.md
+    - cortex (ai chat): dashboard/cortex.md
+    - activity logs: dashboard/activity-logs.md
+    - admin:
       - dashboard/admin/index.md
-      - User Management: dashboard/admin/user-management.md
-      - Installer Management: dashboard/admin/installer-management.md
-      - System Presets: dashboard/admin/system-presets.md
-      - Token Management: dashboard/admin/token-management.md
-      - Email Alerts: dashboard/admin/email-alerts.md
-      - Webhooks: dashboard/admin/webhooks.md
-  - Architecture: architecture.md
-  - Troubleshooting: troubleshooting.md
-  - Changelog: changelog.md
-  - Self-Hosting:
+      - user management: dashboard/admin/user-management.md
+      - installer management: dashboard/admin/installer-management.md
+      - system presets: dashboard/admin/system-presets.md
+      - token management: dashboard/admin/token-management.md
+      - email alerts: dashboard/admin/email-alerts.md
+      - webhooks: dashboard/admin/webhooks.md
+  - api:
+    - reference/index.md
+    - rest api: reference/api.md
+    - webhooks: dashboard/admin/webhooks.md
+    - authentication: reference/authentication.md
+    - cortex tools: reference/cortex-tools.md
+    - agent commands: reference/agent-commands.md
+  - architecture: architecture.md
+  - troubleshooting: troubleshooting.md
+  - changelog: changelog.md
+  - self-hosting:
     - setup/index.md
-    - Firebase Setup: setup/firebase.md
-    - Firestore Rules: setup/firestore-rules.md
-    - Web Deployment: setup/web-deployment.md
-    - Environment Variables: setup/environment-variables.md
-    - Reference:
-      - reference/index.md
-      - REST API: reference/api.md
-      - Firestore Data Model: reference/firestore-data-model.md
-      - Authentication: reference/authentication.md
-      - Cortex Tools: reference/cortex-tools.md
-      - Agent Commands: reference/agent-commands.md
+    - firebase setup: setup/firebase.md
+    - firestore rules: setup/firestore-rules.md
+    - web deployment: setup/web-deployment.md
+    - environment variables: setup/environment-variables.md
+    - firestore data model: reference/firestore-data-model.md
+
+copyright: built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">AGPL-3.0</a>
 
 extra:
+  generator: false
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/theexperiential/owlette

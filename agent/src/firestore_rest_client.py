@@ -52,6 +52,28 @@ FIRESTORE_API_BASE = "https://firestore.googleapis.com/v1"
 # Special value for server timestamp
 SERVER_TIMESTAMP = "SERVER_TIMESTAMP"
 
+def timestamp_to_ms(value) -> int:
+    """Convert a Firestore timestamp value to epoch milliseconds.
+
+    Handles all formats returned by the REST API or written by web clients:
+      - int/float: assumed to be epoch milliseconds already
+      - ISO 8601 string: parsed to epoch ms (Firestore REST returns this for Timestamp fields)
+      - None or unrecognised: returns 0
+    """
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            # Firestore returns e.g. '2026-04-02T14:30:00.123456Z'
+            # Strip trailing 'Z' and parse as UTC
+            cleaned = value.rstrip('Z')
+            dt = datetime.fromisoformat(cleaned)
+            return int(dt.timestamp() * 1000)
+        except (ValueError, OSError):
+            return 0
+    return 0
+
+
 # Special sentinel value for deleting fields (compatible with firebase_admin SDK)
 class _DeleteFieldSentinel:
     """Sentinel class to mark fields for deletion (matches firebase_admin.firestore.DELETE_FIELD)"""

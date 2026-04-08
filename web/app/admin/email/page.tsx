@@ -89,20 +89,21 @@ export default function EmailPage() {
   const currentTemplate = EMAIL_TEMPLATES.find(t => t.id === selectedTemplate);
 
   return (
-    <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-6">
+    <div className="p-8">
+      <div className="max-w-screen-2xl mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Email</h1>
-        <p className="text-muted-foreground mt-1">
+        <h1 className="text-3xl font-bold text-foreground mb-2">email</h1>
+        <p className="text-muted-foreground">
           Email notification configuration and testing
         </p>
       </div>
 
       {/* Configuration */}
-      <Card>
+      <Card className="bg-card border-border">
         <CardHeader>
-          <CardTitle>Configuration</CardTitle>
+          <CardTitle>configuration</CardTitle>
           <CardDescription>
-            Current email provider settings and status
+            current email provider settings and status
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -115,32 +116,32 @@ export default function EmailPage() {
           ) : config ? (
             <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 text-sm">
               <div>
-                <dt className="text-muted-foreground font-medium">Provider</dt>
+                <dt className="text-muted-foreground font-medium">provider</dt>
                 <dd className="mt-1 flex items-center gap-2">
                   {config.provider}
                   <Badge
                     variant={config.apiKeyConfigured ? 'default' : 'destructive'}
                     className={config.apiKeyConfigured ? 'bg-emerald-600 hover:bg-emerald-600' : ''}
                   >
-                    {config.apiKeyConfigured ? 'Connected' : 'Not configured'}
+                    {config.apiKeyConfigured ? 'connected' : 'not configured'}
                   </Badge>
                 </dd>
               </div>
               <div>
-                <dt className="text-muted-foreground font-medium">Environment</dt>
+                <dt className="text-muted-foreground font-medium">environment</dt>
                 <dd className="mt-1">{config.environment}</dd>
               </div>
               <div>
-                <dt className="text-muted-foreground font-medium">From Address</dt>
+                <dt className="text-muted-foreground font-medium">from address</dt>
                 <dd className="mt-1 font-mono text-xs">{config.fromEmail}</dd>
               </div>
               <div>
-                <dt className="text-muted-foreground font-medium">Admin Email</dt>
+                <dt className="text-muted-foreground font-medium">admin email</dt>
                 <dd className="mt-1 flex items-center gap-2">
                   {config.adminEmailConfigured ? (
                     <span className="font-mono text-xs">{config.adminEmail}</span>
                   ) : (
-                    <span className="text-destructive">Not configured</span>
+                    <span className="text-destructive">not configured</span>
                   )}
                 </dd>
               </div>
@@ -152,18 +153,18 @@ export default function EmailPage() {
       </Card>
 
       {/* Test Email */}
-      <Card>
+      <Card className="bg-card border-border">
         <CardHeader>
-          <CardTitle>Test Email</CardTitle>
+          <CardTitle>test email</CardTitle>
           <CardDescription>
-            Send a test email to preview any notification template with sample data
+            send a test email to preview any notification template with sample data
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Template selector */}
           <div className="space-y-2">
             <label htmlFor="template-select" className="text-sm font-medium text-muted-foreground">
-              Template
+              template
             </label>
             <div className="relative w-full max-w-md">
               <select
@@ -198,7 +199,7 @@ export default function EmailPage() {
             ) : (
               <>
                 <Send className="h-4 w-4" />
-                Send Test Email
+                send test email
               </>
             )}
           </Button>
@@ -226,7 +227,7 @@ export default function EmailPage() {
                   <>
                     <p>Template: <span className="text-foreground font-medium">{EMAIL_TEMPLATES.find(t => t.id === lastResult.template)?.label || lastResult.template}</span></p>
                     <p>Sent to <span className="text-foreground font-medium">{lastResult.to}</span></p>
-                    <p>Email ID: <span className="font-mono text-xs">{lastResult.emailId}</span></p>
+                    <p>email ID: <span className="font-mono text-xs">{lastResult.emailId}</span></p>
                   </>
                 ) : (
                   <>
@@ -245,6 +246,7 @@ export default function EmailPage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

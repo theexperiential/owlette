@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { collection, doc, setDoc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 interface Software {
@@ -122,8 +122,7 @@ export function useUninstall() {
       }
 
       // Create uninstall command for each machine
-      const timestamp = Date.now();
-      const commandId = `uninstall-${timestamp}`;
+      const commandId = `uninstall-${Date.now()}`;
 
       console.log('[useUninstall] Creating commands for machines with ID:', commandId);
 
@@ -152,7 +151,7 @@ export function useUninstall() {
           uninstall_command: softwareDetails.uninstall_command,
           installer_type: softwareDetails.installer_type,
           verify_paths: softwareDetails.install_location ? [softwareDetails.install_location] : [],
-          timestamp: timestamp,
+          timestamp: serverTimestamp(),
         };
 
         // Only include deployment_id if provided (when uninstalling from deployment view)
@@ -219,7 +218,7 @@ export function useUninstall() {
         [cancelCommandId]: {
           type: 'cancel_uninstall',
           software_name: softwareName,
-          timestamp: Date.now(),
+          timestamp: serverTimestamp(),
         },
       });
 

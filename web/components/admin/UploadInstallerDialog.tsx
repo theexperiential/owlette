@@ -10,8 +10,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Upload, FileUp, X, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { isValidVersion, formatFileSize } from '@/lib/storageUtils';
+import { AdminButton } from './AdminButton';
 
-// Extract version from filename (e.g., "Owlette-Installer-v2.0.10.exe" -> "2.0.10")
+// Extract version from filename (e.g., "owlette-Installer-v2.0.10.exe" -> "2.0.10")
 const extractVersionFromFilename = (filename: string): string | null => {
   const match = filename.match(/v?(\d+\.\d+\.\d+)/i);
   return match ? match[1] : null;
@@ -152,40 +153,40 @@ export default function UploadInstallerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="border-border bg-secondary text-white max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="text-white">Upload New Installer Version</DialogTitle>
+          <DialogTitle className="text-white">upload new installer version</DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            Upload a new Owlette Agent installer version to Firebase Storage
+            Upload a new owlette Agent installer version to Firebase Storage
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
           {/* File Upload Area */}
           <div className="space-y-2">
-            <Label className="text-white">Installer File</Label>
+            <Label className="text-white">installer file</Label>
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
               className={`
                 border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
-                ${isDragging ? 'border-accent-cyan bg-accent-cyan/10' : 'border-border hover:border-border'}
+                ${isDragging ? 'border-accent-cyan bg-accent-cyan/10' : 'border-border hover:border-muted-foreground'}
               `}
             >
               {!file ? (
                 <div>
                   <FileUp className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                  <p className="text-white mb-2">Drag & drop installer file here</p>
+                  <p className="text-white mb-2">drag & drop installer file here</p>
                   <p className="text-sm text-muted-foreground mb-4">or</p>
                   <label htmlFor="file-upload">
-                    <Button
+                    <AdminButton
+                      adminVariant="outline"
                       type="button"
-                      variant="outline"
-                      className="border-border bg-background text-white hover:bg-muted cursor-pointer"
+                      className="cursor-pointer"
                       onClick={() => document.getElementById('file-upload')?.click()}
                     >
                       <Upload className="h-4 w-4 mr-2" />
-                      Choose File
-                    </Button>
+                      choose file
+                    </AdminButton>
                   </label>
                   <input
                     id="file-upload"
@@ -211,7 +212,7 @@ export default function UploadInstallerDialog({
                     size="sm"
                     onClick={() => setFile(null)}
                     disabled={uploading}
-                    className="hover:bg-secondary cursor-pointer"
+                    className="hover:bg-secondary! cursor-pointer"
                   >
                     <X className="h-4 w-4 text-muted-foreground" />
                   </Button>
@@ -222,7 +223,7 @@ export default function UploadInstallerDialog({
 
           {/* Version Input */}
           <div className="space-y-2">
-            <Label htmlFor="version" className="text-white">Version Number</Label>
+            <Label htmlFor="version" className="text-white">version number</Label>
             <Input
               id="version"
               placeholder="2.0.0"
@@ -236,7 +237,7 @@ export default function UploadInstallerDialog({
 
           {/* Release Notes */}
           <div className="space-y-2">
-            <Label htmlFor="release-notes" className="text-white">Release Notes (Optional)</Label>
+            <Label htmlFor="release-notes" className="text-white">release notes (optional)</Label>
             <Textarea
               id="release-notes"
               placeholder="What's new in this version?"
@@ -266,7 +267,7 @@ export default function UploadInstallerDialog({
           {uploading && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Uploading...</span>
+                <span className="text-muted-foreground">uploading...</span>
                 <span className="text-white font-medium">{uploadProgress}%</span>
               </div>
               <div className="w-full bg-background rounded-full h-2">
@@ -280,14 +281,14 @@ export default function UploadInstallerDialog({
         </div>
 
         <DialogFooter>
-          <Button
-            variant="outline"
+          <AdminButton
+            adminVariant="card"
             onClick={() => onOpenChange(false)}
             disabled={uploading}
-            className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
+            className="cursor-pointer"
           >
             Cancel
-          </Button>
+          </AdminButton>
           <Button
             onClick={handleUpload}
             disabled={uploading || !file || !version}
@@ -296,12 +297,12 @@ export default function UploadInstallerDialog({
             {uploading ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Uploading...
+                uploading...
               </>
             ) : (
               <>
                 <Upload className="h-4 w-4 mr-2" />
-                Upload Installer
+                upload installer
               </>
             )}
           </Button>

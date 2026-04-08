@@ -1,40 +1,40 @@
-# Architecture
+---
+hide:
+  - navigation
+---
 
-Owlette uses a serverless, event-driven architecture where all communication flows through Cloud Firestore. There is no direct connection between agents and the dashboard — Firestore acts as the message bus.
+# architecture
+
+owlette uses a serverless, event-driven architecture where all communication flows through Cloud Firestore. There is no direct connection between agents and the dashboard — Firestore acts as the message bus.
 
 ---
 
-## System Overview
+## system overview
 
-```
-┌─────────────────┐                                    ┌─────────────────┐
-│  Agent           │     ┌──────────────────────┐      │  Web Dashboard   │
-│  (Machine A)     │────▶│                      │◀─────│  (Next.js)       │
-│                  │     │   Cloud Firestore     │      │                  │
-│  Agent           │────▶│   (Real-time NoSQL)   │─────▶│  Users connect   │
-│  (Machine B)     │     │                      │      │  via browser     │
-│                  │◀────│                      │      │                  │
-│  Agent           │     └──────────────────────┘      └─────────────────┘
-│  (Machine C)     │              │
-└─────────────────┘              │
-                          ┌──────────────┐
-                          │  Firebase     │
-                          │  Auth         │
-                          └──────────────┘
+```mermaid
+flowchart LR
+    Agents["Desktop Services\n(Agents)"]
+    FS[("Cloud Firestore\nReal-time NoSQL")]
+    Dashboard["Web Dashboard\n(Next.js)"]
+    Auth["Firebase Auth"]
+
+    Agents -- "metrics & heartbeats" --> FS
+    FS -- "commands" --> Agents
+    FS <--> Dashboard
+    Auth -. "token validation" .-> FS
 ```
 
 ---
 
-## Components
+## components
 
-### Python Agent (Windows Service)
+### python agent (windows service)
 
 The agent runs as a Windows service managed by [NSSM](https://nssm.cc/) (Non-Sucking Service Manager). It:
 
-- **Monitors processes** every 10 seconds — detects crashes, stalls, and exits
+- **Monitors processes** every 5 seconds — detects crashes, stalls, and exits
 - **Auto-restarts** crashed applications using Task Scheduler or CreateProcessAsUser
-- **Sends heartbeats** every 30 seconds to mark the machine as online
-- **Reports metrics** every 60 seconds — CPU, memory, disk, GPU usage
+- **Sends heartbeats & reports metrics** (CPU, memory, disk, GPU, network) at an adaptive interval — 5s when the system tray GUI is open, 30s when processes are running, 120s when idle
 - **Executes commands** from the dashboard — restart process, install software, reboot, etc.
 - **Syncs configuration** bidirectionally between local GUI and cloud
 - **Runs offline** — continues monitoring even without internet, syncs when reconnected
@@ -47,7 +47,7 @@ The agent uses a **custom Firestore REST API client** (not the Firebase Admin SD
     - **Logs**: `C:\ProgramData\Owlette\logs\`
     - **Config**: `C:\ProgramData\Owlette\agent\config\config.json`
 
-### Web Dashboard (Next.js)
+### web dashboard (next.js)
 
 The dashboard is a Next.js 16 application deployed to Railway. It:
 
@@ -58,7 +58,7 @@ The dashboard is a Next.js 16 application deployed to Railway. It:
 - **Manages users** — role-based access control with site-level permissions
 - **Provides Cortex** — AI chat interface for machine interaction, plus autonomous cluster management (auto-investigates crashes)
 
-### Firebase Backend
+### firebase backend
 
 Firebase provides two services:
 
@@ -69,55 +69,52 @@ There are no Cloud Functions or custom backend servers — the web dashboard's N
 
 ---
 
-## Data Flow
+## data flow
 
-### Heartbeat & Metrics
+### heartbeat & metrics
 
-```
-Agent                          Firestore                       Dashboard
-  │                               │                               │
-  │── presence (every 30s) ──────▶│                               │
-  │   {online: true,              │── onSnapshot ────────────────▶│
-  │    lastHeartbeat: now}        │   Machine goes green          │
-  │                               │                               │
-  │── status (every 60s) ────────▶│                               │
-  │   {cpu: 45, memory: 60,      │── onSnapshot ────────────────▶│
-  │    disk: 30, gpu: 15,        │   Metrics update live         │
-  │    processes: {...}}          │                               │
+```mermaid
+flowchart LR
+    Agent["Desktop Service\n(Agent)"]
+    FS[("Firestore")]
+    Dashboard["Web Dashboard"]
+
+    Agent -->|"metrics + heartbeat\n5s / 30s / 120s adaptive"| FS
+    FS -->|"onSnapshot"| Dashboard
 ```
 
-### Command Execution
+### command execution
 
+```mermaid
+flowchart LR
+    Dashboard["Web Dashboard"]
+    FS[("Firestore")]
+    Agent["Desktop Service\n(Agent)"]
+
+    Dashboard -->|"1. write command\nto pending"| FS
+    FS -->|"2. listener\ndetects"| Agent
+    Agent -->|"3. write result\nto completed"| FS
+    FS -->|"4. onSnapshot\nUI updates"| Dashboard
 ```
-Dashboard                      Firestore                       Agent
-  │                               │                               │
-  │── write to pending ──────────▶│                               │
-  │   {type: "restart_process",   │── listener detects ──────────▶│
-  │    process_name: "TD"}        │                               │
-  │                               │                               │── execute
-  │                               │                               │
-  │                               │◀── write to completed ────────│
-  │◀── onSnapshot ────────────────│   {result: "success"}         │
-  │   UI updates                  │                               │
-```
 
-### Configuration Sync
+### configuration sync
 
-Configuration changes from any source propagate to all others within ~1-2 seconds:
-
-```
-GUI ──▶ config.json ──▶ Firestore ──▶ Dashboard (onSnapshot)
-                                  ◀── Dashboard (write)
-                            ──▶ Agent (listener) ──▶ config.json ──▶ GUI
+```mermaid
+flowchart LR
+    GUI["Tray Icon /\nGUI (Agent)"] -->|"1. write"| FS[("Firestore")]
+    FS -->|"2. onSnapshot"| Dashboard["Web Dashboard"]
+    Dashboard -->|"3. write"| FS
+    FS -->|"4. listener"| Agent["Desktop Service\n(Agent)"]
+    Agent -->|"5. update\nconfig.json"| GUI
 ```
 
 ---
 
-## Two Firebase Clients
+## two firebase clients
 
 This is the most important architectural distinction:
 
-| | Web Dashboard | Python Agent |
+| | web dashboard | python agent |
 |---|---|---|
 | **SDK** | Firebase Client SDK (`firebase/firestore`) | Custom REST client (`firestore_rest_client.py`) |
 | **Auth** | Firebase Auth (email/password, Google OAuth) | OAuth two-token system (custom token + refresh token) |
@@ -128,43 +125,30 @@ The agent does **not** use the Firebase Admin SDK or any official Firebase Pytho
 
 ---
 
-## Authentication Architecture
+## authentication architecture
 
-### User Authentication
+### user authentication
 
-```
-Browser ──▶ Firebase Auth (client SDK)
-                 │
-                 ├── Email/Password
-                 └── Google OAuth
-                 │
-                 ▼
-           ID Token
-                 │
-           POST /api/auth/session
-                 │
-                 ▼
-           iron-session (HTTPOnly cookie)
-                 │
-           Subsequent requests use cookie
+```mermaid
+flowchart TD
+    EP["Email/Password"] --> FA["Firebase Auth"]
+    GO["Google OAuth"] --> FA
+    FA -->|"ID Token"| Session["POST /api/auth/session"]
+    Session -->|"sets"| Cookie["iron-session — HTTPOnly cookie"]
+    Cookie -->|"authenticates"| Requests["subsequent requests"]
 ```
 
-### Agent Authentication (OAuth)
+### agent authentication (oauth)
 
-```
-Installer ──▶ Registration Code (24h expiry)
-                    │
-              POST /api/agent/auth/exchange
-                    │
-                    ├── Custom Firebase Token (1h)
-                    └── Refresh Token (long-lived, hashed in Firestore)
-                    │
-              Agent stores encrypted tokens locally
-                    │
-              On token expiry:
-              POST /api/agent/auth/refresh
-                    │
-                    └── New Custom Firebase Token (1h)
+```mermaid
+flowchart TD
+    Installer -->|device code flow| Code["Registration Code (24h expiry)"]
+    Code -->|"POST /api/agent/auth/exchange"| Exchange["token exchange"]
+    Exchange --> AT["Custom Firebase Token (1h)"]
+    Exchange --> RT["Refresh Token (long-lived, hashed in Firestore)"]
+    AT --> Store["encrypted local storage"]
+    RT --> Store
+    Store -->|"on expiry: POST /api/agent/auth/refresh"| NewAT["New Custom Firebase Token (1h)"]
 ```
 
 !!! info "More details"
@@ -172,19 +156,19 @@ Installer ──▶ Registration Code (24h expiry)
 
 ---
 
-## Security Model
+## security model
 
-### Site-Based Access Control
+### site-based access control
 
 All data is scoped to **sites**. Users can only access sites they are assigned to.
 
-| Role | Access |
+| role | access |
 |------|--------|
 | **User** | Sites listed in their `users/{uid}/sites` array |
 | **Admin** | All sites |
 | **Agent** | Single site + single machine (from custom token claims) |
 
-### Firestore Security Rules
+### firestore security rules
 
 Rules enforce access at the database level — no client-side bypass is possible:
 
@@ -195,7 +179,7 @@ Rules enforce access at the database level — no client-side bypass is possible
 
 ---
 
-## Offline Resilience
+## offline resilience
 
 The agent is designed to operate without internet:
 
@@ -204,22 +188,23 @@ The agent is designed to operate without internet:
 3. **Metrics buffered** — Heartbeats and metrics resume immediately on reconnection
 4. **Commands queued** — Pending commands in Firestore are picked up when the agent comes back online
 
-The `ConnectionManager` implements a state machine:
+The `ConnectionManager` implements a state machine with circuit breaker logic — after repeated failures, the agent backs off exponentially (up to 5 minutes) before retrying:
 
+```mermaid
+stateDiagram-v2
+    [*] --> DISCONNECTED
+    DISCONNECTED --> CONNECTING
+    CONNECTING --> CONNECTED
+    CONNECTED --> RECONNECTING : connection lost
+    RECONNECTING --> BACKOFF : repeated failures
+    BACKOFF --> CONNECTING : retry
 ```
-DISCONNECTED ──▶ CONNECTING ──▶ CONNECTED
-      ▲                              │
-      │                              ▼
-  BACKOFF ◀────────────── RECONNECTING
-```
-
-With circuit breaker logic: after repeated failures, the agent backs off exponentially (up to 5 minutes) before retrying.
 
 ---
 
-## Technology Stack
+## technology stack
 
-| Layer | Technology |
+| layer | technology |
 |-------|-----------|
 | **Agent** | Python 3.9+, pywin32, psutil, CustomTkinter, NSSM |
 | **Web** | Next.js 16, React 19, TypeScript 5, Tailwind CSS 4 |

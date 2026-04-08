@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { testWebhook } from '@/lib/webhookSender.server';
 
 /**
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
 
     // Update last triggered
     await webhookDoc.ref.update({
-      lastTriggered: new Date(),
+      lastTriggered: FieldValue.serverTimestamp(),
       lastStatus: result.status,
     });
 

@@ -1,12 +1,12 @@
-# Agent Troubleshooting
+# agent troubleshooting
 
 Common issues and how to resolve them.
 
 ---
 
-## Log Locations
+## log locations
 
-| Log | Path | Contents |
+| log | path | contents |
 |-----|------|----------|
 | **Service** | `C:\ProgramData\Owlette\logs\service.log` | Main service operations, Firebase sync, command execution |
 | **GUI** | `C:\ProgramData\Owlette\logs\gui.log` | Configuration GUI operations |
@@ -17,7 +17,7 @@ Logs use rotating file handlers: 10 MB per file, 5 backups. Old logs are auto-de
 
 ---
 
-## Debug Mode
+## debug mode
 
 Run the service in debug mode to see real-time console output:
 
@@ -31,9 +31,9 @@ python owlette_service.py debug
 
 ---
 
-## Common Issues
+## common issues
 
-### Agent Won't Start
+### agent won't start
 
 **Symptoms**: Service fails to start, or starts and immediately stops.
 
@@ -56,7 +56,7 @@ python owlette_service.py debug
 
 ---
 
-### Agent Shows Offline in Dashboard
+### agent shows offline in dashboard
 
 **Symptoms**: Machine shows offline (red/grey) despite the service running.
 
@@ -76,7 +76,7 @@ python owlette_service.py debug
 
 ---
 
-### "Agent not authenticated" Error
+### "agent not authenticated" error
 
 **Symptoms**: Log shows "Agent not authenticated - no refresh token found"
 
@@ -96,7 +96,7 @@ python owlette_service.py debug
 
 ---
 
-### Processes Not Auto-Restarting
+### processes not auto-restarting
 
 **Symptoms**: Configured processes crash but aren't restarted.
 
@@ -116,11 +116,11 @@ python owlette_service.py debug
 
 ---
 
-### ConnectionManager States
+### connectionmanager states
 
 The agent's connection to Firestore follows a state machine. Check `service.log` for the current state:
 
-| State | Meaning | Action |
+| state | meaning | action |
 |-------|---------|--------|
 | `DISCONNECTED` | No connection, not trying | Will attempt on next cycle |
 | `CONNECTING` | Actively establishing connection | Wait |
@@ -136,9 +136,9 @@ If stuck in `BACKOFF`:
 
 ---
 
-### High CPU/Memory Usage
+### high cpu/memory usage
 
-**Symptoms**: The Owlette service itself uses excessive resources.
+**Symptoms**: The owlette service itself uses excessive resources.
 
 **Normal usage**: ~20-50 MB RAM, <1% CPU
 
@@ -150,7 +150,7 @@ If stuck in `BACKOFF`:
 
 ---
 
-### GUI Won't Open
+### gui won't open
 
 **Symptoms**: Clicking "Open GUI" from tray does nothing, or GUI crashes immediately.
 
@@ -166,7 +166,7 @@ If stuck in `BACKOFF`:
 
 ---
 
-### Windows Defender Blocking
+### windows defender blocking
 
 **Symptoms**: Agent files quarantined, service won't start after update.
 
@@ -180,7 +180,7 @@ Add-MpPreference -ExclusionPath "C:\ProgramData\Owlette"
 
 ---
 
-## Service Management Commands
+## service management commands
 
 ```bash
 # Check service status
@@ -200,3 +200,10 @@ sc qc OwletteService
 ```
 
 All commands require **Administrator** privileges.
+
+---
+
+## getting help
+
+- Email us at [support@owlette.app](mailto:support@owlette.app)
+- File a bug or feature request on [GitHub](https://github.com/theexperiential/owlette/issues)

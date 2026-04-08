@@ -26,7 +26,7 @@ export const GET = withRateLimit(
       const keysSnap = await db
         .collection('users')
         .doc(userId)
-        .collection('apiKeys')
+        .collection('api_keys')
         .orderBy('createdAt', 'desc')
         .get();
 

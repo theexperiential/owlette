@@ -1,18 +1,18 @@
-# Webhooks
+# webhooks
 
-Send event notifications to external systems via HTTPS webhooks. Use webhooks to integrate Owlette with Slack, Discord, PagerDuty, or any HTTP endpoint.
+Send event notifications to external systems via HTTPS webhooks. Use webhooks to integrate owlette with Slack, Discord, PagerDuty, or any HTTP endpoint.
 
 **Location**: Admin Panel → Webhooks
 
 ---
 
-## Overview
+## overview
 
-Webhooks fire when events occur in your site — process crashes, machines going offline, connection failures. Each webhook is configured with a URL and a set of subscribed events. Owlette sends a signed HTTP POST to your URL with event details.
+Webhooks fire when events occur in your site — process crashes, machines going offline, connection failures. Each webhook is configured with a URL and a set of subscribed events. owlette sends a signed HTTP POST to your URL with event details.
 
 ---
 
-## Creating a Webhook
+## creating a webhook
 
 1. Navigate to **Admin Panel → Webhooks**
 2. Click **"Add Webhook"**
@@ -22,13 +22,13 @@ Webhooks fire when events occur in your site — process crashes, machines going
     - **Events**: Select which events trigger this webhook
 4. Click **Create**
 
-Owlette generates an **HMAC-SHA256 signing secret** — save this to verify webhook authenticity on your end.
+owlette generates an **HMAC-SHA256 signing secret** — save this to verify webhook authenticity on your end.
 
 ---
 
-## Event Types
+## event types
 
-| Event | Description |
+| event | description |
 |-------|-------------|
 | `process.crashed` | A configured process exited unexpectedly |
 | `machine.offline` | A machine's heartbeat went stale (3+ minutes) |
@@ -36,7 +36,7 @@ Owlette generates an **HMAC-SHA256 signing secret** — save this to verify webh
 
 ---
 
-## Payload Format
+## payload format
 
 Webhooks receive a JSON POST with this structure:
 
@@ -59,9 +59,9 @@ Webhooks receive a JSON POST with this structure:
 
 ---
 
-## Signature Verification
+## signature verification
 
-Every webhook request includes an `X-Owlette-Signature` header containing an HMAC-SHA256 signature of the request body, using your webhook's secret as the key.
+Every webhook request includes an `X-owlette-Signature` header containing an HMAC-SHA256 signature of the request body, using your webhook's secret as the key.
 
 **Verify in Node.js:**
 
@@ -82,18 +82,18 @@ function verifyWebhook(body, signature, secret) {
 
 ---
 
-## Testing Webhooks
+## testing webhooks
 
 1. Find your webhook in the list
 2. Click **"Test"**
-3. Owlette sends a test payload to your URL
+3. owlette sends a test payload to your URL
 4. Check the response status (shown in the webhook list)
 
 ---
 
-## Managing Webhooks
+## managing webhooks
 
-| Action | Description |
+| action | description |
 |--------|-------------|
 | **Enable/Disable** | Toggle a webhook on or off without deleting |
 | **Delete** | Remove a webhook permanently |
@@ -101,7 +101,7 @@ function verifyWebhook(body, signature, secret) {
 
 ---
 
-## Auto-Disable
+## auto-disable
 
 If a webhook fails to deliver **10 consecutive times**, it is automatically disabled. The `failCount` and `lastStatus` fields in Firestore track delivery health.
 
@@ -109,9 +109,9 @@ To re-enable: fix the endpoint, then toggle the webhook back on.
 
 ---
 
-## Webhook vs Email Alerts
+## webhook vs email alerts
 
-| | Email Alerts | Webhooks |
+| | email alerts | webhooks |
 |---|---|---|
 | **Setup** | Built-in, Resend API key only | Custom endpoint required |
 | **Speed** | 1-2 minutes | Near-instant |

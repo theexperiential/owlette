@@ -5,7 +5,9 @@ import { useInstallerManagement } from '@/hooks/useInstallerManagement';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Package, Plus, Loader2, Download, Trash2, CheckCircle, Copy } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Package, Plus, Loader2, Download, Trash2, CheckCircle, Copy, Sparkles, Paintbrush } from 'lucide-react';
 import { toast } from 'sonner';
 import UploadInstallerDialog from '@/components/admin/UploadInstallerDialog';
 import { formatFileSize } from '@/lib/storageUtils';
@@ -13,7 +15,7 @@ import { formatFileSize } from '@/lib/storageUtils';
 /**
  * Installers Admin Page
  *
- * Admin-only page for managing Owlette Agent installer versions.
+ * Admin-only page for managing owlette Agent installer versions.
  * Allows admins to:
  * - View all versions
  * - Upload new versions
@@ -29,6 +31,8 @@ export default function InstallerVersionsPage() {
     uploadVersion,
     setAsLatest,
     deleteVersion,
+    getCleanupCandidates,
+    cleanupVersions,
   } = useInstallerManagement();
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [deletingVersion, setDeletingVersion] = useState<string | null>(null);
@@ -37,6 +41,9 @@ export default function InstallerVersionsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [versionToSetLatest, setVersionToSetLatest] = useState<string>('');
   const [versionToDelete, setVersionToDelete] = useState<string>('');
+  const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
+  const [cleaningUp, setCleaningUp] = useState(false);
+  const [cleanupRetentionDays, setCleanupRetentionDays] = useState(30);
 
   const handleSetAsLatest = (version: string) => {
     if (latestVersion?.version === version) {
@@ -112,6 +119,27 @@ export default function InstallerVersionsPage() {
     });
   };
 
+  const cleanupCandidates = cleanupDialogOpen ? getCleanupCandidates(cleanupRetentionDays) : [];
+
+  const handleCleanup = async () => {
+    setCleaningUp(true);
+    try {
+      const count = await cleanupVersions(cleanupCandidates);
+      toast.success('Cleanup Complete', {
+        description: `Deleted ${count} old installer${count !== 1 ? 's' : ''}.`,
+      });
+      setCleanupDialogOpen(false);
+    } catch (err: any) {
+      toast.error('Cleanup Failed', {
+        description: err.message || 'Failed to clean up versions.',
+      });
+    } finally {
+      setCleaningUp(false);
+    }
+  };
+
+  const totalCleanupSize = cleanupCandidates.reduce((sum, v) => sum + (v.file_size || 0), 0);
+
   const copyDownloadLink = async (downloadUrl: string, version: string) => {
     try {
       await navigator.clipboard.writeText(downloadUrl);
@@ -131,16 +159,27 @@ export default function InstallerVersionsPage() {
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">Installers</h1>
-          <p className="text-muted-foreground">Manage Owlette Agent installer versions and downloads</p>
+          <h1 className="text-3xl font-bold text-foreground mb-2">installers</h1>
+          <p className="text-muted-foreground">manage owlette Agent installer versions and downloads</p>
         </div>
-        <Button
-          onClick={() => setUploadDialogOpen(true)}
-          className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Upload New Version
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button
+            onClick={() => setCleanupDialogOpen(true)}
+            variant="outline"
+            className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
+            disabled={versions.length < 2}
+          >
+            <Paintbrush className="h-4 w-4 mr-2" />
+            clean up
+          </Button>
+          <Button
+            onClick={() => setUploadDialogOpen(true)}
+            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            upload new version
+          </Button>
+        </div>
       </div>
 
       {/* Stats Card */}
@@ -151,20 +190,20 @@ export default function InstallerVersionsPage() {
               <Package className="h-6 w-6 text-white" />
             </div>
             <div className="flex-1">
-              <p className="text-sm text-muted-foreground">Current Latest Version</p>
+              <p className="text-sm text-muted-foreground">current latest version</p>
               <div className="flex items-center gap-2 mt-1">
                 <p className="text-2xl font-bold text-foreground">{latestVersion.version}</p>
                 <Badge className="bg-green-600">Latest</Badge>
               </div>
             </div>
             <div className="text-right">
-              <p className="text-sm text-muted-foreground">Uploaded</p>
+              <p className="text-sm text-muted-foreground">uploaded</p>
               <p className="text-lg text-foreground font-medium">
                 {formatDate(latestVersion.release_date)}
               </p>
             </div>
             <div className="text-right">
-              <p className="text-sm text-muted-foreground">File Size</p>
+              <p className="text-sm text-muted-foreground">file size</p>
               <p className="text-lg text-foreground font-medium">
                 {formatFileSize(latestVersion.file_size)}
               </p>
@@ -174,8 +213,8 @@ export default function InstallerVersionsPage() {
                 onClick={() => window.open(latestVersion.download_url, '_blank')}
                 variant="outline"
                 size="icon"
-                className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
-                title={`Download Owlette Agent v${latestVersion.version}`}
+                className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
+                title={`Download owlette Agent v${latestVersion.version}`}
               >
                 <Download className="h-4 w-4" />
               </Button>
@@ -183,8 +222,8 @@ export default function InstallerVersionsPage() {
                 onClick={() => copyDownloadLink(latestVersion.download_url, latestVersion.version)}
                 variant="outline"
                 size="icon"
-                className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
-                title={`Copy download link for Owlette Agent v${latestVersion.version}`}
+                className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
+                title={`Copy download link for owlette Agent v${latestVersion.version}`}
               >
                 <Copy className="h-4 w-4" />
               </Button>
@@ -204,7 +243,7 @@ export default function InstallerVersionsPage() {
       {loading && (
         <div className="flex justify-center items-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-accent-cyan" />
-          <span className="ml-3 text-muted-foreground">Loading versions...</span>
+          <span className="ml-3 text-muted-foreground">loading versions...</span>
         </div>
       )}
 
@@ -214,19 +253,19 @@ export default function InstallerVersionsPage() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-border bg-background/50">
-                <th className="text-left p-4 text-sm font-medium text-foreground">Version</th>
-                <th className="text-left p-4 text-sm font-medium text-foreground">File Size</th>
-                <th className="text-left p-4 text-sm font-medium text-foreground">Uploaded</th>
-                <th className="text-left p-4 text-sm font-medium text-foreground">Uploaded By</th>
-                <th className="text-left p-4 text-sm font-medium text-foreground">Release Notes</th>
-                <th className="text-right p-4 text-sm font-medium text-foreground">Actions</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">version</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">file size</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">uploaded</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">uploaded by</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">release notes</th>
+                <th className="text-right p-4 text-sm font-medium text-foreground">actions</th>
               </tr>
             </thead>
             <tbody>
               {versions.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-8 text-center text-muted-foreground">
-                    No versions uploaded yet. Click "Upload New Version" to get started.
+                    No versions uploaded yet. Click "upload new version" to get started.
                   </td>
                 </tr>
               ) : (
@@ -275,7 +314,7 @@ export default function InstallerVersionsPage() {
                             {version.release_notes}
                           </p>
                         ) : (
-                          <span className="text-xs text-muted-foreground/60">No notes</span>
+                          <span className="text-xs text-muted-foreground/60">no notes</span>
                         )}
                       </td>
 
@@ -286,19 +325,22 @@ export default function InstallerVersionsPage() {
                           <div className="min-w-[100px]">
                             {!isLatest && (
                               <Button
+                                variant="ghost"
                                 size="sm"
-                                variant="outline"
                                 onClick={() => handleSetAsLatest(version.version)}
                                 disabled={isSetting || isDeleting}
-                                className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer text-xs"
+                                className="text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer text-sm"
                               >
                                 {isSetting ? (
                                   <>
-                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                    Setting...
+                                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                                    setting...
                                   </>
                                 ) : (
-                                  'Set as Latest'
+                                  <>
+                                    <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                                    set as latest
+                                  </>
                                 )}
                               </Button>
                             )}
@@ -307,35 +349,35 @@ export default function InstallerVersionsPage() {
                           {/* Right side: Icon buttons (always aligned) */}
                           <div className="flex items-center gap-2">
                             <Button
-                              size="sm"
-                              variant="outline"
+                              variant="ghost"
+                              size="icon"
                               onClick={() => window.open(version.download_url, '_blank')}
-                              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
-                              title={`Download Owlette Agent v${version.version}`}
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+                              title={`Download owlette Agent v${version.version}`}
                             >
-                              <Download className="h-3 w-3" />
+                              <Download className="h-3.5 w-3.5" />
                             </Button>
                             <Button
-                              size="sm"
-                              variant="outline"
+                              variant="ghost"
+                              size="icon"
                               onClick={() => copyDownloadLink(version.download_url, version.version)}
-                              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
-                              title={`Copy download link for Owlette Agent v${version.version}`}
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+                              title={`Copy download link for owlette Agent v${version.version}`}
                             >
-                              <Copy className="h-3 w-3" />
+                              <Copy className="h-3.5 w-3.5" />
                             </Button>
                             {!isLatest ? (
                               <Button
-                                size="sm"
-                                variant="outline"
+                                variant="ghost"
+                                size="icon"
                                 onClick={() => handleDelete(version.version)}
                                 disabled={isDeleting || isSetting}
-                                className="border-border bg-background text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer"
+                                className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
                               >
                                 {isDeleting ? (
-                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                 ) : (
-                                  <Trash2 className="h-3 w-3" />
+                                  <Trash2 className="h-3.5 w-3.5" />
                                 )}
                               </Button>
                             ) : (
@@ -375,7 +417,7 @@ export default function InstallerVersionsPage() {
       <Dialog open={setLatestDialogOpen} onOpenChange={setSetLatestDialogOpen}>
         <DialogContent className="border-border bg-card text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-foreground">Set as Latest Version</DialogTitle>
+            <DialogTitle className="text-foreground">set as latest version</DialogTitle>
             <DialogDescription className="text-muted-foreground">
               Set version {versionToSetLatest} as the latest version?
             </DialogDescription>
@@ -384,9 +426,9 @@ export default function InstallerVersionsPage() {
             <Button
               variant="outline"
               onClick={() => setSetLatestDialogOpen(false)}
-              className="border-border bg-card text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
+              className="border-border bg-card text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
             >
-              Cancel
+              cancel
             </Button>
             <Button
               onClick={confirmSetAsLatest}
@@ -402,7 +444,7 @@ export default function InstallerVersionsPage() {
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent className="border-border bg-card text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-foreground">Delete Version</DialogTitle>
+            <DialogTitle className="text-foreground">delete version</DialogTitle>
             <DialogDescription className="text-muted-foreground">
               Are you sure you want to delete version {versionToDelete}? This action cannot be undone.
             </DialogDescription>
@@ -411,15 +453,97 @@ export default function InstallerVersionsPage() {
             <Button
               variant="outline"
               onClick={() => setDeleteDialogOpen(false)}
-              className="border-border bg-card text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
+              className="border-border bg-card text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
             >
-              Cancel
+              cancel
             </Button>
             <Button
               onClick={confirmDelete}
               className="bg-red-600 hover:bg-red-700 text-foreground cursor-pointer"
             >
-              Delete
+              delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cleanup Dialog */}
+      <Dialog open={cleanupDialogOpen} onOpenChange={(open) => { if (!cleaningUp) setCleanupDialogOpen(open); }}>
+        <DialogContent className="border-border bg-card text-foreground sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">clean up old installers</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              Remove superseded patch versions while keeping the latest patch per minor release,
+              the current latest version, and anything uploaded within the retention window.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="flex items-center gap-3">
+              <Label htmlFor="retention-days" className="text-foreground whitespace-nowrap">
+                Keep uploads from last
+              </Label>
+              <Input
+                id="retention-days"
+                type="number"
+                min={0}
+                max={365}
+                value={cleanupRetentionDays}
+                onChange={(e) => setCleanupRetentionDays(Math.max(0, parseInt(e.target.value) || 0))}
+                className="w-20 border-border bg-background text-foreground"
+              />
+              <span className="text-muted-foreground text-sm">days</span>
+            </div>
+
+            {cleanupCandidates.length === 0 ? (
+              <div className="bg-green-900/20 border border-green-700/30 rounded-lg p-4">
+                <p className="text-green-400 text-sm">Nothing to clean up — all versions are either the latest patch in their series or within the retention window.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="bg-red-900/20 border border-red-700/30 rounded-lg p-4">
+                  <p className="text-red-400 text-sm font-medium mb-2">
+                    {cleanupCandidates.length} version{cleanupCandidates.length !== 1 ? 's' : ''} will
+                    be permanently deleted ({formatFileSize(totalCleanupSize)}):
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {cleanupCandidates.map((v) => (
+                      <Badge
+                        key={v.version}
+                        variant="outline"
+                        className="border-red-700/50 text-red-400 text-xs"
+                      >
+                        v{v.version}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCleanupDialogOpen(false)}
+              disabled={cleaningUp}
+              className="border-border bg-card text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
+            >
+              cancel
+            </Button>
+            <Button
+              onClick={handleCleanup}
+              disabled={cleanupCandidates.length === 0 || cleaningUp}
+              className="bg-red-600 hover:bg-red-700 text-foreground cursor-pointer"
+            >
+              {cleaningUp ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                `delete ${cleanupCandidates.length} version${cleanupCandidates.length !== 1 ? 's' : ''}`
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

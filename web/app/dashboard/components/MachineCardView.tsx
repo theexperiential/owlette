@@ -24,7 +24,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, Settings2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, Settings2, BellOff } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass, getUsageRingClass } from '@/lib/usageColorUtils';
@@ -114,6 +114,8 @@ function MachineCard({
   onLiveView,
 }: MachineCardProps) {
   const isDemo = !!useDemoContext();
+  const { userPreferences: fullPrefs } = useAuth();
+  const isMuted = fullPrefs.mutedMachines.includes(machine.machineId);
   // Per-card expand state, synced from parent's global toggle
   const [localStatsExpanded, setLocalStatsExpanded] = useState(statsExpanded);
   const [localProcessesExpanded, setLocalProcessesExpanded] = useState(processesExpanded);
@@ -132,7 +134,10 @@ function MachineCard({
     <Card className="border-border bg-card py-0 gap-0">
       <CardHeader className="py-3 px-4 gap-0">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-xl font-semibold text-white select-text">{machine.machineId}</CardTitle>
+          <CardTitle className="text-xl font-semibold text-white select-text flex items-center gap-1.5">
+            {machine.machineId}
+            {isMuted && <span title="alerts muted"><BellOff className="h-3.5 w-3.5 text-muted-foreground" /></span>}
+          </CardTitle>
           <div className="flex items-center gap-2">
             <Badge className={`select-none text-xs ${
               machine.rebooting ? 'bg-amber-600' :

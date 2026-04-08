@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 
 /**
  * POST /api/admin/keys/create
@@ -33,19 +34,19 @@ export const POST = withRateLimit(
 
       // User's subcollection entry (for listing/management)
       batch.set(
-        db.collection('users').doc(userId).collection('apiKeys').doc(keyId),
+        db.collection('users').doc(userId).collection('api_keys').doc(keyId),
         {
           name,
           keyHash,
           keyPrefix: rawKey.slice(0, 11), // "owk_" + first 7 chars for display
-          createdAt: Date.now(),
+          createdAt: FieldValue.serverTimestamp(),
           lastUsedAt: null,
         }
       );
 
       // Top-level lookup entry (for fast auth resolution — single doc read)
       batch.set(
-        db.collection('apiKeys').doc(keyHash),
+        db.collection('api_keys').doc(keyHash),
         { userId, keyId }
       );
 

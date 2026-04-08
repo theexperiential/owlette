@@ -43,8 +43,8 @@ firestore/
 │       #   schedules?: [{ days: string[], startTime: "HH:MM", endTime: "HH:MM" }],
 │       #   autolaunch (derived, backward compat), check_responsive, relaunch_attempts, ...
 ├── users/{userId}/                # email, role, createdAt, sites[], preferences {healthAlerts, processAlerts, temperatureUnit}
-│   └── apiKeys/{keyId}/          # API key metadata (name, keyHash, keyPrefix, createdAt, lastUsedAt)
-├── apiKeys/{keyHash}/            # Top-level API key lookup (userId, keyId) — O(1) resolution
+│   └── api_keys/{keyId}/          # API key metadata (name, keyHash, keyPrefix, createdAt, lastUsedAt)
+├── api_keys/{keyHash}/            # Top-level API key lookup (userId, keyId) — O(1) resolution
 ├── deployments/{deploymentId}/    # Remote installer deployments
 │   ├── installerUrl, silentFlags, targetMachines[], status, createdBy
 │   └── results: map

@@ -1,10 +1,10 @@
-# Remote Commands
+# remote commands
 
 The agent listens for commands from the web dashboard via Firestore. Commands are written to a pending queue, executed by the agent, and results are written to a completed queue.
 
 ---
 
-## Command Lifecycle
+## command lifecycle
 
 ```
 Dashboard                      Firestore                         Agent
@@ -14,17 +14,17 @@ Dashboard                      Firestore                         Agent
   │                               │                                │── execute
   │                               │                                │
   │                               │◀── write to completed ─────────│
-  │◀── onSnapshot ────────────────│   commands/completed/{id}      │
+  │◀── onSnapshot ──────────────────│   commands/completed/{id}      │
   │   UI updates                  │                                │
 ```
 
 ---
 
-## Command Types
+## command types
 
-### Process Management
+### process management
 
-| Command | Description | Data Payload |
+| command | description | data payload |
 |---------|-------------|--------------|
 | `restart_process` | Kill and restart a process | `{process_name: string}` |
 | `kill_process` | Terminate a process | `{process_name: string}` |
@@ -32,48 +32,48 @@ Dashboard                      Firestore                         Agent
 | `set_launch_mode` | Set launch mode (off/always/scheduled) | `{process_name, mode, schedules?}` |
 | `capture_screenshot` | Capture desktop screenshot | `{monitor: number}` (0=all, 1=primary, etc.) |
 
-### Configuration
+### configuration
 
-| Command | Description | Data Payload |
+| command | description | data payload |
 |---------|-------------|--------------|
 | `update_config` | Update process configuration from cloud | `{processes: [...]}` |
 
-### Software Deployment
+### software deployment
 
-| Command | Description | Data Payload |
+| command | description | data payload |
 |---------|-------------|--------------|
 | `install_software` | Download and install software | `{installer_url, installer_name, silent_flags, verify_path, deployment_id}` |
 | `cancel_installation` | Cancel in-progress installation | `{deployment_id}` |
 
-### Project Distribution
+### project distribution
 
-| Command | Description | Data Payload |
+| command | description | data payload |
 |---------|-------------|--------------|
 | `distribute_project` | Download and extract project files | `{project_url, project_name, extract_path, verify_files, distribution_id}` |
 
-### System Commands
+### system commands
 
-| Command | Description | Data Payload |
+| command | description | data payload |
 |---------|-------------|--------------|
 | `reboot_machine` | Reboot the machine | `{delay: number}` (seconds, default: 0) |
 | `shutdown_machine` | Shut down the machine | `{delay: number}` (seconds, default: 0) |
 | `update_owlette` | Self-update the agent | `{installer_url, version}` |
 | `uninstall_owlette` | Uninstall the agent | `{}` |
 
-### AI/Cortex Tools
+### ai/cortex tools
 
-| Command | Description | Data Payload |
+| command | description | data payload |
 |---------|-------------|--------------|
 | `mcp_tool_call` | Execute a Cortex tool | `{tool_name, arguments, chat_id}` |
 
 !!! info "Cortex tool reference"
-    See the [Cortex Tools Reference](../reference/cortex-tools.md) for the complete list of 24 tools with parameters, tiers, and allowed commands.
+    See the [Cortex Tools Reference](../reference/cortex-tools.md) for the complete list of 29 tools with parameters, tiers, and allowed commands.
 
 ---
 
-## Command Document Structure
+## command document structure
 
-### Pending Command
+### pending command
 
 Written to `sites/{siteId}/machines/{machineId}/commands/pending/{commandId}`:
 
@@ -86,7 +86,7 @@ Written to `sites/{siteId}/machines/{machineId}/commands/pending/{commandId}`:
 }
 ```
 
-### Completed Command
+### completed command
 
 Moved to `sites/{siteId}/machines/{machineId}/commands/completed/{commandId}`:
 
@@ -99,7 +99,7 @@ Moved to `sites/{siteId}/machines/{machineId}/commands/completed/{commandId}`:
 }
 ```
 
-### Failed Command
+### failed command
 
 ```json
 {
@@ -112,7 +112,7 @@ Moved to `sites/{siteId}/machines/{machineId}/commands/completed/{commandId}`:
 
 ---
 
-## Command Polling (Dashboard)
+## command polling (dashboard)
 
 When the dashboard sends a command with `wait: true`, it polls for completion:
 
@@ -125,7 +125,7 @@ This is used by the Admin API (`/api/admin/commands/send`) and Cortex tool execu
 
 ---
 
-## Software Installation Flow
+## software installation flow
 
 The `install_software` command triggers a multi-step process:
 
@@ -144,18 +144,18 @@ The `install_software` command triggers a multi-step process:
 5. Report result to Firestore
 ```
 
-### Supported Installer Types
+### supported installer types
 
-| Type | Silent Flag | Example |
+| type | silent flag | example |
 |------|-------------|---------|
-| **Inno Setup** | `/VERYSILENT /SUPPRESSMSGBOXES` | Owlette itself |
+| **Inno Setup** | `/VERYSILENT /SUPPRESSMSGBOXES` | owlette itself |
 | **NSIS** | `/S` | Notepad++ |
 | **MSI** | `msiexec /i installer.msi /qn` | Windows Installer packages |
 | **Custom** | Varies | Any executable with silent flags |
 
 ---
 
-## Project Distribution Flow
+## project distribution flow
 
 The `distribute_project` command:
 
@@ -177,9 +177,9 @@ The `distribute_project` command:
 
 ---
 
-## System Command Details
+## system command details
 
-### Reboot / Shutdown
+### reboot / shutdown
 
 Uses Windows `shutdown` command:
 
@@ -193,15 +193,15 @@ os.system(f"shutdown /s /t {delay}")
 
 The agent logs the event to Firestore before executing.
 
-### Self-Update
+### self-update
 
 1. Download new installer to temp directory
-2. Stop the Owlette service
+2. Stop the owlette service
 3. Execute installer with `/VERYSILENT` flags
 4. Installer upgrades in place, restarts service
 5. New agent version starts and reconnects
 
-### Uninstall
+### uninstall
 
 1. Run the Inno Setup uninstaller with `/VERYSILENT /FORCECLOSEAPPLICATIONS`
 2. Service and all components are removed

@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { requireAdmin } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { encryptApiKey, isLlmEncryptionConfigured } from '@/lib/llm-encryption.server';
 import { type LlmProvider } from '@/lib/llm';
 
@@ -60,7 +61,7 @@ export const POST = withRateLimit(
             provider,
             apiKeyEncrypted: encrypted,
             model: model || null,
-            updatedAt: new Date(),
+            updatedAt: FieldValue.serverTimestamp(),
           },
           { merge: true }
         );

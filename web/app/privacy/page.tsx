@@ -27,12 +27,12 @@ export default function PrivacyPage() {
             <section>
               <h2 className="text-xl font-semibold text-white mb-4">1. introduction</h2>
               <p>
-                The Experiential Company, LLC (&quot;TEC,&quot; &quot;we,&quot; &quot;our,&quot; or &quot;us&quot;) operates Owlette, a cloud-connected
+                The Experiential Company, LLC (&quot;TEC,&quot; &quot;we,&quot; &quot;our,&quot; or &quot;us&quot;) operates owlette, a cloud-connected
                 process management and remote deployment system. this privacy policy explains how we
                 collect, use, disclose, and safeguard your information when you use our service.
               </p>
               <p className="mt-4">
-                by using Owlette, you agree to the collection and use of information in accordance
+                by using owlette, you agree to the collection and use of information in accordance
                 with this policy.
               </p>
             </section>
@@ -50,7 +50,7 @@ export default function PrivacyPage() {
               </ul>
 
               <h3 className="text-lg font-medium text-white mt-6 mb-3">machine data</h3>
-              <p>when you install the Owlette agent on a machine, we collect:</p>
+              <p>when you install the owlette agent on a machine, we collect:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li>machine hostname and unique identifiers</li>
                 <li>operating system information</li>
@@ -72,7 +72,7 @@ export default function PrivacyPage() {
               <h2 className="text-xl font-semibold text-white mb-4">3. how we use your information</h2>
               <p>we use the collected information to:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
-                <li>provide and maintain the Owlette service</li>
+                <li>provide and maintain the owlette service</li>
                 <li>monitor machine health and process status</li>
                 <li>execute remote commands and deployments</li>
                 <li>send alerts and notifications</li>
@@ -117,7 +117,7 @@ export default function PrivacyPage() {
 
             <section>
               <h2 className="text-xl font-semibold text-white mb-4">6. third-party services</h2>
-              <p>we use the following third-party services to operate Owlette:</p>
+              <p>we use the following third-party services to operate owlette:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li><strong>Google Firebase:</strong> authentication, database, and hosting</li>
                 <li><strong>Google Cloud Platform:</strong> infrastructure and storage</li>
@@ -156,9 +156,9 @@ export default function PrivacyPage() {
             <section>
               <h2 className="text-xl font-semibold text-white mb-4">8. cookies and tracking</h2>
               <p>
-                Owlette uses cookies and similar technologies for authentication and session
+                owlette uses cookies and similar technologies for authentication and session
                 management. these are essential for the service to function and cannot be
-                disabled while using Owlette.
+                disabled while using owlette.
               </p>
               <p className="mt-4">
                 we use Firebase Authentication, which sets cookies to maintain your login session.
@@ -169,7 +169,7 @@ export default function PrivacyPage() {
             <section>
               <h2 className="text-xl font-semibold text-white mb-4">9. children&apos;s privacy</h2>
               <p>
-                Owlette is not intended for use by anyone under the age of 13. we do not knowingly
+                owlette is not intended for use by anyone under the age of 13. we do not knowingly
                 collect personal information from children under 13. if you are a parent or guardian
                 and believe your child has provided us with personal information, please contact us.
               </p>

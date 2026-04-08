@@ -11,6 +11,7 @@ export interface SiteRecipient {
   userId: string;
   email: string;
   ccEmails: string[];
+  mutedMachines: string[];
 }
 
 const isProduction =
@@ -154,9 +155,12 @@ export async function getSiteProcessAlertEmails(siteId: string): Promise<string[
 
 /**
  * Look up site recipients with userId + email for personalized emails (e.g., unsubscribe links).
- * Filters by healthAlerts preference by default.
+ * Optionally filters by a specific alert preference field.
  */
-export async function getSiteAlertRecipients(siteId: string): Promise<SiteRecipient[]> {
+export async function getSiteAlertRecipients(
+  siteId: string,
+  filterPreference?: 'healthAlerts' | 'processAlerts' | 'thresholdAlerts' | 'cortexAlerts'
+): Promise<SiteRecipient[]> {
   const db = getAdminDb();
   const recipients: SiteRecipient[] = [];
   const seenIds = new Set<string>();
@@ -175,8 +179,8 @@ export async function getSiteAlertRecipients(siteId: string): Promise<SiteRecipi
       const data = doc.data();
       const email = data?.email as string | undefined;
       if (!email) continue;
-      if (data?.preferences?.healthAlerts === false) continue;
-      recipients.push({ userId: doc.id, email, ccEmails: data?.preferences?.alertCcEmails || [] });
+      if (filterPreference && data?.preferences?.[filterPreference] === false) continue;
+      recipients.push({ userId: doc.id, email, ccEmails: data?.preferences?.alertCcEmails || [], mutedMachines: data?.preferences?.mutedMachines || [] });
     }
 
     if (ownerId && !seenIds.has(ownerId)) {
@@ -184,8 +188,8 @@ export async function getSiteAlertRecipients(siteId: string): Promise<SiteRecipi
         const ownerDoc = await db.collection('users').doc(ownerId).get();
         const data = ownerDoc.data();
         const email = data?.email as string | undefined;
-        if (email && data?.preferences?.healthAlerts !== false) {
-          recipients.push({ userId: ownerId, email, ccEmails: data?.preferences?.alertCcEmails || [] });
+        if (email && !(filterPreference && data?.preferences?.[filterPreference] === false)) {
+          recipients.push({ userId: ownerId, email, ccEmails: data?.preferences?.alertCcEmails || [], mutedMachines: data?.preferences?.mutedMachines || [] });
         }
       } catch {
         // Skip
@@ -197,7 +201,7 @@ export async function getSiteAlertRecipients(siteId: string): Promise<SiteRecipi
 
   // Fallback to ADMIN_EMAIL env var if no recipients found
   if (recipients.length === 0 && ADMIN_EMAIL) {
-    recipients.push({ userId: 'fallback', email: ADMIN_EMAIL, ccEmails: [] });
+    recipients.push({ userId: 'fallback', email: ADMIN_EMAIL, ccEmails: [], mutedMachines: [] });
   }
 
   return recipients;
@@ -263,4 +267,14 @@ export async function getSiteAlertEmailsWithCc(
     to: Array.from(toEmails),
     cc: Array.from(ccEmails).filter(cc => !toEmails.has(cc)),
   };
+}
+
+export async function getMachineTimezone(siteId: string, machineId: string): Promise<string | undefined> {
+  try {
+    const db = getAdminDb();
+    const machineDoc = await db.collection('sites').doc(siteId).collection('machines').doc(machineId).get();
+    return machineDoc.data()?.machine_timezone as string | undefined;
+  } catch {
+    return undefined;
+  }
 }

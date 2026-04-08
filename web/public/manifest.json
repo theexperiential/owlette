@@ -1,6 +1,6 @@
 {
-  "name": "Owlette",
-  "short_name": "Owlette",
+  "name": "owlette",
+  "short_name": "owlette",
   "description": "AI-powered fleet management for Windows applications",
   "start_url": "/dashboard",
   "display": "standalone",

@@ -441,7 +441,7 @@ service cloud.firestore {
     }
 
     match /device_codes/{phrase} {
-      // Device code pairing phrases for QR/device-code auth flow
+      // Device code pairing phrases for device-code auth flow
       // SECURITY: Only accessible via server-side Admin SDK
       // Contains temporary tokens during pairing handshake
       allow read, write: if false;

@@ -1,10 +1,10 @@
-# Process Management
+# process management
 
 Add, configure, and control processes from the web dashboard. Changes sync to the agent within ~1-2 seconds.
 
 ---
 
-## Adding a Process
+## adding a process
 
 1. Click on a machine in the dashboard
 2. Click **"Add Process"**
@@ -25,7 +25,7 @@ The agent receives the new configuration and begins monitoring the process.
 
 ---
 
-## Editing a Process
+## editing a process
 
 1. Click on a process in a machine card
 2. The **Process Dialog** opens with current settings
@@ -36,11 +36,11 @@ Changes propagate through Firestore to the agent immediately.
 
 ---
 
-## Process Actions
+## process actions
 
 From the Process Dialog or machine card, you can:
 
-| Action | Description | Requires |
+| action | description | requires |
 |--------|-------------|----------|
 | **Start** | Launch the process | Process must be stopped |
 | **Stop / Kill** | Terminate the process | Process must be running |
@@ -52,9 +52,9 @@ All actions send commands to the agent via Firestore and complete within seconds
 
 ---
 
-## Process Settings Reference
+## process settings reference
 
-| Setting | Type | Default | Description |
+| setting | type | default | description |
 |---------|------|---------|-------------|
 | **Name** | string | required | Display name for identification |
 | **Executable Path** | string | required | Full path to `.exe` (e.g., `C:\Program Files\App\app.exe`) |
@@ -69,7 +69,7 @@ All actions send commands to the agent via Firestore and complete within seconds
 
 ---
 
-## Tips
+## tips
 
 !!! tip "Launch ordering"
     Use **Launch Delay** to control startup order. For example, set a database to 0s delay and the application that depends on it to 15s.

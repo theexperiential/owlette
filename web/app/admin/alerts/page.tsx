@@ -26,7 +26,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Bell, Plus, Trash2, Loader2, Zap } from 'lucide-react';
+import { Bell, Plus, Trash2, Loader2, Zap, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 
 /* ------------------------------------------------------------------ */
@@ -334,13 +334,13 @@ export default function AlertsPage() {
   }
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="p-8">
       <div className="max-w-screen-2xl mx-auto">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h1 className="text-3xl font-bold text-foreground mb-2">threshold alerts</h1>
+              <h1 className="text-3xl font-bold text-foreground mb-2">alerts</h1>
               <p className="text-muted-foreground">
                 configure rules to get notified when machine metrics exceed thresholds
               </p>
@@ -363,7 +363,7 @@ export default function AlertsPage() {
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="cursor-pointer" disabled={saving}>
+                  <Button variant="outline" className="hover:bg-accent! hover:text-foreground! cursor-pointer" disabled={saving}>
                     <Zap className="h-4 w-4 mr-2" />
                     presets
                   </Button>
@@ -405,7 +405,7 @@ export default function AlertsPage() {
             <div className="flex gap-3">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="cursor-pointer">
+                  <Button variant="outline" className="hover:bg-accent! hover:text-foreground! cursor-pointer">
                     <Zap className="h-4 w-4 mr-2" />
                     add from presets
                   </Button>
@@ -468,16 +468,26 @@ export default function AlertsPage() {
                   </p>
                 </div>
                 <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => openEditDialog(rule)}
+                  disabled={saving}
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setRuleToDelete(rule);
                     setDeleteDialogOpen(true);
                   }}
                   disabled={saving}
-                  className="bg-card border-border text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer"
+                  className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
                 >
-                  <Trash2 className="h-3 w-3" />
+                  <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </div>
             ))}
@@ -620,7 +630,7 @@ export default function AlertsPage() {
             <Button
               variant="outline"
               onClick={() => setDialogOpen(false)}
-              className="cursor-pointer"
+              className="hover:bg-accent! hover:text-foreground! cursor-pointer"
             >
               cancel
             </Button>
@@ -650,7 +660,7 @@ export default function AlertsPage() {
             <Button
               variant="outline"
               onClick={() => setDeleteDialogOpen(false)}
-              className="cursor-pointer"
+              className="hover:bg-accent! hover:text-foreground! cursor-pointer"
             >
               cancel
             </Button>

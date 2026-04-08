@@ -37,7 +37,7 @@ import registry_utils
 
 # Import new OAuth-based modules (replace firebase_admin)
 from auth_manager import AuthManager, AuthenticationError, TokenRefreshError
-from firestore_rest_client import FirestoreRestClient, SERVER_TIMESTAMP, DELETE_FIELD
+from firestore_rest_client import FirestoreRestClient, SERVER_TIMESTAMP, DELETE_FIELD, timestamp_to_ms
 
 # Import centralized connection manager
 from connection_manager import ConnectionManager, ConnectionState, ConnectionEvent
@@ -755,6 +755,7 @@ class FirebaseClient:
                 'online': True,
                 'lastHeartbeat': SERVER_TIMESTAMP,
                 'agent_version': shared_utils.APP_VERSION,
+                'machine_timezone': shared_utils.get_machine_timezone(),
                 'machineId': self.machine_id,
                 'siteId': self.site_id,
                 'metrics.cpu': metrics.get('cpu', {}),
@@ -1045,16 +1046,21 @@ class FirebaseClient:
         # Clean stale pending commands
         pending_data = self.db.get_document(f"{base}/pending", _suppress_logging=True)
         if pending_data:
-            stale_pending = [
-                cmd_id for cmd_id, cmd in pending_data.items()
-                if isinstance(cmd, dict) and isinstance(cmd.get('timestamp'), (int, float))
-                and (now_ms - cmd['timestamp']) > pending_ttl_ms
-            ]
+            stale_pending = []
+            for cmd_id, cmd in pending_data.items():
+                if not isinstance(cmd, dict):
+                    continue
+                ts_ms = timestamp_to_ms(cmd.get('timestamp'))
+                if ts_ms > 0 and (now_ms - ts_ms) > pending_ttl_ms:
+                    stale_pending.append(cmd_id)
             if stale_pending:
                 pending_ref = self.db.collection('sites').document(self.site_id)\
                     .collection('machines').document(self.machine_id)\
                     .collection('commands').document('pending')
-                pending_ref.update({cmd_id: DELETE_FIELD for cmd_id in stale_pending})
+                # Chunk deletes to avoid REST API URL length limits
+                for i in range(0, len(stale_pending), 50):
+                    chunk = stale_pending[i:i + 50]
+                    pending_ref.update({cmd_id: DELETE_FIELD for cmd_id in chunk})
                 # Also remove from seen set so they don't linger
                 self._seen_commands.difference_update(stale_pending)
                 self.logger.info(f"Cleaned {len(stale_pending)} stale pending command(s)")
@@ -1062,16 +1068,22 @@ class FirebaseClient:
         # Clean old completed commands
         completed_data = self.db.get_document(f"{base}/completed", _suppress_logging=True)
         if completed_data:
-            old_completed = [
-                cmd_id for cmd_id, cmd in completed_data.items()
-                if isinstance(cmd, dict) and isinstance(cmd.get('timestamp'), (int, float))
-                and (now_ms - cmd['timestamp']) > completed_ttl_ms
-            ]
+            old_completed = []
+            for cmd_id, cmd in completed_data.items():
+                if not isinstance(cmd, dict):
+                    continue
+                # Completed commands have completedAt (set by agent); fall back to timestamp
+                ts_ms = timestamp_to_ms(cmd.get('completedAt') or cmd.get('timestamp'))
+                if ts_ms > 0 and (now_ms - ts_ms) > completed_ttl_ms:
+                    old_completed.append(cmd_id)
             if old_completed:
                 completed_ref = self.db.collection('sites').document(self.site_id)\
                     .collection('machines').document(self.machine_id)\
                     .collection('commands').document('completed')
-                completed_ref.update({cmd_id: DELETE_FIELD for cmd_id in old_completed})
+                # Chunk deletes to avoid REST API URL length limits
+                for i in range(0, len(old_completed), 50):
+                    chunk = old_completed[i:i + 50]
+                    completed_ref.update({cmd_id: DELETE_FIELD for cmd_id in chunk})
                 # Also remove from seen set
                 self._seen_commands.difference_update(old_completed)
                 self.logger.info(f"Cleaned {len(old_completed)} old completed command(s)")

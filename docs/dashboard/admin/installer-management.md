@@ -1,4 +1,4 @@
-# Installer Management
+# installer management
 
 Upload, manage, and distribute agent installer versions.
 
@@ -6,7 +6,7 @@ Upload, manage, and distribute agent installer versions.
 
 ---
 
-## Uploading a New Version
+## uploading a new version
 
 1. Click **"Upload New Version"**
 2. **Upload file**: Drag & drop or browse for the `.exe` installer
@@ -17,7 +17,7 @@ Upload, manage, and distribute agent installer versions.
 7. Watch the upload progress bar
 8. Version appears in the table immediately
 
-### Requirements
+### requirements
 
 - File must be `.exe` format
 - Version format: `X.Y.Z` (semantic versioning)
@@ -26,11 +26,11 @@ Upload, manage, and distribute agent installer versions.
 
 ---
 
-## Version Table
+## version table
 
 Each version shows:
 
-| Column | Description |
+| column | description |
 |--------|-------------|
 | **Version** | Version number (e.g., 2.1.8) |
 | **File Size** | Installer file size |
@@ -41,9 +41,9 @@ Each version shows:
 
 ---
 
-## Actions
+## actions
 
-### Set as Latest
+### set as latest
 
 1. Find the version in the table
 2. Click **"Set as Latest"**
@@ -51,11 +51,11 @@ Each version shows:
 
 Use this for **rollback** — if the latest version has issues, set an older version as latest.
 
-### Download
+### download
 
 Click the download icon next to any version to download it directly from Firebase Storage.
 
-### Delete
+### delete
 
 1. Click the trash icon next to a version
 2. Confirm deletion
@@ -65,7 +65,7 @@ Click the download icon next to any version to download it directly from Firebas
 
 ---
 
-## Public Download Button
+## public download button
 
 All users (including non-admins) see a **download button** in the dashboard header:
 
@@ -76,7 +76,7 @@ All users (including non-admins) see a **download button** in the dashboard head
 
 ---
 
-## Storage
+## storage
 
 Installers are stored in Firebase Storage under:
 

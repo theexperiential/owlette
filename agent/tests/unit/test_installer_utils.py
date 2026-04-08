@@ -386,7 +386,7 @@ class TestCancelInstallation:
         assert success is True
         assert 'setup.exe' not in active
         mock_cleanup.assert_called_once()
-        mock_parent.terminate.assert_called_once()
+        mock_parent.kill.assert_called_once()
 
     def test_cancel_not_found(self):
         active = {}

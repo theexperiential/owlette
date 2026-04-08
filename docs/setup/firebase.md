@@ -1,20 +1,20 @@
-# Firebase Setup
+# firebase setup
 
-Firebase provides the real-time database (Firestore) and authentication backend for Owlette.
+Firebase provides the real-time database (Firestore) and authentication backend for owlette.
 
 ---
 
-## Step 1: Create Firebase Project
+## step 1: create firebase project
 
 1. Go to [Firebase Console](https://console.firebase.google.com/)
 2. Click **"Add project"**
-3. Name it (e.g., "Owlette" or "Owlette-Dev")
+3. Name it (e.g., "owlette" or "owlette-Dev")
 4. Disable Google Analytics (not needed)
 5. Click **"Create Project"**
 
 ---
 
-## Step 2: Enable Firestore Database
+## step 2: enable firestore database
 
 1. In Firebase Console, click **"Firestore Database"** in the left sidebar
 2. Click **"Create database"**
@@ -24,7 +24,7 @@ Firebase provides the real-time database (Firestore) and authentication backend 
 
 ---
 
-## Step 3: Enable Authentication
+## step 3: enable authentication
 
 1. Click **"Authentication"** in the left sidebar
 2. Click **"Get started"**
@@ -34,12 +34,12 @@ Firebase provides the real-time database (Firestore) and authentication backend 
 
 ---
 
-## Step 4: Get Web App Configuration
+## step 4: get web app configuration
 
 1. In Firebase Console → Project Settings (gear icon)
 2. Scroll to **"Your apps"**
-3. Click **"Add app"** → Select **Web** (</> icon)
-4. Register the app (name: "Owlette Dashboard")
+3. Click **"Add app"** → Select **Web** (&lt;/&gt; icon)
+4. Register the app (name: "owlette Dashboard")
 5. Copy the 6 configuration values:
 
 ```javascript
@@ -57,7 +57,7 @@ These become your `NEXT_PUBLIC_FIREBASE_*` environment variables.
 
 ---
 
-## Step 5: Generate Service Account Key
+## step 5: generate service account key
 
 The web dashboard's server-side API routes need a service account key for generating agent OAuth tokens.
 
@@ -72,7 +72,7 @@ The entire JSON content is set as a single environment variable. Railway and oth
 
 ---
 
-## Step 6: Enable Firebase Storage (Optional)
+## step 6: enable firebase storage (optional)
 
 Required for installer version management:
 
@@ -83,7 +83,7 @@ Required for installer version management:
 
 ---
 
-## Step 7: Deploy Security Rules & Indexes
+## step 7: deploy security rules & indexes
 
 See [Firestore Rules](firestore-rules.md) for detailed deployment instructions.
 
@@ -102,11 +102,11 @@ firebase deploy --only firestore:indexes
 
 ---
 
-## Multi-User Access Control
+## multi-user access control
 
-Owlette enforces site-based access at the Firestore security rules level:
+owlette enforces site-based access at the Firestore security rules level:
 
-| Role | Access |
+| role | access |
 |------|--------|
 | **Site creators** | Automatically assigned as owner with full access |
 | **Regular users** | Can only access sites in their `sites` array |
@@ -117,14 +117,14 @@ Security rules check permissions on every read/write — no client-side bypass i
 
 ---
 
-## Firestore Data Structure
+## firestore data structure
 
 ```
 sites/{siteId}/
   ├── name, createdAt, owner
   └── machines/{machineId}/
-      ├── presence/    (heartbeat every 30s)
-      ├── status/      (metrics every 60s)
+      ├── presence/    (heartbeat: 5s / 30s / 120s adaptive)
+      ├── status/      (metrics: same adaptive interval)
       └── commands/    (pending/ + completed/)
 
 config/{siteId}/machines/{machineId}/
@@ -144,20 +144,20 @@ installer_metadata/
 
 ---
 
-## Troubleshooting
+## troubleshooting
 
-### Can't find "Rules" tab in Firestore
+### can't find "rules" tab in firestore
 
 Make sure you've created the Firestore database first (Step 2). Look for tabs at the top: Data | Rules | Indexes | Usage.
 
-### "Permission denied" errors
+### "permission denied" errors
 
 1. Verify security rules are published (Step 7)
 2. Check that the user is authenticated
 3. Check the user has access to the site
 4. Review the Rules Playground in Firebase Console for specific test scenarios
 
-### Service account key not downloading
+### service account key not downloading
 
 - Check your browser's download folder
 - Try a different browser (Chrome recommended)

@@ -110,10 +110,10 @@ export function wrapEmailLayout(content: string, options: EmailLayoutOptions = {
     : '';
 
   const unsubscribeHtml = unsubscribeUrl
-    ? `<a href="${unsubscribeUrl}" style="color:${EMAIL_COLORS.muted};text-decoration:underline;font-size:12px;">unsubscribe from alerts</a><span style="color:${EMAIL_COLORS.border};margin:0 8px;">|</span>`
+    ? `<p style="margin:0 0 8px;"><a href="${unsubscribeUrl}" style="color:${EMAIL_COLORS.muted};text-decoration:underline;font-size:12px;">unsubscribe from alerts</a></p>`
     : '';
 
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"><title>owlette</title></head><body style="margin:0;padding:0;background-color:${EMAIL_COLORS.bodyBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">${preheaderHtml}<table width="100%" bgcolor="${EMAIL_COLORS.bodyBg}" cellpadding="0" cellspacing="0" role="presentation" style="background-color:${EMAIL_COLORS.bodyBg};"><tr><td align="center" style="padding:32px 16px;"><table width="600" style="max-width:600px;background-color:${EMAIL_COLORS.cardBg};border-radius:8px;border:1px solid ${EMAIL_COLORS.border};" cellpadding="0" cellspacing="0" role="presentation"><tr><td style="padding:28px 32px 20px;text-align:center;border-bottom:1px solid ${EMAIL_COLORS.border};"><a href="https://owlette.app" style="text-decoration:none;"><img src="${logoUrl}" width="48" height="48" alt="owlette" style="display:block;margin:0 auto 12px;border-radius:50%;"></a><table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;"><tr><td><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};font-size:20px;font-weight:700;text-transform:lowercase;letter-spacing:0.5px;text-decoration:none;line-height:1;">owlette</a></td>${envBadgeHtml}</tr></table></td></tr><tr><td style="padding:28px 32px;color:${EMAIL_COLORS.text};font-size:14px;line-height:1.7;">${content}</td></tr><tr><td style="padding:20px 32px;border-top:1px solid ${EMAIL_COLORS.border};text-align:center;"><p style="margin:0 0 10px;font-size:12px;"><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};text-decoration:none;font-weight:600;">owlette.app</a><span style="color:${EMAIL_COLORS.muted};"> is made by </span><a href="https://tec.design" style="color:${EMAIL_COLORS.cyan};text-decoration:none;">tec.design</a></p><p style="color:${EMAIL_COLORS.muted};font-size:11px;margin:0 0 8px;font-style:italic;">attention is all you need</p><p style="color:${EMAIL_COLORS.border};font-size:11px;margin:0;">${unsubscribeHtml}this is an automated message from owlette</p></td></tr></table></td></tr></table></body></html>`;
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"><title>owlette</title></head><body style="margin:0;padding:0;background-color:${EMAIL_COLORS.bodyBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">${preheaderHtml}<table width="100%" bgcolor="${EMAIL_COLORS.bodyBg}" cellpadding="0" cellspacing="0" role="presentation" style="background-color:${EMAIL_COLORS.bodyBg};"><tr><td align="center" style="padding:32px 16px;"><table width="600" style="max-width:600px;background-color:${EMAIL_COLORS.cardBg};border-radius:8px;border:1px solid ${EMAIL_COLORS.border};" cellpadding="0" cellspacing="0" role="presentation"><tr><td style="padding:28px 32px 20px;text-align:center;border-bottom:1px solid ${EMAIL_COLORS.border};"><a href="https://owlette.app" style="text-decoration:none;"><img src="${logoUrl}" width="48" height="48" alt="owlette" style="display:block;margin:0 auto 12px;border-radius:50%;"></a><table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;"><tr><td><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};font-size:20px;font-weight:700;text-transform:lowercase;letter-spacing:0.5px;text-decoration:none;line-height:1;">owlette</a></td>${envBadgeHtml}</tr></table></td></tr><tr><td style="padding:28px 32px;color:${EMAIL_COLORS.text};font-size:14px;line-height:1.7;">${content}</td></tr><tr><td style="padding:20px 32px;border-top:1px solid ${EMAIL_COLORS.border};text-align:center;"><p style="margin:0 0 10px;font-size:12px;"><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};text-decoration:none;font-weight:600;">owlette.app</a><span style="color:${EMAIL_COLORS.muted};"> is made by </span><a href="https://tec.design" style="color:${EMAIL_COLORS.cyan};text-decoration:none;">tec.design</a></p><p style="color:${EMAIL_COLORS.muted};font-size:11px;margin:0 0 8px;font-style:italic;">attention is all you need</p>${unsubscribeHtml}<p style="color:${EMAIL_COLORS.border};font-size:11px;margin:0;">this is an automated message from owlette</p></td></tr></table></td></tr></table></body></html>`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -121,8 +121,8 @@ export function wrapEmailLayout(content: string, options: EmailLayoutOptions = {
 /* ------------------------------------------------------------------ */
 
 /** Format a date for email display in a locale-independent way. */
-export function emailTimestamp(date: Date = new Date()): string {
-  return date.toLocaleString('en-US', {
+export function emailTimestamp(date: Date = new Date(), timezone?: string): string {
+  const options: Intl.DateTimeFormatOptions = {
     month: 'numeric',
     day: 'numeric',
     year: 'numeric',
@@ -130,5 +130,20 @@ export function emailTimestamp(date: Date = new Date()): string {
     minute: '2-digit',
     second: '2-digit',
     hour12: true,
-  });
+    ...(timezone ? { timeZone: timezone } : {}),
+  };
+
+  const formatted = date.toLocaleString('en-US', options);
+
+  let tzLabel = 'UTC';
+  if (timezone) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'short',
+    }).formatToParts(date);
+    const tzPart = parts.find((p) => p.type === 'timeZoneName');
+    if (tzPart) tzLabel = tzPart.value;
+  }
+
+  return `${formatted} ${tzLabel}`;
 }

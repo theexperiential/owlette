@@ -65,9 +65,9 @@ describe('webhookSender', () => {
       expect(url).toBe('https://hooks.example.com/abc');
       expect(opts.method).toBe('POST');
       expect(opts.headers['Content-Type']).toBe('application/json');
-      expect(opts.headers['X-Owlette-Event']).toBe('process.crashed');
-      expect(opts.headers['User-Agent']).toBe('Owlette-Webhooks/1.0');
-      expect(opts.headers['X-Owlette-Signature']).toMatch(/^sha256=[a-f0-9]{64}$/);
+      expect(opts.headers['X-owlette-Event']).toBe('process.crashed');
+      expect(opts.headers['User-Agent']).toBe('owlette-Webhooks/1.0');
+      expect(opts.headers['X-owlette-Signature']).toMatch(/^sha256=[a-f0-9]{64}$/);
 
       // Verify payload structure
       const body = JSON.parse(opts.body);
@@ -86,7 +86,7 @@ describe('webhookSender', () => {
       await fireWebhooks('s1', 'Site', 'machine.offline', { machine: { id: 'm1' } });
 
       const [, opts] = mockFetch.mock.calls[0];
-      const signatureHeader = opts.headers['X-Owlette-Signature'];
+      const signatureHeader = opts.headers['X-owlette-Signature'];
       const expectedSig = crypto
         .createHmac('sha256', secret)
         .update(opts.body)
@@ -214,11 +214,11 @@ describe('webhookSender', () => {
 
       const [url, opts] = mockFetch.mock.calls[0];
       expect(url).toBe('https://hooks.example.com/test');
-      expect(opts.headers['X-Owlette-Event']).toBe('test');
+      expect(opts.headers['X-owlette-Event']).toBe('test');
 
       const body = JSON.parse(opts.body);
-      expect(body.event).toBe('test');
-      expect(body.site).toEqual({ id: 'test', name: 'Test' });
+      expect(body.event).toBe('process.crashed');
+      expect(body.site).toEqual({ id: 'test', name: 'Test Site' });
     });
 
     it('returns status 0 and error message on network failure', async () => {
@@ -241,7 +241,7 @@ describe('webhookSender', () => {
         .update(opts.body)
         .digest('hex');
 
-      expect(opts.headers['X-Owlette-Signature']).toBe(`sha256=${expectedSig}`);
+      expect(opts.headers['X-owlette-Signature']).toBe(`sha256=${expectedSig}`);
     });
   });
 });

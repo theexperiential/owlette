@@ -1,10 +1,10 @@
-# Firestore Data Model
+# firestore data model
 
 Complete schema for all Firestore collections and documents.
 
 ---
 
-## Collection Hierarchy
+## collection hierarchy
 
 ```
 firestore/
@@ -12,14 +12,20 @@ firestore/
 │   ├── machines/{machineId}/
 │   │   ├── presence              (single document)
 │   │   ├── status                (single document)
-│   │   └── commands/
-│   │       ├── pending/{cmdId}
-│   │       └── completed/{cmdId}
+│   │   ├── commands/
+│   │   │   ├── pending/{cmdId}
+│   │   │   └── completed/{cmdId}
+│   │   ├── screenshots/{screenshotId}
+│   │   ├── installed_software/{softwareId}
+│   │   ├── metrics_history/{bucketId}   (YYYY-MM-DD daily buckets)
+│   │   ├── logs/{logId}                 (machine-level application logs)
+│   │   └── cortex/
+│   │       └── active-chat              (single document, local Cortex streaming)
 │   ├── deployments/{deployId}
 │   ├── project_distributions/{distId}
 │   ├── installer_templates/{tplId}
 │   ├── project_templates/{tplId}
-│   ├── activity_logs/{logId}
+│   ├── logs/{logId}
 │   ├── webhooks/{webhookId}       (webhook notification configs)
 │   ├── settings/
 │   │   ├── llm                   (single document)
@@ -29,19 +35,27 @@ firestore/
 │       └── lock                  (single document, concurrency control)
 │
 ├── config/{siteId}/
-│   └── machines/{machineId}      (single document)
+│   ├── machines/{machineId}      (single document)
+│   └── schedule_presets/{presetId}
 │
 ├── users/{userId}
-│   ├── passkeys/{credentialId}    (WebAuthn credentials)
+│   ├── passkeys/{credentialId}   (WebAuthn credentials)
+│   ├── api_keys/{keyId}
 │   └── settings/
 │       ├── llm
 │       └── preferences
 │
-├── chats/{chatId}                  (Cortex conversations)
+├── chats/{chatId}                (cortex conversations)
+│   └── messages/{messageId}
+├── system_presets/{presetId}     (global deployment presets)
+├── api_keys/{keyHash}             (fast-lookup index for user API keys)
 ├── agent_tokens/{registrationCode}
 ├── agent_refresh_tokens/{tokenHash}
+├── device_codes/{phrase}         (device-code pairing)
 ├── mfa_pending/{userId}
 ├── webauthn_challenges/{challengeId}
+├── installer_uploads/{uploadId}  (temporary, during installer upload)
+├── bug_reports/{reportId}
 └── installer_metadata/
     ├── latest                    (single document)
     └── data/versions/{version}
@@ -53,7 +67,7 @@ firestore/
 
 Top-level site document.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `name` | string | Display name (e.g., "NYC Office") |
 | `owner` | string | UID of the user who created the site |
@@ -63,9 +77,9 @@ Top-level site document.
 
 ## sites/{siteId}/machines/{machineId}/presence
 
-Agent heartbeat — updated every 30 seconds.
+Agent heartbeat — updated at an adaptive interval (5s / 30s / 120s depending on activity).
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `online` | boolean | Whether the machine is connected |
 | `lastHeartbeat` | timestamp | Last heartbeat time (server timestamp) |
@@ -76,9 +90,9 @@ Agent heartbeat — updated every 30 seconds.
 
 ## sites/{siteId}/machines/{machineId}/status
 
-System metrics — updated every 60 seconds.
+System metrics — updated alongside each heartbeat (adaptive interval).
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `cpu` | number | CPU usage percentage (0-100) |
 | `memory` | number | RAM usage percentage (0-100) |
@@ -86,8 +100,6 @@ System metrics — updated every 60 seconds.
 | `gpu` | number | GPU usage percentage (0-100) |
 | `cpu_model` | string | CPU model name |
 | `processes` | map | Per-process status map (see below) |
-| `online` | boolean | Redundant online flag (for atomic updates) |
-| `lastHeartbeat` | timestamp | Redundant heartbeat (for atomic updates) |
 
 ### processes map
 
@@ -107,7 +119,7 @@ System metrics — updated every 60 seconds.
 
 Pending command from dashboard.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | string | Command type (see [Agent Commands](agent-commands.md)) |
 | `timestamp` | number | Unix timestamp (milliseconds) |
@@ -120,7 +132,7 @@ Pending command from dashboard.
 
 Completed command result.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `type` | string | Original command type |
 | `result` | string | Result message or error |
@@ -129,16 +141,82 @@ Completed command result.
 
 ---
 
+## sites/{siteId}/machines/{machineId}/screenshots/{screenshotId}
+
+Screenshot captures from remote machines.
+
+| field | type | description |
+|-------|------|-------------|
+| `url` | string | Public Firebase Storage URL to the screenshot image |
+| `timestamp` | number | Capture time (Unix milliseconds) |
+| `sizeKB` | number | File size in kilobytes |
+
+---
+
+## sites/{siteId}/machines/{machineId}/installed_software/{softwareId}
+
+Windows software inventory synced from the agent via registry scan.
+
+| field | type | description |
+|-------|------|-------------|
+| `name` | string | Display name from Windows registry |
+| `version` | string | Version string (may be empty) |
+| `publisher` | string | Publisher/manufacturer name |
+| `install_location` | string | Installation directory path |
+| `uninstall_command` | string | Uninstall command from registry |
+| `installer_type` | string | Detected type: `inno`, `nsis`, `msi`, `custom` |
+| `registry_key` | string | Registry subkey name for reference |
+| `detected_at` | timestamp | Server timestamp of detection |
+
+---
+
+## sites/{siteId}/machines/{machineId}/metrics_history/{bucketId}
+
+Time-series metrics for sparkline charts. One document per day, keyed by `YYYY-MM-DD`.
+
+| field | type | description |
+|-------|------|-------------|
+| `samples` | array | Time-series metric samples (see below) |
+| `meta.lastSample` | timestamp | Last sample timestamp |
+| `meta.sampleCount` | number | Total samples in bucket |
+| `meta.resolution` | string | Aggregation resolution |
+
+### sample object
+
+```json
+{
+  "t": 1712000000000,
+  "c": 42.1,
+  "m": 61.3,
+  "d": 55.0,
+  "g": 12.4,
+  "ct": 68.0,
+  "gt": 54.0
+}
+```
+
+| key | description |
+|-----|-------------|
+| `t` | Timestamp (Unix ms) |
+| `c` | CPU usage (%) |
+| `m` | Memory usage (%) |
+| `d` | Disk usage (%) |
+| `g` | GPU usage (%) |
+| `ct` | CPU temperature (°C) |
+| `gt` | GPU temperature (°C) |
+
+---
+
 ## config/{siteId}/machines/{machineId}
 
 Process configuration synced between agent and dashboard.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `version` | string | Config schema version |
 | `processes` | array | Array of process objects |
 
-### Process object
+### process object
 
 ```json
 {
@@ -157,11 +235,26 @@ Process configuration synced between agent and dashboard.
 
 ---
 
+## config/{siteId}/schedule_presets/{presetId}
+
+Reusable process schedule presets scoped to a site.
+
+| field | type | description |
+|-------|------|-------------|
+| `name` | string | Preset display name |
+| `schedule.days` | array[string] | Days of week: `["mon", "tue", ...]` |
+| `schedule.time` | string | Time in `HH:MM` format |
+| `enabled` | boolean | Whether the preset is active |
+| `createdAt` | timestamp | Creation time |
+| `updatedAt` | timestamp | Last update time |
+
+---
+
 ## users/{userId}
 
 User account document.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `email` | string | User's email address |
 | `displayName` | string | Full name (optional) |
@@ -177,7 +270,7 @@ User account document.
 
 WebAuthn credential for passkey authentication.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `credentialPublicKey` | string | Base64URL-encoded public key |
 | `counter` | number | Signature counter (for clone detection) |
@@ -188,9 +281,21 @@ WebAuthn credential for passkey authentication.
 | `createdAt` | timestamp | Registration date |
 | `lastUsedAt` | timestamp | Last authentication date |
 
+### users/{userId}/api_keys/{keyId}
+
+User-scoped API keys for external integrations.
+
+| field | type | description |
+|-------|------|-------------|
+| `name` | string | Human-readable label |
+| `keyHash` | string | SHA-256 hash of the actual key value |
+| `keyPrefix` | string | First 11 chars of key for display (e.g., `owk_abc1234`) |
+| `createdAt` | number | Creation timestamp (Unix ms) |
+| `lastUsedAt` | number\|null | Last usage timestamp (null if never used) |
+
 ### users/{userId}/settings/preferences
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `temperatureUnit` | string | `"celsius"` or `"fahrenheit"` |
 | `healthAlerts` | boolean | Receive machine offline emails |
@@ -198,7 +303,7 @@ WebAuthn credential for passkey authentication.
 
 ### users/{userId}/settings/llm
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `provider` | string | `"anthropic"` or `"openai"` |
 | `encryptedApiKey` | string | AES-encrypted API key |
@@ -207,11 +312,25 @@ WebAuthn credential for passkey authentication.
 
 ---
 
+## api_keys/{keyHash}
+
+Fast-lookup index for API key authentication. Keyed by SHA-256 hash of the raw key.
+
+| field | type | description |
+|-------|------|-------------|
+| `userId` | string | Owner's user ID |
+| `keyId` | string | Reference to `users/{userId}/api_keys/{keyId}` |
+
+!!! warning "Server-only"
+    Not accessible from any client. Only the server API can read/write.
+
+---
+
 ## agent_tokens/{registrationCode}
 
 One-time registration code for agent OAuth.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `siteId` | string | Target site |
 | `createdBy` | string | UID of admin who created it |
@@ -229,7 +348,7 @@ One-time registration code for agent OAuth.
 
 Hashed refresh tokens for agent authentication.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `siteId` | string | Agent's site |
 | `machineId` | string | Agent's machine hostname |
@@ -243,11 +362,37 @@ Hashed refresh tokens for agent authentication.
 
 ---
 
+## device_codes/{phrase}
+
+Device code pairing state for the 3-word phrase auth flow. Documents are **ephemeral** — they are created when the agent requests a pairing phrase and deleted atomically when the agent polls and consumes the tokens, or when the code expires.
+
+| field | type | description |
+|-------|------|-------------|
+| `deviceCodeHash` | string | SHA-256 hash of the opaque device code |
+| `machineId` | string\|null | Machine hostname (null for pre-authorized codes) |
+| `version` | string\|null | Agent version |
+| `status` | string | `"pending"` or `"authorized"` (document deleted on consumption or expiry) |
+| `createdAt` | timestamp | Creation time |
+| `expiresAt` | timestamp | Expiry (10 minutes) |
+| `siteId` | string\|null | Site ID (populated on authorization) |
+| `authorizedBy` | string\|null | Admin UID who authorized |
+| `authorizedAt` | timestamp\|null | Authorization timestamp |
+| `accessToken` | string\|null | Firebase access token (populated on authorization, never persisted — document deleted on poll) |
+| `refreshToken` | string\|null | Refresh token (populated on authorization, never persisted — document deleted on poll) |
+
+!!! warning "Server-only"
+    Not accessible from any client. Only the server API can read/write.
+
+!!! info "Lifecycle"
+    `pending` → `authorized` (tokens written) → **deleted** (agent polls and consumes tokens). Expired documents are also deleted on first access. No documents should persist in this collection long-term.
+
+---
+
 ## mfa_pending/{userId}
 
 Temporary MFA setup state.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `secret` | string | TOTP secret (plaintext, temporary) |
 | `email` | string | User's email |
@@ -260,7 +405,7 @@ Temporary MFA setup state.
 
 Temporary WebAuthn challenge for passkey registration or authentication.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `challenge` | string | Base64URL-encoded challenge |
 | `userId` | string\|null | User ID (null for authentication, userId for registration) |
@@ -273,11 +418,31 @@ Temporary WebAuthn challenge for passkey registration or authentication.
 
 ---
 
+## installer_uploads/{uploadId}
+
+Temporary document tracking an in-progress installer upload. Cleaned up after finalization.
+
+| field | type | description |
+|-------|------|-------------|
+| `version` | string | Semver version string (e.g., `"2.5.5"`) |
+| `fileName` | string | Installer filename (must end in `.exe`) |
+| `storagePath` | string | Firebase Storage destination path |
+| `userId` | string | Admin UID who initiated the upload |
+| `releaseNotes` | string\|null | Optional release notes |
+| `setAsLatest` | boolean | Whether to mark as latest on finalization |
+| `status` | string | `"pending"`, `"completed"`, or `"expired"` |
+| `createdAt` | number | Creation timestamp (Unix ms) |
+| `expiresAt` | number | Signed URL expiry timestamp |
+| `completedAt` | number | Finalization timestamp (added on completion) |
+| `file_size` | number | File size in bytes (added on finalization) |
+
+---
+
 ## installer_metadata/latest
 
 Current latest installer version.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `version` | string | Version number (e.g., "2.1.8") |
 | `download_url` | string | Firebase Storage download URL |
@@ -293,7 +458,7 @@ Current latest installer version.
 
 Software deployment record.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `name` | string | Deployment name |
 | `installer_name` | string | Filename |
@@ -311,7 +476,7 @@ Software deployment record.
 
 Project file distribution record.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `name` | string | Distribution name |
 | `project_name` | string | ZIP filename (from URL) |
@@ -324,11 +489,11 @@ Project file distribution record.
 
 ---
 
-## sites/{siteId}/activity_logs/{logId}
+## sites/{siteId}/logs/{logId}
 
 Event log entries.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `timestamp` | timestamp | Event time |
 | `action` | string | Event type (e.g., `process_crashed`) |
@@ -343,7 +508,7 @@ Event log entries.
 
 Webhook notification configurations.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `url` | string | Webhook delivery URL (must be HTTPS) |
 | `name` | string | Display name |
@@ -362,7 +527,7 @@ Webhook notification configurations.
 
 Autonomous Cortex configuration. Created per-site, disabled by default.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `autonomousEnabled` | boolean | Whether autonomous mode is active |
 | `directive` | string | Custom directive text (empty = use default) |
@@ -379,7 +544,7 @@ Autonomous Cortex configuration. Created per-site, disabled by default.
 
 Autonomous investigation records — one per triggered event.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `machineId` | string | Machine that triggered the event |
 | `machineName` | string | Machine display name |
@@ -400,10 +565,31 @@ Autonomous investigation records — one per triggered event.
 
 Concurrency control for autonomous sessions.
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `activeSessions` | number | Currently running autonomous investigations |
 | `lastUpdated` | timestamp | Last lock update |
+
+---
+
+## system_presets/{presetId}
+
+Global software deployment presets (e.g., Owlette Agent self-update, TouchDesigner). Admin-managed, read-only to users.
+
+| field | type | description |
+|-------|------|-------------|
+| `name` | string | Human-readable preset name |
+| `software_name` | string | Name of the software being deployed |
+| `category` | string | Software category |
+| `description` | string | Description of what the preset installs |
+| `installer_name` | string | Installer filename |
+| `installer_url` | string | Download URL (must be HTTPS) |
+| `silent_flags` | string | Silent installation flags |
+| `verify_path` | string\|null | Path to verify installation success |
+| `close_processes` | array[string] | Processes to close before installing |
+| `timeout_seconds` | number\|null | Installation timeout override |
+| `order` | number | Sort order in UI |
+| `createdAt` | timestamp | Creation time |
 
 ---
 
@@ -411,7 +597,7 @@ Concurrency control for autonomous sessions.
 
 Cortex conversation records (both user-initiated and autonomous).
 
-| Field | Type | Description |
+| field | type | description |
 |-------|------|-------------|
 | `userId` | string | User who created the chat (absent for autonomous) |
 | `siteId` | string | Site context |
@@ -422,5 +608,34 @@ Cortex conversation records (both user-initiated and autonomous).
 | `source` | string | `user` or `autonomous` |
 | `eventId` | string\|null | Links to `cortex-events/{eventId}` (autonomous only) |
 | `autonomousSummary` | string\|null | Quick outcome summary (autonomous only) |
+| `category` | string\|null | LLM-generated topic category |
 | `createdAt` | timestamp | When the chat started |
 | `updatedAt` | timestamp | Last activity |
+
+### chats/{chatId}/messages/{messageId}
+
+| field | type | description |
+|-------|------|-------------|
+| `role` | string | `"user"` or `"assistant"` |
+| `content` | string | Message text content |
+| `createdAt` | timestamp | Message creation time |
+
+---
+
+## bug_reports/{reportId}
+
+Bug reports and feedback submissions from users and agents.
+
+| field | type | description |
+|-------|------|-------------|
+| `source` | string | `"agent"` or `"web"` |
+| `category` | string | `"bug"`, `"feature_request"`, `"other"`, `"compliment"`, `"rant"` |
+| `title` | string | Report title (max 200 chars) |
+| `description` | string | Full description (max 50,000 chars) |
+| `status` | string | `"new"` |
+| `createdAt` | timestamp | Submission time |
+| `userId` | string | Reporting user ID |
+| `userEmail` | string | User email (empty for agent reports) |
+| `browserUA` | string | Browser user agent string |
+| `pageUrl` | string | Page URL at time of report |
+| `appVersion` | string | App version at time of report |

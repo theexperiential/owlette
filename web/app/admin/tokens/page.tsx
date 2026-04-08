@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { KeyRound, Trash2, RefreshCw, AlertTriangle, Clock, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { AdminButton } from '@/components/admin/AdminButton';
 
 interface TokenInfo {
   id: string;
@@ -183,19 +184,25 @@ export default function TokensPage() {
   };
 
   return (
-    <div className="p-6 lg:p-8 max-w-6xl mx-auto">
+    <div className="p-8">
+      <div className="max-w-screen-2xl mx-auto">
       {/* Header with inline site selector */}
-      <div className="mb-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-2">
-          <h1 className="text-2xl font-bold text-foreground">Agent Token Management</h1>
-          <div className="flex items-center gap-2">
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground mb-2">agent tokens</h1>
+            <p className="text-muted-foreground">
+              view and revoke agent authentication tokens
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
             <Select value={selectedSiteId} onValueChange={handleSiteChange}>
               <SelectTrigger className="w-[180px] bg-card border-border text-foreground">
-                <SelectValue placeholder="Select site" />
+                <SelectValue placeholder="select site" />
               </SelectTrigger>
               <SelectContent className="bg-card border-border">
                 {sites.map((site) => (
-                  <SelectItem key={site.id} value={site.id} className="text-foreground hover:bg-muted">
+                  <SelectItem key={site.id} value={site.id} className="text-foreground hover:bg-muted!">
                     {site.name}
                   </SelectItem>
                 ))}
@@ -206,47 +213,35 @@ export default function TokensPage() {
               size="icon"
               onClick={fetchTokens}
               disabled={!selectedSiteId || loading}
-              className="border-border text-foreground hover:bg-accent hover:text-foreground"
+              className="border-border text-foreground hover:bg-accent! hover:text-foreground!"
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
-          </div>
-        </div>
-        <p className="text-muted-foreground text-sm">
-          View and revoke agent authentication tokens. Revoking a token will disconnect the agent and require re-registration.
-        </p>
-      </div>
-
-      {/* Tokens Table */}
-      {selectedSiteId && (
-        <Card className="bg-card border-border">
-          <CardHeader className="pb-4 flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-foreground text-lg flex items-center gap-2">
-                <KeyRound className="h-5 w-5" />
-                Active Tokens ({tokens.length})
-              </CardTitle>
-              <CardDescription>Agent refresh tokens for this site</CardDescription>
-            </div>
             {tokens.length > 0 && (
               <Button
                 variant="destructive"
                 size="sm"
                 onClick={() => setRevokeAllDialogOpen(true)}
-                className="bg-red-600 hover:bg-red-700"
+                className="bg-red-600 hover:bg-red-700 cursor-pointer"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
-                Revoke All
+                revoke all
               </Button>
             )}
-          </CardHeader>
-          <CardContent>
+          </div>
+        </div>
+      </div>
+
+      {/* Tokens Table */}
+      {selectedSiteId && (
+        <Card className="bg-card border-border">
+          <CardContent className="pt-6">
             {loading ? (
-              <div className="text-center py-8 text-muted-foreground">Loading tokens...</div>
+              <div className="text-center py-8 text-muted-foreground">loading tokens...</div>
             ) : tokens.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <KeyRound className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                <p>No active tokens for this site</p>
+                <p>no active tokens for this site</p>
                 <p className="text-sm mt-1">Tokens are created when agents register with the site</p>
               </div>
             ) : (
@@ -254,12 +249,12 @@ export default function TokensPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="border-border hover:bg-card">
-                      <TableHead className="text-foreground">Machine ID</TableHead>
-                      <TableHead className="text-foreground">Version</TableHead>
-                      <TableHead className="text-foreground">Status</TableHead>
-                      <TableHead className="text-foreground">Created</TableHead>
-                      <TableHead className="text-foreground">Last Used</TableHead>
-                      <TableHead className="text-foreground text-right">Actions</TableHead>
+                      <TableHead className="text-foreground">machine ID</TableHead>
+                      <TableHead className="text-foreground">version</TableHead>
+                      <TableHead className="text-foreground">status</TableHead>
+                      <TableHead className="text-foreground">created</TableHead>
+                      <TableHead className="text-foreground">last used</TableHead>
+                      <TableHead className="text-foreground text-right">actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -291,10 +286,10 @@ export default function TokensPage() {
                                 setTokenToRevoke(token);
                                 setRevokeDialogOpen(true);
                               }}
-                              className="text-amber-400 hover:text-amber-300 hover:bg-amber-950/30"
+                              className="text-amber-400 hover:text-amber-300! hover:bg-amber-950/30!"
                             >
                               <KeyRound className="h-4 w-4 mr-1" />
-                              Revoke
+                              revoke
                             </Button>
                           </TableCell>
                         </TableRow>
@@ -312,26 +307,25 @@ export default function TokensPage() {
       <Dialog open={revokeDialogOpen} onOpenChange={setRevokeDialogOpen}>
         <DialogContent className="bg-background border-border">
           <DialogHeader>
-            <DialogTitle>Revoke Token for {tokenToRevoke?.machineId}?</DialogTitle>
+            <DialogTitle>revoke token for {tokenToRevoke?.machineId}?</DialogTitle>
             <DialogDescription className="text-muted-foreground">
               This will immediately invalidate the machine&apos;s authentication token.
               The agent will disconnect and cannot reconnect until re-registered with a new registration code.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              variant="outline"
+            <AdminButton
+              adminVariant="card"
               onClick={() => setRevokeDialogOpen(false)}
-              className="bg-card border-border hover:bg-accent"
             >
               Cancel
-            </Button>
+            </AdminButton>
             <Button
               onClick={handleRevokeToken}
               disabled={isRevoking}
               className="bg-amber-600 hover:bg-amber-700"
             >
-              {isRevoking ? 'Revoking...' : 'Revoke Token'}
+              {isRevoking ? 'revoking...' : 'revoke token'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -343,33 +337,33 @@ export default function TokensPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-red-400">
               <AlertTriangle className="h-5 w-5" />
-              Revoke All Tokens?
+              revoke all tokens?
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
               This will immediately invalidate ALL agent tokens for this site ({tokens.length} tokens).
               All agents will disconnect and require re-registration to reconnect.
               <br /><br />
-              <strong className="text-amber-400">This action cannot be undone.</strong>
+              <strong className="text-amber-400">this action cannot be undone.</strong>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              variant="outline"
+            <AdminButton
+              adminVariant="card"
               onClick={() => setRevokeAllDialogOpen(false)}
-              className="bg-card border-border hover:bg-accent"
             >
               Cancel
-            </Button>
+            </AdminButton>
             <Button
               onClick={handleRevokeAll}
               disabled={isRevoking}
               className="bg-red-600 hover:bg-red-700"
             >
-              {isRevoking ? 'Revoking...' : `Revoke All ${tokens.length} Tokens`}
+              {isRevoking ? 'revoking...' : `revoke all ${tokens.length} tokens`}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

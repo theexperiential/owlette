@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, setDoc, getDocs, deleteDoc, query, orderBy, limit } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDocs, deleteDoc, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export interface ProjectDistributionTemplate {
@@ -11,7 +11,7 @@ export interface ProjectDistributionTemplate {
   project_url: string;
   extract_path?: string;
   verify_files?: string[];
-  createdAt: number;
+  createdAt: any; // Firestore Timestamp (new) or number (legacy)
 }
 
 export interface ProjectDistributionTarget {
@@ -30,8 +30,8 @@ export interface ProjectDistribution {
   extract_path?: string;
   verify_files?: string[];
   targets: ProjectDistributionTarget[];
-  createdAt: number;
-  completedAt?: number;
+  createdAt: any; // Firestore Timestamp (new) or number (legacy)
+  completedAt?: any;
   status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial';
 }
 
@@ -69,7 +69,7 @@ export function useProjectDistributionTemplates(siteId: string) {
           });
 
           // Sort by created date (newest first)
-          templateData.sort((a, b) => b.createdAt - a.createdAt);
+          templateData.sort((a, b) => (b.createdAt?.toMillis?.() ?? b.createdAt ?? 0) - (a.createdAt?.toMillis?.() ?? a.createdAt ?? 0));
 
           setTemplates(templateData);
           setLoading(false);
@@ -96,7 +96,7 @@ export function useProjectDistributionTemplates(siteId: string) {
 
     await setDoc(templateRef, {
       ...template,
-      createdAt: Date.now(),
+      createdAt: serverTimestamp(),
     });
 
     return templateId;
@@ -156,7 +156,7 @@ export function useProjectDistributions(siteId: string) {
           });
 
           // Sort by created date (newest first)
-          distributionData.sort((a, b) => b.createdAt - a.createdAt);
+          distributionData.sort((a, b) => (b.createdAt?.toMillis?.() ?? b.createdAt ?? 0) - (a.createdAt?.toMillis?.() ?? a.createdAt ?? 0));
 
           setDistributions(distributionData);
           setLoading(false);
@@ -212,7 +212,7 @@ export function useProjectDistributions(siteId: string) {
               // Handle completed distributions
               const updatedTargets = distribution.targets.map(target =>
                 target.machineId === machineId
-                  ? { ...target, status: 'completed' as const, completedAt: command.completedAt || Date.now() }
+                  ? { ...target, status: 'completed' as const, completedAt: command.completedAt || new Date() }
                   : target
               );
 
@@ -225,13 +225,13 @@ export function useProjectDistributions(siteId: string) {
               await setDoc(distributionRef, {
                 targets: updatedTargets,
                 status: newStatus,
-                ...(allCompleted ? { completedAt: Date.now() } : {}),
+                ...(allCompleted ? { completedAt: serverTimestamp() } : {}),
               }, { merge: true });
             } else if (command.status === 'failed') {
               // Handle failed distributions
               const updatedTargets = distribution.targets.map(target =>
                 target.machineId === machineId
-                  ? { ...target, status: 'failed' as const, error: command.error, completedAt: command.completedAt || Date.now() }
+                  ? { ...target, status: 'failed' as const, error: command.error, completedAt: command.completedAt || new Date() }
                   : target
               );
 
@@ -244,7 +244,7 @@ export function useProjectDistributions(siteId: string) {
               await setDoc(distributionRef, {
                 targets: updatedTargets,
                 status: newStatus,
-                ...(allDone ? { completedAt: Date.now() } : {}),
+                ...(allDone ? { completedAt: serverTimestamp() } : {}),
               }, { merge: true });
             } else if (command.status === 'downloading' || command.status === 'extracting') {
               // Handle intermediate states (downloading, extracting)
@@ -291,7 +291,7 @@ export function useProjectDistributions(siteId: string) {
     await setDoc(distributionRef, {
       ...distribution,
       targets,
-      createdAt: Date.now(),
+      createdAt: serverTimestamp(),
       status: 'pending',
     });
 
@@ -311,7 +311,7 @@ export function useProjectDistributions(siteId: string) {
           extract_path: distribution.extract_path,
           verify_files: distribution.verify_files,
           distribution_id: distributionId,
-          timestamp: Date.now(),
+          timestamp: serverTimestamp(),
           status: 'pending',
         }
       }, { merge: true });
@@ -341,7 +341,7 @@ export function useProjectDistributions(siteId: string) {
         type: 'cancel_distribution',
         project_name: project_name,
         distribution_id: distributionId,
-        timestamp: Date.now(),
+        timestamp: serverTimestamp(),
       }
     }, { merge: true });
 

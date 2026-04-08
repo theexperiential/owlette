@@ -29,7 +29,7 @@ def create_preview():
     # Draw title
     draw = ImageDraw.Draw(preview)
     draw.text((20, 20), "Owlette HAL 9000 Tray Icon - Windows 11 Style", fill=(255, 255, 255))
-    draw.text((20, 40), "Always Watching", fill=(156, 163, 175))  # Gray-400
+    draw.text((20, 40), "attention is all you need", fill=(156, 163, 175))  # Gray-400
 
     y_offset = 80
 
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     print("\nThe icon features:")
     print("  • White circle outline (eye)")
     print("  • Status indicator dot (pupil):")
-    print("    - White = Normal (Always Watching)")
+    print("    - White = Normal (connected)")
     print("    - Yellow = Warning (Firebase issues)")
     print("    - Red = Error (Service stopped)")
     print("\nDesign matches Windows 11 Fluent Design guidelines.")

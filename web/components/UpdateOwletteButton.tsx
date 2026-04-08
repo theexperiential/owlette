@@ -1,7 +1,7 @@
 /**
  * UpdateOwletteButton Component
  *
- * Provides a one-click button to update all Owlette agents to the latest version.
+ * Provides a one-click button to update all owlette agents to the latest version.
  * Displays current version, outdated machine count, and confirmation dialog.
  *
  * Features:
@@ -93,7 +93,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
       toast.success(
         `Update initiated for ${selectedMachines.size} machine(s)`,
         {
-          description: 'The Owlette service will restart automatically after updating',
+          description: 'The owlette service will restart automatically after updating',
           duration: 5000,
         }
       );
@@ -130,7 +130,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
         className="border-orange-600 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950 cursor-pointer"
       >
         <RefreshCw className={`h-4 w-4 mr-2 ${inProgressCount > 0 ? 'animate-spin' : ''}`} />
-        update owlette
+        {inProgressCount > 0 ? 'updating owlette' : 'update owlette'}
         {latestVersion && (
           <span className="ml-2 text-xs">to v{latestVersion}</span>
         )}
@@ -151,7 +151,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
           <DialogHeader>
             <DialogTitle>update owlette agents</DialogTitle>
             <DialogDescription>
-              update selected machines to Owlette v{latestVersion || 'latest'}
+              update selected machines to owlette v{latestVersion || 'latest'}
             </DialogDescription>
           </DialogHeader>
 

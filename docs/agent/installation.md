@@ -1,16 +1,16 @@
-# Installation
+# installation
 
-There are three ways to install and authenticate the Owlette agent on a Windows machine.
+There are three ways to install and authenticate the owlette agent on a Windows machine.
 
 ---
 
-## Method 1: Interactive Install (Recommended)
+## method 1: interactive install (recommended)
 
 Download the installer, run it, and pair from your phone or browser.
 
-### Steps
+### steps
 
-1. Log into the Owlette dashboard
+1. Log into the owlette dashboard
 2. Click the **download button** in the header bar (shows the latest version)
 3. Save the `.exe` installer to the target machine
 4. Run the installer **as Administrator**
@@ -24,11 +24,11 @@ The entire flow takes under a minute. Credentials are stored encrypted on disk �
 
 ---
 
-## Method 2: Silent Install with `/ADD=` (Bulk Deployment)
+## method 2: silent install with `/ADD=` (bulk deployment)
 
 Deploy to many machines without any interaction. Generate a pairing phrase from the dashboard, then run the installer silently.
 
-### Steps
+### steps
 
 1. On the dashboard, click the **"+"** button next to the view toggle
 2. Select the **"Generate Code"** tab
@@ -42,9 +42,9 @@ Owlette-Installer-v2.4.1.exe /ADD=silver-compass-drift /SILENT
 !!! info "Phrase expiry"
     Generated phrases expire after **10 minutes**. Generate a new one from the dashboard if needed.
 
-### Silent Installation Flags
+### silent installation flags
 
-| Flag | Description |
+| flag | description |
 |------|-------------|
 | `/ADD=phrase` | Pre-authorized pairing phrase (skips interactive pairing) |
 | `/SILENT` | Minimal UI (shows progress bar only) |
@@ -61,14 +61,14 @@ Owlette-Installer-v2.4.1.exe /ADD=silver-compass-drift /VERYSILENT /SUPPRESSMSGB
 
 ---
 
-## Method 3: Remote Deployment (Upgrades)
+## method 3: remote deployment (upgrades)
 
-Deploy agent updates to machines that already have Owlette installed.
+Deploy agent updates to machines that already have owlette installed.
 
 1. In the dashboard, go to **Deployments**
 2. Click **"New Deployment"**
 3. Configure:
-    - **Name**: e.g., "Owlette Agent v2.4.1"
+    - **Name**: e.g., "owlette Agent v2.4.1"
     - **Installer URL**: Direct download link to the installer `.exe`
     - **Silent Flags**: `/VERYSILENT /SUPPRESSMSGBOXES`
     - **Verify Path**: `C:\ProgramData\Owlette\agent\src\owlette_service.py`
@@ -76,18 +76,18 @@ Deploy agent updates to machines that already have Owlette installed.
 5. Click **Deploy**
 
 !!! warning "Prerequisites"
-    Remote deployment requires the target machine to already have a running Owlette agent (to receive the deployment command). Use this method for **upgrading** existing agents or deploying other software.
+    Remote deployment requires the target machine to already have a running owlette agent (to receive the deployment command). Use this method for **upgrading** existing agents or deploying other software.
 
 ---
 
-## Method 4: Manual Installation (Development)
+## method 4: manual installation (development)
 
 For development or custom setups:
 
 ```bash
 # Clone the repository
-git clone https://github.com/theexperiential/Owlette.git
-cd Owlette/agent
+git clone https://github.com/theexperiential/owlette.git
+cd owlette/agent
 
 # Install Python dependencies
 pip install -r requirements.txt
@@ -112,7 +112,7 @@ python configure_site.py
 
 ---
 
-## How Pairing Works
+## how pairing works
 
 When the agent connects for the first time, it authenticates via a device code flow:
 
@@ -142,7 +142,7 @@ Agent authenticated — starts syncing
 
 Three ways to authorize:
 
-| Method | When to use |
+| method | when to use |
 |--------|------------|
 | **Browser auto-open** | Default — browser opens on the machine with phrase pre-filled |
 | **Dashboard "+" button** | Enter the phrase on the dashboard from any device |
@@ -150,17 +150,17 @@ Three ways to authorize:
 
 ---
 
-## Post-Installation Verification
+## post-installation verification
 
 After installation, verify the agent is running:
 
-### Check Windows Services
+### check windows services
 
 1. Open Services (`Win + R` → `services.msc`)
 2. Find **"OwletteService"**
 3. Status should be **"Running"**
 
-### Check Logs
+### check logs
 
 ```
 C:\ProgramData\Owlette\logs\service.log
@@ -169,12 +169,12 @@ C:\ProgramData\Owlette\logs\service.log
 Look for:
 
 ```
-INFO: Owlette service started successfully
+INFO: owlette service started successfully
 INFO: Firebase client initialized for site: your_site_id
 INFO: Firebase client started successfully
 ```
 
-### Check Dashboard
+### check dashboard
 
 The machine should appear in your site's dashboard within 30 seconds with:
 
@@ -182,19 +182,19 @@ The machine should appear in your site's dashboard within 30 seconds with:
 - CPU, memory, disk metrics populating
 - Agent version displayed
 
-### Check System Tray
+### check system tray
 
 An owl icon should appear in the Windows system tray. Right-click it for status and options.
 
 ---
 
-## Uninstallation
+## uninstallation
 
-**Windows Settings** → **Apps** → **Owlette** → **Uninstall**
+**Windows Settings** → **Apps** → **owlette** → **Uninstall**
 
 The uninstaller will:
 
-1. Stop the Owlette service
+1. Stop the owlette service
 2. Remove the NSSM service wrapper
 3. Remove Windows Defender exclusions
 4. Delete program files from `C:\ProgramData\Owlette`
@@ -204,11 +204,11 @@ The uninstaller will:
 
 ---
 
-## Installer Details
+## installer details
 
-The Owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php) and bundles:
+The owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php) and bundles:
 
-| Component | Purpose |
+| component | purpose |
 |-----------|---------|
 | **Embedded Python** | Python 3.11 interpreter (no system Python needed) |
 | **NSSM** | Service manager for reliable Windows service operation |
@@ -218,9 +218,9 @@ The Owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.p
 
 ---
 
-## System Requirements
+## system requirements
 
-| Requirement | Minimum |
+| requirement | minimum |
 |-------------|---------|
 | **OS** | Windows 10 or later (64-bit) |
 | **RAM** | 50 MB (agent overhead) |

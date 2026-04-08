@@ -1,10 +1,10 @@
-# Process Monitoring
+# process monitoring
 
 The agent monitors configured processes every 5 seconds, detecting crashes, stalls, and exits. When a process goes down, the agent automatically restarts it (if autolaunch is enabled).
 
 ---
 
-## Process State Machine
+## process state machine
 
 Every configured process is in one of five states:
 
@@ -26,9 +26,9 @@ Every configured process is in one of five states:
          └──────────────┘◀─────────────┘
 ```
 
-### State Definitions
+### state definitions
 
-| State | Description | Dashboard Indicator |
+| state | description | dashboard indicator |
 |-------|-------------|---------------------|
 | **RUNNING** | Process is alive and responsive | Green |
 | **STALLED** | Process exists but is not responding (hang detected) | Yellow |
@@ -38,11 +38,11 @@ Every configured process is in one of five states:
 
 ---
 
-## Monitoring Loop
+## monitoring loop
 
-Every 10 seconds, the agent runs through all configured processes:
+Every 5 seconds, the agent runs through all configured processes:
 
-### 1. Check if Process is Running
+### 1. check if process is running
 
 The agent validates the process by:
 
@@ -50,7 +50,7 @@ The agent validates the process by:
 2. **Path verification** — Does the running process match the configured `exe_path`? (prevents PID reuse false positives)
 3. **Status update** — Set state to RUNNING or detect crash
 
-### 2. Crash Detection
+### 2. crash detection
 
 A process is considered crashed when:
 
@@ -58,11 +58,11 @@ A process is considered crashed when:
 - The PID exists but belongs to a different executable (PID was reused by the OS)
 - The process exit code indicates abnormal termination
 
-### 3. Hang Detection (Multi-Stage)
+### 3. hang detection (multi-stage)
 
 The agent uses a progressive approach to detect frozen applications:
 
-| Stage | Time | Action |
+| stage | time | action |
 |-------|------|--------|
 | **Detection** | 0-10s | `owlette_scout.py` sends `WM_NULL` to the process window |
 | **Wait** | 10-15s | If no response, wait for possible recovery |
@@ -70,7 +70,7 @@ The agent uses a progressive approach to detect frozen applications:
 
 `WM_NULL` is a harmless Windows message — if the process responds, it's alive. If it doesn't respond within the timeout, the process is likely hung.
 
-### 4. Auto-Restart
+### 4. auto-restart
 
 When a crash is detected and `autolaunch` is enabled:
 
@@ -82,11 +82,11 @@ When a crash is detected and `autolaunch` is enabled:
 
 ---
 
-## Process Launch Methods
+## process launch methods
 
 The agent uses a two-stage launch strategy:
 
-### Primary: Task Scheduler
+### primary: task scheduler
 
 ```
 Agent creates one-time scheduled task
@@ -97,7 +97,7 @@ Agent creates one-time scheduled task
 
 **Advantages**: Processes survive service restarts (not killed by NSSM job objects).
 
-### Fallback: CreateProcessAsUser
+### fallback: createprocessasuser
 
 If Task Scheduler fails, the agent falls back to `CreateProcessAsUser` via `pywin32`:
 
@@ -109,7 +109,7 @@ Agent gets user token (WTSQueryUserToken)
 
 ---
 
-## PID Recovery
+## pid recovery
 
 When the service restarts, it doesn't re-launch processes that are already running. Instead, it **recovers** existing PIDs:
 
@@ -121,7 +121,7 @@ This prevents duplicate instances after service restarts or crashes.
 
 ---
 
-## Relaunch Limits
+## relaunch limits
 
 Each process has a configurable `relaunch_attempts` limit (default: 5). When the limit is reached:
 
@@ -135,11 +135,11 @@ Each process has a configurable `relaunch_attempts` limit (default: 5). When the
 
 ---
 
-## Metrics Collection
+## metrics collection
 
-Every 60 seconds, the agent collects and reports:
+At each heartbeat interval, the agent collects and reports (5s when the system tray is open, 30s when processes are active, 120s when idle):
 
-| Metric | Source | Description |
+| metric | source | description |
 |--------|--------|-------------|
 | **CPU** | `psutil.cpu_percent()` | Overall CPU usage percentage |
 | **Memory** | `psutil.virtual_memory()` | RAM usage percentage |

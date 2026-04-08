@@ -20,6 +20,10 @@ ENV/
 .venv/
 agent/.venv/
 
+# Dev planning artifacts
+dev/completed/
+dev/active/
+
 # IDE
 .vscode/
 .idea/
@@ -65,7 +69,8 @@ agent/config/app_states.json
 firebase-credentials.json
 config/firebase-credentials.json
 config/firebase_cache.json
-agent/config/firebase-credentials.json
+agent/config/firebase-creds-dev.json
+agent/config/firebase-creds-prod.json
 agent/config/firebase_cache.json
 
 # Temporary/generated files

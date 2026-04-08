@@ -1,12 +1,12 @@
-# Firestore Security Rules
+# firestore security rules
 
-Firestore security rules control who can read and write data. Owlette's rules enforce site-scoped access, agent isolation, and role-based permissions.
+Firestore security rules control who can read and write data. owlette's rules enforce site-scoped access, agent isolation, and role-based permissions.
 
 ---
 
-## Deployment Methods
+## deployment methods
 
-### Method 1: Firebase CLI (Recommended)
+### method 1: firebase cli (recommended)
 
 ```bash
 # Install Firebase CLI
@@ -28,7 +28,7 @@ Expected output:
 ✔ Deploy complete!
 ```
 
-### Method 2: Firebase Console
+### method 2: firebase console
 
 1. Go to Firebase Console → Firestore Database → **Rules** tab
 2. Copy contents of `firestore.rules` from the repository
@@ -42,11 +42,11 @@ Expected output:
 
 ---
 
-## Rule Architecture
+## rule architecture
 
-### Key Functions
+### key functions
 
-| Function | Purpose |
+| function | purpose |
 |----------|---------|
 | `isAuthenticated()` | User has a valid Firebase Auth token |
 | `isAdmin()` | User's role is "admin" in Firestore |
@@ -55,9 +55,9 @@ Expected output:
 | `agentCanAccessSite(siteId)` | Agent's `site_id` claim matches |
 | `agentCanAccessMachine(siteId, machineId)` | Agent's claims match both site and machine |
 
-### Access Matrix
+### access matrix
 
-| Collection | User | Admin | Agent |
+| collection | user | admin | agent |
 |-----------|------|-------|-------|
 | `sites/{siteId}/**` | Read if site in `sites[]` | Read/Write all | Read/Write own machine only |
 | `config/{siteId}/**` | Read if site access | Read/Write | Read/Write own machine |
@@ -69,7 +69,7 @@ Expected output:
 
 ---
 
-## Agent Authentication
+## agent authentication
 
 Agents use **custom Firebase tokens** with claims:
 
@@ -85,16 +85,16 @@ Rules enforce **strict machine isolation** — an agent can only read/write docu
 
 ---
 
-## Testing Rules
+## testing rules
 
-### Rules Playground
+### rules playground
 
 1. Firebase Console → Firestore → Rules → **Playground**
 2. Set the document path to test
 3. Configure authentication (user, admin, or agent claims)
 4. Test read/write operations
 
-### Example Tests
+### example tests
 
 **Agent accessing own machine (should allow):**
 
@@ -115,16 +115,16 @@ Rules enforce **strict machine isolation** — an agent can only read/write docu
 
 ---
 
-## Rollback
+## rollback
 
 If rules cause issues:
 
-### Via Firebase Console
+### via firebase console
 
 1. Firestore → Rules → Click **"History"** (clock icon)
 2. Find previous version → Click **"Restore"**
 
-### Via Git
+### via git
 
 ```bash
 git checkout HEAD~1 firestore.rules
@@ -133,13 +133,13 @@ firebase deploy --only firestore:rules
 
 ---
 
-## Versioning
+## versioning
 
 Firestore rules version is managed independently from the product version. The rules version is tracked inside the `firestore.rules` file header comment.
 
 ---
 
-## Monitoring
+## monitoring
 
 - **Firebase Console → Firestore → Usage**: Monitor denied reads/writes
 - Spike in denials after a rule change = something broke

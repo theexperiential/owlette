@@ -73,7 +73,7 @@ export function RotatingWord({ words, align = 'end', delay = 0, direction = 'up'
       />
       <span
         className={`inline-flex ${align === 'end' ? 'justify-end' : 'justify-start'} overflow-hidden transition-[width] duration-500 ease-in-out whitespace-nowrap`}
-        style={{ width: `${width}px` }}
+        style={{ width: width > 0 ? `${width}px` : 'auto' }}
       >
         <span
           className={`transition-all duration-400 ${visible ? 'opacity-100 translate-y-0' : `opacity-0 ${exitClass}`}`}

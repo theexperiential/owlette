@@ -89,7 +89,7 @@ export function ValuePropSection() {
   return (
     <section className="pt-0 sm:pt-0 pb-0 px-4 sm:px-6 -mt-32 sm:-mt-48">
       {/* Product screenshot with mouse-reactive 3D tilt */}
-      <div ref={containerRef} className="max-w-6xl mx-auto mb-6 sm:mb-8" style={{ perspective: '1800px' }}>
+      <div ref={containerRef} className="max-w-6xl mx-auto mb-6 sm:mb-8 hero-enter-delay-3" style={{ perspective: '1800px' }}>
         <Link
           ref={tiltRef}
           href="/demo"
@@ -104,7 +104,7 @@ export function ValuePropSection() {
         >
           <Image
             src="/dashboard.png"
-            alt="Owlette dashboard showing 10 machines with real-time metrics"
+            alt="owlette dashboard showing 10 machines with real-time metrics"
             width={2400}
             height={1300}
             className="w-full h-auto"
@@ -120,11 +120,11 @@ export function ValuePropSection() {
           />
         </Link>
       </div>
-      <div className="text-center mb-12 sm:mb-16">
+      <div className="text-center mt-12 mb-16 sm:mb-20">
         <Link
           href="/demo"
           target="_blank"
-          className="inline-flex items-center gap-1.5 text-sm text-accent-cyan hover:text-accent-cyan-hover transition-colors group"
+          className="inline-flex items-center gap-1.5 text-base text-accent-cyan hover:text-accent-cyan-hover transition-colors group"
         >
           explore the live demo
           <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />

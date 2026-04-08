@@ -1,33 +1,133 @@
-# Changelog
+---
+hide:
+  - navigation
+---
 
-All notable changes to Owlette are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/) and this project adheres to [Semantic Versioning](https://semver.org/).
+# changelog
+
+All notable changes to owlette are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
 For the full version management workflow, see [Version Management](internal/version-management.md).
 
 ---
 
+## [2.6.1] - 2026-04-05
+
+### added
+- Batched process alert emails — crash alerts are queued for 2 minutes then grouped by site into a single digest email, preventing spam when multiple machines restart simultaneously
+- New cron endpoint `/api/cron/process-alerts` drains the alert queue every 3 minutes and sends one digest email per site with a table of all affected machines/processes
+- Digest email adapts: single alert uses the familiar single-process layout, multiple alerts show a grouped table
+
+### fixed
+- Owlette's built-in process restart (kill-and-relaunch for hung processes) no longer triggers false "process crashed" emails — writes KILLED status before terminating
+- Scheduled and dashboard-initiated machine reboots/shutdowns no longer trigger crash alert emails — agent suppresses alerts during the shutdown window
+- Removed unused `buildProcessAlertEmail` from alert route (moved to cron digest)
+
+---
+
+## [2.6.0] - 2026-04-04
+
+### added
+- Sentry error monitoring for both web dashboard and agent — captures unhandled exceptions with full stack traces, machine identity tags (hostname, site_id, project_id), and user context
+- Agent Sentry events include structured machine context (hostname, site, version) for quick triage
+- Sentry tunnel route on web to bypass ad-blockers
+- `sentry` config section in agent config.json (disabled by default, preserved during Firestore sync)
+
+### fixed
+- Firestore config sync now preserves local-only keys (`firebase`, `sentry`) via `LOCAL_ONLY_KEYS`
+- Sentry init added to NSSM runner (owlette_runner.py) — previously only in unused OwletteService.__init__
+- Pre-existing stale test failures fixed: apiAuth NextRequest type, installer_utils terminate vs kill, shared_utils config/metrics API mismatches, removed deleted sanitize_process_name test
+
+---
+
+## [2.5.9] - 2026-04-03
+
+### added
+- Rich startup diagnostics logged on every service start: version banner (hostname, timezone, environment, Python version, Windows edition + build, install/data paths), system snapshot (CPU model + cores, RAM, disk free space, GPU name + VRAM, IP addresses), config summary (Firebase enabled, site ID, process count, Cortex status), startup phase timings (health probe, Firebase init, Firebase start), and a startup-complete summary block (version, total elapsed time, Firebase status, process count)
+
+---
+
+## [2.5.8] - 2026-04-03
+
+### fixed
+- `requireAdmin` middleware now accepts both API keys and Firebase ID tokens — previously only one auth method worked depending on route
+- Firestore collection renamed from `apiKeys` to `api_keys` for naming consistency
+- Cortex lowercase enforced across all user-facing text
+- Phantom QR code references removed from device pairing flow
+- Firestore timestamps standardised to `serverTimestamp()` across all writes
+- Dead `presence?.online` fallback patterns removed from web reads
+- Device code documents now deleted on consumption/expiry instead of being marked with a status field
+
+---
+
+## [2.5.7] - 2026-04-02
+
+### added
+- FAQ section on landing page
+- Pricing section on landing page
+
+### fixed
+- Update log event no longer writes version string into the `level` field
+- Update log messages lowercased; version strings prefixed with `v`
+- "Updating owlette" label shown in dashboard while agent update is in progress
+- Landing page explore link spacing polished
+
+---
+
+## [2.5.6] - 2026-04-02
+
+### added
+- API and Webhooks promoted to top-level nav section in docs
+
+### fixed
+- `presence?.online` dead fallback patterns removed from web dashboard reads
+
+---
+
+## [2.5.5] - 2026-04-02
+
+### added
+- Per-user alert emails — each user receives alerts for their own assigned machines
+- Timezone labels in email alerts
+- Centered unsubscribe link in alert emails
+
+### fixed
+- Missing Firestore indexes added; `claude-agent-sdk` dependency pinned
+
+---
+
+## [2.5.4] - 2026-04-01
+
+### added
+- **Process scheduling UX overhaul** — redesigned schedule editor with overnight schedule support (e.g. 22:00–06:00 spanning midnight)
+
+### fixed
+- Site members can now access machine controls without requiring admin role
+
+---
+
 ## [2.5.3] - 2026-04-01
 
-### Fixed
+### fixed
 - **Auto-update now reliably replaces Python files** — replaced deprecated WMIC `call terminate` with PowerShell `Stop-Process -Force` in the installer's `InitializeSetup()` phase. WMIC was silently failing to kill Python processes before file overwrite, causing Inno Setup to schedule locked DLLs for next-reboot replacement (which never comes during auto-update). Two-pass kill with verification ensures all handles are released before file copy begins.
 
 ---
 
 ## [2.5.2] - 2026-03-31
 
-### Changed
+### changed
 - Version bump
 
 ---
 
 ## [2.5.1] - 2026-03-31
 
-### Added
+### added
 - Agent longevity hardening for 24/7 uptime — fixed resource leaks, unbounded queue growth, and error handling across all background threads
 - Windows console event signal handling (`CTRL_SHUTDOWN_EVENT` etc.) in the agent runner
 - Version number logged at service startup
 
-### Fixed
+### fixed
 - Dashboard machine online/offline status delay reduced from ~27s to ~4s
 - Slow command worker thread must start after `self.running = True` (previously caused worker to exit immediately)
 - Killed processes no longer trigger crash detection and relaunch
@@ -35,20 +135,20 @@ For the full version management workflow, see [Version Management](internal/vers
 - Cortex now requires explicit user confirmation before calling `deploy_software`
 - `install.bat` service detection switched to registry query — `nssm status` returned non-zero for stopped services, causing upgrade installs to skip removal and fail on re-registration
 
-### Performance
+### performance
 - Landing page Lighthouse score improved from 69 to 89
 
 ---
 
 ## [2.4.4] - 2026-03-31
 
-### Added
+### added
 - **Cortex `deploy_software` tool** — AI-driven software deployment with full pipeline tracking (download, silent install, verify, Deployments page visibility). Server-side tool with user confirmation required
 - **Cortex `get_system_presets` tool** — Retrieves admin-configured software presets (installer URLs, silent flags, verification paths) for use with `deploy_software`
 - **12h/24h time format preference** — User preference persisted to Firestore, applied across schedule editor, time pickers, and dashboard
 - `listen_to_document` returns a `wake_event` for instant polling on Firestore writes
 
-### Fixed
+### fixed
 - `deploy_software` overrides `/DIR` flag to match the target version install path
 - Bidirectional config sync between agent and Firestore
 - Network metrics flickering on dashboard
@@ -61,7 +161,7 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [2.4.2] - 2026-03-27
 
-### Added
+### added
 - **Feedback / Bug Reporting** — Report bugs from the web dashboard and the agent GUI (system tray → "Report Issue"), with log attachments and direct Firestore submission
 - **Branded email templates** — Dark-theme HTML emails with shared layout system (header, footer, logo, site name in all transactional emails)
 - **Landing page overhaul** — New hero with eye ignition animation, Blade Runner easter egg, rotating word, typewriter text, interactive background, use case and value prop sections, demo mode
@@ -70,7 +170,7 @@ For the full version management workflow, see [Version Management](internal/vers
 - File path, arguments, and PID displayed on process rows in the dashboard
 - Download link in landing page nav; `/download` redirect route
 
-### Fixed
+### fixed
 - Agent Bearer token auth in bug-report API route
 - Email template: logo URL fallback, auto-link color, footer links, Gmail clipping
 - Landing page layout: 4K centering, mobile accordion, hero vertical alignment, subheadline jitter
@@ -79,23 +179,23 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [2.4.1] - 2026-03-26
 
-### Changed
-- **Agent pairing replaces browser OAuth** — Agents now authenticate via QR code / device code flow. No browser window is opened on the target machine; users scan a QR code or enter a 3-word phrase in the dashboard
+### changed
+- **Agent pairing replaces browser OAuth** — Agents now authenticate via device code flow. The installer displays a 3-word pairing phrase, auto-opens the pairing page in a browser, or users enter the phrase on the dashboard
 - Installer publisher, URLs, and fallback version updated
 
-### Fixed
+### fixed
 - Installer pairing UX — auto-opens browser, improved colors, handles failure gracefully
 - Rate limits increased; pause added on pairing failure
 - Dashboard button and status badge hover states
 
-### Removed
+### removed
 - Browser-based OAuth flow (replaced by device code pairing)
 
 ---
 
 ## [2.4.0] - 2026-03-25
 
-### Added
+### added
 - **Network Monitoring Dashboard** — Per-NIC throughput charts with historical data (upload/download MB/s per adapter)
 - **Agent GPU Process Monitoring** — Per-process VRAM usage via Windows Performance Counters (cross-vendor: NVIDIA, AMD, Intel)
 - **Cortex `execute_script` tool** — Unrestricted PowerShell execution on the remote machine (Tier 3, requires confirmation)
@@ -110,7 +210,7 @@ For the full version management workflow, see [Version Management](internal/vers
 - **Logs Improvements** — Infinite scroll, date range filters, auth re-render optimization
 - React Markdown rendering with GFM support in Cortex chat
 
-### Fixed
+### fixed
 - Screenshot max width increased to 8K; lower JPEG quality for reduced payload size
 - Cortex language and tone improvements
 
@@ -118,15 +218,15 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [2.3.1] - 2026-03-24
 
-### Changed
+### changed
 - Version bump for documentation audit and accuracy pass
 
 ---
 
 ## [2.3.0] - 2026-03-22
 
-### Added
-- **Cortex AI Chat** — AI-powered chat interface with 24 specialized tools across three tiers for machine management via natural language
+### added
+- **Cortex AI Chat** — AI-powered chat interface with 29 specialized tools across three tiers for machine management via natural language
   - Tier 1 (read-only): system info, process lists, logs, metrics, network, disk
   - Tier 2 (process management): restart, kill, start, set launch mode, screenshot
   - Tier 3 (privileged): run commands/scripts, read/write files, reboot/shutdown
@@ -152,24 +252,24 @@ For the full version management workflow, see [Version Management](internal/vers
 - **Admin Schedule Presets** — Dashboard page for managing schedule presets
 - **MkDocs Documentation** — Complete documentation rewrite with MkDocs Material theme
 
-### Changed
+### changed
 - Agent monitoring loop interval reduced from 10s to 5s
 - Deployment system now uses Firebase Cloud Functions for status aggregation
 - Process launch mode replaces simple autolaunch toggle (`set_launch_mode` replaces `toggle_autolaunch`)
 
-### Removed
+### removed
 - `owlette_updater.py` — self-update logic moved into main service command handler
 
 ---
 
 ## [2.1.8] - 2026-03-15
 
-### Added
+### added
 - Remote reboot/shutdown commands with dashboard UI
 - Process crash email alerts
 - Installer setup logging enabled by default
 
-### Fixed
+### fixed
 - `useSites` hook fetches assigned sites individually instead of collection query
 - Setup page fetches assigned sites individually instead of collection query
 
@@ -177,7 +277,7 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [2.0.49] - 2025-11-28
 
-### Fixed
+### fixed
 - **VBS Cleanup Race Condition** — VBS wrapper files for hidden process launches are now cleaned up in a background thread after 10s delay, preventing "file in use" errors
 - **Reduced Log Noise** — GUI config change detection logs moved from INFO to DEBUG; verbose tray status logging removed
 
@@ -185,8 +285,8 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [2.0.48] - 2025-11-26
 
-### Fixed
-- **Windows Defender False Positive** — Installer now adds Defender exclusion for Owlette directory (WinRing0 driver flagged as `VulnerableDriver:WinNT/Winring0`). Exclusion removed on uninstall.
+### fixed
+- **Windows Defender False Positive** — Installer now adds Defender exclusion for owlette directory (WinRing0 driver flagged as `VulnerableDriver:WinNT/Winring0`). Exclusion removed on uninstall.
 - **Join Site Performance** — Fixed extremely slow "Join Site" operation (2+ minutes to instant) by removing redundant Firebase client initialization from GUI
 - **Silent Browser Launch** — Changed from `webbrowser.open()` to `os.startfile()` to prevent flashing command prompt windows during OAuth flow
 
@@ -194,14 +294,14 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [2.0.47] - 2025-11-24
 
-### Fixed
+### fixed
 - **Token Encryption Key Stability** — Changed encryption key derivation from `uuid.getnode()` (MAC address) to Windows `MachineGuid`. MAC address can return different values after reboot; `MachineGuid` is stable. Resolves "Agent not authenticated" errors after restart.
 
 ---
 
 ## [2.0.46] - 2025-11-19
 
-### Added
+### added
 - **Email Testing Page** — New admin-only page at `/admin/test-email` for testing email notifications, templates, and delivery
 - **Update Panel Layout** — Improved spacing and organization for machine update dialog
 
@@ -209,17 +309,17 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [2.0.44] - 2025-11-13
 
-### Added
+### added
 - **Config & Logs Buttons** — Quick access buttons in GUI footer to open config.json and logs folder
 - **Custom Messagebox** — Improved text wrapping (92% width), compact layout, dark theme matching
 - **Firebase Reconnection Auto-Detection** — Service detects when Firebase is re-enabled and automatically restarts the client
 
-### Changed
+### changed
 - **Unified Site Management** — Join/Leave Site consolidated into single dynamic button
 - **Increased Deployment Timeout** — Extended from 20 to 40 minutes for large installers
 - **Force Close on Uninstall** — Inno Setup uninstalls now automatically close running applications
 
-### Fixed
+### fixed
 - **Firebase Client Reference Errors** — Fixed incorrect global variable usage in uninstall handler
 - **Firebase Client Not Restarting** — Service now detects enable/disable transitions and reinitializes
 
@@ -227,17 +327,17 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [2.0.29] - 2025-11-12
 
-### Fixed
+### fixed
 - **Config Version for New Installs** — Fixed hardcoded version in configure_site.py; new installs now use correct `CONFIG_VERSION` constant
 
 ---
 
 ## [2.0.28] - 2025-11-12
 
-### Added
+### added
 - **Environment Configuration** — New `environment` setting in config.json (production vs development)
 
-### Fixed
+### fixed
 - **Tray Icon Launch Failure** — Added `get_python_exe_path()` helper to locate bundled Python interpreter
 - **Incorrect Server URL** — "Join Site" now correctly defaults to production URL
 - **Port Conflict on Retry** — Enabled `allow_reuse_address` on OAuth callback server
@@ -246,7 +346,7 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [2.0.27] - 2025-11-11
 
-### Fixed
+### fixed
 - **Software Inventory Sync Error** — Fixed `NameError` in post-installation inventory sync
 - **Real-Time Deployment Status** — Fixed deployment status staying on "downloading" until manual refresh; now transitions in real-time
 
@@ -254,11 +354,11 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [2.0.26] - 2025-11-11
 
-### Added
+### added
 - **Process Launch via Task Scheduler** — Complete rewrite using `schtasks` for service restart resilience
 - **Enhanced Event Logging** — Agent lifecycle events, process crash detection, GUI kill tracking
 
-### Fixed
+### fixed
 - **Agent Stopped Logging** — Implemented restart flag mechanism for graceful shutdown event logging
 - **Process Crash False Positives** — Crash events no longer logged for manually killed processes
 
@@ -266,7 +366,7 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [2.0.15] - 2025-11-11
 
-### Added
+### added
 - **Event Logs Page** — Dedicated page for monitoring process events with filtering, pagination, and color-coded severity
 - **Hidden Process Launch** — VBScript wrapper for truly invisible console application launches
 - **Event Logging to Firestore** — Automatic logging of process starts, kills, crashes, and command executions
@@ -275,11 +375,11 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [2.0.0] - 2025-01-31
 
-### Major Release — Cloud-Connected Architecture
+### major release — cloud-connected architecture
 
-Version 2.0.0 transforms Owlette from a standalone Windows process manager to a cloud-connected system.
+Version 2.0.0 transforms owlette from a standalone Windows process manager to a cloud-connected system.
 
-#### Added
+#### added
 - **Next.js Web Dashboard** — Remote monitoring and control from any browser
 - **Firebase/Firestore Backend** — Real-time bidirectional data sync
 - **Remote Software Deployment** — Silent installation across multiple machines
@@ -287,21 +387,21 @@ Version 2.0.0 transforms Owlette from a standalone Windows process manager to a 
 - **PID Recovery** — Reconnect to existing processes after service restart
 - **Multi-Site Management** — Organize machines by location
 
-#### Changed
+#### changed
 - **Monorepo Structure** — Unified `agent/` and `web/` directories
 - **Firebase as Primary Backend** — Gmail/Slack marked as legacy
 - **Configuration Schema** — Updated to v1.3.0 with Firebase settings
 
-#### Deprecated
+#### deprecated
 - Gmail and Slack notifications (replaced by web dashboard alerts)
 
 ---
 
-## [0.4.2b] - Legacy
+## [0.4.2b] - legacy
 
-### Standalone Architecture
+### standalone architecture
 
-The original Owlette — a standalone Windows service with local configuration.
+The original owlette — a standalone Windows service with local configuration.
 
 - Windows service process monitoring with auto-restart
 - System tray icon and GUI configuration
@@ -311,9 +411,9 @@ The original Owlette — a standalone Windows service with local configuration.
 
 ---
 
-## Migration Guide: v0.4.2b to v2.0.0
+## migration guide: v0.4.2b to v2.0.0
 
-| v0.4.2b Feature | v2.0.0 Equivalent |
+| v0.4.2b feature | v2.0.0 equivalent |
 |-----------------|-------------------|
 | Gmail notifications | Web dashboard alerts + email via Resend |
 | Slack notifications | Web dashboard alerts |

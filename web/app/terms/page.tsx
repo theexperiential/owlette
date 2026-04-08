@@ -27,7 +27,7 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-white mb-4">1. acceptance of terms</h2>
               <p>
-                by accessing or using Owlette (&quot;the service&quot;), operated by The Experiential Company, LLC
+                by accessing or using owlette (&quot;the service&quot;), operated by The Experiential Company, LLC
                 (&quot;TEC,&quot; &quot;we,&quot; &quot;our,&quot; or &quot;us&quot;), you agree to be bound by these terms of service
                 (&quot;terms&quot;). if you do not agree to these terms, you may not use the service.
               </p>
@@ -42,7 +42,7 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-white mb-4">2. description of service</h2>
               <p>
-                Owlette is a cloud-connected process management and remote deployment system
+                owlette is a cloud-connected process management and remote deployment system
                 designed for managing Windows applications across multiple machines. the service
                 includes:
               </p>
@@ -94,11 +94,11 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-white mb-4">5. intellectual property</h2>
               <p>
-                the Owlette software is released under the GNU Affero General Public License v3.0 (AGPL-3.0).
+                the owlette software is released under the GNU Affero General Public License v3.0 (AGPL-3.0).
                 you may use, modify, and distribute the software in accordance with that license.
               </p>
               <p className="mt-4">
-                the Owlette name, logo, and branding are trademarks of TEC and may not be used
+                the owlette name, logo, and branding are trademarks of TEC and may not be used
                 without our express written permission.
               </p>
               <p className="mt-4">
@@ -171,7 +171,7 @@ export default function TermsPage() {
               </p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li>your right to use the service will immediately cease</li>
-                <li>you must stop using the Owlette agent on all machines</li>
+                <li>you must stop using the owlette agent on all machines</li>
                 <li>we may delete your account and associated data</li>
               </ul>
               <p className="mt-4">

@@ -1,5 +1,5 @@
 """
-Owlette Service Runner - NSSM Compatible
+owlette Service Runner - NSSM Compatible
 Runs the service main loop without Windows Service framework
 """
 import sys
@@ -49,7 +49,7 @@ def signal_handler(signum, frame):
             _service_instance.firebase_client.log_event(
                 action='agent_stopped',
                 level='info',
-                details=f'Owlette agent v{version} shutting down gracefully'
+                details=f'owlette agent v{version} shutting down gracefully'
             )
             logging.info("[SIGNAL HANDLER] agent_stopped event logged successfully")
             print("[SIGNAL HANDLER] agent_stopped logged", file=sys.stderr, flush=True)
@@ -89,14 +89,16 @@ if __name__ == '__main__':
     log_level = shared_utils.get_log_level_from_config()
     shared_utils.initialize_logging("service", level=log_level)
 
+    # Initialize Sentry error monitoring (after logging, before exception hooks)
+    import sentry_utils
+    sentry_utils.initialize_sentry(shared_utils.read_config(), shared_utils.APP_VERSION)
+
     # Wire global exception hooks (after logging is configured)
     from owlette_service import _handle_unhandled_exception, _handle_thread_exception
     sys.excepthook = _handle_unhandled_exception
     threading.excepthook = _handle_thread_exception
 
-    logging.info("="*70)
-    logging.info(f"OWLETTE SERVICE STARTING (NSSM MODE) — v{shared_utils.APP_VERSION}")
-    logging.info("="*70)
+    logging.info("Running as NSSM service (not win32serviceutil)")
 
     # Import the OwletteService class just to access its main() method
     from owlette_service import OwletteService
@@ -104,6 +106,8 @@ if __name__ == '__main__':
     # Create a minimal mock service object with just what main() needs
     class MockService:
         def __init__(self):
+            self._service_start_time = time.time()
+
             # Initialize results file if it doesn't exist
             import os
             if not os.path.exists(shared_utils.RESULT_FILE_PATH):

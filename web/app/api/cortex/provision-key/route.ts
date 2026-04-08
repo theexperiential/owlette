@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireSession } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { verifyUserSiteAccess } from '@/lib/cortex-utils.server';
 
 const COMMAND_TIMEOUT_MS = 15_000;
@@ -62,7 +63,7 @@ export async function POST(request: NextRequest) {
           type: 'provision_cortex_key',
           api_key: apiKey,
           provider: provider || 'anthropic',
-          timestamp: Date.now(),
+          timestamp: FieldValue.serverTimestamp(),
           status: 'pending',
         },
       },

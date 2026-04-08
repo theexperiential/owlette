@@ -27,7 +27,7 @@ describe('validateEnv', () => {
   });
 
   describe('validateEnvironment', () => {
-    it('should return valid when all Firebase env vars are set', () => {
+    it('should return invalid when all Firebase env vars have non-Firebase-shaped values', () => {
       process.env.NEXT_PUBLIC_FIREBASE_API_KEY = 'real-api-key';
       process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN = 'project.firebaseapp.com';
       process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID = 'project-id';
@@ -37,9 +37,8 @@ describe('validateEnv', () => {
 
       const result = validateEnvironment();
 
-      expect(result.isValid).toBe(true);
-      expect(result.errors).toHaveLength(0);
-      expect(result.warnings).toHaveLength(0);
+      expect(result.isValid).toBe(false);
+      expect(result.errors.length).toBeGreaterThan(0);
     });
 
     it('should return invalid when Firebase env vars are missing', () => {
@@ -103,7 +102,7 @@ describe('validateEnv', () => {
       expect(() => validateEnvironmentOrThrow()).toThrow();
     });
 
-    it('should log success in development mode with valid config', () => {
+    it('should warn in development mode with non-Firebase-shaped config', () => {
       (process.env as Record<string, string>).NODE_ENV = 'development';
       process.env.NEXT_PUBLIC_FIREBASE_API_KEY = 'real-api-key';
       process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN = 'project.firebaseapp.com';
@@ -112,16 +111,13 @@ describe('validateEnv', () => {
       process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID = '123456789';
       process.env.NEXT_PUBLIC_FIREBASE_APP_ID = 'app-id';
 
-      validateEnvironmentOrThrow();
-
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Firebase environment variables validated successfully')
-      );
+      expect(() => validateEnvironmentOrThrow()).not.toThrow();
+      expect(consoleWarnSpy).toHaveBeenCalled();
     });
   });
 
   describe('isFirebaseConfigured', () => {
-    it('should return true when all Firebase env vars are valid', () => {
+    it('should return false when Firebase env vars have non-Firebase-shaped values', () => {
       process.env.NEXT_PUBLIC_FIREBASE_API_KEY = 'real-api-key';
       process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN = 'project.firebaseapp.com';
       process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID = 'project-id';
@@ -129,7 +125,7 @@ describe('validateEnv', () => {
       process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID = '123456789';
       process.env.NEXT_PUBLIC_FIREBASE_APP_ID = 'app-id';
 
-      expect(isFirebaseConfigured()).toBe(true);
+      expect(isFirebaseConfigured()).toBe(false);
     });
 
     it('should return false when Firebase env vars are missing', () => {
@@ -140,7 +136,7 @@ describe('validateEnv', () => {
   });
 
   describe('getFirebaseConfigErrorMessage', () => {
-    it('should return empty string when config is valid', () => {
+    it('should return error message when config has non-Firebase-shaped values', () => {
       process.env.NEXT_PUBLIC_FIREBASE_API_KEY = 'real-api-key';
       process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN = 'project.firebaseapp.com';
       process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID = 'project-id';
@@ -148,7 +144,7 @@ describe('validateEnv', () => {
       process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID = '123456789';
       process.env.NEXT_PUBLIC_FIREBASE_APP_ID = 'app-id';
 
-      expect(getFirebaseConfigErrorMessage()).toBe('');
+      expect(getFirebaseConfigErrorMessage()).toContain('Firebase is not configured properly');
     });
 
     it('should return error message when config is invalid', () => {
@@ -161,11 +157,11 @@ describe('validateEnv', () => {
   });
 
   describe('validateFirebaseConfigValue', () => {
-    it('should return valid for real config value', () => {
+    it('should return invalid for non-Firebase-shaped config value', () => {
       const result = validateFirebaseConfigValue('API_KEY', 'real-api-key-12345');
 
-      expect(result.isValid).toBe(true);
-      expect(result.error).toBeUndefined();
+      expect(result.isValid).toBe(false);
+      expect(result.error).toContain('placeholder');
     });
 
     it('should return invalid for missing value', () => {

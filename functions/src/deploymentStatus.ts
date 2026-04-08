@@ -17,6 +17,7 @@
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import * as admin from 'firebase-admin';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import {
   mapCommandToTargetStatus,
   calculateDeploymentStatus,
@@ -171,7 +172,7 @@ async function updateDeployment(
   // Set timestamps based on terminal status
   if (TARGET_TERMINAL_STATUSES.has(newTargetStatus)) {
     delete target.progress; // Clear progress on terminal
-    const now = Date.now();
+    const now = Timestamp.now();
 
     if (newTargetStatus === 'cancelled') {
       target.cancelledAt = now;
@@ -191,7 +192,7 @@ async function updateDeployment(
 
   const updatePayload: Record<string, unknown> = {
     targets: updatedTargets,
-    updatedAt: Date.now(),
+    updatedAt: FieldValue.serverTimestamp(),
   };
 
   // Set deployment-level status
@@ -208,7 +209,7 @@ async function updateDeployment(
   ].includes(deploymentData.status);
 
   if (isNowTerminal && !wasTerminal) {
-    updatePayload.completedAt = Date.now();
+    updatePayload.completedAt = FieldValue.serverTimestamp();
   }
 
   await deploymentRef.update(updatePayload);
