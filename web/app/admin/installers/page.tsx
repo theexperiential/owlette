@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useInstallerManagement } from '@/hooks/useInstallerManagement';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Package, Plus, Loader2, Download, Trash2, CheckCircle, Copy, Sparkles, Paintbrush } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import UploadInstallerDialog from '@/components/admin/UploadInstallerDialog';
 import { formatFileSize } from '@/lib/storageUtils';
@@ -22,6 +23,41 @@ import { formatFileSize } from '@/lib/storageUtils';
  * - Set version as latest
  * - Delete old versions
  */
+function TruncatedReleaseNotes({ text }: { text: string }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [isTruncated, setIsTruncated] = useState(false);
+
+  const checkTruncation = useCallback(() => {
+    const el = ref.current;
+    if (el) setIsTruncated(el.scrollHeight > el.clientHeight);
+  }, []);
+
+  useEffect(() => {
+    checkTruncation();
+    window.addEventListener('resize', checkTruncation);
+    return () => window.removeEventListener('resize', checkTruncation);
+  }, [checkTruncation]);
+
+  const content = (
+    <p ref={ref} className="text-sm text-muted-foreground line-clamp-2 cursor-default">
+      {text}
+    </p>
+  );
+
+  if (!isTruncated) return content;
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>{content}</TooltipTrigger>
+        <TooltipContent side="top" className="max-w-sm whitespace-pre-wrap">
+          {text}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 export default function InstallerVersionsPage() {
   const {
     versions,
@@ -310,9 +346,7 @@ export default function InstallerVersionsPage() {
                       {/* Release Notes */}
                       <td className="p-4">
                         {version.release_notes ? (
-                          <p className="text-sm text-muted-foreground line-clamp-2">
-                            {version.release_notes}
-                          </p>
+                          <TruncatedReleaseNotes text={version.release_notes} />
                         ) : (
                           <span className="text-xs text-muted-foreground/60">no notes</span>
                         )}
