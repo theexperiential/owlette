@@ -6,8 +6,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Plus, Loader2, CheckCircle2, Copy, Monitor, Terminal } from 'lucide-react';
+import { Plus, Loader2, CheckCircle2, Copy, Monitor, Terminal, Download, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 
 interface AddMachineButtonProps {
   currentSiteId: string;
@@ -17,6 +18,7 @@ interface AddMachineButtonProps {
 export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineButtonProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'enter' | 'generate'>('enter');
+  const { version, downloadUrl, isLoading: isLoadingVersion } = useInstallerVersion();
 
   // Enter Code tab state
   const [enterPhrase, setEnterPhrase] = useState('');
@@ -154,23 +156,28 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
           </DialogHeader>
 
           {/* Tab switcher */}
-          <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+          <div className="relative grid grid-cols-2 rounded-lg bg-muted p-1">
+            {/* Sliding indicator */}
+            <div
+              className="absolute rounded-md bg-background transition-transform duration-200 ease-in-out pointer-events-none"
+              style={{
+                top: '4px', bottom: '4px', left: '4px',
+                width: 'calc(50% - 4px)',
+                transform: tab === 'generate' ? 'translateX(100%)' : 'translateX(0)',
+              }}
+            />
             <button
               onClick={() => setTab('enter')}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${
-                tab === 'enter'
-                  ? 'bg-secondary text-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
+              className={`relative z-10 rounded-md px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${
+                tab === 'enter' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               enter code
             </button>
             <button
               onClick={() => setTab('generate')}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${
-                tab === 'generate'
-                  ? 'bg-secondary text-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
+              className={`relative z-10 rounded-md px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${
+                tab === 'generate' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               generate code
@@ -179,7 +186,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
 
           {/* Tab 1: Enter Code (for machines already showing a phrase) */}
           {tab === 'enter' && (
-            <div className="space-y-4 mt-4">
+            <div className="space-y-5 mt-5">
               {enterSuccess ? (
                 <div className="text-center space-y-4 py-4">
                   <div className="mx-auto w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center">
@@ -192,10 +199,59 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                 </div>
               ) : (
                 <>
+                  {/* Install instructions */}
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm text-muted-foreground leading-snug">
+                      1) install owlette on the target machine
+                    </p>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <TooltipProvider disableHoverableContent>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={isLoadingVersion || !downloadUrl}
+                              onClick={() => downloadUrl && window.open(downloadUrl, '_blank')}
+                              className="text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer p-1.5"
+                            >
+                              {isLoadingVersion ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom">
+                            <p>{isLoadingVersion ? 'loading...' : `download v${version}`}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <TooltipProvider disableHoverableContent>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={isLoadingVersion || !downloadUrl}
+                              onClick={() => {
+                                if (downloadUrl) {
+                                  navigator.clipboard.writeText(downloadUrl);
+                                  toast.success('download link copied');
+                                }
+                              }}
+                              className="text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer p-1.5"
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom">
+                            <p>copy download link</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                  </div>
                   <div className="space-y-2">
-                    <Label className="text-foreground text-sm">
-                      enter the 3-word phrase shown on the machine
-                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      2) enter the 3-word phrase shown on the machine
+                    </p>
                     <Input
                       placeholder="e.g., silver-compass-drift"
                       value={enterPhrase}
@@ -265,13 +321,13 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                     <Label className="text-muted-foreground text-xs">silent install command</Label>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 bg-muted/50 border border-border rounded-md px-3 py-2 font-mono text-xs text-muted-foreground break-all">
-                        owlette-Installer.exe /ADD={generatedPhrase} /SILENT
+                        Owlette-Installer-v{version ?? '...'}.exe /ADD={generatedPhrase} /SILENT
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => copyToClipboard(
-                          `owlette-Installer.exe /ADD=${generatedPhrase} /SILENT`,
+                          `Owlette-Installer-v${version}.exe /ADD=${generatedPhrase} /SILENT`,
                           'Command'
                         )}
                         className="border-border text-foreground hover:bg-secondary cursor-pointer shrink-0"
@@ -281,9 +337,20 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                     </div>
                   </div>
 
-                  <p className="text-xs text-muted-foreground text-center">
-                    this code expires in 10 minutes. run the command on each target machine.
-                  </p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">
+                      expires in 10 minutes
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => { setGenerateSuccess(false); setGeneratedPhrase(''); handleGenerate(); }}
+                      className="text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer h-7 px-2 text-xs"
+                    >
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                      regenerate
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">
