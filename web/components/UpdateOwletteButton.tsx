@@ -299,9 +299,10 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
           <DialogFooter>
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               onClick={() => setDialogOpen(false)}
               disabled={isUpdating}
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>

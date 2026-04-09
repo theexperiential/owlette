@@ -134,7 +134,7 @@ export default function SchedulePresetDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} className="cursor-pointer">
+          <Button variant="ghost" onClick={() => onOpenChange(false)} className="bg-secondary border border-border cursor-pointer">
             Cancel
           </Button>
           <Button

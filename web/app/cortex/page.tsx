@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Button } from '@/components/ui/button';
 import { Plus, MessageSquare, Trash2, Brain, KeyRound, Check, X, Zap, Search, Loader2, Pencil, ChevronRight, ChevronsDownUp, ChevronsUpDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -281,33 +282,46 @@ export default function CortexPage() {
                   <span className="truncate">new conversation</span>
                 </Button>
                 {!chat.searchQuery && chat.conversations.length > 0 && (
-                  <Button
-                    onClick={() => {
-                      const groups = groupConversationsByCategory(chat.conversations);
-                      const allLabels = groups.map((g) => g.label);
-                      const allCollapsed = allLabels.every((l) => collapsedGroups.has(l));
-                      setCollapsedGroups(allCollapsed ? new Set() : new Set(allLabels));
-                    }}
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 min-w-8 text-muted-foreground hover:text-foreground"
-                    title={collapsedGroups.size > 0 ? 'expand all' : 'collapse all'}
-                  >
-                    {collapsedGroups.size > 0 ? (
-                      <ChevronsUpDown className="h-4 w-4" />
-                    ) : (
-                      <ChevronsDownUp className="h-4 w-4" />
-                    )}
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        onClick={() => {
+                          const groups = groupConversationsByCategory(chat.conversations);
+                          const allLabels = groups.map((g) => g.label);
+                          const allCollapsed = allLabels.every((l) => collapsedGroups.has(l));
+                          setCollapsedGroups(allCollapsed ? new Set() : new Set(allLabels));
+                        }}
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 min-w-8 text-muted-foreground hover:text-foreground"
+                      >
+                        {collapsedGroups.size > 0 ? (
+                          <ChevronsUpDown className="h-4 w-4" />
+                        ) : (
+                          <ChevronsDownUp className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{collapsedGroups.size > 0 ? 'expand all' : 'collapse all'}</p>
+                    </TooltipContent>
+                  </Tooltip>
                 )}
-                <Button
-                  onClick={() => setSearchOpen(true)}
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 min-w-8 text-muted-foreground hover:text-foreground"
-                >
-                  <Search className="h-4 w-4" />
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={() => setSearchOpen(true)}
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 min-w-8 text-muted-foreground hover:text-foreground"
+                    >
+                      <Search className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>search conversations</p>
+                  </TooltipContent>
+                </Tooltip>
               </>
             )}
           </div>
@@ -426,17 +440,23 @@ export default function CortexPage() {
         <main className="flex-1 flex flex-col min-h-0">
           {/* Machine selector bar — matches sidebar header height */}
           <div className="h-12 px-3 border-b border-border bg-card flex items-center gap-3">
-            <button
-              onClick={() => setSidebarOpen((prev) => !prev)}
-              className="hidden md:flex p-1 rounded hover:bg-accent transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
-              title={sidebarOpen ? 'hide sidebar' : 'show sidebar'}
-            >
-              {sidebarOpen ? (
-                <PanelLeftClose className="h-4 w-4" />
-              ) : (
-                <PanelLeftOpen className="h-4 w-4" />
-              )}
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setSidebarOpen((prev) => !prev)}
+                  className="hidden md:flex p-1 rounded hover:bg-accent transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
+                >
+                  {sidebarOpen ? (
+                    <PanelLeftClose className="h-4 w-4" />
+                  ) : (
+                    <PanelLeftOpen className="h-4 w-4" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{sidebarOpen ? 'hide sidebar' : 'show sidebar'}</p>
+              </TooltipContent>
+            </Tooltip>
             <MachineSelector
               machines={machines.map((m) => ({
                 id: m.machineId,
@@ -545,16 +565,23 @@ function ConversationItem({
     return (
       <div className="flex items-center gap-1.5 px-3 py-2 bg-red-950/30 border-y border-red-800/30">
         <p className="text-xs text-red-400 flex-1 truncate">delete?</p>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-            setConfirming(false);
-          }}
-          className="p-1 rounded hover:bg-red-900/50 transition-colors cursor-pointer"
-        >
-          <Check className="h-3.5 w-3.5 text-red-400" />
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+                setConfirming(false);
+              }}
+              className="p-1 rounded hover:bg-red-900/50 transition-colors cursor-pointer"
+            >
+              <Check className="h-3.5 w-3.5 text-red-400" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>confirm delete</p>
+          </TooltipContent>
+        </Tooltip>
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -585,16 +612,23 @@ function ConversationItem({
           }}
           className="flex-1 text-sm bg-secondary rounded px-2 py-1 outline-none border border-border focus:border-accent-cyan min-w-0"
         />
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onRename(editValue);
-            setEditing(false);
-          }}
-          className="p-1 rounded hover:bg-secondary transition-colors cursor-pointer"
-        >
-          <Check className="h-3.5 w-3.5 text-accent-cyan" />
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onRename(editValue);
+                setEditing(false);
+              }}
+              className="p-1 rounded hover:bg-secondary transition-colors cursor-pointer"
+            >
+              <Check className="h-3.5 w-3.5 text-accent-cyan" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>save</p>
+          </TooltipContent>
+        </Tooltip>
         <button
           onClick={(e) => {
             e.stopPropagation();

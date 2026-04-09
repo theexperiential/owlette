@@ -245,24 +245,36 @@ export default function InstallerVersionsPage() {
               </p>
             </div>
             <div className="flex gap-2">
-              <Button
-                onClick={() => window.open(latestVersion.download_url, '_blank')}
-                variant="outline"
-                size="icon"
-                className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
-                title={`Download owlette Agent v${latestVersion.version}`}
-              >
-                <Download className="h-4 w-4" />
-              </Button>
-              <Button
-                onClick={() => copyDownloadLink(latestVersion.download_url, latestVersion.version)}
-                variant="outline"
-                size="icon"
-                className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
-                title={`Copy download link for owlette Agent v${latestVersion.version}`}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={() => window.open(latestVersion.download_url, '_blank')}
+                    variant="outline"
+                    size="icon"
+                    className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
+                  >
+                    <Download className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>download installer</p>
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={() => copyDownloadLink(latestVersion.download_url, latestVersion.version)}
+                    variant="outline"
+                    size="icon"
+                    className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>copy download link</p>
+                </TooltipContent>
+              </Tooltip>
             </div>
           </div>
         </div>
@@ -382,24 +394,36 @@ export default function InstallerVersionsPage() {
 
                           {/* Right side: Icon buttons (always aligned) */}
                           <div className="flex items-center gap-2">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => window.open(version.download_url, '_blank')}
-                              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
-                              title={`Download owlette Agent v${version.version}`}
-                            >
-                              <Download className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => copyDownloadLink(version.download_url, version.version)}
-                              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
-                              title={`Copy download link for owlette Agent v${version.version}`}
-                            >
-                              <Copy className="h-3.5 w-3.5" />
-                            </Button>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => window.open(version.download_url, '_blank')}
+                                  className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>download installer</p>
+                              </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => copyDownloadLink(version.download_url, version.version)}
+                                  className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>copy download link</p>
+                              </TooltipContent>
+                            </Tooltip>
                             {!isLatest ? (
                               <Button
                                 variant="ghost"
@@ -458,9 +482,9 @@ export default function InstallerVersionsPage() {
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setSetLatestDialogOpen(false)}
-              className="border-border bg-card text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -485,9 +509,9 @@ export default function InstallerVersionsPage() {
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setDeleteDialogOpen(false)}
-              className="border-border bg-card text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -558,10 +582,10 @@ export default function InstallerVersionsPage() {
 
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setCleanupDialogOpen(false)}
               disabled={cleaningUp}
-              className="border-border bg-card text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>

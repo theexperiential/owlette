@@ -14,6 +14,7 @@ import { DeploymentTemplate, Deployment } from '@/hooks/useDeployments';
 import { Badge } from '@/components/ui/badge';
 import { useSystemPresets } from '@/hooks/useSystemPresets';
 import { SelectGroup, SelectLabel } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface DeploymentDialogProps {
   open: boolean;
@@ -442,21 +443,26 @@ export default function DeploymentDialog({
                       setEditingName(!editingName);
                     }}
                     className={`border-border bg-background cursor-pointer shrink-0 ${editingName ? 'text-accent-cyan hover:bg-accent-cyan/20 hover:text-accent-cyan' : 'text-white hover:bg-muted hover:text-white'}`}
-                    title={editingName ? 'Back to dropdown' : 'Edit name'}
                   >
                     <Pencil className="h-4 w-4" />
                   </Button>
                   {/* Save template */}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={handleSaveTemplate}
-                    className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer shrink-0"
-                    title={isTemplateSelected ? 'Save changes to template' : 'Save as new template'}
-                  >
-                    <Save className="h-4 w-4" />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={handleSaveTemplate}
+                        className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer shrink-0"
+                      >
+                        <Save className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{isTemplateSelected ? 'save changes to template' : 'save as new template'}</p>
+                    </TooltipContent>
+                  </Tooltip>
                   {/* Delete template */}
                   {isTemplateSelected && (
                     <Button
@@ -465,7 +471,6 @@ export default function DeploymentDialog({
                       size="icon"
                       onClick={handleDeleteTemplate}
                       className="border-border bg-background text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer shrink-0"
-                      title="Delete template"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -725,9 +730,9 @@ export default function DeploymentDialog({
 
         <DialogFooter>
           <Button
-            variant="outline"
+            variant="ghost"
             onClick={() => onOpenChange(false)}
-            className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
+            className="bg-secondary border border-border cursor-pointer"
             disabled={deploying}
           >
             cancel
@@ -763,9 +768,9 @@ export default function DeploymentDialog({
           </DialogHeader>
           <DialogFooter className="gap-2">
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setShowDeleteConfirm(false)}
-              className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>

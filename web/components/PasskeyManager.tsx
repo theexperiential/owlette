@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Fingerprint, Pencil, Trash2, Plus, Check, X, Smartphone, Monitor } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -146,14 +147,21 @@ export function PasskeyManager({ userId, compact = false }: PasskeyManagerProps)
                               if (e.key === 'Escape') setEditingId(null);
                             }}
                           />
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 cursor-pointer"
-                            onClick={() => handleRename(pk.credentialId)}
-                          >
-                            <Check className="h-3.5 w-3.5 text-green-400" />
-                          </Button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 cursor-pointer"
+                                onClick={() => handleRename(pk.credentialId)}
+                              >
+                                <Check className="h-3.5 w-3.5 text-green-400" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>save</p>
+                            </TooltipContent>
+                          </Tooltip>
                           <Button
                             variant="ghost"
                             size="icon"
@@ -268,8 +276,8 @@ export function PasskeyManager({ userId, compact = false }: PasskeyManagerProps)
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button
-              variant="outline"
-              className="bg-input border-border text-foreground hover:bg-muted cursor-pointer"
+              variant="ghost"
+              className="bg-secondary border border-border cursor-pointer"
               onClick={() => setDeleteTarget(null)}
               disabled={deleting}
             >

@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import { LayoutGrid, List, Monitor, Cog, ChevronsUpDown, ChevronsDownUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Table, TableBody } from '@/components/ui/table';
 import { PageHeader } from '@/components/PageHeader';
 import { MetricsDetailPanel, type MetricType } from '@/components/charts';
@@ -181,32 +182,52 @@ export default function DemoPage() {
 
                 {/* Expand/Collapse All + View Toggle */}
                 <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={toggleAllProcesses}
-                    className="cursor-pointer text-muted-foreground hover:bg-secondary hover:text-foreground"
-                    title={allExpanded ? 'collapse all' : 'expand all'}
-                  >
-                    {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={toggleAllProcesses}
+                        className="cursor-pointer text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      >
+                        {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{allExpanded ? 'collapse all' : 'expand all'}</p>
+                    </TooltipContent>
+                  </Tooltip>
                   <div className="h-4 w-px bg-border" />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setViewType('card')}
-                    className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
-                  >
-                    <LayoutGrid className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setViewType('list')}
-                    className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
-                  >
-                    <List className="h-4 w-4" />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setViewType('card')}
+                        className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                      >
+                        <LayoutGrid className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>card view</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setViewType('list')}
+                        className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                      >
+                        <List className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>list view</p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
             </div>

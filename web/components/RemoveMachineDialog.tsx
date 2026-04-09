@@ -84,17 +84,17 @@ export function RemoveMachineDialog({
           {/* Reinstall Notice */}
           <div className="rounded-lg border border-accent-cyan/20 bg-accent-cyan/10 p-4">
             <p className="text-sm text-accent-cyan">
-              to add this machine back to a site, you will need to re-run the owlette installer and configure it with a site ID.
+              to add this machine back to a site, you will need to re-run the owlette installer and pair it again using the 3-word phrase shown during install.
             </p>
           </div>
         </div>
 
         <DialogFooter>
           <Button
-            variant="outline"
+            variant="ghost"
             onClick={() => onOpenChange(false)}
             disabled={isRemoving}
-            className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer disabled:cursor-not-allowed"
+            className="bg-secondary border border-border cursor-pointer disabled:cursor-not-allowed"
           >
             cancel
           </Button>

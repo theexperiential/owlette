@@ -245,7 +245,6 @@ export default function SystemPresetsPage() {
                               size="icon"
                               onClick={() => handleEdit(preset)}
                               className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
-                              title="Edit"
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
@@ -254,7 +253,6 @@ export default function SystemPresetsPage() {
                               size="icon"
                               onClick={() => handleDelete(preset)}
                               className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
-                              title="Delete"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
@@ -355,13 +353,13 @@ export default function SystemPresetsPage() {
             </DialogHeader>
             <DialogFooter>
               <Button
-                variant="outline"
+                variant="ghost"
                 onClick={() => {
                   setDeleteDialogOpen(false);
                   setPresetToDelete(null);
                 }}
                 disabled={deleting}
-                className="border-border bg-background text-foreground hover:bg-accent! cursor-pointer"
+                className="bg-secondary border border-border cursor-pointer"
               >
                 cancel
               </Button>

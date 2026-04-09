@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { KeyRound, Trash2, RefreshCw, AlertTriangle, Clock, CheckCircle } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { AdminButton } from '@/components/admin/AdminButton';
 
@@ -208,15 +209,22 @@ export default function TokensPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={fetchTokens}
-              disabled={!selectedSiteId || loading}
-              className="border-border text-foreground hover:bg-accent! hover:text-foreground!"
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={fetchTokens}
+                  disabled={!selectedSiteId || loading}
+                  className="border-border text-foreground hover:bg-accent! hover:text-foreground!"
+                >
+                  <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>refresh tokens</p>
+              </TooltipContent>
+            </Tooltip>
             {tokens.length > 0 && (
               <Button
                 variant="destructive"

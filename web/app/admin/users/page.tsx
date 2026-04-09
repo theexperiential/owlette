@@ -5,6 +5,7 @@ import { useUserManagement } from '@/hooks/useUserManagement';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Users, Shield, ShieldAlert, Loader2, Settings, MoreVertical, UserCog, UserMinus, Trash2 } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { ManageUserSitesDialog } from '@/components/ManageUserSitesDialog';
@@ -268,14 +269,21 @@ export default function UserManagementPage() {
                     <td className="p-4">
                       <div className="flex items-center justify-end">
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground! hover:bg-accent! cursor-pointer"
-                            >
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground! hover:bg-accent! cursor-pointer"
+                                >
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>user options</p>
+                            </TooltipContent>
+                          </Tooltip>
                           <DropdownMenuContent align="end" className="bg-card border-border">
                             <DropdownMenuItem
                               onClick={() => handleOpenManageSites(user.uid, user.email, user.role, user.sites || [])}
@@ -387,9 +395,9 @@ export default function UserManagementPage() {
           </div>
           <DialogFooter className="gap-2">
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setRoleChangeDialogOpen(false)}
-              className="border-border bg-background text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -432,9 +440,9 @@ export default function UserManagementPage() {
           </div>
           <DialogFooter className="gap-2">
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setDeleteConfirmDialogOpen(false)}
-              className="border-border bg-background text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>

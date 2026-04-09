@@ -196,7 +196,7 @@ export default function SchedulePresetsPage() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)} className="hover:bg-accent! hover:text-foreground! cursor-pointer">
+            <Button variant="ghost" onClick={() => setDeleteDialogOpen(false)} className="bg-secondary border border-border cursor-pointer">
               cancel
             </Button>
             <Button

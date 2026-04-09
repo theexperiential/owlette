@@ -198,7 +198,7 @@ export function ReportBugDialog({ open, onOpenChange }: ReportBugDialogProps) {
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting} className="bg-secondary border border-border cursor-pointer">
             cancel
           </Button>
           <Button onClick={handleSubmit} disabled={submitting}>

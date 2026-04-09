@@ -122,16 +122,23 @@ const DeploymentRow = React.memo(function DeploymentRow({
             {new Date(deployment.createdAt).toLocaleString()}
           </span>
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={(e) => e.stopPropagation()}
-                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
-              >
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={(e) => e.stopPropagation()}
+                    className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>more options</p>
+              </TooltipContent>
+            </Tooltip>
             <DropdownMenuContent align="end" className="border-border bg-secondary">
               {deployment.targets.some((t: any) => t.status === 'failed') && (
                 <DropdownMenuItem

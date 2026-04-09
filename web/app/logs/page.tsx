@@ -11,6 +11,7 @@ import { collection, query, orderBy, limit, getDocs, where, startAfter, Query, D
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { ChevronDown, ChevronsUpDown, ChevronsDownUp, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle, Camera } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -566,15 +567,21 @@ export default function LogsPage() {
 
           <div className="flex items-center gap-2 flex-shrink-0">
             {logs.length > 0 && (
-              <Button
-                variant="outline"
-                onClick={toggleAllExpanded}
-                className="hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
-                title={allExpanded ? 'collapse all' : 'expand all'}
-                size="icon"
-              >
-                {allExpanded ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />}
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    onClick={toggleAllExpanded}
+                    className="hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                    size="icon"
+                  >
+                    {allExpanded ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{allExpanded ? 'collapse all' : 'expand all'}</p>
+                </TooltipContent>
+              </Tooltip>
             )}
             <Button
               variant="outline"

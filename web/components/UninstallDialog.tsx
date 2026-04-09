@@ -401,7 +401,6 @@ export default function UninstallDialog({
                                         setSelectedSoftware('');
                                       }}
                                       className="shrink-0 ml-2 p-1 rounded-sm hover:bg-primary/20 transition-colors cursor-pointer"
-                                      title="Deselect"
                                     >
                                       <X className="h-4 w-4 text-primary" />
                                     </button>
@@ -449,7 +448,7 @@ export default function UninstallDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={uninstalling}>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={uninstalling} className="bg-secondary border border-border cursor-pointer">
             cancel
           </Button>
           <Button

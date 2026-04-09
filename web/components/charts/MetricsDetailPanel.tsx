@@ -21,6 +21,11 @@ import {
 } from 'recharts';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import {
+  Tooltip as UITooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { X, ToggleLeft, ToggleRight } from 'lucide-react';
 import { TimeRangeSelector, type TimeRange } from './TimeRangeSelector';
 import { ChartTooltip, metricConfig, isNetworkMetricKey, type MetricType } from './ChartTooltip';
@@ -241,19 +246,25 @@ export function MetricsDetailPanel({
 
           {/* Metric toggle buttons - left aligned */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleAll}
-              title={allSelected ? 'Show only initial metric' : 'Show all metrics'}
-              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-secondary shrink-0"
-            >
-              {allSelected ? (
-                <ToggleRight className="h-4 w-4" />
-              ) : (
-                <ToggleLeft className="h-4 w-4" />
-              )}
-            </Button>
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={toggleAll}
+                  className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-secondary shrink-0"
+                >
+                  {allSelected ? (
+                    <ToggleRight className="h-4 w-4" />
+                  ) : (
+                    <ToggleLeft className="h-4 w-4" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{allSelected ? 'show only initial metric' : 'show all metrics'}</p>
+              </TooltipContent>
+            </UITooltip>
             {availableMetrics.map((metric) => {
               const config = metricConfig[metric];
               const isSelected = selectedMetrics.includes(metric);

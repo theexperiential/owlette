@@ -94,7 +94,7 @@ export default function SchedulePopover({
                   key={preset.id ?? preset.name}
                   type="button"
                   onClick={() => applyPreset(preset)}
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors cursor-pointer ${
                     isMatch
                       ? 'bg-blue-600 text-white'
                       : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
@@ -110,7 +110,7 @@ export default function SchedulePopover({
               );
               return (
                 <span
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium ${
                     !matchesAnyPreset
                       ? 'bg-blue-600 text-white'
                       : 'bg-muted text-muted-foreground'
@@ -136,10 +136,10 @@ export default function SchedulePopover({
             ) : <span />}
             <div className="flex gap-2">
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 onClick={() => setOpen(false)}
-                className="cursor-pointer text-xs"
+                className="bg-secondary border border-border cursor-pointer text-xs"
               >
                 cancel
               </Button>

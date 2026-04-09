@@ -433,10 +433,10 @@ export default function SystemPresetDialog({
 
         <DialogFooter>
           <Button
-            variant="outline"
+            variant="ghost"
             onClick={() => onOpenChange(false)}
             disabled={saving}
-            className="border-border bg-background text-white hover:bg-muted cursor-pointer"
+            className="bg-secondary border border-border cursor-pointer"
           >
             cancel
           </Button>

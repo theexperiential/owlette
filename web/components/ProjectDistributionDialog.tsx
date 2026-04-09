@@ -269,7 +269,6 @@ export default function ProjectDistributionDialog({
                       size="icon"
                       onClick={handleEditTemplate}
                       className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer"
-                      title="Edit template"
                     >
                       <Pencil className="h-4 w-4" />
                     </Button>
@@ -279,7 +278,6 @@ export default function ProjectDistributionDialog({
                       size="icon"
                       onClick={handleDeleteTemplate}
                       className="border-border bg-background text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
-                      title="Delete template"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -434,9 +432,9 @@ export default function ProjectDistributionDialog({
 
         <DialogFooter>
           <Button
-            variant="outline"
+            variant="ghost"
             onClick={() => onOpenChange(false)}
-            className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
+            className="bg-secondary border border-border cursor-pointer"
             disabled={distributing}
           >
             cancel

@@ -330,10 +330,10 @@ export function WebhookList({ siteId }: { siteId: string }) {
                   {deletingId === webhook.id ? 'deleting...' : 'confirm'}
                 </Button>
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   onClick={() => setDeleteConfirmId(null)}
-                  className="border-border hover:bg-accent hover:text-foreground cursor-pointer"
+                  className="bg-secondary border border-border cursor-pointer"
                 >
                   cancel
                 </Button>
@@ -409,9 +409,9 @@ export function WebhookList({ siteId }: { siteId: string }) {
 
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setEditingWebhook(null)}
-              className="border-border hover:bg-accent hover:text-foreground cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -579,9 +579,9 @@ export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebh
 
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => onOpenChange(false)}
-              className="border-border hover:bg-accent hover:text-foreground cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>

@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { validateSiteId, generateSiteIdFromName, generateRandomSiteId } from '@/lib/validators';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { CheckCircle2, XCircle, Loader2, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
@@ -200,14 +201,20 @@ export function CreateSiteDialog({
               <span>site ID:</span>
               <span className="font-mono text-accent-cyan">{newSiteId}</span>
               {getAvailabilityIcon()}
-              <button
-                type="button"
-                onClick={handleRegenerate}
-                className="text-muted-foreground hover:text-accent-cyan transition-colors cursor-pointer"
-                title="generate new ID"
-              >
-                <RefreshCw className="h-3 w-3" />
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleRegenerate}
+                    className="text-muted-foreground hover:text-accent-cyan transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>generate new ID</p>
+                </TooltipContent>
+              </Tooltip>
             </div>
 
             {validationError && (
@@ -248,9 +255,9 @@ export function CreateSiteDialog({
         </div>
         <DialogFooter>
           <Button
-            variant="outline"
+            variant="ghost"
             onClick={() => onOpenChange(false)}
-            className="border-border bg-secondary text-white hover:bg-muted cursor-pointer"
+            className="bg-secondary border border-border cursor-pointer"
           >
             cancel
           </Button>

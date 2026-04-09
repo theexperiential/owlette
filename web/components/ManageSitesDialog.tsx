@@ -5,14 +5,17 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Pencil, Trash2, Check, X, Plus, Copy } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Pencil, Trash2, Check, X, Plus, Copy, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
+import { useUserManagement } from '@/hooks/useUserManagement';
 
 interface Site {
   id: string;
   name: string;
   timezone?: string;
+  owner?: string;
 }
 
 interface ManageSitesDialogProps {
@@ -21,6 +24,8 @@ interface ManageSitesDialogProps {
   sites: Site[];
   currentSiteId: string;
   machineCount?: number;
+  currentUserId?: string;
+  isAdmin?: boolean;
   onUpdateSite: (siteId: string, updates: { name?: string; timezone?: string }) => Promise<void>;
   onDeleteSite: (siteId: string) => Promise<void>;
   onCreateSite: () => void;
@@ -32,10 +37,23 @@ export function ManageSitesDialog({
   sites,
   currentSiteId,
   machineCount = 0,
+  currentUserId,
+  isAdmin = false,
   onUpdateSite,
   onDeleteSite,
   onCreateSite,
 }: ManageSitesDialogProps) {
+  // When admin, fetch all users so we can display the owner of foreign sites.
+  // Lazily resolve owner UIDs → emails for sites not owned by the current admin.
+  const { users: allUsers } = useUserManagement();
+  const ownerEmailByUid = React.useMemo(() => {
+    if (!isAdmin) return new Map<string, string>();
+    const map = new Map<string, string>();
+    for (const u of allUsers) {
+      if (u.uid && u.email) map.set(u.uid, u.email);
+    }
+    return map;
+  }, [allUsers, isAdmin]);
   const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [editingTimezone, setEditingTimezone] = useState('UTC');
@@ -128,12 +146,26 @@ export function ManageSitesDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="border-border bg-secondary text-white max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="text-white">manage sites</DialogTitle>
+            <div className="flex items-center gap-3 pr-8">
+              <DialogTitle className="text-white">manage sites</DialogTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  onOpenChange(false);
+                  onCreateSite();
+                }}
+                className="bg-card border border-border text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan cursor-pointer"
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                new site
+              </Button>
+            </div>
             <DialogDescription className="text-muted-foreground">
               edit site names, timezones, or delete sites
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 py-4 pr-2 max-h-96 overflow-y-auto">
+          <div className="space-y-2 py-4 pr-[14px] -mr-[6px] max-h-[60vh] overflow-y-auto">
             {sites.map((site) => (
               <div
                 key={site.id}
@@ -179,7 +211,7 @@ export function ManageSitesDialog({
                         size="sm"
                         onClick={cancelEditingSite}
                         disabled={isSaving}
-                        className="text-muted-foreground hover:text-muted-foreground hover:bg-muted cursor-pointer"
+                        className="bg-secondary border border-border cursor-pointer"
                       >
                         <X className="h-4 w-4 mr-1" />
                         cancel
@@ -205,23 +237,29 @@ export function ManageSitesDialog({
                           <p className="text-xs font-mono text-muted-foreground">
                             {site.id}
                           </p>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              try {
-                                await navigator.clipboard.writeText(site.id);
-                                toast.success(`Site ID copied!`);
-                              } catch {
-                                toast.error('Failed to copy Site ID');
-                              }
-                            }}
-                            className="h-5 w-5 p-0 text-muted-foreground hover:text-accent-cyan hover:bg-transparent cursor-pointer"
-                            title="Copy Site ID"
-                          >
-                            <Copy className="h-3 w-3" />
-                          </Button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  try {
+                                    await navigator.clipboard.writeText(site.id);
+                                    toast.success(`Site ID copied!`);
+                                  } catch {
+                                    toast.error('Failed to copy Site ID');
+                                  }
+                                }}
+                                className="h-5 w-5 p-0 text-muted-foreground hover:text-accent-cyan hover:bg-transparent cursor-pointer"
+                              >
+                                <Copy className="h-3 w-3" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>copy site id</p>
+                            </TooltipContent>
+                          </Tooltip>
                         </div>
                         {site.id === currentSiteId && (
                           <p className="text-xs text-muted-foreground mt-0.5">
@@ -233,46 +271,52 @@ export function ManageSitesDialog({
                             {site.timezone}
                           </p>
                         )}
+                        {isAdmin && site.owner && currentUserId && site.owner !== currentUserId && (
+                          <p className="text-xs text-amber-400/80 mt-0.5 flex items-center gap-1">
+                            <User className="h-3 w-3" />
+                            owned by {ownerEmailByUid.get(site.owner) || site.owner}
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1 ml-4 flex-shrink-0">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => startEditingSite(site)}
-                        className="text-muted-foreground hover:text-accent-cyan hover:bg-muted cursor-pointer"
-                        title="Edit site"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => confirmDeleteSite(site.id)}
-                        className="text-muted-foreground hover:text-red-400 hover:bg-muted cursor-pointer"
-                        disabled={sites.length === 1}
-                        title={sites.length === 1 ? "Cannot delete the last site" : "Delete site"}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => startEditingSite(site)}
+                            className="text-muted-foreground hover:text-accent-cyan hover:bg-muted cursor-pointer"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>edit site</p>
+                        </TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => confirmDeleteSite(site.id)}
+                            className="text-muted-foreground hover:text-red-400 hover:bg-muted cursor-pointer"
+                            disabled={sites.length === 1}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{sites.length === 1 ? 'cannot delete the last site' : 'delete site'}</p>
+                        </TooltipContent>
+                      </Tooltip>
                     </div>
                   </div>
                 )}
               </div>
             ))}
           </div>
-          <DialogFooter className="border-t border-border pt-4">
-            <Button
-              onClick={() => {
-                onOpenChange(false);
-                onCreateSite();
-              }}
-              className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              new site
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -297,12 +341,12 @@ export function ManageSitesDialog({
           )}
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => {
                 setDeletingDialogOpen(false);
                 setSiteToDelete(null);
               }}
-              className="border-border bg-secondary text-white hover:bg-muted cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>

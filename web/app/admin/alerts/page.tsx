@@ -628,9 +628,9 @@ export default function AlertsPage() {
 
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setDialogOpen(false)}
-              className="hover:bg-accent! hover:text-foreground! cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -658,9 +658,9 @@ export default function AlertsPage() {
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setDeleteDialogOpen(false)}
-              className="hover:bg-accent! hover:text-foreground! cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
