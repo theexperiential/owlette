@@ -96,6 +96,127 @@
   background-color: #141e3580;
 }
 
+/* Active tab indicator */
+.md-tabs__item--active .md-tabs__link,
+.md-tabs__link:hover {
+  color: #22c3d6 !important;
+}
+
+.md-tabs__item--active .md-tabs__link::after {
+  content: '';
+  display: block;
+  height: 2px;
+  background: #22c3d6;
+  border-radius: 1px;
+  margin-top: 2px;
+}
+
+/* Sidebar section titles — stronger color contrast from child links */
+.md-sidebar--primary .md-nav__item--nested > .md-nav__link,
+.md-sidebar--primary .md-nav__item--section > .md-nav__link {
+  color: var(--md-default-fg-color) !important;
+  font-weight: 600;
+}
+
+/* Section spacing — more breathing room between major sections */
+.md-typeset hr {
+  margin: 2.5em 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  API endpoint cards                                                 */
+/* ------------------------------------------------------------------ */
+.endpoint-card {
+  margin: 1.5em 0;
+  border: 1px solid #293a5c;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.endpoint-card > h3 {
+  margin: 0;
+  padding: 0.65em 1em;
+  background-color: #141e35;
+  border-bottom: 1px solid #293a5c;
+  border-left: 3px solid #22c3d6;
+  border-radius: 0;
+  font-size: 1em;
+}
+
+.endpoint-card > *:not(h3) {
+  margin-left: 1em;
+  margin-right: 1em;
+}
+
+.endpoint-card > *:last-child {
+  margin-bottom: 1em;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Right-side TOC: section headers (h2) vs endpoint items (h3)       */
+/* ------------------------------------------------------------------ */
+
+/* Divider below "table of contents" heading */
+.md-nav--secondary > .md-nav__title {
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  padding-bottom: 0.4em;
+  margin-bottom: 0.4em;
+}
+
+/* h2-level TOC entries — section group labels */
+.md-nav--secondary > .md-nav__list > .md-nav__item > .md-nav__link {
+  color: var(--md-default-fg-color) !important;
+  font-weight: 600;
+  margin-top: 0.5em;
+}
+
+/* Active TOC entry — cyan accent on scroll (must beat h2/h3 specificity) */
+.md-nav--secondary > .md-nav__list > .md-nav__item > .md-nav__link.toc-active,
+.md-nav--secondary .md-nav__item .md-nav__item .md-nav__link.toc-active {
+  color: var(--md-accent-fg-color) !important;
+}
+
+/* h3-level TOC entries — individual endpoints */
+.md-nav--secondary .md-nav__item .md-nav__item .md-nav__link {
+  color: var(--md-default-fg-color--light);
+  font-size: 0.85em;
+  padding-left: 1em;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Left sidebar: indent sub-items under section titles               */
+/* ------------------------------------------------------------------ */
+.md-sidebar--primary .md-nav--nested .md-nav__item {
+  padding-left: 0.6rem;
+}
+
+/* Divider below section titles in left sidebar */
+.md-sidebar--primary .md-nav__item--section > .md-nav__link {
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  padding-bottom: 0.4em;
+  margin-bottom: 0.4em;
+}
+
+/* Tighten logo → title gap */
+.md-header__button.md-logo {
+  margin: 0 !important;
+  padding: 0.4rem 10px !important;
+}
+
+.md-header__title {
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+}
+
+/* Lowercase nav + search chrome */
+.md-tabs__link,
+.md-nav__link,
+.md-nav__title,
+.md-header__title,
+.md-search__input::placeholder {
+  text-transform: lowercase;
+}
+
 /* Scrollbar — matches web app's blue-tinted scrollbars */
 [data-md-color-scheme="slate"] ::-webkit-scrollbar {
   width: 8px;
