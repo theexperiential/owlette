@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { PasskeyManager } from '@/components/PasskeyManager';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'cortex' | 'security' | 'api' | 'danger';
 
@@ -71,6 +72,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [temperatureUnit, setTemperatureUnit] = useState<'C' | 'F'>('C');
   const [timezone, setTimezone] = useState('UTC');
   const [timeFormat, setTimeFormat] = useState<'12h' | '24h'>('12h');
+  const [timeDisplayMode, setTimeDisplayMode] = useState<'user' | 'machine' | 'site'>('machine');
   const [healthAlerts, setHealthAlerts] = useState(true);
   const [processAlerts, setProcessAlerts] = useState(true);
   const [thresholdAlerts, setThresholdAlerts] = useState(true);
@@ -153,6 +155,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setTemperatureUnit(userPreferences.temperatureUnit);
       setTimezone(userPreferences.timezone || getBrowserTimezone());
       setTimeFormat(userPreferences.timeFormat || '12h');
+      setTimeDisplayMode(userPreferences.timeDisplayMode || 'machine');
       setHealthAlerts(userPreferences.healthAlerts);
       setProcessAlerts(userPreferences.processAlerts);
       setThresholdAlerts(userPreferences.thresholdAlerts);
@@ -207,7 +210,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setActiveSection('profile');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, user?.displayName, userPreferences.temperatureUnit, userPreferences.timezone, userPreferences.timeFormat, userPreferences.healthAlerts, userPreferences.processAlerts, JSON.stringify(userPreferences.alertCcEmails)]);
+  }, [open, user?.displayName, userPreferences.temperatureUnit, userPreferences.timezone, userPreferences.timeFormat, userPreferences.timeDisplayMode, userPreferences.healthAlerts, userPreferences.processAlerts, JSON.stringify(userPreferences.alertCcEmails)]);
 
   const handleOpenChange = (isOpen: boolean) => {
     onOpenChange(isOpen);
@@ -268,13 +271,14 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       const prefsChanged = temperatureUnit !== userPreferences.temperatureUnit
         || timezone !== userPreferences.timezone
         || timeFormat !== (userPreferences.timeFormat || '12h')
+        || timeDisplayMode !== (userPreferences.timeDisplayMode || 'machine')
         || healthAlerts !== userPreferences.healthAlerts
         || processAlerts !== userPreferences.processAlerts
         || thresholdAlerts !== userPreferences.thresholdAlerts
         || cortexAlerts !== userPreferences.cortexAlerts
         || JSON.stringify(alertCcEmails) !== JSON.stringify(userPreferences.alertCcEmails || []);
       if (prefsChanged) {
-        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts, alertCcEmails });
+        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, timeDisplayMode, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts, alertCcEmails });
       }
       if (showPasswordSection && (currentPassword || newPassword || confirmPassword)) {
         if (!validatePassword()) {
@@ -418,13 +422,51 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="timezone" className="text-white">timezone</Label>
+                    <Label className="text-white">display times in</Label>
+                    <p className="text-xs text-muted-foreground">
+                      controls how heartbeats, activity logs, and other absolute timestamps render across the dashboard. schedule editors are unaffected — they always show times in the machine's own local timezone.
+                    </p>
+                    <div className="space-y-2 mt-1">
+                      {([
+                        { value: 'machine', label: "each machine's local timezone", help: 'every machine renders its own heartbeats and timestamps in its own local clock. best when monitoring kiosks across multiple timezones.' },
+                        { value: 'user', label: 'my timezone', help: 'all machines render in your selected timezone (below). best when you want a single shared reference frame.' },
+                        { value: 'site', label: "site timezone", help: "all machines render in the site's configured timezone (set in manage sites). preserves the legacy behavior." },
+                      ] as const).map(opt => (
+                        <label
+                          key={opt.value}
+                          className="flex items-start gap-2.5 p-2.5 rounded-md border border-border bg-background/50 hover:bg-secondary cursor-pointer transition-colors"
+                        >
+                          <input
+                            type="radio"
+                            name="timeDisplayMode"
+                            value={opt.value}
+                            checked={timeDisplayMode === opt.value}
+                            onChange={() => setTimeDisplayMode(opt.value)}
+                            disabled={loading}
+                            className="mt-0.5 cursor-pointer accent-cyan-500"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm text-white">{opt.label}</div>
+                            <div className="text-xs text-muted-foreground mt-0.5">{opt.help}</div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="timezone" className="text-white">
+                      your timezone
+                      {timeDisplayMode !== 'user' && (
+                        <span className="ml-2 text-xs text-muted-foreground font-normal">(only used when display mode is "my timezone")</span>
+                      )}
+                    </Label>
                     <TimezoneSelect
                       id="timezone"
                       value={timezone}
                       onValueChange={(value: string) => setTimezone(value)}
-                      disabled={loading}
-                      className="border-border bg-background text-white hover:bg-secondary w-72"
+                      disabled={loading || timeDisplayMode !== 'user'}
+                      className="border-border bg-background text-white hover:bg-secondary w-72 disabled:opacity-50"
                     />
                   </div>
 
@@ -561,16 +603,23 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                           disabled={loading}
                           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCcEmail(); } }}
                         />
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={handleAddCcEmail}
-                          disabled={loading || !newCcEmail.trim()}
-                          className="border-border text-white hover:bg-secondary"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={handleAddCcEmail}
+                              disabled={loading || !newCcEmail.trim()}
+                              className="border-border text-white hover:bg-secondary"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>add email</p>
+                          </TooltipContent>
+                        </Tooltip>
                       </div>
                       {ccEmailError && <p className="text-xs text-red-400">{ccEmailError}</p>}
                       <p className="text-[11px] text-muted-foreground">these addresses will be CC&apos;d on all alert emails. max 5.</p>
@@ -699,13 +748,20 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                           className="border-border bg-background pr-10 text-white"
                           disabled={llmSaving}
                         />
-                        <button
-                          type="button"
-                          onClick={() => setShowLlmKey(!showLlmKey)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
-                        >
-                          {showLlmKey ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
-                        </button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => setShowLlmKey(!showLlmKey)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
+                            >
+                              {showLlmKey ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{showLlmKey ? 'hide key' : 'show key'}</p>
+                          </TooltipContent>
+                        </Tooltip>
                       </div>
                       <p className="text-[11px] text-muted-foreground">
                         your key is encrypted with AES-256 and never leaves the server.
@@ -838,14 +894,21 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                               className="border-border bg-background pr-10 text-white"
                               disabled={loading}
                             />
-                            <button
-                              type="button"
-                              onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
-                              disabled={loading}
-                            >
-                              {showCurrentPassword ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
-                            </button>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                                  className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
+                                  disabled={loading}
+                                >
+                                  {showCurrentPassword ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>{showCurrentPassword ? 'hide password' : 'show password'}</p>
+                              </TooltipContent>
+                            </Tooltip>
                           </div>
                         </div>
 
@@ -861,14 +924,21 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                               className="border-border bg-background pr-10 text-white"
                               disabled={loading}
                             />
-                            <button
-                              type="button"
-                              onClick={() => setShowNewPassword(!showNewPassword)}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
-                              disabled={loading}
-                            >
-                              {showNewPassword ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
-                            </button>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowNewPassword(!showNewPassword)}
+                                  className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
+                                  disabled={loading}
+                                >
+                                  {showNewPassword ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>{showNewPassword ? 'hide password' : 'show password'}</p>
+                              </TooltipContent>
+                            </Tooltip>
                           </div>
                           <p className="text-xs text-muted-foreground">must be at least 6 characters</p>
                         </div>
@@ -885,14 +955,21 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                               className="border-border bg-background pr-10 text-white"
                               disabled={loading}
                             />
-                            <button
-                              type="button"
-                              onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
-                              disabled={loading}
-                            >
-                              {showConfirmPassword ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
-                            </button>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                  className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-white"
+                                  disabled={loading}
+                                >
+                                  {showConfirmPassword ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>{showConfirmPassword ? 'hide password' : 'show password'}</p>
+                              </TooltipContent>
+                            </Tooltip>
                           </div>
                         </div>
 
@@ -937,18 +1014,25 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                         <code className="flex-1 text-xs bg-background rounded px-3 py-2 text-white font-mono break-all select-all">
                           {createdKey}
                         </code>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            navigator.clipboard.writeText(createdKey);
-                            toast.success('API key copied to clipboard');
-                          }}
-                          className="cursor-pointer border-border text-accent-cyan hover:bg-muted h-8 flex-shrink-0"
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                navigator.clipboard.writeText(createdKey);
+                                toast.success('API key copied to clipboard');
+                              }}
+                              className="cursor-pointer border-border text-accent-cyan hover:bg-muted h-8 flex-shrink-0"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>copy key</p>
+                          </TooltipContent>
+                        </Tooltip>
                       </div>
                     </div>
                   )}
@@ -1132,9 +1216,9 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
             {(activeSection === 'profile' || activeSection === 'preferences' || activeSection === 'security') && (
               <div className="border-t border-border px-6 py-3 flex justify-end gap-2">
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   onClick={() => onOpenChange(false)}
-                  className="cursor-pointer border-border bg-secondary text-white hover:bg-muted"
+                  className="bg-secondary border border-border cursor-pointer"
                   disabled={loading}
                 >
                   cancel
@@ -1191,12 +1275,12 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
             </div>
             <DialogFooter>
               <Button
-                variant="outline"
+                variant="ghost"
                 onClick={() => {
                   setShowDeleteConfirm(false);
                   setDeletePassword('');
                 }}
-                className="cursor-pointer border-border bg-secondary text-white hover:bg-muted"
+                className="bg-secondary border border-border cursor-pointer"
                 disabled={deleting}
               >
                 cancel

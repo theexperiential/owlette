@@ -78,8 +78,16 @@ type UserRole = 'user' | 'admin';
 
 export interface UserPreferences {
   temperatureUnit: 'C' | 'F'; // Default: 'C'
-  timezone: string; // IANA timezone (e.g. 'America/New_York'). Default: browser-detected
+  timezone: string; // IANA timezone (e.g. 'America/New_York'). Default: browser-detected. Used as the display reference frame when timeDisplayMode === 'user'.
   timeFormat: '12h' | '24h'; // Time display format. Default: '12h'
+  /** Which timezone reference frame to use when rendering absolute timestamps
+   * (heartbeats, activity logs, etc) on the dashboard:
+   *   - 'user'    → render in `timezone` above (single reference frame for all machines)
+   *   - 'machine' → render each machine's timestamps in that machine's own local timezone (best for distributed kiosks)
+   *   - 'site'    → render in the site's configured timezone (legacy/single-team behavior)
+   * Schedule editors are unaffected — they always use the machine's local timezone with an explicit chip label.
+   * Default: 'machine'. */
+  timeDisplayMode: 'user' | 'machine' | 'site';
   healthAlerts: boolean; // Receive email alerts when machines go offline. Default: true
   processAlerts: boolean; // Receive email alerts when processes crash or fail to start. Default: true
   thresholdAlerts: boolean; // Receive email alerts when health metrics exceed thresholds. Default: true
@@ -123,7 +131,7 @@ const AuthContext = createContext<AuthContextType>({
   lastMachineIds: {},
   requiresMfaSetup: false,
   passkeyEnrolled: false,
-  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
+  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
   signIn: async () => {},
   signUp: async () => {},
   signInWithGoogle: async () => {},
@@ -151,7 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
   const [passkeyEnrolled, setPasskeyEnrolled] = useState(false);
-  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
+  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
   const [lastSiteId, setLastSiteId] = useState<string | null>(null);
   const [lastMachineIds, setLastMachineIds] = useState<Record<string, string>>({});
 
@@ -260,10 +268,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
                 // Load user preferences (with defaults if missing)
                 const preferences = userData.preferences || {};
+                // Validate timeDisplayMode (string union — fall back to 'machine' for unknown/missing)
+                const rawTdm = preferences.timeDisplayMode;
+                const timeDisplayMode: 'user' | 'machine' | 'site' =
+                  rawTdm === 'user' || rawTdm === 'site' ? rawTdm : 'machine';
                 const newPrefs: UserPreferences = {
                   temperatureUnit: preferences.temperatureUnit || 'C',
                   timezone: preferences.timezone || getBrowserTimezone(),
                   timeFormat: preferences.timeFormat || '12h',
+                  timeDisplayMode,
                   healthAlerts: preferences.healthAlerts !== false, // Default: true
                   processAlerts: preferences.processAlerts !== false, // Default: true
                   thresholdAlerts: preferences.thresholdAlerts !== false, // Default: true
@@ -278,6 +291,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     prev.temperatureUnit === newPrefs.temperatureUnit &&
                     prev.timezone === newPrefs.timezone &&
                     prev.timeFormat === newPrefs.timeFormat &&
+                    prev.timeDisplayMode === newPrefs.timeDisplayMode &&
                     prev.healthAlerts === newPrefs.healthAlerts &&
                     prev.processAlerts === newPrefs.processAlerts &&
                     prev.thresholdAlerts === newPrefs.thresholdAlerts &&

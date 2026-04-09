@@ -172,6 +172,128 @@ export function getBrowserTimezone(): string {
   }
 }
 
+// ─── Multi-actor timezone helpers ────────────────────────────────────────────
+//
+// Owlette has three timezone actors:
+//   1. machine — the kiosk/render-node's own Windows local tz, written by the
+//      agent to Firestore as machine_timezone_iana on every heartbeat
+//   2. user — the dashboard viewer's preferred tz, set in user preferences
+//   3. site — the site's configured tz, set in manage-sites dialog
+//
+// The user picks ONE display mode in their preferences (`timeDisplayMode`),
+// and the dashboard renders absolute timestamps according to that mode for
+// every machine. Schedule editors are unaffected by this — they always show
+// times in the *machine's* local tz with an explicit chip label, because
+// schedules are wall-clock configuration tied to the physical machine.
+
+/** User-chosen reference frame for displaying absolute timestamps. */
+export type TimeDisplayMode = 'user' | 'machine' | 'site';
+
+/**
+ * Resolve which IANA timezone to render absolute times in for a given
+ * machine, given the user's chosen display mode and the available sources.
+ *
+ * Each call is per-machine because in `'machine'` mode two machines on the
+ * same dashboard page may render in two different timezones.
+ *
+ * Fallback chain (when the primary source is missing):
+ *   - 'user'    → user's tz → browser → 'UTC'
+ *   - 'machine' → machine tz → site tz → browser → 'UTC'
+ *   - 'site'    → site tz → browser → 'UTC'
+ *
+ * The 'machine' mode falls back to site (not user) because if the agent
+ * hasn't reported its own tz yet, the site's tz is the closest "this
+ * installation lives in X" approximation. Browser is the last resort.
+ */
+export function getDisplayTimezone(
+  mode: TimeDisplayMode,
+  userTz: string | undefined,
+  machineTz: string | undefined,
+  siteTz: string | undefined
+): string {
+  switch (mode) {
+    case 'user':
+      return userTz || getBrowserTimezone() || 'UTC';
+    case 'machine':
+      return machineTz || siteTz || getBrowserTimezone() || 'UTC';
+    case 'site':
+      return siteTz || getBrowserTimezone() || 'UTC';
+  }
+}
+
+/**
+ * Resolve the timezone AND the source label that explains where it came
+ * from, in a single call. Used by surfaces that want to render a
+ * `<TimezoneChip>` next to a list of times — the chip needs to know both
+ * the IANA name (for display) and the source (for tooltip text).
+ *
+ * The `source` reflects which mode actually delivered a value, not the
+ * mode the user originally picked. Example: in 'machine' mode for an old
+ * agent that hasn't reported its tz yet, this returns
+ * `{ tz: <site or browser>, source: 'site' }` so the chip tooltip
+ * doesn't lie about where the value came from.
+ */
+export function getDisplayTimezoneWithSource(
+  mode: TimeDisplayMode,
+  userTz: string | undefined,
+  machineTz: string | undefined,
+  siteTz: string | undefined
+): { tz: string; source: TimeDisplayMode } {
+  switch (mode) {
+    case 'user':
+      if (userTz) return { tz: userTz, source: 'user' };
+      // No user tz set — fall through to browser, but mislabeling as 'site'
+      // would be wrong. Show 'user' source so the tooltip points the user
+      // at where to fix it (their preferences).
+      return { tz: getBrowserTimezone() || 'UTC', source: 'user' };
+    case 'machine':
+      if (machineTz) return { tz: machineTz, source: 'machine' };
+      if (siteTz) return { tz: siteTz, source: 'site' };
+      return { tz: getBrowserTimezone() || 'UTC', source: 'machine' };
+    case 'site':
+      if (siteTz) return { tz: siteTz, source: 'site' };
+      return { tz: getBrowserTimezone() || 'UTC', source: 'site' };
+  }
+}
+
+/**
+ * Format the current wall-clock time in a specific machine's local
+ * timezone — used for the live "22:35 local" label under each hostname
+ * on the dashboard. Updates whenever the caller re-renders (typically
+ * once per minute via a setInterval).
+ *
+ * @param machineTimezone IANA tz, or undefined if the machine hasn't
+ *   reported yet
+ * @param timeFormat '12h' or '24h' (defaults to 24h)
+ * @returns Formatted clock string ("22:35"), or empty string if tz missing
+ */
+export function formatMachineLocalClock(
+  machineTimezone: string | undefined,
+  timeFormat: '12h' | '24h' = '24h'
+): string {
+  if (!machineTimezone) return '';
+  try {
+    return new Date().toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: timeFormat === '12h',
+      timeZone: machineTimezone,
+    });
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Pretty-format an IANA timezone for display (e.g.
+ * "America/Los_Angeles" → "Los Angeles"). Strips underscores and
+ * shows the most-specific component.
+ */
+export function formatTimezoneShortName(tz: string | undefined): string {
+  if (!tz) return 'unknown';
+  return tz.replace(/_/g, ' ').split('/').pop() || tz;
+}
+
 /**
  * Common timezone options for the timezone selector
  * Ordered by approximate UTC offset from west to east

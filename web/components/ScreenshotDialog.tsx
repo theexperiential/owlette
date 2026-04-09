@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Camera, Loader2, RefreshCw, AlertTriangle, Download, ClipboardCopy, Check, Maximize2, X as XIcon, PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Dialog,
   DialogContent,
@@ -16,6 +17,7 @@ import { db } from '@/lib/firebase';
 import { formatRelativeTime } from '@/lib/timeUtils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useScreenshotHistory, ScreenshotRecord } from '@/hooks/useScreenshotHistory';
+import { TimezoneChip } from '@/components/TimezoneChip';
 import { toast } from 'sonner';
 
 interface ScreenshotDialogProps {
@@ -23,6 +25,9 @@ interface ScreenshotDialogProps {
   onOpenChange: (open: boolean) => void;
   machineId: string;
   machineName: string;
+  /** IANA timezone for this machine — used by the history sidebar chip to
+   * tell the user which timezone the captured screenshots' timestamps refer to. */
+  machineTimezone?: string;
   siteId: string;
   isOnline: boolean;
   onCaptureScreenshot: () => Promise<void>;
@@ -39,6 +44,7 @@ export function ScreenshotDialog({
   onOpenChange,
   machineId,
   machineName,
+  machineTimezone,
   siteId,
   isOnline,
   onCaptureScreenshot,
@@ -280,31 +286,39 @@ export function ScreenshotDialog({
           {/* Collapsible left sidebar — history */}
           {showHistory && (
             <div className="w-52 flex-shrink-0 border-r border-border flex flex-col">
-              <div className="px-3 py-3 border-b border-border flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">history</span>
-                <div className="flex items-center gap-1">
-                  {historyScreenshots.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground hover:text-red-400"
-                      onClick={() => setConfirmClearAll(true)}
-                      disabled={clearingAll}
-                      title="Clear all history"
-                    >
-                      {clearingAll ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-muted-foreground"
-                    onClick={() => setShowHistory(false)}
-                    title="Hide history"
-                  >
-                    <PanelLeftClose className="h-3.5 w-3.5" />
-                  </Button>
+              <div className="px-3 py-2 border-b border-border flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">history</span>
+                  <div className="flex items-center gap-1">
+                    {historyScreenshots.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground hover:text-red-400"
+                        onClick={() => setConfirmClearAll(true)}
+                        disabled={clearingAll}
+                      >
+                        {clearingAll ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                      </Button>
+                    )}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-muted-foreground"
+                          onClick={() => setShowHistory(false)}
+                        >
+                          <PanelLeftClose className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>hide history</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
                 </div>
+                <TimezoneChip tz={machineTimezone} source="machine" prefix="captured in" />
               </div>
               <div className="flex-1 overflow-y-auto">
                 {historyLoading ? (
@@ -344,7 +358,6 @@ export function ScreenshotDialog({
                             className="opacity-0 group-hover:opacity-100 p-1.5 mr-1 text-muted-foreground hover:text-red-400 transition-opacity"
                             onClick={(e) => { e.stopPropagation(); handleDeleteScreenshot(hs.id); }}
                             disabled={isDeleting}
-                            title="Delete screenshot"
                           >
                             {isDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
                           </button>
@@ -380,15 +393,21 @@ export function ScreenshotDialog({
             <DialogHeader className="px-4 py-2 border-b border-border flex-shrink-0">
               <DialogTitle className="flex items-center gap-2">
                 {!showHistory && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-muted-foreground"
-                    onClick={() => setShowHistory(true)}
-                    title="Show history"
-                  >
-                    <PanelLeftOpen className="h-4 w-4" />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground"
+                        onClick={() => setShowHistory(true)}
+                      >
+                        <PanelLeftOpen className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>show history</p>
+                    </TooltipContent>
+                  </Tooltip>
                 )}
                 <Camera className="h-5 w-5" />
                 screenshot — {machineName}
@@ -456,33 +475,51 @@ export function ScreenshotDialog({
               <div className="flex items-center gap-1">
                 {displayedScreenshot && (
                   <>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={handleDownload}
-                      title="Download screenshot"
-                    >
-                      <Download className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={handleCopy}
-                      title="Copy to clipboard"
-                    >
-                      {copied ? <Check className="h-4 w-4 text-green-500" /> : <ClipboardCopy className="h-4 w-4" />}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => setFullscreen(true)}
-                      title="Fullscreen"
-                    >
-                      <Maximize2 className="h-4 w-4" />
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={handleDownload}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>download screenshot</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={handleCopy}
+                        >
+                          {copied ? <Check className="h-4 w-4 text-green-500" /> : <ClipboardCopy className="h-4 w-4" />}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>copy to clipboard</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => setFullscreen(true)}
+                        >
+                          <Maximize2 className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>fullscreen</p>
+                      </TooltipContent>
+                    </Tooltip>
                   </>
                 )}
                 {!showHistory && !isCapturing && (
@@ -517,9 +554,9 @@ export function ScreenshotDialog({
         </DialogHeader>
         <DialogFooter>
           <Button
-            variant="outline"
+            variant="ghost"
             onClick={() => setConfirmClearAll(false)}
-            className="bg-secondary border-border hover:bg-accent"
+            className="bg-secondary border border-border cursor-pointer"
           >
             cancel
           </Button>

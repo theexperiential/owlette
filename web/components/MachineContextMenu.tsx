@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { MoreVertical, Trash2, KeyRound, RotateCcw, Power, Camera, Settings2, Eye, BellOff, Bell } from 'lucide-react';
+import { MoreVertical, Trash2, KeyRound, RotateCcw, Power, Camera, Settings2, Eye, BellOff, Bell, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Dialog,
   DialogContent,
@@ -21,34 +22,42 @@ import {
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import RebootScheduleDialog from '@/components/RebootScheduleDialog';
-import type { ScheduleBlock } from '@/hooks/useFirestore';
+import type { RebootSchedule } from '@/hooks/useFirestore';
 
 interface MachineContextMenuProps {
   machineId: string;
   machineName: string;
+  /** IANA timezone for this machine — passed through to RebootScheduleDialog
+   * so the schedule editor's chip + "next at" preview reflect the machine's
+   * own local time, not the browser's. */
+  machineTimezone?: string;
   siteId: string;
   isOnline: boolean;
   isAdmin?: boolean;
+  rebooting?: boolean;
+  shuttingDown?: boolean;
   onRemoveMachine: () => void;
   onReboot?: () => Promise<void>;
   onShutdown?: () => Promise<void>;
+  onCancelReboot?: () => Promise<void>;
   onScreenshot?: () => void;
   onLiveView?: () => void;
-  rebootSchedule?: {
-    enabled: boolean;
-    schedules: ScheduleBlock[];
-  };
+  rebootSchedule?: RebootSchedule;
 }
 
 export function MachineContextMenu({
   machineId,
   machineName,
+  machineTimezone,
   siteId,
   isOnline,
   isAdmin,
+  rebooting,
+  shuttingDown,
   onRemoveMachine,
   onReboot,
   onShutdown,
+  onCancelReboot,
   onScreenshot,
   onLiveView,
   rebootSchedule,
@@ -106,7 +115,7 @@ export function MachineContextMenu({
     try {
       await onReboot();
       toast.success(`Reboot command sent to ${machineName}`, {
-        description: 'The machine will reboot in 30 seconds. You can cancel during the countdown.',
+        description: 'Reboot starting. Click the countdown to cancel.',
       });
     } catch (error: any) {
       toast.error('Failed to send reboot command', { description: error.message });
@@ -122,7 +131,7 @@ export function MachineContextMenu({
     try {
       await onShutdown();
       toast.success(`Shutdown command sent to ${machineName}`, {
-        description: 'The machine will shut down in 30 seconds. You can cancel during the countdown.',
+        description: 'Shutdown starting. Click the countdown to cancel.',
       });
     } catch (error: any) {
       toast.error('Failed to send shutdown command', { description: error.message });
@@ -132,57 +141,111 @@ export function MachineContextMenu({
     }
   };
 
+  const handleCancelReboot = async () => {
+    if (!onCancelReboot) return;
+    setIsSendingCommand(true);
+    try {
+      await onCancelReboot();
+      toast.success(`Cancel sent to ${machineName}`);
+    } catch (error: any) {
+      toast.error('Failed to send cancel command', { description: error.message });
+    } finally {
+      setIsSendingCommand(false);
+    }
+  };
+
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0 text-muted-foreground hover:text-white hover:bg-accent cursor-pointer"
-            onClick={(e) => {
-              // Prevent row click event from firing
-              e.stopPropagation();
-            }}
-          >
-            <MoreVertical className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0 bg-card border border-border text-muted-foreground hover:text-white"
+                onClick={(e) => {
+                  // Prevent row click event from firing
+                  e.stopPropagation();
+                }}
+              >
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>machine options</p>
+          </TooltipContent>
+        </Tooltip>
         <DropdownMenuContent align="end" className="border-border bg-secondary w-48">
           {isOnline && (
             <>
-              <div className="flex items-center justify-between px-2 py-1.5 text-sm text-cyan-400 rounded-sm hover:bg-cyan-950/30 hover:text-cyan-300">
+              {rebooting ? (
                 <DropdownMenuItem
                   onClick={(e) => {
                     e.stopPropagation();
-                    setShowRebootDialog(true);
+                    handleCancelReboot();
                   }}
-                  className="flex-1 p-0 text-cyan-400 focus:bg-transparent focus:text-cyan-300 cursor-pointer"
+                  disabled={isSendingCommand}
+                  className="text-red-400 focus:bg-red-950/30 focus:text-red-300 cursor-pointer"
                 >
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  reboot machine
+                  <XCircle className="mr-2 h-4 w-4" />
+                  cancel reboot
                 </DropdownMenuItem>
-                <button
+              ) : shuttingDown ? (
+                <DropdownMenuItem
                   onClick={(e) => {
                     e.stopPropagation();
-                    setShowRebootScheduleDialog(true);
+                    handleCancelReboot();
                   }}
-                  className="ml-2 p-0.5 rounded hover:bg-cyan-950/50 transition-colors cursor-pointer"
-                  title="schedule reboots"
+                  disabled={isSendingCommand}
+                  className="text-red-400 focus:bg-red-950/30 focus:text-red-300 cursor-pointer"
                 >
-                  <Settings2 className="h-3.5 w-3.5 text-muted-foreground hover:text-cyan-300 transition-colors" />
-                </button>
-              </div>
-              <DropdownMenuItem
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowShutdownDialog(true);
-                }}
-                className="text-purple-400 focus:bg-purple-950/30 focus:text-purple-300 cursor-pointer"
-              >
-                <Power className="mr-2 h-4 w-4" />
-                shutdown machine
-              </DropdownMenuItem>
+                  <XCircle className="mr-2 h-4 w-4" />
+                  cancel shutdown
+                </DropdownMenuItem>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between px-2 py-1.5 text-sm text-cyan-400 rounded-sm hover:bg-cyan-950/30 hover:text-cyan-300">
+                    <DropdownMenuItem
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowRebootDialog(true);
+                      }}
+                      className="flex-1 p-0 text-cyan-400 focus:bg-transparent focus:text-cyan-300 cursor-pointer"
+                    >
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      reboot machine
+                    </DropdownMenuItem>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowRebootScheduleDialog(true);
+                          }}
+                          className="ml-2 p-0.5 rounded hover:bg-cyan-950/50 transition-colors cursor-pointer"
+                        >
+                          <Settings2 className="h-3.5 w-3.5 text-muted-foreground hover:text-cyan-300 transition-colors" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>schedule reboots</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowShutdownDialog(true);
+                    }}
+                    className="text-purple-400 focus:bg-purple-950/30 focus:text-purple-300 cursor-pointer"
+                  >
+                    <Power className="mr-2 h-4 w-4" />
+                    shutdown machine
+                  </DropdownMenuItem>
+                </>
+              )}
               <DropdownMenuItem
                 onClick={(e) => {
                   e.stopPropagation();
@@ -253,9 +316,9 @@ export function MachineContextMenu({
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setShowRevokeDialog(false)}
-              className="bg-secondary border-border hover:bg-accent"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -277,14 +340,14 @@ export function MachineContextMenu({
             <DialogTitle>reboot {machineName}?</DialogTitle>
             <DialogDescription className="text-muted-foreground">
               this will restart the machine in 30 seconds. all running processes will be interrupted.
-              you can cancel during the countdown.
+              you'll have 30 seconds to cancel from the dashboard.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setShowRebootDialog(false)}
-              className="bg-secondary border-border hover:bg-accent"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -306,14 +369,14 @@ export function MachineContextMenu({
             <DialogTitle>shutdown {machineName}?</DialogTitle>
             <DialogDescription className="text-muted-foreground">
               this will shut down the machine in 30 seconds. the machine will not automatically restart.
-              you can cancel during the countdown.
+              you'll have 30 seconds to cancel from the dashboard.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setShowShutdownDialog(false)}
-              className="bg-secondary border-border hover:bg-accent"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -333,6 +396,7 @@ export function MachineContextMenu({
         siteId={siteId}
         machineId={machineId}
         machineName={machineName}
+        machineTimezone={machineTimezone}
         open={showRebootScheduleDialog}
         onOpenChange={setShowRebootScheduleDialog}
         currentSchedule={rebootSchedule}

@@ -18,11 +18,14 @@
 'use client';
 
 import React, { memo } from 'react';
+import { useMinuteTick } from '@/hooks/useMinuteTick';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
+import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
 import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff } from 'lucide-react';
@@ -42,7 +45,7 @@ import { BLOCK_COLORS } from '@/lib/scheduleDefaults';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { formatStorageRange } from '@/lib/storageUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
-import { formatHeartbeatTime } from '@/lib/timeUtils';
+import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
 import { formatThroughput, getPrimaryNic } from '@/lib/networkUtils';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
 import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
@@ -107,6 +110,7 @@ interface MachineRowProps {
   onMetricClick?: (metricType: MetricType) => void;
   onReboot?: () => Promise<void>;
   onShutdown?: () => Promise<void>;
+  onCancelReboot?: () => Promise<void>;
   onScreenshot?: () => void;
   onLiveView?: () => void;
 }
@@ -129,6 +133,7 @@ export function MachineRow({
   onMetricClick,
   onReboot,
   onShutdown,
+  onCancelReboot,
   onScreenshot,
   onLiveView,
 }: MachineRowProps) {
@@ -137,10 +142,25 @@ export function MachineRow({
   const isMuted = fullPrefs.mutedMachines.includes(machine.machineId);
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
-  // Format heartbeat time with timezone and time format support
-  const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, siteTimezone, siteTimeFormat);
+  // Format heartbeat time. The display tz is resolved per-machine according
+  // to the user's chosen `timeDisplayMode` (preferences) — see getDisplayTimezone.
+  const displayTz = getDisplayTimezone(
+    fullPrefs.timeDisplayMode || 'machine',
+    fullPrefs.timezone,
+    machine.machineTimezone,
+    siteTimezone
+  );
+  const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, displayTz, siteTimeFormat);
   const isStale = !machine.online || !!machine.rebooting;
   const staleClass = isStale ? ' opacity-40' : '';
+
+  // Live-updating local clock for this machine's own timezone (under hostname).
+  // Subscribing to the shared wall-clock minute tick re-renders this row
+  // once per minute (in lockstep with every other machine row) so the
+  // formatted clock string below stays current. One interval, app-wide.
+  useMinuteTick();
+  const localClock = formatMachineLocalClock(machine.machineTimezone, siteTimeFormat);
+  const localTzShort = formatTimezoneShortName(machine.machineTimezone);
 
   const handleRowClick = () => {
     const selection = window.getSelection();
@@ -164,23 +184,36 @@ export function MachineRow({
           </div>
         </TableCell>
         <TableCell className="w-[100px] font-medium text-white select-text overflow-hidden">
-          <div className="flex items-center gap-2">
-            <Monitor className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-            <span className="truncate">{machine.machineId}</span>
-            {isMuted && <span title="alerts muted"><BellOff className="h-3 w-3 text-muted-foreground flex-shrink-0" /></span>}
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <div className="flex items-center gap-2">
+              <Monitor className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+              <span className="truncate">{machine.machineId}</span>
+              {isMuted && <span title="alerts muted"><BellOff className="h-3 w-3 text-muted-foreground flex-shrink-0" /></span>}
+            </div>
+            {machine.machineTimezone && localClock && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-[10px] text-muted-foreground/80 select-none cursor-help truncate ml-5">
+                    {localTzShort}, {localClock}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="max-w-xs">this machine's local time ({machine.machineTimezone}). schedule entries are interpreted in this timezone.</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
         </TableCell>
         <TableCell className="w-[72px] p-2">
-          <Badge className={`text-xs select-none ${
-            machine.rebooting ? 'bg-amber-600' :
-            machine.shuttingDown ? 'bg-amber-600' :
-            machine.online ? 'bg-green-600' :
-            'bg-red-600'
-          }`}>
-            {machine.rebooting ? 'rebooting...' :
-             machine.shuttingDown ? 'shutting down...' :
-             machine.online ? 'online' : 'offline'}
-          </Badge>
+          <MachineStatusPill
+            online={machine.online}
+            rebooting={machine.rebooting}
+            shuttingDown={machine.shuttingDown}
+            rebootScheduledAt={machine.rebootScheduledAt}
+            shutdownScheduledAt={machine.shutdownScheduledAt}
+            isAdmin={isAdmin}
+            onCancel={onCancelReboot}
+          />
         </TableCell>
         {/* CPU with Sparkline */}
         <TableCell
@@ -340,12 +373,16 @@ export function MachineRow({
             <MachineContextMenu
               machineId={machine.machineId}
               machineName={machine.machineId}
+              machineTimezone={machine.machineTimezone}
               siteId={currentSiteId}
               isOnline={machine.online}
               isAdmin={isAdmin}
+              rebooting={machine.rebooting}
+              shuttingDown={machine.shuttingDown}
               onRemoveMachine={onRemoveMachine}
               onReboot={onReboot}
               onShutdown={onShutdown}
+              onCancelReboot={onCancelReboot}
               onScreenshot={onScreenshot}
               onLiveView={onLiveView}
               rebootSchedule={machine.rebootSchedule}
@@ -442,18 +479,24 @@ export function MachineRow({
                                           <span key={mode} className={`flex items-stretch ${isActive ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground'}`}>
                                             <button
                                               onClick={() => !isActive && onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
-                                              className={`px-3 text-xs font-medium ${isActive ? 'cursor-default' : 'hover:bg-muted/50 cursor-pointer'} transition-colors`}
+                                              className={`px-3 text-sm font-medium ${isActive ? 'cursor-default' : 'hover:bg-accent/50 cursor-pointer'} transition-colors`}
                                             >
                                               {labels[mode]}
                                             </button>
                                             <span className={`w-px ${isActive ? 'bg-blue-400/50' : 'bg-border'}`} />
-                                            <button
-                                              onClick={() => onConfigureSchedule?.(process)}
-                                              className={`px-1.5 transition-colors cursor-pointer flex items-center ${isActive ? 'hover:bg-blue-500' : 'hover:bg-muted/50'}`}
-                                              title="Configure schedule"
-                                            >
-                                              <Settings2 className="h-3.5 w-3.5" />
-                                            </button>
+                                            <Tooltip>
+                                              <TooltipTrigger asChild>
+                                                <button
+                                                  onClick={() => onConfigureSchedule?.(process)}
+                                                  className={`px-1.5 transition-colors cursor-pointer flex items-center ${isActive ? 'hover:bg-blue-500' : 'hover:bg-accent/50'}`}
+                                                >
+                                                  <Settings2 className="h-3.5 w-3.5" />
+                                                </button>
+                                              </TooltipTrigger>
+                                              <TooltipContent>
+                                                <p>configure schedule</p>
+                                              </TooltipContent>
+                                            </Tooltip>
                                           </span>
                                         );
                                       }
@@ -462,7 +505,7 @@ export function MachineRow({
                                         <button
                                           key={mode}
                                           onClick={() => onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
-                                          className={`px-3 text-xs font-medium transition-all duration-500 cursor-pointer ${isActive ? activeColors[mode] : 'bg-card text-muted-foreground hover:bg-muted/50'}`}
+                                          className={`px-3 text-sm font-medium transition-all duration-500 cursor-pointer ${isActive ? activeColors[mode] : 'bg-card text-muted-foreground hover:bg-accent/50'}`}
                                         >
                                           {labels[mode]}
                                         </button>
@@ -470,19 +513,19 @@ export function MachineRow({
                                     })}
                                   </div>
                                   <Button
-                                    variant="outline"
+                                    variant="ghost"
                                     size="sm"
                                     onClick={() => onEditProcess(process)}
-                                    className="bg-card border-border text-foreground hover:bg-muted hover:border-foreground/40 cursor-pointer"
+                                    className="bg-card border border-border text-foreground"
                                   >
                                     <Pencil className="h-3 w-3 mr-1" />
                                     edit
                                   </Button>
                                   <Button
-                                    variant="outline"
+                                    variant="ghost"
                                     size="sm"
                                     onClick={() => onKillProcess(process.id, process.name)}
-                                    className="bg-card border-border text-red-400 hover:bg-red-950 hover:border-red-700 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50"
                                     disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
                                   >
                                     <Square className="h-3 w-3 mr-1" />
@@ -492,15 +535,22 @@ export function MachineRow({
                                 {/* Compact controls (<lg) */}
                                 <div className="flex lg:hidden items-center gap-2 ml-2 flex-shrink-0">
                                   <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="bg-card border-border text-muted-foreground hover:bg-muted hover:text-white cursor-pointer h-8 w-8 p-0"
-                                      >
-                                        <MoreVertical className="h-4 w-4" />
-                                      </Button>
-                                    </DropdownMenuTrigger>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <DropdownMenuTrigger asChild>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0"
+                                          >
+                                            <MoreVertical className="h-4 w-4" />
+                                          </Button>
+                                        </DropdownMenuTrigger>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <p>more options</p>
+                                      </TooltipContent>
+                                    </Tooltip>
                                     <DropdownMenuContent align="end" className="border-border bg-secondary w-52">
                                       <DropdownMenuLabel className="text-muted-foreground text-xs">
                                         launch mode
@@ -540,16 +590,22 @@ export function MachineRow({
                                       </DropdownMenuItem>
                                     </DropdownMenuContent>
                                   </DropdownMenu>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => onKillProcess(process.id, process.name)}
-                                    className="bg-card border-border text-red-400 hover:bg-red-950 hover:border-red-700 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
-                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
-                                    title="kill"
-                                  >
-                                    <Square className="h-3 w-3" />
-                                  </Button>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => onKillProcess(process.id, process.name)}
+                                        className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
+                                        disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                      >
+                                        <Square className="h-3 w-3" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>kill process</p>
+                                    </TooltipContent>
+                                  </Tooltip>
                                 </div>
                               </>
                             );
@@ -559,12 +615,12 @@ export function MachineRow({
                     ))}
                   </div>
                   {/* add process Button */}
-                  <div className="flex justify-center pt-3 ml-4">
+                  <div className="flex justify-center pt-3">
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
                       onClick={onCreateProcess}
-                      className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
+                      className="bg-card border border-border text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan"
                     >
                       <Plus className="h-3 w-3 mr-1" />
                       add process
@@ -575,10 +631,10 @@ export function MachineRow({
                 <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
                   <p className="mb-4 text-sm">No processes configured for this machine</p>
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
                     onClick={onCreateProcess}
-                    className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
+                    className="bg-card border border-border text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan"
                   >
                     <Plus className="h-3 w-3 mr-1" />
                     add process

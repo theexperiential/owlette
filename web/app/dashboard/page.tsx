@@ -599,6 +599,8 @@ export default function DashboardPage() {
         sites={sites}
         currentSiteId={currentSiteId}
         machineCount={machines.length}
+        currentUserId={user?.uid}
+        isAdmin={isAdmin}
         onUpdateSite={updateSite}
         onDeleteSite={async (siteId) => {
           await deleteSite(siteId);
@@ -707,32 +709,52 @@ export default function DashboardPage() {
 
                 {/* Expand/Collapse All + View Toggle */}
                 <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={toggleAllExpanded}
-                    className="cursor-pointer text-muted-foreground hover:bg-secondary hover:text-foreground"
-                    title={allExpanded ? 'collapse all' : 'expand all'}
-                  >
-                    {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={toggleAllExpanded}
+                        className="cursor-pointer text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      >
+                        {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{allExpanded ? 'collapse all' : 'expand all'}</p>
+                    </TooltipContent>
+                  </Tooltip>
                   <div className="h-4 w-px bg-border" />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleViewChange('card')}
-                    className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
-                  >
-                    <LayoutGrid className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleViewChange('list')}
-                    className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
-                  >
-                    <List className="h-4 w-4" />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleViewChange('card')}
+                        className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                      >
+                        <LayoutGrid className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>card view</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleViewChange('list')}
+                        className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                      >
+                        <List className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>list view</p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
             </div>
@@ -801,6 +823,7 @@ export default function DashboardPage() {
                         onMetricClick={(metricType) => handleMetricClick(machine.machineId, metricType)}
                         onReboot={() => rebootMachine(machine.machineId)}
                         onShutdown={() => shutdownMachine(machine.machineId)}
+                        onCancelReboot={() => cancelReboot(machine.machineId)}
                         onScreenshot={() => {
                           setScreenshotTarget({ machineId: machine.machineId, machineName: machine.machineId, isOnline: machine.online });
                           setScreenshotDialogOpen(true);
@@ -980,23 +1003,29 @@ export default function DashboardPage() {
                           {labels[mode]}
                         </button>
                         <span className="w-px bg-blue-400/50" />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setProcessDialogOpen(false);
-                            handleConfigureSchedule(editingMachineId, {
-                              id: editingProcessId,
-                              name: editProcessForm.name,
-                              exe_path: editProcessForm.exe_path,
-                              schedules: editProcessForm.schedules || null,
-                              launch_mode: 'scheduled',
-                            } as Process);
-                          }}
-                          className="px-1.5 hover:bg-blue-500 transition-colors cursor-pointer flex items-center"
-                          title="configure schedule"
-                        >
-                          <Settings2 className="h-3.5 w-3.5" />
-                        </button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProcessDialogOpen(false);
+                                handleConfigureSchedule(editingMachineId, {
+                                  id: editingProcessId,
+                                  name: editProcessForm.name,
+                                  exe_path: editProcessForm.exe_path,
+                                  schedules: editProcessForm.schedules || null,
+                                  launch_mode: 'scheduled',
+                                } as Process);
+                              }}
+                              className="px-1.5 hover:bg-blue-500 transition-colors cursor-pointer flex items-center"
+                            >
+                              <Settings2 className="h-3.5 w-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>configure schedule</p>
+                          </TooltipContent>
+                        </Tooltip>
                       </span>
                     );
                   }
@@ -1144,9 +1173,9 @@ export default function DashboardPage() {
             )}
             <div className="flex gap-2 ml-auto">
               <Button
-                variant="outline"
+                variant="ghost"
                 onClick={() => setProcessDialogOpen(false)}
-                className="border-border bg-muted text-foreground hover:bg-accent hover:border-foreground/30 hover:text-white cursor-pointer"
+                className="bg-secondary border border-border cursor-pointer"
               >
                 cancel
               </Button>
@@ -1172,9 +1201,9 @@ export default function DashboardPage() {
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setDeleteConfirmOpen(false)}
-              className="border-border bg-muted text-foreground hover:bg-accent hover:border-foreground/30 hover:text-white cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -1219,8 +1248,9 @@ export default function DashboardPage() {
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setKillConfirmOpen(false)}
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -1262,6 +1292,7 @@ export default function DashboardPage() {
           onOpenChange={setScreenshotDialogOpen}
           machineId={screenshotTarget.machineId}
           machineName={screenshotTarget.machineName}
+          machineTimezone={machines.find(m => m.machineId === screenshotTarget.machineId)?.machineTimezone}
           siteId={currentSiteId}
           isOnline={screenshotTarget.isOnline}
           onCaptureScreenshot={() => captureScreenshot(screenshotTarget.machineId)}

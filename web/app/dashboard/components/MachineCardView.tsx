@@ -16,19 +16,22 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useMinuteTick } from '@/hooks/useMinuteTick';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
+import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
 import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, Settings2, BellOff } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass, getUsageRingClass } from '@/lib/usageColorUtils';
-import { formatHeartbeatTime } from '@/lib/timeUtils';
+import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
 import { formatThroughput, getPrimaryNic } from '@/lib/networkUtils';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
 import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
@@ -127,43 +130,56 @@ function MachineCard({
   // Fetch sparkline data for this machine
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
-  // Format heartbeat time with timezone and time format support
-  const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, siteTimezone, siteTimeFormat);
+  // Format heartbeat time. The display tz is resolved per-machine according
+  // to the user's chosen `timeDisplayMode` (preferences) — see getDisplayTimezone.
+  const displayTz = getDisplayTimezone(
+    fullPrefs.timeDisplayMode || 'machine',
+    fullPrefs.timezone,
+    machine.machineTimezone,
+    siteTimezone
+  );
+  const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, displayTz, siteTimeFormat);
+
+  // Live-updating local clock for this machine's own timezone (under hostname).
+  // Subscribing to the shared wall-clock minute tick re-renders this card
+  // once per minute (in lockstep with every other machine card) so the
+  // formatted clock string below stays current. One interval, app-wide.
+  useMinuteTick();
+  const localClock = formatMachineLocalClock(machine.machineTimezone, siteTimeFormat);
+  const localTzShort = formatTimezoneShortName(machine.machineTimezone);
 
   return (
     <Card className="border-border bg-card py-0 gap-0">
       <CardHeader className="py-3 px-4 gap-0">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-xl font-semibold text-white select-text flex items-center gap-1.5">
-            {machine.machineId}
-            {isMuted && <span title="alerts muted"><BellOff className="h-3.5 w-3.5 text-muted-foreground" /></span>}
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            <Badge className={`select-none text-xs ${
-              machine.rebooting ? 'bg-amber-600' :
-              machine.shuttingDown ? 'bg-amber-600' :
-              machine.online ? 'bg-green-600' :
-              'bg-red-600'
-            }`}>
-              {machine.rebooting ? 'rebooting...' :
-               machine.shuttingDown ? 'shutting down...' :
-               machine.online ? 'online' : 'offline'}
-            </Badge>
-            {(machine.rebooting || machine.shuttingDown) && isAdmin && onCancelReboot && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-950/30 cursor-pointer"
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  try {
-                    await onCancelReboot();
-                  } catch {}
-                }}
-              >
-                cancel
-              </Button>
+          <div className="flex flex-col min-w-0">
+            <CardTitle className="text-xl font-semibold text-white select-text flex items-center gap-1.5">
+              {machine.machineId}
+              {isMuted && <span title="alerts muted"><BellOff className="h-3.5 w-3.5 text-muted-foreground" /></span>}
+            </CardTitle>
+            {machine.machineTimezone && localClock && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-xs text-muted-foreground mt-0.5 cursor-help select-none">
+                    {localTzShort}, {localClock} local
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="max-w-xs">this machine's local time ({machine.machineTimezone}). schedule entries are interpreted in this timezone.</p>
+                </TooltipContent>
+              </Tooltip>
             )}
+          </div>
+          <div className="flex items-center gap-2">
+            <MachineStatusPill
+              online={machine.online}
+              rebooting={machine.rebooting}
+              shuttingDown={machine.shuttingDown}
+              rebootScheduledAt={machine.rebootScheduledAt}
+              shutdownScheduledAt={machine.shutdownScheduledAt}
+              isAdmin={isAdmin}
+              onCancel={onCancelReboot}
+            />
             <span
               className={`text-xs flex items-center gap-1 select-none cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
               title={heartbeat.tooltip}
@@ -175,12 +191,16 @@ function MachineCard({
               <MachineContextMenu
                 machineId={machine.machineId}
                 machineName={machine.machineId}
+                machineTimezone={machine.machineTimezone}
                 siteId={currentSiteId}
                 isOnline={machine.online}
                 isAdmin={isAdmin}
+                rebooting={machine.rebooting}
+                shuttingDown={machine.shuttingDown}
                 onRemoveMachine={onRemoveMachine}
                 onReboot={onReboot}
                 onShutdown={onShutdown}
+                onCancelReboot={onCancelReboot}
                 onScreenshot={onScreenshot}
                 onLiveView={onLiveView}
                 rebootSchedule={machine.rebootSchedule}
@@ -538,18 +558,24 @@ function MachineCard({
                                       <span key={mode} className={`flex items-stretch ${isActive ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground'}`}>
                                         <button
                                           onClick={() => !isActive && onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
-                                          className={`px-3 text-xs font-medium ${isActive ? 'cursor-default' : 'hover:bg-muted/50 cursor-pointer'} transition-colors`}
+                                          className={`px-3 text-sm font-medium ${isActive ? 'cursor-default' : 'hover:bg-accent/50 cursor-pointer'} transition-colors`}
                                         >
                                           {labels[mode]}
                                         </button>
                                         <span className={`w-px ${isActive ? 'bg-blue-400/50' : 'bg-border'}`} />
-                                        <button
-                                          onClick={() => onConfigureSchedule?.(process)}
-                                          className={`px-1.5 transition-colors cursor-pointer flex items-center ${isActive ? 'hover:bg-blue-500' : 'hover:bg-muted/50'}`}
-                                          title="Configure schedule"
-                                        >
-                                          <Settings2 className="h-3.5 w-3.5" />
-                                        </button>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <button
+                                              onClick={() => onConfigureSchedule?.(process)}
+                                              className={`px-1.5 transition-colors cursor-pointer flex items-center ${isActive ? 'hover:bg-blue-500' : 'hover:bg-accent/50'}`}
+                                            >
+                                              <Settings2 className="h-3.5 w-3.5" />
+                                            </button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            <p>configure schedule</p>
+                                          </TooltipContent>
+                                        </Tooltip>
                                       </span>
                                     );
                                   }
@@ -558,7 +584,7 @@ function MachineCard({
                                     <button
                                       key={mode}
                                       onClick={() => onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
-                                      className={`px-3 text-xs font-medium transition-all duration-500 cursor-pointer ${isActive ? activeColors[mode] : 'bg-card text-muted-foreground hover:bg-muted/50'}`}
+                                      className={`px-3 text-sm font-medium transition-all duration-500 cursor-pointer ${isActive ? activeColors[mode] : 'bg-card text-muted-foreground hover:bg-accent/50'}`}
                                     >
                                       {labels[mode]}
                                     </button>
@@ -568,36 +594,41 @@ function MachineCard({
                             );
                           })()}
                           <Button
-                            variant="outline"
+                            variant="ghost"
                             size="sm"
                             onClick={() => onEditProcess(process)}
-                            className="bg-card border-border text-foreground hover:bg-muted hover:border-foreground/40 cursor-pointer p-2"
-                            title="edit"
+                            className="bg-card border border-border text-foreground p-2"
                           >
                             <Pencil className="h-3 w-3" />
                           </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => onKillProcess(process.id, process.name)}
-                            className="bg-card border-border text-red-400 hover:bg-red-950 hover:border-red-700 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 p-2"
-                            disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
-                            title="kill"
-                          >
-                            <Square className="h-3 w-3" />
-                          </Button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => onKillProcess(process.id, process.name)}
+                                className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 p-2"
+                                disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                              >
+                                <Square className="h-3 w-3" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>kill process</p>
+                            </TooltipContent>
+                          </Tooltip>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
                 {/* add process Button */}
-                <div className="flex justify-center pt-3 ml-3">
+                <div className="flex justify-center pt-3">
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
                     onClick={onCreateProcess}
-                    className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
+                    className="bg-card border border-border text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan"
                   >
                     <Plus className="h-3 w-3 mr-1" />
                     add process

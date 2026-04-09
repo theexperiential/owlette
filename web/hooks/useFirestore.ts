@@ -5,6 +5,57 @@ import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, getD
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
 
+/**
+ * Robustly parse a Firestore timestamp-shaped value into Unix seconds.
+ *
+ * Returns 0 for falsy / unparseable inputs (which downstream code interprets as
+ * "no value" — formatHeartbeatTime renders `--`, isOnline returns false).
+ *
+ * Necessary because Firebase JS SDK can return the same logical timestamp in
+ * several different shapes depending on listener path, cache rehydration,
+ * persistence layer, and SDK version. The previous parser only handled
+ * `Timestamp` instances and plain numbers, silently dropping every other shape
+ * (including plain `{seconds, nanoseconds}` objects rehydrated from cache),
+ * which manifested as a flapping online/offline pill on the dashboard.
+ */
+function parseFirestoreSeconds(value: any): number {
+  if (value == null) return 0;
+
+  // Number (already in Unix seconds — written by client code or hook itself)
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  // Object — could be Firebase Timestamp instance, plain {seconds, nanoseconds},
+  // legacy admin SDK {_seconds, _nanoseconds}, or a JS Date.
+  if (typeof value === 'object') {
+    // Firebase Timestamp instance — has toMillis(); prefer it for accuracy
+    if (typeof value.toMillis === 'function') {
+      try {
+        const ms = value.toMillis();
+        return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+      } catch {
+        // fall through to property reads
+      }
+    }
+    // Plain {seconds, nanoseconds} — emitted by cache rehydration in some SDK paths
+    if (typeof value.seconds === 'number') return value.seconds;
+    // Legacy admin-SDK shape {_seconds, _nanoseconds}
+    if (typeof value._seconds === 'number') return value._seconds;
+    // JS Date (defensive — shouldn't reach client this way, but handle it)
+    if (value instanceof Date) return Math.floor(value.getTime() / 1000);
+  }
+
+  // String — defensive parse for ISO datetime strings (some Firestore code
+  // paths return timestamps as ISO strings rather than Timestamp objects)
+  if (typeof value === 'string') {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+  }
+
+  return 0;
+}
+
 export type LaunchMode = 'off' | 'always' | 'scheduled';
 
 export interface TimeRange {
@@ -17,6 +68,18 @@ export interface ScheduleBlock {
   colorIndex?: number; // Stable color assignment (persists when blocks are deleted)
   days: string[];      // e.g. ['mon', 'tue', 'wed', 'thu', 'fri']
   ranges: TimeRange[];
+}
+
+/** A single scheduled reboot entry — fires once per matching day at the given time. */
+export interface RebootScheduleEntry {
+  id: string;       // crypto.randomUUID() at creation, stable across edits
+  days: string[];   // e.g. ['mon','tue','wed','thu','fri']
+  time: string;     // "HH:MM" 24h
+}
+
+export interface RebootSchedule {
+  enabled: boolean;
+  entries: RebootScheduleEntry[];
 }
 
 export interface Process {
@@ -51,17 +114,26 @@ export interface Machine {
   lastHeartbeat: number;
   online: boolean;
   agent_version?: string;  // Agent version for update detection (e.g., "2.0.0")
+  machineTimezone?: string;  // IANA timezone (e.g. "America/Los_Angeles") from agent's tzlocal lookup. Undefined if the agent has not yet deployed the IANA-aware build.
   rebooting?: boolean;
   shuttingDown?: boolean;
+  rebootScheduledAt?: number;    // Unix seconds — countdown anchor (matches lastHeartbeat convention)
+  shutdownScheduledAt?: number;
   rebootPending?: {
     active: boolean;
     processName: string | null;
     reason: string | null;
     timestamp: number | null;
   };
-  rebootSchedule?: {
-    enabled: boolean;
-    schedules: ScheduleBlock[];
+  rebootSchedule?: RebootSchedule;
+  rebootState?: {
+    lastFiredByEntry?: { [entryId: string]: string }; // ISO date "YYYY-MM-DD"
+    attempt?: {
+      entryId: string;
+      scheduledFor: string;       // ISO instant
+      lastAttemptAt: any;         // Firestore Timestamp
+      status: 'pending' | 'failed';
+    } | null;
   };
   lastScreenshot?: {
     url: string;       // Firebase Storage public URL
@@ -101,6 +173,7 @@ export interface Site {
   name: string;
   createdAt: any; // Firestore Timestamp (new) or number (legacy)
   timezone?: string;  // IANA timezone, e.g., "America/New_York"
+  owner?: string;  // UID of the user who owns this site
 }
 
 export function useSites(userId?: string, userSites?: string[], isAdmin?: boolean) {
@@ -137,6 +210,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
                 name: data.name || doc.id,
                 createdAt: data.createdAt || Date.now(),
                 timezone: data.timezone,
+                owner: data.owner,
               });
             });
             siteData.sort((a, b) => a.name.localeCompare(b.name));
@@ -182,6 +256,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
                 name: data.name || siteId,
                 createdAt: data.createdAt || Date.now(),
                 timezone: data.timezone,
+                owner: data.owner,
               });
             } else {
               siteDataMap.delete(siteId);
@@ -307,6 +382,10 @@ export function useMachines(siteId: string) {
   // This prevents the 10-second flicker on page load where status doc has stale values
   const configOverridesRef = useRef<Record<string, Record<string, { launch_mode?: string; schedules?: any; schedulePresetId?: string | null }>>>({});
 
+  // Reboot schedule lives in the config doc (not the status doc) so it can be
+  // pushed down to the agent's local cache and survive Firestore disconnections.
+  const rebootScheduleOverridesRef = useRef<Record<string, RebootSchedule | undefined>>({});
+
   // Real-time listener on config docs for authoritative launch_mode/schedules.
   // Config doc is source of truth — status doc may lag behind by 10-120s.
   // Using onSnapshot (not getDocs) so agent-originated changes propagate to the web.
@@ -315,6 +394,7 @@ export function useMachines(siteId: string) {
     const configCol = collection(db, 'config', siteId, 'machines');
     const unsubConfig = onSnapshot(configCol, (snapshot) => {
       const overrides: typeof configOverridesRef.current = {};
+      const rebootOverrides: typeof rebootScheduleOverridesRef.current = {};
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
         if (data.processes && Array.isArray(data.processes)) {
@@ -330,16 +410,21 @@ export function useMachines(siteId: string) {
           }
           overrides[docSnap.id] = processMap;
         }
+        // Reboot schedule lives in the config doc per the offline-capable design.
+        if (data.rebootSchedule) {
+          rebootOverrides[docSnap.id] = data.rebootSchedule as RebootSchedule;
+        }
       });
       configOverridesRef.current = overrides;
+      rebootScheduleOverridesRef.current = rebootOverrides;
 
       // Apply overrides to any already-loaded machines
       setMachines(prev => prev.map(machine => {
         const machineOverrides = overrides[machine.machineId];
-        if (!machineOverrides || !machine.processes) return machine;
-        return {
-          ...machine,
-          processes: machine.processes.map(p => {
+        const rebootSchedule = rebootOverrides[machine.machineId];
+        const next: Machine = { ...machine, rebootSchedule };
+        if (machineOverrides && next.processes) {
+          next.processes = next.processes.map(p => {
             const override = machineOverrides[p.id];
             if (!override) return p;
             return {
@@ -348,8 +433,9 @@ export function useMachines(siteId: string) {
               schedules: override.schedules ?? p.schedules,
               schedulePresetId: override.schedulePresetId,
             };
-          }),
-        };
+          });
+        }
+        return next;
       }));
     }, (e) => {
       // Non-critical — status doc values still work, just may lag
@@ -361,6 +447,13 @@ export function useMachines(siteId: string) {
   // Client-side heartbeat timeout checker
   // Re-evaluates machine online status every 30 seconds based on lastHeartbeat age
   // This catches machines that went offline without writing online=false (crashes, installer kills, etc.)
+  //
+  // IMPORTANT: if `lastHeartbeat === 0` (parser fell through, or doc just
+  // arrived without a heartbeat field), do NOT aggressively flip the machine
+  // offline. Trust `machine.online` from the snapshot listener until we have
+  // a real heartbeat to compare against. Without this guard, any timestamp
+  // shape the parser doesn't recognize causes a flapping online/offline pill
+  // every 30s as this interval fires.
   useEffect(() => {
     if (machines.length === 0) return;
 
@@ -370,6 +463,11 @@ export function useMachines(siteId: string) {
         let hasChanges = false;
 
         const updated = prevMachines.map(machine => {
+          // Skip the staleness check entirely if we have no usable heartbeat —
+          // trust the snapshot's online flag rather than spuriously flipping offline.
+          if (!machine.lastHeartbeat || machine.lastHeartbeat <= 0) {
+            return machine;
+          }
           const heartbeatAge = now - machine.lastHeartbeat;
           const shouldBeOnline = (machine.online === true) && (heartbeatAge < 180);
 
@@ -403,6 +501,16 @@ export function useMachines(siteId: string) {
       const unsubscribe = onSnapshot(
         machinesRef,
         (snapshot) => {
+          // When the snapshot is served from local cache (e.g. on remount after
+          // navigating back to the dashboard), `lastHeartbeat` is whatever was
+          // cached last — wall-clock "now" has advanced but the cached timestamp
+          // hasn't, so the heartbeat-age check below would spuriously flip every
+          // machine to offline for a split second until the server snapshot
+          // arrives. Skip the age check on cached reads and trust `data.online`;
+          // the follow-up server snapshot (ms later) re-applies the full check,
+          // and the 30s interval still catches silent crashes.
+          const isFromCache = snapshot.metadata.fromCache;
+
           setMachines(prevMachines => {
             const machineData: Machine[] = [];
 
@@ -486,26 +594,34 @@ export function useMachines(siteId: string) {
                 .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
             }
 
-            // Convert Firestore Timestamp to Unix timestamp in seconds
-            let lastHeartbeat = 0;
-            if (data.lastHeartbeat) {
-              if (typeof data.lastHeartbeat === 'object' && 'seconds' in data.lastHeartbeat) {
-                // Firestore Timestamp object
-                lastHeartbeat = data.lastHeartbeat.seconds;
-              } else if (typeof data.lastHeartbeat === 'number') {
-                // Already a number
-                lastHeartbeat = data.lastHeartbeat;
-              }
-            }
+            // Convert Firestore Timestamp to Unix timestamp in seconds.
+            // Handles every shape Firestore can return depending on listener
+            // path / cache / persistence layer:
+            //   - Firebase Timestamp instance ({ seconds, nanoseconds, toMillis() })
+            //   - Plain object { seconds, nanoseconds } (from cache rehydration)
+            //   - Plain object with `_seconds` (legacy admin SDK shape)
+            //   - Number (already in Unix seconds — written by client code)
+            //   - ISO string (defensive — agent shouldn't write this, but parse if it does)
+            //   - JS Date instance
+            const lastHeartbeat = parseFirestoreSeconds(data.lastHeartbeat);
+
+            // Convert reboot/shutdown countdown anchors using the same robust parser.
+            const rebootScheduledAtParsed = parseFirestoreSeconds(data.rebootScheduledAt);
+            const rebootScheduledAt = rebootScheduledAtParsed > 0 ? rebootScheduledAtParsed : undefined;
+            const shutdownScheduledAtParsed = parseFirestoreSeconds(data.shutdownScheduledAt);
+            const shutdownScheduledAt = shutdownScheduledAtParsed > 0 ? shutdownScheduledAtParsed : undefined;
 
             // Determine online status: use both boolean flag AND heartbeat timestamp
             // Machine is online if BOTH conditions are true:
             // 1. online flag is true
             // 2. Last heartbeat was within 180 seconds
             //    Agent sends metrics every 30s (active) or 120s (idle), so 180s allows 60s buffer
+            // Exception: on cached snapshots the heartbeat age is unreliable, so trust the flag alone.
             const now = Math.floor(Date.now() / 1000); // Current time in seconds
             const heartbeatAge = now - lastHeartbeat; // Age in seconds
-            const isOnline = (data.online === true) && (heartbeatAge < 180);
+            const isOnline = isFromCache
+              ? (data.online === true)
+              : (data.online === true) && (heartbeatAge < 180);
 
               // Preserve GPU data if current update has invalid/missing GPU (name is "N/A" or missing)
               const metrics = data.metrics ? {
@@ -520,7 +636,14 @@ export function useMachines(siteId: string) {
                 lastHeartbeat,
                 online: isOnline,
                 agent_version: data.agent_version,  // Agent version for update detection
-                rebootSchedule: data.rebootSchedule,
+                machineTimezone: typeof data.machine_timezone_iana === 'string' ? data.machine_timezone_iana : undefined,
+                rebooting: data.rebooting,
+                shuttingDown: data.shuttingDown,
+                rebootScheduledAt,
+                shutdownScheduledAt,
+                // rebootSchedule lives in the config doc — sourced from rebootScheduleOverridesRef
+                rebootSchedule: rebootScheduleOverridesRef.current[doc.id],
+                rebootState: data.rebootState,
                 metrics,
                 processes,
               });
@@ -957,11 +1080,40 @@ export function useMachines(siteId: string) {
   };
 
   const rebootMachine = async (machineId: string) => {
-    await sendMachineCommand(machineId, 'reboot_machine');
+    if (!db || !siteId) throw new Error('Firebase not configured');
+    const machineRef = doc(db, 'sites', siteId, 'machines', machineId);
+    // Pre-compute the TARGET reboot time as Unix seconds (now + 30s, matching
+    // the agent's `shutdown /r /t 30` in _handle_reboot_machine). Writing a
+    // plain number — not serverTimestamp() — means the dashboard pill renders
+    // the countdown the moment the listener fires, with no second round trip.
+    //
+    // configChangeFlag is REQUIRED by firestore.rules for any dashboard write
+    // to the machine status doc. Without it the rule rejects the write
+    // silently, which is why the previous version of this code never made
+    // the optimistic countdown appear — the dashboard write was rejected.
+    const targetReboot = Math.floor(Date.now() / 1000) + 30;
+    await Promise.all([
+      sendMachineCommand(machineId, 'reboot_machine'),
+      updateDoc(machineRef, {
+        rebootScheduledAt: targetReboot,
+        configChangeFlag: true,
+      }),
+    ]);
   };
 
   const shutdownMachine = async (machineId: string) => {
-    await sendMachineCommand(machineId, 'shutdown_machine');
+    if (!db || !siteId) throw new Error('Firebase not configured');
+    const machineRef = doc(db, 'sites', siteId, 'machines', machineId);
+    // Same pattern as rebootMachine — pre-compute target time and include
+    // configChangeFlag to satisfy firestore.rules.
+    const targetShutdown = Math.floor(Date.now() / 1000) + 30;
+    await Promise.all([
+      sendMachineCommand(machineId, 'shutdown_machine'),
+      updateDoc(machineRef, {
+        shutdownScheduledAt: targetShutdown,
+        configChangeFlag: true,
+      }),
+    ]);
   };
 
   const cancelReboot = async (machineId: string) => {
@@ -984,5 +1136,23 @@ export function useMachines(siteId: string) {
     await sendMachineCommand(machineId, 'stop_live_view');
   };
 
-  return { machines, loading, error, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView };
+  /**
+   * Save a reboot schedule for a machine.
+   *
+   * Writes to `config/{siteId}/machines/{machineId}.rebootSchedule` with merge.
+   * The agent's existing config listener picks this up and propagates to local
+   * config.json, where the reboot state machine reads it. This means the schedule
+   * survives Firestore disconnections — the agent fires from local cache.
+   *
+   * No `configChangeFlag` is needed because the rule for the config doc allows
+   * any user with site access to write directly. (Contrast: writes to the
+   * machine status doc require configChangeFlag.)
+   */
+  const updateRebootSchedule = async (machineId: string, schedule: RebootSchedule) => {
+    if (!db) throw new Error('Firebase not configured');
+    const configRef = doc(db, 'config', siteId, 'machines', machineId);
+    await setDoc(configRef, { rebootSchedule: schedule }, { merge: true });
+  };
+
+  return { machines, loading, error, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView, updateRebootSchedule };
 }
