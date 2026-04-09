@@ -58,8 +58,8 @@ export async function getSession(): Promise<IronSession<SessionData>> {
 }
 
 /**
- * Get session from Next.js request (Middleware)
- * Use this in middleware.ts
+ * Get session from Next.js request (Proxy)
+ * Use this in proxy.ts
  */
 export async function getSessionFromRequest(
   req: NextRequest
@@ -112,7 +112,7 @@ export async function validateSession(): Promise<string | null> {
 }
 
 /**
- * Validate session from request (middleware)
+ * Validate session from request (proxy)
  * @returns userId if valid, null if invalid/expired
  */
 export async function validateSessionFromRequest(
@@ -126,7 +126,7 @@ export async function validateSessionFromRequest(
 
   // Check if session has expired
   if (Date.now() > session.expiresAt) {
-    console.warn('[Session] Expired session detected in middleware:', session.userId);
+    console.warn('[Session] Expired session detected in proxy:', session.userId);
     await session.destroy();
     return null;
   }

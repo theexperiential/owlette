@@ -3,10 +3,15 @@ import type { NextRequest } from 'next/server';
 import { validateSessionFromRequest } from '@/lib/sessionManager.server';
 
 /**
- * Next.js Middleware for Route Protection
+ * Next.js Proxy for Route Protection
  *
  * This runs on the server BEFORE pages load, providing true security.
  * Unlike client-side redirects, this cannot be bypassed by disabling JavaScript.
+ *
+ * Renamed from `middleware.ts` to `proxy.ts` per Next.js 16's deprecation of
+ * the `middleware` file convention. Function signature, config export, and
+ * runtime behavior are unchanged — only the file name and exported function
+ * name moved (`middleware` → `proxy`).
  *
  * SECURITY UPDATES:
  * - Uses encrypted, HTTPOnly session cookies (iron-session)
@@ -14,7 +19,7 @@ import { validateSessionFromRequest } from '@/lib/sessionManager.server';
  * - Cannot be bypassed via JavaScript/XSS attacks
  */
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Define protected routes
@@ -45,7 +50,7 @@ export async function middleware(request: NextRequest) {
       loginUrl.searchParams.set('redirect', pathname);
 
       if (process.env.NODE_ENV === 'development') {
-        console.log('[Middleware] Redirecting to login from:', pathname);
+        console.log('[Proxy] Redirecting to login from:', pathname);
       }
 
       return NextResponse.redirect(loginUrl);
@@ -53,7 +58,7 @@ export async function middleware(request: NextRequest) {
 
     // User is authenticated, allow access
     if (process.env.NODE_ENV === 'development') {
-      console.log('[Middleware] Allowing access to protected route:', pathname, 'userId:', userId);
+      console.log('[Proxy] Allowing access to protected route:', pathname, 'userId:', userId);
     }
   }
 
@@ -81,8 +86,8 @@ export async function middleware(request: NextRequest) {
 }
 
 /**
- * Middleware configuration
- * Specifies which routes this middleware should run on
+ * Proxy configuration
+ * Specifies which routes this proxy should run on
  */
 export const config = {
   // Match all routes except:

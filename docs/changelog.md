@@ -11,6 +11,43 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.6.3] - 2026-04-09
+
+### fixed
+- **CRITICAL**: scheduled reboot scheduler no longer fires entries that are more than 5 minutes late. A 5-minute "missed-fire grace window" silently skips any entry observed past its scheduled instant + 5 min, marks it as fired-for-the-day, and logs a `scheduled_reboot_missed` event to the dashboard. Previously, if the agent restarted (or a schedule entry was edited) AFTER the scheduled time, the agent would catastrophically fire the missed reboot the next time it observed the entry — hours late, with no warning, with no chance for the operator to cancel. This was the cause of an unintended reboot that destroyed days of in-progress rendering work on a dev machine
+- Scheduled reboot scheduler no longer retries failed reboots. The previous 3-attempts-with-7-min-timeout retry loop is gone — a failed reboot is logged and dropped, never re-fired automatically
+- Scheduled reboot scheduler now resolves entry times against the **machine's local timezone**, not the site timezone. A `14:00` entry on a Tokyo installation and a `14:00` entry on a New York installation in the same Owlette site now reboot at their respective local 14:00s, not synchronized to one shared timezone. The dashboard reboot-schedule editor was always timezone-agnostic — the agent was incorrectly applying the site timezone
+- Tray icon "Exit" now actually stops the Owlette service. Previously it wrote a `tmp/shutdown.flag` file that the service detected and exited from, but NSSM's `AppExit Default Restart` immediately re-started the service, so Exit was a no-op the user couldn't see. Exit now triggers a UAC-elevated `net stop OwletteService` via the Service Control Manager, which is the only stop NSSM respects
+- Latent `firestore_rest_client.set_document(merge=True)` bug fixed. When called without any `SERVER_TIMESTAMP` fields (e.g. every `set_machine_flag()` call), the function silently sent a PATCH without `updateMask.fieldPaths`, which the Firestore REST API treats as a full document REPLACEMENT — every field not in the request body was DELETED. This wiped `lastHeartbeat`, `online`, and `metrics` from the machine doc on every flag write, then the next `_upload_metrics` call (within ~1s) silently restored them. The bug had been latent in the codebase for an unknown length of time — only became visible when the new atomic startup flag-clear in this same release made the wipe gap large enough for the dashboard pill to flicker offline. Now correctly sends `updateMask` when `merge=True`
+- Dashboard `MachineStatusPill` heartbeat parser hardened to handle every shape Firebase JS SDK v12 can return for a Timestamp field — `Timestamp` instance via `.toMillis()`, plain `{seconds, nanoseconds}` from cache rehydration, legacy `{_seconds, _nanoseconds}`, JS `Date`, plain number, ISO string. Previously, only the strict `Timestamp` instance shape was recognised; cache rehydrations dropped silently to `0`, which the staleness check then treated as "infinitely stale", flipping the dashboard pill offline
+- Dashboard `rebootMachine()` and `shutdownMachine()` now write `configChangeFlag: true` alongside the optimistic countdown anchor. Without it, the firestore.rules `allow update` predicate rejected the write, so the optimistic countdown never appeared on the dashboard until the agent's own write came through (~5-10s later) — the perceived "the cancel button only appears right before the restart" bug
+
+### changed
+- Reboot countdown anchors `rebootScheduledAt` and `shutdownScheduledAt` are now Unix-seconds NUMBERS representing the TARGET reboot time (when the OS will actually restart). Previously they were Firestore server timestamps representing the START of a fixed 30-second countdown. The new semantic supports the new agent-side announce → 5-second pre-roll → 60-second OS countdown sequence, and the dashboard pill renders the countdown the moment the listener fires (no second round trip required)
+- Agent reboot scheduler state file moved from `C:\ProgramData\Owlette\state\reboot_state.json` to `C:\ProgramData\Owlette\tmp\reboot_state.json`, alongside the existing `app_states.json` and `service_status.json`. The unused `state\` directory is removed entirely
+- Tray Exit no longer writes `tmp/shutdown.flag`. The flag handler in the service main loop is also removed (it was dead code — see "fixed" above)
+
+### added
+- New `firebase_client.set_machine_flags(dict)` helper for atomic multi-field writes to the machine doc. Used by the new reboot announce path so the dashboard sees `rebootScheduledAt + rebooting + rebootSource + rebootCancellable + rebootEntryId` in a single listener tick instead of multiple intermediate states. Raises on failure (unlike the silent-log `set_machine_flag`) so callers can react
+
+---
+
+## [2.6.2] - 2026-04-08
+
+### added
+- Live cancel-reboot countdown on the dashboard — the status pill becomes a red pulsing `MM:SS` timer the moment a reboot or shutdown starts, anchored to a server-side `rebootScheduledAt` / `shutdownScheduledAt` timestamp so all viewers stay in sync and the countdown survives page refreshes
+- Hover the countdown pill to reveal a "cancel" affordance; clicking it sends `cancel_reboot` and the pill returns to "online" once the agent confirms
+- Context menu adapts during a pending reboot/shutdown — the reboot/shutdown items are replaced with a single red "cancel reboot" / "cancel shutdown" item, keeping the discoverable cancel path intact for users who don't notice the pill
+- Final-5-seconds safety: pill becomes non-clickable and shows "rebooting…" because Windows `shutdown /a` is unreliable in the final phase
+- Scheduled (cron) reboots now write the same countdown anchor, so they get the same live timer + cancel UX as manual reboots
+- New shared `MachineStatusPill` component used by both list and card views — eliminates the duplicated status badge JSX and the now-redundant standalone cancel button in card view
+
+### fixed
+- Reboot/shutdown confirmation dialogs no longer claim "you can cancel during the countdown" without exposing any cancel UI — copy now reads "you'll have 30 seconds to cancel from the dashboard"
+- `rebooting` and `shuttingDown` flags written by the agent are now actually read by the dashboard's Firestore listener — they were declared on the `Machine` interface but never propagated, so the existing "rebooting…" amber pill never displayed in production
+
+---
+
 ## [2.6.1] - 2026-04-05
 
 ### added

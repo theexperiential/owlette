@@ -25,7 +25,7 @@ Right-clicking the tray icon shows:
 | **Firebase: Connected/Disconnected** | Current cloud connection status (read-only) |
 | **Open GUI** | Launch the configuration GUI |
 | **Restart Service** | Stop and restart the OwletteService |
-| **Exit** | Stop the tray icon process |
+| **Exit** | Stop the Owlette service (triggers a UAC prompt). Also closes the GUI and the tray icon. |
 
 ---
 
