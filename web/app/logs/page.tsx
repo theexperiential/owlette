@@ -20,6 +20,7 @@ import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
+import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 
 interface LogEvent {
   id: string;
@@ -153,9 +154,12 @@ const formatAction = (action: string) => {
 
 export default function LogsPage() {
   const router = useRouter();
-  const { user, loading, isAdmin, userSites, lastSiteId, updateLastSite } = useAuth();
+  const { user, loading, isAdmin, userSites, lastSiteId, updateLastSite, userPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
+  // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
+  const currentSite = sites.find(s => s.id === currentSiteId);
+  const siteTimezone = currentSite?.timezone;
   const [logs, setLogs] = useState<LogEvent[]>([]);
   const [logsLoading, setLogsLoading] = useState(true);
   const [lastDoc, setLastDoc] = useState<DocumentData | null>(null);
@@ -764,7 +768,13 @@ export default function LogsPage() {
                         )}
                       </div>
                       <div className="text-muted-foreground whitespace-nowrap text-xs">
-                        {log.timestamp?.toDate().toLocaleString()}
+                        {formatSiteScopedTimestamp(
+                          log.timestamp?.toDate(),
+                          userPreferences.timeDisplayMode || 'machine',
+                          userPreferences.timezone,
+                          siteTimezone,
+                          userPreferences.timeFormat || '12h'
+                        )}
                       </div>
                     </div>
                     {isExpanded && (
@@ -779,7 +789,15 @@ export default function LogsPage() {
                             </>
                           )}
                           <span className="text-muted-foreground">timestamp</span>
-                          <span className="text-foreground">{log.timestamp?.toDate().toLocaleString()}</span>
+                          <span className="text-foreground">
+                            {formatSiteScopedTimestamp(
+                              log.timestamp?.toDate(),
+                              userPreferences.timeDisplayMode || 'machine',
+                              userPreferences.timezone,
+                              siteTimezone,
+                              userPreferences.timeFormat || '12h'
+                            )}
+                          </span>
                         </div>
                         {log.details && (
                           <div className="flex-1 min-w-0 border-l border-border/50 pl-6">

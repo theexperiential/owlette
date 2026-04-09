@@ -180,13 +180,19 @@ function MachineCard({
               isAdmin={isAdmin}
               onCancel={onCancelReboot}
             />
-            <span
-              className={`text-xs flex items-center gap-1 select-none cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
-              title={heartbeat.tooltip}
-            >
-              <Clock className="h-3 w-3" />
-              {heartbeat.display}
-            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className={`text-xs flex items-center gap-1 select-none cursor-help ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
+                >
+                  <Clock className="h-3 w-3" />
+                  {heartbeat.display}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{heartbeat.tooltip}</p>
+              </TooltipContent>
+            </Tooltip>
             {!isDemo && (
               <MachineContextMenu
                 machineId={machine.machineId}

@@ -20,6 +20,7 @@ import DownloadButton from '@/components/DownloadButton';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { UpdateOwletteButton } from '@/components/UpdateOwletteButton';
 import { useUninstall } from '@/hooks/useUninstall';
+import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 import { toast } from 'sonner';
 
 function getStatusIcon(status: string) {
@@ -85,6 +86,10 @@ const DeploymentRow = React.memo(function DeploymentRow({
   onUninstall,
   onDelete,
   onCancel,
+  timeDisplayMode,
+  userTz,
+  siteTz,
+  timeFormat,
 }: {
   deployment: any;
   isSelected: boolean;
@@ -93,6 +98,10 @@ const DeploymentRow = React.memo(function DeploymentRow({
   onUninstall: (deployment: any) => void;
   onDelete: (id: string) => void;
   onCancel: (deploymentId: string, machineId: string, installerName: string) => void;
+  timeDisplayMode: 'user' | 'machine' | 'site';
+  userTz: string | undefined;
+  siteTz: string | undefined;
+  timeFormat: '12h' | '24h';
 }) {
   const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed' && t.error);
   const errorMessages = failedTargets.map((t: any) => `${t.machineId}: ${t.error}`).join('\n');
@@ -119,7 +128,7 @@ const DeploymentRow = React.memo(function DeploymentRow({
             {getStatusBadge(deployment.status, errorMessages || undefined)}
           </div>
           <span className="text-xs text-muted-foreground hidden sm:block w-[150px] text-right">
-            {new Date(deployment.createdAt).toLocaleString()}
+            {formatSiteScopedTimestamp(deployment.createdAt, timeDisplayMode, userTz, siteTz, timeFormat)}
           </span>
           <DropdownMenu>
             <Tooltip>
@@ -235,9 +244,12 @@ const DeploymentRow = React.memo(function DeploymentRow({
 });
 
 export default function DeploymentsPage() {
-  const { user, loading: authLoading, signOut, userSites, isAdmin, lastSiteId, updateLastSite } = useAuth();
+  const { user, loading: authLoading, signOut, userSites, isAdmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
+  // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
+  const currentSite = sites.find(s => s.id === currentSiteId);
+  const siteTimezone = currentSite?.timezone;
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
   const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
   const [initialSoftwareName, setInitialSoftwareName] = useState<string | undefined>(undefined);
@@ -545,6 +557,10 @@ export default function DeploymentsPage() {
                   onUninstall={handleUninstallFromRow}
                   onDelete={handleDeleteFromRow}
                   onCancel={handleCancelTarget}
+                  timeDisplayMode={userPreferences.timeDisplayMode || 'machine'}
+                  userTz={userPreferences.timezone}
+                  siteTz={siteTimezone}
+                  timeFormat={userPreferences.timeFormat || '12h'}
                 />
               ))}
             </div>

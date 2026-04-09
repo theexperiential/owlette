@@ -295,6 +295,52 @@ export function formatTimezoneShortName(tz: string | undefined): string {
 }
 
 /**
+ * Format a timestamp for display on a SITE-SCOPED surface (deployments,
+ * activity logs, projects, admin tokens) — i.e. surfaces where there is
+ * no single "machine" to anchor to.
+ *
+ * Resolves the timezone via the user's chosen `timeDisplayMode`:
+ *   - 'machine' mode → falls back to site → browser (since there's no machine here)
+ *   - 'user' mode → user's preferred tz
+ *   - 'site' mode → site tz
+ *
+ * Accepts anything `Date.parse`-able OR a Date / number / undefined.
+ * Returns a fully-formatted "Month D, YYYY, HH:MM:SS TZ" string with
+ * the timezone name suffix included so the user can always see which
+ * frame the time is in.
+ *
+ * Returns '—' if the input is falsy or unparseable.
+ */
+export function formatSiteScopedTimestamp(
+  input: Date | number | string | undefined | null,
+  mode: TimeDisplayMode,
+  userTz: string | undefined,
+  siteTz: string | undefined,
+  timeFormat: '12h' | '24h' = '12h'
+): string {
+  if (input == null) return '—';
+
+  let ms: number;
+  if (input instanceof Date) {
+    ms = input.getTime();
+  } else if (typeof input === 'number') {
+    ms = input;
+  } else if (typeof input === 'string') {
+    ms = Date.parse(input);
+  } else {
+    return '—';
+  }
+
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+
+  const seconds = Math.floor(ms / 1000);
+  // Site-scoped surfaces have no single machine — pass undefined for machineTz.
+  // In 'machine' mode this falls through to siteTz, then browser, then UTC.
+  const tz = getDisplayTimezone(mode, userTz, undefined, siteTz);
+  return formatFullTimestamp(seconds, tz, timeFormat);
+}
+
+/**
  * Common timezone options for the timezone selector
  * Ordered by approximate UTC offset from west to east
  */

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
+import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -33,7 +34,7 @@ interface TokenInfo {
 }
 
 export default function TokensPage() {
-  const { user, isAdmin, userSites, lastSiteId, updateLastSite } = useAuth();
+  const { user, isAdmin, userSites, lastSiteId, updateLastSite, userPreferences } = useAuth();
   const { sites } = useSites(user?.uid, userSites, isAdmin);
   const [selectedSiteId, setSelectedSiteId] = useState<string>('');
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
@@ -162,10 +163,20 @@ export default function TokensPage() {
     }
   };
 
+  // Resolve the selected site's timezone for display-mode-aware rendering.
+  // This is a site-scoped admin surface — there is no single "machine" anchor.
+  const selectedSite = sites.find(s => s.id === selectedSiteId);
+  const selectedSiteTimezone = selectedSite?.timezone;
+
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return 'Never';
-    const date = new Date(dateStr);
-    return date.toLocaleString();
+    return formatSiteScopedTimestamp(
+      dateStr,
+      userPreferences.timeDisplayMode || 'machine',
+      userPreferences.timezone,
+      selectedSiteTimezone,
+      userPreferences.timeFormat || '12h'
+    );
   };
 
   const getExpiryStatus = (expiresAt: string | null) => {

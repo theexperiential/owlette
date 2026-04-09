@@ -15,12 +15,16 @@ import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
+import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 import { toast } from 'sonner';
 
 export default function ProjectsPage() {
-  const { user, loading: authLoading, signOut, userSites, isAdmin, lastSiteId, updateLastSite } = useAuth();
+  const { user, loading: authLoading, signOut, userSites, isAdmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
+  // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
+  const currentSite = sites.find(s => s.id === currentSiteId);
+  const siteTimezone = currentSite?.timezone;
   const [distributionDialogOpen, setDistributionDialogOpen] = useState(false);
   const [selectedDistributionId, setSelectedDistributionId] = useState<string | null>(null);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
@@ -271,7 +275,13 @@ export default function ProjectsPage() {
                         {getStatusBadge(distribution.status)}
                       </div>
                       <span className="text-xs text-muted-foreground hidden sm:block w-[150px] text-right">
-                        {new Date(distribution.createdAt).toLocaleString()}
+                        {formatSiteScopedTimestamp(
+                          distribution.createdAt,
+                          userPreferences.timeDisplayMode || 'machine',
+                          userPreferences.timezone,
+                          siteTimezone,
+                          userPreferences.timeFormat || '12h'
+                        )}
                       </span>
                       <Button
                         size="sm"

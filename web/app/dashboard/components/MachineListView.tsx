@@ -360,13 +360,19 @@ export function MachineRow({
           })()}
         </TableCell>
         <TableCell className="w-0 md:w-[150px] overflow-hidden p-0 md:p-2">
-          <span
-            className={`text-xs flex items-center gap-1 cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
-            title={heartbeat.tooltip}
-          >
-            <Clock className="h-3 w-3" />
-            {heartbeat.display}
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={`text-xs flex items-center gap-1 cursor-help ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
+              >
+                <Clock className="h-3 w-3" />
+                {heartbeat.display}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{heartbeat.tooltip}</p>
+            </TooltipContent>
+          </Tooltip>
         </TableCell>
         <TableCell className="w-10 p-2" onClick={(e) => e.stopPropagation()}>
           {!isDemo && (
