@@ -756,6 +756,7 @@ class FirebaseClient:
                 'lastHeartbeat': SERVER_TIMESTAMP,
                 'agent_version': shared_utils.APP_VERSION,
                 'machine_timezone': shared_utils.get_machine_timezone(),
+                'machine_timezone_iana': shared_utils.get_machine_timezone_iana(),
                 'machineId': self.machine_id,
                 'siteId': self.site_id,
                 'metrics.cpu': metrics.get('cpu', {}),
@@ -1266,6 +1267,33 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to set machine flag {flag_name}: {e}")
 
+    def set_machine_flags(self, flags: dict):
+        """Atomically set multiple flags on the machine document in a SINGLE write.
+
+        Use this instead of multiple set_machine_flag() calls when the dashboard
+        must observe several fields together — e.g. rebootScheduledAt + rebooting
+        + rebootCancellable for the scheduled-reboot announcement. Multiple
+        separate set_machine_flag() calls would produce multiple Firestore writes
+        and intermediate listener ticks where the dashboard sees a half-applied
+        state (e.g. rebooting=true but rebootScheduledAt still null), causing
+        the cancel-button countdown to lag or render incorrectly.
+
+        UNLIKE set_machine_flag(), this method RAISES on failure rather than
+        silently logging. Callers that depend on atomic visibility (e.g. the
+        scheduled-reboot announce path) must catch and react to the exception.
+        """
+        if not self.connected or not self.db:
+            raise RuntimeError("Firebase client not connected")
+
+        machine_ref = self.db.collection('sites').document(self.site_id)\
+            .collection('machines').document(self.machine_id)
+
+        machine_ref.set(flags, merge=True)
+        self.logger.debug(
+            f"[FLAG] Atomically set {len(flags)} flags on machine document: "
+            f"{list(flags.keys())}"
+        )
+
     def set_reboot_pending(self, process_name, reason, timestamp):
         """Write a reboot_pending object to the machine document when relaunch limit is exceeded."""
         if not self.connected or not self.db:
@@ -1308,24 +1336,43 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to clear reboot pending: {e}")
 
-    def get_reboot_schedule(self):
-        """Read the rebootSchedule field from the machine document.
+    def mirror_reboot_state(self, state):
+        """Best-effort mirror of local reboot_state.json to Firestore for dashboard visibility.
 
-        Returns:
-            dict with 'enabled' and 'schedules' keys, or None if not set.
+        Writes to sites/{siteId}/machines/{machineId}.rebootState. Silent on
+        offline — local state file remains source of truth.
+
+        Args:
+            state: dict from reboot_state.read_state() — has 'lastFiredByEntry' and 'attempt'.
         """
         if not self.connected or not self.db:
-            return None
+            return
 
         try:
-            machine_path = f"sites/{self.site_id}/machines/{self.machine_id}"
-            machine_doc = self.db.get_document(machine_path)
-            if machine_doc:
-                return machine_doc.get('rebootSchedule')
-            return None
+            machine_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+
+            # Only mirror the fields the dashboard cares about. Use Firestore
+            # server timestamp for attempt.lastAttemptAt if it's the sentinel string.
+            attempt = state.get('attempt')
+            mirror_attempt = None
+            if attempt:
+                mirror_attempt = {
+                    'entryId': attempt.get('entryId'),
+                    'scheduledFor': attempt.get('scheduledFor'),
+                    'lastAttemptAt': attempt.get('lastAttemptAt'),
+                    'status': attempt.get('status'),
+                }
+
+            machine_ref.set({
+                'rebootState': {
+                    'lastFiredByEntry': state.get('lastFiredByEntry', {}),
+                    'attempt': mirror_attempt,
+                }
+            }, merge=True)
+            self.logger.debug("[REBOOT] Mirrored reboot state to Firestore")
         except Exception as e:
-            self.logger.debug(f"Could not read reboot schedule: {e}")
-            return None
+            self.logger.debug(f"Failed to mirror reboot state (non-critical): {e}")
 
     # =========================================================================
     # Event Logging

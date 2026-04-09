@@ -13,6 +13,7 @@ import shared_utils
 import installer_utils
 import project_utils
 import registry_utils
+import reboot_state
 import win32serviceutil
 import win32service
 import win32event
@@ -84,6 +85,35 @@ LOG_FILE_PATH = shared_utils.get_data_path('logs/service.log')
 MAX_RELAUNCH_ATTEMPTS = 3
 SLEEP_INTERVAL = 5
 TIME_TO_INIT = 60
+
+# Reboot scheduler — derived from SLEEP_INTERVAL so changes to the main loop
+# automatically adjust the check cadence. Target: ~30s between checks.
+REBOOT_CHECK_INTERVAL_SECONDS = 30
+REBOOT_CHECK_ITERATIONS = max(1, REBOOT_CHECK_INTERVAL_SECONDS // SLEEP_INTERVAL)
+# Manual-reboot grace: a manual reboot within this many seconds before a
+# scheduled instant counts as fulfilling that entry for the day
+REBOOT_MANUAL_GRACE_SECONDS = 30 * 60
+# Missed-fire grace: if a scheduled instant is more than this many seconds in
+# the past at the moment the scheduler observes it, the entry is treated as
+# MISSED and silently skipped (marked as fired-for-the-day so it never retries).
+# This is the safety guarantee that prevents catastrophic late fires after a
+# service restart, deploy, or schedule edit. Five minutes is the standard
+# missfire window in cron-like schedulers.
+REBOOT_MISSED_FIRE_GRACE_SECONDS = 5 * 60
+# Pre-roll: time we wait between announcing the reboot to Firestore and
+# issuing the OS shutdown command. Gives the dashboard listener time to
+# propagate the announcement and render the countdown BEFORE the Windows
+# toast appears, so the user always sees the cancel button first.
+REBOOT_ANNOUNCE_PREROLL_SECONDS = 5
+# OS-level shutdown countdown (passed to `shutdown /r /t`). The user has this
+# many seconds after the Windows toast appears to cancel via dashboard or CLI
+# (`shutdown /a`). The agent main loop stays alive during this window and
+# processes cancel commands in real time.
+REBOOT_OS_COUNTDOWN_SECONDS = 60
+# Window for retroactively stamping lastFiredByEntry on a successful reboot.
+# If a reboot was scheduled for X and the agent finds itself booted within
+# this window after X, it counts the reboot as fulfilling that entry.
+REBOOT_SUCCESS_DETECTION_WINDOW_SECONDS = 60 * 60
 
 # Utility functions
 class Util:
@@ -166,8 +196,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.manual_overrides = {} # Processes manually started outside their schedule window
         self._skip_launch_delay = set()  # Process IDs that should skip time_delay on next launch
         self._cached_site_timezone = None  # Cached from firebase_client
-        self._last_scheduled_reboot_time = None  # Tracks when we last triggered a scheduled reboot
-        self._reboot_schedule_counter = 0  # Check reboot schedule every ~60s (6 iterations)
+        # Reboot scheduler state — see reboot_state.py for the persisted source of truth.
+        # _reboot_attempt_started_monotonic uses time.monotonic() so DST/NTP corrections
+        # don't trigger false retries.
+        self._reboot_attempt_started_monotonic = None
+        self._reboot_schedule_counter = 0  # Check reboot schedule every REBOOT_CHECK_ITERATIONS
         self._shutting_down = False  # Suppresses crash alerts during reboot/shutdown
         self._live_view_active = False
         self._live_view_stop_time = 0
@@ -2161,6 +2194,28 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     if 'launch_mode' in process:
                         process['autolaunch'] = process['launch_mode'] != 'off'
 
+            # Detect rebootSchedule change → cancel any in-flight attempt.
+            # User intent (a schedule edit) supersedes a stale pending attempt.
+            old_reboot_schedule = (old_config or {}).get('rebootSchedule')
+            new_reboot_schedule = new_config.get('rebootSchedule')
+            if json.dumps(old_reboot_schedule, sort_keys=True) != json.dumps(new_reboot_schedule, sort_keys=True):
+                try:
+                    state = reboot_state.read_state()
+                    if state.get('attempt') and state['attempt'].get('status') == 'pending':
+                        logging.info("Reboot schedule changed mid-attempt — clearing pending attempt")
+                        state = reboot_state.clear_attempt(state)
+                        reboot_state.write_state(state)
+                        if self.firebase_client:
+                            self.firebase_client.mirror_reboot_state(state)
+                            self.firebase_client.log_event(
+                                action='scheduled_reboot_cancelled',
+                                level='info',
+                                details='schedule changed during pending attempt'
+                            )
+                        self._reboot_attempt_started_monotonic = None
+                except Exception as e:
+                    logging.warning(f"Failed to handle reboot schedule change: {e}")
+
             # Write the updated config to local config.json
             shared_utils.write_json_to_file(new_config, shared_utils.CONFIG_PATH)
 
@@ -3253,68 +3308,435 @@ class OwletteService(win32serviceutil.ServiceFramework):
             return error_msg
 
     def _check_scheduled_reboot(self):
-        """Check if a scheduled reboot should be triggered.
+        """State-machine driven scheduled reboot check.
 
-        Conditions:
-        1. Firebase is connected
-        2. rebootSchedule.enabled is True
-        3. Current time is within a schedule window
-        4. Machine uptime > 30 minutes (avoid reboot loops after fresh boot)
-        5. Haven't already triggered a reboot in this schedule window
+        Reads schedule from local config.json (synced by the Firestore listener),
+        and reads/writes state to local reboot_state.json. Mirrors state to
+        Firestore best-effort for dashboard visibility, but never blocks on it.
+
+        Runs every REBOOT_CHECK_INTERVAL_SECONDS seconds via the main loop.
         """
-        if not self.firebase_client or not self.firebase_client.is_connected():
-            return
-
         try:
-            reboot_schedule = self.firebase_client.get_reboot_schedule()
-            if not reboot_schedule or not reboot_schedule.get('enabled'):
+            # Read schedule from local config (offline-safe)
+            schedule = shared_utils.read_config(['rebootSchedule'])
+            if not schedule or not schedule.get('enabled'):
+                return
+            entries = schedule.get('entries') or []
+            if not entries:
                 return
 
-            schedules = reboot_schedule.get('schedules')
-            if not schedules:
+            state = reboot_state.read_state()
+
+            # Branch 1: handle in-progress attempt (retry/escalate)
+            if state.get('attempt') and state['attempt'].get('status') == 'pending':
+                self._handle_pending_reboot_attempt(state)
                 return
 
-            # Check if current time is within the schedule window
-            if not shared_utils.is_within_schedule(schedules, self._cached_site_timezone):
-                return
-
-            # Check machine uptime > 30 minutes to avoid reboot loops
+            # Branch 2: schedule check — should we fire any entry now?
             uptime_seconds = time.time() - psutil.boot_time()
             if uptime_seconds < 1800:  # 30 minutes
                 logging.debug("Scheduled reboot skipped: machine uptime < 30 minutes")
                 return
 
-            # Check if we already triggered a reboot in this schedule window
-            now = datetime.datetime.now()
-            if self._last_scheduled_reboot_time:
-                # If the last reboot trigger was less than 2 hours ago, skip
-                # This prevents re-triggering within the same schedule window
-                elapsed = (now - self._last_scheduled_reboot_time).total_seconds()
-                if elapsed < 7200:  # 2 hours
-                    return
+            # Prune orphaned entries from lastFiredByEntry
+            current_ids = {e.get('id') for e in entries if e.get('id')}
+            state = reboot_state.prune_orphaned_entries(state, current_ids)
 
-            # All conditions met — trigger the reboot
-            self._last_scheduled_reboot_time = now
-            logging.info("Scheduled reboot triggered — all conditions met")
+            # Compute today/now in the MACHINE'S LOCAL timezone — a "14:00"
+            # entry must fire at the machine's local 14:00, not at 14:00 in
+            # whatever timezone the site is set to. See _now_in_local_tz().
+            today_date_iso = self._today_iso_in_local_tz()
+            now_tz = self._now_in_local_tz()
+            current_dayname = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][now_tz.weekday()]
+            boot_dt_tz = self._boot_time_in_local_tz()
 
-            self.firebase_client.log_event(
-                action='scheduled_reboot',
-                level='warning',
-                details='Scheduled reboot initiated by reboot schedule'
-            )
+            for entry in entries:
+                entry_id = entry.get('id')
+                if not entry_id:
+                    continue
+                if current_dayname not in (entry.get('days') or []):
+                    continue
+                time_str = entry.get('time')
+                if not time_str:
+                    continue
 
-            self._shutting_down = True
-            self.firebase_client.set_machine_flag('rebooting', True)
+                # Pass timezone_str=None so compute_scheduled_instant resolves
+                # the entry against the machine's local timezone.
+                scheduled_instant = shared_utils.compute_scheduled_instant(
+                    now_tz.date(), time_str, None
+                )
+                if scheduled_instant is None:
+                    continue
+                age_seconds = (now_tz - scheduled_instant).total_seconds()
+                if age_seconds < 0:
+                    continue  # not yet due
+                if state.get('lastFiredByEntry', {}).get(entry_id) == today_date_iso:
+                    continue  # already fired today
 
-            import subprocess
-            subprocess.run(
-                ['shutdown', '/r', '/t', '30', '/c', 'owlette scheduled reboot'],
-                check=True, timeout=15
-            )
-            logging.info("Scheduled reboot command issued (30-second delay)")
+                # MISSED-FIRE GRACE — the safety guarantee. If we are observing
+                # this entry more than REBOOT_MISSED_FIRE_GRACE_SECONDS after
+                # its scheduled instant, do NOT fire. Mark it as fired-for-the
+                # -day so it cannot retry, and surface a 'missed' event to
+                # the dashboard. This protects against late fires caused by:
+                #   - service restart / deploy after the scheduled time
+                #   - schedule entry created/edited after the scheduled time
+                #   - agent offline at the scheduled time, online again later
+                #   - lastFiredByEntry cleared by any future bug
+                if age_seconds > REBOOT_MISSED_FIRE_GRACE_SECONDS:
+                    logging.warning(
+                        f"Scheduled reboot MISSED for entry {entry_id} "
+                        f"(scheduled {scheduled_instant.isoformat()}, "
+                        f"observed {int(age_seconds)}s late) — skipping, will not refire today"
+                    )
+                    state.setdefault('lastFiredByEntry', {})[entry_id] = today_date_iso
+                    reboot_state.write_state(state)
+                    if self.firebase_client:
+                        try:
+                            self.firebase_client.mirror_reboot_state(state)
+                            self.firebase_client.log_event(
+                                action='scheduled_reboot_missed',
+                                level='warning',
+                                details=(
+                                    f'entry {entry_id} missed by {int(age_seconds)}s '
+                                    f'(scheduled {scheduled_instant.isoformat()})'
+                                )
+                            )
+                        except Exception as e:
+                            logging.debug(f"Failed to mirror missed reboot (non-critical): {e}")
+                    continue
+
+                # Manual-reboot grace: did the machine boot within the grace
+                # window before the scheduled instant? If so, count it as fulfilled.
+                if boot_dt_tz is not None:
+                    delta = (scheduled_instant - boot_dt_tz).total_seconds()
+                    if 0 <= delta <= REBOOT_MANUAL_GRACE_SECONDS:
+                        logging.info(
+                            f"Manual reboot satisfies entry {entry_id} (boot was {int(delta)}s before scheduled)"
+                        )
+                        state.setdefault('lastFiredByEntry', {})[entry_id] = today_date_iso
+                        reboot_state.write_state(state)
+                        if self.firebase_client:
+                            self.firebase_client.mirror_reboot_state(state)
+                        continue
+
+                # FIRE
+                self._fire_scheduled_reboot(state, entry_id, scheduled_instant)
+                return  # only one fire per check cycle
 
         except Exception as e:
-            logging.error(f"Scheduled reboot check failed: {e}")
+            logging.error(f"Scheduled reboot check failed: {e}", exc_info=True)
+
+    def _fire_scheduled_reboot(self, state, entry_id, scheduled_instant):
+        """Fire a scheduled reboot using the announce-then-execute pattern.
+
+        Sequence:
+          1. Persist a 'pending' attempt to local reboot_state.json (durable).
+          2. ANNOUNCE to Firestore — best-effort with retry. Writes a single
+             atomic merge of (rebootScheduledAt, rebooting, rebootSource,
+             rebootCancellable, rebootEntryId) so the dashboard sees a
+             consistent state in one listener tick. rebootScheduledAt is a
+             client-computed UTC wall-clock instant — NOT a server timestamp —
+             so the dashboard can render the countdown the moment it sees the
+             doc, with no second round trip required.
+          3. PRE-ROLL: short fixed sleep so the dashboard listener has time
+             to receive the announce and render the countdown BEFORE the
+             Windows toast appears. Tunable via REBOOT_ANNOUNCE_PREROLL_SECONDS.
+          4. Issue `shutdown /r /t REBOOT_OS_COUNTDOWN_SECONDS`. The agent
+             main loop stays alive during the OS countdown and processes
+             cancel commands in real time.
+          5. If the OS shutdown command itself fails: clear all state and
+             flags, log the failure. NEVER retry.
+
+        OFFLINE BEHAVIOUR (CRITICAL): if Firestore is unreachable or the
+        announce fails after retries, the reboot STILL FIRES. The whole
+        point of local reboot_state.json + lastFiredByEntry + the 5-min
+        missed-fire window is to make scheduled reboots resilient to
+        internet outages. The local state machine is the source of truth.
+        Firestore is a visibility channel for the dashboard — not an
+        authorization gate. Without this property a kiosk in a museum with
+        flaky wifi would silently stop rebooting on schedule.
+
+        NO RETRIES on the OS shutdown itself anywhere in this code path.
+        """
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        target_reboot_at = now_utc + datetime.timedelta(
+            seconds=REBOOT_ANNOUNCE_PREROLL_SECONDS + REBOOT_OS_COUNTDOWN_SECONDS
+        )
+        target_reboot_at_iso = target_reboot_at.isoformat()
+        # Unix seconds — what the dashboard hook expects (matches lastHeartbeat
+        # convention). Plain number, not a server-resolved timestamp, so the
+        # dashboard listener can render the countdown the moment it sees the doc.
+        target_reboot_at_unix = int(target_reboot_at.timestamp())
+        today_date_iso = self._today_iso_in_local_tz()
+
+        logging.info(
+            f"Scheduled reboot firing for entry {entry_id} "
+            f"(scheduled for {scheduled_instant.isoformat()}, "
+            f"target reboot at {target_reboot_at_iso})"
+        )
+
+        # 1. Persist local attempt FIRST — durable record before any network I/O.
+        state['attempt'] = {
+            'entryId': entry_id,
+            'scheduledFor': scheduled_instant.isoformat(),
+            'targetRebootAt': target_reboot_at_iso,
+            'lastAttemptAt': now_utc.isoformat(),
+            'status': 'pending',
+        }
+        reboot_state.write_state(state)
+        self._reboot_attempt_started_monotonic = time.monotonic()
+
+        # 2. ANNOUNCE to Firestore — best-effort with retry. Single atomic write.
+        # Failure does NOT abort the fire — local state is the source of truth.
+        announced = False
+        if self.firebase_client:
+            announce_payload = {
+                'rebootScheduledAt': target_reboot_at_unix,
+                'rebooting': True,
+                'rebootSource': 'scheduled',
+                'rebootCancellable': True,
+                'rebootEntryId': entry_id,
+            }
+            for announce_attempt in range(1, 4):
+                try:
+                    self.firebase_client.set_machine_flags(announce_payload)
+                    self.firebase_client.mirror_reboot_state(state)
+                    self.firebase_client.log_event(
+                        action='scheduled_reboot_announced',
+                        level='warning',
+                        details=(
+                            f'entry {entry_id}, target {target_reboot_at_iso}, '
+                            f'announce attempt {announce_attempt}/3'
+                        )
+                    )
+                    announced = True
+                    logging.info(f"Reboot announce succeeded on attempt {announce_attempt}/3")
+                    break
+                except Exception as e:
+                    logging.warning(
+                        f"Reboot announce attempt {announce_attempt}/3 failed: {e}"
+                    )
+                    time.sleep(0.3)
+
+            if not announced:
+                logging.warning(
+                    f"Reboot announce to Firestore FAILED after 3 attempts for entry "
+                    f"{entry_id} — proceeding with reboot anyway (local state is source "
+                    f"of truth; dashboard will not show countdown until next reconnect)"
+                )
+
+        # 3. PRE-ROLL — give the dashboard time to render the countdown.
+        # Skipped when offline since there's nothing to propagate.
+        if announced:
+            logging.info(
+                f"Reboot pre-roll: sleeping {REBOOT_ANNOUNCE_PREROLL_SECONDS}s "
+                f"for dashboard propagation before issuing OS shutdown"
+            )
+            time.sleep(REBOOT_ANNOUNCE_PREROLL_SECONDS)
+
+        # 5. Issue OS shutdown.
+        self._shutting_down = True
+        try:
+            subprocess.run(
+                [
+                    'shutdown', '/r',
+                    '/t', str(REBOOT_OS_COUNTDOWN_SECONDS),
+                    '/c', 'Owlette scheduled reboot — cancellable from dashboard'
+                ],
+                check=True, timeout=15
+            )
+            logging.info(
+                f"Scheduled reboot command issued ({REBOOT_OS_COUNTDOWN_SECONDS}s OS countdown)"
+            )
+        except Exception as e:
+            # 6. OS shutdown failed. Clear state, clear flags, never retry.
+            logging.error(f"Failed to issue shutdown command: {e}")
+            self._shutting_down = False
+            self._reboot_attempt_started_monotonic = None
+            state['attempt'] = None
+            state.setdefault('lastFiredByEntry', {})[entry_id] = today_date_iso
+            reboot_state.write_state(state)
+            if self.firebase_client:
+                try:
+                    self.firebase_client.set_machine_flags({
+                        'rebooting': False,
+                        'rebootScheduledAt': None,
+                        'rebootCancellable': False,
+                    })
+                    self.firebase_client.mirror_reboot_state(state)
+                    self.firebase_client.log_event(
+                        action='scheduled_reboot_failed',
+                        level='error',
+                        details=f'shutdown command failed for entry {entry_id}: {e}'
+                    )
+                except Exception as inner:
+                    logging.debug(f"Failed to clear flags after shutdown failure: {inner}")
+
+    def _handle_pending_reboot_attempt(self, state):
+        """Called when state.attempt.status == 'pending'.
+
+        NO RETRIES. There are exactly two cases:
+
+        1. We fired this session and the OS shutdown is in progress —
+           _reboot_attempt_started_monotonic is set. Do nothing; wait for
+           the OS to actually shut down. The next service start will run
+           _detect_reboot_success_on_startup and clear the attempt.
+
+        2. The attempt is stale: we found a 'pending' record that was NOT
+           started by this process (service restarted, agent crashed mid-fire,
+           cancel didn't clean up, etc). Treat as FAILED. Clear the attempt,
+           stamp lastFiredByEntry so it cannot retry today, log a failure
+           event. Never re-issue a shutdown.
+
+        This is the "no retries" safety guarantee. A failed reboot is logged
+        and dropped — it does not silently re-fire hours later.
+        """
+        # Case 1: in-flight in this process — let the OS finish what we started.
+        if self._reboot_attempt_started_monotonic is not None:
+            return
+
+        # Case 2: stale attempt from a previous process. Treat as failed.
+        attempt = state.get('attempt') or {}
+        entry_id = attempt.get('entryId')
+        scheduled_for = attempt.get('scheduledFor')
+
+        today_date_iso = self._today_iso_in_local_tz()
+        if entry_id:
+            state.setdefault('lastFiredByEntry', {})[entry_id] = today_date_iso
+        state['attempt'] = None
+        reboot_state.write_state(state)
+
+        logging.error(
+            f"Stale reboot attempt found for entry {entry_id} (scheduled {scheduled_for}) — "
+            f"treating as FAILED, will not retry today"
+        )
+        if self.firebase_client:
+            try:
+                self.firebase_client.mirror_reboot_state(state)
+                self.firebase_client.set_machine_flags({
+                    'rebooting': False,
+                    'rebootScheduledAt': None,
+                    'rebootCancellable': False,
+                })
+                self.firebase_client.log_event(
+                    action='scheduled_reboot_failed',
+                    level='error',
+                    details=(
+                        f'stale attempt for entry {entry_id} (scheduled {scheduled_for}) '
+                        f'cleared on service start — no retry'
+                    )
+                )
+            except Exception as e:
+                logging.debug(f"Failed to mirror failed reboot (non-critical): {e}")
+
+    # NOTE: these helpers used to use the site timezone (`_cached_site_timezone`)
+    # which is wrong for the reboot scheduler — a "14:00" entry should fire at
+    # 14:00 LOCAL WALL-CLOCK on the machine, regardless of where in the world the
+    # site admin happens to be. A kiosk in Tokyo and a kiosk in NYC, both in the
+    # same Owlette site, with a "14:00" reboot, must reboot at their respective
+    # local 14:00 — not synchronized to one shared site timezone. The dashboard
+    # UI for reboot schedules (RebootScheduleDialog) is timezone-agnostic for
+    # exactly this reason: it just collects "HH:MM" and trusts each agent to
+    # interpret it locally.
+    #
+    # Process schedules (is_within_schedule) still use site timezone via
+    # _cached_site_timezone — that's a separate question with different intent
+    # (e.g. office-hours schedules where an admin may want all machines in a
+    # site to start/stop at the same shared time). Don't change those without
+    # an explicit decision.
+
+    def _now_in_local_tz(self):
+        """Return now() in the MACHINE's local timezone (not the site timezone).
+
+        Uses datetime.now().astimezone() which picks up the OS's configured
+        timezone — the same one Windows shows in the system tray clock.
+        """
+        return datetime.datetime.now().astimezone()
+
+    def _today_iso_in_local_tz(self):
+        """Return today's date in the machine's local timezone as 'YYYY-MM-DD'."""
+        return self._now_in_local_tz().date().isoformat()
+
+    def _boot_time_in_local_tz(self):
+        """Return psutil.boot_time() as a tz-aware datetime in the machine's local timezone."""
+        boot_utc = datetime.datetime.fromtimestamp(psutil.boot_time(), tz=datetime.timezone.utc)
+        return boot_utc.astimezone()
+
+    def _detect_reboot_success_on_startup(self):
+        """If a pending reboot attempt persisted across the boot, detect success.
+
+        Called once during service init (after Firebase client is available but
+        possibly disconnected). Compares psutil.boot_time() against the persisted
+        attempt timestamp. If we did boot since the attempt, marks the entry as
+        fulfilled and advances any other entries whose scheduled instant fell
+        within the last hour (handles multi-entry-within-minutes case).
+        """
+        try:
+            state = reboot_state.read_state()
+            attempt = state.get('attempt')
+            if not attempt or attempt.get('status') != 'pending':
+                return
+
+            try:
+                last_attempt_at = datetime.datetime.fromisoformat(attempt['lastAttemptAt'])
+            except (KeyError, ValueError):
+                return
+
+            boot_dt = datetime.datetime.fromtimestamp(psutil.boot_time(), tz=datetime.timezone.utc)
+            if boot_dt <= last_attempt_at:
+                return  # we haven't booted since the attempt — not a success
+
+            logging.info("Reboot success detected — clearing pending attempt")
+
+            # Advance lastFiredByEntry for ALL entries whose scheduled instant
+            # fell in the last hour (multi-entry case). Use the MACHINE'S
+            # LOCAL timezone — same convention as _check_scheduled_reboot.
+            schedule = shared_utils.read_config(['rebootSchedule']) or {}
+            entries = schedule.get('entries') or []
+            now_tz = self._now_in_local_tz()
+            today = now_tz.date()
+            yesterday = today - datetime.timedelta(days=1)
+            day_names = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+
+            state.setdefault('lastFiredByEntry', {})
+            for entry in entries:
+                entry_id = entry.get('id')
+                time_str = entry.get('time')
+                days = entry.get('days') or []
+                if not entry_id or not time_str:
+                    continue
+                # Check yesterday and today separately — covers reboots near midnight
+                for candidate_date in (yesterday, today):
+                    dayname = day_names[candidate_date.weekday()]
+                    if dayname not in days:
+                        continue
+                    # timezone_str=None → resolves the entry against machine local tz
+                    sched_instant = shared_utils.compute_scheduled_instant(
+                        candidate_date, time_str, None
+                    )
+                    if sched_instant is None:
+                        continue
+                    boot_in_local_tz = boot_dt.astimezone(sched_instant.tzinfo) if sched_instant.tzinfo else boot_dt
+                    delta = (boot_in_local_tz - sched_instant).total_seconds()
+                    if 0 <= delta <= REBOOT_SUCCESS_DETECTION_WINDOW_SECONDS:
+                        state['lastFiredByEntry'][entry_id] = candidate_date.isoformat()
+
+            state['attempt'] = None
+            reboot_state.write_state(state)
+            self._reboot_attempt_started_monotonic = None
+
+            if self.firebase_client and self.firebase_client.is_connected():
+                try:
+                    self.firebase_client.mirror_reboot_state(state)
+                    self.firebase_client.log_event(
+                        action='scheduled_reboot_success',
+                        level='info',
+                        details=f'reboot succeeded for entry {attempt.get("entryId")}'
+                    )
+                except Exception as e:
+                    logging.debug(f"Failed to mirror reboot success (non-critical): {e}")
+        except Exception as e:
+            logging.warning(f"Reboot success detection failed: {e}")
 
     def _handle_reboot_machine(self, command_data):
         """Handle remote reboot command."""
@@ -3325,12 +3747,29 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 details='Remote reboot initiated from dashboard'
             )
 
-            # Set rebooting flag so dashboard shows "Rebooting..." and suppress crash alerts
+            # Set rebooting flag so dashboard shows "Rebooting..." and suppress crash alerts.
+            # Compute target reboot instant as Unix seconds — matches the `shutdown /r /t 30`
+            # countdown so the dashboard pill renders immediately on the same listener tick.
             self._shutting_down = True
-            self.firebase_client.set_machine_flag('rebooting', True)
+            target_reboot_at_unix = int(
+                (datetime.datetime.now(datetime.timezone.utc)
+                 + datetime.timedelta(seconds=30)).timestamp()
+            )
+            try:
+                self.firebase_client.set_machine_flags({
+                    'rebootScheduledAt': target_reboot_at_unix,
+                    'rebooting': True,
+                    'rebootSource': 'manual',
+                    'rebootCancellable': True,
+                })
+            except Exception as flag_err:
+                # Local state is source of truth; Firestore is a visibility channel.
+                # Match the offline-resilient behavior of _fire_scheduled_reboot.
+                logging.warning(
+                    f"Failed to announce manual reboot to Firestore (proceeding anyway): {flag_err}"
+                )
 
             # Schedule reboot with 30-second delay (gives agent time to complete Firestore writes)
-            import subprocess
             subprocess.run(
                 ['shutdown', '/r', '/t', '30', '/c', 'owlette remote reboot requested'],
                 check=True, timeout=15
@@ -3350,9 +3789,22 @@ class OwletteService(win32serviceutil.ServiceFramework):
             )
 
             self._shutting_down = True
-            self.firebase_client.set_machine_flag('shuttingDown', True)
+            target_shutdown_at_unix = int(
+                (datetime.datetime.now(datetime.timezone.utc)
+                 + datetime.timedelta(seconds=30)).timestamp()
+            )
+            try:
+                self.firebase_client.set_machine_flags({
+                    'shutdownScheduledAt': target_shutdown_at_unix,
+                    'shuttingDown': True,
+                    'rebootSource': 'manual',
+                })
+            except Exception as flag_err:
+                # Local state is source of truth; Firestore is a visibility channel.
+                logging.warning(
+                    f"Failed to announce manual shutdown to Firestore (proceeding anyway): {flag_err}"
+                )
 
-            import subprocess
             subprocess.run(
                 ['shutdown', '/s', '/t', '30', '/c', 'owlette remote shutdown requested'],
                 check=True, timeout=15
@@ -3363,23 +3815,61 @@ class OwletteService(win32serviceutil.ServiceFramework):
             return f"Shutdown failed: {str(e)}"
 
     def _handle_cancel_reboot(self, command_data):
-        """Cancel a pending reboot/shutdown."""
+        """Cancel a pending reboot/shutdown.
+
+        Aborts the OS-level shutdown via `shutdown /a`, clears all in-flight
+        reboot state both locally and in Firestore, and — critically — stamps
+        lastFiredByEntry for any in-progress scheduled-reboot attempt so the
+        same entry cannot re-fire today on the next scheduler tick.
+        """
         try:
             import subprocess
-            subprocess.run(['shutdown', '/a'], check=True, timeout=15)
+            cancel_result = subprocess.run(['shutdown', '/a'], capture_output=True, timeout=15)
+            os_cancel_ok = (cancel_result.returncode == 0)
 
             self._shutting_down = False
-            self.firebase_client.set_machine_flag('rebooting', False)
-            self.firebase_client.set_machine_flag('shuttingDown', False)
-            self.firebase_client.log_event(
-                action='command_executed',
-                level='info',
-                details='Pending reboot/shutdown cancelled from dashboard'
-            )
+            self._reboot_attempt_started_monotonic = None
 
-            return "Reboot/shutdown cancelled"
-        except subprocess.CalledProcessError:
-            return "No pending reboot to cancel"
+            # Clear local reboot state — stamp lastFiredByEntry for any
+            # in-progress scheduled attempt so it cannot re-fire today.
+            try:
+                state = reboot_state.read_state()
+                attempt = state.get('attempt') or {}
+                entry_id = attempt.get('entryId')
+                if entry_id:
+                    today_date_iso = self._today_iso_in_local_tz()
+                    state.setdefault('lastFiredByEntry', {})[entry_id] = today_date_iso
+                state['attempt'] = None
+                reboot_state.write_state(state)
+                if self.firebase_client:
+                    try:
+                        self.firebase_client.mirror_reboot_state(state)
+                    except Exception as e:
+                        logging.debug(f"Failed to mirror cancelled reboot state: {e}")
+            except Exception as e:
+                logging.warning(f"Failed to clear local reboot state on cancel: {e}")
+
+            if self.firebase_client:
+                try:
+                    self.firebase_client.set_machine_flags({
+                        'rebooting': False,
+                        'shuttingDown': False,
+                        'rebootScheduledAt': None,
+                        'rebootCancellable': False,
+                    })
+                    self.firebase_client.log_event(
+                        action='command_executed',
+                        level='info',
+                        details='Pending reboot/shutdown cancelled from dashboard'
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to clear reboot flags on cancel: {e}")
+
+            if os_cancel_ok:
+                return "Reboot/shutdown cancelled"
+            return "No pending OS reboot to cancel (state cleared)"
+        except subprocess.TimeoutExpired:
+            return "Cancel timed out (shutdown /a hung)"
 
     def _handle_dismiss_reboot_pending(self, command_data):
         """Dismiss a reboot pending prompt and reset relaunch counters."""
@@ -3832,7 +4322,7 @@ with mss.mss() as sct:
 try:
     from PIL import Image
     img = Image.open(io.BytesIO(png_bytes))
-    max_width = 1280
+    max_width = 1920
     if img.width > max_width:
         ratio = max_width / img.width
         img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
@@ -4134,12 +4624,26 @@ with open(out_path, 'wb') as f:
         # Clear stale reboot/shutdown flags from previous session (e.g., after a completed reboot)
         if self.firebase_client and self.firebase_client.is_connected():
             try:
-                self.firebase_client.set_machine_flag('rebooting', False)
-                self.firebase_client.set_machine_flag('shuttingDown', False)
+                # Atomic clear of all reboot/shutdown flags including the
+                # countdown anchors so the dashboard pill stops showing the
+                # active state immediately on the first listener tick after
+                # the agent reconnects post-reboot.
+                self.firebase_client.set_machine_flags({
+                    'rebooting': False,
+                    'shuttingDown': False,
+                    'rebootScheduledAt': None,
+                    'shutdownScheduledAt': None,
+                    'rebootCancellable': False,
+                    'rebootSource': None,
+                    'rebootEntryId': None,
+                })
                 self.firebase_client.clear_reboot_pending()
                 logging.info("Cleared stale reboot/shutdown flags on startup")
             except Exception as e:
                 logging.warning(f"Failed to clear stale flags on startup: {e}")
+
+        # Detect if a previously-pending scheduled reboot succeeded across the boot
+        self._detect_reboot_success_on_startup()
 
         # The heart of owlette
         cleanup_counter = 0  # Counter for periodic cleanup
@@ -4172,16 +4676,12 @@ with open(out_path, 'wb') as f:
 
         try:
             while self.is_alive:
-                # Check for shutdown flag from tray icon
-                shutdown_flag = shared_utils.get_data_path('tmp/shutdown.flag')
-                if os.path.exists(shutdown_flag):
-                    logging.info("Shutdown flag detected - initiating graceful shutdown")
-                    try:
-                        os.remove(shutdown_flag)
-                    except Exception as e:
-                        logging.debug(f"Could not remove shutdown flag: {e}")
-                    self.is_alive = False
-                    break
+                # Note: there is no "shutdown flag" mechanism. The tray's "exit"
+                # uses elevated `net stop OwletteService` (a controlled SCM stop),
+                # which NSSM respects without auto-restarting. A flag-based
+                # approach was tried previously but doesn't work — NSSM
+                # auto-restarts on any process exit, so the service would just
+                # come back up immediately after exiting cleanly.
 
                 # Check for restart flag from tray icon.
                 # Exit with code 42 so NSSM auto-restarts us (AppExit Default Restart).
@@ -4266,9 +4766,10 @@ with open(out_path, 'wb') as f:
                                         pass
                     # mode == 'off': skip entirely
 
-                # Scheduled reboot check (every ~60 seconds to avoid hammering Firestore)
+                # Scheduled reboot check — runs every REBOOT_CHECK_INTERVAL_SECONDS
+                # (derived from SLEEP_INTERVAL so changes propagate automatically)
                 self._reboot_schedule_counter += 1
-                if self._reboot_schedule_counter >= 6:
+                if self._reboot_schedule_counter >= REBOOT_CHECK_ITERATIONS:
                     self._reboot_schedule_counter = 0
                     self._check_scheduled_reboot()
 

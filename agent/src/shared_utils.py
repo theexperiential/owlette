@@ -118,11 +118,40 @@ def get_hostname():
     return socket.gethostname()
 
 def get_machine_timezone():
+    """Return the machine's timezone as the Windows registry name (e.g.
+    "Pacific Standard Time"). Used for diagnostics and back-compat — the
+    web dashboard does not consume this format directly. See
+    get_machine_timezone_iana() for the dashboard-facing IANA value.
+    """
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
                             r'SYSTEM\CurrentControlSet\Control\TimeZoneInformation') as key:
             return winreg.QueryValueEx(key, 'TimeZoneKeyName')[0]
     except Exception:
+        return None
+
+
+def get_machine_timezone_iana():
+    """Return the machine's timezone as an IANA name (e.g. "America/Los_Angeles").
+
+    The dashboard needs this format because:
+      - Python's `zoneinfo.ZoneInfo()` requires IANA names
+      - JavaScript's `Intl.DateTimeFormat({ timeZone: ... })` requires IANA names
+      - The Windows registry value (e.g. "Pacific Standard Time") is not
+        compatible with either standard library
+
+    Uses the `tzlocal` package which queries Windows in a more portable way
+    and maps to the CLDR Windows-to-IANA conversion table internally.
+
+    Returns None on any failure — the dashboard handles the missing field
+    gracefully by falling back to other timezone sources or labelling as
+    "unknown".
+    """
+    try:
+        import tzlocal
+        return tzlocal.get_localzone_name()
+    except Exception as e:
+        logging.debug(f"Could not determine machine IANA timezone: {e}")
         return None
 
 def get_cpu_name():
@@ -1232,6 +1261,47 @@ def is_within_schedule(schedules, timezone_str=None):
                 if prev_day in days and current_time <= stop:
                     return True
     return False
+
+
+def compute_scheduled_instant(date_obj, time_str, timezone_str=None):
+    """Build a timezone-aware datetime for a specific date + HH:MM time.
+
+    Used by the reboot scheduler to convert an entry's `{date, time}` into an
+    absolute instant for comparison against `now` and `boot_time`.
+
+    Args:
+        date_obj: A `datetime.date` (the day the instant lands on).
+        time_str: "HH:MM" 24-hour format.
+        timezone_str: Optional IANA timezone (e.g. 'America/New_York'). Local time if None.
+
+    Returns:
+        A timezone-aware `datetime.datetime`, or None if `time_str` is malformed.
+        On DST forward jumps where the requested local time doesn't exist, the
+        returned instant is the closest valid post-jump moment (zoneinfo's default
+        behavior). The reboot scheduler treats this as "the entry fires at the
+        next valid wall-clock time after the gap" — acceptable per the plan.
+    """
+    from datetime import datetime, time as dt_time
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo
+
+    try:
+        h, m = map(int, time_str.split(':'))
+        wall_time = dt_time(h, m)
+    except (ValueError, AttributeError):
+        return None
+
+    try:
+        tz = ZoneInfo(timezone_str) if timezone_str else None
+    except (KeyError, Exception):
+        logging.warning(f"Invalid timezone '{timezone_str}', falling back to local time")
+        tz = None
+
+    naive = datetime.combine(date_obj, wall_time)
+    return naive.replace(tzinfo=tz) if tz else naive.astimezone()
+
 
 # Read a JSON file and returns its content as a Python dictionary with retry logic
 def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):

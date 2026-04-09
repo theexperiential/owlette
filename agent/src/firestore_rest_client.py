@@ -384,13 +384,31 @@ class FirestoreRestClient:
                 else:
                     self._commit_write(path, cleaned_data, field_transforms)
             else:
-                # No server timestamps — use existing PATCH logic
+                # No server timestamps — use PATCH endpoint.
+                #
+                # CRITICAL: when merge=True, we MUST include updateMask in the
+                # request, otherwise PATCH treats the request as a full
+                # document replacement and DELETES every field not in the
+                # payload (per Firestore REST API spec). Without this,
+                # set_machine_flag/set_machine_flags would silently nuke
+                # online, lastHeartbeat, metrics, etc. on every call —
+                # which manifested as a 5-second offline window on the
+                # dashboard until the next _upload_metrics restored them.
                 url = f"{self.base_url}/{path}"
                 firestore_doc = self._to_firestore_document(cleaned_data)
+
+                params = None
+                if merge:
+                    # Build updateMask from all leaf field paths in the payload.
+                    # This tells Firestore to only update these specific fields
+                    # and leave everything else in the document untouched.
+                    update_mask_paths = list(self._flatten_field_paths(cleaned_data))
+                    params = [('updateMask.fieldPaths', p) for p in update_mask_paths]
 
                 response = self.session.patch(
                     url,
                     json=firestore_doc,
+                    params=params,
                     headers=self._get_auth_headers(),
                     timeout=30
                 )

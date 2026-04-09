@@ -316,6 +316,14 @@ service cloud.firestore {
       allow delete: if canAccessSite(siteId);
     }
 
+    match /config/{siteId}/reboot_presets/{presetId} {
+      // Reboot schedule presets shared across machines in a site
+      // Users with site access can read and manage presets
+      allow read: if canAccessSite(siteId);
+      allow write: if canAccessSite(siteId);
+      allow delete: if canAccessSite(siteId);
+    }
+
     // ============================================
     // Users Collection (Admin System)
     // ============================================
