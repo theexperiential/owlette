@@ -482,6 +482,15 @@ class FirebaseClient:
                         metrics = shared_utils.get_system_metrics()
                         self._upload_metrics(metrics)
 
+                        # Refresh session_state.json last_alive — this is the
+                        # canonical heartbeat path. Used by the next startup
+                        # classifier to compute the "last seen alive" gap.
+                        try:
+                            import session_state
+                            session_state.update_alive()
+                        except Exception as e:
+                            self.logger.debug(f"session_state.update_alive failed in metrics loop: {e}")
+
                         # Report success to connection manager
                         self.connection_manager.report_success()
 

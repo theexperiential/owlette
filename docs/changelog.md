@@ -11,6 +11,21 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.6.4] - 2026-04-10
+
+### added
+- **Session state classifier** — new `session_state.py` module persists shutdown intent and last-alive timestamps across reboots. On startup, the agent classifies how the previous session ended and emits a warning event to the dashboard for anomalous shutdowns:
+    - `external_reboot` — operator or Windows Update restarted the machine outside Owlette
+    - `unexpected_reboot` — no shutdown signal detected (BSOD, power loss, hard reset)
+    - `unexpected_service_restart` — agent process crashed or was killed (NSSM auto-restart)
+    - Silent for Owlette-initiated reboots/shutdowns, version upgrades, and first runs
+- Tooltips on event log action and detail text — truncated entries now show full text on hover (shadcn Tooltip, matching dashboard style)
+
+### changed
+- Reboot event log details cleaned up — human-readable info leads, entry UUID shortened to 8-char prefix for correlation (was full 36-char UUID)
+
+---
+
 ## [2.6.3] - 2026-04-09
 
 ### fixed

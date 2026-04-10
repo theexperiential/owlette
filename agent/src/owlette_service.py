@@ -14,6 +14,7 @@ import installer_utils
 import project_utils
 import registry_utils
 import reboot_state
+import session_state
 import win32serviceutil
 import win32service
 import win32event
@@ -3397,8 +3398,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 action='scheduled_reboot_missed',
                                 level='warning',
                                 details=(
-                                    f'entry {entry_id} missed by {int(age_seconds)}s '
-                                    f'(scheduled {scheduled_instant.isoformat()})'
+                                    f'missed by {int(age_seconds)}s — scheduled '
+                                    f'{scheduled_instant.isoformat()} (entry {entry_id[:8]})'
                                 )
                             )
                         except Exception as e:
@@ -3486,6 +3487,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
         reboot_state.write_state(state)
         self._reboot_attempt_started_monotonic = time.monotonic()
 
+        # Mark this reboot as Owlette-initiated so the next startup classifier
+        # treats it as planned and stays silent.
+        try:
+            session_state.set_intent("owlette_reboot")
+        except Exception as e:
+            logging.debug(f"session_state.set_intent failed in scheduled reboot: {e}")
+
         # 2. ANNOUNCE to Firestore — best-effort with retry. Single atomic write.
         # Failure does NOT abort the fire — local state is the source of truth.
         announced = False
@@ -3504,10 +3512,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     self.firebase_client.log_event(
                         action='scheduled_reboot_announced',
                         level='warning',
-                        details=(
-                            f'entry {entry_id}, target {target_reboot_at_iso}, '
-                            f'announce attempt {announce_attempt}/3'
-                        )
+                        details=f'target {target_reboot_at_iso} (entry {entry_id[:8]})'
                     )
                     announced = True
                     logging.info(f"Reboot announce succeeded on attempt {announce_attempt}/3")
@@ -3567,7 +3572,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     self.firebase_client.log_event(
                         action='scheduled_reboot_failed',
                         level='error',
-                        details=f'shutdown command failed for entry {entry_id}: {e}'
+                        details=f'shutdown command failed: {e} (entry {entry_id[:8]})'
                     )
                 except Exception as inner:
                     logging.debug(f"Failed to clear flags after shutdown failure: {inner}")
@@ -3622,8 +3627,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     action='scheduled_reboot_failed',
                     level='error',
                     details=(
-                        f'stale attempt for entry {entry_id} (scheduled {scheduled_for}) '
-                        f'cleared on service start — no retry'
+                        f'stale attempt cleared on service start — no retry, '
+                        f'scheduled {scheduled_for} (entry {entry_id[:8]})'
                     )
                 )
             except Exception as e:
@@ -3661,6 +3666,102 @@ class OwletteService(win32serviceutil.ServiceFramework):
         """Return psutil.boot_time() as a tz-aware datetime in the machine's local timezone."""
         boot_utc = datetime.datetime.fromtimestamp(psutil.boot_time(), tz=datetime.timezone.utc)
         return boot_utc.astimezone()
+
+    def _classify_startup_session(self):
+        """Detect anomalous prior shutdowns and queue a warning event if needed.
+
+        Compares the persisted session state from the previous run against
+        the current psutil.boot_time(). Result is stored in
+        self._pending_anomaly_event for emission once Firebase is connected
+        (mirrors the _pending_update_event pattern).
+
+        Silent on first run, schema mismatch, version change (upgrades), and
+        Owlette-initiated stops. Emits warning events for external operator
+        reboots, no-signal crashes/BSODs, and unexplained service restarts.
+
+        After classification, writes a fresh session_state.json for this boot
+        with shutdown_intent=None — subsequent reboot/shutdown handlers will
+        set the intent before issuing OS commands.
+        """
+        self._pending_anomaly_event = None
+
+        try:
+            prev = session_state.read_state()
+            current_boot = int(psutil.boot_time())
+            current_version = shared_utils.APP_VERSION
+
+            # Always write fresh state for this session, even if we return
+            # silently below — the new boot needs a baseline so future
+            # set_intent / update_alive calls have a file to mutate.
+            try:
+                session_state.init_session(version=current_version, boot_time=current_boot)
+            except Exception as e:
+                logging.warning(f"Failed to init session_state.json: {e}")
+
+            # Silent guards (in priority order)
+            if prev is None:
+                logging.info("Session classifier: no prior state (first run) — silent")
+                return
+            if prev.get('schema') != session_state.SCHEMA_VERSION:
+                logging.info(
+                    f"Session classifier: schema mismatch (prev={prev.get('schema')}) — silent"
+                )
+                return
+            if prev.get('version') != current_version:
+                logging.info(
+                    f"Session classifier: version changed "
+                    f"({prev.get('version')} -> {current_version}) — silent"
+                )
+                return
+
+            prev_boot = prev.get('boot_time')
+            intent = prev.get('shutdown_intent')
+            last_alive = int(prev.get('last_alive') or 0)
+
+            # 5-second tolerance absorbs psutil.boot_time() jitter on Windows
+            boot_changed = prev_boot is None or abs(current_boot - int(prev_boot)) > 5
+
+            if boot_changed:
+                # Owlette-initiated reboot/shutdown — silent
+                if intent in ('owlette_reboot', 'owlette_shutdown'):
+                    logging.info(f"Session classifier: planned reboot ({intent}) — silent")
+                    return
+                gap = max(0, current_boot - last_alive)
+                if intent == 'external_clean':
+                    action = 'external_reboot'
+                    details = (
+                        f'boot detected after clean shutdown signal, '
+                        f'last alive {gap}s before boot'
+                    )
+                else:
+                    action = 'unexpected_reboot'
+                    details = (
+                        f'boot detected with no shutdown signal, '
+                        f'last alive {gap}s before boot'
+                    )
+                logging.warning(f"Session classifier: {action} — {details}")
+                self._pending_anomaly_event = (action, details)
+            else:
+                # OS did not reboot — agent process restarted only.
+                # Silent for ALL known intents. A failed-to-reboot owlette
+                # intent is already reported by _handle_pending_reboot_attempt
+                # as scheduled_reboot_failed; do not double-report.
+                if intent is not None:
+                    logging.info(
+                        f"Session classifier: planned service restart ({intent}) — silent"
+                    )
+                    return
+                gap = max(0, int(time.time()) - last_alive)
+                details = (
+                    f'agent restarted with no shutdown signal, '
+                    f'last alive {gap}s ago'
+                )
+                logging.warning(
+                    f"Session classifier: unexpected_service_restart — {details}"
+                )
+                self._pending_anomaly_event = ('unexpected_service_restart', details)
+        except Exception as e:
+            logging.error(f"Session classifier failed: {e}", exc_info=True)
 
     def _detect_reboot_success_on_startup(self):
         """If a pending reboot attempt persisted across the boot, detect success.
@@ -3731,7 +3832,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     self.firebase_client.log_event(
                         action='scheduled_reboot_success',
                         level='info',
-                        details=f'reboot succeeded for entry {attempt.get("entryId")}'
+                        details=f'reboot succeeded (entry {attempt.get("entryId", "")[:8]})'
                     )
                 except Exception as e:
                     logging.debug(f"Failed to mirror reboot success (non-critical): {e}")
@@ -3751,6 +3852,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Compute target reboot instant as Unix seconds — matches the `shutdown /r /t 30`
             # countdown so the dashboard pill renders immediately on the same listener tick.
             self._shutting_down = True
+            try:
+                session_state.set_intent("owlette_reboot")
+            except Exception as e:
+                logging.debug(f"session_state.set_intent failed in manual reboot: {e}")
             target_reboot_at_unix = int(
                 (datetime.datetime.now(datetime.timezone.utc)
                  + datetime.timedelta(seconds=30)).timestamp()
@@ -3789,6 +3894,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
             )
 
             self._shutting_down = True
+            try:
+                session_state.set_intent("owlette_shutdown")
+            except Exception as e:
+                logging.debug(f"session_state.set_intent failed in manual shutdown: {e}")
             target_shutdown_at_unix = int(
                 (datetime.datetime.now(datetime.timezone.utc)
                  + datetime.timedelta(seconds=30)).timestamp()
@@ -3866,6 +3975,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     logging.warning(f"Failed to clear reboot flags on cancel: {e}")
 
             if os_cancel_ok:
+                # Only clear the session intent if the OS cancel actually
+                # succeeded. If `shutdown /a` failed (the OS already committed
+                # to rebooting), the original owlette_reboot intent must
+                # survive so the imminent reboot is still classified as planned.
+                try:
+                    session_state.set_intent(None)
+                except Exception as e:
+                    logging.debug(f"session_state.set_intent(None) failed on cancel: {e}")
                 return "Reboot/shutdown cancelled"
             return "No pending OS reboot to cancel (state cleared)"
         except subprocess.TimeoutExpired:
@@ -4531,6 +4648,13 @@ with open(out_path, 'wb') as f:
         # Check for update marker (indicates a self-update was in progress)
         self._check_update_status()
 
+        # Classify the prior session — detects unexpected reboots, BSODs,
+        # crashes, and operator-initiated reboots that bypassed Owlette.
+        # Queues a warning event in self._pending_anomaly_event for emission
+        # once Firebase is connected. Also writes the fresh session_state.json
+        # baseline so subsequent intent writes have a file to mutate.
+        self._classify_startup_session()
+
         # Start Firebase client and upload local config
         if self.firebase_client:
             try:
@@ -4576,6 +4700,20 @@ with open(out_path, 'wb') as f:
                     except Exception as e:
                         logging.warning(f"Failed to log update event to Firebase: {e}")
                     self._pending_update_event = None
+
+                # Log any pending startup anomaly event (from session classifier)
+                if getattr(self, '_pending_anomaly_event', None):
+                    anomaly_action, anomaly_details = self._pending_anomaly_event
+                    try:
+                        self.firebase_client.log_event(
+                            action=anomaly_action,
+                            level='warning',
+                            details=anomaly_details,
+                        )
+                        logging.info(f"Startup anomaly event logged to Firebase: {anomaly_action}")
+                        self._pending_anomaly_event = None
+                    except Exception as e:
+                        logging.warning(f"Failed to log startup anomaly event to Firebase: {e}")
 
                 # Report update command completion to Firestore (closes the loop for web dashboard)
                 if hasattr(self, '_pending_update_completion') and self._pending_update_completion:
@@ -4693,9 +4831,24 @@ with open(out_path, 'wb') as f:
                         os.remove(restart_flag)
                     except Exception as e:
                         logging.debug(f"Could not remove restart flag: {e}")
+                    # Mark this restart as Owlette-initiated so the next startup
+                    # classifier treats it as planned and stays silent.
+                    try:
+                        session_state.set_intent("owlette_service_restart")
+                    except Exception as e:
+                        logging.debug(f"session_state.set_intent failed in restart flag: {e}")
                     self._restart_exit_code = 42
                     self.is_alive = False
                     break
+
+                # Refresh session_state.json last_alive — used by the next
+                # startup classifier to compute the gap between "last seen
+                # alive" and the next boot. Belt-and-suspenders alongside
+                # the metrics-thread heartbeat in firebase_client._metrics_loop.
+                try:
+                    session_state.update_alive()
+                except Exception as e:
+                    logging.debug(f"session_state.update_alive failed: {e}")
 
                 # Ensure tray icon is running (with cooldown to avoid crash-relaunch thrashing)
                 self._try_launch_tray()
@@ -4789,6 +4942,26 @@ with open(out_path, 'wb') as f:
                             logging.debug("Logged agent_started event to Firestore")
                         except Exception as log_err:
                             logging.error(f"Failed to log agent_started event: {log_err}")
+
+                        # Backup emission for startup anomaly event — fires only
+                        # if the primary emission near firebase_client.start() was
+                        # skipped (e.g. Firebase wasn't connected yet at that point).
+                        if getattr(self, '_pending_anomaly_event', None):
+                            anomaly_action, anomaly_details = self._pending_anomaly_event
+                            try:
+                                self.firebase_client.log_event(
+                                    action=anomaly_action,
+                                    level='warning',
+                                    details=anomaly_details,
+                                )
+                                logging.info(
+                                    f"Startup anomaly event logged to Firebase (deferred): {anomaly_action}"
+                                )
+                                self._pending_anomaly_event = None
+                            except Exception as log_err:
+                                logging.error(
+                                    f"Failed to log startup anomaly event (deferred): {log_err}"
+                                )
 
                 self.first_start = False
 

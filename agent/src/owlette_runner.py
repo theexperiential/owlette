@@ -57,6 +57,16 @@ def signal_handler(signum, frame):
             logging.error(f"[SIGNAL HANDLER] Failed to log agent_stopped: {e}")
             print(f"[SIGNAL HANDLER] Failed to log agent_stopped: {e}", file=sys.stderr, flush=True)
 
+        # Mark the session as cleanly stopped — but only if no Owlette intent
+        # was already set (e.g. by _handle_reboot_machine moments earlier).
+        # set_intent_if_none is compare-and-set: it will not overwrite an
+        # existing owlette_reboot/owlette_shutdown intent.
+        try:
+            import session_state
+            session_state.set_intent_if_none("external_clean")
+        except Exception as e:
+            logging.debug(f"[SIGNAL HANDLER] session_state.set_intent_if_none failed: {e}")
+
         # Stop Firebase client now
         try:
             _service_instance.firebase_client.stop()

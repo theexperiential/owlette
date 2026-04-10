@@ -742,9 +742,14 @@ export default function LogsPage() {
                         >
                           <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
                           <div className="w-[60px] flex-shrink-0">{getLevelBadge(log.level)}</div>
-                          <span className="text-foreground font-medium truncate max-w-[140px] flex-shrink-0 text-left">
-                            {formatAction(log.action)}
-                          </span>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-foreground font-medium truncate max-w-[140px] flex-shrink-0 text-left cursor-help">
+                                {formatAction(log.action)}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>{formatAction(log.action)}</TooltipContent>
+                          </Tooltip>
                         </button>
                         <span className="text-muted-foreground">•</span>
                         <span className="text-foreground whitespace-nowrap">{log.machineName}</span>
@@ -763,7 +768,12 @@ export default function LogsPage() {
                         {!isExpanded && log.details && (
                           <>
                             <span className="text-muted-foreground">•</span>
-                            <span className="text-muted-foreground truncate min-w-0">{log.details}</span>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="text-muted-foreground truncate min-w-0 cursor-help">{log.details}</span>
+                              </TooltipTrigger>
+                              <TooltipContent><p className="max-w-xs">{log.details}</p></TooltipContent>
+                            </Tooltip>
                           </>
                         )}
                       </div>
