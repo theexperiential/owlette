@@ -113,6 +113,7 @@ interface MachineRowProps {
   onCancelReboot?: () => Promise<void>;
   onScreenshot?: () => void;
   onLiveView?: () => void;
+  showLocalClock?: boolean;
 }
 
 export function MachineRow({
@@ -136,6 +137,7 @@ export function MachineRow({
   onCancelReboot,
   onScreenshot,
   onLiveView,
+  showLocalClock,
 }: MachineRowProps) {
   const isDemo = !!useDemoContext();
   const { userPreferences: fullPrefs } = useAuth();
@@ -190,7 +192,7 @@ export function MachineRow({
               <span className="truncate">{machine.machineId}</span>
               {isMuted && <span title="alerts muted"><BellOff className="h-3 w-3 text-muted-foreground flex-shrink-0" /></span>}
             </div>
-            {machine.machineTimezone && localClock && (
+            {showLocalClock && machine.machineTimezone && localClock && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="text-[10px] text-muted-foreground/80 select-none cursor-help truncate ml-5">
@@ -671,6 +673,8 @@ export function MachineListView({
   onMetricClick,
 }: MachineListViewProps) {
   const { userPreferences } = useAuth();
+  const uniqueTimezones = new Set(machines.map(m => m.machineTimezone).filter(Boolean));
+  const showLocalClock = uniqueTimezones.size > 1;
 
   return (
     <div className="rounded-lg border border-border bg-background overflow-hidden">
@@ -696,6 +700,7 @@ export function MachineListView({
               onConfigureSchedule={onConfigureSchedule ? (process) => onConfigureSchedule(machine.machineId, process) : undefined}
               onRemoveMachine={() => onRemoveMachine(machine.machineId, machine.machineId, machine.online)}
               onMetricClick={onMetricClick ? (metricType) => onMetricClick(machine.machineId, metricType) : undefined}
+              showLocalClock={showLocalClock}
             />
           ))}
         </TableBody>

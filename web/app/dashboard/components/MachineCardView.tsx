@@ -89,6 +89,7 @@ interface MachineCardProps {
   onDismissRebootPending?: (processName: string) => Promise<void>;
   onScreenshot?: () => void;
   onLiveView?: () => void;
+  showLocalClock?: boolean;
 }
 
 function MachineCard({
@@ -115,6 +116,7 @@ function MachineCard({
   onDismissRebootPending,
   onScreenshot,
   onLiveView,
+  showLocalClock,
 }: MachineCardProps) {
   const isDemo = !!useDemoContext();
   const { userPreferences: fullPrefs } = useAuth();
@@ -157,7 +159,7 @@ function MachineCard({
               {machine.machineId}
               {isMuted && <span title="alerts muted"><BellOff className="h-3.5 w-3.5 text-muted-foreground" /></span>}
             </CardTitle>
-            {machine.machineTimezone && localClock && (
+            {showLocalClock && machine.machineTimezone && localClock && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="text-xs text-muted-foreground mt-0.5 cursor-help select-none">
@@ -687,6 +689,8 @@ export function MachineCardView({
   onLiveView,
 }: MachineCardViewProps) {
   const { userPreferences, isAdmin } = useAuth();
+  const uniqueTimezones = new Set(machines.map(m => m.machineTimezone).filter(Boolean));
+  const showLocalClock = uniqueTimezones.size > 1;
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -718,6 +722,7 @@ export function MachineCardView({
           onDismissRebootPending={onDismissRebootPending ? (processName) => onDismissRebootPending(machine.machineId, processName) : undefined}
           onScreenshot={onScreenshot ? () => onScreenshot(machine.machineId) : undefined}
           onLiveView={onLiveView ? () => onLiveView(machine.machineId) : undefined}
+          showLocalClock={showLocalClock}
         />
       ))}
     </div>
