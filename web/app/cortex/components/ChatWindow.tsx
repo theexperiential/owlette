@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Brain, User, KeyRound, X } from 'lucide-react';
 import { ToolCallCard } from './ToolCallCard';
+import { SynapticIndicator } from './SynapticIndicator';
 import { getRandomSuggestions } from '../data/suggestedQuestions';
 
 interface ChatWindowProps {
@@ -199,11 +200,7 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
             </div>
           </div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <div className="flex gap-1">
-              <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0ms]" />
-              <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:150ms]" />
-              <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:300ms]" />
-            </div>
+            <SynapticIndicator />
             thinking...
           </div>
         </div>

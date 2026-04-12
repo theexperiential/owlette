@@ -171,10 +171,9 @@ export function ChatInput({
               type="button"
               onClick={onStop}
               size="icon"
-              variant="outline"
-              className="!h-auto w-10 rounded-lg border-border bg-secondary hover:bg-accent flex-shrink-0"
+              className="!h-auto w-10 rounded-lg bg-accent-cyan hover:bg-accent-cyan-hover flex-shrink-0"
             >
-              <Square className="h-4 w-4 text-foreground" />
+              <Square className="h-4 w-4 text-gray-900 fill-gray-900" />
             </Button>
           ) : (
             <Button
