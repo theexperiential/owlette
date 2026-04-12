@@ -15,7 +15,6 @@
  * Used by: Dashboard page for card view display
  */
 
-import { useState, useEffect } from 'react';
 import { useMinuteTick } from '@/hooks/useMinuteTick';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -100,6 +99,8 @@ function MachineCard({
   siteTimeFormat,
   userPreferences,
   isAdmin,
+  onToggleStats,
+  onToggleProcesses,
   onEditProcess,
   onCreateProcess,
   onKillProcess,
@@ -118,13 +119,6 @@ function MachineCard({
   const isDemo = !!useDemoContext();
   const { userPreferences: fullPrefs } = useAuth();
   const isMuted = fullPrefs.mutedMachines.includes(machine.machineId);
-  // Per-card expand state, synced from parent's global toggle
-  const [localStatsExpanded, setLocalStatsExpanded] = useState(statsExpanded);
-  const [localProcessesExpanded, setLocalProcessesExpanded] = useState(processesExpanded);
-
-  // Sync when parent global toggle changes
-  useEffect(() => { setLocalStatsExpanded(statsExpanded); }, [statsExpanded]);
-  useEffect(() => { setLocalProcessesExpanded(processesExpanded); }, [processesExpanded]);
 
   // Fetch sparkline data for this machine
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
@@ -261,8 +255,8 @@ function MachineCard({
       )}
 
       {machine.metrics && (
-        <Collapsible open={localStatsExpanded} onOpenChange={() => setLocalStatsExpanded(v => !v)}>
-          {!localStatsExpanded && (
+        <Collapsible open={statsExpanded} onOpenChange={onToggleStats}>
+          {!statsExpanded && (
             <CollapsibleTrigger asChild>
               <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
                 <div className="flex items-center gap-2 w-full select-none">
@@ -478,8 +472,8 @@ function MachineCard({
 
       {/* Expandable Process List */}
       {machine.processes && machine.processes.length > 0 && (
-        <Collapsible open={localProcessesExpanded} onOpenChange={() => setLocalProcessesExpanded(v => !v)}>
-          {!localProcessesExpanded && (
+        <Collapsible open={processesExpanded} onOpenChange={onToggleProcesses}>
+          {!processesExpanded && (
             <CollapsibleTrigger asChild>
               <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
                 <div className="flex items-center gap-2 w-full select-none">
