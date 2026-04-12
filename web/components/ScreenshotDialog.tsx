@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Camera, Loader2, RefreshCw, AlertTriangle, Download, ClipboardCopy, Check, Maximize2, X as XIcon, PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react';
+import { Camera, Loader2, AlertTriangle, Download, ClipboardCopy, Check, Maximize2, X as XIcon, PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {

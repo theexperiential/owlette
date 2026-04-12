@@ -216,7 +216,7 @@ export async function fireWebhooks(
       }
 
       if (response.ok) successCount++;
-    } catch (error) {
+    } catch {
       const newFailCount = (webhook.failCount || 0) + 1;
 
       await doc.ref.update({

@@ -20,7 +20,6 @@ import { useMinuteTick } from '@/hooks/useMinuteTick';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
@@ -101,8 +100,6 @@ function MachineCard({
   siteTimeFormat,
   userPreferences,
   isAdmin,
-  onToggleStats,
-  onToggleProcesses,
   onEditProcess,
   onCreateProcess,
   onKillProcess,
@@ -167,7 +164,7 @@ function MachineCard({
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p className="max-w-xs">this machine's local time ({machine.machineTimezone}). schedule entries are interpreted in this timezone.</p>
+                  <p className="max-w-xs">this machine&apos;s local time ({machine.machineTimezone}). schedule entries are interpreted in this timezone.</p>
                 </TooltipContent>
               </Tooltip>
             )}
@@ -549,7 +546,6 @@ function MachineCard({
                         <div className="flex items-center gap-2 md:gap-3 ml-2 md:ml-4 flex-shrink-0">
                           {(() => {
                             const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
-                            const isScheduled = currentMode === 'scheduled';
                             return (
                               <div className="hidden md:flex items-stretch rounded-md overflow-hidden border border-border h-8">
                                 {(['off', 'always', 'scheduled'] as const).map((mode) => {

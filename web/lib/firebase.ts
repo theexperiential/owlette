@@ -52,7 +52,7 @@ export { app, auth, db, storage, isConfigured };
  * Firebase Helper Functions
  */
 
-import { collection, getDocs, getDoc, query, orderBy, limit, doc, setDoc, Timestamp } from 'firebase/firestore';
+import { getDoc, doc, setDoc, Timestamp } from 'firebase/firestore';
 
 /**
  * Get the latest Owlette agent version from installer_metadata collection

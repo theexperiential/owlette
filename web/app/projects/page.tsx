@@ -6,7 +6,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
 import { useProjectDistributionManager } from '@/hooks/useProjectDistributions';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Plus, CheckCircle2, XCircle, Clock, Loader2, Trash2, X, FolderSync, PlayCircle, Archive } from 'lucide-react';
 import ProjectDistributionDialog from '@/components/ProjectDistributionDialog';
@@ -16,10 +15,9 @@ import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
-import { toast } from 'sonner';
 
 export default function ProjectsPage() {
-  const { user, loading: authLoading, signOut, userSites, isAdmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
+  const { user, loading: authLoading, userSites, isAdmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
@@ -36,7 +34,6 @@ export default function ProjectsPage() {
     distributions,
     distributionsLoading,
     templates,
-    templatesLoading,
     createDistribution,
     createTemplate,
     updateTemplate,
@@ -112,8 +109,6 @@ export default function ProjectsPage() {
       </Badge>
     );
   };
-
-  const selectedDistribution = distributions.find(d => d.id === selectedDistributionId);
 
   return (
     <div className="relative min-h-screen pb-8">

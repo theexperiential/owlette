@@ -51,7 +51,6 @@ export function MachineContextMenu({
   machineTimezone,
   siteId,
   isOnline,
-  isAdmin,
   rebooting,
   shuttingDown,
   onRemoveMachine,
@@ -340,7 +339,7 @@ export function MachineContextMenu({
             <DialogTitle>reboot {machineName}?</DialogTitle>
             <DialogDescription className="text-muted-foreground">
               this will restart the machine in 30 seconds. all running processes will be interrupted.
-              you'll have 30 seconds to cancel from the dashboard.
+              you&apos;ll have 30 seconds to cancel from the dashboard.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -369,7 +368,7 @@ export function MachineContextMenu({
             <DialogTitle>shutdown {machineName}?</DialogTitle>
             <DialogDescription className="text-muted-foreground">
               this will shut down the machine in 30 seconds. the machine will not automatically restart.
-              you'll have 30 seconds to cancel from the dashboard.
+              you&apos;ll have 30 seconds to cancel from the dashboard.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -5,7 +5,7 @@ import { useSystemPresets, type SystemPreset } from '@/hooks/useSystemPresets';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Settings, Plus, Loader2, Pencil, Trash2, Package } from 'lucide-react';
+import { Plus, Loader2, Pencil, Trash2, Package } from 'lucide-react';
 import { toast } from 'sonner';
 import SystemPresetDialog from '@/components/SystemPresetDialog';
 
@@ -348,7 +348,7 @@ export default function SystemPresetsPage() {
             <DialogHeader>
               <DialogTitle>delete preset</DialogTitle>
               <DialogDescription className="text-muted-foreground">
-                Are you sure you want to delete "{presetToDelete?.name}"? This action cannot be undone.
+                Are you sure you want to delete &quot;{presetToDelete?.name}&quot;? This action cannot be undone.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>

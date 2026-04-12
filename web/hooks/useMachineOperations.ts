@@ -2,12 +2,8 @@
 
 import { useState } from 'react';
 import {
-  collection,
   doc,
   deleteDoc,
-  getDocs,
-  query,
-  where,
   writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';

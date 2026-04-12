@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, FolderArchive, Loader2, Pencil, Trash2 } from 'lucide-react';
+import { FolderArchive, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useMachines } from '@/hooks/useFirestore';
 import { ProjectDistributionTemplate, ProjectDistribution } from '@/hooks/useProjectDistributions';
@@ -146,7 +146,7 @@ export default function ProjectDistributionDialog({
     let parsedUrl;
     try {
       parsedUrl = new URL(projectUrl);
-    } catch (e) {
+    } catch {
       toast.error('Invalid project URL format');
       return;
     }
@@ -194,7 +194,7 @@ export default function ProjectDistributionDialog({
       }
 
       // Create distribution
-      const distributionId = await onCreateDistribution(
+      await onCreateDistribution(
         {
           name: distributionName,
           project_name: projectName,

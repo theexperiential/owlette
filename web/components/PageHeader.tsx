@@ -4,11 +4,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ArrowRight, ChevronDown, Settings, LogOut, Shield, Check, LayoutDashboard, Brain, Rocket, FolderSync, ScrollText, CircleHelp, Bug, BookOpen } from 'lucide-react';
-import { getUserInitials, getUserShortName, getUserFirstName } from '@/lib/userUtils';
+import { getUserInitials, getUserShortName } from '@/lib/userUtils';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { ReportBugDialog } from '@/components/ReportBugDialog';
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, setDoc, getDocs, deleteDoc, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export interface ProjectDistributionTemplate {
@@ -199,7 +199,7 @@ export function useProjectDistributions(siteId: string) {
         const completedCommands = snapshot.data();
 
         // Check each completed command for distribution_id
-        for (const [commandId, commandData] of Object.entries(completedCommands)) {
+        for (const [, commandData] of Object.entries(completedCommands)) {
           const command = commandData as any;
 
           if (command.distribution_id) {

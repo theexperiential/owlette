@@ -4,7 +4,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ChevronDown, Search, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getAllTimezones, formatTimezoneLabel, getTimezoneOffset, COMMON_TIMEZONES, type TimezoneOption } from '@/lib/timeUtils';
+import { getAllTimezones, getTimezoneOffset, COMMON_TIMEZONES, type TimezoneOption } from '@/lib/timeUtils';
 
 interface TimezoneSelectProps {
   value: string;

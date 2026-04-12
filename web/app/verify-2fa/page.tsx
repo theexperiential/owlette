@@ -24,7 +24,7 @@ function Verify2FAContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [useBackupCode, setUseBackupCode] = useState(false);
   const [trustThisDevice, setTrustThisDevice] = useState(false);
-  const [mfaReady, setMfaReady] = useState(false);
+  const [, setMfaReady] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {

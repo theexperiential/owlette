@@ -1,6 +1,7 @@
 /** @jest-environment node */
 
 import { NextRequest } from 'next/server';
+import { createHash } from 'crypto';
 
 const mockGetSession = jest.fn();
 jest.mock('@/lib/sessionManager.server', () => ({
@@ -13,7 +14,6 @@ const mockDocUpdate = jest.fn().mockResolvedValue(undefined);
 
 const mockDoc = jest.fn();
 const mockInnerDoc = jest.fn();
-const mockInnerCollection = jest.fn();
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminAuth: () => ({ verifyIdToken: mockVerifyIdToken }),
@@ -132,7 +132,7 @@ describe('requireSessionOrIdToken', () => {
 });
 
 describe('requireAdminOrIdToken', () => {
-  const apiKeyHash = require('crypto').createHash('sha256').update('owk_test123').digest('hex');
+  const apiKeyHash = createHash('sha256').update('owk_test123').digest('hex');
 
   it('returns userId for admin via x-api-key header', async () => {
     mockDocGet.mockImplementation((col: string) => {

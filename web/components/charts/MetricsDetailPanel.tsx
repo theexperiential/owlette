@@ -28,7 +28,7 @@ import {
 } from '@/components/ui/tooltip';
 import { X, ToggleLeft, ToggleRight } from 'lucide-react';
 import { TimeRangeSelector, type TimeRange } from './TimeRangeSelector';
-import { ChartTooltip, metricConfig, isNetworkMetricKey, type MetricType } from './ChartTooltip';
+import { ChartTooltip, metricConfig, type MetricType } from './ChartTooltip';
 import { useHistoricalMetrics } from '@/hooks/useHistoricalMetrics';
 import { getNicColors, formatThroughput } from '@/lib/networkUtils';
 import { useAuth } from '@/contexts/AuthContext';

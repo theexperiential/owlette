@@ -27,7 +27,6 @@ interface RemoveMachineDialogProps {
 export function RemoveMachineDialog({
   open,
   onOpenChange,
-  machineId,
   machineName,
   isOnline,
   hasActiveDeployments,

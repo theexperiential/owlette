@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { type UIMessage } from 'ai';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Brain, User, KeyRound, X } from 'lucide-react';
+import { Brain, User, X } from 'lucide-react';
 import { ToolCallCard } from './ToolCallCard';
 import { SynapticIndicator } from './SynapticIndicator';
 import { getRandomSuggestions } from '../data/suggestedQuestions';
@@ -16,7 +16,7 @@ interface ChatWindowProps {
   onOpenSettings?: () => void;
 }
 
-export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: ChatWindowProps) {
+export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isUserScrolledUp = useRef(false);
@@ -55,7 +55,7 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-2">cortex</h2>
           <p className="text-sm text-muted-foreground">
             debug, diagnose, and manage your remote machines.
-            i can run commands, check configs, and investigate issues you can't see from the dashboard.
+            i can run commands, check configs, and investigate issues you can&apos;t see from the dashboard.
           </p>
 
           <div className="mt-4 grid grid-cols-2 gap-2">

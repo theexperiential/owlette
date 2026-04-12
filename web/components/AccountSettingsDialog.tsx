@@ -104,7 +104,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
 
   // API key state
   const [apiKeys, setApiKeys] = useState<ApiKeyEntry[]>([]);
-  const [apiKeysLoading, setApiKeysLoading] = useState(false);
+  const [apiKeysLoading] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [creatingKey, setCreatingKey] = useState(false);
@@ -292,7 +292,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         setShowPasswordSection(false);
       }
       onOpenChange(false);
-    } catch (error) {
+    } catch {
       // Error already handled by AuthContext with toast
     } finally {
       setLoading(false);
@@ -306,7 +306,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       await deleteAccount(deletePassword);
       setShowDeleteConfirm(false);
       onOpenChange(false);
-    } catch (error) {
+    } catch {
       setDeleting(false);
     }
   };
@@ -424,7 +424,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                   <div className="space-y-2">
                     <Label className="text-white">display times in</Label>
                     <p className="text-xs text-muted-foreground">
-                      controls how heartbeats, activity logs, and other absolute timestamps render across the dashboard. schedule editors are unaffected — they always show times in the machine's own local timezone.
+                      controls how heartbeats, activity logs, and other absolute timestamps render across the dashboard. schedule editors are unaffected — they always show times in the machine&apos;s own local timezone.
                     </p>
                     <div className="space-y-2 mt-1">
                       {([
@@ -458,7 +458,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                     <Label htmlFor="timezone" className="text-white">
                       your timezone
                       {timeDisplayMode !== 'user' && (
-                        <span className="ml-2 text-xs text-muted-foreground font-normal">(only used when display mode is "my timezone")</span>
+                        <span className="ml-2 text-xs text-muted-foreground font-normal">(only used when display mode is &quot;my timezone&quot;)</span>
                       )}
                     </Label>
                     <TimezoneSelect

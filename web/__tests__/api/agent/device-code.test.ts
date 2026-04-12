@@ -61,10 +61,10 @@ const mockDocRef = {
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
-    collection: (name: string) => ({
-      doc: (id: string) => mockDocRef,
-      where: (...args: any[]) => ({
-        limit: (n: number) => ({
+    collection: (_name: string) => ({
+      doc: (_id: string) => mockDocRef,
+      where: (..._args: any[]) => ({
+        limit: (_n: number) => ({
           get: mockWhereGet,
         }),
       }),
@@ -308,7 +308,7 @@ describe('POST /api/agent/auth/device-code/authorize', () => {
   });
 
   it('returns 400 for invalid phrase format', async () => {
-    const { normalizePairPhrase } = require('@/lib/pairPhrases');
+    const { normalizePairPhrase } = jest.requireMock('@/lib/pairPhrases');
     normalizePairPhrase.mockReturnValueOnce(null);
 
     const req = makeRequest('/api/agent/auth/device-code/authorize', {
@@ -322,7 +322,7 @@ describe('POST /api/agent/auth/device-code/authorize', () => {
   });
 
   it('returns 401 when not authenticated', async () => {
-    const { ApiAuthError } = require('@/lib/apiAuth.server');
+    const { ApiAuthError } = jest.requireMock('@/lib/apiAuth.server');
     mockRequireSession.mockRejectedValueOnce(
       new ApiAuthError(401, 'Unauthorized'),
     );

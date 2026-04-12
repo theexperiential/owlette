@@ -12,7 +12,6 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -31,8 +30,6 @@ import {
   Plus,
   Trash2,
   Send,
-  Eye,
-  EyeOff,
   Copy,
   CheckCircle,
   XCircle,
@@ -113,7 +110,6 @@ export function WebhookList({ siteId }: { siteId: string }) {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set());
   const [editingWebhook, setEditingWebhook] = useState<WebhookData | null>(null);
   const [editName, setEditName] = useState('');
   const [editUrl, setEditUrl] = useState('');
@@ -204,11 +200,6 @@ export function WebhookList({ siteId }: { siteId: string }) {
     } finally {
       setTestingId(null);
     }
-  };
-
-  const copySecret = (secret: string) => {
-    navigator.clipboard.writeText(secret);
-    toast.success('secret copied to clipboard');
   };
 
   const getStatusBadge = (webhook: WebhookData) => {

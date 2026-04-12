@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Plus, X, Loader2, Search } from 'lucide-react';
 import { toast } from 'sonner';
@@ -127,7 +126,7 @@ export function ManageUserSitesDialog({
         {userRole === 'admin' && (
           <div className="bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-3 mt-4">
             <p className="text-accent-cyan text-sm">
-              <strong className="font-semibold">Admin Access:</strong> This user has admin privileges and can access <strong>all sites</strong> in the system regardless of the assignments below. The "Assigned Sites" list only controls which sites appear in this user's site dropdown for convenience.
+              <strong className="font-semibold">Admin Access:</strong> This user has admin privileges and can access <strong>all sites</strong> in the system regardless of the assignments below. The &quot;Assigned Sites&quot; list only controls which sites appear in this user&apos;s site dropdown for convenience.
             </p>
           </div>
         )}
@@ -199,7 +198,7 @@ export function ManageUserSitesDialog({
                 </h3>
                 <div className="space-y-2">
                   <div className="text-xs text-muted-foreground mb-2 p-2 bg-red-950/20 border border-red-900 rounded">
-                    these site IDs are in the user's access list but the sites no longer exist or are inaccessible. remove them to fix the site count.
+                    these site IDs are in the user&apos;s access list but the sites no longer exist or are inaccessible. remove them to fix the site count.
                   </div>
                   {orphanedSiteIds.map((siteId) => (
                     <div

@@ -22,7 +22,6 @@ import { useMinuteTick } from '@/hooks/useMinuteTick';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { MachineStatusPill } from '@/components/MachineStatusPill';
@@ -200,7 +199,7 @@ export function MachineRow({
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p className="max-w-xs">this machine's local time ({machine.machineTimezone}). schedule entries are interpreted in this timezone.</p>
+                  <p className="max-w-xs">this machine&apos;s local time ({machine.machineTimezone}). schedule entries are interpreted in this timezone.</p>
                 </TooltipContent>
               </Tooltip>
             )}
@@ -467,7 +466,6 @@ export function MachineRow({
                           </div>
                           {(() => {
                             const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
-                            const isScheduled = currentMode === 'scheduled';
                             return (
                               <>
                                 {/* Desktop controls (lg+) */}

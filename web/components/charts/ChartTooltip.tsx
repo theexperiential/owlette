@@ -93,7 +93,7 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
 
       {/* Metric values */}
       <div className="space-y-1">
-        {payload.map((entry, index) => {
+        {payload.map((entry, _index) => {
           const key = String(entry.dataKey ?? '');
           const config = metricConfig[key as MetricType];
           const netInfo = !config ? parseNetworkKey(key) : null;

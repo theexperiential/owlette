@@ -33,7 +33,7 @@ function formatTimeDisplay(value: string, use24h: boolean): string {
 }
 
 /** Parse typed time input into "HH:MM" 24h format. Returns null if unrecognizable. */
-function parseTimeInput(input: string, use24h: boolean): string | null {
+function parseTimeInput(input: string, _use24h: boolean): string | null {
   const s = input.trim().toLowerCase().replace(/\s+/g, ' ');
 
   // "H:MM" or "HH:MM" with optional am/pm — e.g. "9:30", "17:00", "5:00 pm"

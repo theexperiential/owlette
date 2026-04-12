@@ -3,7 +3,6 @@ import {
   uploadBytesResumable,
   getDownloadURL,
   deleteObject,
-  UploadTask,
 } from 'firebase/storage';
 import { storage } from './firebase';
 

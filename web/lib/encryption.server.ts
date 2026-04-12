@@ -11,7 +11,6 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypt
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // GCM standard
-const AUTH_TAG_LENGTH = 16; // GCM standard
 const SALT_LENGTH = 16;
 const KEY_LENGTH = 32; // 256 bits
 

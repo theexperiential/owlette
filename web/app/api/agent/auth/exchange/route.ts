@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
-import admin from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
 import logger from '@/lib/logger';
 
@@ -50,10 +49,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const adminDb = getAdminDb();
     const tokenRef = adminDb.collection('agent_tokens').doc(registrationCode);
 
-    let siteId: string;
-    let createdBy: string;
-    let agentUid: string;
-
     // Phase 1: Validate the registration code (read-only check)
     const tokenDoc = await tokenRef.get();
 
@@ -74,14 +69,14 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       return NextResponse.json({ error: 'Registration code expired' }, { status: 401 });
     }
 
-    siteId = tokenData?.siteId as string;
-    createdBy = tokenData?.createdBy as string;
+    const siteId = tokenData?.siteId as string;
+    const createdBy = tokenData?.createdBy as string;
 
     if (!siteId || !createdBy) {
       return NextResponse.json({ error: 'Invalid registration code data' }, { status: 401 });
     }
 
-    agentUid = `agent_${siteId}_${machineId}`.replace(/[^a-zA-Z0-9_]/g, '_');
+    const agentUid = `agent_${siteId}_${machineId}`.replace(/[^a-zA-Z0-9_]/g, '_');
 
     // Generate Firebase Custom Token for agent
     const adminAuth = getAdminAuth();
@@ -113,8 +108,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       throw new Error(`Failed to exchange custom token: ${errorData.error?.message || 'Unknown error'}`);
     }
 
-    const authData = await authResponse.json();
-    const idToken = authData.idToken;
+    // Response body intentionally unused — the refreshAuthResponse call below
+    // returns the ID token we actually need (with custom claims baked in).
+    authResponse.body?.cancel();
 
     // CRITICAL: Set custom claims on the user account
     // Custom token claims are NOT automatically persisted - must explicitly set them

@@ -175,11 +175,6 @@ export async function GET(request: NextRequest) {
         // Get timezone from the first machine for display
         const tz = await getMachineTimezone(siteId, siteAlerts[0].machineId);
 
-        // Smart subject line
-        const subject = siteAlerts.length === 1
-          ? `Process ${siteAlerts[0].eventType === 'process_start_failed' ? 'failed to start' : 'crashed'}: ${siteAlerts[0].processName} on ${siteAlerts[0].machineId}`
-          : `${siteAlerts.length} process event(s) in ${siteId}`;
-
         // Send per-recipient emails (for individual unsubscribe links)
         for (const recipient of recipients) {
           try {

@@ -12,7 +12,6 @@ import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { ChevronDown, ChevronsUpDown, ChevronsDownUp, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle, Camera } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import ConfirmDialog from '@/components/ConfirmDialog';

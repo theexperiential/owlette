@@ -25,16 +25,9 @@ export async function proxy(request: NextRequest) {
   // Define protected routes
   const protectedPaths = ['/dashboard', '/deployments', '/admin', '/projects', '/setup', '/add', '/cortex'];
 
-  // Define public routes (no auth required)
-  const publicPaths = ['/', '/login', '/register'];
-
   // Check if current path is protected
   const isProtectedPath = protectedPaths.some(path =>
     pathname.startsWith(path)
-  );
-
-  const isPublicPath = publicPaths.some(path =>
-    pathname === path || pathname.startsWith(path)
   );
 
   // Validate session using encrypted, HTTPOnly cookies

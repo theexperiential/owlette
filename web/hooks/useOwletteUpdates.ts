@@ -12,7 +12,7 @@
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import { Machine } from './useFirestore';
 import { useInstallerVersion } from './useInstallerVersion';
-import { isOutdated, compareVersions } from '@/lib/versionUtils';
+import { isOutdated } from '@/lib/versionUtils';
 import { getLatestOwletteVersion, sendOwletteUpdateCommand } from '@/lib/firebase';
 
 export interface MachineUpdateStatus {

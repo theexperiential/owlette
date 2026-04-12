@@ -7,7 +7,6 @@ import {
   onSnapshot,
   doc,
   setDoc,
-  updateDoc,
   deleteDoc,
   orderBy,
   Timestamp,
@@ -17,7 +16,6 @@ import { handleError } from '@/lib/errorHandler';
 import {
   uploadInstaller,
   deleteInstallerVersion,
-  getInstallerDownloadUrl,
 } from '@/lib/storageUtils';
 import { useAuth } from '@/contexts/AuthContext';
 

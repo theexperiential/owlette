@@ -11,28 +11,22 @@ import { useMachineOperations } from '@/hooks/useMachineOperations';
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, ChevronsUpDown, ChevronsDownUp, Square, Copy, Pencil, Trash2, Download, Monitor, Wifi, Cog, Settings2 } from 'lucide-react';
+import { Plus, LayoutGrid, List, ChevronsUpDown, ChevronsDownUp, Square, Copy, Trash2, Download, Monitor, Cog, Settings2 } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody } from '@/components/ui/table';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Switch } from '@/components/ui/switch';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import DownloadButton from '@/components/DownloadButton';
-import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { RemoveMachineDialog } from '@/components/RemoveMachineDialog';
 import { ScreenshotDialog } from '@/components/ScreenshotDialog';
 import { LiveViewModal } from '@/components/LiveViewModal';
 import { PageHeader } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
-import { formatStorageRange } from '@/lib/storageUtils';
 import { MetricsDetailPanel, type MetricType } from '@/components/charts';
 import ScheduleEditor from '@/components/ScheduleEditor';
 import { MachineCardView } from './components/MachineCardView';
@@ -51,7 +45,7 @@ interface DetailPanelState {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, loading, signOut, isAdmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences, updateUserPreferences } = useAuth();
+  const { user, loading, isAdmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences, updateUserPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
@@ -119,7 +113,7 @@ export default function DashboardPage() {
     schedules: null,
   });
 
-  const { machines, loading: machinesLoading, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView } = useMachines(currentSiteId);
+  const { machines, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView } = useMachines(currentSiteId);
   const { presets: schedulePresets, createPreset, deletePreset: deleteSchedulePreset, updatePreset: updateSchedulePreset } = useSchedulePresets(currentSiteId);
   const { checkMachineHasActiveDeployment } = useDeployments(currentSiteId);
   const { removeMachineFromSite, removing: isRemovingMachine } = useMachineOperations(currentSiteId);
@@ -331,18 +325,6 @@ export default function DashboardPage() {
       return next;
     });
   }, []);
-
-  const handleRowClick = (_machineId: string, canExpand: boolean) => {
-    // Don't toggle if user is selecting text
-    const selection = window.getSelection();
-    if (selection && selection.toString().length > 0) {
-      return;
-    }
-
-    if (canExpand) {
-      toggleProcessesExpanded();
-    }
-  };
 
   const handleKillProcess = (machineId: string, processId: string, processName: string) => {
     setKillTarget({ machineId, processId, processName });
@@ -889,7 +871,7 @@ export default function DashboardPage() {
                         toast.success('download started', {
                           description: `downloading owlette v${version}`,
                         });
-                      } catch (err) {
+                      } catch {
                         toast.error('download failed', {
                           description: 'failed to start download. please try again.',
                         });
@@ -914,7 +896,7 @@ export default function DashboardPage() {
                         toast.success('link copied', {
                           description: 'download link copied to clipboard',
                         });
-                      } catch (err) {
+                      } catch {
                         toast.error('copy failed', {
                           description: 'failed to copy link. please try again.',
                         });
@@ -1196,7 +1178,7 @@ export default function DashboardPage() {
           <DialogHeader>
             <DialogTitle className="text-foreground">delete process</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              are you sure you want to permanently delete "{editProcessForm.name}"? this action cannot be undone.
+              are you sure you want to permanently delete &quot;{editProcessForm.name}&quot;? this action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

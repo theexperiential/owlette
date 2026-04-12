@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { AlertTriangle, ChevronDown, ChevronRight, Download, Loader2, Pencil, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -72,8 +72,6 @@ export default function DeploymentDialog({
   const filteredCategories = categories.filter(cat =>
     filteredPresets.some(p => p.category === cat)
   );
-
-  const hasItems = filteredPresets.length > 0 || templates.length > 0;
 
   // Get display name for the selected item
   const getSelectedLabel = (): string => {
@@ -265,7 +263,7 @@ export default function DeploymentDialog({
 
     try {
       new URL(installerUrl);
-    } catch (e) {
+    } catch {
       toast.error('Invalid installer URL format');
       return;
     }
@@ -316,7 +314,7 @@ export default function DeploymentDialog({
       if (closeProcesses.length > 0) deploymentData.close_processes = closeProcesses;
       if (suppressProjects.length > 0) deploymentData.suppress_projects = suppressProjects;
 
-      const deploymentId = await onCreateDeployment(
+      await onCreateDeployment(
         deploymentData,
         Array.from(selectedMachines)
       );

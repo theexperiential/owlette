@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import { validateSiteId, generateSiteIdFromName, generateRandomSiteId } from '@/lib/validators';
+import { validateSiteId, generateRandomSiteId } from '@/lib/validators';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { CheckCircle2, XCircle, Loader2, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';

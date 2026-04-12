@@ -53,7 +53,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       const adminAuth = getAdminAuth();
       const decoded = await adminAuth.verifyIdToken(idToken);
       verifiedUserId = decoded.uid;
-    } catch (error) {
+    } catch {
       return NextResponse.json(
         { error: 'Invalid or expired ID token' },
         { status: 401 }

@@ -182,7 +182,7 @@ export default function InstallerVersionsPage() {
       toast.success('Link Copied', {
         description: `Download link for version ${version} copied to clipboard.`,
       });
-    } catch (err) {
+    } catch {
       toast.error('Copy Failed', {
         description: 'Failed to copy link to clipboard.',
       });
@@ -313,7 +313,7 @@ export default function InstallerVersionsPage() {
               {versions.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-8 text-center text-muted-foreground">
-                    No versions uploaded yet. Click "upload new version" to get started.
+                    No versions uploaded yet. Click &quot;upload new version&quot; to get started.
                   </td>
                 </tr>
               ) : (
@@ -457,7 +457,7 @@ export default function InstallerVersionsPage() {
       {!loading && !error && versions.length > 0 && (
         <div className="mt-6 bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-4">
           <p className="text-accent-cyan text-sm">
-            <strong>Note:</strong> The "Latest" version is what users will download from the public
+            <strong>Note:</strong> The &quot;Latest&quot; version is what users will download from the public
             download link. You can upload multiple versions and switch between them at any time.
             Old versions cannot be deleted if they are currently set as latest.
           </p>

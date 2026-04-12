@@ -20,7 +20,7 @@ interface Site {
 }
 
 export default function AddMachinePage() {
-  const { user, loading: authLoading, userSites, isAdmin } = useAuth();
+  const { user, loading: authLoading, isAdmin } = useAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [sites, setSites] = useState<Site[]>([]);

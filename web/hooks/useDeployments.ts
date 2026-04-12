@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, getDocs, deleteDoc, deleteField, query, orderBy, limit, runTransaction, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, runTransaction, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export interface DeploymentTemplate {
@@ -301,7 +301,7 @@ export function useDeployments(siteId: string) {
                   } else if (command.status === 'completed') {
                     const updatedTargets = deployment.targets.map(target => {
                       if (target.machineId === machineId) {
-                        const { progress, error, ...rest } = target;
+                        const { progress: _progress, error: _error, ...rest } = target;
                         return {
                           ...rest,
                           status: 'completed' as const,
@@ -323,7 +323,7 @@ export function useDeployments(siteId: string) {
                   } else if (command.status === 'failed') {
                     const updatedTargets = deployment.targets.map(target => {
                       if (target.machineId === machineId) {
-                        const { progress, ...rest } = target;
+                        const { progress: _progress, ...rest } = target;
                         return {
                           ...rest,
                           status: 'failed' as const,

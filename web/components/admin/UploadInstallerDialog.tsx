@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Upload, FileUp, X, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { Upload, FileUp, X, Loader2, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { isValidVersion, formatFileSize } from '@/lib/storageUtils';
 import { AdminButton } from './AdminButton';

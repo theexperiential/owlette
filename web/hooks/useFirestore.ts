@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
 
@@ -796,7 +796,7 @@ export function useMachines(siteId: string) {
           ...(cleanSchedules !== undefined ? { [`metrics.processes.${processId}.schedules`]: cleanSchedules } : {}),
           ...(schedulePresetId !== undefined ? { [`metrics.processes.${processId}.schedulePresetId`]: schedulePresetId || null } : {}),
         });
-      } catch (flagError) {
+      } catch {
         logger.debug('Status doc mirror write skipped (non-critical)', { context: 'setLaunchMode' });
       }
 
@@ -882,7 +882,7 @@ export function useMachines(siteId: string) {
       try {
         const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
         await updateDoc(statusRef, { configChangeFlag: true });
-      } catch (flagError) {
+      } catch {
         logger.debug('configChangeFlag write skipped (non-critical)', { context: 'updateProcess' });
       }
     } catch (error: any) {
@@ -950,7 +950,7 @@ export function useMachines(siteId: string) {
       try {
         const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
         await updateDoc(statusRef, { configChangeFlag: true });
-      } catch (flagError) {
+      } catch {
         logger.debug('configChangeFlag write skipped (non-critical)', { context: 'deleteProcess' });
       }
     } catch (error: any) {
@@ -1031,7 +1031,7 @@ export function useMachines(siteId: string) {
       try {
         const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
         await updateDoc(statusRef, { configChangeFlag: true });
-      } catch (flagError) {
+      } catch {
         logger.debug('configChangeFlag write skipped (non-critical)', { context: 'createProcess' });
       }
 

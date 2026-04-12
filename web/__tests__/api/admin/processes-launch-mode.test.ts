@@ -42,7 +42,7 @@ jest.mock('@/lib/firebase-admin', () => ({
         }),
       }),
     }),
-    runTransaction: jest.fn(async (fn: Function) => {
+    runTransaction: jest.fn(async (fn: (tx: unknown) => unknown) => {
       return fn({ get: mockGet, set: mockSet, update: mockUpdate, delete: mockDelete });
     }),
   }),

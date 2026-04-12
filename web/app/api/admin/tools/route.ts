@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdminOrIdToken } from '@/lib/apiAuth.server';
-import { allTools, getToolsByTier, type ToolTier } from '@/lib/mcp-tools';
+import { getToolsByTier, type ToolTier } from '@/lib/mcp-tools';
 import { apiError } from '@/lib/apiErrorResponse';
 
 /**

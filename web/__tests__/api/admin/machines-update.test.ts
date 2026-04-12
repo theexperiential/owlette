@@ -37,8 +37,8 @@ const mockCollectionGet = jest.fn();
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
-    collection: (colName: string) => ({
-      doc: (docId: string) => ({
+    collection: (_colName: string) => ({
+      doc: (_docId: string) => ({
         get: mockGet,
         collection: () => ({
           doc: () => ({

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
-import admin from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
 import logger from '@/lib/logger';
 

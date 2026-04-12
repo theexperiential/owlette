@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
+import { createContext, useContext, useEffect, useState, useMemo } from 'react';
 import {
   User,
   signInWithEmailAndPassword,
@@ -15,7 +15,7 @@ import {
   EmailAuthProvider,
   deleteUser,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, onSnapshot, deleteDoc, collection, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot, collection, getDocs, writeBatch } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
 import { getBrowserTimezone } from '@/lib/timeUtils';

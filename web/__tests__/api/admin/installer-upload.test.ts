@@ -42,13 +42,13 @@ const mockDownload = jest.fn().mockResolvedValue([Buffer.from('fake-installer-co
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
     collection: () => ({
-      doc: (id?: string) => ({
+      doc: (_id?: string) => ({
         get: mockGet,
         set: mockSet,
         update: mockUpdate,
         delete: mockDelete,
         collection: () => ({
-          doc: (subId?: string) => ({
+          doc: (_subId?: string) => ({
             get: mockGet,
             set: mockSet,
             update: mockUpdate,

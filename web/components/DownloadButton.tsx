@@ -40,7 +40,7 @@ export default function DownloadButton() {
       toast.success('download started', {
         description: `downloading owlette v${version}`,
       });
-    } catch (err) {
+    } catch {
       toast.error('download failed', {
         description: 'failed to start download. please try again.',
       });
@@ -60,7 +60,7 @@ export default function DownloadButton() {
       toast.success('link copied', {
         description: `download link for v${version} copied to clipboard.`,
       });
-    } catch (err) {
+    } catch {
       toast.error('copy failed', {
         description: 'failed to copy link to clipboard.',
       });
