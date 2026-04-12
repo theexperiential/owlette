@@ -123,7 +123,10 @@ export default function CortexPage() {
     sidebarScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, [chat]);
 
-  const uncategorizedIds = chat.conversations.filter((c) => !c.category).map((c) => c.id);
+  // Skip "new conversation" entries — the API requires a title or first message to categorize
+  const uncategorizedIds = chat.conversations
+    .filter((c) => !c.category && c.title !== 'new conversation')
+    .map((c) => c.id);
 
   const categorizeAll = async () => {
     if (categorizingAll || uncategorizedIds.length === 0) return;
@@ -195,7 +198,7 @@ export default function CortexPage() {
   if (!user) return null;
 
   return (
-    <div className="h-screen flex flex-col bg-background">
+    <div className="h-screen flex flex-col">
       <PageHeader
         currentPage="cortex"
         sites={sites}
@@ -205,7 +208,7 @@ export default function CortexPage() {
         onAccountSettings={() => setAccountSettingsOpen(true)}
       />
 
-      <div className="flex-1 flex min-h-0 relative">
+      <div className="flex-1 flex min-h-0 relative max-w-screen-2xl mx-auto w-full gap-3 p-3 md:p-4">
 
         {/* No API key overlay */}
         {hasApiKey === false && (
@@ -233,8 +236,8 @@ export default function CortexPage() {
         )}
 
         {/* Sidebar — Conversation List */}
-        <aside className={`bg-background flex-col hidden md:flex overflow-hidden transition-all duration-300 ease-in-out ${sidebarOpen ? 'w-64' : 'w-0'}`}>
-          <div className="w-64 min-w-64 h-12 px-2 border-b border-border bg-card flex items-center gap-1">
+        <aside className={`bg-card flex-col hidden md:flex overflow-hidden transition-all duration-300 ease-in-out rounded-lg border border-border ${sidebarOpen ? 'w-64' : 'w-0 border-0'}`}>
+          <div className="w-64 min-w-64 h-12 px-2 border-b border-border flex items-center gap-1">
             {searchOpen ? (
               /* Search mode: compact new chat + expanded input */
               <>
@@ -404,7 +407,7 @@ export default function CortexPage() {
                     <button
                       onClick={categorizeAll}
                       disabled={categorizingAll}
-                      className="text-xs text-accent-cyan/70 hover:text-accent-cyan transition-colors cursor-pointer disabled:opacity-50 inline-flex items-center gap-1"
+                      className="text-sm text-accent-cyan/70 hover:text-accent-cyan transition-colors cursor-pointer disabled:opacity-50 inline-flex items-center gap-1"
                     >
                       {categorizingAll ? (
                         <><Loader2 className="h-3 w-3 animate-spin" /> categorizing {uncategorizedIds.length}...</>
@@ -421,7 +424,7 @@ export default function CortexPage() {
                     <button
                       onClick={chat.loadMoreConversations}
                       disabled={chat.loadingMore}
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50 inline-flex items-center gap-1"
+                      className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50 inline-flex items-center gap-1"
                     >
                       {chat.loadingMore ? (
                         <><Loader2 className="h-3 w-3 animate-spin" /> loading...</>
@@ -437,9 +440,9 @@ export default function CortexPage() {
         </aside>
 
         {/* Main Chat Area */}
-        <main className="flex-1 flex flex-col min-h-0">
+        <main className="flex-1 flex flex-col min-h-0 rounded-lg border border-border bg-card overflow-hidden">
           {/* Machine selector bar — matches sidebar header height */}
-          <div className="h-12 px-3 border-b border-border bg-card flex items-center gap-3">
+          <div className="h-12 px-3 border-b border-border flex items-center gap-3">
             <Tooltip>
               <TooltipTrigger asChild>
                 <button

@@ -93,7 +93,7 @@ export function ChatInput({
   );
 
   return (
-    <div className="border-t border-border bg-background px-4 py-3">
+    <div className="border-t border-border px-4 py-3">
       {/* Lightbox overlay */}
       {expandedImage && (
         <div

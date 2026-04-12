@@ -23,7 +23,7 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Define protected routes
-  const protectedPaths = ['/dashboard', '/deployments', '/admin', '/projects', '/setup', '/add'];
+  const protectedPaths = ['/dashboard', '/deployments', '/admin', '/projects', '/setup', '/add', '/cortex'];
 
   // Define public routes (no auth required)
   const publicPaths = ['/', '/login', '/register'];
