@@ -11,6 +11,13 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.6.6] - 2026-04-11
+
+### fixed
+- **Screenshot capture restored** — the v2.6.5 `run_python` sandbox blocked internal screenshot callers (`mss`, `PIL`, `os` imports denied), breaking the dashboard screenshot panel, Cortex `capture_screenshot` tool, crash screenshots, and live view. `execute_in_user_session` now accepts a `trusted=True` flag for first-party callers that bypasses the sandbox; the LLM-facing `run_python` MCP tool remains sandboxed (`trusted=False` default).
+
+---
+
 ## [2.6.5] - 2026-04-11
 
 ### security

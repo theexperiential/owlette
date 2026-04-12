@@ -85,25 +85,37 @@ def _restricted_import(name, *args, **kwargs):
     return __import__(name, *args, **kwargs)
 
 
-def run_python(code, output_dir, timeout):
-    """Execute Python code in-process with sandboxed builtins.
+def run_python(code, output_dir, timeout, trusted=False):
+    """Execute Python code in-process.
 
-    Available: safe stdlib imports (math, json, re, datetime, etc.),
-    open() for file I/O, getattr/setattr for introspection.
-    Blocked: os, subprocess, shutil, ctypes, socket, eval, exec, compile.
+    When trusted=False (default, used by the run_python MCP tool): sandboxed
+    builtins, imports restricted to _SAFE_MODULES (math, json, re, io, base64,
+    etc.), no eval/exec/compile, no os/subprocess/shutil/ctypes/socket.
+
+    When trusted=True (internal first-party callers like screenshot capture):
+    full builtins and unrestricted imports. The LLM cannot set this flag —
+    it's controlled by the service-side caller of execute_in_user_session.
     """
     stdout_lines = []
 
-    # Sandboxed globals — import restricted to safe modules, no eval/exec/compile
-    globals_dict = {
-        '__builtins__': {**_SAFE_BUILTINS, '__import__': _restricted_import},
-        'output_dir': output_dir,
-        'print': lambda *args, **kwargs: stdout_lines.append(
-            ' '.join(str(a) for a in args)
-        ),
-    }
+    if trusted:
+        globals_dict = {
+            '__builtins__': _builtins.__dict__,
+            'output_dir': output_dir,
+            'print': lambda *args, **kwargs: stdout_lines.append(
+                ' '.join(str(a) for a in args)
+            ),
+        }
+    else:
+        globals_dict = {
+            '__builtins__': {**_SAFE_BUILTINS, '__import__': _restricted_import},
+            'output_dir': output_dir,
+            'print': lambda *args, **kwargs: stdout_lines.append(
+                ' '.join(str(a) for a in args)
+            ),
+        }
 
-    logging.info(f"[MCP-AUDIT] run_python called. Code length: {len(code)} chars")
+    logging.info(f"[MCP-AUDIT] run_python called. Code length: {len(code)} chars, trusted={trusted}")
 
     try:
         exec(code, globals_dict)
@@ -172,6 +184,7 @@ def main():
     code = job.get('code', '')
     timeout = min(job.get('timeout', 30), 120)
     output_dir = job.get('outputDir', os.path.dirname(job_path))
+    trusted = bool(job.get('trusted', False))
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -179,7 +192,7 @@ def main():
 
     # Dispatch based on type
     if job_type == 'python':
-        result = run_python(code, output_dir, timeout)
+        result = run_python(code, output_dir, timeout, trusted=trusted)
     elif job_type == 'powershell':
         result = run_subprocess(
             ['powershell', '-NoProfile', '-NonInteractive', '-Command', code],

@@ -1357,7 +1357,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.error(f"Failed to start process: {e}")
             return False
 
-    def execute_in_user_session(self, job_type, code, timeout=30):
+    def execute_in_user_session(self, job_type, code, timeout=30, trusted=False):
         """Execute code in the interactive user's desktop session.
 
         Launches session_exec.py via CreateProcessAsUser, which runs
@@ -1391,6 +1391,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             'code': code,
             'timeout': min(timeout, 120),
             'outputDir': output_dir,
+            'trusted': bool(trusted),
         }
         with open(job_path, 'w') as f:
             _json.dump(job, f)
@@ -4147,7 +4148,7 @@ out_path = os.path.join(output_dir, 'screenshot.jpg')
 with open(out_path, 'wb') as f:
     f.write(jpeg_bytes)
 """
-            result = self.execute_in_user_session('python', capture_code, timeout=8)
+            result = self.execute_in_user_session('python', capture_code, timeout=8, trusted=True)
 
             if result.get('error') or 'screenshot.jpg' not in result.get('files', []):
                 logging.debug("Crash screenshot capture failed — proceeding with relaunch")
@@ -4269,7 +4270,7 @@ print(f'size_kb={{len(jpeg_bytes) // 1024}}')
 print(f'monitors={{len(sct.monitors) - 1}}')
 """
 
-            result = self.execute_in_user_session('python', capture_code, timeout=20)
+            result = self.execute_in_user_session('python', capture_code, timeout=20, trusted=True)
 
             if result.get('error'):
                 return {'error': f"Screenshot failed: {result['error']}"}
@@ -4453,7 +4454,7 @@ out_path = os.path.join(output_dir, 'screenshot.jpg')
 with open(out_path, 'wb') as f:
     f.write(jpeg_bytes)
 """
-                    result = self.execute_in_user_session('python', capture_code, timeout=10)
+                    result = self.execute_in_user_session('python', capture_code, timeout=10, trusted=True)
 
                     if result.get('error') or 'screenshot.jpg' not in result.get('files', []):
                         logging.debug(f"Live view capture failed: {result.get('error', 'no screenshot file')}")
