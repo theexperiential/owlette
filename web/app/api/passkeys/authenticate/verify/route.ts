@@ -15,6 +15,7 @@ import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { getAdminAuth } from '@/lib/firebase-admin';
 import { createSession } from '@/lib/sessionManager.server';
+import { apiError } from '@/lib/apiErrorResponse';
 import {
   getRpId,
   getExpectedOrigins,
@@ -117,11 +118,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       userId,
     });
   } catch (error) {
-    console.error('[Passkey Auth Verify] Error:', error);
-    return NextResponse.json(
-      { error: 'Failed to verify authentication' },
-      { status: 500 }
-    );
+    return apiError(error, 'passkeys/authenticate/verify');
   }
 }, {
   strategy: 'auth',

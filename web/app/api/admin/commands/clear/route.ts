@@ -3,6 +3,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError } from '@/lib/apiAuth.server';
 import { requireAdminWithSiteAccess } from '@/lib/apiHelpers.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 /**
@@ -57,11 +58,7 @@ export const DELETE = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/commands/clear DELETE:', error);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/commands/clear');
     }
   },
   { strategy: 'api', identifier: 'ip' }

@@ -3,6 +3,7 @@ import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { testWebhook } from '@/lib/webhookSender.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * POST /api/webhooks/test
@@ -53,7 +54,6 @@ export async function POST(request: NextRequest) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('[webhooks/test] Error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError(error, 'webhooks/test');
   }
 }

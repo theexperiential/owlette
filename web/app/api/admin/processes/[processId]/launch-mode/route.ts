@@ -4,6 +4,7 @@ import { ApiAuthError } from '@/lib/apiAuth.server';
 import { requireAdminWithSiteAccess, getRouteParam } from '@/lib/apiHelpers.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withProcessConfig, ProcessConfigError, type ScheduleBlock } from '@/lib/processConfig.server';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 const VALID_MODES = ['off', 'always', 'scheduled'] as const;
@@ -109,11 +110,7 @@ export const PATCH = withRateLimit(
         const status = 'status' in error ? error.status : 500;
         return NextResponse.json({ error: error.message }, { status });
       }
-      console.error('admin/processes/launch-mode PATCH:', error);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/processes/launch-mode');
     }
   },
   { strategy: 'api', identifier: 'ip' }

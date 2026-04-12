@@ -17,6 +17,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { createModel, buildSystemPrompt, type ProcessSummary } from '@/lib/llm';
 import { getToolsByTier } from '@/lib/mcp-tools';
+import { apiError } from '@/lib/apiErrorResponse';
 import {
   resolveLlmConfig,
   verifyUserSiteAccess,
@@ -168,9 +169,7 @@ export async function POST(request: NextRequest) {
       return handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId);
     }
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    console.error('Cortex API error:', error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, 'cortex');
   }
 }
 

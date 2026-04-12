@@ -3,6 +3,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError } from '@/lib/apiAuth.server';
 import { requireAdminWithSiteAccess, getRouteParam } from '@/lib/apiHelpers.server';
 import { withProcessConfig, ProcessConfigError } from '@/lib/processConfig.server';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 /**
@@ -62,11 +63,7 @@ export const PATCH = withRateLimit(
         const status = 'status' in error ? error.status : 500;
         return NextResponse.json({ error: error.message }, { status });
       }
-      console.error('admin/processes PATCH:', error);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/processes PATCH');
     }
   },
   { strategy: 'api', identifier: 'ip' }
@@ -113,11 +110,7 @@ export const DELETE = withRateLimit(
         const status = 'status' in error ? error.status : 500;
         return NextResponse.json({ error: error.message }, { status });
       }
-      console.error('admin/processes DELETE:', error);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/processes DELETE');
     }
   },
   { strategy: 'api', identifier: 'ip' }

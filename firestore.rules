@@ -112,7 +112,7 @@ service cloud.firestore {
       // READ: Allow any authenticated user to check if site exists (for availability checking during creation)
       // UPDATE/DELETE: Only users with access to the site
       allow read: if canAccessSite(siteId);
-      allow create: if isAuthenticated(); // Any authenticated user can create a site
+      allow create: if isAuthenticated() && request.resource.data.owner == request.auth.uid;
       allow update, delete: if canAccessSite(siteId);
 
       // ----------------------------------------
@@ -285,7 +285,8 @@ service cloud.firestore {
         allow create: if (canAccessSite(siteId) ||
                           isServiceAccount() ||
                           agentCanAccessSite(siteId)) &&
-                         hasRequiredFields(['timestamp', 'action', 'level', 'machineId']);
+                         hasRequiredFields(['timestamp', 'action', 'level', 'machineId']) &&
+                         (!isAgent() || request.resource.data.machineId == request.auth.token.machine_id);
         allow delete: if canAccessSite(siteId); // Users can delete old logs
       }
     }
@@ -414,7 +415,9 @@ service cloud.firestore {
                      (resource.data.userId == request.auth.uid ||
                       (resource.data.source == 'autonomous' &&
                        canAccessSite(resource.data.siteId)));
-      allow create: if isAuthenticated();
+      allow create: if isAuthenticated() &&
+                     (request.resource.data.userId == request.auth.uid ||
+                      request.resource.data.source == 'autonomous');
       allow update, delete: if isAuthenticated() &&
                                resource.data.userId == request.auth.uid;
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * POST /api/agent/auth/device-code/poll
@@ -128,11 +129,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     return NextResponse.json(result.body, { status: result.status });
   } catch (error: any) {
-    console.error('Error polling device code:', error);
-    return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: 500 }
-    );
+    return apiError(error, 'agent/auth/device-code/poll');
   }
 }, {
   strategy: 'api',

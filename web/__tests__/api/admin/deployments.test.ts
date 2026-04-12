@@ -133,7 +133,7 @@ describe('GET /api/admin/deployments', () => {
     const req = createMockRequest('/api/admin/deployments?siteId=site1');
     const res = await GET(req);
     expect(res.status).toBe(500);
-    expect((await res.json()).error).toContain('Firestore read error');
+    expect((await res.json()).error).toBeTruthy(); // Error is sanitized in production
   });
 });
 
@@ -152,6 +152,7 @@ describe('POST /api/admin/deployments', () => {
     installer_name: '7z2408-x64.exe',
     installer_url: 'https://www.7-zip.org/a/7z2408-x64.exe',
     silent_flags: '/S',
+    sha256_checksum: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
     machineIds: ['machine-1', 'machine-2'],
   };
 
@@ -292,6 +293,6 @@ describe('POST /api/admin/deployments', () => {
     });
     const res = await POST(req);
     expect(res.status).toBe(500);
-    expect((await res.json()).error).toContain('Firestore unavailable');
+    expect((await res.json()).error).toBeTruthy(); // Error is sanitized in production
   });
 });

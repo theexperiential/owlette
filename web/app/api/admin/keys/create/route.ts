@@ -4,6 +4,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * POST /api/admin/keys/create
@@ -62,8 +63,7 @@ export const POST = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/keys/create:', error);
-      return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+      return apiError(error, 'admin/keys/create');
     }
   },
   { strategy: 'api', identifier: 'ip' }

@@ -19,6 +19,7 @@ import { requireSession } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { verifyUserSiteAccess } from '@/lib/cortex-utils.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 const COMMAND_TIMEOUT_MS = 15_000;
 const POLL_INTERVAL_MS = 1_000;
@@ -116,8 +117,6 @@ export async function POST(request: NextRequest) {
       { status: 504 },
     );
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    console.error('Provision key error:', error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, 'cortex/provision-key');
   }
 }

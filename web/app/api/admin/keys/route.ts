@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * GET /api/admin/keys
@@ -46,8 +47,7 @@ export const GET = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/keys:', error);
-      return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+      return apiError(error, 'admin/keys');
     }
   },
   { strategy: 'api', identifier: 'ip' }

@@ -4,6 +4,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdminOrIdToken } from '@/lib/apiAuth.server';
 import { getAdminDb, getAdminStorage } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 const VERSION_REGEX = /^\d+\.\d+\.\d+$/;
@@ -87,11 +88,7 @@ export const POST = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/installer/upload POST:', error);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/installer/upload POST');
     }
   },
   { strategy: 'upload', identifier: 'ip' }
@@ -233,11 +230,7 @@ export const PUT = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/installer/upload PUT:', error);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/installer/upload PUT');
     }
   },
   { strategy: 'upload', identifier: 'ip' }

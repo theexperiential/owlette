@@ -19,6 +19,7 @@ import {
 } from '@/lib/sessionManager.server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { getAdminAuth } from '@/lib/firebase-admin';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * POST /api/auth/session
@@ -84,11 +85,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       expiresIn: durationDays * 24 * 60 * 60, // seconds
     });
   } catch (error) {
-    console.error('[Session API] Failed to create session:', error);
-    return NextResponse.json(
-      { error: 'Failed to create session' },
-      { status: 500 }
-    );
+    return apiError(error, 'auth/session POST');
   }
 }, {
   strategy: 'auth',
@@ -108,11 +105,7 @@ export async function DELETE() {
       message: 'Session destroyed',
     });
   } catch (error) {
-    console.error('[Session API] Failed to destroy session:', error);
-    return NextResponse.json(
-      { error: 'Failed to destroy session' },
-      { status: 500 }
-    );
+    return apiError(error, 'auth/session DELETE');
   }
 }
 
@@ -146,10 +139,6 @@ export async function GET() {
       expiresIn: Math.max(0, Math.floor((sessionData.expiresAt - Date.now()) / 1000)), // seconds
     });
   } catch (error) {
-    console.error('[Session API] Failed to get session:', error);
-    return NextResponse.json(
-      { error: 'Failed to get session' },
-      { status: 500 }
-    );
+    return apiError(error, 'auth/session GET');
   }
 }

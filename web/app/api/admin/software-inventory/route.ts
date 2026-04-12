@@ -3,6 +3,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError } from '@/lib/apiAuth.server';
 import { requireAdminWithSiteAccess } from '@/lib/apiHelpers.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * GET /api/admin/software-inventory?siteId=xxx&machineId=xxx&search=xxx
@@ -63,11 +64,7 @@ export const GET = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/software-inventory GET:', error);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/software-inventory');
     }
   },
   { strategy: 'api', identifier: 'ip' }

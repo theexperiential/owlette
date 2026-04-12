@@ -20,6 +20,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -124,11 +125,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('[MFA Verify Setup] Error:', error);
-    return NextResponse.json(
-      { error: 'Failed to verify MFA setup' },
-      { status: 500 }
-    );
+    return apiError(error, 'mfa/verify-setup');
   }
 }, {
   strategy: 'auth',

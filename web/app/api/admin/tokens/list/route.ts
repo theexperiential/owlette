@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase-admin';
 import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * GET /api/admin/tokens/list
@@ -71,10 +72,6 @@ export async function GET(request: NextRequest) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('Error listing tokens:', error);
-    return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: 500 }
-    );
+    return apiError(error, 'admin/tokens/list');
   }
 }

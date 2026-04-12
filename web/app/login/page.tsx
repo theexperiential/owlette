@@ -26,10 +26,10 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Read redirect parameter from URL
+  // Read redirect parameter from URL (validated: must be a safe relative path)
   useEffect(() => {
     const redirect = searchParams.get('redirect');
-    if (redirect) {
+    if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) {
       setRedirectUrl(redirect);
     }
   }, [searchParams]);

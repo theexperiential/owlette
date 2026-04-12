@@ -8,10 +8,12 @@ dict that gets sent back as the tool result.
 No new dependencies — uses existing psutil, subprocess, platform, socket, etc.
 """
 
+import hashlib
 import logging
 import os
 import platform
 import re
+import shlex
 import socket
 import subprocess
 import time
@@ -651,24 +653,41 @@ def _get_agent_health(params, config):
 
 
 def _run_command(params, config):
-    """Execute a shell command (validated against allow-list)."""
+    """Execute a shell command (validated against allow-list).
+
+    Security: uses shell=False with shlex.split() to prevent shell injection
+    via metacharacters (&&, |, ;, etc.). Only the first token is validated
+    against the allow-list; remaining tokens are passed as arguments.
+    """
     command = params.get('command', '').strip()
     if not command:
         return {'error': 'command parameter is required'}
 
-    # Validate against allow-list
+    # Parse command into a safe token list (no shell interpretation).
+    # posix=False preserves Windows backslashes in paths (POSIX mode treats \ as escape).
+    try:
+        cmd_parts = shlex.split(command, posix=False)
+    except ValueError as e:
+        return {'error': f'Invalid command syntax: {e}'}
+
+    if not cmd_parts:
+        return {'error': 'command parameter is required'}
+
+    # Validate first token against allow-list
     allowed = _get_allowed_commands(config)
-    cmd_base = command.split()[0].lower() if command else ''
+    cmd_base = cmd_parts[0].lower()
 
     if not any(cmd_base == a.lower() for a in allowed):
         return {
             'error': f"Command '{cmd_base}' is not in the allow-list. Allowed: {', '.join(sorted(set(a.lower() for a in allowed)))}",
         }
 
+    logger.info(f"[MCP-AUDIT] run_command: {cmd_base} (args: {len(cmd_parts) - 1})")
+
     try:
         result = subprocess.run(
-            command,
-            capture_output=True, text=True, shell=True,
+            cmd_parts,
+            capture_output=True, text=True, shell=False,
             timeout=SUBPROCESS_TIMEOUT,
             creationflags=subprocess.CREATE_NO_WINDOW
         )
@@ -740,6 +759,11 @@ def _execute_script(params, config):
     if cwd and not os.path.isdir(cwd):
         return {'error': f'Working directory not found: {cwd}'}
 
+    logger.info(f"[MCP-AUDIT] execute_script called. Script length: {len(script)} chars, timeout: {timeout}s")
+
+    # -ExecutionPolicy Bypass is required for kiosks with Group Policy set to
+    # AllSigned/Restricted. It's not a security boundary (SYSTEM can already
+    # do anything), it's a compatibility flag for hardened deployments.
     proc = subprocess.Popen(
         ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -775,23 +799,72 @@ def _execute_script(params, config):
         raise
 
 
+def _get_allowed_file_bases(config):
+    """Build the list of allowed base directories for file I/O.
+
+    Includes Owlette data dirs, user profile, temp, and directories of any
+    configured processes (so Cortex can inspect/write project files).
+    """
+    data_path = os.environ.get('ProgramData', r'C:\ProgramData')
+    bases = [
+        os.path.join(data_path, 'Owlette'),
+        os.path.expandvars('%TEMP%'),
+        os.path.expandvars('%USERPROFILE%'),
+    ]
+    # Add directories of configured processes (e.g. TouchDesigner projects)
+    for proc in (config or {}).get('processes', []):
+        proc_path = proc.get('path', '')
+        if proc_path:
+            bases.append(os.path.dirname(proc_path))
+    # Resolve all to real paths for consistent comparison
+    return [os.path.realpath(b) for b in bases if b]
+
+
+def _validate_file_path(file_path, config):
+    """Validate that a file path is within allowed directories.
+
+    Returns (ok, resolved_path_or_error).
+    Uses case-insensitive comparison (Windows) with path-separator check
+    to prevent prefix collisions (e.g. OwletteEVIL matching Owlette).
+    """
+    resolved = os.path.realpath(file_path)
+    resolved_lower = resolved.lower()
+    for base in _get_allowed_file_bases(config):
+        base_lower = base.lower()
+        if resolved_lower.startswith(base_lower):
+            # Ensure it's truly under base, not just a prefix match
+            # e.g. "C:\ProgramData\OwletteEVIL" must NOT match "C:\ProgramData\Owlette"
+            if len(resolved_lower) == len(base_lower) or resolved_lower[len(base_lower)] in ('\\', '/'):
+                return True, resolved
+    return False, f"Path is outside allowed directories: {file_path}"
+
+
 def _read_file(params, config):
-    """Read file contents with size limit."""
+    """Read file contents with size limit and path validation."""
     file_path = params.get('path', '').strip()
     if not file_path:
         return {'error': 'path parameter is required'}
 
-    if not os.path.isfile(file_path):
+    ok, result = _validate_file_path(file_path, config)
+    if not ok:
+        logger.warning(f"[MCP-AUDIT] read_file BLOCKED: {result}")
+        return {'error': result}
+
+    resolved = result
+
+    if not os.path.isfile(resolved):
         return {'error': f'File not found: {file_path}'}
 
-    file_size = os.path.getsize(file_path)
+    file_size = os.path.getsize(resolved)
     max_size = 100 * 1024  # 100 KB
 
     if file_size > max_size:
         return {'error': f'File too large ({file_size} bytes). Maximum: {max_size} bytes'}
 
+    logger.info(f"[MCP-AUDIT] read_file: {resolved} ({file_size} bytes)")
+
     try:
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(resolved, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
 
         return {
@@ -805,20 +878,29 @@ def _read_file(params, config):
 
 
 def _write_file(params, config):
-    """Write content to a file."""
+    """Write content to a file with path validation."""
     file_path = params.get('path', '').strip()
     content = params.get('content', '')
 
     if not file_path:
         return {'error': 'path parameter is required'}
 
+    ok, result = _validate_file_path(file_path, config)
+    if not ok:
+        logger.warning(f"[MCP-AUDIT] write_file BLOCKED: {result}")
+        return {'error': result}
+
+    resolved = result
+
+    logger.info(f"[MCP-AUDIT] write_file: {resolved} ({len(content)} chars)")
+
     try:
         # Ensure directory exists
-        dir_path = os.path.dirname(file_path)
+        dir_path = os.path.dirname(resolved)
         if dir_path and not os.path.isdir(dir_path):
             os.makedirs(dir_path, exist_ok=True)
 
-        with open(file_path, 'w', encoding='utf-8') as f:
+        with open(resolved, 'w', encoding='utf-8') as f:
             f.write(content)
 
         return {

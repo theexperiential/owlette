@@ -15,6 +15,7 @@ import { randomBytes } from 'crypto';
 import { generateAuthenticationOptions } from '@simplewebauthn/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { getRpId, storeChallenge } from '@/lib/webauthn.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 export const POST = withRateLimit(async () => {
   try {
@@ -31,11 +32,7 @@ export const POST = withRateLimit(async () => {
 
     return NextResponse.json({ options, challengeId });
   } catch (error) {
-    console.error('[Passkey Auth Options] Error:', error);
-    return NextResponse.json(
-      { error: 'Failed to generate authentication options' },
-      { status: 500 }
-    );
+    return apiError(error, 'passkeys/authenticate/options');
   }
 }, {
   strategy: 'auth',

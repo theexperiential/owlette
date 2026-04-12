@@ -44,51 +44,44 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Validate registration code in Firestore
+    // Two-phase exchange: validate first, generate tokens, then mark used.
+    // This prevents burning the registration code if token generation fails
+    // (e.g., Firebase Auth is temporarily down).
     const adminDb = getAdminDb();
     const tokenRef = adminDb.collection('agent_tokens').doc(registrationCode);
+
+    let siteId: string;
+    let createdBy: string;
+    let agentUid: string;
+
+    // Phase 1: Validate the registration code (read-only check)
     const tokenDoc = await tokenRef.get();
 
     if (!tokenDoc.exists) {
-      return NextResponse.json(
-        { error: 'Invalid registration code' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Invalid registration code' }, { status: 401 });
     }
 
     const tokenData = tokenDoc.data();
 
-    // Check if code has already been used
     if (tokenData?.used) {
-      return NextResponse.json(
-        { error: 'Registration code already used' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Registration code already used' }, { status: 401 });
     }
 
-    // Check if code has expired (24 hours from creation)
     const now = Date.now();
     const expiresAt = tokenData?.expiresAt?.toMillis();
 
     if (!expiresAt || expiresAt < now) {
-      return NextResponse.json(
-        { error: 'Registration code expired' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Registration code expired' }, { status: 401 });
     }
 
-    const siteId = tokenData?.siteId as string;
-    const createdBy = tokenData?.createdBy as string;
+    siteId = tokenData?.siteId as string;
+    createdBy = tokenData?.createdBy as string;
 
     if (!siteId || !createdBy) {
-      return NextResponse.json(
-        { error: 'Invalid registration code data' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Invalid registration code data' }, { status: 401 });
     }
 
-    // Generate unique agent user ID
-    const agentUid = `agent_${siteId}_${machineId}`.replace(/[^a-zA-Z0-9_]/g, '_');
+    agentUid = `agent_${siteId}_${machineId}`.replace(/[^a-zA-Z0-9_]/g, '_');
 
     // Generate Firebase Custom Token for agent
     const adminAuth = getAdminAuth();
@@ -182,13 +175,27 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       agentUid,
     });
 
-    // Mark registration code as used
-    await tokenRef.update({
-      used: true,
-      usedAt: FieldValue.serverTimestamp(),
-      machineId,
-      agentUid,
-    });
+    // Phase 2: Token generation succeeded — now atomically mark code as used.
+    // Transaction prevents TOCTOU races (two concurrent requests both passing Phase 1).
+    try {
+      await adminDb.runTransaction(async (transaction) => {
+        const freshDoc = await transaction.get(tokenRef);
+        if (freshDoc.data()?.used) {
+          throw new Error('Registration code already used');
+        }
+        transaction.update(tokenRef, {
+          used: true,
+          usedAt: FieldValue.serverTimestamp(),
+          machineId,
+          agentUid,
+        });
+      });
+    } catch (txError: any) {
+      // Another request won the race — but we already generated tokens.
+      // This is rare; the agent will get a 401 and can re-pair with a new code.
+      logger.warn(`Registration code claim race: ${txError.message}`);
+      return NextResponse.json({ error: 'Registration code already used' }, { status: 401 });
+    }
 
     logger.info(`Agent token exchanged: site=${siteId}, machine=${machineId}, uid=${agentUid}`);
 

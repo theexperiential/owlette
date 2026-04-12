@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * GET /api/admin/webhooks?siteId=xxx
@@ -42,7 +43,7 @@ export async function GET(request: NextRequest) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError(error, 'admin/webhooks GET');
   }
 }
 
@@ -87,8 +88,7 @@ export async function POST(request: NextRequest) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('admin/webhooks POST:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError(error, 'admin/webhooks POST');
   }
 }
 
@@ -112,6 +112,6 @@ export async function DELETE(request: NextRequest) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError(error, 'admin/webhooks DELETE');
   }
 }

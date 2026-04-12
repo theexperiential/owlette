@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { requireAdminOrIdToken } from '@/lib/apiAuth.server';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 const TD_ARCHIVE_URL = 'https://derivative.ca/download/archive';
@@ -91,14 +92,7 @@ export const GET = withRateLimit(
           { status: 504 }
         );
       }
-      if (error?.status) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
-      logger.error(`fetch-td-version: ${error instanceof Error ? error.message : error}`);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/fetch-td-version');
     }
   },
   { strategy: 'api', identifier: 'ip' }

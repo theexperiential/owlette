@@ -18,6 +18,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -81,12 +82,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    const message = error instanceof Error ? error.message : 'Failed to generate MFA setup';
-    console.error('[MFA Setup] Error:', error);
-    return NextResponse.json(
-      { error: message },
-      { status: 500 }
-    );
+    return apiError(error, 'mfa/setup');
   }
 }, {
   strategy: 'auth',

@@ -11,6 +11,31 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.6.5] - 2026-04-11
+
+### security
+- **MCP tool hardening** — `run_command` now uses `shell=False` with `shlex.split(posix=False)` to prevent shell injection via metacharacters (`&&`, `|`, `;`). Allowlist still validates the first token.
+- **Python sandbox** — `run_python` restricts `__builtins__` (no `eval`, `exec`, `compile`, `os`, `subprocess`). Imports gated to safe stdlib modules only (math, json, re, datetime, etc.). `open()` and `getattr` are allowed for file I/O and introspection.
+- **File I/O path validation** — `read_file` and `write_file` MCP tools validate paths against allowed directories (Owlette data, user profile, temp, configured process dirs). Blocks system directory access and path traversal.
+- **PowerShell audit logging** — `execute_script`, `run_command`, `run_python`, `read_file`, `write_file` now emit `[MCP-AUDIT]` log entries for security monitoring.
+- **Token exchange race fix** — registration code exchange uses two-phase pattern: validate → generate tokens → atomically mark used. Prevents burning codes on transient Firebase Auth failures.
+- **Token refresh race fix** — refresh endpoint wrapped in Firestore transaction to prevent concurrent requests from creating inconsistent token state.
+- **Command field allowlist** — `commands/send` API filters data fields per command type before writing to Firestore. Prevents field injection (e.g., overriding `timestamp` or `status`).
+- **Error sanitization** — 60 API routes now use centralized `apiError()` helper that returns generic messages in production, hiding Firebase internals and stack traces.
+- **Firestore rules hardened** — site creation requires `owner == auth.uid`, agent logs require `machineId == token.machine_id`, chat creation requires `userId == auth.uid` (with autonomous exception).
+- **HSTS header** — `Strict-Transport-Security: max-age=31536000; includeSubDomains` added.
+- **Redirect validation** — login and MFA pages validate redirect/return URLs (must be relative paths, blocks protocol-relative `//` redirects).
+- **Cortex nonce dedup** — autonomous endpoint accepts optional `nonce` field to prevent replay attacks.
+- **Deployment checksum validation** — API validates SHA-256 format when provided; agent already enforces verification.
+
+### changed
+- Updated `next` 16.2.1 → 16.2.3 (Server Component DoS fix)
+- Updated `iron-session` 8.0.3 → 8.0.4 (cookie out-of-bounds char fix)
+- Updated `cryptography` 41.0.7 → ≥44.0.0 (hygiene; CVE-2023-50782 not exploitable in Fernet-only usage)
+- `-ExecutionPolicy Bypass` retained on `execute_script` (required for Group Policy–hardened kiosks)
+
+---
+
 ## [2.6.4] - 2026-04-10
 
 ### added

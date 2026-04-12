@@ -12,6 +12,7 @@ import {
   renamePasskey,
   deletePasskey,
 } from '@/lib/webauthn.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 function getCredentialIdFromUrl(request: NextRequest): string {
   const url = new URL(request.url);
@@ -47,11 +48,7 @@ export const PATCH = withRateLimit(async (request: NextRequest) => {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('[Passkey Rename] Error:', error);
-    return NextResponse.json(
-      { error: 'Failed to rename passkey' },
-      { status: 500 }
-    );
+    return apiError(error, 'passkeys/rename');
   }
 }, {
   strategy: 'auth',
@@ -78,11 +75,7 @@ export const DELETE = withRateLimit(async (request: NextRequest) => {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('[Passkey Delete] Error:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete passkey' },
-      { status: 500 }
-    );
+    return apiError(error, 'passkeys/delete');
   }
 }, {
   strategy: 'auth',

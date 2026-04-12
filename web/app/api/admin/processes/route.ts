@@ -4,6 +4,7 @@ import { ApiAuthError } from '@/lib/apiAuth.server';
 import { requireAdminWithSiteAccess } from '@/lib/apiHelpers.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withProcessConfig, ProcessConfigError } from '@/lib/processConfig.server';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 /**
@@ -74,11 +75,7 @@ export const GET = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/processes GET:', error);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/processes GET');
     }
   },
   { strategy: 'api', identifier: 'ip' }
@@ -160,11 +157,7 @@ export const POST = withRateLimit(
         const status = 'status' in error ? error.status : 500;
         return NextResponse.json({ error: error.message }, { status });
       }
-      console.error('admin/processes POST:', error);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/processes POST');
     }
   },
   { strategy: 'api', identifier: 'ip' }

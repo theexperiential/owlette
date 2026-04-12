@@ -3,7 +3,7 @@ psutil==5.9.5
 pystray==0.19.4
 email-validator==2.0.0
 GPUtil==1.4.0
-cryptography==41.0.7
+cryptography>=44.0.0,<45.0.0
 google-auth==2.22.0
 google-api-python-client==2.98.0
 google-auth-oauthlib==1.0.0

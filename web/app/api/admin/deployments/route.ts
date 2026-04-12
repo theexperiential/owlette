@@ -4,6 +4,7 @@ import { ApiAuthError } from '@/lib/apiAuth.server';
 import { requireAdminWithSiteAccess } from '@/lib/apiHelpers.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 /**
@@ -56,11 +57,7 @@ export const GET = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/deployments GET:', error);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/deployments GET');
     }
   },
   { strategy: 'api', identifier: 'ip' }
@@ -85,11 +82,20 @@ export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
       const body = await request.json();
-      const { siteId, name, installer_name, installer_url, silent_flags, verify_path, parallel_install, machineIds } = body;
+      const { siteId, name, installer_name, installer_url, silent_flags, sha256_checksum, verify_path, parallel_install, machineIds } = body;
 
       if (!siteId || !name || !installer_name || !installer_url || !silent_flags) {
         return NextResponse.json(
           { error: 'Missing required fields: siteId, name, installer_name, installer_url, silent_flags' },
+          { status: 400 }
+        );
+      }
+
+      // Validate sha256_checksum format if provided (recommended for supply-chain security).
+      // The agent logs a warning when checksum is missing but still proceeds.
+      if (sha256_checksum && (typeof sha256_checksum !== 'string' || !/^[a-f0-9]{64}$/i.test(sha256_checksum))) {
+        return NextResponse.json(
+          { error: 'sha256_checksum must be a valid 64-character hex SHA-256 hash' },
           { status: 400 }
         );
       }
@@ -135,6 +141,7 @@ export const POST = withRateLimit(
         installer_name,
         installer_url,
         silent_flags,
+        sha256_checksum,
         targets,
         createdAt: FieldValue.serverTimestamp(),
         status: 'pending',
@@ -166,6 +173,7 @@ export const POST = withRateLimit(
           installer_url,
           installer_name,
           silent_flags,
+          sha256_checksum,
           deployment_id: deploymentId,
           timestamp: FieldValue.serverTimestamp(),
           status: 'pending',
@@ -195,11 +203,7 @@ export const POST = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/deployments POST:', error);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/deployments POST');
     }
   },
   { strategy: 'api', identifier: 'ip' }

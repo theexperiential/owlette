@@ -4,6 +4,7 @@ import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getToolByName, EXISTING_COMMAND_MAPPINGS } from '@/lib/mcp-tools';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 const POLL_INTERVAL_MS = 1500;
@@ -159,8 +160,7 @@ export const POST = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/tools/execute:', error);
-      return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+      return apiError(error, 'admin/tools/execute');
     }
   },
   { strategy: 'api', identifier: 'ip' }

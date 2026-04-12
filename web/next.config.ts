@@ -54,6 +54,11 @@ const nextConfig: NextConfig = {
             value: '1; mode=block',
           },
           {
+            // Enforce HTTPS for 1 year — prevents downgrade/MITM attacks
+            key: 'Strict-Transport-Security',
+            value: 'max-age=31536000; includeSubDomains',
+          },
+          {
             // Content Security Policy - controls what resources can be loaded
             // Note: 'unsafe-inline' in style-src is required by Tailwind CSS
             // Note: 'unsafe-inline' in script-src is required by Google OAuth sign-in popups

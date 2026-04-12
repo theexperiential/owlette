@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminOrIdToken, assertUserHasSiteAccess, ApiAuthError } from '@/lib/apiAuth.server';
 import { getAdminDb, getAdminStorage } from '@/lib/firebase-admin';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * DELETE /api/admin/screenshots
@@ -101,7 +102,6 @@ export async function DELETE(request: NextRequest) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('admin/screenshots DELETE:', error);
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+    return apiError(error, 'admin/screenshots');
   }
 }

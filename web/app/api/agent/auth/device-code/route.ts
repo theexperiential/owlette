@@ -3,6 +3,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { generatePairPhrase } from '@/lib/pairPhrases';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 /**
@@ -87,11 +88,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       interval: 5, // poll every 5 seconds
     });
   } catch (error: any) {
-    console.error('Error generating device code:', error);
-    return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: 500 }
-    );
+    return apiError(error, 'agent/auth/device-code');
   }
 }, {
   strategy: 'tokenExchange',

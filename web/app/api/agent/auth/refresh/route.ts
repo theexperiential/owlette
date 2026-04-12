@@ -49,61 +49,75 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       .update(refreshToken)
       .digest('hex');
 
-    // Validate refresh token in Firestore
+    // Validate refresh token and update lastUsed atomically via transaction.
+    // This prevents concurrent refresh requests from creating inconsistent state.
     const adminDb = getAdminDb();
     const tokenRef = adminDb.collection('agent_refresh_tokens').doc(refreshTokenHash);
-    const tokenDoc = await tokenRef.get();
 
-    if (!tokenDoc.exists) {
+    let siteId: string;
+    let version: string;
+    let agentUid: string;
+
+    try {
+      const result = await adminDb.runTransaction(async (transaction) => {
+        const tokenDoc = await transaction.get(tokenRef);
+
+        if (!tokenDoc.exists) {
+          return { error: 'Invalid refresh token', status: 401 } as const;
+        }
+
+        const tokenData = tokenDoc.data();
+
+        // Check expiry (tokens without expiresAt never expire — by design for long-duration installations)
+        const now = Date.now();
+        const expiresAt = tokenData?.expiresAt?.toMillis();
+
+        if (expiresAt && expiresAt < now) {
+          transaction.delete(tokenRef);
+          return { error: 'Refresh token expired. Please re-authenticate.', status: 401 } as const;
+        }
+
+        // Verify machine ID matches (prevent token theft)
+        if (tokenData?.machineId !== machineId) {
+          console.warn(
+            `Machine ID mismatch for refresh token: ` +
+            `expected=${tokenData?.machineId}, got=${machineId}`
+          );
+          return { error: 'Machine ID mismatch. Token may be compromised.', status: 403 } as const;
+        }
+
+        const txSiteId = tokenData?.siteId as string;
+        const txVersion = tokenData?.version as string;
+        const txAgentUid = tokenData?.agentUid as string;
+
+        if (!txSiteId || !txVersion || !txAgentUid) {
+          return { error: 'Invalid refresh token data', status: 401 } as const;
+        }
+
+        // Atomically update lastUsed inside the transaction
+        transaction.update(tokenRef, {
+          lastUsed: FieldValue.serverTimestamp(),
+        });
+
+        return { siteId: txSiteId, version: txVersion, agentUid: txAgentUid } as const;
+      });
+
+      if ('error' in result) {
+        return NextResponse.json({ error: result.error }, { status: result.status });
+      }
+
+      siteId = result.siteId;
+      version = result.version;
+      agentUid = result.agentUid;
+    } catch (txError: any) {
+      logger.warn(`Refresh token transaction failed: ${txError.message}`);
       return NextResponse.json(
-        { error: 'Invalid refresh token' },
-        { status: 401 }
+        { error: 'Token refresh failed. Please try again.' },
+        { status: 500 }
       );
     }
 
-    const tokenData = tokenDoc.data();
-
-    // Check if refresh token has expired (only if expiresAt is set)
-    // Tokens without expiresAt never expire (for long-duration installations)
-    const now = Date.now();
-    const expiresAt = tokenData?.expiresAt?.toMillis();
-
-    if (expiresAt && expiresAt < now) {
-      // Clean up expired token
-      await tokenRef.delete();
-
-      return NextResponse.json(
-        { error: 'Refresh token expired. Please re-authenticate.' },
-        { status: 401 }
-      );
-    }
-
-    // Verify machine ID matches (prevent token theft)
-    if (tokenData?.machineId !== machineId) {
-      // Log potential security issue
-      console.warn(
-        `Machine ID mismatch for refresh token: ` +
-        `expected=${tokenData?.machineId}, got=${machineId}`
-      );
-
-      return NextResponse.json(
-        { error: 'Machine ID mismatch. Token may be compromised.' },
-        { status: 403 }
-      );
-    }
-
-    const siteId = tokenData?.siteId as string;
-    const version = tokenData?.version as string;
-    const agentUid = tokenData?.agentUid as string;
-
-    if (!siteId || !version || !agentUid) {
-      return NextResponse.json(
-        { error: 'Invalid refresh token data' },
-        { status: 401 }
-      );
-    }
-
-    // Generate new Firebase Custom Token for agent
+    // Generate new Firebase Custom Token for agent (outside transaction — safe, idempotent)
     const adminAuth = getAdminAuth();
 
     // CRITICAL: Ensure custom claims are set on the user account
@@ -146,10 +160,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const authData = await authResponse.json();
     const idToken = authData.idToken; // This token now has the custom claims
 
-    // Update last used timestamp (for monitoring)
-    await tokenRef.update({
-      lastUsed: FieldValue.serverTimestamp(),
-    });
+    // lastUsed was already updated atomically inside the transaction above.
 
     logger.info(`Token refreshed: site=${siteId}, machine=${machineId}`);
 

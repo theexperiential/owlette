@@ -5,6 +5,7 @@ import { getSiteAlertEmailsWithCc } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@/lib/emailTemplates.server';
 import { fireWebhooks } from '@/lib/webhookSender.server';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 /**
@@ -187,8 +188,7 @@ export const POST = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/events/simulate:', error);
-      return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+      return apiError(error, 'admin/events/simulate');
     }
   },
   { strategy: 'agentAlert', identifier: 'ip' }

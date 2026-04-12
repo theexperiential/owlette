@@ -13,6 +13,7 @@ import { verifyRegistrationResponse } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
+import { apiError } from '@/lib/apiErrorResponse';
 import {
   getRpId,
   getExpectedOrigins,
@@ -88,11 +89,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('[Passkey Register Verify] Error:', error);
-    return NextResponse.json(
-      { error: 'Failed to verify registration' },
-      { status: 500 }
-    );
+    return apiError(error, 'passkeys/register/verify');
   }
 }, {
   strategy: 'auth',

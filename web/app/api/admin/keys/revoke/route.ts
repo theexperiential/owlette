@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * DELETE /api/admin/keys/revoke
@@ -51,8 +52,7 @@ export const DELETE = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/keys/revoke:', error);
-      return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+      return apiError(error, 'admin/keys/revoke');
     }
   },
   { strategy: 'api', identifier: 'ip' }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { FROM_EMAIL, ENV_LABEL, isProduction } from '@/lib/resendClient.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 const ADMIN_EMAIL = isProduction
   ? process.env.ADMIN_EMAIL_PROD
@@ -22,10 +23,6 @@ export async function GET(request: NextRequest) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('Error fetching email config:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch email configuration' },
-      { status: 500 }
-    );
+    return apiError(error, 'admin/email/config');
   }
 }

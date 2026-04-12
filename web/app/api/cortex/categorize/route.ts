@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { generateText } from 'ai';
 import { requireSession } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { apiError } from '@/lib/apiErrorResponse';
 import { createCheapModel } from '@/lib/llm';
 import { resolveLlmConfig } from '@/lib/cortex-utils.server';
 
@@ -153,7 +154,6 @@ Performance`,
 
     return NextResponse.json({ title, category });
   } catch (error) {
-    console.error('Failed to categorize conversation:', error);
-    return NextResponse.json({ error: 'Categorization failed' }, { status: 500 });
+    return apiError(error, 'cortex/categorize');
   }
 }

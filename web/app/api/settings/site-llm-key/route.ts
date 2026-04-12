@@ -13,6 +13,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { encryptApiKey, isLlmEncryptionConfigured } from '@/lib/llm-encryption.server';
 import { type LlmProvider } from '@/lib/llm';
+import { apiError } from '@/lib/apiErrorResponse';
 
 export const POST = withRateLimit(
   async (request: NextRequest) => {
@@ -68,9 +69,7 @@ export const POST = withRateLimit(
 
       return NextResponse.json({ success: true });
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Internal server error';
-      const status = (error as { status?: number }).status || 500;
-      return NextResponse.json({ error: message }, { status });
+      return apiError(error, 'settings/site-llm-key POST');
     }
   },
   { strategy: 'api', identifier: 'ip' }
@@ -108,9 +107,7 @@ export const GET = withRateLimit(
         updatedAt: data.updatedAt?.toDate?.()?.toISOString() || null,
       });
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Internal server error';
-      const status = (error as { status?: number }).status || 500;
-      return NextResponse.json({ error: message }, { status });
+      return apiError(error, 'settings/site-llm-key GET');
     }
   },
   { strategy: 'api', identifier: 'ip' }
@@ -138,9 +135,7 @@ export const DELETE = withRateLimit(
 
       return NextResponse.json({ success: true });
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Internal server error';
-      const status = (error as { status?: number }).status || 500;
-      return NextResponse.json({ error: message }, { status });
+      return apiError(error, 'settings/site-llm-key DELETE');
     }
   },
   { strategy: 'api', identifier: 'ip' }

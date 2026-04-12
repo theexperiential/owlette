@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
 import { getPasskeyListInfo } from '@/lib/webauthn.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 export const GET = withRateLimit(async (request: NextRequest) => {
   try {
@@ -29,11 +30,7 @@ export const GET = withRateLimit(async (request: NextRequest) => {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('[Passkey List] Error:', error);
-    return NextResponse.json(
-      { error: 'Failed to list passkeys' },
-      { status: 500 }
-    );
+    return apiError(error, 'passkeys/list');
   }
 }, {
   strategy: 'auth',

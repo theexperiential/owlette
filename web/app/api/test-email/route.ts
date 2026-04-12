@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { getResend, FROM_EMAIL, ENV_LABEL, isProduction } from '@/lib/resendClient.server';
+import { apiError } from '@/lib/apiErrorResponse';
 import {
   wrapEmailLayout,
   emailDataTable,
@@ -332,14 +333,6 @@ export async function POST(request: NextRequest) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('Error sending test email:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: 'Failed to send test email',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      },
-      { status: 500 }
-    );
+    return apiError(error, 'test-email');
   }
 }

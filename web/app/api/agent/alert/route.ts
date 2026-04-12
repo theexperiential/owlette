@@ -8,6 +8,7 @@ import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { checkRateLimit, processAlertRateLimit } from '@/lib/rateLimit';
 import { fireWebhooks } from '@/lib/webhookSender.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * POST /api/agent/alert
@@ -240,8 +241,7 @@ export const POST = withRateLimit(
 
       return NextResponse.json({ success: true, emailSent: emailsSent > 0, recipients: emailsSent });
     } catch (error: unknown) {
-      console.error('[agent/alert] Unhandled error:', error);
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+      return apiError(error, 'agent/alert');
     }
   },
   { strategy: 'agentAlert', identifier: 'ip' }

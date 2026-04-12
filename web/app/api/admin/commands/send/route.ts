@@ -3,11 +3,43 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 const COMMAND_POLL_INTERVAL_MS = 1500;
 const DEFAULT_TIMEOUT_S = 30;
 const MAX_TIMEOUT_S = 120;
+
+/** Allowed data fields per command type. Fields not in this map are stripped. */
+const COMMAND_ALLOWED_FIELDS: Record<string, string[]> = {
+  restart_process: ['process_name', 'process_id'],
+  kill_process: ['process_name', 'process_id'],
+  set_launch_mode: ['process_name', 'process_id', 'launch_mode'],
+  update_config: ['config'],
+  install_software: [
+    'installer_url', 'installer_name', 'silent_flags', 'sha256_checksum',
+    'verify_path', 'timeout_seconds', 'deployment_id', 'parallel_install',
+  ],
+  update_owlette: ['installer_url', 'checksum_sha256', 'version'],
+  cancel_installation: ['deployment_id'],
+  uninstall_software: ['software_name', 'uninstall_command', 'silent_flags', 'timeout_seconds'],
+  cancel_uninstall: [],
+  refresh_software_inventory: [],
+  distribute_project: [
+    'distribution_id', 'project_url', 'project_name', 'destination_path',
+    'extract_path', 'sha256_checksum', 'post_install_action', 'verify_files',
+  ],
+  cancel_distribution: ['distribution_id'],
+  mcp_tool_call: ['tool_name', 'tool_params', 'cortex_request_id'],
+  capture_screenshot: [],
+  reboot_machine: ['delay_seconds'],
+  shutdown_machine: ['delay_seconds'],
+  cancel_reboot: [],
+  dismiss_reboot_pending: [],
+  provision_cortex_key: ['api_key'],
+  start_live_view: ['interval_ms'],
+  stop_live_view: [],
+};
 
 /**
  * POST /api/admin/commands/send
@@ -55,11 +87,17 @@ export const POST = withRateLimit(
         .collection('commands')
         .doc('pending');
 
+      // Filter command data to only allowed fields (prevent field injection)
+      const allowedFields = COMMAND_ALLOWED_FIELDS[command] || [];
+      const safeData = Object.fromEntries(
+        Object.entries(data || {}).filter(([k]) => allowedFields.includes(k))
+      );
+
       await pendingRef.set(
         {
           [commandId]: {
             type: command,
-            ...data,
+            ...safeData,
             timestamp: FieldValue.serverTimestamp(),
             status: 'pending',
           },
@@ -107,8 +145,7 @@ export const POST = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/commands/send:', error);
-      return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+      return apiError(error, 'admin/commands/send');
     }
   },
   { strategy: 'api', identifier: 'ip' }

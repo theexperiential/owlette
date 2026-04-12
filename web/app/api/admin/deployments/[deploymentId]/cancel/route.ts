@@ -4,6 +4,7 @@ import { ApiAuthError } from '@/lib/apiAuth.server';
 import { requireAdminWithSiteAccess, getRouteParam } from '@/lib/apiHelpers.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 /**
@@ -132,11 +133,7 @@ export const POST = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('admin/deployments/cancel POST:', error);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Internal server error' },
-        { status: 500 }
-      );
+      return apiError(error, 'admin/deployments/[id]/cancel');
     }
   },
   { strategy: 'api', identifier: 'ip' }

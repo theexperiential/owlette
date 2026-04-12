@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdminOrIdToken } from '@/lib/apiAuth.server';
 import { allTools, getToolsByTier, type ToolTier } from '@/lib/mcp-tools';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * GET /api/admin/tools
@@ -27,7 +28,7 @@ export const GET = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+      return apiError(error, 'admin/tools');
     }
   },
   { strategy: 'api', identifier: 'ip' }

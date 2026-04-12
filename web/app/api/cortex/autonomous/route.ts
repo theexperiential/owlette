@@ -22,8 +22,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { generateText, stepCountIs, tool, jsonSchema } from 'ai';
-import { Timestamp } from 'firebase-admin/firestore';
+import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { apiError } from '@/lib/apiErrorResponse';
 import { createModel, buildAutonomousSystemPrompt } from '@/lib/llm';
 import { getToolsByTier, EXISTING_COMMAND_MAPPINGS, type McpToolDefinition } from '@/lib/mcp-tools';
 import {
@@ -46,6 +47,7 @@ interface AutonomousRequest {
   processName: string;
   errorMessage: string;
   agentVersion?: string;
+  nonce?: string;
 }
 
 interface CortexSettings {
@@ -104,7 +106,7 @@ export async function POST(request: NextRequest) {
 
     // 2. Parse & validate body
     const body = await request.json() as AutonomousRequest;
-    const { siteId, machineId, machineName, eventType, processName, errorMessage, agentVersion } = body;
+    const { siteId, machineId, machineName, eventType, processName, errorMessage, agentVersion, nonce } = body;
 
     if (!siteId || !machineId || !processName || !eventType) {
       return NextResponse.json(
@@ -124,6 +126,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 4. Dedup check — same machine+process within cooldown window
+    //    Also dedup by nonce if provided (prevents replay attacks)
     const cooldownMs = (settings.cooldownMinutes ?? DEFAULT_COOLDOWN_MINUTES) * 60 * 1000;
     const cutoffTime = Timestamp.fromMillis(Date.now() - cooldownMs);
 
@@ -139,6 +142,18 @@ export async function POST(request: NextRequest) {
       const existingEvent = recentEvents.docs[0].data();
       console.log(`[cortex/autonomous] Dedup: skipping ${machineId}:${processName} (existing event ${existingEvent.status})`);
       return NextResponse.json({ accepted: false, reason: 'cooldown_active' });
+    }
+
+    // Nonce-based dedup: reject exact replay of same request
+    if (nonce) {
+      const nonceRef = db.doc(`sites/${siteId}/cortex-nonces/${nonce}`);
+      const nonceDoc = await nonceRef.get();
+      if (nonceDoc.exists) {
+        console.log(`[cortex/autonomous] Nonce replay blocked: ${nonce}`);
+        return NextResponse.json({ accepted: false, reason: 'duplicate_nonce' });
+      }
+      // Store nonce with TTL (cleaned up by cooldown window naturally)
+      await nonceRef.set({ machineId, processName, timestamp: FieldValue.serverTimestamp() });
     }
 
     // 5. Concurrency check — max sessions per site
@@ -191,8 +206,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ accepted: true, eventId, chatId });
 
   } catch (error: unknown) {
-    console.error('[cortex/autonomous] Unhandled error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError(error, 'cortex/autonomous');
   }
 }
 

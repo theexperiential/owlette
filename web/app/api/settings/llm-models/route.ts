@@ -13,6 +13,7 @@ import { requireSession } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { decryptApiKey } from '@/lib/llm-encryption.server';
 import { type LlmProvider } from '@/lib/llm';
+import { apiError } from '@/lib/apiErrorResponse';
 
 interface ProviderModel {
   id: string;
@@ -111,9 +112,7 @@ export const GET = withRateLimit(
 
       return NextResponse.json({ models });
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Failed to fetch models';
-      const status = (error as { status?: number }).status || 500;
-      return NextResponse.json({ error: message }, { status });
+      return apiError(error, 'settings/llm-models GET');
     }
   },
   { strategy: 'auth', identifier: 'ip' }
@@ -139,9 +138,7 @@ export const POST = withRateLimit(
       const models = await fetchModels(provider, apiKey);
       return NextResponse.json({ models });
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Failed to fetch models';
-      const status = (error as { status?: number }).status || 500;
-      return NextResponse.json({ error: message }, { status });
+      return apiError(error, 'settings/llm-models POST');
     }
   },
   { strategy: 'auth', identifier: 'ip' }

@@ -3,6 +3,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { ApiAuthError, requireSessionOrIdToken } from '@/lib/apiAuth.server';
 import { getResend, FROM_EMAIL, ENV_LABEL, isProduction } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@/lib/emailTemplates.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 const ADMIN_EMAIL = isProduction
   ? process.env.ADMIN_EMAIL_PROD
@@ -120,13 +121,6 @@ export async function POST(request: NextRequest) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('Error sending user creation notification:', error);
-    return NextResponse.json(
-      {
-        error: 'Failed to send notification',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      },
-      { status: 500 }
-    );
+    return apiError(error, 'webhooks/user-created');
   }
 }
