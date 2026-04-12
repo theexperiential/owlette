@@ -31,17 +31,21 @@ class TestConfigManagement:
 
     def test_read_config_file_missing(self):
         """Test reading configuration when file doesn't exist"""
-        with patch('builtins.open', side_effect=FileNotFoundError):
-            result = shared_utils.read_config()
+        # Bypass the mtime-based config cache by making getmtime raise.
+        # _read_config_cached() falls through to the raw reader in that case.
+        with patch('os.path.getmtime', side_effect=OSError):
+            with patch('builtins.open', side_effect=FileNotFoundError):
+                result = shared_utils.read_config()
 
-            assert result == {}
+                assert result == {}
 
     def test_read_config_invalid_json(self):
         """Test reading configuration with invalid JSON"""
-        with patch('builtins.open', mock_open(read_data='invalid json{')):
-            result = shared_utils.read_config()
+        with patch('os.path.getmtime', side_effect=OSError):
+            with patch('builtins.open', mock_open(read_data='invalid json{')):
+                result = shared_utils.read_config()
 
-            assert result == {}
+                assert result == {}
 
     def test_read_config_specific_keys(self, mock_config):
         """Test reading specific keys from configuration"""
@@ -97,8 +101,13 @@ class TestSystemMetrics:
         mock_gpu.name = "Test GPU"
         mock_gpu.temperature = 65
 
-        with patch('shared_utils.GPUtil.getGPUs', return_value=[mock_gpu]):
-            with patch('shared_utils.get_gpu_temperatures', return_value=[65]):
+        # GPUtil is now lazy-loaded via _get_gputil(). Return a fake module
+        # whose getGPUs() returns our mock GPU object.
+        fake_gputil_module = Mock()
+        fake_gputil_module.getGPUs = Mock(return_value=[mock_gpu])
+
+        with patch('shared_utils._get_gputil', return_value=fake_gputil_module):
+            with patch('shared_utils.get_gpu_temperatures', return_value=[{'temperature': 65}]):
                 metrics = shared_utils.get_system_metrics(skip_gpu=False)
 
         assert metrics['gpu']['usage_percent'] == 75.0

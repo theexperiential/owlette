@@ -8,7 +8,6 @@ import {
   requiresConfirmation,
   EXISTING_COMMAND_MAPPINGS,
   type McpToolDefinition,
-  type ToolTier,
 } from '@/lib/mcp-tools';
 
 // ─── Tool Registry ──────────────────────────────────────────────────────────
@@ -29,6 +28,7 @@ const EXPECTED_TIER1 = [
   'get_agent_logs',
   'get_agent_health',
   'get_system_presets',
+  'check_pending_reboot',
 ] as const;
 
 const EXPECTED_TIER2 = [
@@ -37,6 +37,21 @@ const EXPECTED_TIER2 = [
   'start_process',
   'set_launch_mode',
   'capture_screenshot',
+  // Wave 1
+  'manage_process',
+  'manage_windows_service',
+  'configure_gpu_tdr',
+  'manage_windows_update',
+  'manage_notifications',
+  'configure_power_plan',
+  // Wave 2
+  'manage_scheduled_task',
+  'network_reset',
+  'registry_operation',
+  'clean_disk_space',
+  'get_event_logs_filtered',
+  'manage_windows_feature',
+  'show_notification',
 ] as const;
 
 const EXPECTED_TIER3 = [

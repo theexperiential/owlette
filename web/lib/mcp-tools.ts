@@ -223,6 +223,15 @@ const tier1Tools: McpToolDefinition[] = [
       },
     },
   },
+  {
+    name: 'check_pending_reboot',
+    description: 'Diagnostic: detect whether a system reboot is currently pending (from Windows Update, Component Based Servicing, pending file rename ops, or SCCM client). Read-only. Returns pending (bool), reasons (array), last update install time, and next scheduled update run time if available. Use during incident investigations, after a suspected update, or when the machine is behaving unusually.',
+    tier: 1,
+    parameters: {
+      type: 'object',
+      properties: {},
+    },
+  },
 ];
 
 // ─── Tier 2: Process Management ─────────────────────────────────────────────
@@ -333,6 +342,440 @@ const tier2Tools: McpToolDefinition[] = [
           default: 0,
         },
       },
+    },
+  },
+  {
+    name: 'manage_process',
+    description: 'Kill, suspend, or resume OS processes by name pattern. Works on ANY process, not just Owlette-managed ones. Safer than run_command + taskkill: validated params, no shell, refuses to touch critical system processes (lsass, winlogon, csrss, etc.). Use when you need to terminate hung apps, free up VRAM/memory by killing a runaway process, or stop a non-Owlette app that is interfering with the kiosk.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        name_pattern: {
+          type: 'string',
+          description: 'Process name (with .exe) or glob pattern. Examples: "chrome.exe", "FreeFileSync*", "notepad*".',
+        },
+        action: {
+          type: 'string',
+          enum: ['kill', 'suspend', 'resume'],
+          description: 'kill = terminate, suspend = pause execution, resume = continue a suspended process.',
+        },
+        match_exact: {
+          type: 'boolean',
+          description: 'If true (default), exact name match. If false, glob pattern matching via fnmatch.',
+          default: true,
+        },
+        force: {
+          type: 'boolean',
+          description: 'For kill action: force-kill immediately if true (default), otherwise try graceful termination first.',
+          default: true,
+        },
+      },
+      required: ['name_pattern', 'action'],
+    },
+  },
+  {
+    name: 'manage_windows_service',
+    description: 'Full services.msc parity — start, stop, restart, pause/continue, set startup type, configure failure recovery, or get full service details. Use set_recovery to configure auto-restart on crash (critical for unattended media installations). Use get_details to query everything about a service in one call: status, startup type, binary path, dependencies, recovery config.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        service_name: {
+          type: 'string',
+          description: 'Name of the Windows service (not the display name).',
+        },
+        action: {
+          type: 'string',
+          enum: ['start', 'stop', 'restart', 'pause', 'continue', 'set_startup', 'set_recovery', 'get_details'],
+          description: 'State ops (start/stop/restart/pause/continue), configuration (set_startup, set_recovery), or query (get_details).',
+        },
+        startup_type: {
+          type: 'string',
+          enum: ['auto', 'auto_delayed', 'manual', 'disabled'],
+          description: 'For set_startup: the new startup type.',
+        },
+        first_failure: {
+          type: 'string',
+          enum: ['restart', 'run_program', 'reboot', 'none'],
+          description: 'For set_recovery: action on first failure.',
+        },
+        second_failure: {
+          type: 'string',
+          enum: ['restart', 'run_program', 'reboot', 'none'],
+          description: 'For set_recovery: action on second failure.',
+        },
+        subsequent_failures: {
+          type: 'string',
+          enum: ['restart', 'run_program', 'reboot', 'none'],
+          description: 'For set_recovery: action on third and subsequent failures.',
+        },
+        restart_delay_ms: {
+          type: 'number',
+          description: 'For set_recovery: delay between failure and action in milliseconds. Default 60000 (1 min).',
+          default: 60000,
+        },
+        reset_counter_days: {
+          type: 'number',
+          description: 'For set_recovery: reset failure count after this many days of no failures. Default 1.',
+          default: 1,
+        },
+        reboot_message: {
+          type: 'string',
+          description: 'For set_recovery: optional broadcast message if action is reboot.',
+        },
+        run_program_path: {
+          type: 'string',
+          description: 'For set_recovery: path to program to run on failure (required if any action is run_program).',
+        },
+      },
+      required: ['service_name', 'action'],
+    },
+  },
+  {
+    name: 'configure_gpu_tdr',
+    description: 'Configure Windows GPU Timeout Detection and Recovery. Writes TdrDelay (and optionally TdrDdiDelay) to the registry. Critical for TouchDesigner/Unreal/Unity installations with heavy shader work — the default 2-second timeout causes silent crashes on complex GPU operations. A reboot is required for changes to take effect.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        timeout_seconds: {
+          type: 'number',
+          description: 'TdrDelay value in seconds (2-300). Windows default is 2; heavy creative workloads usually need 10-60.',
+        },
+        ddi_timeout_seconds: {
+          type: 'number',
+          description: 'Optional TdrDdiDelay value in seconds (2-300). Maximum time the GPU can spend in Present/Draw calls.',
+        },
+      },
+      required: ['timeout_seconds'],
+    },
+  },
+  {
+    name: 'manage_windows_update',
+    description: 'Pause, resume, or schedule Windows Update. Use pause before live events, set_active_hours to define quiet hours during which auto-reboot is blocked, set_scheduled_install to define exactly when updates install, and set_feature_deferral / set_quality_deferral to delay update rollouts. Windows Update is the #1 threat to unattended 24/7 installations.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['get_status', 'pause', 'resume', 'set_active_hours', 'set_scheduled_install', 'set_restart_deadline', 'set_feature_deferral', 'set_quality_deferral'],
+          description: 'The Windows Update operation to perform.',
+        },
+        pause_days: {
+          type: 'number',
+          description: 'For pause: number of days to pause updates (1-35).',
+        },
+        start_hour: {
+          type: 'number',
+          description: 'For set_active_hours: active hours start hour (0-23).',
+        },
+        end_hour: {
+          type: 'number',
+          description: 'For set_active_hours: active hours end hour (0-23).',
+        },
+        day_of_week: {
+          type: 'number',
+          description: 'For set_scheduled_install: day of week (0=every day, 1=Sunday, 2=Monday, ..., 7=Saturday).',
+        },
+        hour: {
+          type: 'number',
+          description: 'For set_scheduled_install: hour of day to install (0-23).',
+        },
+        deadline_days: {
+          type: 'number',
+          description: 'For set_restart_deadline: days Windows waits before force-rebooting (2-14).',
+        },
+        days: {
+          type: 'number',
+          description: 'For set_feature_deferral (0-365) or set_quality_deferral (0-30): deferral days.',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'manage_notifications',
+    description: 'Control Windows toast notifications and Focus Assist. Essential for kiosks and video walls where a surprise "Updates are ready" or "Teams call" toast would appear on the display during an exhibit. Use disable_all_toasts to fully silence the system, enable_focus_assist with alarms_only for total silence, or disable_for_app to silence a specific app.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['get_status', 'disable_all_toasts', 'enable_focus_assist', 'disable_focus_assist', 'disable_for_app'],
+          description: 'The notification management operation.',
+        },
+        app_name: {
+          type: 'string',
+          description: 'For disable_for_app: the app identifier (e.g. "Microsoft.WindowsStore", "MSTeams", "Microsoft.Windows.WindowsUpdate").',
+        },
+        focus_mode: {
+          type: 'string',
+          enum: ['priority_only', 'alarms_only'],
+          description: 'For enable_focus_assist: priority_only allows priority senders, alarms_only silences everything except alarms.',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'configure_power_plan',
+    description: 'Set Windows power plan and disable sleep/hibernate/screen blanking. Required for any 24/7 unattended installation — default power settings will sleep the machine, blank the screen, or hibernate, all of which break live deployments. Use plan="high_performance" for media work, and enable disable_sleep + disable_hibernate + disable_screen_blanking together for kiosk setups.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        plan: {
+          type: 'string',
+          enum: ['high_performance', 'balanced', 'ultimate_performance'],
+          description: 'Power plan to activate (optional — omit to keep current plan).',
+        },
+        disable_sleep: {
+          type: 'boolean',
+          description: 'Disable standby/sleep timeout (sets to Never on both AC and battery).',
+        },
+        disable_hibernate: {
+          type: 'boolean',
+          description: 'Disable hibernation entirely (removes hiberfil.sys).',
+        },
+        disable_screen_blanking: {
+          type: 'boolean',
+          description: 'Disable monitor timeout (prevents screen blanking).',
+        },
+      },
+    },
+  },
+  {
+    name: 'manage_scheduled_task',
+    description: 'Full Task Scheduler parity — list, enable, disable, delete, run_now, stop, create new tasks, get details, and get run history. Use create to schedule weekly memory-flush reboots, hourly health checks, boot-time media app launches, or event-triggered restarts. Specify the trigger (boot/daily/weekly/once/on_event/on_logon/on_idle), the action (run_program), the principal (SYSTEM/LOCAL_SERVICE/etc.), and settings (retry count, execution time limit, etc.).',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list', 'enable', 'disable', 'delete', 'run_now', 'stop', 'create', 'get_details', 'get_history'],
+          description: 'The operation to perform.',
+        },
+        task_name: {
+          type: 'string',
+          description: 'Name of the task (required for all non-list actions). Can include folder path like "\\Folder\\TaskName".',
+        },
+        name_filter: {
+          type: 'string',
+          description: 'For list: substring filter on task name.',
+        },
+        description: {
+          type: 'string',
+          description: 'For create: optional human-readable description.',
+        },
+        trigger: {
+          type: 'object',
+          description: 'For create: trigger definition. type is one of boot/logon/once/daily/weekly/on_event/on_idle. Additional fields depend on type (e.g. daily needs start_time, weekly needs days_of_week + start_time, on_event needs log_name + event_id).',
+        },
+        task_action: {
+          type: 'object',
+          description: 'For create: {type: "run_program", program: path, arguments?: str, working_directory?: str}. NOTE: this is the task\'s action, distinct from the top-level action parameter.',
+        },
+        principal: {
+          type: 'object',
+          description: 'For create: {run_as: SYSTEM|LOCAL_SERVICE|NETWORK_SERVICE|current_user, run_level: highest|limited}.',
+        },
+        settings: {
+          type: 'object',
+          description: 'For create: {start_when_available, execution_time_limit_minutes, restart_count, restart_interval_minutes, run_only_if_network_available, allow_start_on_batteries, hidden, multiple_instances, delete_expired_task_after_days}.',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'network_reset',
+    description: 'Flush DNS, renew IP lease, restart network adapter, or reset the winsock stack. Common fix for NDI dropouts, Firebase connectivity loss, DNS resolution issues at venue networks. reset_winsock requires a reboot to fully take effect.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['flush_dns', 'renew_ip', 'restart_adapter', 'reset_winsock'],
+          description: 'The network operation to perform.',
+        },
+        adapter_name: {
+          type: 'string',
+          description: 'For restart_adapter: name of the network adapter (e.g. "Ethernet", "Wi-Fi").',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'registry_operation',
+    description: 'Read, write, or delete Windows registry values. Restricted to an allowlist of safe registry paths (Winlogon, GraphicsDrivers, WindowsUpdate, Notifications, Power, Services, etc.) — system hives like SAM, SECURITY, and Cryptography are blocked. Use this for structured registry edits instead of execute_script + reg.exe.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['read', 'write', 'delete'],
+          description: 'Registry operation.',
+        },
+        hive: {
+          type: 'string',
+          enum: ['HKLM', 'HKCU'],
+          description: 'Registry hive: HKLM (machine) or HKCU (current user).',
+        },
+        key_path: {
+          type: 'string',
+          description: 'Key path under the hive, e.g. "SYSTEM\\\\CurrentControlSet\\\\Control\\\\GraphicsDrivers". Must match an allowed prefix.',
+        },
+        value_name: {
+          type: 'string',
+          description: 'Value name (required for write/delete; omit for read to enumerate all values in the key).',
+        },
+        value_data: {
+          type: 'string',
+          description: 'For write: the data to write. For dword, pass as a string like "8"; for binary, pass as hex string; for string types, just the text.',
+        },
+        value_type: {
+          type: 'string',
+          enum: ['string', 'dword', 'binary', 'expand_string', 'multi_string'],
+          description: 'For write: registry value type.',
+        },
+      },
+      required: ['action', 'hive', 'key_path'],
+    },
+  },
+  {
+    name: 'clean_disk_space',
+    description: 'Clean temp files, windows temp, prefetch cache, recycle bin, or Owlette logs with age filter. Use dry_run=true to preview what would be deleted before committing. Essential when media rendering caches fill up disks and cause process failures.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        target: {
+          type: 'string',
+          enum: ['temp', 'windows_temp', 'prefetch', 'recycle_bin', 'owlette_logs'],
+          description: 'Which location to clean.',
+        },
+        older_than_days: {
+          type: 'number',
+          description: 'Only delete files older than N days (default 7). Ignored for recycle_bin.',
+          default: 7,
+        },
+        dry_run: {
+          type: 'boolean',
+          description: 'If true, return counts and sizes without actually deleting.',
+          default: false,
+        },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'get_event_logs_filtered',
+    description: 'Fast filtered event log query via Get-WinEvent -FilterHashtable. Orders of magnitude faster than the general get_event_logs when you need events from a specific process, event ID, or time window. Use this instead of get_event_logs when searching for specific crashes or errors.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        log_name: {
+          type: 'string',
+          enum: ['Application', 'System', 'Security', 'Setup'],
+          description: 'Event log to query.',
+        },
+        process_name: {
+          type: 'string',
+          description: 'Optional: filter by provider/source name.',
+        },
+        event_id: {
+          type: 'number',
+          description: 'Optional: specific event ID (e.g. 41 for unexpected shutdown, 1000 for app crash).',
+        },
+        hours_back: {
+          type: 'number',
+          description: 'Look back this many hours (1-168).',
+          default: 24,
+        },
+        level: {
+          type: 'string',
+          enum: ['Critical', 'Error', 'Warning', 'Information', 'Verbose'],
+          description: 'Optional: filter by severity level.',
+        },
+        max_events: {
+          type: 'number',
+          description: 'Maximum events to return (1-200).',
+          default: 50,
+        },
+      },
+      required: ['log_name'],
+    },
+  },
+  {
+    name: 'manage_windows_feature',
+    description: 'Add, remove, or list Windows Optional Features (DISM, e.g. NetFx3, OpenSSH-Server), Windows Capabilities (FoD, e.g. OpenSSH.Client), or AppX Packages (Microsoft Store apps like OneDrive, Xbox Game Bar, Cortana, Teams). Use for kiosk provisioning — removing OneDrive/Xbox/Cortana bloat and installing needed features. Critical features for Owlette itself are blocklisted and cannot be disabled.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        type: {
+          type: 'string',
+          enum: ['optional_feature', 'capability', 'appx_package'],
+          description: 'Category of feature.',
+        },
+        action: {
+          type: 'string',
+          enum: ['list', 'install', 'remove'],
+          description: 'Operation to perform. AppX install is not supported.',
+        },
+        name: {
+          type: 'string',
+          description: 'For install/remove: feature/capability/package name (e.g. NetFx3, OpenSSH.Client~~~~0.0.1.0, Microsoft.XboxGameBar).',
+        },
+        all_users: {
+          type: 'boolean',
+          description: 'For appx_package remove: also remove the provisioning package so new user profiles do not get it reinstalled.',
+          default: false,
+        },
+        name_filter: {
+          type: 'string',
+          description: 'For list: substring filter on name.',
+        },
+      },
+      required: ['type', 'action'],
+    },
+  },
+  {
+    name: 'show_notification',
+    description: 'Display an on-screen message on the remote machine — useful when a technician is physically nearby (live events, setup, maintenance). Toast style is a subtle corner notification; modal style uses msg.exe to display a message box that blocks the screen briefly. Opposite of manage_notifications, which suppresses notifications.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        title: {
+          type: 'string',
+          description: 'Notification title.',
+        },
+        message: {
+          type: 'string',
+          description: 'Notification body / message.',
+        },
+        style: {
+          type: 'string',
+          enum: ['toast', 'modal'],
+          description: 'toast = subtle corner notification (default), modal = blocking message box via msg.exe.',
+          default: 'toast',
+        },
+        duration_seconds: {
+          type: 'number',
+          description: 'For modal style: how long the message box stays up (default 5).',
+          default: 5,
+        },
+      },
+      required: ['message'],
     },
   },
 ];

@@ -173,6 +173,16 @@ class FirebaseClient:
                 self.logger.error(f"Token validation failed: {e}")
                 return False
 
+            # Safety belt: close any lingering client from a prior connect
+            # that didn't go through _do_disconnect (shouldn't happen, but
+            # guarantees we never stack two live HTTP sessions).
+            old_db = getattr(self, 'db', None)
+            if old_db is not None:
+                try:
+                    old_db.close()
+                except Exception as e:
+                    self.logger.debug(f"Old Firestore client close failed (ignored): {e}")
+
             # Initialize Firestore REST client
             self.db = FirestoreRestClient(
                 project_id=self.project_id,
@@ -189,11 +199,18 @@ class FirebaseClient:
     def _do_disconnect(self):
         """
         Called by ConnectionManager during shutdown.
-        Performs cleanup operations.
+        Releases the Firestore REST client's HTTP session pool so we don't
+        leak sockets across reconnect cycles (token refresh flaps, network
+        outages, config toggles). Safe no-op if already disconnected.
         """
         self.logger.debug("Disconnect callback: cleaning up resources")
-        # Firestore REST client doesn't need explicit cleanup
-        # but we could add cleanup here if needed
+        db = getattr(self, 'db', None)
+        if db is not None:
+            try:
+                db.close()
+            except Exception as e:
+                self.logger.debug(f"Firestore client close failed (ignored): {e}")
+            self.db = None
 
     def _on_connected(self):
         """

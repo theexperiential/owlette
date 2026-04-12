@@ -111,6 +111,20 @@ class FirestoreRestClient:
 
         logger.debug(f"FirestoreRestClient initialized: project={project_id}")
 
+    def close(self):
+        """Release the HTTP connection pool held by the underlying Session.
+
+        Idempotent — safe to call multiple times. Closing a Session just
+        disposes of pooled sockets; it does not affect future use (the caller
+        should drop the reference afterwards and create a new client if needed).
+        """
+        sess = getattr(self, 'session', None)
+        if sess is not None:
+            try:
+                sess.close()
+            except Exception as e:
+                logger.debug(f"Session close failed (ignored): {e}")
+
     def _get_auth_headers(self) -> Dict[str, str]:
         """
         Get authorization headers with fresh access token.

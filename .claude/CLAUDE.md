@@ -2,7 +2,7 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. Monorepo: Python Windows service (agent) + Next.js web dashboard (web) + Firebase/Firestore backend.
 
-**Version**: 2.6.6 | **License**: AGPL-3.0
+**Version**: 2.7.0 | **License**: AGPL-3.0
 
 ---
 
@@ -50,6 +50,8 @@ Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules
 - Check for completeness: if a pattern is introduced (e.g. lazy init), verify it's wired up end-to-end (references stored, cleanup handled, state updates propagated)
 - No dead code, no commented-out code, no placeholder TODOs that won't be addressed in this commit
 - All changes must be self-contained and fully functional — never commit something that "works but will need a follow-up fix"
+
+**Lint as you go — don't let errors accumulate.** After editing any web file, run `npx eslint <file>` on that file (or `npm run lint` for a broader change) and fix every error and warning you introduced before moving on. Never commit new lint errors, and never rationalise them as "pre-existing" if your edit touched the same file. The repo has historical lint debt — your job is to not add to it, and to clean up any issues in lines you modified. Same principle for TypeScript: if `tsc` / IDE diagnostics flag your change, fix it before the next edit, not at commit time.
 
 ---
 

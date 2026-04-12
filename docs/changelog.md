@@ -11,6 +11,39 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.7.0] - 2026-04-11
+
+### added
+- **14 new MCP tools for Cortex** — purpose-built Tier 2 admin tools with validated parameters. Eliminates most fallbacks to `execute_script` for common sysadmin scenarios and produces cleaner chat UX (one green tool call instead of 2-4 red-then-green retries).
+    - **`manage_process`** — kill / suspend / resume any OS process by name or glob pattern. Refuses to touch critical system processes (lsass, winlogon, csrss, etc.).
+    - **`manage_windows_service`** — full services.msc parity: start / stop / restart / pause / continue / set_startup / set_recovery / get_details. `set_recovery` configures the auto-restart-on-crash safety net (first/second/subsequent failure actions, restart delay, reset counter). `get_details` returns status, startup type, binary path, dependencies, and recovery config in one call.
+    - **`configure_gpu_tdr`** — set Windows GPU TDR (Timeout Detection and Recovery) registry values (TdrDelay, TdrDdiDelay). Critical for TouchDesigner/Unreal workloads with heavy shaders.
+    - **`manage_windows_update`** — pause/resume + full scheduling: set_active_hours, set_scheduled_install, set_restart_deadline, set_feature_deferral, set_quality_deferral.
+    - **`manage_notifications`** — suppress Windows toast notifications, enable Focus Assist (priority_only/alarms_only), disable notifications per-app. Essential for kiosks so Windows/Teams/Defender toasts don't appear on exhibit displays.
+    - **`configure_power_plan`** — set power plan + disable sleep/hibernate/screen blanking. Required for every 24/7 unattended installation.
+    - **`check_pending_reboot`** (Tier 1) — detect whether a reboot is pending and why (Windows Update, CBS, pending file renames, SCCM).
+    - **`manage_scheduled_task`** — full taskschd.msc parity: list / enable / disable / delete / run_now / stop / create / get_details / get_history. `create` supports full trigger schema (boot/logon/once/daily/weekly/on_event/on_idle), run-as principals (SYSTEM/LOCAL_SERVICE/NETWORK_SERVICE), and settings (start_when_available, restart_count, execution_time_limit, multiple_instances, etc.).
+    - **`network_reset`** — flush_dns / renew_ip / restart_adapter / reset_winsock.
+    - **`registry_operation`** — allowlisted registry read / write / delete. Explicit allowlist of safe prefixes (Winlogon, GraphicsDrivers, WindowsUpdate, Notifications, Power, Services); SAM / SECURITY / Cryptography hives blocked.
+    - **`clean_disk_space`** — clean temp / windows_temp / prefetch / recycle_bin / owlette_logs with age filter and dry-run mode.
+    - **`get_event_logs_filtered`** — fast event log queries via `Get-WinEvent -FilterHashtable`. Orders of magnitude faster than the older `get_event_logs` when filtering by process, event ID, or time window.
+    - **`manage_windows_feature`** — add / remove / list Windows Optional Features, Capabilities, or AppX packages. Removes OneDrive / Xbox Game Bar / Cortana / Teams consumer bloat during kiosk provisioning. Critical Windows features are blocklisted.
+    - **`show_notification`** — display an on-screen toast or modal message (opposite of manage_notifications). Useful when a tech is physically nearby.
+- **Background reboot-pending auto-alert** — agent checks for pending reboot every 15 min and emits a site event via the existing `/api/agent/alert` pipeline. Dashboard admins see "Reboot pending on [machine]" alerts; configured email/webhook alerts fire automatically. Idempotent — alerts once per pending-state transition.
+
+### changed
+- **Cortex CLAUDE.md** — new "Prefer Tier 2 tools over Tier 3" section with a mapping table. Cortex will now reach for purpose-built tools first and fall back to `execute_script` only for novel tasks.
+- All new Tier 2 tools emit structured `[MCP-AUDIT]` log entries for security monitoring.
+- `mcp_tools.py` gained `_CRITICAL_PROCESSES` blocklist and `_SAFE_REGISTRY_PREFIXES` allowlist as hardcoded safety helpers.
+
+### security
+- `manage_process` refuses to kill critical Windows processes (lsass, winlogon, csrss, services, etc.) and Owlette's own service — can't be bypassed via tool parameters.
+- `registry_operation` has explicit allowlist + blocklist; hives like SAM and SECURITY are unreachable regardless of params.
+- `manage_windows_feature` has a hardcoded blocklist of features Owlette itself depends on (NetFx4, WMI-*, PowerShell*, core networking).
+- Scheduled task creation uses argument-list subprocess calls and PowerShell string escaping to prevent command injection via task names, programs, or arguments.
+
+---
+
 ## [2.6.6] - 2026-04-11
 
 ### fixed

@@ -36,6 +36,13 @@ SCHEMA_VERSION = 1
 # the main service loop, and the Windows console signal handler thread.
 _lock = threading.Lock()
 
+# Throttle for update_alive() — its two callers (main loop every 5s + metrics
+# thread every 5-120s) previously produced a write per tick. The startup
+# classifier only cares about gaps on the order of tens of seconds, so a 30s
+# floor keeps the "last seen alive" signal useful while cutting ~83% of writes.
+_last_alive_write = 0.0
+_ALIVE_WRITE_INTERVAL = 30.0
+
 
 def read_state() -> Optional[dict]:
     """Read session state from disk.
@@ -95,14 +102,24 @@ def init_session(version: str, boot_time: int) -> bool:
 def update_alive() -> None:
     """Refresh the last_alive timestamp. Called from periodic heartbeat hooks.
 
+    Throttled at the source so both hot-loop callers benefit; skips if the
+    last successful write was less than _ALIVE_WRITE_INTERVAL ago.
     No-op if the state file is missing — init_session must be called first.
     """
+    global _last_alive_write
+    now_mono = time.monotonic()
+    if now_mono - _last_alive_write < _ALIVE_WRITE_INTERVAL:
+        return
     with _lock:
+        # Re-check under the lock so concurrent callers don't both write.
+        if time.monotonic() - _last_alive_write < _ALIVE_WRITE_INTERVAL:
+            return
         state = _read_state_unlocked()
         if state is None:
             return
         state['last_alive'] = int(time.time())
-        _write_state_unlocked(state)
+        if _write_state_unlocked(state):
+            _last_alive_write = time.monotonic()
 
 
 def set_intent(intent: Optional[str]) -> None:

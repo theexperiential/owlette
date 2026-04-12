@@ -23,7 +23,7 @@ export const mockLimit = jest.fn();
 export const mockSignInWithEmailAndPassword = jest.fn();
 export const mockCreateUserWithEmailAndPassword = jest.fn();
 export const mockSignOut = jest.fn();
-export const mockOnAuthStateChanged = jest.fn((auth, callback) => {
+export const mockOnAuthStateChanged = jest.fn((_auth, _callback) => {
   // Return unsubscribe function
   return jest.fn();
 });

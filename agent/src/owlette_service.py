@@ -87,6 +87,38 @@ MAX_RELAUNCH_ATTEMPTS = 3
 SLEEP_INTERVAL = 5
 TIME_TO_INIT = 60
 
+# Throttle for _write_service_status(). Main loop calls it every SLEEP_INTERVAL;
+# the GUI treats the file as stale after 120s, so a 30s refresh floor is safe
+# and cuts ~83% of writes when content is unchanged.
+MIN_STATUS_WRITE_INTERVAL = 30
+
+
+def _init_status_writer_logger():
+    """Build a dedicated rotating logger for status-write decisions.
+
+    Writes to tmp/status_writer.log (100KB x 2 backups = 300KB max). Kept
+    separate from the main service log so signal-to-noise stays high and any
+    future regression in the throttle is diagnosable from one file.
+    """
+    import logging.handlers
+    log_path = shared_utils.get_data_path('tmp/status_writer.log')
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    logger = logging.getLogger('owlette.status_writer')
+    if getattr(logger, '_owlette_initialized', False):
+        return logger
+    logger.setLevel(logging.INFO)
+    logger.propagate = False  # don't spam main service log
+    handler = logging.handlers.RotatingFileHandler(
+        log_path, maxBytes=100 * 1024, backupCount=2
+    )
+    handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
+    logger.addHandler(handler)
+    logger._owlette_initialized = True
+    return logger
+
+
+_status_writer_logger = None
+
 # Reboot scheduler — derived from SLEEP_INTERVAL so changes to the main loop
 # automatically adjust the check cadence. Target: ~30s between checks.
 REBOOT_CHECK_INTERVAL_SECONDS = 30
@@ -178,6 +210,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Store auth manager and api_base for use in _update_health_state
         self._auth_manager = None
         self._api_base = api_base
+
+        # Throttle state for _write_service_status(). See MIN_STATUS_WRITE_INTERVAL
+        # above. Initialised here so first real call always hits the refresh-due
+        # branch; _write_service_status also has a hasattr() safety net for any
+        # call path that might somehow pre-empt this.
+        self._last_status_signature = None
+        self._last_status_write_time = 0.0
 
         # Write early status so tray can show health alerts before Firebase init
         self._write_service_status_early()
@@ -408,9 +447,28 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         This provides real-time IPC from service → tray icon without log parsing.
 
+        Writes are throttled: skipped if content-relevant fields are unchanged
+        AND the refresh floor (MIN_STATUS_WRITE_INTERVAL) hasn't elapsed.
+        Every decision is logged to tmp/status_writer.log for diagnosability.
+
         Args:
             running: Whether service is currently running (False when stopping)
         """
+        # Defensive init — guard against any call path that might hit this
+        # method before __init__ finishes setting throttle state (e.g. a
+        # Firebase listener callback firing during connection_manager wiring).
+        if not hasattr(self, '_last_status_signature'):
+            self._last_status_signature = None
+        if not hasattr(self, '_last_status_write_time'):
+            self._last_status_write_time = 0.0
+
+        global _status_writer_logger
+        if _status_writer_logger is None:
+            try:
+                _status_writer_logger = _init_status_writer_logger()
+            except Exception:
+                _status_writer_logger = logging.getLogger('owlette.status_writer.fallback')
+
         try:
             status_path = shared_utils.get_data_path('tmp/service_status.json')
 
@@ -433,6 +491,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 except Exception:
                     pass  # Ignore errors getting Firebase state
 
+            health_section = self._health_section()
+
             status = {
                 'service': {
                     'running': running,
@@ -445,8 +505,34 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'site_id': site_id,
                     'last_heartbeat': last_heartbeat
                 },
-                'health': self._health_section()
+                'health': health_section
             }
+
+            # Signature excludes timestamp-like fields (last_update,
+            # last_heartbeat, checked_at) and free-form strings (error_message,
+            # probe_results dict) so it only flips on meaningful state changes.
+            signature = (
+                bool(running),
+                bool(firebase_enabled),
+                bool(firebase_connected),
+                site_id,
+                health_section.get('status'),
+                health_section.get('error_code'),
+            )
+
+            now_mono = time.monotonic()
+            content_changed = signature != self._last_status_signature
+            refresh_due = (now_mono - self._last_status_write_time) >= MIN_STATUS_WRITE_INTERVAL
+            should_write = (not running) or content_changed or refresh_due
+
+            if not should_write:
+                try:
+                    _status_writer_logger.info(
+                        f"skip throttled sig={hash(signature) & 0xffffffff:08x}"
+                    )
+                except Exception:
+                    pass
+                return
 
             # Write atomically (write to temp file, then replace)
             temp_path = status_path + '.tmp'
@@ -456,8 +542,27 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # os.replace() is atomic on Windows (no gap where file is missing)
             os.replace(temp_path, status_path)
 
+            reason = (
+                'shutdown' if not running
+                else 'content_changed' if content_changed
+                else 'refresh_floor'
+            )
+            self._last_status_signature = signature
+            self._last_status_write_time = now_mono
+            try:
+                _status_writer_logger.info(
+                    f"write {reason} sig={hash(signature) & 0xffffffff:08x} "
+                    f"connected={firebase_connected} health={health_section.get('status')}"
+                )
+            except Exception:
+                pass
+
         except Exception as e:
             logging.debug(f"Failed to write service status: {e}")
+            try:
+                _status_writer_logger.info(f"error {type(e).__name__}: {e}")
+            except Exception:
+                pass
 
     def _update_health_state(self, status: str, error_code: str, message: str):
         """
@@ -521,6 +626,86 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             t = threading.Thread(target=_send_alert, daemon=True)
             t.start()
+
+    def _check_and_alert_reboot_pending(self):
+        """Background check: detect Windows reboot-pending state and emit a
+        site event once per pending-state transition.
+
+        Runs every ~15 min from the main loop. Uses a flag file to avoid
+        re-alerting every 15 min for the same pending state; clears the flag
+        once the system is no longer pending.
+        """
+        if not self._auth_manager:
+            return
+
+        try:
+            import mcp_tools
+            status = mcp_tools.check_pending_reboot({}, None)
+        except Exception as e:
+            logging.debug(f"reboot-pending detection failed: {e}")
+            return
+
+        if not isinstance(status, dict):
+            return
+
+        pending = bool(status.get('pending'))
+        flag_path = shared_utils.get_data_path('tmp/reboot_pending_alerted.flag')
+
+        if not pending:
+            # Clear the flag once pending state resolves
+            try:
+                if os.path.exists(flag_path):
+                    os.remove(flag_path)
+                    logging.info("[REBOOT-PENDING] State cleared — flag removed")
+            except Exception:
+                pass
+            return
+
+        # Pending is true — only alert if we haven't already for this state
+        if os.path.exists(flag_path):
+            return
+
+        reasons = status.get('reasons', [])
+        next_scheduled = status.get('next_scheduled_update') or {}
+        logging.warning(f"[REBOOT-PENDING] Detected: reasons={reasons}, emitting alert")
+
+        def _emit_alert():
+            try:
+                token = self._auth_manager.get_valid_token()
+                site_id = self._auth_manager.get_site_id() or ''
+                machine_id = socket.gethostname()
+                api_base = self._api_base or shared_utils.get_api_base_url()
+                message = (
+                    f"Reboot pending on {machine_id} "
+                    f"(reasons: {', '.join(reasons) or 'unknown'})"
+                )
+                if next_scheduled.get('next_run'):
+                    message += f" — next scheduled run: {next_scheduled['next_run']}"
+                requests.post(
+                    f"{api_base}/agent/alert",
+                    json={
+                        'siteId': site_id,
+                        'machineId': machine_id,
+                        'errorCode': 'reboot_pending',
+                        'errorMessage': message,
+                        'agentVersion': shared_utils.APP_VERSION,
+                    },
+                    headers={'Authorization': f'Bearer {token}'},
+                    timeout=10,
+                )
+                # Write flag after successful send
+                try:
+                    os.makedirs(os.path.dirname(flag_path), exist_ok=True)
+                    with open(flag_path, 'w') as f:
+                        f.write(','.join(reasons))
+                except Exception as e:
+                    logging.debug(f"Could not write reboot-pending flag: {e}")
+                logging.info(f"[REBOOT-PENDING] Alert sent: {message}")
+            except Exception as e:
+                logging.debug(f"[REBOOT-PENDING] Alert send failed (non-critical): {e}")
+
+        t = threading.Thread(target=_emit_alert, daemon=True)
+        t.start()
 
     # On service stop
     def SvcStop(self):
@@ -2755,10 +2940,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         with open(update_marker_path, 'r') as f:
                             existing_marker = json.load(f)
                         started_at = existing_marker.get('started_at', '')
-                        # Parse the timestamp and check if update is still recent (< 10 minutes)
-                        from datetime import datetime
-                        marker_time = datetime.strptime(started_at, '%Y-%m-%d %H:%M:%S')
-                        age_minutes = (datetime.now() - marker_time).total_seconds() / 60
+                        # Parse the timestamp and check if update is still recent (< 10 minutes).
+                        # Uses module-level `import datetime` (line 32) — do NOT add a local
+                        # `from datetime import datetime` here; it shadows the module name for
+                        # the entire function scope and breaks the kill_process branch above.
+                        marker_time = datetime.datetime.strptime(started_at, '%Y-%m-%d %H:%M:%S')
+                        age_minutes = (datetime.datetime.now() - marker_time).total_seconds() / 60
                         if age_minutes < 10:
                             logging.warning(f"Update already in progress (started {age_minutes:.1f}m ago) - rejecting duplicate command")
                             return f"Update already in progress (started {age_minutes:.1f}m ago)"
@@ -4537,12 +4724,12 @@ with open(out_path, 'wb') as f:
             logging.info(f"Current version: {current_version}")
 
             # ANTI-FRAGILE: Detect stale markers from updates that never completed
-            # (e.g., power loss during install, BSOD, installer hung and was killed)
-            from datetime import datetime
+            # (e.g., power loss during install, BSOD, installer hung and was killed).
+            # Uses module-level `import datetime` (line 32) for consistency across the file.
             marker_age_minutes = float('inf')
             try:
-                marker_time = datetime.strptime(started_at, '%Y-%m-%d %H:%M:%S')
-                marker_age_minutes = (datetime.now() - marker_time).total_seconds() / 60
+                marker_time = datetime.datetime.strptime(started_at, '%Y-%m-%d %H:%M:%S')
+                marker_age_minutes = (datetime.datetime.now() - marker_time).total_seconds() / 60
                 logging.info(f"Update marker age: {marker_age_minutes:.1f} minutes")
             except (ValueError, TypeError):
                 logging.warning(f"Could not parse marker timestamp: {started_at}")
@@ -4788,6 +4975,7 @@ with open(out_path, 'wb') as f:
         cleanup_counter = 0  # Counter for periodic cleanup
         log_cleanup_counter = 0  # Counter for log cleanup (runs less frequently)
         firebase_check_counter = 0  # Counter for Firebase state check (runs every minute)
+        reboot_pending_counter = 0  # Counter for reboot-pending check (runs every 15 min)
         last_firebase_state = {
             'enabled': self.firebase_client is not None,
             'site_id': shared_utils.read_config(['firebase', 'site_id']) if self.firebase_client else None
@@ -5037,6 +5225,15 @@ with open(out_path, 'wb') as f:
                     cleanup_counter = 0
 
                 # Periodic cleanup of old log files (every 8640 iterations = 24 hours)
+                # Reboot-pending check every 15 min (180 iterations at SLEEP_INTERVAL=5s)
+                reboot_pending_counter += 1
+                if reboot_pending_counter >= 180:
+                    try:
+                        self._check_and_alert_reboot_pending()
+                    except Exception as e:
+                        logging.debug(f"Reboot-pending check failed (non-critical): {e}")
+                    reboot_pending_counter = 0
+
                 log_cleanup_counter += 1
                 if log_cleanup_counter >= 17280:
                     try:

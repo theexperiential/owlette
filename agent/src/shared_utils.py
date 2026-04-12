@@ -6,7 +6,6 @@ import ctypes
 import socket
 from packaging import version
 import psutil
-import GPUtil
 import platform
 import subprocess
 import threading
@@ -707,7 +706,24 @@ def get_project_id(environment=None):
     else:
         return 'owlette-prod-90a12'
 
+# TTL cache for is_script_running(). psutil.process_iter() is one of the
+# slowest psutil calls on Windows (200-500ms cmdline parse across all procs);
+# the metrics thread hits it every 5-120s just to pick a heartbeat cadence.
+# Cache for 10s — GUI can't appear/disappear faster than the 5s main loop
+# and the metrics interval selection responds within one cycle either way.
+_script_running_cache = {}  # script_name -> (result, expires_at_monotonic)
+_SCRIPT_RUNNING_TTL = 10.0
+
 def is_script_running(script_name):
+    now = time.monotonic()
+    cached = _script_running_cache.get(script_name)
+    if cached is not None and cached[1] > now:
+        return cached[0]
+    result = _is_script_running_uncached(script_name)
+    _script_running_cache[script_name] = (result, now + _SCRIPT_RUNNING_TTL)
+    return result
+
+def _is_script_running_uncached(script_name):
     for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
         try:
             name = process.info.get('name') or ''
@@ -722,6 +738,69 @@ def is_script_running(script_name):
 # PATHS - Now using ProgramData for proper Windows service data storage
 CONFIG_PATH = get_data_path('config/config.json')
 RESULT_FILE_PATH = get_data_path('tmp/app_states.json')
+
+# Lazy GPUtil import — avoids eager GPU probing at module load (saves ~5-10 MB
+# baseline and a startup delay for every process that imports shared_utils).
+# Failures are sticky only for _GPUTIL_RETRY_BACKOFF seconds so a transient
+# import error during a driver update recovers on its own.
+_gputil_module = None
+_gputil_retry_after = 0.0  # monotonic seconds; 0 = retry immediately
+_GPUTIL_RETRY_BACKOFF = 300.0  # 5 min between retries after a failed import
+
+def _get_gputil():
+    global _gputil_module, _gputil_retry_after
+    if _gputil_module is not None:
+        return _gputil_module
+    if time.monotonic() < _gputil_retry_after:
+        return None
+    try:
+        import GPUtil as _g
+        _gputil_module = _g
+        return _gputil_module
+    except Exception:
+        _gputil_retry_after = time.monotonic() + _GPUTIL_RETRY_BACKOFF
+        return None
+
+# Config cache with mtime-based invalidation. The agent is multi-threaded
+# (main service loop + metrics thread + Firestore listener), and read_config()
+# is called multiple times per 5s tick. Caching by mtime eliminates redundant
+# disk reads without changing semantics: external edits are picked up as soon
+# as the OS publishes the new mtime, and in-process writes invalidate directly.
+import copy as _copy
+_config_cache_lock = threading.Lock()
+_config_cache_mtime = 0.0
+_config_cache_data = None
+
+def _read_config_cached():
+    """Return the parsed config.json, using an mtime-invalidated cache.
+
+    Returns a deep copy so callers can safely mutate the result without
+    corrupting the shared cache entry.
+    """
+    global _config_cache_mtime, _config_cache_data
+    try:
+        mtime = os.path.getmtime(CONFIG_PATH)
+    except OSError:
+        # File missing — fall through to the raw reader, which has its own
+        # not-found handling and retry logic.
+        return read_json_from_file(CONFIG_PATH)
+
+    with _config_cache_lock:
+        if _config_cache_data is not None and mtime == _config_cache_mtime:
+            return _copy.deepcopy(_config_cache_data)
+
+    data = read_json_from_file(CONFIG_PATH)
+    with _config_cache_lock:
+        _config_cache_mtime = mtime
+        _config_cache_data = data
+    return _copy.deepcopy(data)
+
+def _invalidate_config_cache(new_data=None):
+    """Reset the config cache. Call after any in-process write to config.json."""
+    global _config_cache_mtime, _config_cache_data
+    with _config_cache_lock:
+        _config_cache_mtime = 0.0
+        _config_cache_data = _copy.deepcopy(new_data) if new_data is not None else None
 
 # Cortex (local AI agent) paths
 CORTEX_PID_PATH = get_data_path('tmp/cortex.pid')
@@ -938,7 +1017,8 @@ def log_startup_system_snapshot():
         logging.info(f"  RAM          : {mem_gb} GB total")
         logging.info(f"  Disk (C:\\)   : {disk_str}")
         try:
-            gpus = GPUtil.getGPUs()
+            _g = _get_gputil()
+            gpus = _g.getGPUs() if _g else []
             if gpus:
                 for i, gpu in enumerate(gpus):
                     vram_gb = round(gpu.memoryTotal / 1024, 1)
@@ -1457,7 +1537,7 @@ def generate_config_file(existing_config=None):
 
 # Read specific keys from the configuration file or a specific process by its ID
 def read_config(keys=None, process_list_id=None):
-    config = read_json_from_file(CONFIG_PATH)
+    config = _read_config_cached()
 
     # If process_list_id is provided, find the corresponding process
     if process_list_id:
@@ -1497,6 +1577,9 @@ def write_config(keys, value):
     item[keys[-1]] = value
 
     write_json_to_file(config, CONFIG_PATH)
+    # Publish the fresh data to the cache so subsequent reads in this process
+    # see the new value immediately (don't wait for mtime propagation).
+    _invalidate_config_cache(config)
 
 # PROCESS TERMINATION
 
@@ -1665,7 +1748,8 @@ def get_system_info():
     cpu_usage = psutil.cpu_percent()
     memory_info = psutil.virtual_memory()
     disk_info = psutil.disk_usage('/')
-    gpus = GPUtil.getGPUs()
+    _g = _get_gputil()
+    gpus = _g.getGPUs() if _g else []
     gpu_info = gpus[0] if gpus else "No GPU detected"
 
     # Convert bytes to gigabytes
@@ -1692,20 +1776,25 @@ def get_system_metrics(skip_gpu=False):
     Args:
         skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
     """
-    # Read config from disk
-    config = read_json_from_file(CONFIG_PATH)
+    # Route through the mtime-cached reader so repeated calls inside a tick
+    # don't re-hit disk. read_config() returns a deep copy, safe to pass down.
+    config = read_config()
     return get_system_metrics_with_config(config, skip_gpu)
 
 
-def get_system_metrics_with_config(config, skip_gpu=False):
+def get_system_metrics_with_config(config=None, skip_gpu=False):
     """
     Get system metrics with clear units for Firebase.
     Accepts config as parameter to avoid file read race conditions.
 
     Args:
-        config: Configuration dict (to avoid re-reading from disk)
+        config: Configuration dict (to avoid re-reading from disk). If None,
+            loads via the mtime-cached read_config() — no extra disk I/O when
+            the cache is warm.
         skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
     """
+    if config is None:
+        config = read_config()
     try:
         # CPU - model name, percentage, and temperature
         cpu_name = get_cpu_name()
@@ -1732,7 +1821,8 @@ def get_system_metrics_with_config(config, skip_gpu=False):
         gpu_temp = None  # Celsius or None
         if not skip_gpu:
             try:
-                gpus = GPUtil.getGPUs()
+                _g = _get_gputil()
+                gpus = _g.getGPUs() if _g else []
                 if gpus:
                     gpu = gpus[0]
                     gpu_usage_percent = round(gpu.load * 100, 1)
