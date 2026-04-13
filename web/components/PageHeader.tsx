@@ -5,9 +5,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/UserAvatar';
 import { ArrowRight, ChevronDown, Settings, LogOut, Shield, Check, LayoutDashboard, Brain, Rocket, FolderSync, ScrollText, CircleHelp, Bug, BookOpen } from 'lucide-react';
-import { getUserInitials, getUserShortName } from '@/lib/userUtils';
+import { getUserShortName } from '@/lib/userUtils';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { ReportBugDialog } from '@/components/ReportBugDialog';
 
@@ -265,11 +265,7 @@ export function PageHeader({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="inline-flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-secondary transition-colors cursor-pointer">
-                <Avatar className="h-7 w-7">
-                  <AvatarFallback className="bg-accent-cyan text-gray-900 text-xs font-medium">
-                    {user ? getUserInitials(user) : '?'}
-                  </AvatarFallback>
-                </Avatar>
+                <UserAvatar user={user} size="sm" />
                 {user?.displayName && (
                   <span className="text-sm text-foreground hidden lg:block">{getUserShortName(user)}</span>
                 )}

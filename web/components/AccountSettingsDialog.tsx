@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { UserAvatar } from '@/components/UserAvatar';
+import { cropAndResizeSquare } from '@/lib/imageUtils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -65,10 +67,12 @@ interface AccountSettingsDialogProps {
 }
 
 export function AccountSettingsDialog({ open, onOpenChange, initialSection }: AccountSettingsDialogProps) {
-  const { user, userPreferences, updateUserProfile, updatePassword, updateUserPreferences, deleteAccount } = useAuth();
+  const { user, userPreferences, updateUserProfile, updateUserPhoto, updatePassword, updateUserPreferences, deleteAccount } = useAuth();
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection || 'profile');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const [temperatureUnit, setTemperatureUnit] = useState<'C' | 'F'>('C');
   const [timezone, setTimezone] = useState('UTC');
   const [timeFormat, setTimeFormat] = useState<'12h' | '24h'>('12h');
@@ -261,6 +265,48 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
     return true;
   };
 
+  const handlePhotoPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset the input value so picking the same file twice in a row still fires onChange.
+    e.target.value = '';
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Invalid File', { description: 'Please choose an image file.' });
+      return;
+    }
+
+    setPhotoUploading(true);
+    let blob: Blob;
+    try {
+      ({ blob } = await cropAndResizeSquare(file));
+    } catch (err: unknown) {
+      setPhotoUploading(false);
+      const message = err instanceof Error ? err.message : 'Failed to prepare the selected image.';
+      toast.error('Could Not Process Image', { description: message });
+      return;
+    }
+
+    try {
+      await updateUserPhoto(blob);
+    } catch {
+      // AuthContext surfaces its own toast
+    } finally {
+      setPhotoUploading(false);
+    }
+  };
+
+  const handlePhotoRemove = async () => {
+    setPhotoUploading(true);
+    try {
+      await updateUserPhoto(null);
+    } catch {
+      // Toast handled in AuthContext
+    } finally {
+      setPhotoUploading(false);
+    }
+  };
+
   const handleSave = async () => {
     setLoading(true);
     setPasswordError('');
@@ -370,6 +416,50 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                   <div>
                     <h3 className="text-base font-medium text-white">profile</h3>
                     <p className="text-xs text-muted-foreground mt-1">your personal information</p>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <div className="relative">
+                      <UserAvatar user={user} size="lg" />
+                      {photoUploading && (
+                        <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/50">
+                          <Loader2 className="h-5 w-5 text-white animate-spin" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <input
+                        ref={photoInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handlePhotoPick}
+                      />
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => photoInputRef.current?.click()}
+                          disabled={photoUploading || loading}
+                        >
+                          {user?.photoURL ? 'change photo' : 'upload photo'}
+                        </Button>
+                        {user?.photoURL && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={handlePhotoRemove}
+                            disabled={photoUploading || loading}
+                            className="text-muted-foreground hover:text-red-400"
+                          >
+                            remove
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">square crop, resized to 256px</p>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

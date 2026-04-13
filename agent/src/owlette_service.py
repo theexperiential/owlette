@@ -2625,13 +2625,17 @@ class OwletteService(win32serviceutil.ServiceFramework):
             cmd_type = cmd_data.get('type')
             logging.info(f"Received Firebase command: {cmd_type} (ID: {cmd_id})")
 
-            # Rate limit: prevent rapid-fire commands of the same type
-            now = time.time()
-            last_time = self._command_rate_limits.get(cmd_type, 0)
-            if now - last_time < self.COMMAND_RATE_LIMIT_SECONDS:
-                logging.warning(f"Command rate-limited: {cmd_type} (last executed {now - last_time:.1f}s ago)")
-                return f"Rate limited: {cmd_type} executed too recently, try again in a few seconds"
-            self._command_rate_limits[cmd_type] = now
+            # Rate limit: prevent rapid-fire commands of the same type.
+            # Exempt mcp_tool_call — Cortex fires parallel tool calls by design,
+            # is already authenticated + audit-logged per-tool, and has its own
+            # server-side gating. A 5s per-type throttle breaks parallel queries.
+            if cmd_type != 'mcp_tool_call':
+                now = time.time()
+                last_time = self._command_rate_limits.get(cmd_type, 0)
+                if now - last_time < self.COMMAND_RATE_LIMIT_SECONDS:
+                    logging.warning(f"Command rate-limited: {cmd_type} (last executed {now - last_time:.1f}s ago)")
+                    return f"Rate limited: {cmd_type} executed too recently, try again in a few seconds"
+                self._command_rate_limits[cmd_type] = now
 
             if cmd_type == 'restart_process':
                 # Restart a specific process by name
@@ -4395,19 +4399,25 @@ with open(out_path, 'wb') as f:
                     details=' — '.join(detail_parts),
                 )
             elif tool_name in self._TIER3_TOOLS:
-                # Log privileged tool executions for audit trail
+                # Log privileged tool executions for audit trail. For script-bearing
+                # tools we capture the first 500 chars (multi-line preserved) so an
+                # operator reviewing the site log can see what actually ran — not
+                # just the first 100 chars of line 1.
                 detail = f'Cortex: {tool_name}'
-                if tool_name in ('run_command', 'run_powershell') and 'command' in tool_params:
+                if tool_name == 'run_command' and 'command' in tool_params:
                     cmd = tool_params['command']
                     if len(cmd) > 100:
                         cmd = cmd[:100] + '...'
                     detail += f' — {cmd}'
-                elif tool_name == 'execute_script' and 'script' in tool_params:
-                    script = tool_params['script']
-                    first_line = script.split('\n', 1)[0]
-                    if len(first_line) > 100:
-                        first_line = first_line[:100] + '...'
-                    detail += f' — {first_line}'
+                elif tool_name in ('run_powershell', 'execute_script') and 'script' in tool_params:
+                    # Scripts get 500 chars (vs 100 for one-liner commands) because
+                    # multi-line PowerShell/Python bodies are only interpretable in
+                    # context — a first-line truncation would hide what actually ran.
+                    script = tool_params.get('script') or ''
+                    preview = script[:500]
+                    if len(script) > 500:
+                        preview += '...'
+                    detail += f'\n{preview}'
                 elif tool_name == 'write_file' and 'path' in tool_params:
                     detail += f' — {tool_params["path"]}'
                 self.firebase_client.log_event(

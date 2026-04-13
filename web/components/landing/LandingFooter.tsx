@@ -59,7 +59,7 @@ export function LandingFooter() {
             <span>in california</span>
             <span className="mx-1 sm:mx-2">&middot;</span>
             <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
-              AGPL-3.0
+              FSL-1.1-Apache-2.0
             </a>
           </p>
         </div>

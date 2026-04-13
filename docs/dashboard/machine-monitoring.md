@@ -121,6 +121,21 @@ Click a process to open the [Process Dialog](process-management.md) for manageme
 
 ---
 
+## reboot countdown & cancel
+
+When a reboot or shutdown is scheduled (from the dashboard, from Cortex, or via the Tier 3 `reboot_machine` / `shutdown_machine` tools), the machine card displays a red pulsing **MM:SS** countdown timer in place of its normal status indicator. This gives the operator a visible, unambiguous window in which to abort.
+
+### timing
+
+- The shutdown command is scheduled with a **30-second delay** so running processes can flush state.
+- The **Cancel** button on the machine card is the full-dashboard equivalent of the `cancel_reboot` tool — clicking it revokes the pending shutdown via Firestore and the agent aborts before issuing `shutdown /r`.
+- For the first **5 seconds** after a reboot is scheduled, the Cancel button is deliberately non-clickable (a safety delay) to prevent reflexive misclicks from racing the command's own round-trip to the agent. After 5 seconds the button becomes active for the remaining window.
+- Once the countdown expires the machine card flips to a "rebooting…" state and the cancel path closes — at that point only the OS can be interrupted, and only physically.
+
+This behaviour was introduced in v2.6.2 (commit `52e1ed8`) and replaces the older fire-and-forget reboot UX.
+
+---
+
 ## machine information
 
 Each machine reports additional details:

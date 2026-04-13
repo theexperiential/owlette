@@ -22,6 +22,7 @@ import {
   resolveLlmConfig,
   verifyUserSiteAccess,
   isMachineOnline,
+  isCortexEnabled,
   getOnlineMachines,
   buildExecutableTools,
 } from '@/lib/cortex-utils.server';
@@ -155,6 +156,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: `Machine "${machineName || machineId}" appears to be offline.` },
         { status: 503 },
+      );
+    }
+
+    const cortexEnabled = await isCortexEnabled(db, siteId, machineId);
+    if (!cortexEnabled) {
+      return NextResponse.json(
+        { error: `Cortex is disabled on "${machineName || machineId}". Re-enable it from the Cortex header to deliver tool calls.` },
+        { status: 423 },
       );
     }
 

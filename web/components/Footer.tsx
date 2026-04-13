@@ -78,7 +78,7 @@ export function Footer() {
             rel="noopener noreferrer"
             className="hover:text-muted-foreground transition-colors"
           >
-            source (AGPL-3.0)
+            source (FSL-1.1-Apache-2.0)
           </Link>
         </p>
       </div>

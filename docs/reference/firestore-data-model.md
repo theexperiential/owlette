@@ -85,6 +85,7 @@ Agent heartbeat — updated at an adaptive interval (5s / 30s / 120s depending o
 | `lastHeartbeat` | timestamp | Last heartbeat time (server timestamp) |
 | `agent_version` | string | Agent version (e.g., "2.1.8") |
 | `os` | string | OS description (e.g., "Windows 11 Pro 10.0.22631") |
+| `cortexEnabled` | boolean | Per-machine Cortex kill switch. When `false`, web + agent reject all LLM tool-call delivery (manual and autonomous). Absent/`true` = enabled. |
 
 ---
 
@@ -297,9 +298,18 @@ User-scoped API keys for external integrations.
 
 | field | type | description |
 |-------|------|-------------|
-| `temperatureUnit` | string | `"celsius"` or `"fahrenheit"` |
-| `healthAlerts` | boolean | Receive machine offline emails |
-| `processAlerts` | boolean | Receive process crash emails |
+| `temperatureUnit` | string | `"C"` or `"F"` (default: `"C"`) |
+| `timezone` | string | IANA timezone for the user (e.g. `America/New_York`). Default: browser-detected. Used when `timeDisplayMode === "user"` |
+| `timeFormat` | string | `"12h"` or `"24h"` (default: `"12h"`) |
+| `timeDisplayMode` | string | `"user"` / `"machine"` / `"site"` — which timezone actor to render absolute times in (default: `"machine"`). See [Timezones](../dashboard/timezones.md) |
+| `healthAlerts` | boolean | Receive machine offline emails (default: `true`) |
+| `processAlerts` | boolean | Receive process crash emails (default: `true`) |
+| `thresholdAlerts` | boolean | Receive emails when health metrics exceed thresholds (default: `true`) |
+| `cortexAlerts` | boolean | Receive emails when Cortex escalates unresolved issues (default: `true`) |
+| `mutedMachines` | string[] | Machine IDs to suppress all alerts for (default: `[]`) |
+| `alertCcEmails` | string[] | Additional CC recipients for alert emails (default: `[]`) |
+| `statsExpanded` | boolean | Whether stats section is expanded in card view (default: `false`) |
+| `processesExpanded` | boolean | Whether process list is expanded in card view (default: `false`) |
 
 ### users/{userId}/settings/llm
 

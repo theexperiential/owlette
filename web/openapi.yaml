@@ -58,8 +58,8 @@ info:
     | Production  | `https://owlette.app` |
     | Development | `https://dev.owlette.app` |
   license:
-    name: AGPL-3.0
-    url: https://www.gnu.org/licenses/agpl-3.0.html
+    name: FSL-1.1-Apache-2.0
+    url: https://fsl.software/FSL-1.1-Apache-2.0.template.md
   contact:
     name: Owlette Support
 

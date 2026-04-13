@@ -30,6 +30,7 @@ import { getToolsByTier, EXISTING_COMMAND_MAPPINGS, type McpToolDefinition } fro
 import {
   resolveLlmConfig,
   isMachineOnline,
+  isCortexEnabled,
   executeToolOnAgent,
   executeExistingCommand,
 } from '@/lib/cortex-utils.server';
@@ -257,6 +258,28 @@ async function runAutonomousInvestigation(
       }
 
       console.log(`[cortex/autonomous] ${eventId}: escalated (machine offline)`);
+      return;
+    }
+
+    // Respect the per-machine Cortex kill switch — skip autonomous investigation
+    // but still escalate so operators aren't left in the dark.
+    const cortexEnabled = await isCortexEnabled(db, siteId, machineId);
+    if (!cortexEnabled) {
+      await eventRef.update({
+        status: 'escalated',
+        summary: 'Cortex disabled on this machine — autonomous investigation skipped',
+        resolvedAt: Timestamp.now(),
+        durationMs: Date.now() - startTime,
+      });
+
+      if (settings.escalationEmail !== false) {
+        await escalate(
+          siteId, eventId, machineName, processName,
+          `Cortex is disabled on "${machineName}". Process "${processName}" ${eventType === 'process_start_failed' ? 'failed to start' : 'crashed'} but autonomous investigation was skipped because the kill switch is engaged.\n\nError: ${errorMessage}`
+        );
+      }
+
+      console.log(`[cortex/autonomous] ${eventId}: escalated (cortex disabled)`);
       return;
     }
 

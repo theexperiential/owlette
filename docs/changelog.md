@@ -11,6 +11,26 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.8.0] - 2026-04-12
+
+### added
+- **Per-machine Cortex kill switch** — operators can toggle Cortex off on a specific machine from the Cortex header (`CortexPowerToggle`). The agent reads the `cortexEnabled` flag before every poll and, when disabled, rejects pending messages with a clear error back to the web UI instead of executing tool calls. Firestore security rules were extended to allow dashboard writes to `cortexEnabled` without granting write access to agent-only fields (`online`, `lastHeartbeat`).
+- **Profile photo upload/remove** — users can upload an avatar from account settings (`AccountSettingsDialog`). Photos are stored in Firebase Storage at `users/{uid}/avatar.jpg` and surfaced throughout the UI via the new `UserAvatar` component (Cortex chat bubbles, page header). New `storage.rules` grant each user read/write access to their own avatar path only.
+- **Copy-message button in Cortex chat** — hover-revealed `CopyButton` on each chat bubble copies the full message text (cortex or user) to the clipboard.
+- **Cortex suggested-question additions** and new `docs/dashboard/timezones.md` reference page.
+
+### changed
+- **Relicensed from AGPL-3.0 to FSL-1.1-Apache-2.0** (Functional Source License, Version 1.1, Apache 2.0 Future License). Self-hosting, internal use, non-commercial use, and professional services remain freely permitted; only competing commercial products or services are restricted. Each release automatically converts to Apache License 2.0 two years after it is made available. Copyright holder is The Experiential Company.
+- Updated license references across web dashboard footers, landing page, terms page, OpenAPI spec, docs site footer, agent GUI, and repository README to reflect the new license.
+- **`run_powershell` allow-list removed** — the first-token regex was security theater (a semicolon-prefixed `Get-Date; Remove-Item` bypassed it trivially) and caused constant false rejections on legitimate multi-statement scripts (`foreach`, `if`, `try`, `$var = ...`). Accountability now comes from the Firestore audit trail (`cortex-events` + site logs) and the `[MCP-AUDIT]` local log, which captures a 500-char preview of every script. `run_command` retains its binary allow-list.
+- **Tier 3 audit previews expanded from 100 → 500 chars for script-bearing tools** (`run_powershell`, `execute_script`). One-line commands still truncate at 100. Multi-line PowerShell/Python bodies are now actually readable in the site log instead of showing only the first line.
+- **`mcp_tool_call` exempted from the per-type command rate limit.** Cortex fires tool calls in parallel by design and is already authenticated + audit-logged per call; a 5-second throttle broke parallel queries. Other command types remain rate-limited.
+- **`get_event_logs_filtered` wrapped in `try`/`catch`** — "no matching events" now returns `[]` cleanly instead of surfacing as a non-zero exit with empty stderr.
+- **`sync-versions.js`** now updates the shields.io README version badge, the "Current" lines in `docs/internal/version-management.md`, and "Last Updated" date stamps automatically.
+
+### fixed
+- **`_get_agent_health` MCP tool** was calling a `HealthProbe()` API that no longer existed; rewired to the current `HealthProbe(config_path, api_base).run()` shape and now returns `status`, `error_code`, `error_message`, `checked_at`, and `checks` alongside version/hostname/uptime.
+
 ## [2.7.0] - 2026-04-11
 
 ### added

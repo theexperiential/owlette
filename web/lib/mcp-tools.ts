@@ -805,7 +805,7 @@ const tier3Tools: McpToolDefinition[] = [
   },
   {
     name: 'run_powershell',
-    description: 'Execute a PowerShell command on the remote machine. The first cmdlet must be in the allow-list (e.g., Get-Process, Get-Service). Returns stdout, stderr, and exit code. Set user_session=true to run in the logged-in user\'s desktop session.',
+    description: 'Execute a PowerShell command on the remote machine. Accepts arbitrary PowerShell — every call is audit-logged to the site events feed. Use this for quick one-shot reads and small scripts with the fixed 25s timeout. For long-running work, custom timeouts, or process-tree cleanup, use execute_script. Returns stdout, stderr, and exit code. Set user_session=true to run in the logged-in user\'s desktop session.',
     tier: 3,
     parameters: {
       type: 'object',

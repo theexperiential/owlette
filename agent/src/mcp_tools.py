@@ -26,15 +26,17 @@ import shared_utils
 
 logger = logging.getLogger(__name__)
 
-# Default allow-list for run_command / run_powershell
+# Default allow-list for run_command (used with .exe binaries, strict by design).
+# NOTE: run_powershell no longer uses this — it executes arbitrary PowerShell and
+# relies on the Firestore audit trail (see owlette_service._log_cortex_tool) plus
+# the [MCP-AUDIT] local log for accountability. The first-token regex that used
+# to live here was security theater — a semicolon-prefixed `Get-Date; Remove-Item`
+# bypassed it trivially, and real scripts (foreach, if, try, $var = ...) triggered
+# constant false rejections.
 DEFAULT_ALLOWED_COMMANDS = [
     'ipconfig', 'systeminfo', 'hostname', 'whoami', 'tasklist',
     'netstat', 'ping', 'tracert', 'nslookup', 'dir', 'type',
     'echo', 'set', 'ver', 'wmic', 'sc', 'net', 'reg', 'nvidia-smi', 'dxdiag',
-    'Get-Process', 'Get-Service', 'Get-EventLog', 'Get-WinEvent',
-    'Get-NetAdapter', 'Get-NetIPAddress', 'Get-Disk', 'Get-Volume',
-    'Get-ComputerInfo', 'Get-HotFix', 'Test-Connection',
-    'Get-ChildItem', 'Get-Content', 'Get-ItemProperty',
 ]
 
 # Maximum output size returned from commands (characters)
@@ -729,14 +731,21 @@ def _get_agent_logs(params, config):
 
 def _get_agent_health(params, config):
     """Get agent health and connection status."""
+    del params, config  # unused
     from health_probe import HealthProbe
 
-    probe = HealthProbe()
-    health = probe.check()
+    api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
+    state = HealthProbe(
+        config_path=shared_utils.CONFIG_PATH,
+        api_base=api_base,
+    ).run()
 
     return {
-        'status': health.get('status', 'unknown'),
-        'checks': health.get('checks', {}),
+        'status': state.status,
+        'error_code': state.error_code,
+        'error_message': state.error_message,
+        'checked_at': state.checked_at,
+        'checks': state.probe_results,
         'version': shared_utils.get_app_version(),
         'hostname': socket.gethostname(),
         'uptime_seconds': int(time.time() - psutil.boot_time()),
@@ -800,20 +809,23 @@ def _run_command(params, config):
 
 
 def _run_powershell(params, config):
-    """Execute a PowerShell command (validated against allow-list)."""
+    """Execute a PowerShell command. No allow-list — accountability comes from
+    the Firestore audit trail (site logs / cortex-events) and the [MCP-AUDIT]
+    local log. For novel/long-running scripts with configurable timeouts and
+    process-tree cleanup, prefer execute_script.
+    """
+    del config  # unused
     script = params.get('script', '').strip()
     if not script:
         return {'error': 'script parameter is required'}
 
-    # Validate the first command/cmdlet against allow-list
-    allowed = _get_allowed_commands(config)
-    # Extract first token (cmdlet name)
-    first_token = script.split()[0].rstrip(';') if script else ''
-
-    if not any(first_token.lower() == a.lower() for a in allowed):
-        return {
-            'error': f"Command '{first_token}' is not in the allow-list. Allowed: {', '.join(sorted(set(a.lower() for a in allowed)))}",
-        }
+    # Audit log: capture a script preview, not just length. The first ~500 chars
+    # are enough to identify the command and its first few operations while
+    # keeping log rotation manageable. Newlines rendered as literal `\n` so a
+    # real PowerShell pipe (`|`) isn't confused with a line break.
+    _preview = script[:500].replace('\r\n', '\n').replace('\n', '\\n')
+    _truncated = '...' if len(script) > 500 else ''
+    logger.info(f"[MCP-AUDIT] run_powershell ({len(script)} chars): {_preview}{_truncated}")
 
     try:
         result = subprocess.run(
@@ -2247,14 +2259,22 @@ def _get_event_logs_filtered(params, config):
         filter_parts.append(f"ProviderName='{pn}'")
 
     hash_table = '@{' + '; '.join(filter_parts) + '}'
+    # Wrap Get-WinEvent in try/catch so "no matching events" returns [] instead of
+    # surfacing as a non-zero exit with empty stderr. Real errors still propagate.
     ps = (
-        f'Get-WinEvent -FilterHashtable {hash_table} -MaxEvents {max_events} -ErrorAction SilentlyContinue | '
+        'try { '
+        f'Get-WinEvent -FilterHashtable {hash_table} -MaxEvents {max_events} -ErrorAction Stop | '
         'Select-Object TimeCreated,Id,Level,LevelDisplayName,ProviderName,Message | '
-        'ConvertTo-Json -Depth 3 -Compress'
+        'ConvertTo-Json -Depth 3 -Compress '
+        '} catch [Exception] { '
+        'if ($_.FullyQualifiedErrorId -like "NoMatchingEventsFound*") { "[]" } '
+        'else { Write-Error $_.Exception.Message; exit 1 } '
+        '}'
     )
     rc, out, err = _run_powershell_script(ps, timeout=60)
-    if rc != 0 and not out.strip():
-        return {'error': f'event query failed: {err or out}'}
+    if rc != 0:
+        msg = (err or out).strip() or 'unknown error (empty stderr)'
+        return {'error': f'event query failed (rc={rc}): {msg}'}
     try:
         events = json.loads(out) if out.strip() else []
         if not isinstance(events, list):

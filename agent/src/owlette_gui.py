@@ -366,7 +366,7 @@ class OwletteConfigApp:
         )
         self.overflow_button.pack(side='left', padx=(0, 10))
 
-        self.version_label = ctk.CTkLabel(self.footer_right, text=f"v{shared_utils.APP_VERSION} | AGPL-3.0", fg_color='transparent', text_color=shared_utils.TEXT_COLOR, font=("", 11))
+        self.version_label = ctk.CTkLabel(self.footer_right, text=f"v{shared_utils.APP_VERSION} | FSL-1.1-Apache-2.0", fg_color='transparent', text_color=shared_utils.TEXT_COLOR, font=("", 11))
         self.version_label.pack(side='left')
 
         # VERTICAL SEPARATOR between panels

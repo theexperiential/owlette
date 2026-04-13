@@ -6,8 +6,8 @@
 
 ### ai-powered fleet management for Windows applications
 
-[![Version](https://img.shields.io/badge/version-2.4.1-blue)](https://github.com/theexperiential/Owlette/releases)
-[![License](https://img.shields.io/badge/license-AGPL--3.0-green)](LICENSE)
+[![Version](https://img.shields.io/badge/version-2.8.0-blue)](https://github.com/theexperiential/Owlette/releases)
+[![License](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)](https://owlette.app)
 
 [live app](https://owlette.app) &nbsp;&bull;&nbsp; [documentation](https://theexperiential.github.io/owlette/) &nbsp;&bull;&nbsp; [download agent](https://owlette.app/download)
@@ -156,4 +156,4 @@ contributions are welcome! please open an issue or submit a pull request.
 
 ## license
 
-this project is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). if you run a modified version of owlette as a network service, you must make your source code available to users of that service.
+this project is licensed under the [Functional Source License, Version 1.1, Apache 2.0 Future License](LICENSE) (FSL-1.1-Apache-2.0). you may freely use, modify, and self-host owlette for any purpose other than a competing commercial product or service. two years after each release, that version automatically converts to Apache License 2.0.

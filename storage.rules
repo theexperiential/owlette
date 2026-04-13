@@ -46,6 +46,22 @@ service firebase.storage {
     }
 
     // ============================================
+    // User Avatars - Authenticated Read, Owner Write
+    // ============================================
+
+    match /users/{userId}/avatar.{ext} {
+      // Any authenticated user can view avatars (displayed across the dashboard/cortex)
+      allow read: if request.auth != null;
+
+      // Only the owning user can upload/delete; max 1 MB, images only
+      allow write, delete: if request.auth != null
+        && request.auth.uid == userId
+        && (request.resource == null
+            || (request.resource.size < 1 * 1024 * 1024
+                && request.resource.contentType.matches('image/.*')));
+    }
+
+    // ============================================
     // All Other Files - Deny by Default
     // ============================================
 

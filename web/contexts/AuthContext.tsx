@@ -16,7 +16,8 @@ import {
   deleteUser,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot, collection, getDocs, writeBatch } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
+import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { auth, db, storage } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { toast } from 'sonner';
@@ -114,6 +115,7 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   updateUserProfile: (firstName: string, lastName: string) => Promise<void>;
+  updateUserPhoto: (photoBlob: Blob | null) => Promise<void>;
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   updateUserPreferences: (preferences: Partial<UserPreferences>, options?: { silent?: boolean }) => Promise<void>;
   updateLastSite: (siteId: string) => void;
@@ -137,6 +139,7 @@ const AuthContext = createContext<AuthContextType>({
   signInWithGoogle: async () => {},
   signOut: async () => {},
   updateUserProfile: async () => {},
+  updateUserPhoto: async () => {},
   updatePassword: async () => {},
   updateUserPreferences: async () => {},
   updateLastSite: () => {},
@@ -546,6 +549,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateUserPhoto = async (photoBlob: Blob | null) => {
+    try {
+      if (!auth?.currentUser) {
+        throw new Error('No user is currently signed in.');
+      }
+      if (!storage) {
+        throw new Error('Storage is not initialized.');
+      }
+
+      const uid = auth.currentUser.uid;
+      const avatarRef = storageRef(storage, `users/${uid}/avatar.jpg`);
+
+      if (photoBlob) {
+        await uploadBytes(avatarRef, photoBlob, { contentType: 'image/jpeg' });
+        const downloadUrl = await getDownloadURL(avatarRef);
+        await updateProfile(auth.currentUser, { photoURL: downloadUrl });
+      } else {
+        // Remove: best-effort delete the object, then clear photoURL
+        try {
+          await deleteObject(avatarRef);
+        } catch (err: unknown) {
+          // Object may not exist — only re-throw unexpected errors
+          const code = (err as { code?: string } | null)?.code;
+          if (code !== 'storage/object-not-found') {
+            throw err;
+          }
+        }
+        await updateProfile(auth.currentUser, { photoURL: '' });
+      }
+
+      setUser({ ...auth.currentUser });
+
+      toast.success(photoBlob ? 'Photo Updated' : 'Photo Removed', {
+        description: photoBlob
+          ? 'Your profile photo has been updated.'
+          : 'Your profile photo has been removed.',
+      });
+    } catch (error: unknown) {
+      const friendlyMessage = handleError(error);
+      toast.error('Photo Update Failed', {
+        description: friendlyMessage,
+      });
+      throw error;
+    }
+  };
+
   const updateUserPreferences = async (preferences: Partial<UserPreferences>, options?: { silent?: boolean }) => {
     try {
       if (!auth?.currentUser || !db) {
@@ -781,12 +830,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signInWithGoogle,
     signOut,
     updateUserProfile,
+    updateUserPhoto,
     updatePassword,
     updateUserPreferences,
     updateLastSite,
     updateLastMachine,
     deleteAccount,
-  }), [user, loading, role, isAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, passkeyEnrolled, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updatePassword, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
+  }), [user, loading, role, isAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, passkeyEnrolled, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

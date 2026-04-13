@@ -16,6 +16,7 @@ import { db } from '@/lib/firebase';
 import { ChatWindow } from './components/ChatWindow';
 import { ChatInput } from './components/ChatInput';
 import { MachineSelector, SITE_TARGET_ID } from './components/MachineSelector';
+import { CortexPowerToggle } from './components/CortexPowerToggle';
 
 function timeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -484,6 +485,12 @@ export default function CortexPage() {
               <span className="text-xs text-yellow-500">
                 no machines online — tool calls will not be delivered
               </span>
+            )}
+
+            {!isSiteMode && selectedMachine && (
+              <div className="ml-auto">
+                <CortexPowerToggle siteId={currentSiteId} machine={selectedMachine} />
+              </div>
             )}
           </div>
 

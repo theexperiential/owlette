@@ -147,6 +147,27 @@ export async function isMachineOnline(
 }
 
 /**
+ * Check whether Cortex tool-call delivery is enabled for a machine.
+ * Defaults to true when the field is absent (backwards-compatible).
+ */
+export async function isCortexEnabled(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  machineId: string
+): Promise<boolean> {
+  const machineDoc = await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('machines')
+    .doc(machineId)
+    .get();
+
+  if (!machineDoc.exists) return true;
+
+  return machineDoc.data()?.cortexEnabled !== false;
+}
+
+/**
  * Get all online machines for a site.
  */
 export async function getOnlineMachines(

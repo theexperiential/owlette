@@ -4,8 +4,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { type UIMessage } from 'ai';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Brain, User, X } from 'lucide-react';
+import { Brain, X } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserAvatar } from '@/components/UserAvatar';
 import { ToolCallCard } from './ToolCallCard';
+import { CopyButton } from './CopyButton';
 import { SynapticIndicator } from './SynapticIndicator';
 import { getRandomSuggestions } from '../data/suggestedQuestions';
 
@@ -17,6 +20,7 @@ interface ChatWindowProps {
 }
 
 export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
+  const { user } = useAuth();
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isUserScrolledUp = useRef(false);
@@ -111,13 +115,11 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
       )}
 
       {messages.map((message) => (
-        <div key={message.id} className="flex gap-3 max-w-3xl mx-auto">
+        <div key={message.id} className="group flex gap-3 max-w-3xl mx-auto">
           {/* Avatar */}
-          <div className="flex-shrink-0 mt-1">
+          <div className="flex-shrink-0">
             {message.role === 'user' ? (
-              <div className="h-7 w-7 rounded-full bg-accent-cyan flex items-center justify-center">
-                <User className="h-4 w-4 text-gray-900" />
-              </div>
+              <UserAvatar user={user} size="sm" />
             ) : (
               <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
                 <Brain className="h-4 w-4 text-foreground" />
@@ -127,8 +129,21 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
 
           {/* Content */}
           <div className="flex-1 min-w-0">
-            <div className="text-xs text-muted-foreground mb-1">
-              {message.role === 'user' ? 'you' : 'cortex'}
+            <div className="flex items-center gap-2 h-7 text-xs text-muted-foreground mb-1">
+              <span>{message.role === 'user' ? 'you' : 'cortex'}</span>
+              {(() => {
+                const fullText = message.parts
+                  .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+                  .map((p) => p.text)
+                  .join('\n\n')
+                  .trim();
+                return fullText.length > 0 ? (
+                  <CopyButton
+                    value={fullText}
+                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-cyan focus-visible:outline-offset-2 rounded-sm transition-opacity"
+                  />
+                ) : null;
+              })()}
             </div>
 
             {/* Render parts (text + images + tool calls) */}

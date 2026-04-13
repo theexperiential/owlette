@@ -53,9 +53,13 @@ class CortexFirestore:
     def poll_for_messages(self) -> Optional[Dict[str, Any]]:
         """Check active-chat doc for a pending message.
 
+        Authoritative enforcement of the per-machine `cortexEnabled` kill switch:
+        if an operator has toggled Cortex off on this machine, surface an error
+        back to the web UI and drop the pending message without executing tools.
+
         Returns:
             Message dict with 'content', 'chatId', 'messages' if pending,
-            or None if no pending message.
+            or None if no pending message (or Cortex is disabled).
         """
         try:
             doc = self.db.get_document(self._active_chat_path, _suppress_logging=True)
@@ -63,6 +67,13 @@ class CortexFirestore:
                 return None
 
             if doc.get('status') != 'pending':
+                return None
+
+            if not self._is_cortex_enabled():
+                logger.info("Rejecting pending Cortex message: cortexEnabled=false")
+                self.write_error_response(
+                    "Cortex is disabled on this machine. Re-enable it from the Cortex header to deliver tool calls."
+                )
                 return None
 
             result: Dict[str, Any] = {
@@ -79,6 +90,17 @@ class CortexFirestore:
         except Exception as e:
             logger.debug(f"Error polling for messages: {e}")
             return None
+
+    def _is_cortex_enabled(self) -> bool:
+        """Read the per-machine Cortex kill switch. Defaults to enabled."""
+        try:
+            machine_doc = self.db.get_document(self._machine_path, _suppress_logging=True)
+            if not machine_doc:
+                return True
+            return machine_doc.get('cortexEnabled') is not False
+        except Exception as e:
+            logger.debug(f"Error reading cortexEnabled flag: {e}")
+            return True
 
     def set_status(self, status: str):
         """Update the active-chat status field.

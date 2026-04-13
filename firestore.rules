@@ -129,11 +129,12 @@ service cloud.firestore {
                        agentCanAccessMachine(siteId, machineId);
 
         // Allow web dashboard to update configChangeFlag and mirror launch_mode/schedules
-        // to metrics.processes for real-time UI responsiveness.
-        // configChangeFlag must always be included to distinguish from fake metrics writes.
+        // to metrics.processes for real-time UI responsiveness, or toggle cortexEnabled
+        // to block LLM tool-call delivery without stopping the agent.
+        // At least one user-writable key must be included to distinguish from fake metrics writes.
         // Agent-only fields (online, lastHeartbeat) remain protected.
         allow update: if canAccessSite(siteId) &&
-                         request.resource.data.diff(resource.data).affectedKeys().hasAny(['configChangeFlag']) &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasAny(['configChangeFlag', 'cortexEnabled']) &&
                          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['online', 'lastHeartbeat']);
 
         // Allow agents full write access for metrics, heartbeats, processes

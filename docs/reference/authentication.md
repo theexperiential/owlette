@@ -71,6 +71,29 @@ Agents authenticate using a device code flow with a two-token system. No Firebas
    └── Refresh token: encrypted locally with Fernet AES (machine-bound key)
 ```
 
+### add machine modal (dashboard)
+
+Operators can pair machines without using the installer's browser handoff by clicking the **"+"** button on the dashboard header. The `AddMachineButton` modal (see `web/app/dashboard/components/AddMachineButton.tsx`) exposes two tabs:
+
+**Enter Code** — for operators who already have a pairing phrase (e.g. the installer's GUI is showing `silver-compass-drift` on the target machine):
+
+1. Type the three-word phrase into the input
+2. Click **Authorize**
+3. The modal `POST`s to `/api/agent/auth/device-code/authorize` with the current `siteId` — the agent's pending poll sees the authorization and completes pairing
+
+**Generate Code** — for bulk or silent deployments where no one will be at the machine:
+
+1. Click **Generate Pairing Phrase** — the modal calls `POST /api/agent/auth/device-code` then immediately authorizes the returned phrase for the current site (`POST /api/agent/auth/device-code/authorize`)
+2. Copy the pre-authorized phrase, or copy the silent install command, which the modal formats as:
+
+        Owlette-Installer-v{version}.exe /ADD={phrase} /SILENT
+
+3. The phrase expires **10 minutes** after generation. Run the command on each target machine within that window and the agent will pair on first launch — no GUI, no browser.
+
+Both tabs work only while the viewer has write access to the currently-selected site.
+
+---
+
 ### token refresh flow
 
 ```

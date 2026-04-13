@@ -60,10 +60,24 @@ Launched on demand:
 1. Initialize logging (RotatingFileHandler, 10 MB per file, 5 backups)
 2. Upgrade config schema if needed (automatic migration)
 3. Initialize Firebase client (lazy, soft-fail if no credentials)
-4. Recover running processes (adopt PIDs from previous session)
-5. Launch system tray icon as user process
-6. Launch Cortex process as user process (if enabled)
-7. Enter main loop
+4. **Classify the previous session's end** (see below) and emit a warning event if the machine came back up in an unexpected way
+5. Recover running processes (adopt PIDs from previous session)
+6. Launch system tray icon as user process
+7. Launch Cortex process as user process (if enabled)
+8. Enter main loop
+
+### session state classification
+
+On every startup the agent reads `C:\ProgramData\Owlette\tmp\session_state.json` (written continuously by the previous run — alongside `app_states.json` and `reboot_state.json`) and uses the "alive heartbeat" and any recorded shutdown intent to categorise how the last session ended:
+
+| classification | trigger | behavior |
+|----------------|---------|----------|
+| _(silent)_ | Previous session recorded an **Owlette-initiated** reboot/shutdown (scheduled reboot, dashboard command, deploy-triggered reboot) | Startup proceeds without alerts — the reboot was intentional |
+| `external_reboot` | Previous session ended with a **clean shutdown signal** but no Owlette intent (operator restart, Windows Update reboot, shutdown command from another tool) | Warning event emitted so the operator can audit why |
+| `unexpected_reboot` | **No alive heartbeat for long enough to be a reboot**, with no clean shutdown signal (BSOD, power loss, hard reset) | Warning event emitted; the gap is reported |
+| `unexpected_service_restart` | Service-only restart with no shutdown intent (NSSM auto-restart after crash, `taskkill`, OOM) — the OS stayed up but the service died | Warning event emitted distinguishing it from a full reboot |
+
+The classifier depends only on `shared_utils` and stdlib — no Firebase, no logging config — so it is safe to import from any agent context (main loop, metrics thread, signal handler, user-space dialogs). Source: `agent/src/session_state.py`.
 
 ### main loop (every 5 seconds)
 

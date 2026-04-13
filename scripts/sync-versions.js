@@ -28,7 +28,16 @@ const VERSION_FILES = {
 const DOC_FILES = {
   readme: path.join(ROOT, 'README.md'),
   claudemd: path.join(ROOT, '.claude', 'CLAUDE.md'),
+  versionMgmt: path.join(ROOT, 'docs', 'internal', 'version-management.md'),
 };
+
+// Today's date in YYYY-MM-DD (for "Last Updated" fields)
+function todayISO() {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
 
 // Read version from file
 function readVersion(file) {
@@ -51,15 +60,41 @@ function writeVersion(file, version) {
 }
 
 // Update version in documentation file
-function updateDocVersion(file, version) {
+// oldVersion is the previous product version — needed to precisely target
+// lines like "**Current:** X.Y.Z" without touching independent versions (e.g. firestore rules).
+function updateDocVersion(file, version, oldVersion) {
   let content = fs.readFileSync(file, 'utf8');
   let updated = false;
 
   if (file === DOC_FILES.readme) {
-    // Update README.md: **Version X.Y.Z** - A modern...
+    // Update README.md shields.io version badge: version-X.Y.Z-blue
+    const badgePattern = /(img\.shields\.io\/badge\/version-)\d+\.\d+\.\d+(-[a-z]+\))/;
+    if (badgePattern.test(content)) {
+      content = content.replace(badgePattern, `$1${version}$2`);
+      updated = true;
+    }
+
+    // Also handle legacy **Version X.Y.Z** format if present
     const readmePattern = /\*\*Version \d+\.\d+\.\d+\*\*/;
     if (readmePattern.test(content)) {
       content = content.replace(readmePattern, `**Version ${version}**`);
+      updated = true;
+    }
+  } else if (file === DOC_FILES.versionMgmt) {
+    // Update product/agent/web "Current: X.Y.Z" entries (skip firestore rules — independent)
+    // The file has 3 "**Current:** X.Y.Z" lines for product/agent/web, and one for firestore rules (2.2.0).
+    // We replace only those matching the previous product version to avoid touching firestore rules.
+    const escapedPrev = oldVersion.replace(/\./g, '\\.');
+    const currentPattern = new RegExp(`\\*\\*Current:\\*\\* ${escapedPrev}`, 'g');
+    if (currentPattern.test(content)) {
+      content = content.replace(currentPattern, `**Current:** ${version}`);
+      updated = true;
+    }
+
+    // Update trailing "Last Updated" line (supports **Last Updated:** or **Last Updated**:)
+    const lastUpdatedPattern = /\*\*Last Updated:?\*\*:? \d{4}-\d{2}-\d{2}/;
+    if (lastUpdatedPattern.test(content)) {
+      content = content.replace(lastUpdatedPattern, `**Last Updated:** ${todayISO()}`);
       updated = true;
     }
   } else if (file === DOC_FILES.claudemd) {
@@ -83,7 +118,14 @@ function updateDocVersion(file, version) {
       updated = true;
     }
 
-    // 3. Update: **Current Version**: X.Y.Z (November...)
+    // 3. Update trailing "Last Updated" line
+    const lastUpdatedPattern = /\*\*Last Updated\*\*: \d{4}-\d{2}-\d{2}/;
+    if (lastUpdatedPattern.test(content)) {
+      content = content.replace(lastUpdatedPattern, `**Last Updated**: ${todayISO()}`);
+      updated = true;
+    }
+
+    // 4. Update: **Current Version**: X.Y.Z (November...)
     const currentVersionPattern = /\*\*Current Version\*\*: \d+\.\d+\.\d+/;
     if (currentVersionPattern.test(content)) {
       // Get current date
@@ -125,7 +167,9 @@ function syncVersions(newVersion) {
     process.exit(1);
   }
 
-  console.log(`\n🔄 Syncing all versions to ${newVersion}...\n`);
+  const oldVersion = readVersion(VERSION_FILES.product);
+
+  console.log(`\n🔄 Syncing all versions to ${newVersion} (was ${oldVersion})...\n`);
 
   writeVersion(VERSION_FILES.product, newVersion);
   console.log(`  ✅ Updated /VERSION → ${newVersion}`);
@@ -137,12 +181,16 @@ function syncVersions(newVersion) {
   console.log(`  ✅ Updated web/package.json → ${newVersion}`);
 
   // Update documentation files
-  if (updateDocVersion(DOC_FILES.readme, newVersion)) {
+  if (updateDocVersion(DOC_FILES.readme, newVersion, oldVersion)) {
     console.log(`  ✅ Updated README.md → ${newVersion}`);
   }
 
-  if (updateDocVersion(DOC_FILES.claudemd, newVersion)) {
+  if (updateDocVersion(DOC_FILES.claudemd, newVersion, oldVersion)) {
     console.log(`  ✅ Updated .claude/CLAUDE.md → ${newVersion}`);
+  }
+
+  if (updateDocVersion(DOC_FILES.versionMgmt, newVersion, oldVersion)) {
+    console.log(`  ✅ Updated docs/internal/version-management.md → ${newVersion}`);
   }
 
   console.log('\n✨ All versions synced!\n');

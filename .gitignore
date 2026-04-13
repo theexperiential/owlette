@@ -32,6 +32,7 @@ dev/active/
 .claude/.env.local
 .claude/memory/
 .claude/plans/
+.claude/worktrees/
 *.swp
 *.swo
 *~

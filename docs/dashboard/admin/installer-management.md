@@ -65,6 +65,29 @@ Click the download icon next to any version to download it directly from Firebas
 
 ---
 
+## cleanup
+
+Old installer versions accumulate fast during active development. The **Clean Up** button (top of the installers page, next to "Upload New Version") identifies and bulk-deletes superseded patch versions in one click.
+
+### what gets removed
+
+Any version that is **both**:
+
+- Not the newest patch in its `major.minor` series (e.g. `2.5.3` is removed if `2.5.4` or `2.5.9` exists), and
+- Older than the retention window (default: 30 days)
+
+### what gets preserved
+
+- The current **latest** version (even if it's older than the retention window)
+- The **newest patch** for every `major.minor` series — so `2.4.7`, `2.5.9`, `2.6.3`, `2.7.0` all survive even though only `2.7.0` is latest
+- Anything uploaded within the retention window, regardless of whether it's superseded
+
+Clicking **Clean Up** opens a confirmation dialog that lists every version about to be deleted with total reclaimed file size. Deletion is final — each candidate is removed from Firebase Storage and its `installer_metadata` record is deleted.
+
+The button is disabled when there is fewer than 2 versions on record.
+
+---
+
 ## public download button
 
 All users (including non-admins) see a **download button** in the dashboard header:
