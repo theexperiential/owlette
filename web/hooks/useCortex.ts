@@ -50,7 +50,7 @@ export interface ChatConversation {
   updatedAt: Date;
 }
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 40;
 
 interface UseChatOptions {
   siteId: string;

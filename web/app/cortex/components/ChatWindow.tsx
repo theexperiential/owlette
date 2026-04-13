@@ -11,6 +11,14 @@ import { ToolCallCard } from './ToolCallCard';
 import { CopyButton } from './CopyButton';
 import { SynapticIndicator } from './SynapticIndicator';
 import { getRandomSuggestions } from '../data/suggestedQuestions';
+import { YOU_TRANSLATIONS } from '@/lib/dashboardConstants';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+
+function pickYouTranslation(messageId: string) {
+  let hash = 0;
+  for (let i = 0; i < messageId.length; i++) hash = (hash * 31 + messageId.charCodeAt(i)) | 0;
+  return YOU_TRANSLATIONS[Math.abs(hash) % YOU_TRANSLATIONS.length];
+}
 
 interface ChatWindowProps {
   messages: UIMessage[];
@@ -113,7 +121,7 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
         </span>
       </button>
 
-      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
       <div ref={topRef} />
 
       {/* Lightbox overlay */}
@@ -139,40 +147,56 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
         </div>
       )}
 
-      {messages.map((message) => (
-        <div key={message.id} className="group flex gap-3 max-w-3xl mx-auto">
-          {/* Avatar */}
-          <div className="flex-shrink-0">
-            {message.role === 'user' ? (
-              <UserAvatar user={user} size="sm" />
-            ) : (
-              <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
-                <Brain className="h-4 w-4 text-foreground" />
+      {messages.map((message) => {
+        const isUser = message.role === 'user';
+        return (
+        <div key={message.id} className="max-w-3xl mx-auto">
+          <div className={`group flex gap-3 ${isUser ? 'justify-end' : ''}`}>
+            {/* Cortex: avatar + rail column on the left */}
+            {!isUser && (
+              <div className="flex-shrink-0 flex flex-col items-center">
+                <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
+                  <Brain className="h-4 w-4 text-foreground" />
+                </div>
+                <div className="mt-1 flex-1 w-0.5 bg-accent-cyan/25" />
               </div>
             )}
-          </div>
 
-          {/* Content */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 h-7 text-xs text-muted-foreground mb-1">
-              <span>{message.role === 'user' ? 'you' : 'cortex'}</span>
-              {(() => {
-                const fullText = message.parts
-                  .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-                  .map((p) => p.text)
-                  .join('\n\n')
-                  .trim();
-                return fullText.length > 0 ? (
-                  <CopyButton
-                    value={fullText}
-                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-cyan focus-visible:outline-offset-2 rounded-sm transition-opacity"
-                  />
-                ) : null;
-              })()}
-            </div>
+            {/* Content */}
+            <div className={`min-w-0 ${isUser ? 'max-w-[75%]' : 'flex-1'}`}>
+              <div className={`flex items-center gap-2 h-7 text-sm font-semibold text-foreground mb-1 ${isUser ? 'justify-end' : ''}`}>
+                {(() => {
+                  const fullText = message.parts
+                    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+                    .map((p) => p.text)
+                    .join('\n\n')
+                    .trim();
+                  const copyBtn = fullText.length > 0 ? (
+                    <CopyButton
+                      value={fullText}
+                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-cyan focus-visible:outline-offset-2 rounded-sm transition-opacity"
+                    />
+                  ) : null;
+                  const label = isUser ? (() => {
+                    const t = pickYouTranslation(message.id);
+                    return (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="cursor-help">{t.text}</span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>you ({t.language})</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  })() : <span>cortex</span>;
+                  return isUser ? <>{copyBtn}{label}</> : <>{label}{copyBtn}</>;
+                })()}
+              </div>
 
-            {/* Render parts (text + images + tool calls) */}
-            {message.parts.map((part, i) => {
+              <div className={isUser ? 'opacity-80 text-right' : ''}>
+              {/* Render parts (text + images + tool calls) */}
+              {message.parts.map((part, i) => {
               if (part.type === 'text') {
                 return (
                   <div
@@ -226,22 +250,35 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
               }
 
               return null;
-            })}
+              })}
+              </div>
+            </div>
+
+            {/* User: avatar + rail column on the right */}
+            {isUser && (
+              <div className="flex-shrink-0 flex flex-col items-center">
+                <UserAvatar user={user} size="sm" />
+                <div className="mt-1 flex-1 w-0.5 bg-muted-foreground/25" />
+              </div>
+            )}
           </div>
         </div>
-      ))}
+        );
+      })}
 
       {/* Loading indicator */}
       {isLoading && messages[messages.length - 1]?.role === 'user' && (
-        <div className="flex items-center gap-3 max-w-3xl mx-auto">
-          <div className="flex-shrink-0">
-            <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
-              <Brain className="h-4 w-4 text-foreground" />
+        <div className="max-w-3xl mx-auto">
+          <div className="flex items-center gap-3 border-l-2 pl-3 border-accent-cyan/40">
+            <div className="flex-shrink-0">
+              <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
+                <Brain className="h-4 w-4 text-foreground" />
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <SynapticIndicator />
-            thinking...
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <SynapticIndicator />
+              thinking...
+            </div>
           </div>
         </div>
       )}

@@ -118,11 +118,29 @@ export default function CortexPage() {
   }, [chat.error]);
 
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
   const handleNewChat = useCallback((overrides?: { machineId?: string; machineName?: string }) => {
     chat.startNewChat(overrides);
     sidebarScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, [chat]);
+
+  // Infinite scroll: auto-load more conversations when the sentinel scrolls into view
+  const { hasMoreConversations, loadingMore, loadMoreConversations } = chat;
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    const root = sidebarScrollRef.current;
+    if (!sentinel || !root || !hasMoreConversations || loadingMore) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMoreConversations();
+      },
+      { root, rootMargin: '200px 0px' }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMoreConversations, loadingMore, loadMoreConversations]);
 
   // Skip "new conversation" entries — the API requires a title or first message to categorize
   const uncategorizedIds = chat.conversations
@@ -385,7 +403,7 @@ export default function CortexPage() {
                           {group.label}
                         </span>
                         <span className="text-xs text-muted-foreground/40 ml-auto">
-                          {group.conversations.length}
+                          {group.conversations.length}{chat.hasMoreConversations ? '+' : ''}
                         </span>
                       </button>
                       {!isCollapsed && group.conversations.map((convo) => (
@@ -419,20 +437,16 @@ export default function CortexPage() {
                   </div>
                 )}
 
-                {/* Load more */}
+                {/* Infinite scroll sentinel + loading indicator */}
                 {chat.hasMoreConversations && (
-                  <div className="py-2 text-center">
-                    <button
-                      onClick={chat.loadMoreConversations}
-                      disabled={chat.loadingMore}
-                      className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50 inline-flex items-center gap-1"
-                    >
-                      {chat.loadingMore ? (
-                        <><Loader2 className="h-3 w-3 animate-spin" /> loading...</>
-                      ) : (
-                        'load more'
-                      )}
-                    </button>
+                  <div
+                    ref={loadMoreSentinelRef}
+                    className="py-3 flex items-center justify-center"
+                    aria-hidden={!chat.loadingMore}
+                  >
+                    {chat.loadingMore && (
+                      <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50" />
+                    )}
                   </div>
                 )}
               </div>
