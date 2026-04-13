@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { type UIMessage } from 'ai';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Brain, X } from 'lucide-react';
+import { ArrowUp, Brain, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserAvatar } from '@/components/UserAvatar';
 import { ToolCallCard } from './ToolCallCard';
@@ -22,9 +22,11 @@ interface ChatWindowProps {
 export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
   const { user } = useAuth();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isUserScrolledUp = useRef(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
   const suggestions = useMemo(() => getRandomSuggestions(4), []);
 
   const handleScroll = () => {
@@ -33,6 +35,11 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
     // "Near bottom" = within 100px of the bottom edge
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
     isUserScrolledUp.current = !nearBottom;
+    setShowScrollTop(el.scrollTop > 200);
+  };
+
+  const scrollToTop = () => {
+    topRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   useEffect(() => {
@@ -90,7 +97,25 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
   }
 
   return (
-    <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+    <div className="relative flex-1 min-h-0 flex flex-col">
+      {/* Scroll to top button */}
+      <button
+        type="button"
+        onClick={scrollToTop}
+        aria-label="Back to top"
+        className={`absolute top-3 right-4 z-10 flex items-center justify-center h-8 min-w-8 px-2 rounded-full border border-border bg-background/80 backdrop-blur text-muted-foreground hover:text-foreground hover:bg-accent shadow-sm cursor-pointer transition-opacity duration-200 overflow-hidden group/scrolltop ${
+          showScrollTop ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+      >
+        <ArrowUp className="h-4 w-4 flex-shrink-0" />
+        <span className="max-w-0 group-hover/scrolltop:max-w-[120px] group-hover/scrolltop:ml-1.5 overflow-hidden whitespace-nowrap text-xs transition-[max-width,margin] duration-200">
+          back to top
+        </span>
+      </button>
+
+      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div ref={topRef} />
+
       {/* Lightbox overlay */}
       {expandedImage && (
         <div
@@ -222,6 +247,7 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
       )}
 
       <div ref={bottomRef} />
+      </div>
     </div>
   );
 }

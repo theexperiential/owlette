@@ -63,14 +63,14 @@ export function CortexPowerToggle({ siteId, machine }: CortexPowerToggleProps) {
       <ConfirmDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
-        title={enabled ? 'Disable Cortex on this machine?' : 'Enable Cortex on this machine?'}
+        title={enabled ? 'disable cortex on this machine?' : 'enable cortex on this machine?'}
         description={
           enabled
-            ? `Cortex tool calls will be blocked on "${machine.machineId}" until re-enabled. The agent will stay online for monitoring — only LLM-initiated actions (manual and autonomous) are paused.`
-            : `Cortex tool calls will resume on "${machine.machineId}". Both manual chat and autonomous investigations will be able to execute tools on this machine again.`
+            ? `cortex tool calls will be blocked on "${machine.machineId}" until re-enabled. the agent will stay online for monitoring — only LLM-initiated actions (manual and autonomous) are paused.`
+            : `cortex tool calls will resume on "${machine.machineId}". both manual chat and autonomous investigations will be able to execute tools on this machine again.`
         }
-        confirmText={enabled ? 'Disable Cortex' : 'Enable Cortex'}
-        cancelText="Cancel"
+        confirmText={enabled ? 'disable cortex' : 'enable cortex'}
+        cancelText="cancel"
         onConfirm={handleConfirm}
         variant={enabled ? 'destructive' : 'default'}
       />

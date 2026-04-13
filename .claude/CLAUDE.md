@@ -136,6 +136,11 @@ curl -s -X PUT "$BASE_URL/api/admin/installer/upload" \
 - **Never use blocking operations** in the 10-second main service loop — stalls all monitoring
 - **Never spawn reconnection logic** outside `ConnectionManager` — it has circuit breaker and backoff
 
+### UI Copy Style
+- **All user-facing copy is lowercase** — page titles, buttons, dialog headings, labels, descriptions, tooltips, placeholder text, empty-state copy, toasts. Match the voice of the rest of the UI.
+- Exceptions (keep normal casing): proper nouns/product names in external contexts, acronyms (`LLM`, `API`, `URL`, `GPU`, `OAuth`), code identifiers, machine IDs / site IDs / user-entered strings, and legal/compliance text where casing is load-bearing.
+- When adding new copy, default to lowercase. When editing existing strings, match the surrounding casing — don't mix sentence case into a lowercase screen or vice versa.
+
 ### Web Landmines
 - **Never call Firestore directly from components** — use hooks in `web/hooks/`
 - **Never hardcode colors** — use CSS variables / Tailwind theme tokens
