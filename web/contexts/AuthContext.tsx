@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, useMemo } from 'react';
+import { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import {
   User,
   signInWithEmailAndPassword,
@@ -349,9 +349,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   );
 
                   // Don't set loading to false yet - wait for the listener to fire again
-                } catch (firestoreError: any) {
+                } catch (firestoreError: unknown) {
+                  const code = (firestoreError as { code?: string } | null)?.code;
                   console.error('❌ Listener failed to create document:', firestoreError);
-                  console.error('Error code:', firestoreError.code);
+                  console.error('Error code:', code);
                   setRole('user');
                   setUserSites([]);
                   setLoading(false);
@@ -387,7 +388,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = useCallback(async (email: string, password: string) => {
     try {
       if (!auth) {
         const error = new Error('Firebase authentication is not configured. Please check your environment variables.');
@@ -398,16 +399,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       await signInWithEmailAndPassword(auth, email, password);
-    } catch (error: any) {
+    } catch (error: unknown) {
       const friendlyMessage = handleError(error);
       toast.error('Sign In Failed', {
         description: friendlyMessage,
       });
       throw error; // Re-throw so calling component can handle it
     }
-  };
+  }, []);
 
-  const signUp = async (email: string, password: string, firstName?: string, lastName?: string) => {
+  const signUp = useCallback(async (email: string, password: string, firstName?: string, lastName?: string) => {
     try {
       if (!auth || !db) {
         const error = new Error('Firebase authentication is not configured. Please check your environment variables.');
@@ -452,10 +453,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           displayName,
           'email'
         );
-      } catch (firestoreError: any) {
+      } catch (firestoreError: unknown) {
+        const err = firestoreError as { code?: string; message?: string } | null;
         console.error('❌ Failed to create user document:', firestoreError);
-        console.error('Error code:', firestoreError.code);
-        console.error('Error message:', firestoreError.message);
+        console.error('Error code:', err?.code);
+        console.error('Error message:', err?.message);
         // Don't throw - let the user continue even if Firestore fails
         // The onAuthStateChanged listener will retry
       }
@@ -463,16 +465,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       toast.success('Account Created', {
         description: 'Your account has been created successfully. You can now sign in.',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       const friendlyMessage = handleError(error);
       toast.error('Sign Up Failed', {
         description: friendlyMessage,
       });
       throw error; // Re-throw so calling component can handle it
     }
-  };
+  }, []);
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = useCallback(async () => {
     try {
       if (!auth) {
         const error = new Error('Firebase authentication is not configured. Please check your environment variables.');
@@ -484,9 +486,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const code = (error as { code?: string } | null)?.code;
       // Don't show toast for popup closed by user
-      if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         throw error;
       }
 
@@ -496,9 +499,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       throw error; // Re-throw so calling component can handle it
     }
-  };
+  }, []);
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     try {
       if (!auth) {
         const error = new Error('Firebase authentication is not configured.');
@@ -514,16 +517,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       toast.success('Signed Out', {
         description: 'You have been signed out successfully.',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       const friendlyMessage = handleError(error);
       toast.error('Sign Out Failed', {
         description: friendlyMessage,
       });
       throw error; // Re-throw so calling component can handle it
     }
-  };
+  }, []);
 
-  const updateUserProfile = async (firstName: string, lastName: string) => {
+  const updateUserProfile = useCallback(async (firstName: string, lastName: string) => {
     try {
       if (!auth?.currentUser) {
         const error = new Error('No user is currently signed in.');
@@ -551,16 +554,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       toast.success('Profile Updated', {
         description: 'Your profile has been updated successfully.',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       const friendlyMessage = handleError(error);
       toast.error('Update Failed', {
         description: friendlyMessage,
       });
       throw error;
     }
-  };
+  }, []);
 
-  const updateUserPhoto = async (photoBlob: Blob | null) => {
+  const updateUserPhoto = useCallback(async (photoBlob: Blob | null) => {
     try {
       if (!auth?.currentUser) {
         throw new Error('No user is currently signed in.');
@@ -604,9 +607,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       throw error;
     }
-  };
+  }, []);
 
-  const updateUserPreferences = async (preferences: Partial<UserPreferences>, options?: { silent?: boolean }) => {
+  const updateUserPreferences = useCallback(async (preferences: Partial<UserPreferences>, options?: { silent?: boolean }) => {
     try {
       if (!auth?.currentUser || !db) {
         const error = new Error('No user is currently signed in.');
@@ -637,16 +640,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           description: 'Your preferences have been saved successfully.',
         });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const friendlyMessage = handleError(error);
       toast.error('Update Failed', {
         description: friendlyMessage,
       });
       throw error;
     }
-  };
+  }, [userPreferences]);
 
-  const updateLastSite = (siteId: string) => {
+  const updateLastSite = useCallback((siteId: string) => {
     setLastSiteId(siteId);
     // Also keep localStorage for fast same-browser access
     localStorage.setItem('owlette_current_site', siteId);
@@ -657,9 +660,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('Failed to save lastSiteId:', err)
       );
     }
-  };
+  }, []);
 
-  const updateLastMachine = (siteId: string, machineId: string) => {
+  const updateLastMachine = useCallback((siteId: string, machineId: string) => {
     setLastMachineIds((prev) => ({ ...prev, [siteId]: machineId }));
     if (auth?.currentUser && db) {
       const userDocRef = doc(db, 'users', auth.currentUser.uid);
@@ -667,9 +670,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('Failed to save lastMachineId:', err)
       );
     }
-  };
+  }, []);
 
-  const updatePassword = async (currentPassword: string, newPassword: string) => {
+  const updatePassword = useCallback(async (currentPassword: string, newPassword: string) => {
     try {
       if (!auth?.currentUser) {
         const error = new Error('No user is currently signed in.');
@@ -701,13 +704,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       toast.success('Password Updated', {
         description: 'Your password has been updated successfully.',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const code = (error as { code?: string } | null)?.code;
       // Handle specific re-authentication errors
-      if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
         toast.error('Update Failed', {
           description: 'Current password is incorrect.',
         });
-      } else if (error.code === 'auth/weak-password') {
+      } else if (code === 'auth/weak-password') {
         toast.error('Update Failed', {
           description: 'New password is too weak. Please choose a stronger password.',
         });
@@ -719,9 +723,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       throw error;
     }
-  };
+  }, []);
 
-  const deleteAccount = async (password: string) => {
+  const deleteAccount = useCallback(async (password: string) => {
     try {
       if (!auth?.currentUser || !db) {
         const error = new Error('No user is currently signed in.');
@@ -803,13 +807,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       toast.success('Account Deleted', {
         description: 'Your account has been permanently deleted.',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const code = (error as { code?: string } | null)?.code;
       // Handle specific errors
-      if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
         toast.error('Deletion Failed', {
           description: 'Password is incorrect.',
         });
-      } else if (error.code === 'auth/requires-recent-login') {
+      } else if (code === 'auth/requires-recent-login') {
         toast.error('Deletion Failed', {
           description: 'Please sign out and sign in again before deleting your account.',
         });
@@ -821,7 +826,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       throw error;
     }
-  };
+  }, []);
 
   const isAdmin = role === 'admin';
 

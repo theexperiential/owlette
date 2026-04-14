@@ -171,6 +171,10 @@ export function MetricsDetailPanel({
       nextMetrics = persisted.metrics;
       nextNics = persisted.nics;
     }
+    // Reconciling local selection state with external (persisted) selection is
+    // a legitimate sync-external-source case; the guarded setters no-op when
+    // nothing changed so no cascading renders occur.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedMetrics((prev) => (sameStringArray(prev, nextMetrics) ? prev : nextMetrics));
     setSelectedNics((prev) => (sameStringArray(prev, nextNics) ? prev : nextNics));
   }, [machineId, initialMetric, graphTabs, intentKey]);
@@ -232,9 +236,21 @@ export function MetricsDetailPanel({
     }
   };
 
+  // Latch "now" in state so the time domain is a pure function of state.
+  // Refresh on every new data sample (chartData.length) AND on range change
+  // so the right edge tracks wall-clock as new metrics arrive — matches the
+  // behavior of the previous Date.now()-in-render implementation.
+  // setState-in-effect is intentional: Date.now() is impure and can't be called
+  // during render, so we have to sync the external clock here.
+  const [nowTs, setNowTs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNowTs(Date.now());
+  }, [timeRange, chartData.length]);
+
   // Calculate the time domain based on selected range
   const timeDomain = useMemo((): [number, number] => {
-    const now = Date.now();
+    const now = nowTs;
     switch (timeRange) {
       case '1h':
         return [now - 60 * 60 * 1000, now];
@@ -256,7 +272,7 @@ export function MetricsDetailPanel({
       default:
         return [now - 24 * 60 * 60 * 1000, now];
     }
-  }, [timeRange, chartData]);
+  }, [timeRange, chartData, nowTs]);
 
   const availableMetrics: MetricType[] = useMemo(() => {
     const base: MetricType[] = ['cpu', 'memory', 'disk'];

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useLayoutEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites, type LaunchMode, type ScheduleBlock } from '@/hooks/useFirestore';
@@ -135,11 +135,14 @@ export default function DashboardPage() {
   // Per-row expand state for list view
   const [expandedMachineIds, setExpandedMachineIds] = useState<Set<string>>(() => new Set());
 
-  // Sync expanded set when machines change (expand new machines if global pref is expanded)
+  // Sync expanded set when machines change (expand new machines if global pref is expanded).
+  // Depend on machines.length (not `machines`) so we only re-run when the list grows/shrinks,
+  // not on every metrics snapshot that mutates an existing machine's fields.
   useEffect(() => {
     if (userPreferences.processesExpanded) {
       setExpandedMachineIds(new Set(machines.map(m => m.machineId)));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [machines.length, userPreferences.processesExpanded]);
 
   // Remove Machine Dialog state
@@ -358,13 +361,14 @@ export default function DashboardPage() {
     try {
       await killProcess(machineId, processId, processName);
       toast.success(`Kill command sent for "${processName}"`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('confirmKillProcess error:', error);
-      toast.error(error.message || 'Failed to kill process');
+      const msg = error instanceof Error ? error.message : 'Failed to kill process';
+      toast.error(msg);
     }
   };
 
-  const handleSetLaunchMode = async (machineId: string, processId: string, processName: string, mode: 'off' | 'always' | 'scheduled', exePath: string, schedules?: any[] | null, schedulePresetId?: string | null, successMessage?: string) => {
+  const handleSetLaunchMode = async (machineId: string, processId: string, processName: string, mode: 'off' | 'always' | 'scheduled', exePath: string, schedules?: ScheduleBlock[] | null, schedulePresetId?: string | null, successMessage?: string) => {
     // Validate exe_path before enabling
     if (mode !== 'off' && (!exePath || exePath.trim() === '')) {
       toast.error(`cannot enable launch mode for "${processName}": executable path is not set. please edit the process and set a valid executable path.`);
@@ -379,13 +383,14 @@ export default function DashboardPage() {
       await setLaunchMode(machineId, processId, processName, mode, effectiveSchedules, schedulePresetId);
       const modeLabels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
       toast.success(successMessage ?? `Launch mode set to ${modeLabels[mode]} for "${processName}"`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('handleSetLaunchMode error:', error);
-      toast.error(error.message || 'Failed to set launch mode');
+      const msg = error instanceof Error ? error.message : 'Failed to set launch mode';
+      toast.error(msg);
     }
   };
 
-  const openEditProcessDialog = (machineId: string, process: any) => {
+  const openEditProcessDialog = (machineId: string, process: Process) => {
     setProcessDialogMode('edit');
     setEditingMachineId(machineId);
     setEditingProcessId(process.id);
@@ -460,8 +465,9 @@ export default function DashboardPage() {
         toast.success(`Process "${editProcessForm.name}" updated successfully!`);
       }
       setProcessDialogOpen(false);
-    } catch (error: any) {
-      toast.error(error.message || `Failed to ${processDialogMode} process`);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : `Failed to ${processDialogMode} process`;
+      toast.error(msg);
     }
   };
 
@@ -471,8 +477,9 @@ export default function DashboardPage() {
       toast.success(`Process "${editProcessForm.name}" deleted successfully!`);
       setProcessDialogOpen(false);
       setDeleteConfirmOpen(false);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete process');
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Failed to delete process';
+      toast.error(msg);
     }
   };
 
@@ -489,13 +496,15 @@ export default function DashboardPage() {
       toast.success(`Machine "${machineToRemove.name}" removed from site successfully!`);
       setRemoveMachineDialogOpen(false);
       setMachineToRemove(null);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to remove machine');
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Failed to remove machine';
+      toast.error(msg);
     }
   };
 
-  // Read view preference from localStorage before first paint to avoid card→list flash
-  useLayoutEffect(() => {
+  // Read view preference from localStorage after hydration to avoid SSR mismatch.
+  // A lazy initializer would render different HTML on the server vs. client.
+  useEffect(() => {
     const savedView = localStorage.getItem('owlette_view_type');
     if (savedView === 'card' || savedView === 'list') {
       setViewType(savedView);
@@ -508,7 +517,9 @@ export default function DashboardPage() {
     localStorage.setItem('owlette_view_type', view);
   };
 
-  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
+  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback).
+  // setState in effect is intentional: depends on async-loaded `sites` + `lastSiteId`
+  // which aren't available synchronously at mount, so a lazy initializer won't work.
   useEffect(() => {
     if (!sitesLoading && sites.length > 0 && !currentSiteId) {
       const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
