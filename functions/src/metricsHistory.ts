@@ -52,16 +52,56 @@ interface CachedAlertRules {
 const alertRulesCache = new Map<string, CachedAlertRules>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * Resolve scalar fields from either v2 (schemaVersion 2, per-device maps keyed
+ * by id + metrics.primary) or v1 (singular cpu/disk/gpu objects) metrics docs.
+ * The helpers below pick the primary device for aggregates (sparkline/alerts),
+ * falling back to the first entry when `primary` is absent, and finally to the
+ * legacy v1 fields so in-flight docs during rollout still produce samples.
+ */
+function pickPrimaryEntry<T>(
+  map: Record<string, T> | undefined,
+  primaryId: string | null | undefined,
+): T | undefined {
+  if (!map) return undefined;
+  if (primaryId && map[primaryId]) return map[primaryId];
+  const first = Object.values(map)[0];
+  return first;
+}
+
+function v2CpuPercent(m: Record<string, any>): number | undefined {
+  return pickPrimaryEntry<any>(m.cpus, m.primary?.cpu)?.percent ?? m.cpu?.percent;
+}
+function v2CpuTemp(m: Record<string, any>): number | undefined {
+  return pickPrimaryEntry<any>(m.cpus, m.primary?.cpu)?.temperature ?? m.cpu?.temperature;
+}
+function v2DiskPercent(m: Record<string, any>): number | undefined {
+  return pickPrimaryEntry<any>(m.disks, m.primary?.disk)?.percent ?? m.disk?.percent;
+}
+function v2GpuPercent(m: Record<string, any>): number | undefined {
+  const v2 = pickPrimaryEntry<any>(m.gpus, m.primary?.gpu);
+  return v2?.usagePercent ?? m.gpu?.usage_percent;
+}
+function v2GpuTemp(m: Record<string, any>): number | undefined {
+  return pickPrimaryEntry<any>(m.gpus, m.primary?.gpu)?.temperature ?? m.gpu?.temperature;
+}
+function v2Latency(m: Record<string, any>): number | undefined {
+  return m.network?.latencyMs ?? m.network?.latency_ms;
+}
+function v2PacketLoss(m: Record<string, any>): number | undefined {
+  return m.network?.packetLossPct ?? m.network?.packet_loss_pct;
+}
+
 /** Metric name → path into the metrics object from the machine document */
 const METRIC_PATHS: Record<string, (m: Record<string, any>) => number | undefined> = {
-  cpu_percent:        (m) => m.cpu?.percent,
+  cpu_percent:        v2CpuPercent,
   memory_percent:     (m) => m.memory?.percent,
-  disk_percent:       (m) => m.disk?.percent,
-  gpu_percent:        (m) => m.gpu?.usage_percent,
-  cpu_temp:           (m) => m.cpu?.temperature,
-  gpu_temp:           (m) => m.gpu?.temperature,
-  network_latency:    (m) => m.network?.latency_ms,
-  network_packet_loss:(m) => m.network?.packet_loss_pct,
+  disk_percent:       v2DiskPercent,
+  gpu_percent:        v2GpuPercent,
+  cpu_temp:           v2CpuTemp,
+  gpu_temp:           v2GpuTemp,
+  network_latency:    v2Latency,
+  network_packet_loss:v2PacketLoss,
 };
 
 /**
@@ -146,40 +186,54 @@ export const onMetricsWrite = onDocumentWritten(
       console.warn(`Could not check rate limit for ${machineId}:`, err);
     }
 
-    // Build compact sample object
+    // Build compact sample object. Read v2 (per-device maps + primary) with
+    // fallback to v1 singular fields so in-flight docs still produce samples
+    // during the rollout window.
+    const cpuPct = v2CpuPercent(metrics);
+    const memPct = metrics.memory?.percent;
+    const diskPct = v2DiskPercent(metrics);
     const sample: MetricsSample = {
       t: now,
-      c: round(metrics.cpu?.percent ?? 0),
-      m: round(metrics.memory?.percent ?? 0),
-      d: round(metrics.disk?.percent ?? 0),
+      c: round(cpuPct ?? 0),
+      m: round(memPct ?? 0),
+      d: round(diskPct ?? 0),
     };
 
-    // Add optional GPU percent
-    if (metrics.gpu?.usage_percent !== undefined && metrics.gpu.usage_percent !== null) {
-      sample.g = round(metrics.gpu.usage_percent);
-    }
+    const gpuPct = v2GpuPercent(metrics);
+    if (gpuPct !== undefined && gpuPct !== null) sample.g = round(gpuPct);
 
-    // Add optional temperatures
-    if (metrics.cpu?.temperature !== undefined && metrics.cpu.temperature !== null) {
-      sample.ct = round(metrics.cpu.temperature);
-    }
-    if (metrics.gpu?.temperature !== undefined && metrics.gpu.temperature !== null) {
-      sample.gt = round(metrics.gpu.temperature);
-    }
+    const cpuTemp = v2CpuTemp(metrics);
+    if (cpuTemp !== undefined && cpuTemp !== null) sample.ct = round(cpuTemp);
 
-    // Add network quality (gateway ping)
-    if (metrics.network?.latency_ms !== undefined && metrics.network.latency_ms !== null) {
-      sample.nl = round(metrics.network.latency_ms);
-    }
-    if (metrics.network?.packet_loss_pct !== undefined && metrics.network.packet_loss_pct !== null) {
-      sample.np = round(metrics.network.packet_loss_pct);
-    }
+    const gpuTemp = v2GpuTemp(metrics);
+    if (gpuTemp !== undefined && gpuTemp !== null) sample.gt = round(gpuTemp);
 
-    // Add per-NIC network metrics
-    const interfaces = metrics.network?.interfaces;
-    if (interfaces && typeof interfaces === 'object') {
-      const nicEntries: NicSample[] = [];
-      for (const [name, data] of Object.entries(interfaces)) {
+    const latency = v2Latency(metrics);
+    if (latency !== undefined && latency !== null) sample.nl = round(latency);
+
+    const packetLoss = v2PacketLoss(metrics);
+    if (packetLoss !== undefined && packetLoss !== null) sample.np = round(packetLoss);
+
+    // Per-NIC network metrics. v2 doc: metrics.nics[id] = { txBps, rxBps, txUtil, rxUtil }.
+    // v1 fallback: metrics.network.interfaces[id] = { tx_bps, rx_bps, tx_util, rx_util }.
+    const v2Nics = metrics.nics;
+    const v1Nics = metrics.network?.interfaces;
+    const nicEntries: NicSample[] = [];
+    if (v2Nics && typeof v2Nics === 'object') {
+      for (const [name, data] of Object.entries(v2Nics)) {
+        const nic = data as Record<string, number>;
+        if ((nic.txBps ?? 0) > 0 || (nic.rxBps ?? 0) > 0) {
+          nicEntries.push({
+            i: name,
+            tx: Math.round(nic.txBps ?? 0),
+            rx: Math.round(nic.rxBps ?? 0),
+            tu: round(nic.txUtil ?? 0),
+            ru: round(nic.rxUtil ?? 0),
+          });
+        }
+      }
+    } else if (v1Nics && typeof v1Nics === 'object') {
+      for (const [name, data] of Object.entries(v1Nics)) {
         const nic = data as Record<string, number>;
         if ((nic.tx_bps ?? 0) > 0 || (nic.rx_bps ?? 0) > 0) {
           nicEntries.push({
@@ -191,10 +245,8 @@ export const onMetricsWrite = onDocumentWritten(
           });
         }
       }
-      if (nicEntries.length > 0) {
-        sample.n = nicEntries;
-      }
     }
+    if (nicEntries.length > 0) sample.n = nicEntries;
 
     // Use arrayUnion for atomic append without read-modify-write
     try {

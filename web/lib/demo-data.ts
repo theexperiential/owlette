@@ -3,7 +3,22 @@
  * Generates realistic-looking machine data for product screenshots and marketing.
  */
 
-import type { Machine, Process } from '@/hooks/useFirestore';
+import type {
+  Machine,
+  Process,
+  HardwareProfile,
+  CpuProfile,
+  DiskProfile,
+  GpuProfile,
+  NicProfile,
+  CpuMetric,
+  MemoryMetric,
+  DiskMetric,
+  GpuMetric,
+  NicMetric,
+  PrimaryDevices,
+  DeviceEntry,
+} from '@/hooks/useFirestore';
 import type { SparklineDataPoint } from '@/components/charts';
 import type { ChartDataPoint } from '@/hooks/useHistoricalMetrics';
 import type { TimeRange } from '@/components/charts/TimeRangeSelector';
@@ -221,9 +236,193 @@ function buildProcess(def: MachineDef['processes'][number], index: number): Proc
   };
 }
 
+// ── v2 profile/metric synthesis ──────────────────────────────────────
+
+/**
+ * Build a realistic HardwareProfile for a demo machine. Most machines get
+ * 2 disks (C: system, D: data) and 2 NICs (Ethernet, Wi-Fi) so the
+ * dashboard's per-device dropdowns actually appear and tell a good story.
+ * Low-spec kiosks get a single disk and NIC.
+ */
+function buildProfile(def: MachineDef): HardwareProfile {
+  const isLowSpec = def.memTotal <= 16;
+
+  const cpus: CpuProfile[] = [{
+    id: 'CPU0',
+    model: def.cpuName,
+    physicalCores: def.cpuName.includes('i9') || def.cpuName.includes('Ryzen 9') ? 16 : 8,
+    logicalCores: def.cpuName.includes('i9') || def.cpuName.includes('Ryzen 9') ? 24 : 16,
+    socketIndex: 0,
+  }];
+
+  const disks: DiskProfile[] = isLowSpec
+    ? [{ id: 'C:', label: 'System', fs: 'NTFS', totalGb: def.diskTotal }]
+    : [
+        { id: 'C:', label: 'System', fs: 'NTFS', totalGb: Math.round(def.diskTotal * 0.4) },
+        { id: 'D:', label: 'Media', fs: 'NTFS', totalGb: Math.round(def.diskTotal * 0.6) },
+      ];
+
+  const gpus: GpuProfile[] = def.gpu
+    ? [{
+        id: 'GPU0',
+        name: def.gpu.name,
+        vramTotalGb: def.gpu.vramTotal,
+        pciBus: '0000:01:00.0',
+      }]
+    : [];
+
+  const nics: NicProfile[] = isLowSpec
+    ? [{ id: 'Ethernet', mac: '00:1A:2B:3C:4D:5E', linkSpeedMbps: 1000 }]
+    : [
+        { id: 'Ethernet', mac: '00:1A:2B:3C:4D:5E', linkSpeedMbps: 1000 },
+        { id: 'Wi-Fi', mac: '00:1A:2B:3C:4D:5F', linkSpeedMbps: 866 },
+      ];
+
+  return {
+    schemaVersion: 2,
+    signatureHash: `demo-${def.id}-profile-hash`,
+    capturedAt: Date.now() - 30 * 24 * 3600 * 1000,
+    agentVersion: def.agentVersion,
+    cpus,
+    disks,
+    gpus,
+    nics,
+  };
+}
+
+/** Synthesize `devices` the same way `joinMachineDevices` does — since the
+ *  demo page consumes `getDemoMachines()` directly (not via useMachines). */
+function joinDevices(
+  profile: HardwareProfile,
+  metrics: NonNullable<Machine['metrics']>,
+): NonNullable<Machine['devices']> {
+  const buildBucket = <P extends { id: string }, M>(
+    profileList: P[],
+    metricMap: Record<string, M> | undefined,
+  ): DeviceEntry<P, M>[] => {
+    const result: DeviceEntry<P, M>[] = [];
+    const seen = new Set<string>();
+    for (const p of profileList) {
+      const metric = metricMap?.[p.id];
+      result.push({
+        ...p,
+        ...(metric ?? {}),
+        isMissing: !metric,
+        isOrphan: false,
+      } as unknown as DeviceEntry<P, M>);
+      seen.add(p.id);
+    }
+    for (const [id, metric] of Object.entries(metricMap ?? {})) {
+      if (seen.has(id)) continue;
+      result.push({
+        id,
+        ...(metric as M),
+        isMissing: false,
+        isOrphan: true,
+      } as unknown as DeviceEntry<P, M>);
+    }
+    return result;
+  };
+
+  return {
+    cpus: buildBucket<CpuProfile, CpuMetric>(profile.cpus, metrics.cpus),
+    disks: buildBucket<DiskProfile, DiskMetric>(profile.disks, metrics.disks),
+    gpus: buildBucket<GpuProfile, GpuMetric>(profile.gpus, metrics.gpus),
+    nics: buildBucket<NicProfile, NicMetric>(profile.nics, metrics.nics),
+  };
+}
+
 function buildMachine(def: MachineDef): Machine {
   const now = Math.floor(Date.now() / 1000);
   const heartbeatAge = def.online && !def.rebooting ? 15 + Math.floor(Math.random() * 30) : 300;
+
+  const profile = buildProfile(def);
+
+  // ── CPU metrics ──────────────────────────────────────────────────
+  const cpus: Record<string, CpuMetric> = {
+    CPU0: {
+      percent: def.cpuBase + Math.floor(Math.random() * 8),
+      temperature: def.cpuBase > 0 ? 42 + Math.floor(def.cpuBase * 0.4) : null,
+    },
+  };
+
+  // ── Disk metrics ─────────────────────────────────────────────────
+  const disks: Record<string, DiskMetric> = {};
+  for (const d of profile.disks) {
+    // System disk tracks def.diskBase; data disk runs a bit lower.
+    const pct = d.id === 'C:' ? def.diskBase : Math.max(5, def.diskBase - 12);
+    disks[d.id] = {
+      percent: pct,
+      usedGb: +(d.totalGb * (pct / 100)).toFixed(0),
+    };
+  }
+
+  // ── GPU metrics ──────────────────────────────────────────────────
+  const gpus: Record<string, GpuMetric> = {};
+  if (def.gpu) {
+    gpus.GPU0 = {
+      usagePercent: def.gpu.usageBase + Math.floor(Math.random() * 8),
+      vramUsedGb: def.gpu.vramUsed,
+      temperature: 48 + Math.floor(def.gpu.usageBase * 0.35),
+    };
+  }
+
+  // ── NIC metrics ──────────────────────────────────────────────────
+  const nics: Record<string, NicMetric> = {};
+  if (def.network) {
+    // Primary NIC (Ethernet) carries the bulk of traffic.
+    nics['Ethernet'] = {
+      txBps: def.network.txBps,
+      rxBps: def.network.rxBps,
+      txUtil: def.network.txUtil,
+      rxUtil: def.network.rxUtil,
+    };
+    // Secondary Wi-Fi NIC (if profiled) carries light traffic.
+    if (profile.nics.some(n => n.id === 'Wi-Fi')) {
+      nics['Wi-Fi'] = {
+        txBps: Math.round(def.network.txBps * 0.05),
+        rxBps: Math.round(def.network.rxBps * 0.08),
+        txUtil: +(def.network.txUtil * 0.1).toFixed(1),
+        rxUtil: +(def.network.rxUtil * 0.1).toFixed(1),
+      };
+    }
+  }
+
+  // ── Memory ───────────────────────────────────────────────────────
+  const memory: MemoryMetric = {
+    percent: def.memBase + Math.floor(Math.random() * 5),
+    usedGb: +(def.memTotal * (def.memBase / 100)).toFixed(1),
+  };
+
+  // ── Primary device selection (most-active of each kind) ──────────
+  const primary: PrimaryDevices = {
+    cpu: 'CPU0',
+    disk: 'C:',
+    gpu: def.gpu ? 'GPU0' : null,
+    nic: def.network ? 'Ethernet' : null,
+  };
+
+  const metrics: NonNullable<Machine['metrics']> = {
+    schemaVersion: 2,
+    profileHash: profile.signatureHash,
+    timestamp: Date.now(),
+    cpus,
+    memory,
+    disks,
+    gpus,
+    nics,
+    network: def.network
+      ? {
+          latencyMs: def.network.latencyMs,
+          packetLossPct: def.network.packetLoss,
+          gatewayIp: '192.168.1.1',
+        }
+      : {},
+    primary,
+    processes: Object.fromEntries(
+      def.processes.map(p => [p.name, p.status])
+    ),
+  };
 
   return {
     machineId: def.id,
@@ -232,55 +431,9 @@ function buildMachine(def: MachineDef): Machine {
     agent_version: def.agentVersion,
     rebooting: def.rebooting,
     rebootPending: def.rebootPending,
-    metrics: {
-      cpu: {
-        name: def.cpuName,
-        percent: def.cpuBase + Math.floor(Math.random() * 8),
-        unit: '%',
-        temperature: def.cpuBase > 0 ? 42 + Math.floor(def.cpuBase * 0.4) : undefined,
-      },
-      memory: {
-        percent: def.memBase + Math.floor(Math.random() * 5),
-        total_gb: def.memTotal,
-        used_gb: +(def.memTotal * (def.memBase / 100)).toFixed(1),
-        unit: '%',
-      },
-      disk: {
-        percent: def.diskBase,
-        total_gb: def.diskTotal,
-        used_gb: +(def.diskTotal * (def.diskBase / 100)).toFixed(0),
-        unit: '%',
-      },
-      ...(def.gpu ? {
-        gpu: {
-          name: def.gpu.name,
-          usage_percent: def.gpu.usageBase + Math.floor(Math.random() * 8),
-          vram_total_gb: def.gpu.vramTotal,
-          vram_used_gb: def.gpu.vramUsed,
-          unit: '%',
-          temperature: 48 + Math.floor(def.gpu.usageBase * 0.35),
-        },
-      } : {}),
-      ...(def.network ? {
-        network: {
-          interfaces: {
-            'Ethernet': {
-              tx_bps: def.network.txBps,
-              rx_bps: def.network.rxBps,
-              tx_util: def.network.txUtil,
-              rx_util: def.network.rxUtil,
-              link_speed: def.network.linkSpeed,
-            },
-          },
-          gateway_ip: '192.168.1.1',
-          latency_ms: def.network.latencyMs,
-          packet_loss_pct: def.network.packetLoss,
-        },
-      } : {}),
-      processes: Object.fromEntries(
-        def.processes.map(p => [p.name, p.status])
-      ),
-    },
+    profile,
+    metrics,
+    devices: joinDevices(profile, metrics),
     processes: def.processes.map((p, i) => buildProcess(p, i)),
   };
 }

@@ -17,7 +17,7 @@
 
 'use client';
 
-import React, { memo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { useMinuteTick } from '@/hooks/useMinuteTick';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -45,13 +45,90 @@ import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUt
 import { formatStorageRange } from '@/lib/storageUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
-import { formatThroughput, getPrimaryNic } from '@/lib/networkUtils';
+import { formatThroughput } from '@/lib/networkUtils';
+import { resolveDevice, unionIds } from '@/lib/deviceResolvers';
+import { useDevicePrefs, type DeviceKind, type DeviceSelection } from '@/hooks/useDevicePrefs';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
 import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
 
-// Memoized table header to prevent flickering on data updates
-export const MemoizedTableHeader = memo(() => {
+/**
+ * Per-kind device id union across all visible machines. Used to populate
+ * the shared column-header dropdowns in the list view.
+ */
+export interface DeviceUnion {
+  cpus: string[];
+  disks: string[];
+  gpus: string[];
+  nics: string[];
+}
+
+/** Which column headers should render a device dropdown (vs. plain label). */
+export interface ShowDropdownFlags {
+  cpu: boolean;
+  disk: boolean;
+  gpu: boolean;
+  nic: boolean;
+}
+
+interface DeviceColumnHeaderProps {
+  label: string;
+  kind: DeviceKind;
+  showDropdown: boolean;
+  ids: string[];
+  selectedId: string | undefined;
+  onSelect: (kind: DeviceKind, id: string | null) => void;
+}
+
+function DeviceColumnHeader({
+  label,
+  kind,
+  showDropdown,
+  ids,
+  selectedId,
+  onSelect,
+}: DeviceColumnHeaderProps) {
+  if (!showDropdown) {
+    return <>{label}</>;
+  }
+  const displayLabel = selectedId ? `${label}: ${selectedId}` : label;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 text-foreground hover:text-white cursor-pointer"
+        >
+          <span>{displayLabel}</span>
+          <ChevronDown className="h-3 w-3 opacity-70" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="border-border bg-secondary">
+        <DropdownMenuRadioGroup
+          value={selectedId ?? ''}
+          onValueChange={(value) => onSelect(kind, value === '' ? null : value)}
+        >
+          <DropdownMenuRadioItem value="" className="cursor-pointer">
+            auto (most active)
+          </DropdownMenuRadioItem>
+          {ids.map((id) => (
+            <DropdownMenuRadioItem key={id} value={id} className="cursor-pointer">
+              {id}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * Legacy no-dropdown header, kept for callers (demo page, dashboard page)
+ * that render the list-view table directly and don't need column-header
+ * device selectors. Renders plain column labels identical to the pre-v2
+ * layout so existing pages keep working without wiring deviceUnion through.
+ */
+export const MemoizedTableHeader = memo(function MemoizedTableHeader() {
   return (
     <TableHeader className="sticky top-0 z-10 bg-background">
       <TableRow className="border-border hover:bg-transparent">
@@ -70,7 +147,76 @@ export const MemoizedTableHeader = memo(() => {
   );
 });
 
-MemoizedTableHeader.displayName = 'MemoizedTableHeader';
+interface MachineTableHeaderProps {
+  deviceUnion: DeviceUnion;
+  showDropdown: ShowDropdownFlags;
+  listPref: DeviceSelection;
+  setListPref: (kind: DeviceKind, id: string | null) => void;
+}
+
+// Memoized table header to prevent flickering on data updates. Memo compares
+// the prop bag by reference; callers pass stable refs for listPref/setListPref
+// and a memoized deviceUnion/showDropdown so the header only re-renders when
+// the device set or user selection actually changes — not on every metrics tick.
+export const MachineTableHeader = memo(function MachineTableHeader({
+  deviceUnion,
+  showDropdown,
+  listPref,
+  setListPref,
+}: MachineTableHeaderProps) {
+  return (
+    <TableHeader className="sticky top-0 z-10 bg-background">
+      <TableRow className="border-border hover:bg-transparent">
+        <TableHead className="text-foreground w-8"></TableHead>
+        <TableHead className="text-foreground w-[140px]">hostname</TableHead>
+        <TableHead className="text-foreground w-[72px]">status</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[160px] sm:overflow-visible sm:!px-2">
+          <DeviceColumnHeader
+            label="cpu"
+            kind="cpu"
+            showDropdown={showDropdown.cpu}
+            ids={deviceUnion.cpus}
+            selectedId={listPref.cpu}
+            onSelect={setListPref}
+          />
+        </TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[120px] sm:overflow-visible sm:!px-2">memory</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[100px] lg:overflow-visible lg:!px-2">
+          <DeviceColumnHeader
+            label="disk"
+            kind="disk"
+            showDropdown={showDropdown.disk}
+            ids={deviceUnion.disks}
+            selectedId={listPref.disk}
+            onSelect={setListPref}
+          />
+        </TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[200px] lg:overflow-visible lg:!px-2">
+          <DeviceColumnHeader
+            label="gpu"
+            kind="gpu"
+            showDropdown={showDropdown.gpu}
+            ids={deviceUnion.gpus}
+            selectedId={listPref.gpu}
+            onSelect={setListPref}
+          />
+        </TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 xl:w-[130px] xl:overflow-visible xl:!px-2">
+          <DeviceColumnHeader
+            label="network"
+            kind="nic"
+            showDropdown={showDropdown.nic}
+            ids={deviceUnion.nics}
+            selectedId={listPref.nic}
+            onSelect={setListPref}
+          />
+        </TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 md:w-[110px] md:overflow-visible md:!px-2">last heartbeat</TableHead>
+        <TableHead className="text-foreground w-10"></TableHead>
+      </TableRow>
+    </TableHeader>
+  );
+});
 
 interface MachineListViewProps {
   machines: Machine[];
@@ -113,6 +259,13 @@ interface MachineRowProps {
   onScreenshot?: () => void;
   onLiveView?: () => void;
   showLocalClock?: boolean;
+  /**
+   * User's column-dropdown selection for this view (cpu/disk/gpu/nic). When
+   * omitted (legacy callers) or a kind is unset, the row falls back to the
+   * machine's reported primary device — which also matches "auto (most
+   * active)" in the column-header selector.
+   */
+  listPref?: DeviceSelection;
 }
 
 export function MachineRow({
@@ -137,7 +290,25 @@ export function MachineRow({
   onScreenshot,
   onLiveView,
   showLocalClock,
+  listPref,
 }: MachineRowProps) {
+  const pref = listPref ?? {};
+  const primary = machine.metrics?.primary;
+  const cpuDevice = resolveDevice(machine.devices?.cpus, pref.cpu, primary?.cpu);
+  const diskDevice = resolveDevice(machine.devices?.disks, pref.disk, primary?.disk);
+  const gpuDevice = resolveDevice(machine.devices?.gpus, pref.gpu, primary?.gpu);
+  const nicDevice = resolveDevice(machine.devices?.nics, pref.nic, primary?.nic);
+
+  // Memory has no per-device fan-out; `totalGb` isn't reported on the v2
+  // MemoryMetric, so derive it from (usedGb / percent) when both are present.
+  // When percent is 0/missing, we can't derive total reliably — fall back to
+  // showing the used value alone.
+  const memoryPercent = machine.metrics?.memory?.percent ?? 0;
+  const memoryUsedGb = machine.metrics?.memory?.usedGb;
+  const memoryTotalGb =
+    memoryUsedGb !== undefined && memoryPercent > 0
+      ? Math.round((memoryUsedGb / memoryPercent) * 100 * 10) / 10
+      : null;
   const isDemo = !!useDemoContext();
   const { userPreferences: fullPrefs } = useAuth();
   const isMuted = fullPrefs.mutedMachines.includes(machine.machineId);
@@ -225,18 +396,18 @@ export function MachineRow({
             <div className="opacity-80">
               <SparklineChart data={sparklineData.cpu} color="cpu" height={52} loading={sparklineData.loading} />
             </div>
-            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(machine.metrics?.cpu?.percent ?? 0)}`} />
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(cpuDevice?.percent ?? 0)}`} />
             <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
-              {machine.metrics?.cpu ? (
+              {cpuDevice && typeof cpuDevice.percent === 'number' ? (
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs text-muted-foreground truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
-                    {machine.metrics.cpu.name || 'Unknown CPU'}
+                  <div className="text-xs text-muted-foreground truncate" title={cpuDevice.model || 'Unknown CPU'}>
+                    {cpuDevice.model || 'Unknown CPU'}
                   </div>
                   <div className="text-sm font-semibold whitespace-nowrap">
-                    {machine.metrics.cpu.percent}%
-                    {machine.metrics.cpu.temperature !== undefined && (
-                      <span className={`ml-1 text-xs font-medium ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
-                        {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
+                    {cpuDevice.percent}%
+                    {typeof cpuDevice.temperature === 'number' && (
+                      <span className={`ml-1 text-xs font-medium ${getTemperatureColorClass(cpuDevice.temperature)}`}>
+                        {formatTemperature(cpuDevice.temperature, userPreferences.temperatureUnit)}
                       </span>
                     )}
                   </div>
@@ -254,13 +425,15 @@ export function MachineRow({
             <div className="opacity-80">
               <SparklineChart data={sparklineData.memory} color="memory" height={52} loading={sparklineData.loading} />
             </div>
-            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(machine.metrics?.memory?.percent ?? 0)}`} />
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(memoryPercent)}`} />
             <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
-              {machine.metrics?.memory ? (
+              {machine.metrics?.memory && memoryUsedGb !== undefined ? (
                 <div className="min-w-0">
-                  <div className="text-sm font-semibold">{machine.metrics.memory.percent}%</div>
+                  <div className="text-sm font-semibold">{memoryPercent}%</div>
                   <div className="text-muted-foreground text-xs truncate">
-                    {formatStorageRange(machine.metrics.memory.used_gb, machine.metrics.memory.total_gb)}
+                    {memoryTotalGb !== null
+                      ? formatStorageRange(memoryUsedGb, memoryTotalGb)
+                      : `${memoryUsedGb.toFixed(1)} GB`}
                   </div>
                 </div>
               ) : '-'}
@@ -276,13 +449,15 @@ export function MachineRow({
             <div className="opacity-80">
               <SparklineChart data={sparklineData.disk} color="disk" height={52} loading={sparklineData.loading} />
             </div>
-            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(machine.metrics?.disk?.percent ?? 0)}`} />
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(diskDevice?.percent ?? 0)}`} />
             <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
-              {machine.metrics?.disk ? (
+              {diskDevice && typeof diskDevice.percent === 'number' && typeof diskDevice.usedGb === 'number' ? (
                 <div className="min-w-0">
-                  <div className="text-sm font-semibold">{machine.metrics.disk.percent}%</div>
-                  <div className="text-muted-foreground text-xs truncate">
-                    {formatStorageRange(machine.metrics.disk.used_gb, machine.metrics.disk.total_gb)}
+                  <div className="text-sm font-semibold">{diskDevice.percent}%</div>
+                  <div className="text-muted-foreground text-xs truncate" title={diskDevice.id}>
+                    {typeof diskDevice.totalGb === 'number'
+                      ? formatStorageRange(diskDevice.usedGb, diskDevice.totalGb)
+                      : `${diskDevice.usedGb.toFixed(1)} GB`}
                   </div>
                 </div>
               ) : '-'}
@@ -298,23 +473,23 @@ export function MachineRow({
             <div className="opacity-80">
               <SparklineChart data={sparklineData.gpu.length > 0 ? sparklineData.gpu : []} color="gpu" height={52} loading={sparklineData.loading} />
             </div>
-            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(machine.metrics?.gpu?.usage_percent ?? 0)}`} />
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(gpuDevice?.usagePercent ?? 0)}`} />
             <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
-              {machine.metrics?.gpu && machine.metrics.gpu.name && machine.metrics.gpu.name !== 'N/A' ? (
+              {gpuDevice && gpuDevice.name && gpuDevice.name !== 'N/A' && typeof gpuDevice.usagePercent === 'number' ? (
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs text-muted-foreground truncate" title={machine.metrics.gpu.name}>
-                    {machine.metrics.gpu.name}
+                  <div className="text-xs text-muted-foreground truncate" title={gpuDevice.name}>
+                    {gpuDevice.name}
                   </div>
                   <div className="text-sm font-semibold whitespace-nowrap">
-                    {machine.metrics.gpu.usage_percent}%
-                    {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
+                    {gpuDevice.usagePercent}%
+                    {typeof gpuDevice.vramUsedGb === 'number' && typeof gpuDevice.vramTotalGb === 'number' && (
                       <span className="text-muted-foreground text-xs ml-1 font-normal">
-                        ({formatStorageRange(machine.metrics.gpu.vram_used_gb, machine.metrics.gpu.vram_total_gb)})
+                        ({formatStorageRange(gpuDevice.vramUsedGb, gpuDevice.vramTotalGb)})
                       </span>
                     )}
-                    {machine.metrics.gpu.temperature !== undefined && (
-                      <span className={`ml-1 text-xs font-medium ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
-                        {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
+                    {typeof gpuDevice.temperature === 'number' && (
+                      <span className={`ml-1 text-xs font-medium ${getTemperatureColorClass(gpuDevice.temperature)}`}>
+                        {formatTemperature(gpuDevice.temperature, userPreferences.temperatureUnit)}
                       </span>
                     )}
                   </div>
@@ -330,30 +505,36 @@ export function MachineRow({
           className="text-white p-0 w-0 xl:w-[130px] overflow-hidden"
           onClick={(e) => {
             e.stopPropagation();
-            const primary = machine.metrics?.network?.interfaces
-              ? getPrimaryNic(machine.metrics.network.interfaces)
-              : null;
-            if (primary) onMetricClick?.(`${primary.name}_tx_util` as MetricType);
+            if (nicDevice) onMetricClick?.(`${nicDevice.id}_tx_util` as MetricType);
           }}
         >
           {(() => {
-            const interfaces = machine.metrics?.network?.interfaces;
-            if (!interfaces) return <span className="text-muted-foreground text-xs p-2">-</span>;
-            const primary = getPrimaryNic(interfaces);
-            if (!primary) return <span className="text-muted-foreground text-xs p-2">-</span>;
-            const maxUtil = Math.max(primary.data.tx_util, primary.data.rx_util);
+            if (
+              !nicDevice ||
+              typeof nicDevice.txBps !== 'number' ||
+              typeof nicDevice.rxBps !== 'number'
+            ) {
+              return <span className="text-muted-foreground text-xs p-2">-</span>;
+            }
+            const txUtil = nicDevice.txUtil ?? 0;
+            const rxUtil = nicDevice.rxUtil ?? 0;
+            const maxUtil = Math.max(txUtil, rxUtil);
+            const linkSpeed = nicDevice.linkSpeedMbps;
+            const titleText = typeof linkSpeed === 'number'
+              ? `${nicDevice.id} (${linkSpeed} Mbps)`
+              : nicDevice.id;
             return (
               <div className={`relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden${staleClass}`}>
                 <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(maxUtil)}`} />
                 <div className="p-2 pl-2.5">
-                  <div className="text-xs text-muted-foreground truncate" title={`${primary.name} (${primary.data.link_speed} Mbps)`}>
-                    {primary.name}
+                  <div className="text-xs text-muted-foreground truncate" title={titleText}>
+                    {nicDevice.id}
                   </div>
                   <div className="text-xs font-medium">
-                    <span className="text-orange-400">TX {formatThroughput(primary.data.tx_bps)}</span>
+                    <span className="text-orange-400">TX {formatThroughput(nicDevice.txBps)}</span>
                   </div>
                   <div className="text-xs font-medium">
-                    <span className="text-green-400">RX {formatThroughput(primary.data.rx_bps)}</span>
+                    <span className="text-green-400">RX {formatThroughput(nicDevice.rxBps)}</span>
                   </div>
                 </div>
               </div>
@@ -671,13 +852,41 @@ export function MachineListView({
   onMetricClick,
 }: MachineListViewProps) {
   const { userPreferences } = useAuth();
+  const { prefs, setListPref } = useDevicePrefs();
+  const listPref = prefs.listView;
   const uniqueTimezones = new Set(machines.map(m => m.machineTimezone).filter(Boolean));
   const showLocalClock = uniqueTimezones.size > 1;
+
+  // Union of device ids across visible machines — drives the column-header
+  // dropdown menus. Memoized so the memoized table header doesn't re-render
+  // on every metrics tick (only when the device set actually changes).
+  const deviceUnion = useMemo<DeviceUnion>(() => ({
+    cpus:  unionIds(machines.map(m => m.devices?.cpus?.map(c => c.id) ?? [])),
+    disks: unionIds(machines.map(m => m.devices?.disks?.map(d => d.id) ?? [])),
+    gpus:  unionIds(machines.map(m => m.devices?.gpus?.map(g => g.id) ?? [])),
+    nics:  unionIds(machines.map(m => m.devices?.nics?.map(n => n.id) ?? [])),
+  }), [machines]);
+
+  // A dropdown is worth showing only when at least one visible machine has
+  // more than one device of that kind — otherwise the selector would offer
+  // nothing meaningful beyond "auto".
+  const showDropdown = useMemo<ShowDropdownFlags>(() => ({
+    cpu:  machines.some(m => (m.devices?.cpus?.length  ?? 0) > 1),
+    disk: machines.some(m => (m.devices?.disks?.length ?? 0) > 1),
+    gpu:  machines.some(m => (m.devices?.gpus?.length  ?? 0) > 1),
+    nic:  machines.some(m => (m.devices?.nics?.length  ?? 0) > 1),
+  }), [machines]);
+
 
   return (
     <div className="rounded-lg border border-border bg-background overflow-hidden">
       <Table className="table-fixed" style={{ contain: 'layout' }}>
-        <MemoizedTableHeader />
+        <MachineTableHeader
+          deviceUnion={deviceUnion}
+          showDropdown={showDropdown}
+          listPref={listPref}
+          setListPref={setListPref}
+        />
         <TableBody>
           {machines.map((machine) => (
             <MachineRow
@@ -699,6 +908,7 @@ export function MachineListView({
               onRemoveMachine={() => onRemoveMachine(machine.machineId, machine.machineId, machine.online)}
               onMetricClick={onMetricClick ? (metricType) => onMetricClick(machine.machineId, metricType) : undefined}
               showLocalClock={showLocalClock}
+              listPref={listPref}
             />
           ))}
         </TableBody>

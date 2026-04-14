@@ -97,6 +97,10 @@ export interface UserPreferences {
   alertCcEmails: string[]; // Additional CC recipients for alert emails. Default: []
   statsExpanded: boolean; // Whether stats section is expanded in card view. Default: false
   processesExpanded: boolean; // Whether process list is expanded in card view. Default: false
+  /** Remembered graph tab selection for each machine's MetricsDetailPanel.
+   * Keyed by machineId → array of namespaced tab ids (e.g. 'metric:cpu', 'nic:Ethernet 2', 'gpu:0').
+   * Unknown namespaces are ignored on read, so new entity types slot in without migration. */
+  graphTabs?: Record<string, string[]>;
 }
 
 interface AuthContextType {
@@ -288,6 +292,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   alertCcEmails: preferences.alertCcEmails || [], // Default: []
                   statsExpanded: preferences.statsExpanded ?? true, // Default: expanded
                   processesExpanded: preferences.processesExpanded ?? true, // Default: expanded
+                  graphTabs: preferences.graphTabs || undefined,
                 };
                 setUserPreferences(prev => {
                   if (
@@ -302,7 +307,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     prev.statsExpanded === newPrefs.statsExpanded &&
                     prev.processesExpanded === newPrefs.processesExpanded &&
                     arraysEqual(prev.mutedMachines, newPrefs.mutedMachines) &&
-                    arraysEqual(prev.alertCcEmails, newPrefs.alertCcEmails)
+                    arraysEqual(prev.alertCcEmails, newPrefs.alertCcEmails) &&
+                    JSON.stringify(prev.graphTabs || null) === JSON.stringify(newPrefs.graphTabs || null)
                   ) return prev;
                   return newPrefs;
                 });

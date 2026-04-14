@@ -8,7 +8,7 @@
  * Supports per-NIC network metrics with TX/RX utilization lines.
  */
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import {
   LineChart,
   Line,
@@ -42,6 +42,58 @@ interface MetricsDetailPanelProps {
   onClose: () => void;
 }
 
+// Namespaced tab-id storage format. New entity types (per-GPU, per-disk, etc.)
+// slot in with a new prefix without any schema change; unknown prefixes are
+// silently ignored on read so older clients don't crash.
+const METRIC_PREFIX = 'metric:';
+const NIC_PREFIX = 'nic:';
+// Exhaustive map keyed by MetricType — TypeScript errors here if MetricType
+// gains a new member, forcing us to decide whether it should be persistable.
+const KNOWN_METRIC_MAP: Record<MetricType, true> = {
+  cpu: true, memory: true, disk: true, gpu: true, cpuTemp: true, gpuTemp: true,
+};
+const KNOWN_METRICS: ReadonlySet<MetricType> = new Set(
+  Object.keys(KNOWN_METRIC_MAP) as MetricType[],
+);
+
+function serializeTabs(metrics: MetricType[], nics: string[]): string[] {
+  return [
+    ...metrics.map((m) => `${METRIC_PREFIX}${m}`),
+    ...nics.map((n) => `${NIC_PREFIX}${n}`),
+  ];
+}
+
+function deserializeTabs(ids: string[] | undefined): { metrics: MetricType[]; nics: string[] } {
+  const metrics: MetricType[] = [];
+  const nics: string[] = [];
+  if (!ids) return { metrics, nics };
+  for (const id of ids) {
+    if (id.startsWith(METRIC_PREFIX)) {
+      const m = id.slice(METRIC_PREFIX.length) as MetricType;
+      if (KNOWN_METRICS.has(m)) metrics.push(m);
+    } else if (id.startsWith(NIC_PREFIX)) {
+      nics.push(id.slice(NIC_PREFIX.length));
+    }
+  }
+  return { metrics, nics };
+}
+
+function initialMetricToState(initialMetric: MetricType): { metrics: MetricType[]; nics: string[] } {
+  const initStr = initialMetric as string;
+  if (initStr.endsWith('_tx_util') || initStr.endsWith('_rx_util')) {
+    return { metrics: [], nics: [initStr.replace(/_[tr]x_util$/, '')] };
+  }
+  if (initialMetric === 'cpu') return { metrics: ['cpu', 'cpuTemp'], nics: [] };
+  if (initialMetric === 'gpu') return { metrics: ['gpu', 'gpuTemp'], nics: [] };
+  return { metrics: [initialMetric], nics: [] };
+}
+
+function sameStringArray(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 export function MetricsDetailPanel({
   machineId,
   machineName,
@@ -49,9 +101,28 @@ export function MetricsDetailPanel({
   initialMetric = 'cpu',
   onClose,
 }: MetricsDetailPanelProps) {
-  const { userPreferences } = useAuth();
-  const [selectedMetrics, setSelectedMetrics] = useState<MetricType[]>([initialMetric]);
-  const [selectedNics, setSelectedNics] = useState<string[]>([]);
+  const { userPreferences, updateUserPreferences } = useAuth();
+  const graphTabs = userPreferences.graphTabs;
+
+  // Seed from persisted selection on first render so there's no flash between
+  // the default and the restored selection. The post-mount effect below handles
+  // all subsequent syncs (machine changes, cross-tab updates, click intent).
+  const [selectedMetrics, setSelectedMetrics] = useState<MetricType[]>(() => {
+    const persisted = deserializeTabs(graphTabs?.[machineId]);
+    const click = initialMetricToState(initialMetric);
+    if (persisted.metrics.length > 0 || persisted.nics.length > 0) {
+      return Array.from(new Set([...persisted.metrics, ...click.metrics]));
+    }
+    return click.metrics;
+  });
+  const [selectedNics, setSelectedNics] = useState<string[]>(() => {
+    const persisted = deserializeTabs(graphTabs?.[machineId]);
+    const click = initialMetricToState(initialMetric);
+    if (persisted.metrics.length > 0 || persisted.nics.length > 0) {
+      return Array.from(new Set([...persisted.nics, ...click.nics]));
+    }
+    return click.nics;
+  });
   const [timeRange, setTimeRange] = useState<TimeRange>('1h');
 
   const { data, loading, error } = useHistoricalMetrics(siteId, machineId, timeRange);
@@ -72,47 +143,73 @@ export function MetricsDetailPanel({
     return Array.from(names);
   }, [chartData]);
 
-  // Sync selectedMetrics when initialMetric changes (user clicked different cell)
-  // For CPU/GPU, also select the corresponding temperature metric
-  // For network metrics, select the NIC
+  // Reconcile local state with (machine, initialMetric, persisted) on every
+  // change. Click intent (a new machineId/initialMetric) is merged with the
+  // persisted selection so the clicked cell is visible without erasing the
+  // user's other sticky tabs. When only the persisted map changes (our own
+  // write echoing back, or a cross-tab update), click intent is NOT re-merged
+  // — otherwise toggling off e.g. cpuTemp would immediately re-add it.
+  const prevIntentRef = useRef<string | null>(null);
+  const intentKey = `${machineId}|${initialMetric}`;
   useEffect(() => {
-    const initStr = initialMetric as string;
-    if (initStr.endsWith('_tx_util') || initStr.endsWith('_rx_util')) {
-      // Network metric — extract NIC name and select it
-      const nicName = initStr.replace(/_[tr]x_util$/, '');
-      setSelectedMetrics([]);
-      setSelectedNics([nicName]);
-    } else if (initialMetric === 'cpu') {
-      setSelectedMetrics(['cpu', 'cpuTemp']);
-      setSelectedNics([]);
-    } else if (initialMetric === 'gpu') {
-      setSelectedMetrics(['gpu', 'gpuTemp']);
-      setSelectedNics([]);
+    const persisted = deserializeTabs(graphTabs?.[machineId]);
+    const intentChanged = prevIntentRef.current !== intentKey;
+    prevIntentRef.current = intentKey;
+
+    let nextMetrics: MetricType[];
+    let nextNics: string[];
+    if (intentChanged) {
+      const click = initialMetricToState(initialMetric);
+      const hasPersisted = persisted.metrics.length > 0 || persisted.nics.length > 0;
+      nextMetrics = hasPersisted
+        ? Array.from(new Set([...persisted.metrics, ...click.metrics]))
+        : click.metrics;
+      nextNics = hasPersisted
+        ? Array.from(new Set([...persisted.nics, ...click.nics]))
+        : click.nics;
     } else {
-      setSelectedMetrics([initialMetric]);
-      setSelectedNics([]);
+      nextMetrics = persisted.metrics;
+      nextNics = persisted.nics;
     }
-  }, [initialMetric]);
+    setSelectedMetrics((prev) => (sameStringArray(prev, nextMetrics) ? prev : nextMetrics));
+    setSelectedNics((prev) => (sameStringArray(prev, nextNics) ? prev : nextNics));
+  }, [machineId, initialMetric, graphTabs, intentKey]);
+
+  const persistSelections = (metrics: MetricType[], nics: string[]) => {
+    const ids = serializeTabs(metrics, nics);
+    updateUserPreferences(
+      { graphTabs: { ...(graphTabs || {}), [machineId]: ids } },
+      { silent: true },
+    ).catch(() => { /* fire-and-forget; matches statsExpanded pattern */ });
+  };
 
   const toggleMetric = (metric: MetricType) => {
     setSelectedMetrics((prev) => {
+      let next: MetricType[];
       if (prev.includes(metric)) {
         // Don't allow deselecting if it's the only thing selected (and no NICs)
         if (prev.length === 1 && selectedNics.length === 0) return prev;
-        return prev.filter((m) => m !== metric);
+        next = prev.filter((m) => m !== metric);
+      } else {
+        next = [...prev, metric];
       }
-      return [...prev, metric];
+      persistSelections(next, selectedNics);
+      return next;
     });
   };
 
   const toggleNic = (nicName: string) => {
     setSelectedNics((prev) => {
+      let next: string[];
       if (prev.includes(nicName)) {
         // Don't allow deselecting if it's the only thing selected (and no metrics)
         if (prev.length === 1 && selectedMetrics.length === 0) return prev;
-        return prev.filter((n) => n !== nicName);
+        next = prev.filter((n) => n !== nicName);
+      } else {
+        next = [...prev, nicName];
       }
-      return [...prev, nicName];
+      persistSelections(selectedMetrics, next);
+      return next;
     });
   };
 
@@ -183,13 +280,11 @@ export function MetricsDetailPanel({
     selectedNics.length === nicNames.length;
 
   const toggleAll = () => {
-    if (allSelected) {
-      setSelectedMetrics([initialMetric]);
-      setSelectedNics([]);
-    } else {
-      setSelectedMetrics([...availableMetrics]);
-      setSelectedNics([...nicNames]);
-    }
+    const nextMetrics = allSelected ? [initialMetric] : [...availableMetrics];
+    const nextNics = allSelected ? [] : [...nicNames];
+    setSelectedMetrics(nextMetrics);
+    setSelectedNics(nextNics);
+    persistSelections(nextMetrics, nextNics);
   };
 
   // Build the list of all active Line dataKeys and their display info
@@ -236,14 +331,25 @@ export function MetricsDetailPanel({
 
   return (
     <Card className="border-border bg-card">
-      <CardContent className="p-3 pt-2">
-        {/* Header row */}
+      <CardContent className="p-3 pt-1">
+        {/* Title row */}
         <div className="flex items-center gap-3 mb-3">
-          {/* Machine name */}
-          <span className="text-base font-semibold text-foreground shrink-0">
+          <span className="text-xl font-semibold text-foreground shrink-0">
             {machineName || machineId}
           </span>
+          <div className="flex-1" />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onClose}
+            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-secondary shrink-0"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
 
+        {/* Controls row */}
+        <div className="flex items-center gap-3 mb-3">
           {/* Metric toggle buttons - left aligned */}
           <div className="flex flex-wrap items-center gap-1.5">
             <UITooltip>
@@ -322,16 +428,8 @@ export function MetricsDetailPanel({
           {/* Spacer */}
           <div className="flex-1" />
 
-          {/* Time selector + close button */}
+          {/* Time selector */}
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onClose}
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-secondary shrink-0"
-          >
-            <X className="h-4 w-4" />
-          </Button>
         </div>
 
         {/* Chart Area */}

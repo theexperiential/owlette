@@ -1784,58 +1784,82 @@ def get_system_metrics(skip_gpu=False):
 
 def get_system_metrics_with_config(config=None, skip_gpu=False):
     """
-    Get system metrics with clear units for Firebase.
-    Accepts config as parameter to avoid file read race conditions.
+    Get system metrics with clear units. Returns the legacy snake_case shape
+    (cpu/memory/disk/gpu/network/processes) for in-process consumers such as
+    mcp_tools, report_issue, and the tray GUI; firebase_client reads only the
+    `memory` and `processes` keys and sources per-device metrics directly from
+    hardware_profile.collect_dynamic_metrics() for the v2 heartbeat.
 
     Args:
         config: Configuration dict (to avoid re-reading from disk). If None,
             loads via the mtime-cached read_config() — no extra disk I/O when
             the cache is warm.
-        skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
+        skip_gpu: If True, skip GPU queries (used by GUI callers to avoid the
+            nvidia-smi / WinTmp console window flash).
     """
     if config is None:
         config = read_config()
     try:
-        # CPU - model name, percentage, and temperature
+        # CPU - model, aggregate percent, temperature
         cpu_name = get_cpu_name()
         cpu_percent = round(psutil.cpu_percent(interval=0.1), 1)
-        cpu_temp = get_cpu_temperature()  # Celsius or None
+        cpu_temp = get_cpu_temperature()
 
-        # Memory - bytes to GB
+        # Memory - bytes to GB (both snake and camelCase for v1 + v2 readers)
         mem = psutil.virtual_memory()
         mem_used_gb = round(mem.used / (1024**3), 2)
         mem_total_gb = round(mem.total / (1024**3), 2)
         mem_percent = round(mem.percent, 1)
 
-        # Disk - bytes to GB
-        disk = psutil.disk_usage('/')
-        disk_used_gb = round(disk.used / (1024**3), 2)
-        disk_total_gb = round(disk.total / (1024**3), 2)
-        disk_percent = round(disk.percent, 1)
+        # Disk - system drive
+        try:
+            disk = psutil.disk_usage('/')
+            disk_used_gb = round(disk.used / (1024**3), 2)
+            disk_total_gb = round(disk.total / (1024**3), 2)
+            disk_percent = round(disk.percent, 1)
+        except Exception:
+            disk_used_gb = 0.0
+            disk_total_gb = 0.0
+            disk_percent = 0.0
 
-        # GPU - usage %, VRAM, and temperature (skip if requested to avoid command window flashing)
+        # GPU - first GPU (skipped in GUI to avoid subprocess flash)
         gpu_usage_percent = 0
         gpu_vram_used_gb = 0
         gpu_vram_total_gb = 0
         gpu_name = "N/A"
-        gpu_temp = None  # Celsius or None
+        gpu_temp = None
         if not skip_gpu:
             try:
                 _g = _get_gputil()
                 gpus = _g.getGPUs() if _g else []
                 if gpus:
-                    gpu = gpus[0]
-                    gpu_usage_percent = round(gpu.load * 100, 1)
-                    gpu_vram_used_gb = round(gpu.memoryUsed / 1024, 2)  # MB to GB
-                    gpu_vram_total_gb = round(gpu.memoryTotal / 1024, 2)
-                    gpu_name = gpu.name
-
-                    # Get GPU temperature (first GPU only, to match GPUtil behavior)
+                    g0 = gpus[0]
+                    gpu_usage_percent = round(g0.load * 100, 1)
+                    gpu_vram_used_gb = round(g0.memoryUsed / 1024, 2)
+                    gpu_vram_total_gb = round(g0.memoryTotal / 1024, 2)
+                    gpu_name = g0.name
                     gpu_temps = get_gpu_temperatures()
-                    if gpu_temps and len(gpu_temps) > 0:
-                        gpu_temp = gpu_temps[0]['temperature']  # Celsius
-            except:
+                    if gpu_temps:
+                        gpu_temp = gpu_temps[0].get('temperature')
+            except Exception:
                 pass
+
+        # Network (legacy shape — v1 consumers)
+        try:
+            network_metrics = get_network_metrics() or {}
+        except Exception:
+            network_metrics = {}
+        try:
+            quality = get_network_quality() or {}
+        except Exception:
+            quality = {}
+        network_metrics.setdefault('interfaces', {})
+        if 'latency_ms' in quality:
+            network_metrics['latency_ms'] = quality.get('latency_ms')
+        if 'packet_loss_pct' in quality:
+            network_metrics['packet_loss_pct'] = quality.get('packet_loss_pct')
+        if 'gateway_ip' in quality:
+            network_metrics['gateway_ip'] = quality.get('gateway_ip')
 
         # Processes - combine config and runtime state
         processes_data = {}
@@ -1903,51 +1927,50 @@ def get_system_metrics_with_config(config=None, skip_gpu=False):
         except Exception as e:
             logging.error(f"Error collecting process data: {e}")
 
-        # Build CPU metrics with optional temperature
         cpu_metrics = {
             'name': cpu_name,
             'percent': cpu_percent,
-            'unit': '%'
+            'unit': '%',
         }
         if cpu_temp is not None:
-            cpu_metrics['temperature'] = round(cpu_temp, 1)  # Celsius, 1 decimal place
+            cpu_metrics['temperature'] = round(cpu_temp, 1)
 
-        # Build GPU metrics with optional temperature
         gpu_metrics = {
             'name': gpu_name,
             'usage_percent': gpu_usage_percent,
             'vram_used_gb': gpu_vram_used_gb,
             'vram_total_gb': gpu_vram_total_gb,
-            'unit': 'GB'
+            'unit': '%',
         }
         if gpu_temp is not None:
-            gpu_metrics['temperature'] = round(gpu_temp, 1)  # Celsius, 1 decimal place
+            gpu_metrics['temperature'] = round(gpu_temp, 1)
 
         return {
             'cpu': cpu_metrics,
             'memory': {
+                'percent': mem_percent,
                 'used_gb': mem_used_gb,
                 'total_gb': mem_total_gb,
-                'percent': mem_percent,
-                'unit': 'GB'
+                'usedGb': mem_used_gb,
+                'unit': 'GB',
             },
             'disk': {
+                'percent': disk_percent,
                 'used_gb': disk_used_gb,
                 'total_gb': disk_total_gb,
-                'percent': disk_percent,
-                'unit': 'GB'
+                'unit': 'GB',
             },
             'gpu': gpu_metrics,
-            'network': {**get_network_metrics(), **get_network_quality()},
-            'processes': processes_data
+            'network': network_metrics,
+            'processes': processes_data,
         }
     except Exception as e:
         logging.error(f"Error getting system metrics: {e}")
         return {
-            'cpu': {'name': 'Unknown CPU', 'percent': 0, 'unit': '%'},
-            'memory': {'used_gb': 0, 'total_gb': 0, 'percent': 0, 'unit': 'GB'},
-            'disk': {'used_gb': 0, 'total_gb': 0, 'percent': 0, 'unit': 'GB'},
-            'gpu': {'name': 'N/A', 'usage_percent': 0, 'vram_used_gb': 0, 'vram_total_gb': 0, 'unit': 'GB'},
-            'network': {'interfaces': {}, 'gateway_ip': None, 'latency_ms': None, 'packet_loss_pct': None},
-            'processes': {}
+            'cpu': {'name': 'Unknown', 'percent': 0.0, 'unit': '%'},
+            'memory': {'percent': 0.0, 'used_gb': 0.0, 'total_gb': 0.0, 'usedGb': 0.0, 'unit': 'GB'},
+            'disk': {'percent': 0.0, 'used_gb': 0.0, 'total_gb': 0.0, 'unit': 'GB'},
+            'gpu': {'name': 'N/A', 'usage_percent': 0, 'vram_used_gb': 0, 'vram_total_gb': 0, 'unit': '%'},
+            'network': {'interfaces': {}},
+            'processes': {},
         }

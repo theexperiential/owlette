@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { useEffect, useState, useRef, useMemo } from 'react';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, runTransaction, serverTimestamp, type Unsubscribe } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
 
@@ -109,6 +109,79 @@ export interface Process {
   _optimisticPresetId?: string | null;
 }
 
+export interface CpuProfile {
+  id: string;              // "CPU0", "CPU1", ...
+  model: string;
+  physicalCores: number;
+  logicalCores: number;
+  socketIndex: number;
+}
+
+export interface DiskProfile {
+  id: string;              // mountpoint, e.g. "C:"
+  label: string;
+  fs: string;
+  totalGb: number;
+}
+
+export interface GpuProfile {
+  id: string;              // UUID or hash
+  name: string;
+  vramTotalGb: number;
+  pciBus: string | null;
+}
+
+export interface NicProfile {
+  id: string;              // interface name, e.g. "Ethernet 2"
+  mac: string | null;
+  linkSpeedMbps: number;
+}
+
+export interface HardwareProfile {
+  schemaVersion: number;
+  signatureHash: string;
+  capturedAt: any;         // Firestore Timestamp or number
+  agentVersion: string;
+  cpus: CpuProfile[];
+  disks: DiskProfile[];
+  gpus: GpuProfile[];
+  nics: NicProfile[];
+}
+
+export interface CpuMetric   { percent: number; temperature?: number | null }
+export interface MemoryMetric { percent: number; usedGb: number }
+export interface DiskMetric  { percent: number; usedGb: number }
+export interface GpuMetric   { usagePercent: number; vramUsedGb: number; temperature?: number | null }
+export interface NicMetric   { txBps: number; rxBps: number; txUtil: number; rxUtil: number }
+export interface NetworkMetric { latencyMs?: number | null; packetLossPct?: number | null; gatewayIp?: string | null }
+
+export interface PrimaryDevices {
+  cpu?: string | null;
+  disk?: string | null;
+  gpu?: string | null;
+  nic?: string | null;
+}
+
+/**
+ * Joined view of a profiled device (CPU / disk / GPU / NIC) with its live metric.
+ *
+ * - `isMissing`  true when the profile entry exists but no matching metric key
+ *                 was found in the most recent metrics upload (agent hasn't
+ *                 reported it yet, or it's transiently absent).
+ * - `isOrphan`   true when a metric key exists but there's no matching profile
+ *                 entry (hardware changed since last profile capture — shown
+ *                 with a "syncing" indicator until the agent re-uploads the
+ *                 profile doc).
+ *
+ * Orphan entries carry the metric plus a synthesized profile shell (id/label
+ * only), so the profile half is `Partial<P>` rather than the full `P`.
+ */
+export type DeviceEntry<P, M> = Partial<P> & Partial<M> & {
+  id: string;
+  isMissing: boolean;
+  isOrphan: boolean;
+};
+
 export interface Machine {
   machineId: string;
   lastHeartbeat: number;
@@ -148,11 +221,16 @@ export interface Machine {
     expiresAt?: number;
   };
   metrics?: {
-    cpu: { name?: string; percent: number; unit: string; temperature?: number };
-    memory: { percent: number; total_gb: number; used_gb: number; unit: string };
-    disk: { percent: number; total_gb: number; used_gb: number; unit: string };
-    gpu?: { name: string; usage_percent: number; vram_total_gb: number; vram_used_gb: number; unit: string; temperature?: number };
-    network?: {
+    schemaVersion?: number;
+    profileHash?: string;
+    timestamp?: any;
+    cpus?:   Record<string, CpuMetric>;
+    memory?: MemoryMetric;
+    disks?:  Record<string, DiskMetric>;
+    gpus?:   Record<string, GpuMetric>;
+    nics?:   Record<string, NicMetric>;
+    network?: NetworkMetric & {
+      /** @deprecated v1 legacy — per-interface map moved to top-level `metrics.nics` in v2. Kept for rollout-window shim. */
       interfaces?: Record<string, {
         tx_bps: number;
         rx_bps: number;
@@ -160,11 +238,36 @@ export interface Machine {
         rx_util: number;
         link_speed: number;
       }>;
+      /** @deprecated v1 legacy — use `gatewayIp` (v2). */
       gateway_ip?: string | null;
+      /** @deprecated v1 legacy — use `latencyMs` (v2). */
       latency_ms?: number | null;
+      /** @deprecated v1 legacy — use `packetLossPct` (v2). */
       packet_loss_pct?: number | null;
     };
+    primary?: PrimaryDevices;
     processes?: Record<string, string>;
+
+    /** @deprecated v1 legacy singular field — kept for rollout-window shim. Remove once all agents are >= 2.9.0. */
+    cpu?: { name?: string; percent: number; unit: string; temperature?: number };
+    /** @deprecated v1 legacy singular field — kept for rollout-window shim. Remove once all agents are >= 2.9.0. */
+    disk?: { percent: number; total_gb: number; used_gb: number; unit: string };
+    /** @deprecated v1 legacy singular field — kept for rollout-window shim. Remove once all agents are >= 2.9.0. */
+    gpu?: { name: string; usage_percent: number; vram_total_gb: number; vram_used_gb: number; unit: string; temperature?: number };
+  };
+  profile?: HardwareProfile;
+  /**
+   * Joined profile + metrics view. Populated by `useMachines` after the
+   * per-machine `hardware/profile` doc and the live metrics have both arrived.
+   * Orphan entries (metrics key with no matching profile entry) are appended
+   * with `isOrphan: true`; profiled devices with no current metric carry
+   * `isMissing: true`.
+   */
+  devices?: {
+    cpus: DeviceEntry<CpuProfile, CpuMetric>[];
+    disks: DeviceEntry<DiskProfile, DiskMetric>[];
+    gpus: DeviceEntry<GpuProfile, GpuMetric>[];
+    nics: DeviceEntry<NicProfile, NicMetric>[];
   };
   processes?: Process[];
 }
@@ -175,6 +278,190 @@ export interface Site {
   createdAt: any; // Firestore Timestamp (new) or number (legacy)
   timezone?: string;  // IANA timezone, e.g., "America/New_York"
   owner?: string;  // UID of the user who owns this site
+}
+
+// DELETE once all agents are >= 2.9.0
+const LEGACY_METRICS_SHIM = true;
+
+/**
+ * Synthesize v2-shaped `metrics` and `profile` from a legacy (schemaVersion < 2)
+ * machine doc, so downstream code can always assume the v2 layout.
+ *
+ * Returns a shallow clone of the input machine with `metrics` and `profile`
+ * replaced by synthesized v2 equivalents. If the machine already looks v2
+ * (or there's nothing to shim), returns the input unchanged.
+ */
+function shimLegacyMachine(machine: Machine): Machine {
+  if (!LEGACY_METRICS_SHIM) return machine;
+
+  const legacy = machine.metrics;
+  if (!legacy) return machine;
+  // Already v2 — nothing to do.
+  if (legacy.schemaVersion === 2) return machine;
+  // Only shim if the legacy singular field is present (otherwise this is
+  // an empty/placeholder metrics object and there's nothing to synthesize).
+  if (!legacy.cpu) return machine;
+
+  const legacyNetwork = legacy.network ?? {};
+  const legacyInterfaces = legacyNetwork.interfaces ?? {};
+  const firstNicId = Object.keys(legacyInterfaces)[0];
+
+  const cpus: Record<string, CpuMetric> = {
+    CPU0: {
+      percent: legacy.cpu.percent,
+      temperature: legacy.cpu.temperature ?? null,
+    },
+  };
+
+  const disks: Record<string, DiskMetric> = legacy.disk
+    ? { 'C:': { percent: legacy.disk.percent, usedGb: legacy.disk.used_gb } }
+    : {};
+
+  const gpus: Record<string, GpuMetric> = legacy.gpu
+    ? {
+        GPU0: {
+          usagePercent: legacy.gpu.usage_percent,
+          vramUsedGb: legacy.gpu.vram_used_gb,
+          temperature: legacy.gpu.temperature ?? null,
+        },
+      }
+    : {};
+
+  const nics: Record<string, NicMetric> = {};
+  for (const [id, n] of Object.entries(legacyInterfaces)) {
+    nics[id] = {
+      txBps: n.tx_bps,
+      rxBps: n.rx_bps,
+      txUtil: n.tx_util,
+      rxUtil: n.rx_util,
+    };
+  }
+
+  // Legacy memory is snake_case at runtime (`used_gb`) even though the TS
+  // type claims camelCase — the v2 interface describes the post-shim shape.
+  // Read via a narrow structural type and normalize.
+  const legacyMemory = legacy.memory as unknown as
+    | { percent: number; used_gb?: number; usedGb?: number }
+    | undefined;
+  const memory: MemoryMetric | undefined = legacyMemory
+    ? {
+        percent: legacyMemory.percent,
+        usedGb: legacyMemory.used_gb ?? legacyMemory.usedGb ?? 0,
+      }
+    : undefined;
+
+  const network: NetworkMetric = {
+    latencyMs: legacyNetwork.latency_ms ?? null,
+    packetLossPct: legacyNetwork.packet_loss_pct ?? null,
+    gatewayIp: legacyNetwork.gateway_ip ?? null,
+  };
+
+  const primary: PrimaryDevices = {
+    cpu: 'CPU0',
+    disk: legacy.disk ? 'C:' : null,
+    gpu: legacy.gpu ? 'GPU0' : null,
+    nic: firstNicId ?? null,
+  };
+
+  const shimmedMetrics: Machine['metrics'] = {
+    ...legacy,
+    schemaVersion: 2,
+    cpus,
+    disks,
+    gpus,
+    nics,
+    memory,
+    network,
+    primary,
+  };
+
+  const shimmedProfile: HardwareProfile = {
+    schemaVersion: 0,
+    signatureHash: 'legacy',
+    capturedAt: 0,
+    agentVersion: 'legacy',
+    cpus: [{
+      id: 'CPU0',
+      model: legacy.cpu.name || 'Unknown',
+      physicalCores: 0,
+      logicalCores: 0,
+      socketIndex: 0,
+    }],
+    disks: legacy.disk
+      ? [{ id: 'C:', label: 'System', fs: 'NTFS', totalGb: legacy.disk.total_gb }]
+      : [],
+    gpus: legacy.gpu
+      ? [{
+          id: 'GPU0',
+          name: legacy.gpu.name,
+          vramTotalGb: legacy.gpu.vram_total_gb,
+          pciBus: null,
+        }]
+      : [],
+    nics: Object.entries(legacyInterfaces).map(([id, n]) => ({
+      id,
+      mac: null,
+      linkSpeedMbps: n.link_speed,
+    })),
+  };
+
+  // If the machine already has a real profile (e.g. a v2 agent uploaded its
+  // profile doc but its next metrics write is still legacy-shaped during the
+  // rollout window), preserve it — only synthesize a profile when none exists.
+  return {
+    ...machine,
+    metrics: shimmedMetrics,
+    profile: machine.profile ?? shimmedProfile,
+  };
+}
+
+/**
+ * Join a machine's `metrics` with its `profile` to produce the `devices`
+ * field. Profiled devices with no current metric are flagged `isMissing`;
+ * metric keys with no matching profile entry are appended as orphans.
+ */
+function joinMachineDevices(machine: Machine): Machine {
+  const profile = machine.profile;
+  const metrics = machine.metrics;
+  if (!profile) return machine;
+
+  const buildBucket = <P extends { id: string }, M>(
+    profileList: P[] | undefined,
+    metricMap: Record<string, M> | undefined,
+  ): DeviceEntry<P, M>[] => {
+    const result: DeviceEntry<P, M>[] = [];
+    const seen = new Set<string>();
+    for (const p of profileList ?? []) {
+      const metric = metricMap?.[p.id];
+      result.push({
+        ...p,
+        ...(metric ?? {}),
+        isMissing: !metric,
+        isOrphan: false,
+      } as unknown as DeviceEntry<P, M>);
+      seen.add(p.id);
+    }
+    // Orphans: metric keys not present in the profile.
+    for (const [id, metric] of Object.entries(metricMap ?? {})) {
+      if (seen.has(id)) continue;
+      result.push({
+        id,
+        ...(metric as M),
+        isMissing: false,
+        isOrphan: true,
+      } as unknown as DeviceEntry<P, M>);
+    }
+    return result;
+  };
+
+  const devices = {
+    cpus: buildBucket<CpuProfile, CpuMetric>(profile.cpus, metrics?.cpus),
+    disks: buildBucket<DiskProfile, DiskMetric>(profile.disks, metrics?.disks),
+    gpus: buildBucket<GpuProfile, GpuMetric>(profile.gpus, metrics?.gpus),
+    nics: buildBucket<NicProfile, NicMetric>(profile.nics, metrics?.nics),
+  };
+
+  return { ...machine, devices };
 }
 
 export function useSites(userId?: string, userSites?: string[], isAdmin?: boolean) {
@@ -376,8 +663,14 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
 
 export function useMachines(siteId: string) {
   const [machines, setMachines] = useState<Machine[]>([]);
+  const [profiles, setProfiles] = useState<Record<string, HardwareProfile>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Per-machine hardware/profile listeners. Keyed by machineId; opened lazily
+  // when a machine appears in the snapshot and torn down when it disappears
+  // or when siteId changes / the hook unmounts.
+  const profileListenersRef = useRef<Record<string, Unsubscribe>>({});
 
   // Config doc overrides: authoritative launch_mode/schedules from config collection
   // This prevents the 10-second flicker on page load where status doc has stale values
@@ -511,6 +804,51 @@ export function useMachines(siteId: string) {
           // the follow-up server snapshot (ms later) re-applies the full check,
           // and the 30s interval still catches silent crashes.
           const isFromCache = snapshot.metadata.fromCache;
+
+          // Reconcile per-machine hardware/profile listeners with the current
+          // set of machines. Open a listener for any newly appearing machine;
+          // tear down listeners for machines that disappeared.
+          const currentMachineIds = new Set<string>();
+          snapshot.forEach((d) => currentMachineIds.add(d.id));
+
+          // Open listeners for new machines
+          for (const machineId of currentMachineIds) {
+            if (profileListenersRef.current[machineId]) continue;
+            const profileRef = doc(db!, 'sites', siteId, 'machines', machineId, 'hardware', 'profile');
+            profileListenersRef.current[machineId] = onSnapshot(
+              profileRef,
+              (profileSnap) => {
+                if (!profileSnap.exists()) {
+                  setProfiles((prev) => {
+                    if (!(machineId in prev)) return prev;
+                    const next = { ...prev };
+                    delete next[machineId];
+                    return next;
+                  });
+                  return;
+                }
+                const profileData = profileSnap.data() as HardwareProfile;
+                setProfiles((prev) => ({ ...prev, [machineId]: profileData }));
+              },
+              (e) => {
+                // Non-critical — profile is supplementary; metrics still render.
+                console.debug(`Profile listener error for ${machineId}:`, e);
+              },
+            );
+          }
+
+          // Tear down listeners for machines no longer present
+          for (const machineId of Object.keys(profileListenersRef.current)) {
+            if (currentMachineIds.has(machineId)) continue;
+            profileListenersRef.current[machineId]();
+            delete profileListenersRef.current[machineId];
+            setProfiles((prev) => {
+              if (!(machineId in prev)) return prev;
+              const next = { ...prev };
+              delete next[machineId];
+              return next;
+            });
+          }
 
           setMachines(prevMachines => {
             const machineData: Machine[] = [];
@@ -664,7 +1002,16 @@ export function useMachines(siteId: string) {
         }
       );
 
-      return () => unsubscribe();
+      return () => {
+        unsubscribe();
+        // Tear down every per-machine profile listener opened by this effect
+        // instance. Next effect run (new siteId or remount) will re-open them.
+        for (const machineId of Object.keys(profileListenersRef.current)) {
+          profileListenersRef.current[machineId]();
+        }
+        profileListenersRef.current = {};
+        setProfiles({});
+      };
     } catch (err: any) {
       setError(err.message);
       setLoading(false);
@@ -1155,5 +1502,18 @@ export function useMachines(siteId: string) {
     await setDoc(configRef, { rebootSchedule: schedule }, { merge: true });
   };
 
-  return { machines, loading, error, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView, updateRebootSchedule };
+  // Join each machine with its hardware/profile doc (if any) and produce the
+  // derived `devices` field. Legacy (pre-v2) machines are shimmed first so
+  // downstream code always sees the v2 layout. Memoized on the raw inputs so
+  // we don't re-derive on unrelated re-renders.
+  const joinedMachines = useMemo(() => {
+    return machines.map((m) => {
+      const profile = profiles[m.machineId];
+      const withProfile = profile ? { ...m, profile } : m;
+      const shimmed = shimLegacyMachine(withProfile);
+      return joinMachineDevices(shimmed);
+    });
+  }, [machines, profiles]);
+
+  return { machines: joinedMachines, loading, error, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView, updateRebootSchedule };
 }

@@ -30,8 +30,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass, getUsageRingClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
-import { formatThroughput, getPrimaryNic } from '@/lib/networkUtils';
+import { formatThroughput } from '@/lib/networkUtils';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
+import { useDevicePrefs, type DeviceKind } from '@/hooks/useDevicePrefs';
+import { resolveDevice, shouldShowDeviceDropdown } from '@/lib/deviceResolvers';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
 
@@ -72,6 +75,8 @@ interface MachineCardProps {
   siteTimeFormat: '12h' | '24h';
   userPreferences: { temperatureUnit: 'C' | 'F' };
   isAdmin: boolean;
+  cardPref: { cpu?: string; disk?: string; gpu?: string; nic?: string };
+  onSetCardPref: (kind: DeviceKind, id: string | null) => void;
   onToggleStats: () => void;
   onToggleProcesses: () => void;
   onEditProcess: (process: Process) => void;
@@ -99,6 +104,8 @@ function MachineCard({
   siteTimeFormat,
   userPreferences,
   isAdmin,
+  cardPref,
+  onSetCardPref,
   onToggleStats,
   onToggleProcesses,
   onEditProcess,
@@ -140,6 +147,55 @@ function MachineCard({
   useMinuteTick();
   const localClock = formatMachineLocalClock(machine.machineTimezone, siteTimeFormat);
   const localTzShort = formatTimezoneShortName(machine.machineTimezone);
+
+  // Resolve per-card device selection (user pref → primary → first).
+  const primary = machine.metrics?.primary;
+  const cpuDevice = resolveDevice(machine.devices?.cpus, cardPref.cpu, primary?.cpu);
+  const diskDevice = resolveDevice(machine.devices?.disks, cardPref.disk, primary?.disk);
+  const gpuDevice = resolveDevice(machine.devices?.gpus, cardPref.gpu, primary?.gpu);
+  const nicDevice = resolveDevice(machine.devices?.nics, cardPref.nic, primary?.nic);
+
+  const showCpuDropdown = shouldShowDeviceDropdown(machine.devices?.cpus);
+  const showDiskDropdown = shouldShowDeviceDropdown(machine.devices?.disks);
+  const showGpuDropdown = shouldShowDeviceDropdown(machine.devices?.gpus);
+  const showNicDropdown = shouldShowDeviceDropdown(machine.devices?.nics);
+
+  // Derive memory total from usedGb / (percent/100) when percent > 0. v2 agents
+  // no longer send total_gb — the ratio is recoverable from the two fields we do
+  // have. Guard against divide-by-zero / missing fields.
+  const memory = machine.metrics?.memory;
+  const memoryTotalGb =
+    memory && memory.usedGb != null && memory.percent != null && memory.percent > 0
+      ? memory.usedGb / (memory.percent / 100)
+      : null;
+
+  // Tiny shadcn Select helpers for the per-card device selectors.
+  // Kept inline so they can close over machine + resolved device state.
+  const renderDeviceSelect = (
+    kind: DeviceKind,
+    devices: { id: string }[],
+    currentId: string | undefined,
+    labelFor: (id: string) => string
+  ) => (
+    <Select
+      value={currentId ?? 'auto'}
+      onValueChange={(v) => onSetCardPref(kind, v === 'auto' ? null : v)}
+    >
+      <SelectTrigger
+        size="sm"
+        className="h-5 px-1.5 py-0 text-xs border-0 bg-transparent shadow-none gap-1 text-muted-foreground hover:text-foreground focus-visible:ring-0"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent onClick={(e) => e.stopPropagation()}>
+        <SelectItem value="auto">auto (most active)</SelectItem>
+        {devices.map((d) => (
+          <SelectItem key={d.id} value={d.id}>{labelFor(d.id)}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 
   return (
     <Card className="border-border bg-card py-0 gap-0">
@@ -262,41 +318,49 @@ function MachineCard({
                 <div className="flex items-center gap-2 w-full select-none">
                   <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
                   <div className="flex items-center gap-2.5 text-sm text-muted-foreground overflow-hidden">
-                    {machine.metrics.cpu && (
-                      <span className="tabular-nums">cpu <span className="text-foreground font-medium">{machine.metrics.cpu.percent}%</span>
-                        {machine.metrics.cpu.temperature !== undefined && (
-                          <span className={`ml-1 ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
-                            {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
+                    {cpuDevice && cpuDevice.percent != null && (
+                      <span className="tabular-nums">cpu <span className="text-foreground font-medium">{cpuDevice.percent}%</span>
+                        {cpuDevice.temperature != null && (
+                          <span className={`ml-1 ${getTemperatureColorClass(cpuDevice.temperature)}`}>
+                            {formatTemperature(cpuDevice.temperature, userPreferences.temperatureUnit)}
                           </span>
                         )}
                       </span>
                     )}
-                    <span className="text-border">|</span>
-                    <span className="tabular-nums">mem <span className="text-foreground font-medium">{machine.metrics.memory?.percent}%</span></span>
-                    <span className="text-border">|</span>
-                    <span className="tabular-nums">disk <span className="text-foreground font-medium">{machine.metrics.disk?.percent}%</span></span>
-                    {machine.metrics.gpu && (
+                    {memory?.percent != null && (
                       <>
                         <span className="text-border">|</span>
-                        <span className="tabular-nums">gpu <span className="text-foreground font-medium">{machine.metrics.gpu.usage_percent}%</span>
-                          {machine.metrics.gpu.temperature !== undefined && (
-                            <span className={`ml-1 ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
-                              {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
+                        <span className="tabular-nums">mem <span className="text-foreground font-medium">{memory.percent}%</span></span>
+                      </>
+                    )}
+                    {diskDevice && diskDevice.percent != null && (
+                      <>
+                        <span className="text-border">|</span>
+                        <span className="tabular-nums">disk <span className="text-foreground font-medium">{diskDevice.percent}%</span></span>
+                      </>
+                    )}
+                    {gpuDevice && gpuDevice.usagePercent != null && (
+                      <>
+                        <span className="text-border">|</span>
+                        <span className="tabular-nums">gpu <span className="text-foreground font-medium">{gpuDevice.usagePercent}%</span>
+                          {gpuDevice.temperature != null && (
+                            <span className={`ml-1 ${getTemperatureColorClass(gpuDevice.temperature)}`}>
+                              {formatTemperature(gpuDevice.temperature, userPreferences.temperatureUnit)}
                             </span>
                           )}
                         </span>
                       </>
                     )}
-                    {machine.metrics.network?.latency_ms != null && (
+                    {machine.metrics.network?.latencyMs != null && (
                       <>
                         <span className="text-border">|</span>
                         <span className="tabular-nums">ping <span className={`font-medium ${
-                          machine.metrics.network.latency_ms > 100 ? 'text-red-400' :
-                          machine.metrics.network.latency_ms > 50 ? 'text-yellow-400' :
+                          machine.metrics.network.latencyMs > 100 ? 'text-red-400' :
+                          machine.metrics.network.latencyMs > 50 ? 'text-yellow-400' :
                           'text-foreground'
-                        }`}>{Math.round(machine.metrics.network.latency_ms)}ms</span>
-                          {(machine.metrics.network.packet_loss_pct ?? 0) > 0 && (
-                            <span className="ml-1 text-red-400">{machine.metrics.network.packet_loss_pct}% loss</span>
+                        }`}>{Math.round(machine.metrics.network.latencyMs)}ms</span>
+                          {(machine.metrics.network.packetLossPct ?? 0) > 0 && (
+                            <span className="ml-1 text-red-400">{machine.metrics.network.packetLossPct}% loss</span>
                           )}
                         </span>
                       </>
@@ -317,9 +381,9 @@ function MachineCard({
         </CollapsibleTrigger>
         <CardContent className="space-y-1.5 select-none pt-0 pb-4">
           {/* CPU Metric */}
-          {machine.metrics.cpu && (
+          {cpuDevice && cpuDevice.percent != null && (
             <div
-              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(machine.metrics.cpu.percent)}`}
+              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(cpuDevice.percent)}`}
               onClick={onMetricClick ? () => onMetricClick('cpu') : undefined}
             >
               {/* Sparkline background */}
@@ -327,20 +391,26 @@ function MachineCard({
                 <SparklineChart data={sparklineData.cpu} color="cpu" height={52} loading={sparklineData.loading} />
               </div>
               {/* Left accent bar - color based on usage */}
-              <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(machine.metrics.cpu.percent)}`} />
+              <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(cpuDevice.percent)}`} />
               {/* Content */}
               <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                 <div className="flex items-center gap-3 min-w-0">
                   <span className="text-sm font-medium text-muted-foreground">cpu</span>
-                  <span className="text-xs text-muted-foreground truncate hidden sm:block" title={machine.metrics.cpu.name || 'Unknown'}>
-                    {machine.metrics.cpu.name || 'Unknown'}
+                  <span className="text-xs text-muted-foreground truncate hidden sm:block" title={cpuDevice.model || cpuDevice.id}>
+                    {cpuDevice.model || cpuDevice.id}
                   </span>
+                  {showCpuDropdown && machine.devices?.cpus && (
+                    renderDeviceSelect('cpu', machine.devices.cpus, cardPref.cpu, (id) => {
+                      const d = machine.devices?.cpus.find(x => x.id === id);
+                      return d?.model || id;
+                    })
+                  )}
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  <span className="text-lg font-bold text-white tabular-nums">{machine.metrics.cpu.percent}%</span>
-                  {machine.metrics.cpu.temperature !== undefined && (
-                    <span className={`text-sm font-medium ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
-                      {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
+                  <span className="text-lg font-bold text-white tabular-nums">{cpuDevice.percent}%</span>
+                  {cpuDevice.temperature != null && (
+                    <span className={`text-sm font-medium ${getTemperatureColorClass(cpuDevice.temperature)}`}>
+                      {formatTemperature(cpuDevice.temperature, userPreferences.temperatureUnit)}
                     </span>
                   )}
                 </div>
@@ -349,59 +419,67 @@ function MachineCard({
           )}
 
           {/* Memory Metric */}
-          <div
-            className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(machine.metrics.memory?.percent ?? 0)}`}
-            onClick={onMetricClick ? () => onMetricClick('memory') : undefined}
-          >
-            {/* Sparkline background */}
-            <div className="absolute inset-0 opacity-80">
-              <SparklineChart data={sparklineData.memory} color="memory" height={52} loading={sparklineData.loading} />
-            </div>
-            {/* Left accent bar - color based on usage */}
-            <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(machine.metrics.memory?.percent ?? 0)}`} />
-            {/* Content */}
-            <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-muted-foreground">memory</span>
-                {machine.metrics.memory?.used_gb !== undefined && machine.metrics.memory?.total_gb !== undefined && (
-                  <span className="text-xs text-muted-foreground hidden sm:block">
-                    {machine.metrics.memory.used_gb.toFixed(1)} / {machine.metrics.memory.total_gb.toFixed(1)} GB
-                  </span>
-                )}
+          {memory?.percent != null && (
+            <div
+              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(memory.percent)}`}
+              onClick={onMetricClick ? () => onMetricClick('memory') : undefined}
+            >
+              {/* Sparkline background */}
+              <div className="absolute inset-0 opacity-80">
+                <SparklineChart data={sparklineData.memory} color="memory" height={52} loading={sparklineData.loading} />
               </div>
-              <span className="text-lg font-bold text-white tabular-nums">{machine.metrics.memory?.percent}%</span>
+              {/* Left accent bar - color based on usage */}
+              <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(memory.percent)}`} />
+              {/* Content */}
+              <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-medium text-muted-foreground">memory</span>
+                  {memory.usedGb != null && memoryTotalGb != null && (
+                    <span className="text-xs text-muted-foreground hidden sm:block">
+                      {memory.usedGb.toFixed(1)} / {memoryTotalGb.toFixed(1)} GB
+                    </span>
+                  )}
+                </div>
+                <span className="text-lg font-bold text-white tabular-nums">{memory.percent}%</span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Disk Metric */}
-          <div
-            className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(machine.metrics.disk?.percent ?? 0)}`}
-            onClick={onMetricClick ? () => onMetricClick('disk') : undefined}
-          >
-            {/* Sparkline background */}
-            <div className="absolute inset-0 opacity-80">
-              <SparklineChart data={sparklineData.disk} color="disk" height={52} loading={sparklineData.loading} />
-            </div>
-            {/* Left accent bar - color based on usage */}
-            <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(machine.metrics.disk?.percent ?? 0)}`} />
-            {/* Content */}
-            <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-muted-foreground">disk</span>
-                {machine.metrics.disk?.used_gb !== undefined && machine.metrics.disk?.total_gb !== undefined && (
-                  <span className="text-xs text-muted-foreground hidden sm:block">
-                    {machine.metrics.disk.used_gb.toFixed(1)} / {machine.metrics.disk.total_gb.toFixed(1)} GB
-                  </span>
-                )}
+          {diskDevice && diskDevice.percent != null && (
+            <div
+              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(diskDevice.percent)}`}
+              onClick={onMetricClick ? () => onMetricClick('disk') : undefined}
+            >
+              {/* Sparkline background */}
+              <div className="absolute inset-0 opacity-80">
+                <SparklineChart data={sparklineData.disk} color="disk" height={52} loading={sparklineData.loading} />
               </div>
-              <span className="text-lg font-bold text-white tabular-nums">{machine.metrics.disk?.percent}%</span>
+              {/* Left accent bar - color based on usage */}
+              <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(diskDevice.percent)}`} />
+              {/* Content */}
+              <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-medium text-muted-foreground">disk</span>
+                  <span className="text-xs text-muted-foreground hidden sm:block">
+                    {diskDevice.id}
+                    {diskDevice.usedGb != null && diskDevice.totalGb != null && (
+                      <> &nbsp;{diskDevice.usedGb.toFixed(1)} / {diskDevice.totalGb.toFixed(1)} GB</>
+                    )}
+                  </span>
+                  {showDiskDropdown && machine.devices?.disks && (
+                    renderDeviceSelect('disk', machine.devices.disks, cardPref.disk, (id) => id)
+                  )}
+                </div>
+                <span className="text-lg font-bold text-white tabular-nums">{diskDevice.percent}%</span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* GPU Metric */}
-          {machine.metrics.gpu && (
+          {gpuDevice && gpuDevice.usagePercent != null && (
             <div
-              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(machine.metrics.gpu.usage_percent ?? 0)}`}
+              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(gpuDevice.usagePercent)}`}
               onClick={onMetricClick ? () => onMetricClick('gpu') : undefined}
             >
               {/* Sparkline background */}
@@ -411,25 +489,31 @@ function MachineCard({
                 </div>
               )}
               {/* Left accent bar - color based on usage */}
-              <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(machine.metrics.gpu.usage_percent ?? 0)}`} />
+              <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(gpuDevice.usagePercent)}`} />
               {/* Content */}
               <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                 <div className="flex items-center gap-3 min-w-0">
                   <span className="text-sm font-medium text-muted-foreground">gpu</span>
-                  <span className="text-xs text-muted-foreground truncate hidden sm:block" title={machine.metrics.gpu.name}>
-                    {machine.metrics.gpu.name}
+                  <span className="text-xs text-muted-foreground truncate hidden sm:block" title={gpuDevice.name || gpuDevice.id}>
+                    {gpuDevice.name || gpuDevice.id}
                   </span>
+                  {showGpuDropdown && machine.devices?.gpus && (
+                    renderDeviceSelect('gpu', machine.devices.gpus, cardPref.gpu, (id) => {
+                      const d = machine.devices?.gpus.find(x => x.id === id);
+                      return d?.name || id;
+                    })
+                  )}
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  <span className="text-lg font-bold text-white tabular-nums">{machine.metrics.gpu.usage_percent}%</span>
-                  {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
+                  <span className="text-lg font-bold text-white tabular-nums">{gpuDevice.usagePercent}%</span>
+                  {gpuDevice.vramUsedGb != null && gpuDevice.vramTotalGb != null && gpuDevice.vramTotalGb > 0 && (
                     <span className="text-xs text-muted-foreground hidden md:block">
-                      {machine.metrics.gpu.vram_used_gb.toFixed(1)}/{machine.metrics.gpu.vram_total_gb.toFixed(1)}GB
+                      {gpuDevice.vramUsedGb.toFixed(1)}/{gpuDevice.vramTotalGb.toFixed(1)}GB
                     </span>
                   )}
-                  {machine.metrics.gpu.temperature !== undefined && (
-                    <span className={`text-sm font-medium ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
-                      {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
+                  {gpuDevice.temperature != null && (
+                    <span className={`text-sm font-medium ${getTemperatureColorClass(gpuDevice.temperature)}`}>
+                      {formatTemperature(gpuDevice.temperature, userPreferences.temperatureUnit)}
                     </span>
                   )}
                 </div>
@@ -438,28 +522,27 @@ function MachineCard({
           )}
 
           {/* Network Metric */}
-          {(() => {
-            const interfaces = machine.metrics?.network?.interfaces;
-            if (!interfaces) return null;
-            const primary = getPrimaryNic(interfaces);
-            if (!primary) return null;
-            const maxUtil = Math.max(primary.data.tx_util, primary.data.rx_util);
+          {nicDevice && nicDevice.txBps != null && nicDevice.rxBps != null && (() => {
+            const maxUtil = Math.max(nicDevice.txUtil ?? 0, nicDevice.rxUtil ?? 0);
             return (
               <div
                 className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(maxUtil)}`}
-                onClick={onMetricClick ? () => onMetricClick(`${primary.name}_tx_util` as MetricType) : undefined}
+                onClick={onMetricClick ? () => onMetricClick(`${nicDevice.id}_tx_util` as MetricType) : undefined}
               >
                 <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(maxUtil)}`} />
                 <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="text-sm font-medium text-muted-foreground">network</span>
-                    <span className="text-xs text-muted-foreground truncate hidden sm:block" title={`${primary.name} (${primary.data.link_speed} Mbps)`}>
-                      {primary.name}
+                    <span className="text-xs text-muted-foreground truncate hidden sm:block" title={nicDevice.linkSpeedMbps ? `${nicDevice.id} (${nicDevice.linkSpeedMbps} Mbps)` : nicDevice.id}>
+                      {nicDevice.id}
                     </span>
+                    {showNicDropdown && machine.devices?.nics && (
+                      renderDeviceSelect('nic', machine.devices.nics, cardPref.nic, (id) => id)
+                    )}
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
-                    <span className="text-xs font-medium text-orange-400">TX {formatThroughput(primary.data.tx_bps)}</span>
-                    <span className="text-xs font-medium text-green-400">RX {formatThroughput(primary.data.rx_bps)}</span>
+                    <span className="text-xs font-medium text-orange-400">TX {formatThroughput(nicDevice.txBps)}</span>
+                    <span className="text-xs font-medium text-green-400">RX {formatThroughput(nicDevice.rxBps)}</span>
                   </div>
                 </div>
               </div>
@@ -679,6 +762,7 @@ export function MachineCardView({
   onLiveView,
 }: MachineCardViewProps) {
   const { userPreferences, isAdmin } = useAuth();
+  const { prefs, setCardPref } = useDevicePrefs();
   const uniqueTimezones = new Set(machines.map(m => m.machineTimezone).filter(Boolean));
   const showLocalClock = uniqueTimezones.size > 1;
 
@@ -695,6 +779,8 @@ export function MachineCardView({
           siteTimeFormat={siteTimeFormat}
           userPreferences={userPreferences}
           isAdmin={isAdmin}
+          cardPref={prefs.cardView[machine.machineId] ?? {}}
+          onSetCardPref={(kind, id) => setCardPref(machine.machineId, kind, id)}
           onToggleStats={onToggleStats}
           onToggleProcesses={onToggleProcesses}
           onEditProcess={(process) => onEditProcess(machine.machineId, process)}

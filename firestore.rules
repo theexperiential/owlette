@@ -181,6 +181,21 @@ service cloud.firestore {
         }
 
         // ----------------------------------------
+        // Hardware Profile Subcollection
+        // ----------------------------------------
+        // Stores hardware inventory/profile data for the machine
+        // Agents write hardware profile on startup and on hardware changes
+        // Web dashboard reads to display hardware details
+        // OAuth agents can ONLY write to their own machine's hardware profile
+        match /hardware/{docId} {
+          allow read: if canAccessSite(siteId) ||
+                         isServiceAccount() ||
+                         agentCanAccessMachine(siteId, machineId);
+          allow write: if isServiceAccount() ||
+                          agentCanAccessMachine(siteId, machineId);
+        }
+
+        // ----------------------------------------
         // Historical Metrics Subcollection
         // ----------------------------------------
         // Stores time-series metrics for dashboard graphs
@@ -390,6 +405,12 @@ service cloud.firestore {
       // User-level settings (e.g., LLM API keys)
       // Users can only read/write their own settings
       // Admin SDK handles encryption server-side
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/devicePrefs/{docId} {
+      // Per-device UI preferences (e.g., view mode, collapse state)
+      // Users can only read/write their own device preferences
       allow read, write: if isAuthenticated() && request.auth.uid == userId;
     }
 

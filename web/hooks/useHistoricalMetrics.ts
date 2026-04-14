@@ -12,7 +12,7 @@
  *   meta: { lastSample, sampleCount, resolution }
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useDemoContext } from '@/contexts/DemoContext';
@@ -189,6 +189,7 @@ export function useHistoricalMetrics(
   const [data, setData] = useState<ChartDataPoint[] | null>(null);
   const [loading, setLoading] = useState(!demo);
   const [error, setError] = useState<string | null>(null);
+  const lastFetchRef = useRef<number>(0);
 
   const fetchData = useCallback(async () => {
     if (demo && machineId) {
@@ -276,6 +277,7 @@ export function useHistoricalMetrics(
       const finalData = insertGapMarkers(downsampled);
 
       setData(finalData);
+      lastFetchRef.current = Date.now();
     } catch (e: unknown) {
       console.error('Failed to fetch historical metrics:', e);
       setError(e instanceof Error ? e.message : 'Failed to load chart data');
@@ -286,6 +288,19 @@ export function useHistoricalMetrics(
 
   useEffect(() => {
     fetchData();
+  }, [fetchData]);
+
+  // Refetch when the tab becomes visible again, so the chart's "now" boundary
+  // doesn't stay frozen on the timestamp captured at initial mount. Gated on
+  // a 30s staleness check to avoid refetch spam on quick tab flips.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastFetchRef.current > 30_000) {
+        fetchData();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
   }, [fetchData]);
 
   return { data, loading, error, refetch: fetchData };

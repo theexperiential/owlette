@@ -34,6 +34,7 @@ from datetime import datetime
 # Import shared utilities
 import shared_utils
 import registry_utils
+import hardware_profile
 
 # Import new OAuth-based modules (replace firebase_admin)
 from auth_manager import AuthManager, AuthenticationError, TokenRefreshError
@@ -142,6 +143,17 @@ class FirebaseClient:
         # Track last synced software inventory hash to prevent unnecessary writes
         self._last_software_inventory_hash: Optional[str] = None
 
+        # Hardware profile state (schemaVersion 1)
+        # _last_profile_check: monotonic timestamp of the last build_profile() call
+        # _cached_profile: most recent profile dict returned by _ensure_profile
+        # _cached_profile_hash: on-disk signature hash (loaded lazily from profile_hash.json)
+        # _last_primary: previous compute_primary result, used for hysteresis
+        self._last_profile_check: float = 0.0
+        self._cached_profile: Optional[Dict] = None
+        self._cached_profile_hash: Optional[str] = None
+        self._last_primary: Optional[Dict] = None
+        self._profile_hash_path: str = shared_utils.get_data_path('tmp/profile_hash.json')
+
         # =================================================================
         # Initialize Firebase connection
         # =================================================================
@@ -227,6 +239,11 @@ class FirebaseClient:
             # Send immediate heartbeat and metrics
             self._update_presence(True)
             self.logger.debug("Heartbeat sent after connection")
+
+            # Ensure hardware profile is uploaded once on (re)connect — on a
+            # signature change this writes the new profile doc before metrics,
+            # so consumers never see metrics referencing a stale profileHash.
+            self._ensure_profile()
 
             metrics = shared_utils.get_system_metrics()
             self._upload_metrics(metrics)
@@ -762,8 +779,100 @@ class FirebaseClient:
             self.logger.error(f"Error updating presence: {e}")
             self.connection_manager.report_error(e, "Presence update")
 
+    # =========================================================================
+    # Hardware Profile (schemaVersion 1)
+    # =========================================================================
+
+    _PROFILE_CHECK_INTERVAL = 300.0  # seconds between full build_profile() rebuilds
+
+    def _load_cached_profile_hash(self) -> Optional[str]:
+        """Load the cached profile signature hash from disk (once per process)."""
+        if self._cached_profile_hash is not None:
+            return self._cached_profile_hash
+        try:
+            data = shared_utils.read_json_from_file(self._profile_hash_path)
+            if isinstance(data, dict):
+                hash_val = data.get('signatureHash')
+                if isinstance(hash_val, str) and hash_val:
+                    self._cached_profile_hash = hash_val
+        except Exception as e:
+            self.logger.debug(f"No cached profile hash available: {e}")
+        return self._cached_profile_hash
+
+    def _write_cached_profile_hash(self, signature_hash: str):
+        """Persist the profile signature hash to disk."""
+        try:
+            os.makedirs(os.path.dirname(self._profile_hash_path), exist_ok=True)
+            shared_utils.write_json_to_file({'signatureHash': signature_hash}, self._profile_hash_path)
+            self._cached_profile_hash = signature_hash
+        except Exception as e:
+            self.logger.warning(f"Failed to persist profile hash: {e}")
+
+    def _ensure_profile(self) -> Optional[Dict[str, Any]]:
+        """
+        Ensure the hardware profile is up-to-date in Firestore.
+
+        Rebuilds the profile at most once every _PROFILE_CHECK_INTERVAL seconds.
+        If the signature hash changed since the last upload, writes the new
+        profile to sites/{siteId}/machines/{machineId}/hardware/profile and
+        updates the local cache. All errors are swallowed so heartbeat never
+        crashes.
+
+        Returns:
+            The current profile dict, or the cached profile if the rate-limit
+            gate skipped a rebuild, or None on catastrophic failure.
+        """
+        now = time.monotonic()
+        if self._cached_profile is not None and (now - self._last_profile_check) < self._PROFILE_CHECK_INTERVAL:
+            return self._cached_profile
+
+        # Stamp the check time BEFORE attempting build_profile so a persistent
+        # failure (e.g. stuck WMI, hung disk_usage) still honors the 5-minute
+        # gate instead of re-running expensive queries on every heartbeat tick.
+        self._last_profile_check = now
+
+        try:
+            profile = hardware_profile.build_profile()
+        except Exception as e:
+            self.logger.warning(f"build_profile failed: {e}")
+            return self._cached_profile
+
+        self._cached_profile = profile
+
+        signature = profile.get('signatureHash')
+        if not signature:
+            return profile
+
+        cached_hash = self._load_cached_profile_hash()
+        if signature == cached_hash:
+            return profile
+
+        # Signature changed — upload to Firestore.
+        if not self.connected or not self.db:
+            # Offline or not yet connected; retain cached state, retry next tick.
+            return profile
+
+        try:
+            profile_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('hardware').document('profile')
+            profile_ref.set(profile, merge=False)
+            self._write_cached_profile_hash(signature)
+            self.logger.info(f"Hardware profile uploaded (hash={signature[:12]})")
+        except Exception as e:
+            self.logger.warning(f"Failed to upload hardware profile: {e}")
+
+        return profile
+
     def _upload_metrics(self, metrics: Dict[str, Any]):
-        """Upload system metrics to Firestore."""
+        """Upload system metrics to Firestore.
+
+        The `metrics` argument provides the lean in-line dict from
+        shared_utils.get_system_metrics_with_config (memory + processes).
+        Dynamic hardware metrics (cpus/disks/gpus/nics/network) are collected
+        here from the current hardware_profile so the shape stays aligned with
+        the uploaded schemaVersion 1 profile document.
+        """
         if not self.connected or not self.db:
             return
 
@@ -771,11 +880,34 @@ class FirebaseClient:
             .collection('machines').document(self.machine_id)
 
         try:
+            # Ensure profile is uploaded / up-to-date. Needed for IDs alignment.
+            profile = self._ensure_profile()
+
+            # Collect dynamic per-device metrics keyed by profile IDs.
+            try:
+                dynamic = hardware_profile.collect_dynamic_metrics(profile) if profile else {}
+            except Exception as e:
+                self.logger.warning(f"collect_dynamic_metrics failed: {e}")
+                dynamic = {}
+
+            # Primary device picks (with hysteresis against previous tick).
+            try:
+                primary = hardware_profile.compute_primary(dynamic, self._last_primary)
+                self._last_primary = primary
+            except Exception as e:
+                self.logger.warning(f"compute_primary failed: {e}")
+                primary = self._last_primary or {'cpu': None, 'disk': None, 'gpu': None, 'nic': None}
+
+            # Memory and processes come from the caller-provided metrics dict.
+            memory_data = metrics.get('memory', {})
             processes_data = metrics.get('processes', {})
+
             self.logger.debug(f"Uploading metrics with {len(processes_data)} processes: {list(processes_data.keys())}")
 
-            # Use update() with dot notation so metrics.processes is REPLACED
-            # entirely (not deep-merged). This ensures deleted processes don't
+            profile_hash = profile.get('signatureHash') if profile else None
+
+            # Use update() with dot notation so nested maps are REPLACED entirely
+            # (not deep-merged). This ensures deleted processes/devices don't
             # persist as ghost entries in Firestore.
             metrics_ref.update({
                 'online': True,
@@ -785,13 +917,23 @@ class FirebaseClient:
                 'machine_timezone_iana': shared_utils.get_machine_timezone_iana(),
                 'machineId': self.machine_id,
                 'siteId': self.site_id,
-                'metrics.cpu': metrics.get('cpu', {}),
-                'metrics.memory': metrics.get('memory', {}),
-                'metrics.disk': metrics.get('disk', {}),
-                'metrics.gpu': metrics.get('gpu', {}),
-                'metrics.network': metrics.get('network', {}),
+                'metrics.schemaVersion': 2,
+                'metrics.profileHash': profile_hash,
                 'metrics.timestamp': SERVER_TIMESTAMP,
-                'metrics.processes': processes_data
+                'metrics.cpus': dynamic.get('cpus', {}),
+                'metrics.disks': dynamic.get('disks', {}),
+                'metrics.gpus': dynamic.get('gpus', {}),
+                'metrics.nics': dynamic.get('nics', {}),
+                'metrics.memory': memory_data,
+                'metrics.network': dynamic.get('network', {}),
+                'metrics.primary': primary,
+                'metrics.processes': processes_data,
+                # Clean up legacy v1 singular fields so they don't linger
+                # alongside v2 plurals. DELETE_FIELD is a no-op if the key
+                # is already absent, so this is safe on fresh docs too.
+                'metrics.cpu': DELETE_FIELD,
+                'metrics.disk': DELETE_FIELD,
+                'metrics.gpu': DELETE_FIELD,
             })
 
         except Exception as e:

@@ -30,7 +30,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { MetricsDetailPanel, type MetricType } from '@/components/charts';
 import ScheduleEditor from '@/components/ScheduleEditor';
 import { MachineCardView } from './components/MachineCardView';
-import { MachineRow, MemoizedTableHeader as ListViewTableHeader } from './components/MachineListView';
+import { MachineRow, MachineTableHeader, type DeviceUnion, type ShowDropdownFlags } from './components/MachineListView';
+import { useDevicePrefs } from '@/hooks/useDevicePrefs';
+import { unionIds } from '@/lib/deviceResolvers';
 import { AddMachineButton } from './components/AddMachineButton';
 import type { Process } from '@/hooks/useFirestore';
 
@@ -114,6 +116,20 @@ export default function DashboardPage() {
   });
 
   const { machines, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView } = useMachines(currentSiteId);
+  const { prefs: devicePrefs, setListPref } = useDevicePrefs();
+  const listPref = devicePrefs.listView;
+  const deviceUnion = useMemo<DeviceUnion>(() => ({
+    cpus:  unionIds(machines.map(m => m.devices?.cpus?.map(c => c.id) ?? [])),
+    disks: unionIds(machines.map(m => m.devices?.disks?.map(d => d.id) ?? [])),
+    gpus:  unionIds(machines.map(m => m.devices?.gpus?.map(g => g.id) ?? [])),
+    nics:  unionIds(machines.map(m => m.devices?.nics?.map(n => n.id) ?? [])),
+  }), [machines]);
+  const showDropdown = useMemo<ShowDropdownFlags>(() => ({
+    cpu:  machines.some(m => (m.devices?.cpus?.length  ?? 0) > 1),
+    disk: machines.some(m => (m.devices?.disks?.length ?? 0) > 1),
+    gpu:  machines.some(m => (m.devices?.gpus?.length  ?? 0) > 1),
+    nic:  machines.some(m => (m.devices?.nics?.length  ?? 0) > 1),
+  }), [machines]);
   const { presets: schedulePresets, createPreset, deletePreset: deleteSchedulePreset, updatePreset: updateSchedulePreset } = useSchedulePresets(currentSiteId);
   const { checkMachineHasActiveDeployment } = useDeployments(currentSiteId);
   const { removeMachineFromSite, removing: isRemovingMachine } = useMachineOperations(currentSiteId);
@@ -781,12 +797,18 @@ export default function DashboardPage() {
             {viewType === 'list' && (
               <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
                 <Table style={{ contain: 'layout', tableLayout: 'fixed' }}>
-                  <ListViewTableHeader />
+                  <MachineTableHeader
+                    deviceUnion={deviceUnion}
+                    showDropdown={showDropdown}
+                    listPref={listPref}
+                    setListPref={setListPref}
+                  />
                   <TableBody>
                     {machines.map((machine) => (
                       <MachineRow
                         key={machine.machineId}
                         machine={machine}
+                        listPref={listPref}
                         isExpanded={expandedMachineIds.has(machine.machineId)}
                         currentSiteId={currentSiteId}
                         siteTimezone={currentSite?.timezone || 'UTC'}
