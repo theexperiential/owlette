@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites, type LaunchMode, type ScheduleBlock } from '@/hooks/useFirestore';
@@ -502,9 +502,11 @@ export default function DashboardPage() {
     }
   };
 
-  // Read view preference from localStorage after hydration to avoid SSR mismatch.
-  // A lazy initializer would render different HTML on the server vs. client.
-  useEffect(() => {
+  // Read view preference from localStorage before first paint to avoid card→list flash.
+  // useLayoutEffect runs synchronously after DOM mutations but BEFORE the browser
+  // paints, so the user only sees the final view. useEffect would paint the default
+  // 'card' first, then re-render to 'list' — visible flash on returning users.
+  useLayoutEffect(() => {
     const savedView = localStorage.getItem('owlette_view_type');
     if (savedView === 'card' || savedView === 'list') {
       setViewType(savedView);
