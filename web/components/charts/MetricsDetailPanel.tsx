@@ -26,7 +26,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { X, ToggleLeft, ToggleRight } from 'lucide-react';
+import { X, ToggleLeft, ToggleRight, Monitor } from 'lucide-react';
 import { TimeRangeSelector, type TimeRange } from './TimeRangeSelector';
 import { ChartTooltip, metricConfig, type MetricType } from './ChartTooltip';
 import { useHistoricalMetrics } from '@/hooks/useHistoricalMetrics';
@@ -330,11 +330,12 @@ export function MetricsDetailPanel({
   }, [selectedMetrics, selectedNics, nicNames]);
 
   return (
-    <Card className="border-border bg-card">
-      <CardContent className="p-3 pt-1">
+    <Card className="border-border bg-card py-0 gap-0">
+      <CardContent className="p-4">
         {/* Title row */}
         <div className="flex items-center gap-3 mb-3">
-          <span className="text-xl font-semibold text-foreground shrink-0">
+          <span className="flex items-center gap-2 text-xl font-semibold text-foreground shrink-0">
+            <Monitor className="h-5 w-5 text-muted-foreground" />
             {machineName || machineId}
           </span>
           <div className="flex-1" />

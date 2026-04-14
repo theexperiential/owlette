@@ -56,8 +56,6 @@ export default function DashboardPage() {
   const [viewType, setViewType] = useState<ViewType>('card');
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
 
-  // Delay showing "Getting Started" to avoid flash if machines are still loading
-  const [canShowGettingStarted, setCanShowGettingStarted] = useState(false);
 
   // Schedule Editor dialog state (single instance, opened by gear icon on any process)
   const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
@@ -115,7 +113,7 @@ export default function DashboardPage() {
     schedules: null,
   });
 
-  const { machines, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView } = useMachines(currentSiteId);
+  const { machines, loading: machinesLoading, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView } = useMachines(currentSiteId);
   const { prefs: devicePrefs, setListPref } = useDevicePrefs();
   const listPref = devicePrefs.listView;
   const deviceUnion = useMemo<DeviceUnion>(() => ({
@@ -160,8 +158,13 @@ export default function DashboardPage() {
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   const [liveViewTarget, setLiveViewTarget] = useState<{ machineId: string; machineName: string } | null>(null);
 
-  // Metrics Detail Panel state (replaces top stats cards when active)
-  const [detailPanel, setDetailPanel] = useState<DetailPanelState | null>(null);
+  // Metrics Detail Panel state is the source of truth in userPreferences.activeGraphPanel
+  // (persisted across reloads). Derive the rendered panel from that pref once machines load.
+  const detailPanel = useMemo<DetailPanelState | null>(() => {
+    const p = userPreferences.activeGraphPanel;
+    if (!p) return null;
+    return { machineId: p.machineId, machineName: p.machineId, metric: p.metric as MetricType };
+  }, [userPreferences.activeGraphPanel]);
 
   // Multilingual welcome messages with language info (memoized to avoid recreation)
   const welcomeMessages = useMemo(() => [
@@ -499,14 +502,6 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // Delay showing "Getting Started" by 2 seconds to avoid flash if machines load quickly
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setCanShowGettingStarted(true);
-    }, 2000); // 2 second delay
-    return () => clearTimeout(timer);
-  }, []);
-
   // Save view preference to localStorage
   const handleViewChange = (view: ViewType) => {
     setViewType(view);
@@ -530,19 +525,20 @@ export default function DashboardPage() {
     updateLastSite(siteId);
   };
 
-  // Handle metric click to open detail panel
+  // Handle metric click to open detail panel (persisted)
   const handleMetricClick = (machineId: string, metric: MetricType) => {
-    const machine = machines.find(m => m.machineId === machineId);
-    setDetailPanel({
-      machineId,
-      machineName: machine?.machineId || machineId,
-      metric,
-    });
+    updateUserPreferences(
+      { activeGraphPanel: { machineId, metric } },
+      { silent: true },
+    ).catch(() => { /* fire-and-forget, matches graphTabs pattern */ });
   };
 
   // Close detail panel and return to stats cards
   const handleCloseDetailPanel = () => {
-    setDetailPanel(null);
+    updateUserPreferences(
+      { activeGraphPanel: null },
+      { silent: true },
+    ).catch(() => { /* fire-and-forget */ });
   };
 
   useEffect(() => {
@@ -843,7 +839,7 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-        ) : canShowGettingStarted ? (
+        ) : !machinesLoading ? (
           <Card className="border-border bg-card animate-in fade-in duration-500">
             <CardHeader>
               <CardTitle className="text-foreground">getting started</CardTitle>
