@@ -39,6 +39,13 @@ def _agent_version() -> str:
 def _collect_cpus() -> list:
     cpus = []
     try:
+        # WMI uses COM; background threads must register with the COM runtime
+        # before making calls. Idempotent on threads that already initialized.
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
         import wmi
         c = wmi.WMI()
         for idx, proc in enumerate(c.Win32_Processor()):

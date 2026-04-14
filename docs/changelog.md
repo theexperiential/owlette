@@ -11,6 +11,27 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.8.1] - 2026-04-14
+
+### added
+- **Per-device metrics schema (v2)** — metrics now key cpus/disks/gpus/nics by stable device id instead of the old singular `cpu`/`disk`/`gpu` fields. Each machine publishes a `hardware/profile` subcollection document (schemaVersion 1) describing its physical devices; heartbeats reference those ids and include a `primary` pick per kind (selected by busyness with 5% hysteresis so the display doesn't flicker). Multi-GPU rigs, multi-disk setups, and multi-NIC hosts now render every device instead of collapsing to the first one.
+- **Per-user device selection preferences** — dashboard list and card views remember which device each user wants to see per machine, persisted to `users/{uid}/devicePrefs/global` in Firestore (no localStorage). The list view shows a column-header dropdown when any visible machine has >1 of a kind; each row falls back to its own `primary` when the selection isn't present locally.
+- **`deviceResolvers` utility** — `resolveDevice`, `shouldShowDeviceDropdown`, and `unionIds` helpers with unit tests; shared by list view, card view, and the metrics detail panel.
+- **Metrics detail panel persistence** — selected metric tabs (and selected NIC, when relevant) now persist per machine via `userPreferences.graphTabs`, so refreshing or switching sites no longer resets your view.
+
+### changed
+- **Agent hardware profile is built on-device** (`hardware_profile.py`) with signature-hash change detection and a 5-minute rate-limit gate; only re-uploads when hardware actually changes. Gate stamps its timestamp *before* `build_profile()` so a persistent WMI/disk failure doesn't storm the heartbeat loop.
+- **`shared_utils.get_system_metrics_with_config` retained its legacy snake_case shape** (`cpu`/`memory`/`disk`/`gpu`/`network`) for in-process consumers (`mcp_tools`, `report_issue`, tray GUI) while also carrying the camelCase keys the v2 uploader needs; `skip_gpu` is honored again to keep the tray GUI free of `nvidia-smi` console-window flashes.
+- **WMI calls from the metrics thread now initialize COM** via `pythoncom.CoInitialize()` so per-socket CPU detection works on dual-socket workstations instead of silently falling through to the psutil fallback.
+- **Legacy singular metrics fields are deleted on v2 upload** (`metrics.cpu`/`metrics.disk`/`metrics.gpu` → `DELETE_FIELD`) so doc size doesn't grow with both schemas side by side.
+
+### fixed
+- **Cloud `metricsHistory` function reads v2 per-device maps** (via `primary` + first-entry) with v1 fallback, so sparklines and threshold alerts keep working across the rollout window instead of flatlining the moment a v2 agent reports.
+- **`shimLegacyMachine` no longer clobbers a real profile** during the mixed-version window when a v2 agent has uploaded its profile doc but its next metrics write is still legacy-shaped.
+- **`hardware_profile._mac_for` return type** tightened to `Optional[str]`.
+
+---
+
 ## [2.8.0] - 2026-04-12
 
 ### added

@@ -2,7 +2,7 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. Monorepo: Python Windows service (agent) + Next.js web dashboard (web) + Firebase/Firestore backend.
 
-**Version**: 2.8.0 | **License**: FSL-1.1-Apache-2.0
+**Version**: 2.8.1 | **License**: FSL-1.1-Apache-2.0
 
 ---
 
@@ -206,4 +206,4 @@ Be real, not flattering. If something was mid, say so. If it was genuinely great
 
 ---
 
-**Last Updated**: 2026-04-12
+**Last Updated**: 2026-04-14
