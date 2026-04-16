@@ -8,7 +8,7 @@
  * Supports per-NIC network metrics with TX/RX utilization lines.
  */
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   LineChart,
   Line,
@@ -88,6 +88,14 @@ function initialMetricToState(initialMetric: MetricType): { metrics: MetricType[
   return { metrics: [initialMetric], nics: [] };
 }
 
+function getISOWeek(d: Date): number {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
+
 function sameStringArray(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
@@ -123,14 +131,28 @@ export function MetricsDetailPanel({
     }
     return click.nics;
   });
-  const [timeRange, setTimeRange] = useState<TimeRange>('1h');
+  const [timeRange, setTimeRangeState] = useState<TimeRange>(
+    () => userPreferences.graphTimeRange || '1h',
+  );
+
+  // Keep local state in sync if another tab/device updates the preference.
+  useEffect(() => {
+    const next = userPreferences.graphTimeRange || '1h';
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTimeRangeState((prev) => (prev === next ? prev : next));
+  }, [userPreferences.graphTimeRange]);
+
+  const setTimeRange = useCallback((range: TimeRange) => {
+    setTimeRangeState(range);
+    updateUserPreferences({ graphTimeRange: range }, { silent: true })
+      .catch(() => { /* fire-and-forget; matches statsExpanded pattern */ });
+  }, [updateUserPreferences]);
 
   const { data, loading, error } = useHistoricalMetrics(siteId, machineId, timeRange);
 
-  const chartData = useMemo(() => {
-    if (!data) return [];
-    return data;
-  }, [data]);
+  // Stable empty-array reference when data is null so downstream useMemo
+  // dependencies don't thrash on every render while loading.
+  const chartData = useMemo(() => data ?? [], [data]);
 
   // Extract unique NIC names from chart data
   const nicNames = useMemo(() => {
@@ -218,23 +240,34 @@ export function MetricsDetailPanel({
   };
 
   const hour12 = (userPreferences.timeFormat || '12h') === '12h';
-  const formatXAxisTick = (timestamp: number): string => {
+
+  // Memoized so Recharts' XAxis/Tooltip don't re-mount on every parent render.
+  const formatXAxisTick = useCallback((timestamp: number): string => {
     const date = new Date(timestamp);
     switch (timeRange) {
       case '1h':
-      case '1d':
         return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12 });
+      case '1d':
+        // Show date at midnight, hour otherwise
+        return date.getHours() === 0
+          ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+          : date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12 });
       case '1w':
-        return date.toLocaleDateString(undefined, { weekday: 'short', hour: '2-digit', hour12 });
+        return `W${getISOWeek(date)} ${date.toLocaleDateString(undefined, { weekday: 'short' })}`;
       case '1m':
-        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       case '1y':
+        return date.toLocaleDateString(undefined, { month: 'short' });
       case 'all':
         return date.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
       default:
         return date.toLocaleTimeString(undefined, { hour12 });
     }
-  };
+  }, [timeRange, hour12]);
+
+  const formatTooltipTime = useCallback((ts: number): string => {
+    const d = new Date(ts);
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12 });
+  }, [hour12]);
 
   // Latch "now" in state so the time domain is a pure function of state.
   // Refresh on every new data sample (chartData.length) AND on range change
@@ -273,6 +306,49 @@ export function MetricsDetailPanel({
         return [now - 24 * 60 * 60 * 1000, now];
     }
   }, [timeRange, chartData, nowTs]);
+
+  // Explicit ticks keep the x-axis clean: one label per natural unit
+  // (date / week-day / month), no repeats, and no auto-generated gaps where
+  // the data is sparse.
+  const xTicks = useMemo((): number[] | undefined => {
+    const [start, end] = timeDomain;
+    if (timeRange === '1h') return undefined; // let recharts auto-tick
+    const ticks: number[] = [];
+    if (timeRange === '1d') {
+      // One tick per hour. Step 2h so 24 labels don't overcrowd.
+      const d = new Date(start);
+      d.setMinutes(0, 0, 0);
+      if (d.getTime() < start) d.setHours(d.getHours() + 1);
+      // Align to even hours so midnight is always a tick when in range.
+      while (d.getHours() % 2 !== 0) d.setHours(d.getHours() + 1);
+      while (d.getTime() <= end) {
+        ticks.push(d.getTime());
+        d.setHours(d.getHours() + 2);
+      }
+      return ticks;
+    }
+    if (timeRange === '1w') {
+      // One tick per midnight within the range.
+      const d = new Date(start);
+      d.setHours(0, 0, 0, 0);
+      if (d.getTime() < start) d.setDate(d.getDate() + 1);
+      while (d.getTime() <= end) {
+        ticks.push(d.getTime());
+        d.setDate(d.getDate() + 1);
+      }
+      return ticks;
+    }
+    // 1m / 1y / all: one tick per calendar month start.
+    const d = new Date(start);
+    d.setDate(1);
+    d.setHours(0, 0, 0, 0);
+    if (d.getTime() < start) d.setMonth(d.getMonth() + 1);
+    while (d.getTime() <= end) {
+      ticks.push(d.getTime());
+      d.setMonth(d.getMonth() + 1);
+    }
+    return ticks;
+  }, [timeRange, timeDomain]);
 
   const availableMetrics: MetricType[] = useMemo(() => {
     const base: MetricType[] = ['cpu', 'memory', 'disk'];
@@ -365,6 +441,20 @@ export function MetricsDetailPanel({
           </Button>
         </div>
 
+        {/* Controls + chart render together once data is ready so the panel
+            doesn't show an empty shell while the fetch is in flight. */}
+        {loading ? (
+          <div
+            className="flex items-center justify-center h-[320px]"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+            aria-label="loading metrics"
+          >
+            <div className="text-muted-foreground animate-pulse text-sm">loading...</div>
+          </div>
+        ) : (
+        <div className="animate-in fade-in duration-200">
         {/* Controls row */}
         <div className="flex items-center gap-3 mb-3">
           {/* Metric toggle buttons - left aligned */}
@@ -399,10 +489,10 @@ export function MetricsDetailPanel({
                   size="sm"
                   onClick={() => toggleMetric(metric)}
                   className={cn(
-                    'text-xs h-7 px-2',
+                    'text-xs h-7 px-2 transition-colors',
                     isSelected
-                      ? 'bg-secondary text-foreground border-border'
-                      : 'bg-transparent text-muted-foreground border-border hover:bg-secondary hover:text-foreground'
+                      ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
+                      : 'bg-transparent text-muted-foreground/70 border-border/40 hover:bg-accent/40 hover:text-foreground hover:border-border'
                   )}
                 >
                   <span
@@ -426,10 +516,10 @@ export function MetricsDetailPanel({
                   size="sm"
                   onClick={() => toggleNic(nicName)}
                   className={cn(
-                    'text-xs h-7 px-2',
+                    'text-xs h-7 px-2 transition-colors',
                     isSelected
-                      ? 'bg-secondary text-foreground border-border'
-                      : 'bg-transparent text-muted-foreground border-border hover:bg-secondary hover:text-foreground'
+                      ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
+                      : 'bg-transparent text-muted-foreground/70 border-border/40 hover:bg-accent/40 hover:text-foreground hover:border-border'
                   )}
                 >
                   <span className="flex gap-0.5 shrink-0">
@@ -451,20 +541,16 @@ export function MetricsDetailPanel({
 
         {/* Chart Area */}
         <div className="h-[280px] w-full">
-          {loading ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-muted-foreground animate-pulse">Loading...</div>
-            </div>
-          ) : error ? (
+          {error ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-destructive">{error}</div>
             </div>
           ) : chartData.length === 0 ? (
             <div className="flex items-center justify-center h-full text-center">
               <div className="text-muted-foreground">
-                No data available for this time range.
+                no data available for this time range.
                 <br />
-                <span className="text-sm text-muted-foreground/70">Data appears as the agent collects metrics.</span>
+                <span className="text-sm text-muted-foreground/70">data appears as the agent collects metrics.</span>
               </div>
             </div>
           ) : (
@@ -472,13 +558,14 @@ export function MetricsDetailPanel({
               <LineChart data={chartData}>
                 <CartesianGrid
                   strokeDasharray="3 3"
-                  stroke="oklch(0.35 0.08 250)"
-                  opacity={0.5}
+                  stroke="oklch(0.55 0.06 250)"
+                  opacity={0.7}
                 />
                 <XAxis
                   dataKey="time"
                   type="number"
                   domain={timeDomain}
+                  ticks={xTicks}
                   tickFormatter={formatXAxisTick}
                   stroke="oklch(0.708 0.05 250)"
                   fontSize={11}
@@ -497,12 +584,7 @@ export function MetricsDetailPanel({
                 />
                 {/* Hidden Y-axis for raw throughput lines (prevents them from blowing out the % scale) */}
                 <YAxis yAxisId="hidden" hide />
-                <Tooltip content={<ChartTooltip formatTime={(ts) => {
-                  const d = new Date(ts);
-                  const isToday = d.toDateString() === new Date().toDateString();
-                  if (isToday) return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12 });
-                  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12 });
-                }} />} />
+                <Tooltip content={<ChartTooltip formatTime={formatTooltipTime} />} />
                 {/* Baseline reference line to show full time range */}
                 <ReferenceLine y={0} stroke="oklch(0.35 0.08 250)" strokeDasharray="3 3" />
                 {activeLines.map((line) =>
@@ -595,6 +677,8 @@ export function MetricsDetailPanel({
               );
             })}
           </div>
+        )}
+        </div>
         )}
       </CardContent>
     </Card>

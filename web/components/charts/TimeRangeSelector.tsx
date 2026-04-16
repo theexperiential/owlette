@@ -31,22 +31,26 @@ const ranges: { value: TimeRange; label: string }[] = [
 
 export function TimeRangeSelector({ value, onChange, className }: TimeRangeSelectorProps) {
   return (
-    <div className={cn('flex gap-1 bg-muted p-1 rounded-lg', className)}>
-      {ranges.map((range) => (
-        <Button
-          key={range.value}
-          variant="ghost"
-          size="sm"
-          className={cn(
-            'px-3 py-1 h-7 text-xs font-medium',
-            value === range.value && 'bg-background shadow-sm text-foreground',
-            value !== range.value && 'text-muted-foreground hover:text-foreground'
-          )}
-          onClick={() => onChange(range.value)}
-        >
-          {range.label}
-        </Button>
-      ))}
+    <div className={cn('flex gap-1 bg-muted p-1 rounded-lg border border-border/50', className)}>
+      {ranges.map((range) => {
+        const isSelected = value === range.value;
+        return (
+          <Button
+            key={range.value}
+            variant="ghost"
+            size="sm"
+            className={cn(
+              'px-3 py-1 h-7 text-xs font-medium transition-colors',
+              isSelected
+                ? 'bg-accent text-foreground ring-1 ring-primary/40 hover:bg-accent'
+                : 'text-muted-foreground/70 hover:text-foreground hover:bg-accent/40'
+            )}
+            onClick={() => onChange(range.value)}
+          >
+            {range.label}
+          </Button>
+        );
+      })}
     </div>
   );
 }

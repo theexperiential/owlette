@@ -661,7 +661,7 @@ export default function DashboardPage() {
                 <Monitor className="h-4 w-4" />
               </div>
               <div>
-                <div className="flex items-baseline gap-0.5">
+                <div className="flex items-baseline gap-0.5 tabular-nums">
                   <span className={`text-xl font-bold ${onlineMachines > 0 ? 'text-emerald-400' : 'text-foreground'}`}>{onlineMachines}</span>
                   <span className="text-xs text-muted-foreground">/ {machines.length}</span>
                 </div>
@@ -678,7 +678,7 @@ export default function DashboardPage() {
                 <Cog className="h-4 w-4" />
               </div>
               <div>
-                <div className="flex items-baseline gap-0.5">
+                <div className="flex items-baseline gap-0.5 tabular-nums">
                   <span className="text-xl font-bold text-foreground">{totalProcesses}</span>
                   <span className="text-xs text-muted-foreground">managed</span>
                 </div>
@@ -852,8 +852,8 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-        ) : !machinesLoading ? (
-          <Card className="border-border bg-card animate-in fade-in duration-500">
+        ) : !machinesLoading || (!sitesLoading && sites.length === 0) ? (
+          <Card className="border-border bg-card animate-in fade-in duration-300">
             <CardHeader>
               <CardTitle className="text-foreground">getting started</CardTitle>
               <CardDescription className="text-muted-foreground">

@@ -186,6 +186,20 @@
     @apply bg-background text-foreground;
     scroll-behavior: smooth;
   }
+
+  /* Respect the user's OS-level motion preference. Disables both
+     tailwindcss-animate enter/exit classes and Tailwind's animate-*
+     utilities (spin, pulse, bounce, ping) without touching the rare
+     cases where we need animation (progress indicators, etc — those
+     should opt back in explicitly if we add any). */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
   body {
     overflow-x: hidden;
     overflow-y: auto;

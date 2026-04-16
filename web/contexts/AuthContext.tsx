@@ -104,6 +104,9 @@ export interface UserPreferences {
   /** Which machine's MetricsDetailPanel is currently open, and the metric that opened it.
    * Null/absent when no panel is open. Persisted so the panel reappears after reload. */
   activeGraphPanel?: { machineId: string; metric: string } | null;
+  /** Selected time range for the MetricsDetailPanel (global, not per-machine).
+   * One of: '1h' | '1d' | '1w' | '1m' | '1y' | 'all'. Default: '1h'. */
+  graphTimeRange?: '1h' | '1d' | '1w' | '1m' | '1y' | 'all';
 }
 
 interface AuthContextType {
@@ -297,6 +300,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   processesExpanded: preferences.processesExpanded ?? true, // Default: expanded
                   graphTabs: preferences.graphTabs || undefined,
                   activeGraphPanel: preferences.activeGraphPanel || null,
+                  graphTimeRange: preferences.graphTimeRange || undefined,
                 };
                 setUserPreferences(prev => {
                   if (
@@ -313,7 +317,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     arraysEqual(prev.mutedMachines, newPrefs.mutedMachines) &&
                     arraysEqual(prev.alertCcEmails, newPrefs.alertCcEmails) &&
                     JSON.stringify(prev.graphTabs || null) === JSON.stringify(newPrefs.graphTabs || null) &&
-                    JSON.stringify(prev.activeGraphPanel || null) === JSON.stringify(newPrefs.activeGraphPanel || null)
+                    JSON.stringify(prev.activeGraphPanel || null) === JSON.stringify(newPrefs.activeGraphPanel || null) &&
+                    prev.graphTimeRange === newPrefs.graphTimeRange
                   ) return prev;
                   return newPrefs;
                 });
