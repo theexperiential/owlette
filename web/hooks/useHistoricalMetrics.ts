@@ -13,7 +13,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where, documentId } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useDemoContext } from '@/contexts/DemoContext';
 import type { TimeRange } from '@/components/charts';
@@ -198,8 +198,17 @@ export function useHistoricalMetrics(
       return;
     }
 
-    if (!db || !siteId || !machineId) {
+    if (!db) {
       setLoading(false);
+      setError('Firebase not configured');
+      setData(null);
+      return;
+    }
+    if (!siteId || !machineId) {
+      // Params not ready — stay in loading state (parent is still resolving).
+      // Flipping to loading=false here caused a "no data" flash before the
+      // real fetch kicked in.
+      setLoading(true);
       setData(null);
       return;
     }
@@ -216,7 +225,10 @@ export function useHistoricalMetrics(
       // Get bucket IDs to query
       const bucketIds = getBucketIds(startDate, now);
 
-      // Fetch all relevant buckets
+      // Fetch only the buckets we need. For short ranges (hour/day) this is
+      // 1-2 docs vs. potentially dozens when fetching the whole collection.
+      // Firestore allows up to 30 values per `in` clause; for longer ranges
+      // we fall back to fetching the whole collection and filtering.
       const historyRef = collection(
         db,
         'sites',
@@ -228,13 +240,14 @@ export function useHistoricalMetrics(
 
       const allSamples: ChartDataPoint[] = [];
 
-      // Fetch each bucket document
-      const snapshot = await getDocs(historyRef);
+      const snapshot = bucketIds.length > 0 && bucketIds.length <= 30
+        ? await getDocs(query(historyRef, where(documentId(), 'in', bucketIds)))
+        : await getDocs(historyRef);
 
       snapshot.forEach((doc) => {
         const bucketId = doc.id;
 
-        // Skip buckets outside our range
+        // For the fallback (unfiltered) fetch, drop buckets outside range.
         if (!bucketIds.includes(bucketId)) return;
 
         const docData = doc.data();

@@ -48,11 +48,19 @@ export function useSparklineData(
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!db || !siteId || !machineId) {
+    if (!db) {
       setLoading(false);
       setData([]);
       return;
     }
+    if (!siteId || !machineId) {
+      // Params not ready — stay in loading. Parent is still resolving IDs.
+      setLoading(true);
+      setData([]);
+      return;
+    }
+
+    setLoading(true);
 
     // Get today's bucket ID
     const bucketId = new Date().toISOString().split('T')[0];
@@ -143,8 +151,14 @@ export function useAllSparklineData(
       return;
     }
 
-    if (!db || !siteId || !machineId) {
+    if (!db) {
       setState(prev => prev.loading ? { ...prev, loading: false } : prev);
+      return;
+    }
+    if (!siteId || !machineId) {
+      // Params not ready — stay in loading so the card doesn't flash a
+      // "no data" state before the real subscription attaches.
+      setState(prev => prev.loading ? prev : { ...EMPTY_SPARKLINE_STATE });
       return;
     }
 

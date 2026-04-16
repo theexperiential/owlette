@@ -48,11 +48,20 @@ export function useDeploymentTemplates(siteId: string) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!db || !siteId) {
+    if (!db) {
       setLoading(false);
-      setError('Firebase not configured or no site selected');
+      setError('Firebase not configured');
       return;
     }
+    if (!siteId) {
+      // Params not ready — stay in loading until site resolves.
+      setLoading(true);
+      setTemplates([]);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
 
     try {
       const templatesRef = collection(db, 'sites', siteId, 'installer_templates');
@@ -140,13 +149,21 @@ export function useDeployments(siteId: string) {
   const mountTimeRef = useRef<number>(Date.now());
 
   useEffect(() => {
-    if (!db || !siteId) {
+    if (!db) {
       setLoading(false);
-      setError('Firebase not configured or no site selected');
+      setError('Firebase not configured');
+      return;
+    }
+    if (!siteId) {
+      // Params not ready — stay in loading until site resolves. Avoids a
+      // brief "no deployments" flash on the deployments page on reload.
+      setLoading(true);
+      setDeployments([]);
       return;
     }
 
     setLoading(true);
+    setError(null);
 
     try {
       const deploymentsRef = collection(db, 'sites', siteId, 'deployments');

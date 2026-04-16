@@ -782,11 +782,24 @@ export function useMachines(siteId: string) {
   }, [machines.length]); // Re-create interval when machine count changes
 
   useEffect(() => {
-    if (!db || !siteId) {
+    if (!db) {
       setLoading(false);
-      setError('Firebase not configured or no site selected');
+      setError('Firebase not configured');
       return;
     }
+    if (!siteId) {
+      // Keep loading=true while waiting for the parent to resolve currentSiteId.
+      // Otherwise the dashboard sees machinesLoading=false + machines=[] on the
+      // first render after refresh and briefly renders the getting-started card.
+      setLoading(true);
+      setMachines([]);
+      return;
+    }
+
+    // Reset on siteId change so stale data from the previous site doesn't render
+    // while the new listener's first snapshot is in flight.
+    setLoading(true);
+    setMachines([]);
 
     try {
       // Listen to machines collection in real-time

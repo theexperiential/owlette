@@ -54,10 +54,20 @@ export function useSchedulePresets(siteId: string | null): UseSchedulePresetsRet
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!db || !siteId) {
+    if (!db) {
       setLoading(false);
       return;
     }
+    if (!siteId) {
+      // Params not ready — stay in loading until the site resolves. Flipping
+      // to loading=false here caused the preset editor to briefly render
+      // built-in defaults as if Firestore overrides didn't exist.
+      setLoading(true);
+      setFirestorePresets([]);
+      return;
+    }
+
+    setLoading(true);
 
     try {
       const presetsRef = collection(db, 'config', siteId, 'schedule_presets');
