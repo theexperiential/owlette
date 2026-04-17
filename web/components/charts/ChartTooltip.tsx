@@ -8,8 +8,9 @@
  */
 
 import { formatThroughput } from '@/lib/networkUtils';
+import { DISK_IO_COLORS, formatDiskIO, isDiskIOKey, parseDiskIOKey } from '@/lib/diskIOUtils';
 
-export type MetricType = 'cpu' | 'memory' | 'disk' | 'gpu' | 'cpuTemp' | 'gpuTemp';
+export type MetricType = 'cpu' | 'memory' | 'disk' | 'gpu' | 'cpuTemp' | 'gpuTemp' | 'display';
 
 // Configuration for each metric type
 // Using explicit RGB colors because CSS variables don't work in SVG stroke attributes
@@ -20,6 +21,7 @@ export const metricConfig: Record<MetricType, { label: string; color: string; un
   gpu: { label: 'GPU', color: 'rgb(249, 115, 22)', unit: '%' },          // orange-500
   cpuTemp: { label: 'CPU°', color: 'rgb(239, 68, 68)', unit: '°C' },     // red-500
   gpuTemp: { label: 'GPU°', color: 'rgb(236, 72, 153)', unit: '°C' },    // pink-500
+  display: { label: 'Displays', color: 'oklch(0.70 0.15 280)', unit: '' }, // purple — display topology (not a time-series metric)
 };
 
 /**
@@ -35,6 +37,23 @@ export function isNetworkMetricKey(key: string): boolean {
 function parseNetworkKey(key: string): { nic: string; direction: 'TX' | 'RX' } | null {
   if (key.endsWith('_tx_util')) return { nic: key.replace('_tx_util', ''), direction: 'TX' };
   if (key.endsWith('_rx_util')) return { nic: key.replace('_rx_util', ''), direction: 'RX' };
+  return null;
+}
+
+/**
+ * Check if a dataKey is a per-device disk metric (e.g., "C:_pct", "L:_pct")
+ */
+function parseDiskKey(key: string): { diskName: string } | null {
+  if (!key.endsWith('_pct')) return null;
+  return { diskName: key.slice(0, -4) };
+}
+
+/**
+ * Check if a dataKey is a per-device GPU metric (e.g., "GPU 0_usage", "GPU 0_temp")
+ */
+function parseGpuDeviceKey(key: string): { gpuName: string; field: 'usage' | 'temp' } | null {
+  if (key.endsWith('_usage')) return { gpuName: key.slice(0, -6), field: 'usage' };
+  if (key.endsWith('_temp')) return { gpuName: key.slice(0, -5), field: 'temp' };
   return null;
 }
 
@@ -97,8 +116,11 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
           const key = String(entry.dataKey ?? '');
           const config = metricConfig[key as MetricType];
           const netInfo = !config ? parseNetworkKey(key) : null;
+          const diskInfo = !config && !netInfo ? parseDiskKey(key) : null;
+          const gpuInfo = !config && !netInfo && !diskInfo ? parseGpuDeviceKey(key) : null;
+          const diskIOChannel = !config && !netInfo && !diskInfo && !gpuInfo && isDiskIOKey(key) ? parseDiskIOKey(key) : null;
 
-          if (!config && !netInfo) return null;
+          if (!config && !netInfo && !diskInfo && !gpuInfo && !diskIOChannel) return null;
           if (entry.value === undefined || entry.value === null) return null;
 
           // For network metrics, find the corresponding throughput value
@@ -120,6 +142,55 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
                   {typeof entry.value === 'number' ? entry.value.toFixed(1) : entry.value}%
                   <span className="text-muted-foreground ml-1">({formatThroughput(throughput)})</span>
                 </span>
+              </div>
+            );
+          }
+
+          // Per-device disk metrics (e.g., "C:_pct", "L:_pct")
+          if (diskInfo) {
+            return (
+              <div key={key} className="flex items-center justify-between gap-6">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+                  <span className="text-foreground font-medium">{diskInfo.diskName}</span>
+                </div>
+                <span className="text-foreground font-semibold tabular-nums">{Number(entry.value).toFixed(1)}%</span>
+              </div>
+            );
+          }
+
+          // Per-device GPU metrics (e.g., "GPU 0_usage", "GPU 0_temp")
+          if (gpuInfo) {
+            const unit = gpuInfo.field === 'temp' ? '°C' : '%';
+            const label = gpuInfo.field === 'temp' ? `${gpuInfo.gpuName}°` : gpuInfo.gpuName;
+            return (
+              <div key={key} className="flex items-center justify-between gap-6">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+                  <span className="text-foreground font-medium">{label}</span>
+                </div>
+                <span className="text-foreground font-semibold tabular-nums">{Number(entry.value).toFixed(1)}{unit}</span>
+              </div>
+            );
+          }
+
+          // Per-volume disk IO metrics (e.g. "C:_io_read"). Label is
+          // volume-qualified ("C: read" / "L: busy") and throughput values
+          // render via formatDiskIO; busy is a plain percent.
+          if (diskIOChannel) {
+            const label = `${diskIOChannel.id} ${diskIOChannel.channel}`;
+            const dotColor = DISK_IO_COLORS[diskIOChannel.channel];
+            const numericValue = typeof entry.value === 'number' ? entry.value : Number(entry.value);
+            const formatted = diskIOChannel.channel === 'busy'
+              ? `${numericValue.toFixed(1)}%`
+              : formatDiskIO(numericValue);
+            return (
+              <div key={key} className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: dotColor }} />
+                  <span className="text-sm text-foreground">{label}</span>
+                </div>
+                <span className="text-sm font-medium text-foreground">{formatted}</span>
               </div>
             );
           }
