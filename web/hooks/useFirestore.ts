@@ -249,17 +249,18 @@ export interface Machine {
     processes?: Record<string, string>;
 
     /**
-     * Aggregate disk IO (system-wide, not per-volume). Sibling of `disks` —
-     * agent-side aggregate keys (physical drives) don't align with logical
-     * volume keys (C:, D:). Populated by agents >= v2.8.2.
+     * Per-logical-volume disk IO, keyed by volume id (e.g. `"C:"`, `"L:"`).
+     * Sibling of `disks`; keys align 1:1 with `disks` entries so a card's
+     * selected drive can look up its own IO directly. Populated by agents
+     * >= v2.8.2.
      */
-    diskio?: {
+    diskio?: Record<string, {
       readBps: number;
       writeBps: number;
       readIops: number;
       writeIops: number;
       busyPct: number;
-    };
+    }>;
 
     /** @deprecated v1 legacy singular field — kept for rollout-window shim. Remove once all agents are >= 2.9.0. */
     cpu?: { name?: string; percent: number; unit: string; temperature?: number };
@@ -495,6 +496,20 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
       return;
     }
 
+    // Reset to loading on any dep change. Do NOT remove — this is what prevents
+    // the dashboard's "step 1: create your first site" flicker on reload.
+    //
+    // Why: AuthContext initializes `userSites` as `[]` before the user doc
+    // snapshot arrives. Firebase's `onAuthStateChanged` sets `user` synchronously
+    // but awaits the session-cookie call before subscribing to the user doc,
+    // so React can render an intermediate frame with `user` set but `userSites`
+    // still at the default `[]`. Without this reset, the `userSites.length === 0`
+    // branch below sets `loading=false` during that intermediate frame, and
+    // when `userSites` later populates, `loading` stays false — the dashboard
+    // then paints the empty-state card for one frame before the real sites
+    // snapshot arrives. Resetting here guarantees `loading` only lands on
+    // `false` once we have a stable, definitive answer.
+    setLoading(true);
 
     try {
       // ADMINS: Query all sites
@@ -542,6 +557,9 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
       };
 
       if (userSites.length === 0) {
+        // Stable empty state — clear any stale sites from a previous userSites
+        // value and let the dashboard render its empty state.
+        setSites([]);
         setLoading(false);
       }
 

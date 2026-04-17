@@ -359,18 +359,25 @@ export function MachineRow({
         <TableCell className="w-[100px] font-medium text-white select-text overflow-hidden">
           <div className="flex flex-col gap-0.5 min-w-0">
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMetricClick?.('display');
-                }}
-                className="cursor-pointer hover:bg-muted/50 rounded p-0.5 transition-colors"
-                title="view displays"
-                aria-label="view displays"
-              >
-                <Monitor className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMetricClick?.('display');
+                    }}
+                    className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0"
+                    aria-label="view displays"
+                  >
+                    <Monitor className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>view displays</p>
+                </TooltipContent>
+              </Tooltip>
               <span className="truncate">{machine.machineId}</span>
               {isMuted && <span title="alerts muted"><BellOff className="h-3 w-3 text-muted-foreground flex-shrink-0" /></span>}
             </div>
@@ -473,16 +480,20 @@ export function MachineRow({
                         : `${diskDevice.usedGb.toFixed(1)} GB`}
                     </div>
                   </div>
-                  {machine.metrics?.diskio && (machine.metrics.diskio.readBps > 0 || machine.metrics.diskio.writeBps > 0) && (
-                    <div className="flex-shrink-0 min-w-0">
-                      <div className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.write }}>
-                        {'\u2191 '}{formatDiskIO(machine.metrics.diskio.writeBps)}
+                  {(() => {
+                    const io = machine.metrics?.diskio?.[diskDevice.id];
+                    if (!io || (io.readBps === 0 && io.writeBps === 0)) return null;
+                    return (
+                      <div className="flex-shrink-0 min-w-0">
+                        <div className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.read }}>
+                          r {formatDiskIO(io.readBps)}
+                        </div>
+                        <div className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.write }}>
+                          w {formatDiskIO(io.writeBps)}
+                        </div>
                       </div>
-                      <div className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.read }}>
-                        {'\u2193 '}{formatDiskIO(machine.metrics.diskio.readBps)}
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </>
               ) : '-'}
             </div>

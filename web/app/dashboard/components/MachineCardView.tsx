@@ -357,18 +357,21 @@ function MachineCard({
                         <span className="tabular-nums">mem <span className="text-foreground font-medium">{memory.percent}%</span></span>
                       </>
                     )}
-                    {diskDevice && diskDevice.percent != null && (
-                      <>
-                        <span className="text-border">|</span>
-                        <span className="tabular-nums">disk <span className="text-foreground font-medium">{diskDevice.percent}%</span>
-                          {machine.metrics?.diskio && machine.metrics.diskio.writeBps > 0 && (
-                            <span className="ml-1 font-medium" style={{ color: DISK_IO_COLORS.write }}>
-                              {'\u2191'}{formatDiskIO(machine.metrics.diskio.writeBps)}
-                            </span>
-                          )}
-                        </span>
-                      </>
-                    )}
+                    {diskDevice && diskDevice.percent != null && (() => {
+                      const io = machine.metrics?.diskio?.[diskDevice.id];
+                      return (
+                        <>
+                          <span className="text-border">|</span>
+                          <span className="tabular-nums">disk <span className="text-foreground font-medium">{diskDevice.percent}%</span>
+                            {io && io.writeBps > 0 && (
+                              <span className="ml-1 font-medium" style={{ color: DISK_IO_COLORS.write }}>
+                                w {formatDiskIO(io.writeBps)}
+                              </span>
+                            )}
+                          </span>
+                        </>
+                      );
+                    })()}
                     {gpuDevice && gpuDevice.usagePercent != null && (
                       <>
                         <span className="text-border">|</span>
@@ -502,16 +505,20 @@ function MachineCard({
                   )}
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  {machine.metrics?.diskio && (machine.metrics.diskio.readBps > 0 || machine.metrics.diskio.writeBps > 0) && (
-                    <>
-                      <span className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.write }}>
-                        {'\u2191 '}{formatDiskIO(machine.metrics.diskio.writeBps)}
-                      </span>
-                      <span className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.read }}>
-                        {'\u2193 '}{formatDiskIO(machine.metrics.diskio.readBps)}
-                      </span>
-                    </>
-                  )}
+                  {(() => {
+                    const io = machine.metrics?.diskio?.[diskDevice.id];
+                    if (!io || (io.readBps === 0 && io.writeBps === 0)) return null;
+                    return (
+                      <div className="flex flex-col items-end leading-tight">
+                        <span className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.read }}>
+                          r {formatDiskIO(io.readBps)}
+                        </span>
+                        <span className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.write }}>
+                          w {formatDiskIO(io.writeBps)}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   <span className="text-lg font-bold text-white tabular-nums">{diskDevice.percent}%</span>
                 </div>
               </div>
@@ -624,9 +631,8 @@ function MachineCard({
           <CollapsibleTrigger asChild>
             <div className="border-t border-border relative cursor-pointer group">
               <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="relative flex items-center gap-1.5 px-4 py-1.5 select-none">
+              <div className="relative flex items-center px-4 py-1.5 select-none">
                 <ChevronUp className="h-4 w-4 text-foreground/50 group-hover:text-foreground/70 transition-colors flex-shrink-0" />
-                <span className="text-xs text-muted-foreground">displays</span>
               </div>
             </div>
           </CollapsibleTrigger>
