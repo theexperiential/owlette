@@ -361,6 +361,13 @@ def collect_dynamic_metrics(profile: dict) -> dict:
     except Exception as e:
         logger.warning('get_network_quality failed: %s', e)
 
+    # Aggregate disk IO (system-wide, not per-volume)
+    try:
+        diskio_out = shared_utils.get_disk_io_metrics() or {}
+    except Exception as e:
+        logger.warning('get_disk_io_metrics failed: %s', e)
+        diskio_out = {'readBps': 0, 'writeBps': 0, 'readIops': 0, 'writeIops': 0, 'busyPct': 0.0}
+
     return {
         'cpus': cpus_out,
         'memory': memory_out,
@@ -368,6 +375,7 @@ def collect_dynamic_metrics(profile: dict) -> dict:
         'gpus': gpus_out,
         'nics': nics_out,
         'network': network_out,
+        'diskio': diskio_out,
     }
 
 

@@ -922,6 +922,7 @@ class FirebaseClient:
                 'metrics.timestamp': SERVER_TIMESTAMP,
                 'metrics.cpus': dynamic.get('cpus', {}),
                 'metrics.disks': dynamic.get('disks', {}),
+                'metrics.diskio': dynamic.get('diskio', {}),
                 'metrics.gpus': dynamic.get('gpus', {}),
                 'metrics.nics': dynamic.get('nics', {}),
                 'metrics.memory': memory_data,

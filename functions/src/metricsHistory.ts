@@ -115,6 +115,12 @@ interface NicSample {
   ru: number;  // RX utilization % of link speed
 }
 
+interface DiskIOSample {
+  rb: number;  // read bytes/sec
+  wb: number;  // write bytes/sec
+  bu: number;  // busy %
+}
+
 interface MetricsSample {
   t: number;   // timestamp (unix seconds)
   c: number;   // cpu percent
@@ -124,6 +130,7 @@ interface MetricsSample {
   ct?: number; // cpu temperature (optional)
   gt?: number; // gpu temperature (optional)
   n?: NicSample[]; // per-NIC network metrics (optional)
+  dio?: DiskIOSample; // aggregate disk IO (optional)
   nl?: number; // network latency ms (gateway ping, optional)
   np?: number; // network packet loss % (gateway ping, optional)
 }
@@ -247,6 +254,18 @@ export const onMetricsWrite = onDocumentWritten(
       }
     }
     if (nicEntries.length > 0) sample.n = nicEntries;
+
+    // Aggregate disk IO (system-wide). Only include when there's real activity
+    // to keep idle samples compact.
+    const v2DiskIO = metrics.diskio as Record<string, number> | undefined;
+    if (v2DiskIO && typeof v2DiskIO === 'object') {
+      const rb = Math.round(v2DiskIO.readBps ?? 0);
+      const wb = Math.round(v2DiskIO.writeBps ?? 0);
+      const bu = round(v2DiskIO.busyPct ?? 0);
+      if (rb > 0 || wb > 0 || bu > 0) {
+        sample.dio = { rb, wb, bu };
+      }
+    }
 
     // Use arrayUnion for atomic append without read-modify-write
     try {
