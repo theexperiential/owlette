@@ -46,6 +46,7 @@ import { formatStorageRange } from '@/lib/storageUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
 import { formatThroughput } from '@/lib/networkUtils';
+import { DISK_IO_COLORS, formatDiskIO } from '@/lib/diskIOUtils';
 import { resolveDevice, unionIds } from '@/lib/deviceResolvers';
 import { useDevicePrefs, type DeviceKind, type DeviceSelection } from '@/hooks/useDevicePrefs';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
@@ -358,7 +359,18 @@ export function MachineRow({
         <TableCell className="w-[100px] font-medium text-white select-text overflow-hidden">
           <div className="flex flex-col gap-0.5 min-w-0">
             <div className="flex items-center gap-2">
-              <Monitor className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMetricClick?.('display');
+                }}
+                className="cursor-pointer hover:bg-muted/50 rounded p-0.5 transition-colors"
+                title="view displays"
+                aria-label="view displays"
+              >
+                <Monitor className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+              </button>
               <span className="truncate">{machine.machineId}</span>
               {isMuted && <span title="alerts muted"><BellOff className="h-3 w-3 text-muted-foreground flex-shrink-0" /></span>}
             </div>
@@ -459,6 +471,16 @@ export function MachineRow({
                       ? formatStorageRange(diskDevice.usedGb, diskDevice.totalGb)
                       : `${diskDevice.usedGb.toFixed(1)} GB`}
                   </div>
+                  {machine.metrics?.diskio && (machine.metrics.diskio.readBps > 0 || machine.metrics.diskio.writeBps > 0) && (
+                    <>
+                      <div className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.write }}>
+                        {'\u2191 '}{formatDiskIO(machine.metrics.diskio.writeBps)}
+                      </div>
+                      <div className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.read }}>
+                        {'\u2193 '}{formatDiskIO(machine.metrics.diskio.readBps)}
+                      </div>
+                    </>
+                  )}
                 </div>
               ) : '-'}
             </div>
@@ -531,10 +553,10 @@ export function MachineRow({
                     {nicDevice.id}
                   </div>
                   <div className="text-xs font-medium">
-                    <span className="text-orange-400">TX {formatThroughput(nicDevice.txBps)}</span>
+                    <span className="text-orange-400">{'\u2191 '}{formatThroughput(nicDevice.txBps)}</span>
                   </div>
                   <div className="text-xs font-medium">
-                    <span className="text-green-400">RX {formatThroughput(nicDevice.rxBps)}</span>
+                    <span className="text-green-400">{'\u2193 '}{formatThroughput(nicDevice.rxBps)}</span>
                   </div>
                 </div>
               </div>

@@ -31,8 +31,11 @@ import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUt
 import { getUsageColorClass, getUsageRingClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
 import { formatThroughput } from '@/lib/networkUtils';
+import { DISK_IO_COLORS, formatDiskIO } from '@/lib/diskIOUtils';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
 import { useDevicePrefs, type DeviceKind } from '@/hooks/useDevicePrefs';
+import { useDisplayState } from '@/hooks/useDisplayState';
+import { DisplayCanvas } from '@/components/charts/DisplayCanvas';
 import { resolveDevice, shouldShowDeviceDropdown } from '@/lib/deviceResolvers';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
@@ -42,8 +45,10 @@ interface MachineCardViewProps {
   machines: Machine[];
   statsExpanded: boolean;
   processesExpanded: boolean;
+  displaysExpanded?: boolean;
   onToggleStats: () => void;
   onToggleProcesses: () => void;
+  onToggleDisplays?: () => void;
   currentSiteId: string;
   siteTimezone?: string;
   siteTimeFormat?: '12h' | '24h';
@@ -70,6 +75,7 @@ interface MachineCardProps {
   machine: Machine;
   statsExpanded: boolean;
   processesExpanded: boolean;
+  displaysExpanded?: boolean;
   currentSiteId: string;
   siteTimezone: string;
   siteTimeFormat: '12h' | '24h';
@@ -79,6 +85,7 @@ interface MachineCardProps {
   onSetCardPref: (kind: DeviceKind, id: string | null) => void;
   onToggleStats: () => void;
   onToggleProcesses: () => void;
+  onToggleDisplays?: () => void;
   onEditProcess: (process: Process) => void;
   onCreateProcess: () => void;
   onKillProcess: (processId: string, processName: string) => void;
@@ -99,6 +106,7 @@ function MachineCard({
   machine,
   statsExpanded,
   processesExpanded,
+  displaysExpanded,
   currentSiteId,
   siteTimezone,
   siteTimeFormat,
@@ -108,6 +116,7 @@ function MachineCard({
   onSetCardPref,
   onToggleStats,
   onToggleProcesses,
+  onToggleDisplays,
   onEditProcess,
   onCreateProcess,
   onKillProcess,
@@ -129,6 +138,21 @@ function MachineCard({
 
   // Fetch sparkline data for this machine
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
+
+  // Live display topology (monitors + mosaic) for the displays collapsible.
+  // Only subscribe when the displays section is explicitly expanded — a
+  // 50-machine dashboard would otherwise open 100 Firestore listeners on
+  // mount.
+  const { profile: displayProfile } = useDisplayState(
+    currentSiteId,
+    machine.machineId,
+    { enabled: displaysExpanded === true }
+  );
+  const displayMonitors = displayProfile?.monitors ?? [];
+  const primaryMonitor =
+    displayMonitors.find((m) => m.primary) ?? displayMonitors[0] ?? null;
+  // Parent preference is the source of truth; default collapsed on first render.
+  const effectiveDisplaysExpanded = displaysExpanded ?? false;
 
   // Format heartbeat time. The display tz is resolved per-machine according
   // to the user's chosen `timeDisplayMode` (preferences) — see getDisplayTimezone.
@@ -336,7 +360,13 @@ function MachineCard({
                     {diskDevice && diskDevice.percent != null && (
                       <>
                         <span className="text-border">|</span>
-                        <span className="tabular-nums">disk <span className="text-foreground font-medium">{diskDevice.percent}%</span></span>
+                        <span className="tabular-nums">disk <span className="text-foreground font-medium">{diskDevice.percent}%</span>
+                          {machine.metrics?.diskio && machine.metrics.diskio.writeBps > 0 && (
+                            <span className="ml-1 font-medium" style={{ color: DISK_IO_COLORS.write }}>
+                              {'\u2191'}{formatDiskIO(machine.metrics.diskio.writeBps)}
+                            </span>
+                          )}
+                        </span>
                       </>
                     )}
                     {gpuDevice && gpuDevice.usagePercent != null && (
@@ -471,7 +501,19 @@ function MachineCard({
                     renderDeviceSelect('disk', machine.devices.disks, cardPref.disk, (id) => id)
                   )}
                 </div>
-                <span className="text-lg font-bold text-white tabular-nums">{diskDevice.percent}%</span>
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  {machine.metrics?.diskio && (machine.metrics.diskio.readBps > 0 || machine.metrics.diskio.writeBps > 0) && (
+                    <>
+                      <span className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.write }}>
+                        {'\u2191 '}{formatDiskIO(machine.metrics.diskio.writeBps)}
+                      </span>
+                      <span className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.read }}>
+                        {'\u2193 '}{formatDiskIO(machine.metrics.diskio.readBps)}
+                      </span>
+                    </>
+                  )}
+                  <span className="text-lg font-bold text-white tabular-nums">{diskDevice.percent}%</span>
+                </div>
               </div>
             </div>
           )}
@@ -541,8 +583,8 @@ function MachineCard({
                     )}
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
-                    <span className="text-xs font-medium text-orange-400">TX {formatThroughput(nicDevice.txBps)}</span>
-                    <span className="text-xs font-medium text-green-400">RX {formatThroughput(nicDevice.rxBps)}</span>
+                    <span className="text-xs font-medium text-orange-400">{'\u2191 '}{formatThroughput(nicDevice.txBps)}</span>
+                    <span className="text-xs font-medium text-green-400">{'\u2193 '}{formatThroughput(nicDevice.rxBps)}</span>
                   </div>
                 </div>
               </div>
@@ -552,6 +594,67 @@ function MachineCard({
           </CollapsibleContent>
         </Collapsible>
       )}
+
+      {/* Displays Collapsible */}
+      <Collapsible open={effectiveDisplaysExpanded} onOpenChange={onToggleDisplays}>
+        {!effectiveDisplaysExpanded && (
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
+              <div className="flex items-center gap-2 w-full select-none">
+                <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
+                {displayMonitors.length > 0 && primaryMonitor ? (
+                  <div className="flex items-center gap-2.5 text-sm text-muted-foreground overflow-hidden">
+                    <span className="tabular-nums">
+                      <span className="text-foreground font-medium">{displayMonitors.length}</span> display{displayMonitors.length === 1 ? '' : 's'}
+                    </span>
+                    <span className="text-border">|</span>
+                    <span className="truncate">
+                      primary: <span className="text-foreground font-medium">{primaryMonitor.friendlyName || primaryMonitor.id}</span>
+                      <span className="ml-1 tabular-nums">@ {primaryMonitor.resolution.width}x{primaryMonitor.resolution.height}</span>
+                    </span>
+                  </div>
+                ) : (
+                  <span className="text-muted-foreground text-sm">displays: no data</span>
+                )}
+              </div>
+            </Button>
+          </CollapsibleTrigger>
+        )}
+        <CollapsibleContent>
+          <CollapsibleTrigger asChild>
+            <div className="border-t border-border relative cursor-pointer group">
+              <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="relative flex items-center gap-1.5 px-4 py-1.5 select-none">
+                <ChevronUp className="h-4 w-4 text-foreground/50 group-hover:text-foreground/70 transition-colors flex-shrink-0" />
+                <span className="text-xs text-muted-foreground">displays</span>
+              </div>
+            </div>
+          </CollapsibleTrigger>
+          <div
+            className={`px-4 pb-4 pt-2 ${onMetricClick ? 'cursor-pointer hover:bg-secondary/20 transition-colors' : ''}`}
+            onClick={onMetricClick ? (e) => { e.stopPropagation(); onMetricClick('display'); } : undefined}
+          >
+            {displayMonitors.length > 0 ? (
+              <>
+                <DisplayCanvas
+                  monitors={displayMonitors}
+                  mosaicGrids={displayProfile?.mosaicGrids}
+                  className="h-[120px]"
+                />
+                <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+                  {displayMonitors.map((m) => (
+                    <div key={m.id} className="truncate">
+                      {m.friendlyName || m.id} &middot; {m.resolution.width}x{m.resolution.height} @{m.refreshHz}hz{m.primary ? ' \u00b7 primary' : ''}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="text-xs text-muted-foreground py-4 text-center">no display data reported</div>
+            )}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Expandable Process List */}
       {machine.processes && machine.processes.length > 0 && (
@@ -742,8 +845,10 @@ export function MachineCardView({
   machines,
   statsExpanded,
   processesExpanded,
+  displaysExpanded,
   onToggleStats,
   onToggleProcesses,
+  onToggleDisplays,
   currentSiteId,
   siteTimezone = 'UTC',
   siteTimeFormat = '12h',
@@ -774,6 +879,7 @@ export function MachineCardView({
           machine={machine}
           statsExpanded={statsExpanded}
           processesExpanded={processesExpanded}
+          displaysExpanded={displaysExpanded}
           currentSiteId={currentSiteId}
           siteTimezone={siteTimezone}
           siteTimeFormat={siteTimeFormat}
@@ -783,6 +889,7 @@ export function MachineCardView({
           onSetCardPref={(kind, id) => setCardPref(machine.machineId, kind, id)}
           onToggleStats={onToggleStats}
           onToggleProcesses={onToggleProcesses}
+          onToggleDisplays={onToggleDisplays}
           onEditProcess={(process) => onEditProcess(machine.machineId, process)}
           onCreateProcess={() => onCreateProcess(machine.machineId)}
           onKillProcess={(processId, processName) => onKillProcess(machine.machineId, processId, processName)}

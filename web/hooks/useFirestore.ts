@@ -248,6 +248,19 @@ export interface Machine {
     primary?: PrimaryDevices;
     processes?: Record<string, string>;
 
+    /**
+     * Aggregate disk IO (system-wide, not per-volume). Sibling of `disks` —
+     * agent-side aggregate keys (physical drives) don't align with logical
+     * volume keys (C:, D:). Populated by agents >= v2.8.2.
+     */
+    diskio?: {
+      readBps: number;
+      writeBps: number;
+      readIops: number;
+      writeIops: number;
+      busyPct: number;
+    };
+
     /** @deprecated v1 legacy singular field — kept for rollout-window shim. Remove once all agents are >= 2.9.0. */
     cpu?: { name?: string; percent: number; unit: string; temperature?: number };
     /** @deprecated v1 legacy singular field — kept for rollout-window shim. Remove once all agents are >= 2.9.0. */
