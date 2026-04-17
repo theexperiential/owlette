@@ -442,6 +442,11 @@ def _disk_io_counters_with_timeout(timeout: float = 2.0):
             return None
 
 
+def disk_io_zero() -> dict:
+    """Canonical zero-shape for get_disk_io_metrics(). Shared so callers' fallbacks stay in sync."""
+    return {'readBps': 0, 'writeBps': 0, 'readIops': 0, 'writeIops': 0, 'busyPct': 0.0}
+
+
 def get_disk_io_metrics():
     """
     Get aggregate disk IO throughput metrics.
@@ -461,7 +466,7 @@ def get_disk_io_metrics():
     """
     global _prev_disk_io_counters, _prev_disk_io_time
 
-    result = {'readBps': 0, 'writeBps': 0, 'readIops': 0, 'writeIops': 0, 'busyPct': 0.0}
+    result = disk_io_zero()
     now = time.time()
 
     try:

@@ -363,10 +363,10 @@ def collect_dynamic_metrics(profile: dict) -> dict:
 
     # Aggregate disk IO (system-wide, not per-volume)
     try:
-        diskio_out = shared_utils.get_disk_io_metrics() or {}
+        diskio_out = shared_utils.get_disk_io_metrics() or shared_utils.disk_io_zero()
     except Exception as e:
         logger.warning('get_disk_io_metrics failed: %s', e)
-        diskio_out = {'readBps': 0, 'writeBps': 0, 'readIops': 0, 'writeIops': 0, 'busyPct': 0.0}
+        diskio_out = shared_utils.disk_io_zero()
 
     return {
         'cpus': cpus_out,

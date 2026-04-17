@@ -259,9 +259,11 @@ export const onMetricsWrite = onDocumentWritten(
     // to keep idle samples compact.
     const v2DiskIO = metrics.diskio as Record<string, number> | undefined;
     if (v2DiskIO && typeof v2DiskIO === 'object') {
-      const rb = Math.round(v2DiskIO.readBps ?? 0);
-      const wb = Math.round(v2DiskIO.writeBps ?? 0);
-      const bu = round(v2DiskIO.busyPct ?? 0);
+      // Guard against NaN/non-finite values — Firestore rejects NaN in array elements,
+      // which would fail the whole history write for this sample.
+      const rb = Number.isFinite(v2DiskIO.readBps) ? Math.round(v2DiskIO.readBps as number) : 0;
+      const wb = Number.isFinite(v2DiskIO.writeBps) ? Math.round(v2DiskIO.writeBps as number) : 0;
+      const bu = Number.isFinite(v2DiskIO.busyPct) ? round(v2DiskIO.busyPct as number) : 0;
       if (rb > 0 || wb > 0 || bu > 0) {
         sample.dio = { rb, wb, bu };
       }
