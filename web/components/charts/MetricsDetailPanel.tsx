@@ -149,29 +149,6 @@ export function initialMetricToState(initialMetric: MetricType): TabSelection {
   return { ...empty, metrics: [initialMetric] };
 }
 
-/**
- * Merge a click's expanded tab ids into an existing persisted tab id list.
- * Returns the merged array, or null when nothing new would be added so callers
- * can skip a redundant Firestore write.
- */
-export function mergeClickIntentIntoTabs(
-  currentIds: readonly string[] | undefined,
-  clickedMetric: MetricType,
-): string[] | null {
-  const clickIds = serializeTabs(initialMetricToState(clickedMetric));
-  const current = currentIds ? [...currentIds] : [];
-  const seen = new Set(current);
-  let added = false;
-  for (const id of clickIds) {
-    if (!seen.has(id)) {
-      seen.add(id);
-      current.push(id);
-      added = true;
-    }
-  }
-  return added ? current : null;
-}
-
 function getISOWeek(d: Date): number {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const dayNum = date.getUTCDay() || 7;
@@ -221,11 +198,9 @@ export function MetricsDetailPanel({
   const graphTabs = userPreferences.graphTabs;
 
   // Seed from persisted selection on first render so there's no flash between
-  // the default and the restored selection. Click intent is merged at the
-  // dashboard click handler (via mergeClickIntentIntoTabs) before activeGraphPanel
-  // is set, so by the time we mount the persisted list already includes the
-  // clicked metric. Mount here just mirrors persisted verbatim — merging here
-  // would re-add metrics the user has explicitly deselected.
+  // the default and the restored selection. The dashboard click handler writes
+  // the fresh click intent to graphTabs before activeGraphPanel is set, so by
+  // the time we mount the persisted list already reflects the clicked metric.
   const [selectedMetrics, setSelectedMetrics] = useState<MetricType[]>(() => {
     const persisted = deserializeTabs(graphTabs?.[machineId]);
     const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + countDiskIOSelections(persisted.diskIO) > 0;
@@ -391,7 +366,6 @@ export function MetricsDetailPanel({
   const toggleMetric = (metric: MetricType) => {
     setSelectedMetrics((prev) => {
       if (prev.includes(metric)) {
-        if (totalSelected <= 1) return prev;
         const next = prev.filter((m) => m !== metric);
         persistSelections({ metrics: next });
         return next;
@@ -405,7 +379,6 @@ export function MetricsDetailPanel({
   const toggleNic = (nicName: string) => {
     setSelectedNics((prev) => {
       if (prev.includes(nicName)) {
-        if (totalSelected <= 1) return prev;
         const next = prev.filter((n) => n !== nicName);
         persistSelections({ nics: next });
         return next;
@@ -419,7 +392,6 @@ export function MetricsDetailPanel({
   const toggleDisk = (diskName: string) => {
     setSelectedDisks((prev) => {
       if (prev.includes(diskName)) {
-        if (totalSelected <= 1) return prev;
         const next = prev.filter((d) => d !== diskName);
         persistSelections({ disks: next });
         return next;
@@ -433,7 +405,6 @@ export function MetricsDetailPanel({
   const toggleGpu = (gpuName: string) => {
     setSelectedGpus((prev) => {
       if (prev.includes(gpuName)) {
-        if (totalSelected <= 1) return prev;
         const next = prev.filter((g) => g !== gpuName);
         persistSelections({ gpus: next });
         return next;
@@ -449,9 +420,6 @@ export function MetricsDetailPanel({
       const current = prev[volumeId] ?? [];
       const isSelected = current.includes(channel);
       if (isSelected) {
-        // Prevent deselecting the last remaining toggle across the whole panel
-        // — matches toggleMetric / toggleNic / toggleDisk / toggleGpu behavior.
-        if (totalSelected <= 1) return prev;
         const nextChannels = current.filter((c) => c !== channel);
         const next: Record<string, DiskIOChannel[]> = { ...prev };
         if (nextChannels.length === 0) {

@@ -14,4 +14,4 @@ export type { TimeRange } from './TimeRangeSelector';
 export { ChartTooltip, metricConfig } from './ChartTooltip';
 export type { MetricType } from './ChartTooltip';
 
-export { MetricsDetailPanel } from './MetricsDetailPanel';
+export { MetricsDetailPanel, initialMetricToState, serializeTabs } from './MetricsDetailPanel';

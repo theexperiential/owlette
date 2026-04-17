@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useLayoutEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites, type LaunchMode, type ScheduleBlock } from '@/hooks/useFirestore';
@@ -27,13 +27,15 @@ import { ScreenshotDialog } from '@/components/ScreenshotDialog';
 import { LiveViewModal } from '@/components/LiveViewModal';
 import { PageHeader } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { MetricsDetailPanel, type MetricType } from '@/components/charts';
+import { MetricsDetailPanel, initialMetricToState, serializeTabs, type MetricType } from '@/components/charts';
+import { DisplayLayoutPanel } from '@/components/charts/DisplayLayoutPanel';
 import ScheduleEditor from '@/components/ScheduleEditor';
 import { MachineCardView } from './components/MachineCardView';
 import { MachineRow, MachineTableHeader, type DeviceUnion, type ShowDropdownFlags } from './components/MachineListView';
 import { useDevicePrefs } from '@/hooks/useDevicePrefs';
 import { unionIds } from '@/lib/deviceResolvers';
 import { AddMachineButton } from './components/AddMachineButton';
+import { LoadingWord } from '@/components/LoadingWord';
 import type { Process } from '@/hooks/useFirestore';
 
 type ViewType = 'card' | 'list';
@@ -168,6 +170,46 @@ export default function DashboardPage() {
     if (!p) return null;
     return { machineId: p.machineId, machineName: p.machineId, metric: p.metric as MetricType };
   }, [userPreferences.activeGraphPanel]);
+
+  // Keep a "held" copy of detailPanel so the close animation can play out before
+  // unmounting. The wrapper collapses via CSS grid-template-rows; the content
+  // stays mounted for the transition duration (200ms) then unmounts.
+  const [heldDetailPanel, setHeldDetailPanel] = useState<DetailPanelState | null>(detailPanel);
+  // Defer heavy child mount until the grid-rows transition finishes, so the
+  // wrapper animates on an empty box instead of re-laying out Recharts/SVG on
+  // every frame. On open: flip to true ~210ms after the transition starts.
+  // On close: keep children mounted through the close transition, then flip
+  // false together with heldDetailPanel at 220ms.
+  const [childrenReady, setChildrenReady] = useState<boolean>(!!detailPanel);
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    // Always clear any pending open timer before scheduling new work.
+    if (openTimerRef.current) {
+      clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+
+    if (detailPanel) {
+      setHeldDetailPanel(detailPanel);
+      // Open: delay children mount until after the 200ms grid-rows transition.
+      openTimerRef.current = setTimeout(() => setChildrenReady(true), 210);
+      return () => {
+        if (openTimerRef.current) {
+          clearTimeout(openTimerRef.current);
+          openTimerRef.current = null;
+        }
+      };
+    }
+
+    // Close: keep children mounted during the close transition so content
+    // stays visible while the wrapper shrinks, then unmount together.
+    const t = setTimeout(() => {
+      setChildrenReady(false);
+      setHeldDetailPanel(null);
+    }, 220);
+    return () => clearTimeout(t);
+  }, [detailPanel]);
 
   // Multilingual welcome messages with language info (memoized to avoid recreation)
   const welcomeMessages = useMemo(() => [
@@ -325,16 +367,20 @@ export default function DashboardPage() {
     updateUserPreferences({ processesExpanded: !userPreferences.processesExpanded }, { silent: true });
   }, [userPreferences.processesExpanded, updateUserPreferences]);
 
-  // Global expand/collapse all (both stats + processes)
+  const toggleDisplaysExpanded = useCallback(() => {
+    updateUserPreferences({ displaysExpanded: !userPreferences.displaysExpanded }, { silent: true });
+  }, [userPreferences.displaysExpanded, updateUserPreferences]);
+
+  // Global expand/collapse all (stats + processes + displays)
   const allExpanded = expandedMachineIds.size === machines.length && machines.length > 0;
 
   const toggleAllExpanded = useCallback(() => {
     if (allExpanded) {
       setExpandedMachineIds(new Set());
-      updateUserPreferences({ statsExpanded: false, processesExpanded: false }, { silent: true });
+      updateUserPreferences({ statsExpanded: false, processesExpanded: false, displaysExpanded: false }, { silent: true });
     } else {
       setExpandedMachineIds(new Set(machines.map(m => m.machineId)));
-      updateUserPreferences({ statsExpanded: true, processesExpanded: true }, { silent: true });
+      updateUserPreferences({ statsExpanded: true, processesExpanded: true, displaysExpanded: true }, { silent: true });
     }
   }, [allExpanded, machines, updateUserPreferences]);
 
@@ -538,10 +584,64 @@ export default function DashboardPage() {
     updateLastSite(siteId);
   };
 
-  // Handle metric click to open detail panel (persisted)
+  // Gate the "getting started" empty-state card on being CERTAIN there's
+  // nothing to display. Do not simplify — this condition is load-bearing and
+  // every simplification attempted so far has reintroduced the "step 1: create
+  // your first site" flicker on reload.
+  //
+  // Why it's tricky: useMachines('') sets machinesLoading=false immediately
+  // when there's no currentSiteId yet, so `!machinesLoading` is TRUE during
+  // the initial render — before sites have even come back from Firestore.
+  // Using `!machinesLoading` (or anything that doesn't also gate on
+  // `!sitesLoading`) flashes the empty-state card for one paint on every
+  // reload.
+  //
+  // Valid empty states to show the card:
+  //   (a) User truly has no sites: sitesLoading=false && sites.length === 0
+  //   (b) User has sites and a selected site with zero machines:
+  //       sitesLoading=false && currentSiteId && machinesLoading=false && machines.length === 0
+  // Everything else = still loading → render null.
+  const showGettingStarted = useMemo(() => {
+    if (sitesLoading) return false;
+    if (sites.length === 0) return true;
+    // Have sites; need a selected one whose machines have finished loading.
+    return !!currentSiteId && !machinesLoading && machines.length === 0;
+  }, [sitesLoading, sites.length, currentSiteId, machinesLoading, machines.length]);
+
+  // Handle metric click to open detail panel (persisted).
+  // Each click SWAPS the panel's selection to the clicked metric — overwriting
+  // any existing graphTabs for this machine — rather than merging, so clicking
+  // different cells behaves like switching tabs, not like accumulating them.
   const handleMetricClick = (machineId: string, metric: MetricType) => {
+    // 'display' is a panel route, not a chart tab — skip graphTabs write to avoid
+    // polluting persisted preferences with entries deserializeTabs will drop on read.
+    if (metric === 'display') {
+      updateUserPreferences(
+        { activeGraphPanel: { machineId, metric } },
+        { silent: true },
+      ).catch(() => { /* fire-and-forget, matches graphTabs pattern */ });
+      return;
+    }
+
+    // Build the fresh click intent. Clicking a generic 'disk' / 'gpu' cell
+    // expands to every per-device id on that machine (the generic metric gets
+    // filtered from display when per-device data exists, so the per-device
+    // expansion is what the user actually sees).
+    const clickIds = serializeTabs(initialMetricToState(metric));
+    const machine = machines.find((m) => m.machineId === machineId);
+    if (machine?.devices) {
+      if (metric === 'disk') {
+        for (const d of machine.devices.disks) clickIds.push(`disk:${d.id}`);
+      } else if (metric === 'gpu') {
+        for (const g of machine.devices.gpus) clickIds.push(`gpu:${g.id}`);
+      }
+    }
+
     updateUserPreferences(
-      { activeGraphPanel: { machineId, metric } },
+      {
+        activeGraphPanel: { machineId, metric },
+        graphTabs: { ...(userPreferences.graphTabs || {}), [machineId]: clickIds },
+      },
       { silent: true },
     ).catch(() => { /* fire-and-forget, matches graphTabs pattern */ });
   };
@@ -570,7 +670,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-muted-foreground">loading...</p>
+        <p className="text-muted-foreground"><LoadingWord /></p>
       </div>
     );
   }
@@ -688,18 +788,37 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Metrics Detail Panel */}
-        {detailPanel && (
-          <div className="mb-6">
-            <MetricsDetailPanel
-              machineId={detailPanel.machineId}
-              machineName={detailPanel.machineName}
-              siteId={currentSiteId}
-              initialMetric={detailPanel.metric}
-              onClose={handleCloseDetailPanel}
-            />
+        {/* Metrics Detail Panel — animates height via CSS grid-template-rows.
+            The wrapper stays mounted; its row collapses to 0fr when detailPanel
+            is null, then heldDetailPanel unmounts after the transition completes. */}
+        <div
+          className={`grid transition-[grid-template-rows,margin] duration-200 ease-out ${
+            detailPanel ? 'grid-rows-[1fr] mb-6' : 'grid-rows-[0fr] mb-0'
+          }`}
+          style={{ contain: 'layout paint' }}
+          aria-hidden={!detailPanel}
+        >
+          <div className="overflow-hidden min-h-0" style={{ contain: 'layout paint' }}>
+            {heldDetailPanel && childrenReady && (
+              heldDetailPanel.metric === 'display' ? (
+                <DisplayLayoutPanel
+                  machineId={heldDetailPanel.machineId}
+                  machineName={heldDetailPanel.machineName}
+                  siteId={currentSiteId}
+                  onClose={handleCloseDetailPanel}
+                />
+              ) : (
+                <MetricsDetailPanel
+                  machineId={heldDetailPanel.machineId}
+                  machineName={heldDetailPanel.machineName}
+                  siteId={currentSiteId}
+                  initialMetric={heldDetailPanel.metric}
+                  onClose={handleCloseDetailPanel}
+                />
+              )
+            )}
           </div>
-        )}
+        </div>
 
         {/* Machines list */}
         {machines.length > 0 ? (
@@ -773,8 +892,10 @@ export default function DashboardPage() {
                   machines={machines}
                   statsExpanded={userPreferences.statsExpanded}
                   processesExpanded={userPreferences.processesExpanded}
+                  displaysExpanded={userPreferences.displaysExpanded ?? false}
                   onToggleStats={toggleStatsExpanded}
                   onToggleProcesses={toggleProcessesExpanded}
+                  onToggleDisplays={toggleDisplaysExpanded}
                   currentSiteId={currentSiteId}
                   siteTimezone={currentSite?.timezone}
                   siteTimeFormat={userPreferences.timeFormat || '12h'}
@@ -852,7 +973,7 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-        ) : !machinesLoading || (!sitesLoading && sites.length === 0) ? (
+        ) : showGettingStarted ? (
           <Card className="border-border bg-card animate-in fade-in duration-300">
             <CardHeader>
               <CardTitle className="text-foreground">getting started</CardTitle>
