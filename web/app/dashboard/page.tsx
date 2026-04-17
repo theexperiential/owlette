@@ -624,9 +624,9 @@ export default function DashboardPage() {
     }
 
     // Build the fresh click intent. Clicking a generic 'disk' / 'gpu' cell
-    // expands to every per-device id on that machine (the generic metric gets
-    // filtered from display when per-device data exists, so the per-device
-    // expansion is what the user actually sees).
+    // (or a NIC util cell) expands to every per-device id on that machine so
+    // the user sees all devices of that type at once — not just the one that
+    // happened to be in the cell they clicked.
     const clickIds = serializeTabs(initialMetricToState(metric));
     const machine = machines.find((m) => m.machineId === machineId);
     if (machine?.devices) {
@@ -634,6 +634,14 @@ export default function DashboardPage() {
         for (const d of machine.devices.disks) clickIds.push(`disk:${d.id}`);
       } else if (metric === 'gpu') {
         for (const g of machine.devices.gpus) clickIds.push(`gpu:${g.id}`);
+      } else if (metric.endsWith('_tx_util') || metric.endsWith('_rx_util')) {
+        // NIC util click already seeded the clicked NIC in clickIds via
+        // initialMetricToState — dedupe so we don't add it twice.
+        const seen = new Set(clickIds);
+        for (const n of machine.devices.nics) {
+          const id = `nic:${n.id}`;
+          if (!seen.has(id)) clickIds.push(id);
+        }
       }
     }
 
