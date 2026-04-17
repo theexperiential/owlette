@@ -138,7 +138,7 @@ export const MemoizedTableHeader = memo(function MemoizedTableHeader() {
         <TableHead className="text-foreground w-[72px]">status</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[160px] sm:overflow-visible sm:!px-2">cpu</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[120px] sm:overflow-visible sm:!px-2">memory</TableHead>
-        <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[100px] lg:overflow-visible lg:!px-2">disk</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[160px] lg:overflow-visible lg:!px-2">disk</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[200px] lg:overflow-visible lg:!px-2">gpu</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 xl:w-[130px] xl:overflow-visible xl:!px-2">network</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 md:w-[110px] md:overflow-visible md:!px-2">last heartbeat</TableHead>
@@ -182,7 +182,7 @@ export const MachineTableHeader = memo(function MachineTableHeader({
           />
         </TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[120px] sm:overflow-visible sm:!px-2">memory</TableHead>
-        <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[100px] lg:overflow-visible lg:!px-2">
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[160px] lg:overflow-visible lg:!px-2">
           <DeviceColumnHeader
             label="disk"
             kind="disk"
@@ -454,7 +454,7 @@ export function MachineRow({
         </TableCell>
         {/* Disk with Sparkline */}
         <TableCell
-          className="text-white p-0 w-0 lg:w-[100px] overflow-hidden"
+          className="text-white p-0 w-0 lg:w-[160px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('disk'); }}
         >
           <div className={`relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden${staleClass}`}>
@@ -462,26 +462,28 @@ export function MachineRow({
               <SparklineChart data={sparklineData.disk} color="disk" height={52} loading={sparklineData.loading} />
             </div>
             <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(diskDevice?.percent ?? 0)}`} />
-            <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
+            <div className="absolute inset-0 flex items-center gap-3 p-2 pl-2.5 overflow-hidden">
               {diskDevice && typeof diskDevice.percent === 'number' && typeof diskDevice.usedGb === 'number' ? (
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold">{diskDevice.percent}%</div>
-                  <div className="text-muted-foreground text-xs truncate" title={diskDevice.id}>
-                    {typeof diskDevice.totalGb === 'number'
-                      ? formatStorageRange(diskDevice.usedGb, diskDevice.totalGb)
-                      : `${diskDevice.usedGb.toFixed(1)} GB`}
+                <>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold">{diskDevice.percent}%</div>
+                    <div className="text-muted-foreground text-xs truncate" title={diskDevice.id}>
+                      {typeof diskDevice.totalGb === 'number'
+                        ? formatStorageRange(diskDevice.usedGb, diskDevice.totalGb)
+                        : `${diskDevice.usedGb.toFixed(1)} GB`}
+                    </div>
                   </div>
                   {machine.metrics?.diskio && (machine.metrics.diskio.readBps > 0 || machine.metrics.diskio.writeBps > 0) && (
-                    <>
+                    <div className="flex-shrink-0 min-w-0">
                       <div className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.write }}>
                         {'\u2191 '}{formatDiskIO(machine.metrics.diskio.writeBps)}
                       </div>
                       <div className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.read }}>
                         {'\u2193 '}{formatDiskIO(machine.metrics.diskio.readBps)}
                       </div>
-                    </>
+                    </div>
                   )}
-                </div>
+                </>
               ) : '-'}
             </div>
           </div>
