@@ -490,6 +490,21 @@ export function MetricsDetailPanel({
     setNowTs(Date.now());
   }, [timeRange, chartData.length]);
 
+  // Recharts' ResponsiveContainer uses ResizeObserver to measure its container,
+  // but ResizeObserver and rAF are throttled while the tab is hidden. When the
+  // tab becomes visible again the chart sometimes holds a stale width — the
+  // plot area renders offset to the right with empty space on the left. Forcing
+  // a window resize event triggers all ResponsiveContainers to re-measure.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        window.dispatchEvent(new Event('resize'));
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
+
   // Calculate the time domain based on selected range
   const timeDomain = useMemo((): [number, number] => {
     const now = nowTs;
