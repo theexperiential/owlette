@@ -509,13 +509,15 @@ function MachineCard({
                     const io = machine.metrics?.diskio?.[diskDevice.id];
                     if (!io || (io.readBps === 0 && io.writeBps === 0)) return null;
                     return (
-                      <div className="flex flex-col items-end leading-tight">
-                        <span className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.read }}>
-                          r {formatDiskIO(io.readBps)}
-                        </span>
-                        <span className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.write }}>
-                          w {formatDiskIO(io.writeBps)}
-                        </span>
+                      <div className="flex gap-1 text-xs font-medium leading-tight">
+                        <div className="flex flex-col text-right">
+                          <span style={{ color: DISK_IO_COLORS.read }}>r</span>
+                          <span style={{ color: DISK_IO_COLORS.write }}>w</span>
+                        </div>
+                        <div className="flex flex-col text-left tabular-nums">
+                          <span style={{ color: DISK_IO_COLORS.read }}>{formatDiskIO(io.readBps)}</span>
+                          <span style={{ color: DISK_IO_COLORS.write }}>{formatDiskIO(io.writeBps)}</span>
+                        </div>
                       </div>
                     );
                   })()}

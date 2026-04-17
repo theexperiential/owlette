@@ -469,7 +469,7 @@ export function MachineRow({
               <SparklineChart data={sparklineData.disk} color="disk" height={52} loading={sparklineData.loading} />
             </div>
             <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(diskDevice?.percent ?? 0)}`} />
-            <div className="absolute inset-0 flex items-center gap-3 p-2 pl-2.5 overflow-hidden">
+            <div className="absolute inset-0 flex items-end gap-3 p-2 pl-2.5 overflow-hidden">
               {diskDevice && typeof diskDevice.percent === 'number' && typeof diskDevice.usedGb === 'number' ? (
                 <>
                   <div className="min-w-0">
@@ -484,12 +484,14 @@ export function MachineRow({
                     const io = machine.metrics?.diskio?.[diskDevice.id];
                     if (!io || (io.readBps === 0 && io.writeBps === 0)) return null;
                     return (
-                      <div className="flex-shrink-0 min-w-0">
-                        <div className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.read }}>
-                          r {formatDiskIO(io.readBps)}
+                      <div className="flex-shrink-0 flex gap-1 text-xs font-medium">
+                        <div className="flex flex-col text-right">
+                          <span style={{ color: DISK_IO_COLORS.read }}>r</span>
+                          <span style={{ color: DISK_IO_COLORS.write }}>w</span>
                         </div>
-                        <div className="text-xs font-medium tabular-nums" style={{ color: DISK_IO_COLORS.write }}>
-                          w {formatDiskIO(io.writeBps)}
+                        <div className="flex flex-col text-left tabular-nums">
+                          <span style={{ color: DISK_IO_COLORS.read }}>{formatDiskIO(io.readBps)}</span>
+                          <span style={{ color: DISK_IO_COLORS.write }}>{formatDiskIO(io.writeBps)}</span>
                         </div>
                       </div>
                     );
