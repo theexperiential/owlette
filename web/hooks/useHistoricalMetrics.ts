@@ -30,6 +30,15 @@ interface NicSample {
 }
 
 /**
+ * Aggregate disk IO sample in history (abbreviated keys)
+ */
+interface DiskIOSample {
+  rb: number;  // read bytes/sec
+  wb: number;  // write bytes/sec
+  bu: number;  // busy %
+}
+
+/**
  * Raw sample from Firestore (abbreviated keys)
  */
 export interface MetricsSample {
@@ -41,6 +50,7 @@ export interface MetricsSample {
   ct?: number; // cpu temperature (optional)
   gt?: number; // gpu temperature (optional)
   n?: NicSample[]; // per-NIC network metrics (optional)
+  dio?: DiskIOSample; // aggregate disk IO (optional)
 }
 
 /**
@@ -160,6 +170,9 @@ function insertGapMarkers(samples: ChartDataPoint[]): ChartDataPoint[] {
         gpu: null,
         cpuTemp: null,
         gpuTemp: null,
+        diskIO_read: null,
+        diskIO_write: null,
+        diskIO_busy: null,
       });
     }
     result.push(samples[i]);
@@ -274,6 +287,13 @@ export function useHistoricalMetrics(
                 point[`${nic.i}_tx_util`] = nic.tu;
                 point[`${nic.i}_rx_util`] = nic.ru;
               }
+            }
+
+            // Expand aggregate disk IO into flat chart keys
+            if (sample.dio) {
+              point.diskIO_read = sample.dio.rb;
+              point.diskIO_write = sample.dio.wb;
+              point.diskIO_busy = sample.dio.bu;
             }
 
             allSamples.push(point);
