@@ -9,6 +9,7 @@ import psutil
 import platform
 import subprocess
 import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import winreg
 import time
 from pathlib import Path
@@ -316,6 +317,10 @@ def get_gpu_temperatures():
 _prev_net_counters: dict = {}
 _prev_net_time: float = 0.0
 
+# Disk IO monitoring state for delta calculation
+_prev_disk_io_counters: dict = {}
+_prev_disk_io_time: float = 0.0
+
 
 def get_network_metrics():
     """
@@ -419,6 +424,100 @@ def get_network_metrics():
 
     except Exception as e:
         logging.error(f"Error collecting network metrics: {e}")
+
+    return result
+
+
+def _disk_io_counters_with_timeout(timeout: float = 2.0):
+    """Call psutil.disk_io_counters under a watchdog — Windows perf-counter hangs must not block the metrics loop."""
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(psutil.disk_io_counters, False)
+        try:
+            return future.result(timeout=timeout)
+        except FuturesTimeoutError:
+            logging.warning('disk_io_counters() timed out — skipping sample')
+            return None
+        except Exception as e:
+            logging.warning(f'disk_io_counters() failed: {e}')
+            return None
+
+
+def get_disk_io_metrics():
+    """
+    Get aggregate disk IO throughput metrics.
+
+    Computes read/write bytes/sec and IOPS by calculating deltas between
+    consecutive calls. First call returns zeros (no previous baseline to
+    compare against).
+
+    Returns:
+        dict: {
+            'readBps': int,      # Read bytes per second
+            'writeBps': int,     # Write bytes per second
+            'readIops': int,     # Read operations per second
+            'writeIops': int,    # Write operations per second
+            'busyPct': float,    # Disk busy time as % (0-100); 0.0 if unavailable
+        }
+    """
+    global _prev_disk_io_counters, _prev_disk_io_time
+
+    result = {'readBps': 0, 'writeBps': 0, 'readIops': 0, 'writeIops': 0, 'busyPct': 0.0}
+    now = time.time()
+
+    try:
+        curr = _disk_io_counters_with_timeout()
+        if curr is None:
+            return result
+
+        busy_time = getattr(curr, 'busy_time', None)
+
+        if not _prev_disk_io_counters or _prev_disk_io_time == 0.0:
+            # First call — store baseline, return zeros
+            _prev_disk_io_counters = {
+                'read_bytes': curr.read_bytes,
+                'write_bytes': curr.write_bytes,
+                'read_count': curr.read_count,
+                'write_count': curr.write_count,
+                'busy_time': busy_time if busy_time is not None else 0,
+            }
+            _prev_disk_io_time = now
+            return result
+
+        elapsed = now - _prev_disk_io_time
+        if elapsed <= 0:
+            return result
+
+        prev = _prev_disk_io_counters
+
+        # Compute deltas (clamp negative to 0 for counter resets)
+        read_bytes_delta = max(0, curr.read_bytes - prev['read_bytes'])
+        write_bytes_delta = max(0, curr.write_bytes - prev['write_bytes'])
+        read_count_delta = max(0, curr.read_count - prev['read_count'])
+        write_count_delta = max(0, curr.write_count - prev['write_count'])
+
+        result['readBps'] = int(read_bytes_delta / elapsed)
+        result['writeBps'] = int(write_bytes_delta / elapsed)
+        result['readIops'] = int(read_count_delta / elapsed)
+        result['writeIops'] = int(write_count_delta / elapsed)
+
+        if busy_time is not None:
+            busy_delta_ms = max(0, busy_time - prev['busy_time'])
+            result['busyPct'] = round(min((busy_delta_ms / (elapsed * 1000)) * 100, 100.0), 1)
+        else:
+            result['busyPct'] = 0.0
+
+        # Update stored state for next call
+        _prev_disk_io_counters = {
+            'read_bytes': curr.read_bytes,
+            'write_bytes': curr.write_bytes,
+            'read_count': curr.read_count,
+            'write_count': curr.write_count,
+            'busy_time': busy_time if busy_time is not None else 0,
+        }
+        _prev_disk_io_time = now
+
+    except Exception as e:
+        logging.error(f"Error collecting disk IO metrics: {e}")
 
     return result
 
