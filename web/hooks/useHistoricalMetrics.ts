@@ -30,9 +30,10 @@ interface NicSample {
 }
 
 /**
- * Aggregate disk IO sample in history (abbreviated keys)
+ * Per-volume disk IO sample in history (abbreviated keys)
  */
 interface DiskIOSample {
+  i: string;   // volume id (e.g. "C:", "L:")
   rb: number;  // read bytes/sec
   wb: number;  // write bytes/sec
   bu: number;  // busy %
@@ -50,7 +51,7 @@ export interface MetricsSample {
   ct?: number; // cpu temperature (optional)
   gt?: number; // gpu temperature (optional)
   n?: NicSample[]; // per-NIC network metrics (optional)
-  dio?: DiskIOSample; // aggregate disk IO (optional)
+  dios?: DiskIOSample[]; // per-volume disk IO (optional)
 }
 
 /**
@@ -170,9 +171,6 @@ function insertGapMarkers(samples: ChartDataPoint[]): ChartDataPoint[] {
         gpu: null,
         cpuTemp: null,
         gpuTemp: null,
-        diskIO_read: null,
-        diskIO_write: null,
-        diskIO_busy: null,
       });
     }
     result.push(samples[i]);
@@ -289,11 +287,13 @@ export function useHistoricalMetrics(
               }
             }
 
-            // Expand aggregate disk IO into flat chart keys
-            if (sample.dio) {
-              point.diskIO_read = sample.dio.rb;
-              point.diskIO_write = sample.dio.wb;
-              point.diskIO_busy = sample.dio.bu;
+            // Expand per-volume disk IO into flat chart keys
+            if (sample.dios) {
+              for (const dio of sample.dios) {
+                point[`${dio.i}_io_read`] = dio.rb;
+                point[`${dio.i}_io_write`] = dio.wb;
+                point[`${dio.i}_io_busy`] = dio.bu;
+              }
             }
 
             allSamples.push(point);

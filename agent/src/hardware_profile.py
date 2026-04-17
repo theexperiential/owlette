@@ -361,12 +361,12 @@ def collect_dynamic_metrics(profile: dict) -> dict:
     except Exception as e:
         logger.warning('get_network_quality failed: %s', e)
 
-    # Aggregate disk IO (system-wide, not per-volume)
+    # Per-volume disk IO (WMI LogicalDisk counters)
     try:
-        diskio_out = shared_utils.get_disk_io_metrics() or shared_utils.disk_io_zero()
+        diskio_out = shared_utils.get_disk_io_metrics() or {}
     except Exception as e:
         logger.warning('get_disk_io_metrics failed: %s', e)
-        diskio_out = shared_utils.disk_io_zero()
+        diskio_out = {}
 
     return {
         'cpus': cpus_out,

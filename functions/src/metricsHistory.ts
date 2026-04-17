@@ -116,6 +116,7 @@ interface NicSample {
 }
 
 interface DiskIOSample {
+  i: string;   // volume id (e.g. "C:", "L:")
   rb: number;  // read bytes/sec
   wb: number;  // write bytes/sec
   bu: number;  // busy %
@@ -130,7 +131,7 @@ interface MetricsSample {
   ct?: number; // cpu temperature (optional)
   gt?: number; // gpu temperature (optional)
   n?: NicSample[]; // per-NIC network metrics (optional)
-  dio?: DiskIOSample; // aggregate disk IO (optional)
+  dios?: DiskIOSample[]; // per-volume disk IO (optional)
   nl?: number; // network latency ms (gateway ping, optional)
   np?: number; // network packet loss % (gateway ping, optional)
 }
@@ -255,19 +256,21 @@ export const onMetricsWrite = onDocumentWritten(
     }
     if (nicEntries.length > 0) sample.n = nicEntries;
 
-    // Aggregate disk IO (system-wide). Only include when there's real activity
-    // to keep idle samples compact.
-    const v2DiskIO = metrics.diskio as Record<string, number> | undefined;
-    if (v2DiskIO && typeof v2DiskIO === 'object') {
-      // Guard against NaN/non-finite values — Firestore rejects NaN in array elements,
-      // which would fail the whole history write for this sample.
-      const rb = Number.isFinite(v2DiskIO.readBps) ? Math.round(v2DiskIO.readBps as number) : 0;
-      const wb = Number.isFinite(v2DiskIO.writeBps) ? Math.round(v2DiskIO.writeBps as number) : 0;
-      const bu = Number.isFinite(v2DiskIO.busyPct) ? round(v2DiskIO.busyPct as number) : 0;
-      if (rb > 0 || wb > 0 || bu > 0) {
-        sample.dio = { rb, wb, bu };
+    // Per-volume disk IO. v2 doc: metrics.diskio[id] = { readBps, writeBps, readIops, writeIops, busyPct }
+    const v2DiskIO = metrics.diskio;
+    const diskIOEntries: DiskIOSample[] = [];
+    if (v2DiskIO && typeof v2DiskIO === 'object' && !Array.isArray(v2DiskIO)) {
+      for (const [id, data] of Object.entries(v2DiskIO)) {
+        const vol = data as Record<string, number>;
+        const rb = Number.isFinite(vol.readBps) ? Math.round(vol.readBps as number) : 0;
+        const wb = Number.isFinite(vol.writeBps) ? Math.round(vol.writeBps as number) : 0;
+        const bu = Number.isFinite(vol.busyPct) ? round(vol.busyPct as number) : 0;
+        if (rb > 0 || wb > 0 || bu > 0) {
+          diskIOEntries.push({ i: id, rb, wb, bu });
+        }
       }
     }
+    if (diskIOEntries.length > 0) sample.dios = diskIOEntries;
 
     // Use arrayUnion for atomic append without read-modify-write
     try {
