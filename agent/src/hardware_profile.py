@@ -91,7 +91,11 @@ def _collect_cpus() -> list:
 
 def _disk_usage_with_timeout(mount: str, timeout: float = 2.0):
     """Call psutil.disk_usage under a watchdog — hung network mounts must not block."""
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    # Manual lifecycle so a hung disk_usage worker can't block our exit via
+    # the default `with`-shutdown(wait=True). See _wmi_logical_disk_with_timeout
+    # in shared_utils.py for the same fix; both watchdogs need it.
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
         future = pool.submit(psutil.disk_usage, mount)
         try:
             return future.result(timeout=timeout)
@@ -101,6 +105,8 @@ def _disk_usage_with_timeout(mount: str, timeout: float = 2.0):
         except Exception as e:
             logger.warning('disk_usage(%s) failed: %s', mount, e)
             return None
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _collect_disks() -> list:

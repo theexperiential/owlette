@@ -173,6 +173,11 @@ if __name__ == '__main__':
             self._live_view_active = False
             self._live_view_stop_time = 0
             self.cortex_pid = None
+            # Throttle state for _write_service_status() — OwletteService has
+            # a hasattr() guard, but mirror here so the safety net never has
+            # to fire under NSSM.
+            self._last_status_signature = None
+            self._last_status_write_time = 0.0
 
             # Initialize Firebase client
             self.firebase_client = None

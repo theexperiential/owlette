@@ -436,7 +436,12 @@ def _wmi_logical_disk_with_timeout(timeout: float = 2.0):
         c = wmi.WMI()
         return list(c.Win32_PerfFormattedData_PerfDisk_LogicalDisk())
 
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    # Manual lifecycle (not `with`) so we can shutdown(wait=False) on timeout.
+    # The default `with` exit calls shutdown(wait=True), which would block on a
+    # hung WMI worker thread — defeating the watchdog. Leaking a thread per
+    # failed tick is acceptable; stalling the metrics loop is not.
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
         future = pool.submit(_query)
         try:
             return future.result(timeout=timeout)
@@ -446,11 +451,8 @@ def _wmi_logical_disk_with_timeout(timeout: float = 2.0):
         except Exception as e:
             logging.warning(f'Win32_PerfFormattedData_PerfDisk_LogicalDisk failed: {e}')
             return None
-
-
-def disk_io_zero() -> dict:
-    """Canonical zero-shape for a single volume entry in get_disk_io_metrics()."""
-    return {'readBps': 0, 'writeBps': 0, 'readIops': 0, 'writeIops': 0, 'busyPct': 0.0}
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def get_disk_io_metrics():
