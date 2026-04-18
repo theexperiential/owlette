@@ -11,6 +11,28 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [2.9.0] - 2026-04-18
+
+### added
+- **Per-logical-volume disk IO monitoring** — agent now collects per-drive read/write throughput, IOPS, and busy% via WMI's `Win32_PerfFormattedData_PerfDisk_LogicalDisk`. Each drive (`C:`, `L:`, etc.) reports its own rates instead of one system-wide aggregate; selecting a different drive in the dashboard shows that drive's specific IO. New Firestore field `metrics.diskio` is keyed by volume id (mirrors `metrics.disks` shape). History samples carry per-volume entries under `sample.dios = [{i, rb, wb, bu}]`.
+- **Disk IO surfaces on machine cards and list rows** — selected drive's read/write rates shown as stacked `r <rate>` (green) / `w <rate>` (orange) lines, hidden when idle. Auto-scales between B/s, KB/s, MB/s, GB/s. List-view disk cell widened to 160px with a 2-column layout (usage stats left, IO right).
+- **Disk IO chart series in the metrics detail panel** — per-volume sub-toggles for read/write/busy% with volume-qualified labels (`C: read`, `L: busy`). Read/write render on the hidden axis (throughput); busy% shares the default 0-100% axis. Tooltip and stats grid both volume-qualified.
+- **Friendly GPU names in the detail panel** — UUID stays as the chart-data key (stable, unique) while toggle labels, chart legend, stats grid, and tooltip all show "NVIDIA GeForce RTX 2080 Ti" via a lookup against the static profile.
+
+### changed
+- **Network cards now use arrow notation** (`↑ <rate>` / `↓ <rate>`) instead of `TX` / `RX` text on both card and list views — language-independent, more compact, and a cleaner visual rhythm with the new disk r/w letters.
+- **Metric cell clicks SWAP the detail panel** instead of merging — clicking disk then GPU shows only GPU lines, not both. Click expansion still adds every per-device id (all disks, all GPUs, all NICs) so the panel shows all devices of the clicked type.
+- **Toggles can deselect everything** — the "must keep at least one selected" guard is gone. Empty chart is a valid state; the stats grid hides cleanly.
+- **Stats grid headers lowercased** (`avg` / `max` / `min`) for consistency with the rest of the panel's UI copy.
+
+### fixed
+- **MetricsDetailPanel chart now re-measures when the tab becomes visible** — Recharts' ResponsiveContainer would occasionally hold a stale width while the tab was backgrounded (rAF + ResizeObserver throttling), then render the plot area offset to the right with blank space on the left. A synthetic `window.resize` event on `visibilitychange → visible` forces all charts to re-measure.
+- **Watchdog timeouts actually unblock the metrics loop** — both `_wmi_logical_disk_with_timeout` (disk IO) and `_disk_usage_with_timeout` (disk partitions) used `with ThreadPoolExecutor` whose `__exit__` calls `shutdown(wait=True)`, blocking forever on a hung WMI/network-mount worker. Switched both to manual lifecycle with `shutdown(wait=False, cancel_futures=True)` so a hung worker leaks instead of stalling.
+- **NSSM runner crash on first metrics tick** — `MockService` in `owlette_runner.py` was missing four attributes that `OwletteService.__init__` defines (`_display_check_counter`, `_cached_display_hash`, `_shutting_down`, `_reboot_attempt_started_monotonic`). The display topology check at the top of every loop iteration crashed with `AttributeError`, causing NSSM to thrash-restart. Added the missing initializations plus two more (`_last_status_signature`, `_last_status_write_time`) for the status-throttle path.
+- **NaN-guarded disk IO history extraction** — cloud function now uses `Number.isFinite()` checks before pushing IO entries to a sample. Prevents a poisoned NaN field (rare but possible from upstream perf-counter glitches) from causing Firestore to reject the entire history write.
+
+---
+
 ## [2.8.1] - 2026-04-14
 
 ### added
