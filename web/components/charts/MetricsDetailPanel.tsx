@@ -1070,18 +1070,18 @@ export function MetricsDetailPanel({
                   <div className="text-xs font-medium text-foreground mb-1.5">{label}</div>
                   <div className="grid grid-cols-3 gap-2 text-xs">
                     <div>
-                      <div className="text-muted-foreground">Avg</div>
+                      <div className="text-muted-foreground">avg</div>
                       <div className="font-semibold text-foreground">
                         {fmtAvg}
                         {isNetwork && <span className="text-muted-foreground ml-0.5 font-normal">({formatThroughput(avgThroughput)})</span>}
                       </div>
                     </div>
                     <div>
-                      <div className="text-muted-foreground">Max</div>
+                      <div className="text-muted-foreground">max</div>
                       <div className="font-semibold text-foreground">{fmtMax}</div>
                     </div>
                     <div>
-                      <div className="text-muted-foreground">Min</div>
+                      <div className="text-muted-foreground">min</div>
                       <div className="font-semibold text-foreground">{fmtMin}</div>
                     </div>
                   </div>

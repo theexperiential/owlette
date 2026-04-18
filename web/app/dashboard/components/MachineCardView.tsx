@@ -363,6 +363,11 @@ function MachineCard({
                         <>
                           <span className="text-border">|</span>
                           <span className="tabular-nums">disk <span className="text-foreground font-medium">{diskDevice.percent}%</span>
+                            {io && io.readBps > 0 && (
+                              <span className="ml-1 font-medium" style={{ color: DISK_IO_COLORS.read }}>
+                                r {formatDiskIO(io.readBps)}
+                              </span>
+                            )}
                             {io && io.writeBps > 0 && (
                               <span className="ml-1 font-medium" style={{ color: DISK_IO_COLORS.write }}>
                                 w {formatDiskIO(io.writeBps)}
