@@ -70,6 +70,9 @@ interface ChartTooltipProps {
   label?: string | number;
   /** Optional: Override the default time formatter */
   formatTime?: (timestamp: number) => string;
+  /** Optional: UUID → friendly-name map for GPU entries. Chart keys stay
+   *  UUID-based; this map only swaps what the tooltip label displays. */
+  gpuLabels?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -95,7 +98,7 @@ function defaultFormatTime(timestamp: number): string {
   });
 }
 
-export function ChartTooltip({ active, payload, label, formatTime = defaultFormatTime }: ChartTooltipProps) {
+export function ChartTooltip({ active, payload, label, formatTime = defaultFormatTime, gpuLabels }: ChartTooltipProps) {
   if (!active || !payload || payload.length === 0) {
     return null;
   }
@@ -162,7 +165,8 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
           // Per-device GPU metrics (e.g., "GPU 0_usage", "GPU 0_temp")
           if (gpuInfo) {
             const unit = gpuInfo.field === 'temp' ? '°C' : '%';
-            const label = gpuInfo.field === 'temp' ? `${gpuInfo.gpuName}°` : gpuInfo.gpuName;
+            const friendly = gpuLabels?.get(gpuInfo.gpuName) ?? gpuInfo.gpuName;
+            const label = gpuInfo.field === 'temp' ? `${friendly}°` : friendly;
             return (
               <div key={key} className="flex items-center justify-between gap-6">
                 <div className="flex items-center gap-2">

@@ -822,6 +822,7 @@ export default function DashboardPage() {
                   siteId={currentSiteId}
                   initialMetric={heldDetailPanel.metric}
                   onClose={handleCloseDetailPanel}
+                  gpus={machines.find((m) => m.machineId === heldDetailPanel.machineId)?.devices?.gpus}
                 />
               )
             )}

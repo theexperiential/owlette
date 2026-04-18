@@ -42,6 +42,10 @@ interface MetricsDetailPanelProps {
   siteId: string;
   initialMetric?: MetricType;
   onClose: () => void;
+  /** Static GPU profile entries keyed by UUID — used to render friendly
+   *  names in toggle labels, chart lines, stats grid, and tooltip while
+   *  keeping the UUID as the stable chart-data key. */
+  gpus?: ReadonlyArray<{ id: string; name?: string }>;
 }
 
 // Namespaced tab-id storage format. New entity types (per-GPU, per-disk, etc.)
@@ -193,9 +197,23 @@ export function MetricsDetailPanel({
   siteId,
   initialMetric = 'cpu',
   onClose,
+  gpus,
 }: MetricsDetailPanelProps) {
   const { userPreferences, updateUserPreferences } = useAuth();
   const graphTabs = userPreferences.graphTabs;
+
+  // UUID → friendly-name lookup for GPU labels. Chart keys stay UUID-based
+  // (stable, unique, unaffected by driver-induced name changes) while the
+  // user sees "NVIDIA GeForce RTX 2080 Ti" everywhere a label would show.
+  const gpuLabels = useMemo(() => {
+    const m = new Map<string, string>();
+    if (gpus) for (const g of gpus) if (g.name) m.set(g.id, g.name);
+    return m;
+  }, [gpus]);
+  const resolveGpuLabel = useCallback(
+    (id: string) => gpuLabels.get(id) ?? id,
+    [gpuLabels],
+  );
 
   // Seed from persisted selection on first render so there's no flash between
   // the default and the restored selection. The dashboard click handler writes
@@ -657,8 +675,9 @@ export function MetricsDetailPanel({
     for (const gpuName of selectedGpus) {
       const gpuIdx = gpuNames.indexOf(gpuName);
       const colors = getGpuColors(gpuIdx >= 0 ? gpuIdx : 0);
-      lines.push({ key: `${gpuName}_usage`, color: colors.usage, label: gpuName });
-      lines.push({ key: `${gpuName}_temp`, color: colors.temp, label: `${gpuName}°` });
+      const friendly = resolveGpuLabel(gpuName);
+      lines.push({ key: `${gpuName}_usage`, color: colors.usage, label: friendly });
+      lines.push({ key: `${gpuName}_temp`, color: colors.temp, label: `${friendly}°` });
     }
 
     // Per-volume disk IO lines. Throughput (read/write) varies over orders of
@@ -676,7 +695,7 @@ export function MetricsDetailPanel({
     }
 
     return lines;
-  }, [effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIOPairs]);
+  }, [effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIOPairs, resolveGpuLabel]);
 
   // Collect all selected metric/NIC/disk/GPU/disk-IO keys for stats summary.
   // `format: 'throughput'` switches the grid cell to byte-rate formatting
@@ -701,8 +720,9 @@ export function MetricsDetailPanel({
     for (const gpuName of selectedGpus) {
       const gpuIdx = gpuNames.indexOf(gpuName);
       const colors = getGpuColors(gpuIdx >= 0 ? gpuIdx : 0);
-      keys.push({ key: `${gpuName}_usage`, label: gpuName, color: colors.usage, isNetwork: false, unit: '%' });
-      keys.push({ key: `${gpuName}_temp`, label: `${gpuName}°`, color: colors.temp, isNetwork: false, unit: '°C' });
+      const friendly = resolveGpuLabel(gpuName);
+      keys.push({ key: `${gpuName}_usage`, label: friendly, color: colors.usage, isNetwork: false, unit: '%' });
+      keys.push({ key: `${gpuName}_temp`, label: `${friendly}°`, color: colors.temp, isNetwork: false, unit: '°C' });
     }
     for (const { volumeId, channel } of effectiveDiskIOPairs) {
       const key = `${volumeId}_io_${channel}`;
@@ -715,7 +735,7 @@ export function MetricsDetailPanel({
       }
     }
     return keys;
-  }, [effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIOPairs]);
+  }, [effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIOPairs, resolveGpuLabel]);
 
   return (
     <Card className="border-border bg-card py-0 gap-0">
@@ -877,7 +897,7 @@ export function MetricsDetailPanel({
                     <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.usage }} />
                     <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.temp }} />
                   </span>
-                  <span className="ml-1.5">{gpuName}</span>
+                  <span className="ml-1.5">{resolveGpuLabel(gpuName)}</span>
                 </Button>
               );
             })}
@@ -962,7 +982,7 @@ export function MetricsDetailPanel({
                 />
                 {/* Hidden Y-axis for raw throughput lines (prevents them from blowing out the % scale) */}
                 <YAxis yAxisId="hidden" hide />
-                <Tooltip content={<ChartTooltip formatTime={formatTooltipTime} />} />
+                <Tooltip content={<ChartTooltip formatTime={formatTooltipTime} gpuLabels={gpuLabels} />} />
                 {/* Baseline reference line to show full time range */}
                 <ReferenceLine y={0} stroke="oklch(0.35 0.08 250)" strokeDasharray="3 3" />
                 {activeLines.map((line) => {
