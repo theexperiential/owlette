@@ -8,7 +8,7 @@
  */
 
 import { formatThroughput } from '@/lib/networkUtils';
-import { DISK_IO_COLORS, formatDiskIO, isDiskIOKey, parseDiskIOKey } from '@/lib/diskIOUtils';
+import { DISK_IO_COLORS, isDiskIOKey, parseDiskIOKey } from '@/lib/diskIOUtils';
 
 export type MetricType = 'cpu' | 'memory' | 'disk' | 'gpu' | 'cpuTemp' | 'gpuTemp' | 'display';
 
@@ -178,23 +178,20 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
             );
           }
 
-          // Per-volume disk IO metrics (e.g. "C:_io_read"). Label is
-          // volume-qualified ("C: read" / "L: busy") and throughput values
-          // render via formatDiskIO; busy is a plain percent.
+          // Per-volume disk IO activity (e.g. "C:_io_read_pct"). Label is
+          // volume-qualified ("C: read" / "L: write") and the value is a
+          // percentage of the volume's max bandwidth.
           if (diskIOChannel) {
             const label = `${diskIOChannel.id} ${diskIOChannel.channel}`;
             const dotColor = DISK_IO_COLORS[diskIOChannel.channel];
             const numericValue = typeof entry.value === 'number' ? entry.value : Number(entry.value);
-            const formatted = diskIOChannel.channel === 'busy'
-              ? `${numericValue.toFixed(1)}%`
-              : formatDiskIO(numericValue);
             return (
               <div key={key} className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: dotColor }} />
                   <span className="text-sm text-foreground">{label}</span>
                 </div>
-                <span className="text-sm font-medium text-foreground">{formatted}</span>
+                <span className="text-sm font-medium text-foreground">{numericValue.toFixed(1)}%</span>
               </div>
             );
           }

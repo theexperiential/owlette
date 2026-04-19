@@ -115,11 +115,23 @@ interface NicSample {
   ru: number;  // RX utilization % of link speed
 }
 
+interface DiskSample {
+  i: string;   // disk id (e.g. "C:", "L:")
+  p: number;   // usage percent
+}
+
+interface GpuSample {
+  i: string;   // gpu id (e.g. "GPU 0")
+  u: number;   // usage percent
+  t?: number;  // temperature (optional)
+}
+
 interface DiskIOSample {
   i: string;   // volume id (e.g. "C:", "L:")
   rb: number;  // read bytes/sec
   wb: number;  // write bytes/sec
   bu: number;  // busy %
+  mb: number;  // max bytes/sec — denominator for read/write %-of-bandwidth chart
 }
 
 interface MetricsSample {
@@ -131,6 +143,8 @@ interface MetricsSample {
   ct?: number; // cpu temperature (optional)
   gt?: number; // gpu temperature (optional)
   n?: NicSample[]; // per-NIC network metrics (optional)
+  ds?: DiskSample[]; // per-disk usage (optional)
+  gs?: GpuSample[]; // per-GPU usage (optional)
   dios?: DiskIOSample[]; // per-volume disk IO (optional)
   nl?: number; // network latency ms (gateway ping, optional)
   np?: number; // network packet loss % (gateway ping, optional)
@@ -256,7 +270,38 @@ export const onMetricsWrite = onDocumentWritten(
     }
     if (nicEntries.length > 0) sample.n = nicEntries;
 
-    // Per-volume disk IO. v2 doc: metrics.diskio[id] = { readBps, writeBps, readIops, writeIops, busyPct }
+    // Per-disk usage. v2 doc: metrics.disks[id] = { percent, usedGb }.
+    const v2Disks = metrics.disks;
+    const diskEntries: DiskSample[] = [];
+    if (v2Disks && typeof v2Disks === 'object') {
+      for (const [id, data] of Object.entries(v2Disks)) {
+        const disk = data as Record<string, number>;
+        diskEntries.push({
+          i: id,
+          p: round(disk.percent ?? 0),
+        });
+      }
+    }
+    if (diskEntries.length > 0) sample.ds = diskEntries;
+
+    // Per-GPU usage. v2 doc: metrics.gpus[id] = { name?, usagePercent, temperature?, vramUsedGb }.
+    // Use the human-readable `name` for the sample label, falling back to the UUID key.
+    const v2Gpus = metrics.gpus;
+    const gpuEntries: GpuSample[] = [];
+    if (v2Gpus && typeof v2Gpus === 'object') {
+      for (const [id, data] of Object.entries(v2Gpus)) {
+        const gpu = data as Record<string, any>;
+        const entry: GpuSample = {
+          i: (typeof gpu.name === 'string' && gpu.name) ? gpu.name : id,
+          u: round(gpu.usagePercent ?? 0),
+        };
+        if (gpu.temperature != null) entry.t = round(gpu.temperature);
+        gpuEntries.push(entry);
+      }
+    }
+    if (gpuEntries.length > 0) sample.gs = gpuEntries;
+
+    // Per-volume disk IO. v2 doc: metrics.diskio[id] = { readBps, writeBps, readIops, writeIops, busyPct, maxBps }
     const v2DiskIO = metrics.diskio;
     const diskIOEntries: DiskIOSample[] = [];
     if (v2DiskIO && typeof v2DiskIO === 'object' && !Array.isArray(v2DiskIO)) {
@@ -265,8 +310,9 @@ export const onMetricsWrite = onDocumentWritten(
         const rb = Number.isFinite(vol.readBps) ? Math.round(vol.readBps as number) : 0;
         const wb = Number.isFinite(vol.writeBps) ? Math.round(vol.writeBps as number) : 0;
         const bu = Number.isFinite(vol.busyPct) ? round(vol.busyPct as number) : 0;
+        const mb = Number.isFinite(vol.maxBps) ? Math.round(vol.maxBps as number) : 0;
         if (rb > 0 || wb > 0 || bu > 0) {
-          diskIOEntries.push({ i: id, rb, wb, bu });
+          diskIOEntries.push({ i: id, rb, wb, bu, mb });
         }
       }
     }

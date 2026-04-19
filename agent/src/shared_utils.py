@@ -428,8 +428,10 @@ def _wmi_logical_disk_with_timeout(timeout: float = 10.0):
     """Query Win32_PerfFormattedData_PerfDisk_LogicalDisk under a watchdog.
 
     Each call spawns a fresh worker thread that initializes its own COM
-    apartment, instantiates wmi.WMI(), and runs one query. ~350ms total cost
-    in the steady state.
+    apartment, instantiates wmi.WMI(), runs the query, and extracts the
+    fields we care about INSIDE the worker thread. Returns a list of plain
+    Python dicts — never COM proxies — so the caller can read fields
+    safely without re-entering COM apartment marshalling rules.
 
     Per-call (rather than persistent) because the python `wmi` package binds
     its proxy interfaces to the apartment that created them — reusing a
@@ -437,6 +439,12 @@ def _wmi_logical_disk_with_timeout(timeout: float = 10.0):
     (0x8001010E, "interface marshalled for a different thread") on the
     second and subsequent queries. Per-call avoids that entirely; the
     ~350ms cost is fine since the metrics loop runs every 120s in idle.
+
+    Returning plain dicts (not COM proxies) avoids a second related crash:
+    if the caller does ANOTHER WMI query before reading attributes off the
+    rows, the worker thread's COM apartment is already torn down and the
+    proxies become dangling pointers — segfault on next attribute access.
+    Extracting in-worker keeps the proxy lifetime contained.
 
     The 10s timeout is sized to capture the perflib LogicalDisk stalls that
     occur when the BITS service flips state during Windows Update / Delivery
@@ -455,7 +463,17 @@ def _wmi_logical_disk_with_timeout(timeout: float = 10.0):
             pass
         import wmi
         c = wmi.WMI()
-        return list(c.Win32_PerfFormattedData_PerfDisk_LogicalDisk())
+        return [
+            {
+                'Name': str(getattr(row, 'Name', '') or ''),
+                'DiskReadBytesPerSec': int(getattr(row, 'DiskReadBytesPerSec', 0) or 0),
+                'DiskWriteBytesPerSec': int(getattr(row, 'DiskWriteBytesPerSec', 0) or 0),
+                'DiskReadsPerSec': int(getattr(row, 'DiskReadsPerSec', 0) or 0),
+                'DiskWritesPerSec': int(getattr(row, 'DiskWritesPerSec', 0) or 0),
+                'PercentIdleTime': float(getattr(row, 'PercentIdleTime', 100) or 100),
+            }
+            for row in c.Win32_PerfFormattedData_PerfDisk_LogicalDisk()
+        ]
 
     # Manual lifecycle (not `with`) so we can shutdown(wait=False) on timeout.
     # The default `with` exit calls shutdown(wait=True), which would block on a
@@ -476,6 +494,145 @@ def _wmi_logical_disk_with_timeout(timeout: float = 10.0):
         pool.shutdown(wait=False, cancel_futures=True)
 
 
+# --- Disk IO max-throughput estimation (for percentage scaling on the chart) ---
+#
+# `metrics.diskio[*].maxBps` is the denominator the web uses to plot read/write
+# as a 0-100% bandwidth utilization line. Computed as max(hardware_estimate,
+# observed_peak):
+#
+#   - Hardware estimate is detected once at first call by querying
+#     MSFT_PhysicalDisk for each volume's BusType + MediaType, then mapping to
+#     a conservative manufacturer-class throughput (NVMe ≈ 3.5 GB/s, SATA SSD
+#     ≈ 550 MB/s, etc).
+#   - Observed peak is ratcheted upward in process memory whenever a sample
+#     exceeds the current max. Self-corrects if the hardware estimate is
+#     conservative; preserves a sensible cold-start value when it's not.
+#
+# Both halves cached per volume id (drive letter). Cleared on service restart;
+# warm-up is one WMI tick.
+_disk_max_bps_cache: dict = {}        # volume_id -> int (bytes/sec)
+_disk_max_bps_hw_resolved: bool = False
+_disk_max_bps_lock = threading.Lock()
+
+# Conservative class baselines. Real-world peaks vary widely; values picked
+# to be "the chart shows ~30-60% during a normal heavy workload" rather than
+# best-case marketing numbers. Ratchet handles the drives that actually go
+# faster.
+_DISK_MAX_BPS_BY_CLASS = {
+    ('NVMe',  'SSD'):      3_500 * 1024 * 1024,   # NVMe SSD: ~3.5 GB/s
+    ('NVMe',  'Unknown'):  3_500 * 1024 * 1024,
+    ('SATA',  'SSD'):        550 * 1024 * 1024,   # SATA SSD: ~550 MB/s
+    ('SAS',   'SSD'):       1000 * 1024 * 1024,   # SAS SSD: ~1 GB/s
+    ('SATA',  'HDD'):        150 * 1024 * 1024,   # 7200rpm HDD: ~150 MB/s
+    ('SAS',   'HDD'):        200 * 1024 * 1024,   # SAS HDD: ~200 MB/s
+    ('USB',   'SSD'):        400 * 1024 * 1024,   # USB SSD: USB 3.2-ish
+    ('USB',   'HDD'):        100 * 1024 * 1024,   # USB HDD: USB 3.0-ish
+    ('USB',   'Unknown'):    100 * 1024 * 1024,
+}
+_DISK_MAX_BPS_FALLBACK = 200 * 1024 * 1024  # 200 MB/s — generic spinning-disk-class default
+
+# WMI BusType enum (subset relevant to consumer/server storage)
+_WMI_BUS_TYPE = {
+    1:  'SCSI',  2: 'ATAPI', 3:  'ATA',  4: '1394', 5:  'SSA',  6: 'FibreChannel',
+    7:  'USB',   8: 'RAID',  9:  'iSCSI', 10: 'SAS', 11: 'SATA',
+    14: 'MMC',  15: 'Virtual', 16: 'FileBackedVirtual', 17: 'NVMe',
+}
+_WMI_MEDIA_TYPE = {0: 'Unknown', 3: 'HDD', 4: 'SSD', 5: 'SCM'}
+
+
+def _resolve_disk_hardware_max_bps() -> dict:
+    """Query MSFT_PhysicalDisk for each volume's bus + media type, return {drive_letter: max_bytes_per_sec}.
+
+    Uses the Storage WMI namespace (root\\Microsoft\\Windows\\Storage) and walks
+    DiskToPartition + PartitionToVolume associations to map physical disks back
+    to drive letters. Returns {} silently on any failure — the caller falls back
+    to the observed-peak ratchet.
+    """
+    def _query():
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
+        import wmi
+        c = wmi.WMI(namespace='root/Microsoft/Windows/Storage')
+        result = {}
+        try:
+            disks = c.MSFT_PhysicalDisk()
+        except Exception:
+            return {}
+        # Map: DeviceId -> bus/media class
+        disk_class = {}
+        for d in disks:
+            bus = _WMI_BUS_TYPE.get(int(getattr(d, 'BusType', 0) or 0), 'Unknown')
+            media = _WMI_MEDIA_TYPE.get(int(getattr(d, 'MediaType', 0) or 0), 'Unknown')
+            disk_class[str(getattr(d, 'DeviceId', ''))] = (bus, media)
+        # Walk Disk -> Partition -> Volume to get drive letters
+        try:
+            partitions = c.MSFT_Partition()
+        except Exception:
+            return {}
+        for part in partitions:
+            # DriveLetter is a uint16 ASCII char code (0 when no letter is mounted)
+            letter_code = int(getattr(part, 'DriveLetter', 0) or 0)
+            if letter_code < ord('A') or letter_code > ord('Z'):
+                continue
+            letter = chr(letter_code)
+            disk_num = str(getattr(part, 'DiskNumber', ''))
+            cls = disk_class.get(disk_num)
+            if not cls:
+                continue
+            max_bps = _DISK_MAX_BPS_BY_CLASS.get(cls, _DISK_MAX_BPS_FALLBACK)
+            result[f'{letter}:'] = max_bps
+        return result
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = pool.submit(_query)
+        try:
+            return future.result(timeout=10.0)
+        except FuturesTimeoutError:
+            logging.warning('MSFT_PhysicalDisk hardware-class query timed out — disk maxBps will fall back to ratchet only')
+            return {}
+        except Exception as e:
+            logging.warning(f'MSFT_PhysicalDisk hardware-class query failed: {e}')
+            return {}
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _disk_max_bps_for(volume_id: str, observed_bps: int) -> int:
+    """Return the larger of (hardware estimate for this volume) and (all-time observed peak).
+
+    First call resolves the hardware estimate map (one WMI query, ~300ms).
+    Subsequent calls hit the in-memory cache + ratchet only.
+    """
+    global _disk_max_bps_hw_resolved
+    with _disk_max_bps_lock:
+        if not _disk_max_bps_hw_resolved:
+            hw = _resolve_disk_hardware_max_bps()
+            for vol, mb in hw.items():
+                # Only seed if no observed peak is already higher.
+                _disk_max_bps_cache[vol] = max(_disk_max_bps_cache.get(vol, 0), mb)
+            _disk_max_bps_hw_resolved = True
+        # Ratchet: if a sample exceeds our current max, raise the bar.
+        cached = _disk_max_bps_cache.get(volume_id, 0)
+        if observed_bps > cached:
+            cached = observed_bps
+            _disk_max_bps_cache[volume_id] = cached
+        # Final floor — never report 0 as max (would cause division by zero downstream).
+        return max(cached, _DISK_MAX_BPS_FALLBACK)
+
+
+def _is_real_drive_letter(name: str) -> bool:
+    """True for `C:`, `L:`, etc. — single-letter colon volumes that map to user-visible drive letters.
+
+    Excludes WMI's `_Total`, internal `HarddiskVolumeN` raw partitions, and any
+    other oddly-shaped Name fields. Drive letters are always 2 chars: A-Z + ':'.
+    """
+    return len(name) == 2 and name[0].isalpha() and name[1] == ':'
+
+
 def get_disk_io_metrics():
     """
     Get per-logical-volume disk IO metrics via WMI.
@@ -483,6 +640,14 @@ def get_disk_io_metrics():
     Uses Win32_PerfFormattedData_PerfDisk_LogicalDisk, which returns pre-computed
     rates keyed by volume (e.g., 'C:', 'L:'). WMI perf counters need two internal
     samples to compute rates, so the first call after boot may return zeros.
+
+    Only volumes with real drive letters are emitted — WMI's internal
+    `HarddiskVolumeN` raw-partition entries are filtered out as they have no
+    user-visible mapping in the dashboard.
+
+    Each entry includes `maxBps` — the denominator the web uses to plot read/write
+    as a 0-100% bandwidth utilization line. See `_disk_max_bps_for()` for the
+    hardware-estimate + observed-peak ratchet logic.
 
     Returns:
         dict: {
@@ -492,6 +657,7 @@ def get_disk_io_metrics():
                 'readIops': int,     # Read operations per second
                 'writeIops': int,    # Write operations per second
                 'busyPct': float,    # 100 - %IdleTime, clamped to [0, 100]
+                'maxBps': int,       # Hardware-class estimate, ratcheted up by observed peak
             },
             ...
         }
@@ -504,17 +670,21 @@ def get_disk_io_metrics():
 
         result = {}
         for row in rows:
-            name = getattr(row, 'Name', None)
-            if not name or name == '_Total':
+            name = row.get('Name', '')
+            if not name or not _is_real_drive_letter(name):
                 continue
-            idle_pct = float(getattr(row, 'PercentIdleTime', 100) or 100)
+            idle_pct = row.get('PercentIdleTime', 100.0)
             busy_pct = round(max(0.0, min(100.0 - idle_pct, 100.0)), 1)
+            read_bps = row.get('DiskReadBytesPerSec', 0)
+            write_bps = row.get('DiskWriteBytesPerSec', 0)
+            max_bps = _disk_max_bps_for(name, max(read_bps, write_bps))
             result[name] = {
-                'readBps': int(getattr(row, 'DiskReadBytesPerSec', 0) or 0),
-                'writeBps': int(getattr(row, 'DiskWriteBytesPerSec', 0) or 0),
-                'readIops': int(getattr(row, 'DiskReadsPerSec', 0) or 0),
-                'writeIops': int(getattr(row, 'DiskWritesPerSec', 0) or 0),
+                'readBps': read_bps,
+                'writeBps': write_bps,
+                'readIops': row.get('DiskReadsPerSec', 0),
+                'writeIops': row.get('DiskWritesPerSec', 0),
                 'busyPct': busy_pct,
+                'maxBps': max_bps,
             }
         return result
 

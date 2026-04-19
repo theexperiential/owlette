@@ -26,9 +26,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { X, ToggleLeft, ToggleRight, Monitor } from 'lucide-react';
+import { X, ToggleLeft, ToggleRight, Monitor, HardDrive, ArrowDownUp } from 'lucide-react';
 import { TimeRangeSelector, type TimeRange } from './TimeRangeSelector';
 import { ChartTooltip, metricConfig, type MetricType } from './ChartTooltip';
+import {
+  serializeTabs,
+  deserializeTabs,
+  initialMetricToState,
+  type TabSelection,
+} from './metricsTabs';
 import { useHistoricalMetrics } from '@/hooks/useHistoricalMetrics';
 import { getNicColors, getDiskColors, getGpuColors, formatThroughput } from '@/lib/networkUtils';
 import { DISK_IO_COLORS, formatDiskIO, isDiskIOKey, parseDiskIOKey } from '@/lib/diskIOUtils';
@@ -48,110 +54,14 @@ interface MetricsDetailPanelProps {
   gpus?: ReadonlyArray<{ id: string; name?: string }>;
 }
 
-// Namespaced tab-id storage format. New entity types (per-GPU, per-disk, etc.)
-// slot in with a new prefix without any schema change; unknown prefixes are
-// silently ignored on read so older clients don't crash.
-const METRIC_PREFIX = 'metric:';
-const NIC_PREFIX = 'nic:';
-const DISK_PREFIX = 'disk:';
-const GPU_PREFIX = 'gpu:';
-// Per-volume disk IO uses a compound `diskIO:{volumeId}:{channel}` id format
-// (one entry per channel per volume) so each sub-toggle can be independently
-// persisted and restored — mirroring how per-NIC lines are stored but at a
-// finer granularity because read/write/busy are independently toggleable.
-const DISK_IO_PREFIX = 'diskIO:';
+// Pure tab-state helpers (serializeTabs / deserializeTabs / initialMetricToState)
+// and the DiskIOChannel / TabSelection types live in ./metricsTabs so the
+// dashboard can import them without pulling Recharts into the main bundle.
 
-/** Ordered list of disk IO sub-channels — drives toggle render + persistence. */
-const DISK_IO_CHANNELS = ['read', 'write', 'busy'] as const;
-type DiskIOChannel = typeof DISK_IO_CHANNELS[number];
-const DISK_IO_CHANNEL_SET: ReadonlySet<string> = new Set(DISK_IO_CHANNELS);
-// Exhaustive map keyed by MetricType — TypeScript errors here if MetricType
-// gains a new member, forcing us to decide whether it should be persistable
-// as a graph tab. `false` entries are routed to their own panel (e.g. the
-// display topology panel) and never stored in `graphTabs`.
-const KNOWN_METRIC_MAP: Record<MetricType, boolean> = {
-  cpu: true, memory: true, disk: true, gpu: true, cpuTemp: true, gpuTemp: true,
-  display: false,
-};
-const KNOWN_METRICS: ReadonlySet<MetricType> = new Set(
-  (Object.keys(KNOWN_METRIC_MAP) as MetricType[]).filter((m) => KNOWN_METRIC_MAP[m]),
-);
-
-export interface TabSelection {
-  metrics: MetricType[];
-  nics: string[];
-  disks: string[];
-  gpus: string[];
-  /** Per-volume disk IO selections keyed by volume id. Each volume maps to
-   *  an ordered list of active channels (read/write/busy). A volume with no
-   *  channels selected is represented by omission, not an empty array. */
-  diskIO: Record<string, DiskIOChannel[]>;
-}
-
-export function serializeTabs(sel: TabSelection): string[] {
-  const diskIOEntries: string[] = [];
-  // Sort volume ids for stable serialization — keeps the persisted id list
-  // deterministic across reloads so no-op writes can be detected.
-  const volumeIds = Object.keys(sel.diskIO).sort();
-  for (const volumeId of volumeIds) {
-    for (const channel of sel.diskIO[volumeId]) {
-      diskIOEntries.push(`${DISK_IO_PREFIX}${volumeId}:${channel}`);
-    }
-  }
-  return [
-    ...sel.metrics.map((m) => `${METRIC_PREFIX}${m}`),
-    ...sel.nics.map((n) => `${NIC_PREFIX}${n}`),
-    ...sel.disks.map((d) => `${DISK_PREFIX}${d}`),
-    ...sel.gpus.map((g) => `${GPU_PREFIX}${g}`),
-    ...diskIOEntries,
-  ];
-}
-
-function deserializeTabs(ids: string[] | undefined): TabSelection {
-  const metrics: MetricType[] = [];
-  const nics: string[] = [];
-  const disks: string[] = [];
-  const gpus: string[] = [];
-  const diskIO: Record<string, DiskIOChannel[]> = {};
-  if (!ids) return { metrics, nics, disks, gpus, diskIO };
-  for (const id of ids) {
-    if (id.startsWith(METRIC_PREFIX)) {
-      const m = id.slice(METRIC_PREFIX.length) as MetricType;
-      if (KNOWN_METRICS.has(m)) metrics.push(m);
-    } else if (id.startsWith(NIC_PREFIX)) {
-      nics.push(id.slice(NIC_PREFIX.length));
-    } else if (id.startsWith(DISK_PREFIX)) {
-      disks.push(id.slice(DISK_PREFIX.length));
-    } else if (id.startsWith(GPU_PREFIX)) {
-      gpus.push(id.slice(GPU_PREFIX.length));
-    } else if (id.startsWith(DISK_IO_PREFIX)) {
-      // Compound `{volumeId}:{channel}` — split on the LAST colon so volume
-      // ids containing colons (e.g. Windows drive letters like `C:`) round-trip
-      // cleanly. A malformed entry with no colon is silently dropped.
-      const rest = id.slice(DISK_IO_PREFIX.length);
-      const sepIdx = rest.lastIndexOf(':');
-      if (sepIdx <= 0 || sepIdx === rest.length - 1) continue;
-      const volumeId = rest.slice(0, sepIdx);
-      const channel = rest.slice(sepIdx + 1);
-      if (!DISK_IO_CHANNEL_SET.has(channel)) continue;
-      const list = diskIO[volumeId] ?? [];
-      if (!list.includes(channel as DiskIOChannel)) list.push(channel as DiskIOChannel);
-      diskIO[volumeId] = list;
-    }
-  }
-  return { metrics, nics, disks, gpus, diskIO };
-}
-
-export function initialMetricToState(initialMetric: MetricType): TabSelection {
-  const empty: TabSelection = { metrics: [], nics: [], disks: [], gpus: [], diskIO: {} };
-  const initStr = initialMetric as string;
-  if (initStr.endsWith('_tx_util') || initStr.endsWith('_rx_util')) {
-    return { ...empty, nics: [initStr.replace(/_[tr]x_util$/, '')] };
-  }
-  if (initialMetric === 'cpu') return { ...empty, metrics: ['cpu', 'cpuTemp'] };
-  if (initialMetric === 'gpu') return { ...empty, metrics: ['gpu', 'gpuTemp'] };
-  return { ...empty, metrics: [initialMetric] };
-}
+// Reserved horizontal space for the Recharts YAxis. Also used as left padding
+// on the stats grid so the stat cards align flush with the chart's plot area
+// (the "0" on the x-axis) for a crisp visual edge.
+const CHART_Y_AXIS_WIDTH = 40;
 
 function getISOWeek(d: Date): number {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -167,28 +77,10 @@ function sameStringArray(a: readonly string[], b: readonly string[]): boolean {
   return true;
 }
 
-/** Total number of (volume, channel) entries across a per-volume diskIO selection. */
-function countDiskIOSelections(sel: Record<string, readonly DiskIOChannel[]>): number {
-  let n = 0;
-  for (const channels of Object.values(sel)) n += channels.length;
-  return n;
-}
-
-/** Shallow-equal compare for the per-volume diskIO selection map — same key set,
- *  same channel list (order-sensitive) per key. Used to no-op sync-external-source
- *  setState calls, mirroring sameStringArray's purpose for the flat arrays. */
-function sameDiskIOSelection(
-  a: Record<string, readonly DiskIOChannel[]>,
-  b: Record<string, readonly DiskIOChannel[]>,
-): boolean {
-  const aKeys = Object.keys(a);
-  const bKeys = Object.keys(b);
-  if (aKeys.length !== bKeys.length) return false;
-  for (const k of aKeys) {
-    if (!(k in b)) return false;
-    if (!sameStringArray(a[k], b[k])) return false;
-  }
-  return true;
+/** Drive-letter shape: `C:`, `L:`, etc. Filters out raw `HarddiskVolumeN`
+ *  partitions that have no drive-letter mapping. */
+function isDriveLetter(id: string): boolean {
+  return /^[A-Z]:$/.test(id);
 }
 
 export function MetricsDetailPanel({
@@ -199,9 +91,6 @@ export function MetricsDetailPanel({
   onClose,
   gpus,
 }: MetricsDetailPanelProps) {
-  const { userPreferences, updateUserPreferences } = useAuth();
-  const graphTabs = userPreferences.graphTabs;
-
   // UUID → friendly-name lookup for GPU labels. Chart keys stay UUID-based
   // (stable, unique, unaffected by driver-induced name changes) while the
   // user sees "NVIDIA GeForce RTX 2080 Ti" everywhere a label would show.
@@ -215,33 +104,36 @@ export function MetricsDetailPanel({
     [gpuLabels],
   );
 
+  const { userPreferences, updateUserPreferences } = useAuth();
+  const graphTabs = userPreferences.graphTabs;
+
   // Seed from persisted selection on first render so there's no flash between
   // the default and the restored selection. The dashboard click handler writes
   // the fresh click intent to graphTabs before activeGraphPanel is set, so by
   // the time we mount the persisted list already reflects the clicked metric.
   const [selectedMetrics, setSelectedMetrics] = useState<MetricType[]>(() => {
     const persisted = deserializeTabs(graphTabs?.[machineId]);
-    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + countDiskIOSelections(persisted.diskIO) > 0;
+    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + persisted.diskIO.length > 0;
     return hasPersisted ? persisted.metrics : initialMetricToState(initialMetric).metrics;
   });
   const [selectedNics, setSelectedNics] = useState<string[]>(() => {
     const persisted = deserializeTabs(graphTabs?.[machineId]);
-    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + countDiskIOSelections(persisted.diskIO) > 0;
+    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + persisted.diskIO.length > 0;
     return hasPersisted ? persisted.nics : initialMetricToState(initialMetric).nics;
   });
   const [selectedDisks, setSelectedDisks] = useState<string[]>(() => {
     const persisted = deserializeTabs(graphTabs?.[machineId]);
-    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + countDiskIOSelections(persisted.diskIO) > 0;
+    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + persisted.diskIO.length > 0;
     return hasPersisted ? persisted.disks : initialMetricToState(initialMetric).disks;
   });
   const [selectedGpus, setSelectedGpus] = useState<string[]>(() => {
     const persisted = deserializeTabs(graphTabs?.[machineId]);
-    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + countDiskIOSelections(persisted.diskIO) > 0;
+    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + persisted.diskIO.length > 0;
     return hasPersisted ? persisted.gpus : initialMetricToState(initialMetric).gpus;
   });
-  const [selectedDiskIO, setSelectedDiskIO] = useState<Record<string, DiskIOChannel[]>>(() => {
+  const [selectedDiskIO, setSelectedDiskIO] = useState<string[]>(() => {
     const persisted = deserializeTabs(graphTabs?.[machineId]);
-    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + countDiskIOSelections(persisted.diskIO) > 0;
+    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + persisted.diskIO.length > 0;
     return hasPersisted ? persisted.diskIO : initialMetricToState(initialMetric).diskIO;
   });
   const [timeRange, setTimeRangeState] = useState<TimeRange>(
@@ -282,10 +174,13 @@ export function MetricsDetailPanel({
     const names = new Set<string>();
     for (const d of chartData) {
       for (const key of Object.keys(d)) {
-        if (key.endsWith('_pct')) names.add(key.slice(0, -4));
+        if (key.endsWith('_pct') && !key.endsWith('_io_read_pct') && !key.endsWith('_io_write_pct')) {
+          const id = key.slice(0, -4);
+          if (isDriveLetter(id)) names.add(id);
+        }
       }
     }
-    return Array.from(names);
+    return Array.from(names).sort();
   }, [chartData]);
 
   const gpuNames = useMemo(() => {
@@ -321,7 +216,7 @@ export function MetricsDetailPanel({
   // no entry for this machine yet (first-ever open).
   useEffect(() => {
     const persisted = deserializeTabs(graphTabs?.[machineId]);
-    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + countDiskIOSelections(persisted.diskIO) > 0;
+    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + persisted.diskIO.length > 0;
     const next: TabSelection = hasPersisted ? persisted : initialMetricToState(initialMetric);
 
     // Reconciling local selection state with external (persisted) selection is
@@ -332,7 +227,7 @@ export function MetricsDetailPanel({
     setSelectedNics((prev) => (sameStringArray(prev, next.nics) ? prev : next.nics));
     setSelectedDisks((prev) => (sameStringArray(prev, next.disks) ? prev : next.disks));
     setSelectedGpus((prev) => (sameStringArray(prev, next.gpus) ? prev : next.gpus));
-    setSelectedDiskIO((prev) => (sameDiskIOSelection(prev, next.diskIO) ? prev : next.diskIO));
+    setSelectedDiskIO((prev) => (sameStringArray(prev, next.diskIO) ? prev : next.diskIO));
   }, [machineId, initialMetric, graphTabs]);
 
   // Generic 'disk' / 'gpu' / 'gpuTemp' are hidden from the toggle UI when
@@ -349,22 +244,17 @@ export function MetricsDetailPanel({
   // Filter out volumes no longer present in chart data — the persisted
   // selection may still reference a volume from an earlier active period.
   // Following the effectiveMetrics pattern: don't mutate persisted state,
-  // just render only what the chart currently supports. The flat
-  // (volumeId, channel) pairs below are what render + stats consume.
-  const effectiveDiskIOPairs = useMemo(() => {
-    const pairs: { volumeId: string; channel: DiskIOChannel }[] = [];
-    for (const volumeId of volumeIds) {
-      const channels = selectedDiskIO[volumeId];
-      if (!channels) continue;
-      for (const channel of channels) pairs.push({ volumeId, channel });
-    }
-    return pairs;
-  }, [selectedDiskIO, volumeIds]);
+  // just render only what the chart currently supports.
+  const effectiveDiskIO = useMemo(
+    () => selectedDiskIO.filter((v) => volumeIds.includes(v)),
+    [selectedDiskIO, volumeIds],
+  );
 
-  // Total number of selected items across all categories — used to prevent
-  // deselecting the last remaining toggle.
+  // Total number of selected lines across all categories. Each disk IO
+  // toggle contributes 2 lines (read + write), matching the visual count
+  // in the chart.
   const totalSelected =
-    effectiveMetrics.length + selectedNics.length + selectedDisks.length + selectedGpus.length + effectiveDiskIOPairs.length;
+    effectiveMetrics.length + selectedNics.length + selectedDisks.length + selectedGpus.length + effectiveDiskIO.length * 2;
 
   const persistSelections = useCallback((sel: Partial<TabSelection>) => {
     const merged: TabSelection = {
@@ -433,28 +323,11 @@ export function MetricsDetailPanel({
     });
   };
 
-  const toggleDiskIO = (volumeId: string, channel: DiskIOChannel) => {
+  const toggleDiskIO = (volumeId: string) => {
     setSelectedDiskIO((prev) => {
-      const current = prev[volumeId] ?? [];
-      const isSelected = current.includes(channel);
-      if (isSelected) {
-        const nextChannels = current.filter((c) => c !== channel);
-        const next: Record<string, DiskIOChannel[]> = { ...prev };
-        if (nextChannels.length === 0) {
-          // Prune empty volumes so serializeTabs doesn't round-trip
-          // volume-with-no-channels ghosts that would confuse hasPersisted.
-          delete next[volumeId];
-        } else {
-          next[volumeId] = nextChannels;
-        }
-        persistSelections({ diskIO: next });
-        return next;
-      }
-      // Insert in canonical DISK_IO_CHANNELS order so toggle-then-toggle
-      // produces stable serialization regardless of click order.
-      const withAdded = [...current, channel];
-      const ordered = DISK_IO_CHANNELS.filter((c) => withAdded.includes(c));
-      const next: Record<string, DiskIOChannel[]> = { ...prev, [volumeId]: ordered };
+      const next = prev.includes(volumeId)
+        ? prev.filter((v) => v !== volumeId)
+        : [...prev, volumeId];
       persistSelections({ diskIO: next });
       return next;
     });
@@ -611,24 +484,20 @@ export function MetricsDetailPanel({
 
   const hasSelection = totalSelected > 0;
 
-  // All-selected = every visible toggle is on. For disk IO that means every
-  // volume has all three channels active (volumes × channels = total pairs).
+  // All-selected = every visible toggle is on.
   const allSelected =
     effectiveMetrics.length === availableMetrics.length &&
     selectedNics.length === nicNames.length &&
     selectedDisks.length === diskNames.length &&
     selectedGpus.length === gpuNames.length &&
-    effectiveDiskIOPairs.length === volumeIds.length * DISK_IO_CHANNELS.length;
+    effectiveDiskIO.length === volumeIds.length;
 
   const toggleAll = () => {
     const nextMetrics = allSelected ? [initialMetric] : [...availableMetrics];
     const nextNics = allSelected ? [] : [...nicNames];
     const nextDisks = allSelected ? [] : [...diskNames];
     const nextGpus = allSelected ? [] : [...gpuNames];
-    const nextDiskIO: Record<string, DiskIOChannel[]> = {};
-    if (!allSelected) {
-      for (const volumeId of volumeIds) nextDiskIO[volumeId] = [...DISK_IO_CHANNELS];
-    }
+    const nextDiskIO: string[] = allSelected ? [] : [...volumeIds];
     setSelectedMetrics(nextMetrics);
     setSelectedNics(nextNics);
     setSelectedDisks(nextDisks);
@@ -683,19 +552,23 @@ export function MetricsDetailPanel({
     // Per-volume disk IO lines. Throughput (read/write) varies over orders of
     // magnitude and shares the hidden axis with NIC bytes; busy % sits on the
     // default 0-100 axis alongside CPU / memory / disk.
-    for (const { volumeId, channel } of effectiveDiskIOPairs) {
-      const key = `${volumeId}_io_${channel}`;
-      const color = DISK_IO_COLORS[channel];
-      const label = `${volumeId} ${channel}`;
-      if (channel === 'busy') {
-        lines.push({ key, color, label });
-      } else {
-        lines.push({ key, color, label, axis: 'hidden' });
-      }
+    // Per-volume disk IO activity: 2 lines per selected volume (read + write)
+    // both as % of max bandwidth on the default 0-100 axis.
+    for (const volumeId of effectiveDiskIO) {
+      lines.push({
+        key: `${volumeId}_io_read_pct`,
+        color: DISK_IO_COLORS.read,
+        label: `${volumeId} read`,
+      });
+      lines.push({
+        key: `${volumeId}_io_write_pct`,
+        color: DISK_IO_COLORS.write,
+        label: `${volumeId} write`,
+      });
     }
 
     return lines;
-  }, [effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIOPairs, resolveGpuLabel]);
+  }, [effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIO, resolveGpuLabel]);
 
   // Collect all selected metric/NIC/disk/GPU/disk-IO keys for stats summary.
   // `format: 'throughput'` switches the grid cell to byte-rate formatting
@@ -724,18 +597,24 @@ export function MetricsDetailPanel({
       keys.push({ key: `${gpuName}_usage`, label: friendly, color: colors.usage, isNetwork: false, unit: '%' });
       keys.push({ key: `${gpuName}_temp`, label: `${friendly}°`, color: colors.temp, isNetwork: false, unit: '°C' });
     }
-    for (const { volumeId, channel } of effectiveDiskIOPairs) {
-      const key = `${volumeId}_io_${channel}`;
-      const color = DISK_IO_COLORS[channel];
-      const label = `${volumeId} ${channel}`;
-      if (channel === 'busy') {
-        keys.push({ key, label, color, isNetwork: false, unit: '%' });
-      } else {
-        keys.push({ key, label, color, isNetwork: false, format: 'throughput' });
-      }
+    for (const volumeId of effectiveDiskIO) {
+      keys.push({
+        key: `${volumeId}_io_read_pct`,
+        label: `${volumeId} read`,
+        color: DISK_IO_COLORS.read,
+        isNetwork: false,
+        unit: '%',
+      });
+      keys.push({
+        key: `${volumeId}_io_write_pct`,
+        label: `${volumeId} write`,
+        color: DISK_IO_COLORS.write,
+        isNetwork: false,
+        unit: '%',
+      });
     }
     return keys;
-  }, [effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIOPairs, resolveGpuLabel]);
+  }, [effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIO, resolveGpuLabel]);
 
   return (
     <Card className="border-border bg-card py-0 gap-0">
@@ -751,14 +630,15 @@ export function MetricsDetailPanel({
             variant="ghost"
             size="sm"
             onClick={onClose}
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-secondary shrink-0"
+            className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0 shrink-0"
           >
             <X className="h-4 w-4" />
           </Button>
         </div>
 
-        {/* Controls + chart render together once data is ready so the panel
-            doesn't show an empty shell while the fetch is in flight. */}
+        {/* Loading branch — historical-metrics fetch in flight. The 320px
+            height matches the chart + stats area below so when the body
+            commits there's no height shift. */}
         {loading ? (
           <div
             className="flex items-center justify-center h-[320px]"
@@ -770,7 +650,7 @@ export function MetricsDetailPanel({
             <div className="text-muted-foreground animate-pulse text-sm"><LoadingWord /></div>
           </div>
         ) : (
-        <div className="animate-in fade-in duration-200">
+        <div className="animate-in fade-in duration-100">
         {/* Controls row */}
         <div className="flex items-center gap-3 mb-3">
           {/* Metric toggle buttons - left aligned */}
@@ -781,7 +661,7 @@ export function MetricsDetailPanel({
                   variant="ghost"
                   size="sm"
                   onClick={toggleAll}
-                  className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-secondary shrink-0"
+                  className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0 shrink-0"
                 >
                   {allSelected ? (
                     <ToggleRight className="h-4 w-4" />
@@ -805,10 +685,10 @@ export function MetricsDetailPanel({
                   size="sm"
                   onClick={() => toggleMetric(metric)}
                   className={cn(
-                    'text-xs h-7 px-2 transition-colors',
+                    'text-xs h-8 px-3 transition-colors',
                     isSelected
                       ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
-                      : 'bg-transparent text-muted-foreground/70 border-border/40 hover:bg-accent/40 hover:text-foreground hover:border-border'
+                      : 'bg-card text-muted-foreground border-border hover:bg-accent/40 hover:text-foreground'
                   )}
                 >
                   <span
@@ -820,7 +700,9 @@ export function MetricsDetailPanel({
               );
             })}
 
-            {/* Per-disk toggle buttons */}
+            {/* Per-disk STORAGE toggle (disk usage %) — `<HardDrive>` icon
+                signals "how full" / capacity, distinct from the activity
+                toggle below for the same drive. */}
             {diskNames.map((diskName, diskIdx) => {
               const isSelected = selectedDisks.includes(diskName);
               const color = getDiskColors(diskIdx);
@@ -832,48 +714,46 @@ export function MetricsDetailPanel({
                   size="sm"
                   onClick={() => toggleDisk(diskName)}
                   className={cn(
-                    'text-xs h-7 px-2 transition-colors',
+                    'text-xs h-8 px-3 transition-colors',
                     isSelected
                       ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
-                      : 'bg-transparent text-muted-foreground/70 border-border/40 hover:bg-accent/40 hover:text-foreground hover:border-border'
+                      : 'bg-card text-muted-foreground border-border hover:bg-accent/40 hover:text-foreground'
                   )}
+                  title={`${diskName} — disk usage`}
                 >
-                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                  <HardDrive className="w-3 h-3 shrink-0" style={{ color }} />
                   <span className="ml-1.5">{diskName}</span>
                 </Button>
               );
             })}
 
-            {/* Per-volume disk IO sub-toggle buttons — one set of
-                {read / write / busy%} per volume that has reported IO.
-                read/write render on the hidden axis (byte rates), busy%
-                on the default 0-100 axis. */}
-            {volumeIds.map((volumeId) =>
-              DISK_IO_CHANNELS.map((channel) => {
-                const channelList = selectedDiskIO[volumeId] ?? [];
-                const isSelected = channelList.includes(channel);
-                const color = DISK_IO_COLORS[channel];
-                const channelLabel = channel === 'busy' ? 'busy%' : channel;
-
-                return (
-                  <Button
-                    key={`diskIO-${volumeId}-${channel}`}
-                    variant={isSelected ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => toggleDiskIO(volumeId, channel)}
-                    className={cn(
-                      'text-xs h-7 px-2 transition-colors',
-                      isSelected
-                        ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
-                        : 'bg-transparent text-muted-foreground/70 border-border/40 hover:bg-accent/40 hover:text-foreground hover:border-border'
-                    )}
-                  >
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                    <span className="ml-1.5">{volumeId} {channelLabel}</span>
-                  </Button>
-                );
-              })
-            )}
+            {/* Per-volume disk IO ACTIVITY toggle — one button per drive.
+                When on, the chart renders 2 lines for that volume: read%
+                (green) and write% (orange), both as % of the volume's
+                max bandwidth (hardware-class estimate ratcheted up by
+                observed peaks). The two-dot indicator mirrors the GPU
+                toggle's usage+temp visual signature. */}
+            {volumeIds.map((volumeId) => {
+              const isSelected = selectedDiskIO.includes(volumeId);
+              return (
+                <Button
+                  key={`diskIO-${volumeId}`}
+                  variant={isSelected ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => toggleDiskIO(volumeId)}
+                  className={cn(
+                    'text-xs h-8 px-3 transition-colors',
+                    isSelected
+                      ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
+                      : 'bg-card text-muted-foreground border-border hover:bg-accent/40 hover:text-foreground'
+                  )}
+                  title={`${volumeId} — read/write activity (% of max bandwidth)`}
+                >
+                  <ArrowDownUp className="w-3 h-3 shrink-0" style={{ color: DISK_IO_COLORS.read }} />
+                  <span className="ml-1.5">{volumeId}</span>
+                </Button>
+              );
+            })}
 
             {/* Per-GPU toggle buttons */}
             {gpuNames.map((gpuName, gpuIdx) => {
@@ -887,10 +767,10 @@ export function MetricsDetailPanel({
                   size="sm"
                   onClick={() => toggleGpu(gpuName)}
                   className={cn(
-                    'text-xs h-7 px-2 transition-colors',
+                    'text-xs h-8 px-3 transition-colors',
                     isSelected
                       ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
-                      : 'bg-transparent text-muted-foreground/70 border-border/40 hover:bg-accent/40 hover:text-foreground hover:border-border'
+                      : 'bg-card text-muted-foreground border-border hover:bg-accent/40 hover:text-foreground'
                   )}
                 >
                   <span className="flex gap-0.5 shrink-0">
@@ -914,10 +794,10 @@ export function MetricsDetailPanel({
                   size="sm"
                   onClick={() => toggleNic(nicName)}
                   className={cn(
-                    'text-xs h-7 px-2 transition-colors',
+                    'text-xs h-8 px-3 transition-colors',
                     isSelected
                       ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
-                      : 'bg-transparent text-muted-foreground/70 border-border/40 hover:bg-accent/40 hover:text-foreground hover:border-border'
+                      : 'bg-card text-muted-foreground border-border hover:bg-accent/40 hover:text-foreground'
                   )}
                 >
                   <span className="flex gap-0.5 shrink-0">
@@ -953,7 +833,7 @@ export function MetricsDetailPanel({
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
+              <LineChart data={chartData} margin={{ top: 5, right: 0, bottom: 5, left: 0 }}>
                 <CartesianGrid
                   strokeDasharray="3 3"
                   stroke="oklch(0.55 0.06 250)"
@@ -973,6 +853,7 @@ export function MetricsDetailPanel({
                 />
                 <YAxis
                   yAxisId="default"
+                  width={CHART_Y_AXIS_WIDTH}
                   domain={[0, 100]}
                   stroke="oklch(0.708 0.05 250)"
                   fontSize={11}
@@ -1028,9 +909,13 @@ export function MetricsDetailPanel({
           )}
         </div>
 
-        {/* Stats Summary */}
+        {/* Stats Summary — left padding matches the chart's YAxis width so
+            cards align with the chart's plot area (the "0" on the x-axis). */}
         {chartData.length > 0 && hasSelection && (
-          <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2">
+          <div
+            className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2"
+            style={{ paddingLeft: CHART_Y_AXIS_WIDTH }}
+          >
             {statsKeys.map(({ key, label, color, isNetwork, unit: explicitUnit, format }) => {
               const values = chartData
                 .map((d) => d[key] as number | undefined)

@@ -30,6 +30,23 @@ interface NicSample {
 }
 
 /**
+ * Per-disk sample in history (abbreviated keys)
+ */
+interface DiskSample {
+  i: string;   // disk id (e.g. "C:", "L:")
+  p: number;   // usage percent
+}
+
+/**
+ * Per-GPU sample in history (abbreviated keys)
+ */
+interface GpuSample {
+  i: string;   // gpu id (e.g. "GPU 0")
+  u: number;   // usage percent
+  t?: number;  // temperature (optional)
+}
+
+/**
  * Per-volume disk IO sample in history (abbreviated keys)
  */
 interface DiskIOSample {
@@ -37,6 +54,7 @@ interface DiskIOSample {
   rb: number;  // read bytes/sec
   wb: number;  // write bytes/sec
   bu: number;  // busy %
+  mb?: number; // max bytes/sec (denominator for read/write %-of-bandwidth chart). Optional for back-compat with older samples.
 }
 
 /**
@@ -51,6 +69,8 @@ export interface MetricsSample {
   ct?: number; // cpu temperature (optional)
   gt?: number; // gpu temperature (optional)
   n?: NicSample[]; // per-NIC network metrics (optional)
+  ds?: DiskSample[]; // per-disk metrics (optional)
+  gs?: GpuSample[]; // per-GPU metrics (optional)
   dios?: DiskIOSample[]; // per-volume disk IO (optional)
 }
 
@@ -287,11 +307,39 @@ export function useHistoricalMetrics(
               }
             }
 
-            // Expand per-volume disk IO into flat chart keys
+            // Expand per-disk data into flat chart keys
+            if (sample.ds) {
+              for (const disk of sample.ds) {
+                point[`${disk.i}_pct`] = disk.p;
+              }
+            }
+
+            // Expand per-GPU data into flat chart keys
+            if (sample.gs) {
+              for (const gpu of sample.gs) {
+                point[`${gpu.i}_usage`] = gpu.u;
+                if (gpu.t != null) point[`${gpu.i}_temp`] = gpu.t;
+              }
+            }
+
+            // Expand per-volume disk IO into flat chart keys.
+            //
+            // The chart shows utilization as % of the volume's max bandwidth
+            // (mb / "maxBps") — agent ships a hardware-class estimate that
+            // ratchets up on observed peaks. Samples without `mb` (older
+            // schema, or volumes the hardware-class lookup didn't find)
+            // get omitted from the chart entirely so we don't render
+            // misleading scale-relative spikes. Drive-letter filter:
+            // only `^[A-Z]:$` shapes — older samples may still contain
+            // `HarddiskVolumeN` raw partitions; skip them.
             if (sample.dios) {
               for (const dio of sample.dios) {
-                point[`${dio.i}_io_read`] = dio.rb;
-                point[`${dio.i}_io_write`] = dio.wb;
+                if (!/^[A-Z]:$/.test(dio.i)) continue;
+                if (dio.mb && dio.mb > 0) {
+                  point[`${dio.i}_io_read_pct`] = Math.min(100, (dio.rb / dio.mb) * 100);
+                  point[`${dio.i}_io_write_pct`] = Math.min(100, (dio.wb / dio.mb) * 100);
+                }
+                // busy% stays as-is — already a percentage from PercentDiskTime.
                 point[`${dio.i}_io_busy`] = dio.bu;
               }
             }
