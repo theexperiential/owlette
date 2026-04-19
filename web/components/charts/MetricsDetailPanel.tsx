@@ -8,7 +8,7 @@
  * Supports per-NIC network metrics with TX/RX utilization lines.
  */
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { Fragment, useState, useMemo, useEffect, useCallback } from 'react';
 import {
   LineChart,
   Line,
@@ -26,7 +26,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { X, ToggleLeft, ToggleRight, Monitor, HardDrive, ArrowDownUp } from 'lucide-react';
+import { X, ToggleLeft, ToggleRight, Monitor, HardDrive, ArrowDownUp, ArrowUp, ArrowDown, Thermometer } from 'lucide-react';
 import { TimeRangeSelector, type TimeRange } from './TimeRangeSelector';
 import { ChartTooltip, metricConfig, type MetricType } from './ChartTooltip';
 import {
@@ -63,6 +63,20 @@ interface MetricsDetailPanelProps {
 // (the "0" on the x-axis) for a crisp visual edge.
 const CHART_Y_AXIS_WIDTH = 40;
 
+// Shared className for every metric/disk/GPU/NIC toggle button. Mirrors the
+// TimeRangeSelector styling: `variant="ghost"` at the call site (no variant
+// border — the outline variant's `dark:border-input` beats `border-border`
+// on specificity in dark mode, producing invisible borders) and an explicit
+// `border border-border` here for the unselected state.
+function toggleButtonClass(isSelected: boolean): string {
+  return cn(
+    'text-xs h-8 px-3 transition-colors',
+    isSelected
+      ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
+      : 'bg-card text-muted-foreground border border-border hover:bg-accent/40 hover:text-foreground',
+  );
+}
+
 function getISOWeek(d: Date): number {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const dayNum = date.getUTCDay() || 7;
@@ -81,6 +95,28 @@ function sameStringArray(a: readonly string[], b: readonly string[]): boolean {
  *  partitions that have no drive-letter mapping. */
 function isDriveLetter(id: string): boolean {
   return /^[A-Z]:$/.test(id);
+}
+
+/** Returns the temperature sibling metric for a base metric, if any. CPU pairs
+ *  with CPU temperature and GPU with GPU temperature — the toggle buttons
+ *  flip both in lock-step so the usage and temperature lines always appear
+ *  together (mirrors the disk-IO read+write pairing). */
+function tempSiblingOf(metric: MetricType): MetricType | null {
+  if (metric === 'cpu') return 'cpuTemp';
+  if (metric === 'gpu') return 'gpuTemp';
+  return null;
+}
+
+/** Resolve the starting TabSelection for a machine. An explicit entry in
+ *  graphTabs — even an empty array — is honored as "user's current choice"
+ *  (so a deliberate deselect-all stays deselected across remounts). Only when
+ *  the entry is entirely absent do we fall back to the initial-metric default. */
+function resolveSelection(
+  persistedIds: string[] | undefined,
+  initialMetric: MetricType,
+): TabSelection {
+  if (persistedIds !== undefined) return deserializeTabs(persistedIds);
+  return initialMetricToState(initialMetric);
 }
 
 export function MetricsDetailPanel({
@@ -111,34 +147,29 @@ export function MetricsDetailPanel({
   // the default and the restored selection. The dashboard click handler writes
   // the fresh click intent to graphTabs before activeGraphPanel is set, so by
   // the time we mount the persisted list already reflects the clicked metric.
-  const [selectedMetrics, setSelectedMetrics] = useState<MetricType[]>(() => {
-    const persisted = deserializeTabs(graphTabs?.[machineId]);
-    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + persisted.diskIO.length > 0;
-    return hasPersisted ? persisted.metrics : initialMetricToState(initialMetric).metrics;
-  });
-  const [selectedNics, setSelectedNics] = useState<string[]>(() => {
-    const persisted = deserializeTabs(graphTabs?.[machineId]);
-    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + persisted.diskIO.length > 0;
-    return hasPersisted ? persisted.nics : initialMetricToState(initialMetric).nics;
-  });
-  const [selectedDisks, setSelectedDisks] = useState<string[]>(() => {
-    const persisted = deserializeTabs(graphTabs?.[machineId]);
-    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + persisted.diskIO.length > 0;
-    return hasPersisted ? persisted.disks : initialMetricToState(initialMetric).disks;
-  });
-  const [selectedGpus, setSelectedGpus] = useState<string[]>(() => {
-    const persisted = deserializeTabs(graphTabs?.[machineId]);
-    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + persisted.diskIO.length > 0;
-    return hasPersisted ? persisted.gpus : initialMetricToState(initialMetric).gpus;
-  });
-  const [selectedDiskIO, setSelectedDiskIO] = useState<string[]>(() => {
-    const persisted = deserializeTabs(graphTabs?.[machineId]);
-    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + persisted.diskIO.length > 0;
-    return hasPersisted ? persisted.diskIO : initialMetricToState(initialMetric).diskIO;
-  });
+  const [selectedMetrics, setSelectedMetrics] = useState<MetricType[]>(
+    () => resolveSelection(graphTabs?.[machineId], initialMetric).metrics,
+  );
+  const [selectedNics, setSelectedNics] = useState<string[]>(
+    () => resolveSelection(graphTabs?.[machineId], initialMetric).nics,
+  );
+  const [selectedDisks, setSelectedDisks] = useState<string[]>(
+    () => resolveSelection(graphTabs?.[machineId], initialMetric).disks,
+  );
+  const [selectedGpus, setSelectedGpus] = useState<string[]>(
+    () => resolveSelection(graphTabs?.[machineId], initialMetric).gpus,
+  );
+  const [selectedDiskIO, setSelectedDiskIO] = useState<string[]>(
+    () => resolveSelection(graphTabs?.[machineId], initialMetric).diskIO,
+  );
   const [timeRange, setTimeRangeState] = useState<TimeRange>(
     () => userPreferences.graphTimeRange || '1h',
   );
+
+  // When the user hovers a stat card, the matching line in the chart stays at
+  // full opacity + thicker stroke and every other line dims. Null = no hover,
+  // all lines render at normal weight. Card `key` matches Line `dataKey` 1:1.
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
 
   // Keep local state in sync if another tab/device updates the preference.
   useEffect(() => {
@@ -209,15 +240,25 @@ export function MetricsDetailPanel({
     return Array.from(ids).sort();
   }, [chartData]);
 
+  // Union of drive identifiers seen in either storage (diskNames) or activity
+  // (volumeIds) data, sorted. Toggles iterate this list so each drive's
+  // storage + activity buttons render next to each other (C storage, C
+  // activity, L storage, L activity) rather than grouped by type.
+  const driveOrder = useMemo(() => {
+    const all = new Set<string>();
+    for (const d of diskNames) all.add(d);
+    for (const v of volumeIds) all.add(v);
+    return Array.from(all).sort();
+  }, [diskNames, volumeIds]);
+
   // Mirror persisted selection into local state. The click handler at the
   // dashboard level (see handleMetricClick) merges click intent into graphTabs
   // at click time, so the persisted list is already the source of truth.
   // Falling back to the initialMetric default only applies when graphTabs has
-  // no entry for this machine yet (first-ever open).
+  // no entry for this machine yet (first-ever open); an empty-array entry is
+  // honored as an explicit deselect-all.
   useEffect(() => {
-    const persisted = deserializeTabs(graphTabs?.[machineId]);
-    const hasPersisted = persisted.metrics.length + persisted.nics.length + persisted.disks.length + persisted.gpus.length + persisted.diskIO.length > 0;
-    const next: TabSelection = hasPersisted ? persisted : initialMetricToState(initialMetric);
+    const next = resolveSelection(graphTabs?.[machineId], initialMetric);
 
     // Reconciling local selection state with external (persisted) selection is
     // a legitimate sync-external-source case; the guarded setters no-op when
@@ -271,14 +312,14 @@ export function MetricsDetailPanel({
     ).catch(() => { /* fire-and-forget; matches statsExpanded pattern */ });
   }, [selectedMetrics, selectedNics, selectedDisks, selectedGpus, selectedDiskIO, graphTabs, machineId, updateUserPreferences]);
 
-  const toggleMetric = (metric: MetricType) => {
+  // Toggle a base metric together with its optional temperature sibling. When
+  // clicking the CPU button, both `cpu` and `cpuTemp` flip together so the
+  // usage line never appears without the temperature line (and vice versa).
+  const togglePairedMetric = (base: MetricType, temp: MetricType | null) => {
     setSelectedMetrics((prev) => {
-      if (prev.includes(metric)) {
-        const next = prev.filter((m) => m !== metric);
-        persistSelections({ metrics: next });
-        return next;
-      }
-      const next = [...prev, metric];
+      const isOn = prev.includes(base);
+      const stripped = prev.filter((m) => m !== base && m !== temp);
+      const next = isOn ? stripped : [...stripped, base, ...(temp ? [temp] : [])];
       persistSelections({ metrics: next });
       return next;
     });
@@ -493,7 +534,10 @@ export function MetricsDetailPanel({
     effectiveDiskIO.length === volumeIds.length;
 
   const toggleAll = () => {
-    const nextMetrics = allSelected ? [initialMetric] : [...availableMetrics];
+    // True on/off: when everything is selected, flipping clears every toggle;
+    // otherwise selects all. Matches the ToggleRight/ToggleLeft icon grammar
+    // and pairs with the ability to individually deselect down to zero.
+    const nextMetrics: MetricType[] = allSelected ? [] : [...availableMetrics];
     const nextNics = allSelected ? [] : [...nicNames];
     const nextDisks = allSelected ? [] : [...diskNames];
     const nextGpus = allSelected ? [] : [...gpuNames];
@@ -546,7 +590,7 @@ export function MetricsDetailPanel({
       const colors = getGpuColors(gpuIdx >= 0 ? gpuIdx : 0);
       const friendly = resolveGpuLabel(gpuName);
       lines.push({ key: `${gpuName}_usage`, color: colors.usage, label: friendly });
-      lines.push({ key: `${gpuName}_temp`, color: colors.temp, label: `${friendly}°` });
+      lines.push({ key: `${gpuName}_temp`, color: colors.temp, label: friendly });
     }
 
     // Per-volume disk IO lines. Throughput (read/write) varies over orders of
@@ -574,47 +618,90 @@ export function MetricsDetailPanel({
   // `format: 'throughput'` switches the grid cell to byte-rate formatting
   // (e.g. "1.5 MB/s") instead of the default "{value}{unit}" percent display.
   const statsKeys = useMemo(() => {
-    const keys: { key: string; label: string; color: string; isNetwork: boolean; unit?: string; format?: 'throughput' }[] = [];
-    for (const metric of effectiveMetrics) {
+    const keys: { key: string; label: string; color: string; isNetwork: boolean; unit?: string; format?: 'throughput'; showThermometer?: boolean; direction?: 'tx' | 'rx' }[] = [];
+
+    // Order must mirror the toggle-button row so users can associate a button
+    // with its card at a glance:
+    //   metrics (base + temp sibling adjacent) → drives (storage + IO
+    //   interleaved per drive) → GPUs (usage + temp per GPU) → NICs (TX + RX
+    //   per NIC).
+
+    // Metric cards — iterate availableMetrics so order is deterministic and
+    // bases come before their temps. For each base, inject its temp sibling
+    // immediately after (mirrors togglePairedMetric's lock-step pairing).
+    const seenMetrics = new Set<MetricType>();
+    const pushMetricCard = (metric: MetricType) => {
+      if (seenMetrics.has(metric)) return;
+      seenMetrics.add(metric);
       const config = metricConfig[metric];
-      if (config) keys.push({ key: metric, label: config.label, color: config.color, isNetwork: false });
+      if (!config) return;
+      keys.push({
+        key: metric,
+        label: config.label,
+        color: config.color,
+        isNetwork: false,
+        // cpuTemp/gpuTemp share their base label ("CPU"/"GPU") — the
+        // thermometer icon is what differentiates the two cards visually.
+        showThermometer: metric === 'cpuTemp' || metric === 'gpuTemp',
+      });
+    };
+    for (const metric of availableMetrics) {
+      if (metric === 'cpuTemp' || metric === 'gpuTemp') continue; // inserted after base
+      if (effectiveMetrics.includes(metric)) pushMetricCard(metric);
+      const temp = tempSiblingOf(metric);
+      if (temp && effectiveMetrics.includes(temp)) pushMetricCard(temp);
     }
-    for (const nicName of selectedNics) {
-      const nicIdx = nicNames.indexOf(nicName);
-      const colors = getNicColors(nicIdx >= 0 ? nicIdx : 0);
-      keys.push({ key: `${nicName}_tx_util`, label: `${nicName} TX`, color: colors.tx, isNetwork: true });
-      keys.push({ key: `${nicName}_rx_util`, label: `${nicName} RX`, color: colors.rx, isNetwork: true });
+    // Safety net: any standalone temp in effectiveMetrics whose base isn't in
+    // availableMetrics (shouldn't happen, but preserves old behavior).
+    for (const metric of effectiveMetrics) pushMetricCard(metric);
+
+    // Drive cards — same loop shape as the toggle-button row in driveOrder:
+    // for each drive, emit storage card then its read/write IO cards.
+    for (const drive of driveOrder) {
+      if (selectedDisks.includes(drive)) {
+        const diskIdx = diskNames.indexOf(drive);
+        const color = getDiskColors(diskIdx >= 0 ? diskIdx : 0);
+        keys.push({ key: `${drive}_pct`, label: drive, color, isNetwork: false, unit: '%' });
+      }
+      if (effectiveDiskIO.includes(drive)) {
+        keys.push({
+          key: `${drive}_io_read_pct`,
+          label: `${drive} read`,
+          color: DISK_IO_COLORS.read,
+          isNetwork: false,
+          unit: '%',
+        });
+        keys.push({
+          key: `${drive}_io_write_pct`,
+          label: `${drive} write`,
+          color: DISK_IO_COLORS.write,
+          isNetwork: false,
+          unit: '%',
+        });
+      }
     }
-    for (const diskName of selectedDisks) {
-      const diskIdx = diskNames.indexOf(diskName);
-      const color = getDiskColors(diskIdx >= 0 ? diskIdx : 0);
-      keys.push({ key: `${diskName}_pct`, label: diskName, color, isNetwork: false, unit: '%' });
-    }
+
+    // GPU cards — usage + temp per GPU, in the same order as the GPU toggles.
     for (const gpuName of selectedGpus) {
       const gpuIdx = gpuNames.indexOf(gpuName);
       const colors = getGpuColors(gpuIdx >= 0 ? gpuIdx : 0);
       const friendly = resolveGpuLabel(gpuName);
       keys.push({ key: `${gpuName}_usage`, label: friendly, color: colors.usage, isNetwork: false, unit: '%' });
-      keys.push({ key: `${gpuName}_temp`, label: `${friendly}°`, color: colors.temp, isNetwork: false, unit: '°C' });
+      keys.push({ key: `${gpuName}_temp`, label: friendly, color: colors.temp, isNetwork: false, unit: '°C', showThermometer: true });
     }
-    for (const volumeId of effectiveDiskIO) {
-      keys.push({
-        key: `${volumeId}_io_read_pct`,
-        label: `${volumeId} read`,
-        color: DISK_IO_COLORS.read,
-        isNetwork: false,
-        unit: '%',
-      });
-      keys.push({
-        key: `${volumeId}_io_write_pct`,
-        label: `${volumeId} write`,
-        color: DISK_IO_COLORS.write,
-        isNetwork: false,
-        unit: '%',
-      });
+
+    // NIC cards — TX + RX per NIC, in the same order as the NIC toggles.
+    // Direction is an arrow icon (↑/↓) appended to the bare NIC name rather
+    // than a " TX"/" RX" suffix, mirroring the thermometer pattern.
+    for (const nicName of selectedNics) {
+      const nicIdx = nicNames.indexOf(nicName);
+      const colors = getNicColors(nicIdx >= 0 ? nicIdx : 0);
+      keys.push({ key: `${nicName}_tx_util`, label: nicName, color: colors.tx, isNetwork: true, direction: 'tx' });
+      keys.push({ key: `${nicName}_rx_util`, label: nicName, color: colors.rx, isNetwork: true, direction: 'rx' });
     }
+
     return keys;
-  }, [effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIO, resolveGpuLabel]);
+  }, [availableMetrics, effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, driveOrder, selectedGpus, gpuNames, effectiveDiskIO, resolveGpuLabel]);
 
   return (
     <Card className="border-border bg-card py-0 gap-0">
@@ -671,87 +758,78 @@ export function MetricsDetailPanel({
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                <p>{allSelected ? 'show only initial metric' : 'show all metrics'}</p>
+                <p>{allSelected ? 'clear all' : 'show all metrics'}</p>
               </TooltipContent>
             </UITooltip>
-            {availableMetrics.map((metric) => {
-              const config = metricConfig[metric];
-              const isSelected = effectiveMetrics.includes(metric);
+            {availableMetrics
+              .filter((m) => m !== 'cpuTemp' && m !== 'gpuTemp')
+              .map((metric) => {
+                const config = metricConfig[metric];
+                const temp = tempSiblingOf(metric);
+                const hasTemp = temp !== null && availableMetrics.includes(temp);
+                const tempConfig = hasTemp && temp ? metricConfig[temp] : null;
+                const isSelected = effectiveMetrics.includes(metric);
 
+                return (
+                  <Button
+                    key={metric}
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => togglePairedMetric(metric, hasTemp ? temp : null)}
+                    className={toggleButtonClass(isSelected)}
+                    title={hasTemp ? `${config.label} — usage & temperature` : undefined}
+                  >
+                    <span className="inline-flex items-center gap-0.5 shrink-0">
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: config.color }} />
+                      {tempConfig && (
+                        <Thermometer className="w-3 h-3" style={{ color: tempConfig.color }} />
+                      )}
+                    </span>
+                    <span className="ml-1.5">{config.label}</span>
+                  </Button>
+                );
+              })}
+
+            {/* Per-drive toggle pair: STORAGE (`<HardDrive>` = capacity %) then
+                ACTIVITY (`<ArrowDownUp>` = read+write % of max bandwidth). Grouped
+                by drive so each letter's two buttons sit next to each other
+                (C storage → C activity → L storage → L activity) rather than
+                separated by type. A drive missing one axis (e.g. no IO data)
+                simply renders whichever button it has. */}
+            {driveOrder.map((drive) => {
+              const diskIdx = diskNames.indexOf(drive);
+              const hasStorage = diskIdx >= 0;
+              const hasActivity = volumeIds.includes(drive);
+              const storageSelected = selectedDisks.includes(drive);
+              const activitySelected = selectedDiskIO.includes(drive);
+              const storageColor = hasStorage ? getDiskColors(diskIdx) : undefined;
               return (
-                <Button
-                  key={metric}
-                  variant={isSelected ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => toggleMetric(metric)}
-                  className={cn(
-                    'text-xs h-8 px-3 transition-colors',
-                    isSelected
-                      ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
-                      : 'bg-card text-muted-foreground border-border hover:bg-accent/40 hover:text-foreground'
+                <Fragment key={drive}>
+                  {hasStorage && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleDisk(drive)}
+                      className={toggleButtonClass(storageSelected)}
+                      title={`${drive} — disk usage`}
+                    >
+                      <HardDrive className="w-3 h-3 shrink-0" style={{ color: storageColor }} />
+                      <span className="ml-1.5">{drive}</span>
+                    </Button>
                   )}
-                >
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{ backgroundColor: config.color }}
-                  />
-                  <span className="ml-1.5">{config.label}</span>
-                </Button>
-              );
-            })}
-
-            {/* Per-disk STORAGE toggle (disk usage %) — `<HardDrive>` icon
-                signals "how full" / capacity, distinct from the activity
-                toggle below for the same drive. */}
-            {diskNames.map((diskName, diskIdx) => {
-              const isSelected = selectedDisks.includes(diskName);
-              const color = getDiskColors(diskIdx);
-
-              return (
-                <Button
-                  key={`disk-${diskName}`}
-                  variant={isSelected ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => toggleDisk(diskName)}
-                  className={cn(
-                    'text-xs h-8 px-3 transition-colors',
-                    isSelected
-                      ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
-                      : 'bg-card text-muted-foreground border-border hover:bg-accent/40 hover:text-foreground'
+                  {hasActivity && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleDiskIO(drive)}
+                      className={toggleButtonClass(activitySelected)}
+                      title={`${drive} — read/write activity (% of max bandwidth)`}
+                    >
+                      <ArrowDownUp className="w-3 h-3 shrink-0" style={{ color: DISK_IO_COLORS.read }} />
+                      <span className="ml-1.5">{drive}</span>
+                    </Button>
                   )}
-                  title={`${diskName} — disk usage`}
-                >
-                  <HardDrive className="w-3 h-3 shrink-0" style={{ color }} />
-                  <span className="ml-1.5">{diskName}</span>
-                </Button>
-              );
-            })}
-
-            {/* Per-volume disk IO ACTIVITY toggle — one button per drive.
-                When on, the chart renders 2 lines for that volume: read%
-                (green) and write% (orange), both as % of the volume's
-                max bandwidth (hardware-class estimate ratcheted up by
-                observed peaks). The two-dot indicator mirrors the GPU
-                toggle's usage+temp visual signature. */}
-            {volumeIds.map((volumeId) => {
-              const isSelected = selectedDiskIO.includes(volumeId);
-              return (
-                <Button
-                  key={`diskIO-${volumeId}`}
-                  variant={isSelected ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => toggleDiskIO(volumeId)}
-                  className={cn(
-                    'text-xs h-8 px-3 transition-colors',
-                    isSelected
-                      ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
-                      : 'bg-card text-muted-foreground border-border hover:bg-accent/40 hover:text-foreground'
-                  )}
-                  title={`${volumeId} — read/write activity (% of max bandwidth)`}
-                >
-                  <ArrowDownUp className="w-3 h-3 shrink-0" style={{ color: DISK_IO_COLORS.read }} />
-                  <span className="ml-1.5">{volumeId}</span>
-                </Button>
+                </Fragment>
               );
             })}
 
@@ -763,19 +841,14 @@ export function MetricsDetailPanel({
               return (
                 <Button
                   key={`gpu-${gpuName}`}
-                  variant={isSelected ? 'default' : 'outline'}
+                  variant="ghost"
                   size="sm"
                   onClick={() => toggleGpu(gpuName)}
-                  className={cn(
-                    'text-xs h-8 px-3 transition-colors',
-                    isSelected
-                      ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
-                      : 'bg-card text-muted-foreground border-border hover:bg-accent/40 hover:text-foreground'
-                  )}
+                  className={toggleButtonClass(isSelected)}
                 >
-                  <span className="flex gap-0.5 shrink-0">
+                  <span className="inline-flex items-center gap-0.5 shrink-0">
                     <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.usage }} />
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.temp }} />
+                    <Thermometer className="w-3 h-3" style={{ color: colors.temp }} />
                   </span>
                   <span className="ml-1.5">{resolveGpuLabel(gpuName)}</span>
                 </Button>
@@ -790,15 +863,10 @@ export function MetricsDetailPanel({
               return (
                 <Button
                   key={`nic-${nicName}`}
-                  variant={isSelected ? 'default' : 'outline'}
+                  variant="ghost"
                   size="sm"
                   onClick={() => toggleNic(nicName)}
-                  className={cn(
-                    'text-xs h-8 px-3 transition-colors',
-                    isSelected
-                      ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
-                      : 'bg-card text-muted-foreground border-border hover:bg-accent/40 hover:text-foreground'
-                  )}
+                  className={toggleButtonClass(isSelected)}
                 >
                   <span className="flex gap-0.5 shrink-0">
                     <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.tx }} />
@@ -889,6 +957,8 @@ export function MetricsDetailPanel({
                   // throughput values off the 0-100% scale, 'default' is the
                   // standard percent axis shared by cpu/memory/disk/gpu).
                   const yAxisId = line.axis === 'hidden' ? 'hidden' : 'default';
+                  const isHovered = hoveredKey === line.key;
+                  const isDimmed = hoveredKey !== null && !isHovered;
                   return (
                     <Line
                       key={line.key}
@@ -897,7 +967,8 @@ export function MetricsDetailPanel({
                       dataKey={line.key}
                       name={line.label}
                       stroke={line.color}
-                      strokeWidth={2}
+                      strokeWidth={isHovered ? 3 : 2}
+                      strokeOpacity={isDimmed ? 0.15 : 1}
                       dot={false}
                       activeDot={{ r: 4, strokeWidth: 2 }}
                       isAnimationActive={false}
@@ -915,8 +986,9 @@ export function MetricsDetailPanel({
           <div
             className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2"
             style={{ paddingLeft: CHART_Y_AXIS_WIDTH }}
+            onMouseLeave={() => setHoveredKey(null)}
           >
-            {statsKeys.map(({ key, label, color, isNetwork, unit: explicitUnit, format }) => {
+            {statsKeys.map(({ key, label, color, isNetwork, unit: explicitUnit, format, showThermometer, direction }) => {
               const values = chartData
                 .map((d) => d[key] as number | undefined)
                 .filter((v): v is number => v != null);
@@ -948,11 +1020,21 @@ export function MetricsDetailPanel({
               return (
                 <div
                   key={key}
-                  className="p-2 rounded-lg bg-secondary border border-border"
+                  className="p-2 rounded-lg bg-secondary border border-border transition-colors hover:bg-accent/40 cursor-default"
                   style={{ borderLeftColor: color, borderLeftWidth: '3px' }}
+                  onMouseEnter={() => setHoveredKey(key)}
                 >
-                  {/* Metric label */}
-                  <div className="text-xs font-medium text-foreground mb-1.5">{label}</div>
+                  {/* Metric label — Thermometer icon for temp entries
+                      (cpuTemp/gpuTemp and per-GPU _temp), ArrowUp/ArrowDown
+                      for NIC TX/RX. Both disambiguate siblings that share the
+                      same base label (CPU usage vs CPU temp, Ethernet TX vs
+                      Ethernet RX). */}
+                  <div className="text-xs font-medium text-foreground mb-1.5 inline-flex items-center gap-1">
+                    {label}
+                    {showThermometer && <Thermometer className="h-3 w-3 shrink-0" />}
+                    {direction === 'tx' && <ArrowUp className="h-3 w-3 shrink-0" />}
+                    {direction === 'rx' && <ArrowDown className="h-3 w-3 shrink-0" />}
+                  </div>
                   <div className="grid grid-cols-3 gap-2 text-xs">
                     <div>
                       <div className="text-muted-foreground">avg</div>

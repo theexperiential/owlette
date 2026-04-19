@@ -7,6 +7,7 @@
  * Styled to match Owlette's dark theme.
  */
 
+import { ArrowDown, ArrowUp, Thermometer } from 'lucide-react';
 import { formatThroughput } from '@/lib/networkUtils';
 import { DISK_IO_COLORS, isDiskIOKey, parseDiskIOKey } from '@/lib/diskIOUtils';
 
@@ -16,11 +17,11 @@ export type MetricType = 'cpu' | 'memory' | 'disk' | 'gpu' | 'cpuTemp' | 'gpuTem
 // Using explicit RGB colors because CSS variables don't work in SVG stroke attributes
 export const metricConfig: Record<MetricType, { label: string; color: string; unit: string }> = {
   cpu: { label: 'CPU', color: 'oklch(0.75 0.18 195)', unit: '%' },       // cyan accent (matches --accent-cyan)
-  memory: { label: 'Memory', color: 'oklch(0.65 0.25 250)', unit: '%' }, // blue (matches sidebar-primary)
+  memory: { label: 'RAM', color: 'oklch(0.65 0.25 250)', unit: '%' },    // blue (matches sidebar-primary)
   disk: { label: 'Disk', color: 'rgb(34, 197, 94)', unit: '%' },         // green-500
   gpu: { label: 'GPU', color: 'rgb(249, 115, 22)', unit: '%' },          // orange-500
-  cpuTemp: { label: 'CPU°', color: 'rgb(239, 68, 68)', unit: '°C' },     // red-500
-  gpuTemp: { label: 'GPU°', color: 'rgb(236, 72, 153)', unit: '°C' },    // pink-500
+  cpuTemp: { label: 'CPU', color: 'rgb(239, 68, 68)', unit: '°C' },      // red-500 — thermometer icon disambiguates from cpu
+  gpuTemp: { label: 'GPU', color: 'rgb(236, 72, 153)', unit: '°C' },     // pink-500 — thermometer icon disambiguates from gpu
   display: { label: 'Displays', color: 'oklch(0.70 0.15 280)', unit: '' }, // purple — display topology (not a time-series metric)
 };
 
@@ -41,10 +42,13 @@ function parseNetworkKey(key: string): { nic: string; direction: 'TX' | 'RX' } |
 }
 
 /**
- * Check if a dataKey is a per-device disk metric (e.g., "C:_pct", "L:_pct")
+ * Check if a dataKey is a per-device disk *storage* metric (e.g., "C:_pct", "L:_pct").
+ * Explicitly excludes per-volume IO activity keys (`_io_read_pct` / `_io_write_pct`)
+ * which share the `_pct` suffix but route to the disk-IO tooltip branch instead.
  */
 function parseDiskKey(key: string): { diskName: string } | null {
   if (!key.endsWith('_pct')) return null;
+  if (key.endsWith('_io_read_pct') || key.endsWith('_io_write_pct')) return null;
   return { diskName: key.slice(0, -4) };
 }
 
@@ -139,7 +143,14 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
                     className="w-2 h-2 rounded-full"
                     style={{ backgroundColor: entry.color }}
                   />
-                  <span className="text-sm text-foreground">{netInfo.nic} {netInfo.direction}</span>
+                  <span className="text-sm text-foreground inline-flex items-center gap-1">
+                    {netInfo.nic}
+                    {netInfo.direction === 'TX' ? (
+                      <ArrowUp className="h-3 w-3" />
+                    ) : (
+                      <ArrowDown className="h-3 w-3" />
+                    )}
+                  </span>
                 </div>
                 <span className="text-sm font-medium text-foreground">
                   {typeof entry.value === 'number' ? entry.value.toFixed(1) : entry.value}%
@@ -152,28 +163,33 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
           // Per-device disk metrics (e.g., "C:_pct", "L:_pct")
           if (diskInfo) {
             return (
-              <div key={key} className="flex items-center justify-between gap-6">
+              <div key={key} className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
-                  <span className="text-foreground font-medium">{diskInfo.diskName}</span>
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
+                  <span className="text-sm text-foreground">{diskInfo.diskName}</span>
                 </div>
-                <span className="text-foreground font-semibold tabular-nums">{Number(entry.value).toFixed(1)}%</span>
+                <span className="text-sm font-medium text-foreground">{Number(entry.value).toFixed(1)}%</span>
               </div>
             );
           }
 
-          // Per-device GPU metrics (e.g., "GPU 0_usage", "GPU 0_temp")
+          // Per-device GPU metrics (e.g., "GPU 0_usage", "GPU 0_temp").
+          // Temp rows append a Thermometer icon so they read as "<name> 🌡"
+          // instead of the legacy degree-suffix convention.
           if (gpuInfo) {
             const unit = gpuInfo.field === 'temp' ? '°C' : '%';
             const friendly = gpuLabels?.get(gpuInfo.gpuName) ?? gpuInfo.gpuName;
-            const label = gpuInfo.field === 'temp' ? `${friendly}°` : friendly;
+            const isTemp = gpuInfo.field === 'temp';
             return (
-              <div key={key} className="flex items-center justify-between gap-6">
+              <div key={key} className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
-                  <span className="text-foreground font-medium">{label}</span>
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
+                  <span className="text-sm text-foreground inline-flex items-center gap-1">
+                    {friendly}
+                    {isTemp && <Thermometer className="h-3 w-3" />}
+                  </span>
                 </div>
-                <span className="text-foreground font-semibold tabular-nums">{Number(entry.value).toFixed(1)}{unit}</span>
+                <span className="text-sm font-medium text-foreground">{Number(entry.value).toFixed(1)}{unit}</span>
               </div>
             );
           }
@@ -196,6 +212,11 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
             );
           }
 
+          // Standard scalar metric row. `cpuTemp` / `gpuTemp` share their
+          // base-metric label ("CPU" / "GPU") so the Thermometer icon is the
+          // sole disambiguator — without it the tooltip would show two
+          // identical "CPU" rows.
+          const isTempMetric = key === 'cpuTemp' || key === 'gpuTemp';
           return (
             <div key={key} className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-2">
@@ -203,7 +224,10 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
                   className="w-2 h-2 rounded-full"
                   style={{ backgroundColor: config.color }}
                 />
-                <span className="text-sm text-foreground">{config.label}</span>
+                <span className="text-sm text-foreground inline-flex items-center gap-1">
+                  {config.label}
+                  {isTempMetric && <Thermometer className="h-3 w-3" />}
+                </span>
               </div>
               <span className="text-sm font-medium text-foreground">
                 {typeof entry.value === 'number' ? entry.value.toFixed(1) : entry.value}

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useLayoutEffect, useState, useMemo, useCallback, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites, type LaunchMode, type ScheduleBlock } from '@/hooks/useFirestore';
@@ -27,8 +28,11 @@ import { ScreenshotDialog } from '@/components/ScreenshotDialog';
 import { LiveViewModal } from '@/components/LiveViewModal';
 import { PageHeader } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { MetricsDetailPanel, initialMetricToState, serializeTabs, type MetricType } from '@/components/charts';
-import { DisplayLayoutPanel } from '@/components/charts/DisplayLayoutPanel';
+// Pure tab-state helpers — imported directly from the lightweight module so
+// the dashboard bundle doesn't have to resolve @/components/charts' barrel
+// (which re-exports Recharts-heavy components like MetricsDetailPanel).
+import { initialMetricToState, serializeTabs } from '@/components/charts/metricsTabs';
+import type { MetricType } from '@/components/charts/ChartTooltip';
 import ScheduleEditor from '@/components/ScheduleEditor';
 import { MachineCardView } from './components/MachineCardView';
 import { MachineRow, MachineTableHeader, type DeviceUnion, type ShowDropdownFlags } from './components/MachineListView';
@@ -37,6 +41,21 @@ import { unionIds } from '@/lib/deviceResolvers';
 import { AddMachineButton } from './components/AddMachineButton';
 import { LoadingWord } from '@/components/LoadingWord';
 import type { Process } from '@/hooks/useFirestore';
+
+// Code-split the two heavy detail panels out of the dashboard bundle. Both
+// subtrees are only needed after the user clicks a metric/display cell, so
+// deferring their parse + compile avoids a frame-budget spike during the
+// grid-template-rows slide animation that reveals them. `ssr: false` keeps
+// them out of server rendering entirely — the panels are client-only (they
+// subscribe to live Firestore state) so there's no SSR benefit to pay for.
+const MetricsDetailPanel = dynamic(
+  () => import('@/components/charts/MetricsDetailPanel').then((m) => ({ default: m.MetricsDetailPanel })),
+  { ssr: false, loading: () => null },
+);
+const DisplayLayoutPanel = dynamic(
+  () => import('@/components/charts/DisplayLayoutPanel').then((m) => ({ default: m.DisplayLayoutPanel })),
+  { ssr: false, loading: () => null },
+);
 
 type ViewType = 'card' | 'list';
 
@@ -171,45 +190,272 @@ export default function DashboardPage() {
     return { machineId: p.machineId, machineName: p.machineId, metric: p.metric as MetricType };
   }, [userPreferences.activeGraphPanel]);
 
-  // Keep a "held" copy of detailPanel so the close animation can play out before
-  // unmounting. The wrapper collapses via CSS grid-template-rows; the content
-  // stays mounted for the transition duration (200ms) then unmounts.
+  // Keep a "held" copy of detailPanel so the close animation can play out
+  // before unmounting. The wrapper animates a pixel `height` from 0 to the
+  // measured content height on open and from the measured height back to 0
+  // on close; children stay mounted for the full transition.
   const [heldDetailPanel, setHeldDetailPanel] = useState<DetailPanelState | null>(detailPanel);
-  // Defer heavy child mount until the grid-rows transition finishes, so the
-  // wrapper animates on an empty box instead of re-laying out Recharts/SVG on
-  // every frame. On open: flip to true ~210ms after the transition starts.
-  // On close: keep children mounted through the close transition, then flip
-  // false together with heldDetailPanel at 220ms.
-  const [childrenReady, setChildrenReady] = useState<boolean>(!!detailPanel);
-  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    // Always clear any pending open timer before scheduling new work.
-    if (openTimerRef.current) {
-      clearTimeout(openTimerRef.current);
-      openTimerRef.current = null;
+  // Wrapper element — `height` is controlled imperatively (not via className)
+  // so we can write 0 → measuredPx → auto across three frames without React
+  // rerendering in between. Inner ref measures the natural content height.
+  const slideWrapperRef = useRef<HTMLDivElement | null>(null);
+  const slideContentRef = useRef<HTMLDivElement | null>(null);
+  // Drives the `data-slide-pausing` flag on the machines grid
+  // (content-visibility hint) so offscreen cards skip layout/paint while the
+  // wrapper transitions. Flipped true at the start of the open/close ramp
+  // and false on `transitionend` (or the safety timer).
+  const [slideAnimating, setSlideAnimating] = useState<boolean>(false);
+  // Remember the previous detailPanel between renders so the effect can tell
+  // the difference between "first mount with a persisted panel already open"
+  // (initial state is already correct, don't animate) and a real open/close
+  // transition. Seeded with the current panel so the very first run diffs
+  // against itself and short-circuits.
+  const prevDetailPanelRef = useRef<DetailPanelState | null>(detailPanel);
+  const slideTimersRef = useRef<{
+    fallback: ReturnType<typeof setTimeout> | null;
+    raf: number | null;
+    cleanupListener: (() => void) | null;
+    observer: ResizeObserver | null;
+  }>({ fallback: null, raf: null, cleanupListener: null, observer: null });
+  // Mirror of `heldDetailPanel` for use inside `clearAll`. The layout
+  // effect below depends only on `detailPanel`, so setting
+  // `heldDetailPanel` from within it doesn't re-run the effect — its
+  // cleanup closes over the pre-set value of `heldDetailPanel`. Reading
+  // through a ref (updated synchronously at every `setHeldDetailPanel`
+  // callsite) gives `clearAll` the current visual-open state so its
+  // terminal-state guarantee lands on the right value.
+  const heldDetailPanelRef = useRef<DetailPanelState | null>(detailPanel);
+  const setHeldAndSync = useCallback((next: DetailPanelState | null) => {
+    heldDetailPanelRef.current = next;
+    setHeldDetailPanel(next);
+  }, []);
+
+  // On initial mount, seed the wrapper's inline `height` to match the
+  // current state — `auto` if a persisted panel is already open, `0` if
+  // not. Runs synchronously before first paint so the user never sees a
+  // collapsed-to-zero flash when landing on the dashboard mid-panel.
+  useLayoutEffect(() => {
+    const wrapper = slideWrapperRef.current;
+    if (!wrapper) return;
+    wrapper.style.height = detailPanel ? 'auto' : '0px';
+    // Intentional: initial-mount only. Every subsequent open/close is
+    // driven by the animation effect below via prevDetailPanelRef.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useLayoutEffect(() => {
+    const timers = slideTimersRef.current;
+    const wrapperEl = slideWrapperRef.current;
+    // Defensive terminal-state guarantee: whenever we tear down in-flight
+    // transition work, the wrapper must end on a stable height matching
+    // the current visual state. If we're visually open (held panel still
+    // mounted), force `auto` so the content is fully revealed and will
+    // reflow with future content changes. If we're closed, force `0px`.
+    // This catches the case where the user switches panels before the
+    // previous open transition's settle callback runs — without this,
+    // the wrapper would stay stuck at a partial pixel value and clip
+    // subsequent (taller) content.
+    //
+    // Safe in all call sites: every branch that schedules a new
+    // transition writes its own starting height (`0px` for open,
+    // `{measured}px` for close) immediately after calling `clearAll`,
+    // overwriting the forced terminal state before any paint.
+    const clearAll = () => {
+      if (timers.fallback != null) { clearTimeout(timers.fallback); timers.fallback = null; }
+      if (timers.raf != null) { cancelAnimationFrame(timers.raf); timers.raf = null; }
+      if (timers.cleanupListener) { timers.cleanupListener(); timers.cleanupListener = null; }
+      if (timers.observer) { timers.observer.disconnect(); timers.observer = null; }
+      if (wrapperEl) {
+        wrapperEl.style.height = heldDetailPanelRef.current ? 'auto' : '0px';
+      }
+    };
+
+    // Animate only on true open/close edges. Switching metric within the
+    // same machine (CPU → Memory → GPU tab click) produces a new
+    // `detailPanel` object but no open/close transition should run — the
+    // wrapper is already at `height: auto`, and inner content reflows
+    // naturally on swap. Likewise the very first mount with a persisted
+    // panel matches the ref seed and short-circuits here, so the panel
+    // renders fully on first paint with no slide animation (the seeding
+    // useLayoutEffect above writes `height: auto` before first paint).
+    const prev = prevDetailPanelRef.current;
+    const prevOpen = prev != null;
+    const nextOpen = detailPanel != null;
+    // Panel-kind swap (display ↔ metric) on the same machine needs a
+    // re-measure but not a full slide. The two panels have different
+    // natural heights, and under `overflow: hidden` the wrapper can
+    // stay locked at the previous kind's pixel height (e.g. after an
+    // interrupted open transition), clipping the new content. Treat
+    // this edge as a "reflow" case: swap content + snap to `auto`.
+    const prevKindDisplay = prev?.metric === 'display';
+    const nextKindDisplay = detailPanel?.metric === 'display';
+    const isKindSwap =
+      prevOpen && nextOpen &&
+      prev!.machineId === detailPanel!.machineId &&
+      prevKindDisplay !== nextKindDisplay;
+    const isOpenClose =
+      prevOpen !== nextOpen ||
+      // A machine swap (different target while open) should re-animate
+      // because the content height can jump dramatically. Metric-only
+      // swaps on the SAME machine must not re-animate.
+      (prevOpen && nextOpen && prev!.machineId !== detailPanel!.machineId);
+    if (!isOpenClose) {
+      // Still advance the ref so future diffs compare against the latest
+      // panel snapshot, and sync `heldDetailPanel` so the rendered content
+      // reflects the new metric tab under `height: auto`.
+      prevDetailPanelRef.current = detailPanel;
+      if (detailPanel) setHeldAndSync(detailPanel);
+      // On a panel-kind swap, the new content mounts on the next commit
+      // with a different natural height than the wrapper's current lock.
+      // After React paints the new content, release the wrapper to `auto`
+      // so it reflows to the new size. rAF defers until the new DOM is
+      // in place; writing `'auto'` while the wrapper holds a pixel value
+      // snaps instantly (browsers can't interpolate to/from `auto`), so
+      // no transition flash. Also acts as a recovery path if the previous
+      // open transition was interrupted and left the wrapper stuck.
+      if (isKindSwap && wrapperEl) {
+        if (timers.raf != null) { cancelAnimationFrame(timers.raf); }
+        timers.raf = requestAnimationFrame(() => {
+          timers.raf = null;
+          wrapperEl.style.height = 'auto';
+        });
+      }
+      return clearAll;
     }
+    prevDetailPanelRef.current = detailPanel;
+
+    // Always clear any pending work from a previous transition before
+    // scheduling new — clicking between panels mid-slide must not leave
+    // dangling timers/listeners that would fire against the new target.
+    clearAll();
+
+    const wrapper = slideWrapperRef.current;
+    const content = slideContentRef.current;
+    if (!wrapper) return clearAll;
+
+    // 260ms safety — 60ms past the 200ms transition duration. Covers the
+    // pathological case where `transitionend` doesn't fire (tab hidden during
+    // animation, reduced-motion snap-to-end on some engines). On the happy
+    // path the listener fires first and clears this timer before it runs.
+    const SAFETY_MS = 260;
+
+    // Wait for the wrapper's `height` transition to end. Filters nested
+    // child transitions (hover colour tweens, fade-in on inner content) via
+    // propertyName so we only react to the slide itself settling.
+    const onSlideEnd = (run: () => void): (() => void) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        if (timers.fallback != null) { clearTimeout(timers.fallback); timers.fallback = null; }
+        wrapper.removeEventListener('transitionend', handler);
+        run();
+      };
+      const handler = (e: TransitionEvent) => {
+        if (e.target !== wrapper) return;
+        if (e.propertyName !== 'height') return;
+        finish();
+      };
+      wrapper.addEventListener('transitionend', handler);
+      timers.fallback = setTimeout(finish, SAFETY_MS);
+      return () => {
+        wrapper.removeEventListener('transitionend', handler);
+      };
+    };
+
+    const startTransitioning = () => {
+      setSlideAnimating(true);
+    };
+    const endTransitioning = () => {
+      setSlideAnimating(false);
+    };
 
     if (detailPanel) {
-      setHeldDetailPanel(detailPanel);
-      // Open: delay children mount until after the 200ms grid-rows transition.
-      openTimerRef.current = setTimeout(() => setChildrenReady(true), 210);
-      return () => {
-        if (openTimerRef.current) {
-          clearTimeout(openTimerRef.current);
-          openTimerRef.current = null;
+      // Opening. Mount the held target synchronously so children lay out
+      // inside the wrapper on this same commit. Wrapper is clipped to 0
+      // height via inline style below; once `scrollHeight` is stable we
+      // transition to the measured pixel value.
+      setHeldAndSync(detailPanel);
+      // Clip to 0 immediately so the children don't flash at full height
+      // before the next frame applies the transition target.
+      wrapper.style.height = '0px';
+      // Force a reflow to commit `height: 0` before writing the target,
+      // otherwise the browser may collapse the two writes and skip the
+      // transition entirely.
+      void wrapper.offsetHeight;
+      startTransitioning();
+      // rAF so the browser paints the zero-height frame first; on the next
+      // frame we measure the content and write the target.
+      timers.raf = requestAnimationFrame(() => {
+        timers.raf = null;
+        // Measure the mounted content's natural height. `scrollHeight` on
+        // the wrapper would collapse to zero because of `overflow: hidden`
+        // + the inline height style, so we measure the inner container.
+        const measured = content ? content.scrollHeight : wrapper.scrollHeight;
+        wrapper.style.height = `${measured}px`;
+
+        // Dynamic imports (MetricsDetailPanel / DisplayLayoutPanel) may
+        // finish AFTER this measurement on a cold first-click — the chunk
+        // isn't in the bundle yet, so `measured` reads 0 or a partial
+        // value. A ResizeObserver keeps the wrapper's pixel target in
+        // sync while the content grows during the open ramp. It is scoped
+        // to this open phase only: disconnected on `transitionend` (or
+        // the safety timer) below, and re-created on the next open. Once
+        // the wrapper settles at `height: auto`, natural reflow handles
+        // any subsequent content size changes — which means tab switches
+        // inside the panel (CPU → Memory → GPU) do NOT re-animate.
+        if (content && typeof ResizeObserver !== 'undefined') {
+          const observer = new ResizeObserver(() => {
+            // Only rewrite while the wrapper is still in its pixel-height
+            // phase. Defensive: `transitionend` disconnects the observer
+            // before settling to `auto`, so this guard should already be
+            // true, but if the browser fires an observer callback racing
+            // with the settle write, skip it.
+            const h = wrapper.style.height;
+            if (h === 'auto' || h === '0px' || h === '') return;
+            const next = content.scrollHeight;
+            if (next > 0) wrapper.style.height = `${next}px`;
+          });
+          observer.observe(content);
+          timers.observer = observer;
         }
-      };
+
+        timers.cleanupListener = onSlideEnd(() => {
+          timers.cleanupListener = null;
+          // Disconnect the observer BEFORE switching to `auto` so a final
+          // content-size callback can't race the settle write and leave
+          // the wrapper stuck on a pixel value.
+          if (timers.observer) { timers.observer.disconnect(); timers.observer = null; }
+          // Settle at `auto` so later content changes (e.g. time range
+          // switch adds stats cards, tab switch changes inner content)
+          // reflow naturally — no pixel-height rewrites, no animation.
+          wrapper.style.height = 'auto';
+          endTransitioning();
+        });
+      });
+      return clearAll;
     }
 
-    // Close: keep children mounted during the close transition so content
-    // stays visible while the wrapper shrinks, then unmount together.
-    const t = setTimeout(() => {
-      setChildrenReady(false);
-      setHeldDetailPanel(null);
-    }, 220);
-    return () => clearTimeout(t);
-  }, [detailPanel]);
+    // Closing. Can't transition from `auto`; snap to the current measured
+    // height first, force a reflow, then transition to 0 on the next frame.
+    // Children stay mounted for the duration so the slide has smooth visual
+    // content to interpolate over.
+    const currentMeasured = content ? content.scrollHeight : wrapper.scrollHeight;
+    wrapper.style.height = `${currentMeasured}px`;
+    void wrapper.offsetHeight;
+    startTransitioning();
+    timers.raf = requestAnimationFrame(() => {
+      timers.raf = null;
+      wrapper.style.height = '0px';
+      timers.cleanupListener = onSlideEnd(() => {
+        timers.cleanupListener = null;
+        setHeldAndSync(null);
+        endTransitioning();
+      });
+    });
+    return clearAll;
+  }, [detailPanel, setHeldAndSync]);
 
   // Multilingual welcome messages with language info (memoized to avoid recreation)
   const welcomeMessages = useMemo(() => [
@@ -796,18 +1042,27 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Metrics Detail Panel — animates height via CSS grid-template-rows.
-            The wrapper stays mounted; its row collapses to 0fr when detailPanel
-            is null, then heldDetailPanel unmounts after the transition completes. */}
+        {/* Metrics Detail Panel — animates pixel `height` from 0 → measured
+            px on open and back to 0 on close. The wrapper keeps its inline
+            `height` style under imperative control (see the useLayoutEffect
+            above); children mount synchronously on open so the height
+            transition has fully-laid-out content to interpolate over. That
+            trades a small click-to-slide delay (mount cost) for a smooth
+            slide animation with no per-frame layout cost. */}
         <div
-          className={`grid transition-[grid-template-rows,margin] duration-200 ease-out ${
-            detailPanel ? 'grid-rows-[1fr] mb-6' : 'grid-rows-[0fr] mb-0'
-          }`}
+          ref={slideWrapperRef}
+          className="overflow-hidden transition-[height] duration-200 ease-out"
           style={{ contain: 'layout paint' }}
           aria-hidden={!detailPanel}
         >
-          <div className="overflow-hidden min-h-0" style={{ contain: 'layout paint' }}>
-            {heldDetailPanel && childrenReady && (
+          {/* Inner container: scrollHeight on this element measures the
+              natural content size (the wrapper's scrollHeight is clipped by
+              its own `height: 0`). `pb-6` (padding, not margin) absorbs the
+              old wrapper margin toggle into the measured height — so the
+              24px below-panel gap transitions alongside the panel itself
+              rather than snapping in/out at either end. */}
+          <div ref={slideContentRef} className="pb-6" style={{ contain: 'layout paint' }}>
+            {heldDetailPanel && (
               heldDetailPanel.metric === 'display' ? (
                 <DisplayLayoutPanel
                   machineId={heldDetailPanel.machineId}
@@ -829,9 +1084,15 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Machines list */}
+        {/* Machines list — during the detail panel's slide animation we
+            mark this subtree so the global rule in globals.css can apply
+            `content-visibility: auto` + `contain-intrinsic-size` to each
+            row/card. Offscreen rows skip layout/paint while the wrapper
+            transitions, keeping the slide's frame budget clear. Flag lifts
+            as soon as bodyReady commits (or, on close, once the held panel
+            unmounts), so normal interaction is unaffected. */}
         {machines.length > 0 ? (
-          <div className="space-y-6">
+          <div className="space-y-6" data-slide-pausing={slideAnimating ? 'true' : undefined}>
             <div className="flex items-center justify-between">
               <h3 className="text-lg md:text-xl font-bold text-foreground">machines</h3>
 

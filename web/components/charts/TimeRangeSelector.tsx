@@ -21,17 +21,17 @@ interface TimeRangeSelectorProps {
 }
 
 const ranges: { value: TimeRange; label: string }[] = [
-  { value: '1h', label: 'Hour' },
-  { value: '1d', label: 'Day' },
-  { value: '1w', label: 'Week' },
-  { value: '1m', label: 'Month' },
-  { value: '1y', label: 'Year' },
-  { value: 'all', label: 'All' },
+  { value: '1h', label: 'hour' },
+  { value: '1d', label: 'day' },
+  { value: '1w', label: 'week' },
+  { value: '1m', label: 'month' },
+  { value: '1y', label: 'year' },
+  { value: 'all', label: 'all' },
 ];
 
 export function TimeRangeSelector({ value, onChange, className }: TimeRangeSelectorProps) {
   return (
-    <div className={cn('flex gap-1 bg-muted p-1 rounded-lg border border-border/50', className)}>
+    <div className={cn('flex gap-1.5', className)}>
       {ranges.map((range) => {
         const isSelected = value === range.value;
         return (
@@ -40,10 +40,10 @@ export function TimeRangeSelector({ value, onChange, className }: TimeRangeSelec
             variant="ghost"
             size="sm"
             className={cn(
-              'px-3 py-1 h-7 text-xs font-medium transition-colors',
+              'h-8 px-3 text-xs transition-colors',
               isSelected
-                ? 'bg-accent text-foreground ring-1 ring-primary/40 hover:bg-accent'
-                : 'text-muted-foreground/70 hover:text-foreground hover:bg-accent/40'
+                ? 'bg-accent text-foreground border-transparent ring-1 ring-primary/40 hover:bg-accent'
+                : 'bg-card text-muted-foreground border border-border hover:bg-accent/40 hover:text-foreground'
             )}
             onClick={() => onChange(range.value)}
           >
@@ -87,5 +87,5 @@ export function getTimeRangeStart(range: TimeRange): number {
  * Get human-readable label for a time range
  */
 export function getTimeRangeLabel(range: TimeRange): string {
-  return ranges.find(r => r.value === range)?.label ?? 'Day';
+  return ranges.find(r => r.value === range)?.label ?? 'day';
 }

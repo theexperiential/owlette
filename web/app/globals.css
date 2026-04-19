@@ -334,6 +334,21 @@
 .hero-enter-delay-2  { opacity: 0; animation: hero-enter 0.6s ease-out 600ms both; }
 .hero-enter-delay-3  { opacity: 0; animation: hero-enter 0.8s ease-out 800ms both; }
 
+/* Radix Collapsible slide animations.
+   Radix exposes the content's measured height as `--radix-collapsible-content-height`,
+   so we can animate from 0 to auto without JS measuring. Apply to any
+   <CollapsibleContent> with the matching data-[state] utility classes. */
+@keyframes collapsible-down {
+  from { height: 0; }
+  to   { height: var(--radix-collapsible-content-height); }
+}
+@keyframes collapsible-up {
+  from { height: var(--radix-collapsible-content-height); }
+  to   { height: 0; }
+}
+.animate-collapsible-down { animation: collapsible-down 200ms ease-out; }
+.animate-collapsible-up   { animation: collapsible-up   180ms ease-in; }
+
 /* Cortex markdown styling */
 .cortex-markdown {
   line-height: 1.75;
@@ -425,4 +440,19 @@
 
 .cortex-markdown a:hover {
   text-decoration: underline;
+}
+
+/* Slide-panel performance hint — the dashboard marks the machines-list
+ * subtree with `data-slide-pausing="true"` while the detail panel's
+ * pixel-height transition is running. During that window, each machines
+ * grid card opts into `content-visibility: auto`, letting the browser
+ * skip layout and paint for cards currently outside the viewport. The
+ * `contain-intrinsic-size` reservation keeps the scrollbar and page
+ * height stable while skipped cards are virtualised out. As soon as the
+ * transition ends, the flag is removed and cards return to normal
+ * rendering — so this only affects the ~200-300ms of the slide, nothing
+ * else. */
+[data-slide-pausing="true"] .machines-grid > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 360px;
 }
