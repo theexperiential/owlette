@@ -424,11 +424,12 @@ def get_network_metrics():
     return result
 
 
-def _wmi_logical_disk_with_timeout(timeout: float = 5.0):
+def _wmi_logical_disk_with_timeout(timeout: float = 10.0):
     """Query Win32_PerfFormattedData_PerfDisk_LogicalDisk under a watchdog.
 
     Each call spawns a fresh worker thread that initializes its own COM
-    apartment, instantiates wmi.WMI(), and runs one query. ~350ms total cost.
+    apartment, instantiates wmi.WMI(), and runs one query. ~350ms total cost
+    in the steady state.
 
     Per-call (rather than persistent) because the python `wmi` package binds
     its proxy interfaces to the apartment that created them — reusing a
@@ -437,9 +438,14 @@ def _wmi_logical_disk_with_timeout(timeout: float = 5.0):
     second and subsequent queries. Per-call avoids that entirely; the
     ~350ms cost is fine since the metrics loop runs every 120s in idle.
 
-    The 5s timeout (vs. an older 2s) is sized to capture the brief perflib
-    LogicalDisk stalls (~3s) that occur when the BITS service flips state
-    during Windows Update / Delivery Optimization polling.
+    The 10s timeout is sized to capture the perflib LogicalDisk stalls that
+    occur when the BITS service flips state during Windows Update / Delivery
+    Optimization polling. Empirical observation: 2s and 5s budgets both
+    skipped these stalls (~3-4 timeouts/hour, perfectly spaced ~16 min
+    apart matching SCM event 7040 BITS demand↔auto cycles); the perflib
+    provider lock during a BITS state change consistently exceeds 5s. The
+    metrics loop runs in its own thread (not the main service loop) so a
+    10s WMI call doesn't stall anything else.
     """
     def _query():
         try:
@@ -1140,6 +1146,52 @@ def _get_primary_ips():
     return ips
 
 
+def log_watchdog_restart_block(snapshot: dict):
+    """Log a visually distinct banner when the self-restart watchdog fires.
+
+    Tagged [WATCHDOG-RESTART] for easy grep across rotated log files. Also
+    emits a single [WATCHDOG-JSON] line with the full snapshot for machine
+    parsing (jq / Loki / ELK).
+    """
+    try:
+        sep = "=" * 70
+        logging.info(sep)
+        logging.info("  [WATCHDOG-RESTART] INITIATING PROCESS EXIT FOR SELF-RECOVERY")
+        logging.info(sep)
+        logging.info(f"  Reason code        : {snapshot.get('reason_code', 'unknown')}")
+        logging.info(f"  Seconds since OK   : {snapshot.get('seconds_since_last_success', 'n/a')}")
+        logging.info(f"  Consecutive fails  : {snapshot.get('consecutive_failures', 'n/a')}")
+        logging.info(f"  Internet (TCP)     : {snapshot.get('internet_check_tcp', 'n/a')}")
+        logging.info(f"  Last error         : {snapshot.get('last_error', 'n/a')}")
+        logging.info(f"  Process uptime (s) : {snapshot.get('process_uptime_s', 'n/a')}")
+        logging.info(f"  Restarts in window : {snapshot.get('restart_count_in_window', 'n/a')}")
+        logging.info(f"  Restart ID         : {snapshot.get('restart_id', 'n/a')}")
+        logging.info(f"  Timestamp (UTC)    : {snapshot.get('timestamp_utc', 'n/a')}")
+        logging.info(sep)
+        # Machine-parseable JSON line alongside the human banner
+        logging.info("[WATCHDOG-JSON] " + json.dumps(snapshot, default=str))
+    except Exception as e:
+        logging.error(f"log_watchdog_restart_block failed: {e}")
+
+
+def log_watchdog_restart_replay(snapshot: dict):
+    """Log a block on startup when the previous process exited via watchdog."""
+    try:
+        sep = "-" * 70
+        logging.info(sep)
+        logging.info("  [WATCHDOG-RESTART REPLAY] previous process exited via self-restart watchdog")
+        logging.info(sep)
+        logging.info(f"  Reason code        : {snapshot.get('reason_code', 'unknown')}")
+        logging.info(f"  Restart ID         : {snapshot.get('restart_id', 'n/a')}")
+        logging.info(f"  Timestamp (UTC)    : {snapshot.get('timestamp_utc', 'n/a')}")
+        logging.info(f"  Seconds since OK   : {snapshot.get('seconds_since_last_success', 'n/a')}")
+        logging.info(f"  Last error         : {snapshot.get('last_error', 'n/a')}")
+        logging.info(f"  Submitted          : {'yes' if snapshot.get('submitted_at') else 'pending firestore submission'}")
+        logging.info(sep)
+    except Exception as e:
+        logging.warning(f"log_watchdog_restart_replay failed (non-fatal): {e}")
+
+
 def log_startup_config_summary():
     """Log key config values at startup. Non-fatal if config unreadable."""
     try:
@@ -1617,6 +1669,21 @@ def generate_config_file(existing_config=None):
             "enabled": True,
             "assigned": None,
             "auto_enforce": False
+        },
+        "watchdog": {
+            "enabled": True,
+            "thresholds": {
+                "failure_seconds": 360,
+                "boot_grace_seconds": 180
+            },
+            "budget": {
+                "max_per_window": 3,
+                "window_seconds": 3600
+            },
+            "preconditions": {
+                "require_internet": True,
+                "fatal_error_suppression_seconds": 3600
+            }
         }
     }
 
