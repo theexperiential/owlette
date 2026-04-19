@@ -16,6 +16,7 @@ import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { auth as firebaseAuth, db } from '@/lib/firebase';
 import { isDeviceTrusted, setMfaVerifiedForSession } from '@/lib/mfaSession';
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser';
+import { LoadingWord } from '@/components/LoadingWord';
 
 function LoginForm() {
   const [email, setEmail] = useState('');
@@ -303,7 +304,7 @@ export default function LoginPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-center text-muted-foreground">loading...</div>
+            <div className="text-center text-muted-foreground"><LoadingWord /></div>
           </CardContent>
         </Card>
       </div>

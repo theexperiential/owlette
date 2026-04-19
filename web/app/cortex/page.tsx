@@ -17,6 +17,7 @@ import { ChatWindow } from './components/ChatWindow';
 import { ChatInput } from './components/ChatInput';
 import { MachineSelector, SITE_TARGET_ID } from './components/MachineSelector';
 import { CortexPowerToggle } from './components/CortexPowerToggle';
+import { LoadingWord } from '@/components/LoadingWord';
 
 function timeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -209,7 +210,7 @@ export default function CortexPage() {
   if (authLoading || sitesLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-muted-foreground">loading...</div>
+        <div className="text-muted-foreground"><LoadingWord /></div>
       </div>
     );
   }

@@ -17,6 +17,7 @@ import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
+import { LoadingWord } from '@/components/LoadingWord';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { UpdateOwletteButton } from '@/components/UpdateOwletteButton';
 import { useUninstall } from '@/hooks/useUninstall';
@@ -376,7 +377,7 @@ export default function DeploymentsPage() {
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-muted-foreground">loading...</p>
+        <p className="text-muted-foreground"><LoadingWord /></p>
       </div>
     );
   }

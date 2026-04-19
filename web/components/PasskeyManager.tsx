@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { usePasskeys } from '@/hooks/usePasskeys';
+import { LoadingWord } from '@/components/LoadingWord';
 import { toast } from 'sonner';
 
 interface PasskeyManagerProps {
@@ -119,7 +120,7 @@ export function PasskeyManager({ userId, compact = false }: PasskeyManagerProps)
         </CardHeader>
         <CardContent className="space-y-3">
           {loading ? (
-            <p className="text-sm text-muted-foreground">loading...</p>
+            <p className="text-sm text-muted-foreground"><LoadingWord /></p>
           ) : (
             <>
               {passkeys.length === 0 && !showNameInput && (
