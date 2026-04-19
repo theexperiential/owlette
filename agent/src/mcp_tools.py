@@ -149,6 +149,7 @@ def execute_tool(tool_name, tool_params, config=None):
         'get_agent_logs': _get_agent_logs,
         'get_agent_health': _get_agent_health,
         'check_pending_reboot': check_pending_reboot,
+        'get_display_layout': _get_display_layout,
         # Tier 2: purpose-built admin (validated params, no raw shell)
         'manage_process': _manage_process,
         'manage_windows_service': _manage_windows_service,
@@ -163,6 +164,7 @@ def execute_tool(tool_name, tool_params, config=None):
         'get_event_logs_filtered': _get_event_logs_filtered,
         'manage_windows_feature': _manage_windows_feature,
         'show_notification': _show_notification,
+        'apply_display_topology': _apply_display_topology,
         # Tier 3: privileged (shell, file I/O, scripts)
         'run_command': _run_command,
         'run_powershell': _run_powershell,
@@ -750,6 +752,31 @@ def _get_agent_health(params, config):
         'hostname': socket.gethostname(),
         'uptime_seconds': int(time.time() - psutil.boot_time()),
     }
+
+
+def _get_display_layout(params, config):
+    """Get current display topology (Tier 1 read-only)."""
+    if config and config.get('displays', {}).get('enabled') is False:
+        return {'error': 'display management is disabled (config.displays.enabled=false)'}
+    try:
+        import display_manager
+        import nvapi_display
+        profile = display_manager.build_display_profile()
+        # Merge Mosaic data if available
+        try:
+            mosaic = nvapi_display.detect_mosaic()
+            if mosaic:
+                profile['mosaicActive'] = True
+                profile['mosaicGrids'] = mosaic.get('grids', [])
+            sync = nvapi_display.detect_sync()
+            if sync:
+                profile['syncDevices'] = sync.get('devices', [])
+        except Exception:
+            pass
+        return profile
+    except Exception as e:
+        logger.error(f"get_display_layout failed: {e}")
+        return {'error': str(e)}
 
 
 # ─── Tier 3: Privileged Tools ───────────────────────────────────────────────
@@ -2420,3 +2447,25 @@ def _show_notification(params, config):
     if rc != 0:
         return {'error': f'toast failed: {err or out}'}
     return {'style': style, 'status': 'sent', 'duration_seconds': duration}
+
+
+def _apply_display_topology(params, config):
+    """Apply a display layout (Tier 2 admin)."""
+    if config and config.get('displays', {}).get('enabled') is False:
+        return {'error': 'display management is disabled (config.displays.enabled=false)'}
+    try:
+        layout = params.get('layout')
+        if not isinstance(layout, dict) or 'monitors' not in layout:
+            return {'error': 'layout parameter must be a dict with a monitors list'}
+        if not isinstance(layout.get('monitors'), list):
+            return {'error': 'layout.monitors must be a list'}
+        monitor_count = len(layout.get('monitors', []))
+        logger.info(f"[MCP-AUDIT] apply_display_topology: monitors={monitor_count}")
+        import display_manager
+        result = display_manager.apply_topology(layout)
+        return result
+    except NotImplementedError:
+        return {'error': 'apply_topology not yet implemented (Wave 5)'}
+    except Exception as e:
+        logger.error(f"apply_display_topology failed: {e}")
+        return {'error': str(e)}

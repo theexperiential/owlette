@@ -169,6 +169,7 @@ if __name__ == '__main__':
             self._reboot_attempt_started_monotonic = None
             self._display_check_counter = 0
             self._cached_display_hash = None
+            self._cached_display_profile = None
             self._shutting_down = False
             self._live_view_active = False
             self._live_view_stop_time = 0

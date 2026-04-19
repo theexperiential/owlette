@@ -15,6 +15,10 @@ import project_utils
 import registry_utils
 import reboot_state
 import session_state
+import watchdog_state
+import display_manager
+import nvapi_display
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import win32serviceutil
 import win32service
 import win32event
@@ -123,6 +127,12 @@ _status_writer_logger = None
 # automatically adjust the check cadence. Target: ~30s between checks.
 REBOOT_CHECK_INTERVAL_SECONDS = 30
 REBOOT_CHECK_ITERATIONS = max(1, REBOOT_CHECK_INTERVAL_SECONDS // SLEEP_INTERVAL)
+# Display topology check — derived from SLEEP_INTERVAL so changes to the main
+# loop automatically adjust the check cadence. Target: ~30s between checks.
+# Signature-hash change detection is cheap; the actual Firestore upload is
+# driven by firebase_client's own metrics loop.
+DISPLAY_CHECK_INTERVAL_SECONDS = 30
+DISPLAY_CHECK_ITERATIONS = max(1, DISPLAY_CHECK_INTERVAL_SECONDS // SLEEP_INTERVAL)
 # Manual-reboot grace: a manual reboot within this many seconds before a
 # scheduled instant counts as fulfilling that entry for the day
 REBOOT_MANUAL_GRACE_SECONDS = 30 * 60
@@ -224,6 +234,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
         self.is_alive = True
         self._restart_exit_code = 0
+        # Self-restart watchdog: set to True at top of SvcStop so an in-flight
+        # hard-exit timer yields to operator-initiated stop (tray Exit / net stop)
+        self._scm_stop_requested = False
         self.tray_icon_pid = None
         self.cortex_pid = None
         self.relaunch_attempts = {} # Restart attempts for each process
@@ -241,6 +254,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # don't trigger false retries.
         self._reboot_attempt_started_monotonic = None
         self._reboot_schedule_counter = 0  # Check reboot schedule every REBOOT_CHECK_ITERATIONS
+        # Display topology tracking — counter-gated signature check, cached hash
+        # lets us log only real topology changes (hot-plug, resolution edit, etc.)
+        # _cached_display_profile holds the previous profile dict so we can diff
+        # monitors by edidHash and emit categorized log events (add / remove /
+        # swap / drift / mosaic_disabled / sync_lost) on each real change.
+        self._display_check_counter = 0
+        self._cached_display_hash = None
+        self._cached_display_profile = None
         self._shutting_down = False  # Suppresses crash alerts during reboot/shutdown
         self._live_view_active = False
         self._live_view_stop_time = 0
@@ -371,6 +392,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Wire health callback so connection failures update health state + alert
             self.firebase_client.connection_manager.set_health_callback(
                 lambda code, msg: self._update_health_state('connection_failure', code, msg)
+            )
+
+            # Wire self-restart watchdog callback BEFORE start() so the watchdog
+            # thread (spawned by start) always has a callback registered.
+            self.firebase_client.connection_manager.set_restart_callback(
+                self._handle_watchdog_restart
             )
 
             # Start Firebase client background threads
@@ -708,7 +735,109 @@ class OwletteService(win32serviceutil.ServiceFramework):
         t.start()
 
     # On service stop
+    def _flush_pending_watchdog_events(self):
+        """Submit any watchdog-restart history entries that haven't reached
+        Firestore yet. Idempotent — safe to call every iteration while
+        Firebase is connected; already-submitted entries are skipped.
+        """
+        if not self.firebase_client or not self.firebase_client.is_connected():
+            return
+        try:
+            pending = watchdog_state.read_pending_history()
+        except Exception as e:
+            logging.debug(f"Watchdog pending-history read failed (non-fatal): {e}")
+            return
+        for entry in pending:
+            restart_id = entry.get('restart_id')
+            if not restart_id:
+                continue  # malformed entry; skip rather than risk duplicate Firestore rows
+            event_kind = entry.get('event_kind', 'watchdog_restart')
+            # Top-level queryable fields; full snapshot stays nested in `diagnostics`
+            extra = {
+                'reason_code': entry.get('reason_code'),
+                'seconds_since_success': entry.get('seconds_since_last_success'),
+                'consecutive_failures': entry.get('consecutive_failures'),
+                'last_error': entry.get('last_error'),
+                'restart_id': restart_id,
+                'diagnostics': entry,
+            }
+            extra = {k: v for k, v in extra.items() if v is not None}
+            try:
+                log_id = self.firebase_client.log_event(
+                    action=event_kind,
+                    level='warning',
+                    details=(
+                        f"{event_kind}: {entry.get('reason_code', 'unknown')} "
+                        f"({entry.get('seconds_since_last_success', '?')}s since last success)"
+                    ),
+                    extra_fields=extra,
+                    doc_id=restart_id,  # idempotent dedup key
+                )
+                if log_id:
+                    watchdog_state.mark_submitted(restart_id, log_id)
+                    logging.info(f"Watchdog restart event submitted: {event_kind} ({restart_id})")
+            except Exception as e:
+                logging.warning(f"Failed to submit watchdog restart event {restart_id}: {e}")
+
+    def _handle_watchdog_restart(self, exit_code: int, snapshot: dict):
+        """Self-restart watchdog callback.
+
+        Called from ConnectionManager._watchdog_loop when a stuck-connection
+        restart is authorized. Arms a hard-exit timer first (so nothing below
+        can wedge the exit), logs a visible banner, sets the session intent
+        so the startup classifier treats the next boot as planned, then
+        signals the main loop to exit cleanly with the provided code (43).
+
+        The hard-exit timer yields if the operator issues `net stop` / tray
+        Exit during the 30s window — see `_scm_stop_requested`.
+        """
+        # 1. Arm hard-exit FIRST. If anything below wedges (e.g. set_intent
+        #    blocks on a corrupt state file, main loop takes >30s to unwind),
+        #    the timer guarantees the process dies so NSSM restarts us.
+        def _hard_exit():
+            try:
+                if getattr(self, '_scm_stop_requested', False):
+                    logging.info("[WATCHDOG] Hard-exit aborted — SCM stop in progress, yielding to operator")
+                    return
+                # Flush offline presence before dying so dashboards don't show
+                # ~heartbeat-timeout of stale "online" after a watchdog exit.
+                try:
+                    if self.firebase_client and self.firebase_client.connected:
+                        self.firebase_client._update_presence(False)
+                except Exception as e:
+                    logging.debug(f"[WATCHDOG] offline presence flush failed: {e}")
+                logging.error(f"[WATCHDOG] Hard-exit timer firing with code {exit_code}")
+            finally:
+                os._exit(exit_code)
+
+        try:
+            threading.Timer(30.0, _hard_exit).start()
+        except Exception as e:
+            logging.error(f"[WATCHDOG] Failed to arm hard-exit timer: {e}")
+
+        # 2. Log the banner (primary debug surface)
+        try:
+            shared_utils.log_watchdog_restart_block(snapshot)
+        except Exception as e:
+            logging.error(f"[WATCHDOG] banner log failed: {e}")
+
+        # 3. Set session intent so startup classifier doesn't treat the next
+        #    boot as unexpected_service_restart
+        try:
+            session_state.set_intent("watchdog_restart")
+        except Exception as e:
+            logging.debug(f"[WATCHDOG] set_intent failed: {e}")
+
+        # 4. Signal main loop to exit cleanly via existing exit-code mechanism
+        self._restart_exit_code = exit_code
+        self.is_alive = False
+
     def SvcStop(self):
+        # Signal self-restart watchdog to yield — if an exit-43 hard-exit timer
+        # is in flight, it will abort so this clean exit-0 path wins and NSSM
+        # respects the operator's stop intent.
+        self._scm_stop_requested = True
+
         # Try to report service status (may fail when running under NSSM)
         try:
             self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
@@ -2521,6 +2650,25 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # Log summary
                 logging.info(f"Config update complete - Processes: {len(old_processes)} -> {len(new_processes)}, Removed: {len(removed_process_ids)}")
 
+            # Detect displays-key changes so operators can see topology-config
+            # edits reach the agent. `displays` is a top-level key and flows
+            # through normal merge logic — we do NOT add it to LOCAL_ONLY_KEYS.
+            # Real apply work happens via the apply_display_topology command;
+            # this block is purely observational.
+            try:
+                old_displays = (old_config or {}).get('displays')
+                new_displays = new_config.get('displays')
+                if json.dumps(old_displays, sort_keys=True) != json.dumps(new_displays, sort_keys=True):
+                    old_enabled = bool((old_displays or {}).get('enabled'))
+                    new_enabled = bool((new_displays or {}).get('enabled'))
+                    old_layout_count = len(((old_displays or {}).get('savedLayouts') or []))
+                    new_layout_count = len(((new_displays or {}).get('savedLayouts') or []))
+                    logging.info(
+                        f"Displays config changed: enabled {old_enabled}->{new_enabled}, "
+                        f"savedLayouts {old_layout_count}->{new_layout_count}"
+                    )
+            except Exception as e:
+                logging.debug(f"Displays config diff failed (non-critical): {e}")
 
             # Upload metrics immediately so web dashboard sees config changes quickly
             # This is different from GUI-initiated changes (which already upload immediately)
@@ -2629,7 +2777,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Exempt mcp_tool_call — Cortex fires parallel tool calls by design,
             # is already authenticated + audit-logged per-tool, and has its own
             # server-side gating. A 5s per-type throttle breaks parallel queries.
-            if cmd_type != 'mcp_tool_call':
+            # Exempt ack_display_topology — acks legitimately follow an apply
+            # within a few seconds and must never be dropped (dropping an ack
+            # forces auto-revert, defeating the confirmation flow).
+            if cmd_type not in ('mcp_tool_call', 'ack_display_topology'):
                 now = time.time()
                 last_time = self._command_rate_limits.get(cmd_type, 0)
                 if now - last_time < self.COMMAND_RATE_LIMIT_SECONDS:
@@ -3491,6 +3642,57 @@ class OwletteService(win32serviceutil.ServiceFramework):
             elif cmd_type == 'stop_live_view':
                 return self._handle_stop_live_view(cmd_data)
 
+            elif cmd_type == 'apply_display_topology':
+                # Dispatch the display topology apply via display_manager. The
+                # call performs validate → snapshot → apply synchronously and
+                # arms a revert watchdog thread before returning; the dashboard
+                # is expected to follow up with ack_display_topology within the
+                # revert deadline or the config auto-reverts. `applyId` comes
+                # from the dashboard (UUID) and threads through to the ack so
+                # a stale ack for a prior apply can't cancel this one.
+                layout = cmd_data.get('layout')
+                apply_id = cmd_data.get('applyId') or cmd_data.get('apply_id')
+                try:
+                    result = display_manager.apply_topology(
+                        layout,
+                        firebase_client=self.firebase_client,
+                        apply_id=apply_id,
+                    )
+                    if isinstance(result, dict) and result.get('success'):
+                        change_count = len(result.get('changes', []) or [])
+                        revert_s = result.get('revertDeadlineSeconds', 0)
+                        return (
+                            f"Display topology applied — {change_count} changes, "
+                            f"revert in {revert_s}s"
+                        )
+                    err = (
+                        result.get('error', 'unknown')
+                        if isinstance(result, dict) else str(result)
+                    )
+                    return f"Error: {err}"
+                except Exception as e:
+                    return f"Error: {e}"
+
+            elif cmd_type == 'ack_display_topology':
+                # Acknowledge an in-flight apply; cancels the auto-revert
+                # watchdog. Must arrive within the revert deadline set by the
+                # corresponding apply_display_topology (default 30s) or it's a
+                # no-op against an already-reverted config. `applyId` is the
+                # generation token returned by the apply; agent rejects acks
+                # whose id doesn't match the in-flight apply.
+                apply_id = cmd_data.get('applyId') or cmd_data.get('apply_id')
+                try:
+                    result = display_manager.ack_apply(apply_id=apply_id)
+                    if isinstance(result, dict) and result.get('success'):
+                        return result.get('message', 'apply acknowledged')
+                    err = (
+                        result.get('error', 'unknown')
+                        if isinstance(result, dict) else str(result)
+                    )
+                    return f"Error: {err}"
+                except Exception as e:
+                    return f"Error: {e}"
+
             else:
                 logging.warning(f"Unknown command type: {cmd_type}")
                 return f"Unknown command type: {cmd_type}"
@@ -3499,6 +3701,232 @@ class OwletteService(win32serviceutil.ServiceFramework):
             error_msg = f"Error executing command {cmd_type}: {e}"
             logging.error(error_msg)
             return error_msg
+
+    def _check_display_topology(self):
+        """Snapshot the current display topology and log changes.
+
+        Gated by the ``displays.enabled`` config kill switch. Runs the CCD
+        enumeration under a 5s watchdog (defence-in-depth — display_manager
+        already wraps its own query with a shorter timeout). Merges Mosaic /
+        GSync data from NVAPI into the profile dict and compares the resulting
+        signature hash to the cached value. Firestore upload of the profile
+        happens in firebase_client's metrics loop (Task 2.2), so nothing is
+        dispatched from here.
+        """
+        try:
+            # Kill switch: only short-circuit when explicitly disabled.
+            # Missing key (None) or any other value defaults to enabled so
+            # existing installs without the `displays` config block still
+            # collect topology data.
+            if shared_utils.read_config(['displays', 'enabled']) is False:
+                return
+
+            try:
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(display_manager.build_display_profile)
+                    profile = future.result(timeout=5)
+            except FuturesTimeoutError:
+                logging.warning("Display topology enumeration timed out after 5s")
+                return
+            except Exception as e:
+                logging.warning(f"Display topology enumeration failed: {e}")
+                return
+
+            if not isinstance(profile, dict):
+                logging.debug("Display topology returned non-dict payload, skipping")
+                return
+
+            # Merge NVAPI Mosaic / GSync data (best-effort — None on non-NVIDIA).
+            try:
+                mosaic = nvapi_display.detect_mosaic()
+            except Exception as e:
+                logging.debug(f"detect_mosaic raised: {e}")
+                mosaic = None
+            if mosaic is not None:
+                profile['mosaicActive'] = True
+                profile['mosaicGrids'] = mosaic.get('grids', [])
+
+            try:
+                sync = nvapi_display.detect_sync()
+            except Exception as e:
+                logging.debug(f"detect_sync raised: {e}")
+                sync = None
+            if sync is not None:
+                profile['syncDevices'] = sync.get('devices', [])
+
+            # Re-hash after merging so the signature reflects Mosaic state.
+            try:
+                profile['signatureHash'] = display_manager.display_signature(profile)
+            except Exception as e:
+                logging.debug(f"display_signature rehash failed: {e}")
+
+            new_hash = profile.get('signatureHash') or ''
+            if new_hash and new_hash != self._cached_display_hash:
+                prev_profile = self._cached_display_profile
+                if self._cached_display_hash is None:
+                    logging.info(f"Display topology baseline: {new_hash} ({len(profile.get('monitors') or [])} monitor(s))")
+                else:
+                    logging.info(
+                        f"Display topology changed: {self._cached_display_hash} -> {new_hash} "
+                        f"({len(profile.get('monitors') or [])} monitor(s))"
+                    )
+                self._cached_display_hash = new_hash
+                self._cached_display_profile = profile
+                # Push the new profile to Firestore immediately rather than
+                # waiting up to 5 minutes for the next idle metrics tick.
+                # The rate-limit gate exists to throttle no-op rebuilds; a
+                # confirmed signature change is exactly what we want to ship.
+                if self.firebase_client:
+                    try:
+                        self.firebase_client._ensure_display_profile(force=True)
+                    except Exception as e:
+                        logging.debug(f"Forced display profile upload failed: {e}")
+                # Categorize the change and emit one log event per distinct
+                # symptom. Skip on first run (no previous profile to diff
+                # against). Wrapped in its own try/except — a logging failure
+                # must never break the topology-check / upload path above.
+                if prev_profile is not None and self.firebase_client:
+                    try:
+                        self._emit_display_change_events(prev_profile, profile)
+                    except Exception as e:
+                        logging.debug(f"Display change event emission failed: {e}")
+        except Exception as e:
+            logging.warning(f"Display topology check failed: {e}")
+
+    # Fields compared for display_drift events. Labels match computeDisplayDrift
+    # in web/hooks/useDisplayState.ts so dashboard and agent speak the same
+    # vocabulary when describing per-monitor drift.
+    _DISPLAY_DRIFT_FIELDS = (
+        ('position.x',        lambda m: (m.get('position') or {}).get('x')),
+        ('position.y',        lambda m: (m.get('position') or {}).get('y')),
+        ('resolution.width',  lambda m: (m.get('resolution') or {}).get('width')),
+        ('resolution.height', lambda m: (m.get('resolution') or {}).get('height')),
+        ('refreshHz',         lambda m: m.get('refreshHz')),
+        ('rotation',          lambda m: m.get('rotation')),
+        ('scalePct',          lambda m: m.get('scalePct')),
+        ('primary',           lambda m: m.get('primary')),
+    )
+
+    @staticmethod
+    def _display_monitor_summary(monitor: dict) -> dict:
+        """Compact monitor descriptor embedded in each display_* event payload."""
+        return {
+            'edidHash': monitor.get('edidHash') or '',
+            'friendlyName': monitor.get('friendlyName') or '',
+            'port': monitor.get('connectionType') or '',
+        }
+
+    def _emit_display_event(self, event_type: str, severity: str, payload: dict):
+        """Emit a single categorized display event via the firebase_client
+        log_event helper. ``payload`` is JSON-serialized into ``details`` so
+        structured fields (monitor, changes) survive the flat log schema.
+
+        log_event already stamps machineId + timestamp (SERVER_TIMESTAMP), so
+        we don't duplicate those here.
+        """
+        try:
+            details = json.dumps(payload, separators=(',', ':'), sort_keys=True)
+        except (TypeError, ValueError) as e:
+            logging.debug(f"Failed to serialize {event_type} payload: {e}")
+            return
+        self.firebase_client.log_event(
+            action=event_type,
+            level=severity,
+            details=details,
+        )
+
+    def _emit_display_change_events(self, prev_profile: dict, new_profile: dict):
+        """Diff two display profiles and emit one log event per distinct
+        change category. Called only when the topology signature actually
+        changed, so at least one event is expected (modulo edge cases where
+        only unhashed fields flipped, which is fine — no events emitted).
+        """
+        prev_monitors = prev_profile.get('monitors') or []
+        new_monitors = new_profile.get('monitors') or []
+
+        # Index by edidHash for identity-based diffing. Monitors without an
+        # edidHash (rare — broken EDID, generic driver) are skipped here; they
+        # can't be categorized reliably, and the signature hash already caught
+        # the transition at the topology level.
+        prev_by_hash = {m.get('edidHash'): m for m in prev_monitors if m.get('edidHash')}
+        new_by_hash = {m.get('edidHash'): m for m in new_monitors if m.get('edidHash')}
+
+        # 1. Added monitors — new edidHash not present previously.
+        for edid_hash, monitor in new_by_hash.items():
+            if edid_hash not in prev_by_hash:
+                self._emit_display_event('display_monitor_added', 'info', {
+                    'monitor': self._display_monitor_summary(monitor),
+                })
+
+        # 2. Removed monitors — previously present edidHash now gone.
+        for edid_hash, monitor in prev_by_hash.items():
+            if edid_hash not in new_by_hash:
+                self._emit_display_event('display_monitor_removed', 'critical', {
+                    'monitor': self._display_monitor_summary(monitor),
+                })
+
+        # 3. Swapped monitors — same Windows targetId but a different EDID.
+        # Indicates a physical cable-swap on the same output. Keyed on
+        # targetId because edidHash identifies the panel, not the port.
+        prev_by_target = {
+            m.get('targetId'): m for m in prev_monitors
+            if m.get('targetId') is not None and m.get('edidHash')
+        }
+        for new_monitor in new_monitors:
+            target_id = new_monitor.get('targetId')
+            new_hash = new_monitor.get('edidHash')
+            if target_id is None or not new_hash:
+                continue
+            prev_monitor = prev_by_target.get(target_id)
+            if prev_monitor and prev_monitor.get('edidHash') != new_hash:
+                self._emit_display_event('display_monitor_swapped', 'warning', {
+                    'monitor': self._display_monitor_summary(new_monitor),
+                    'previousEdidHash': prev_monitor.get('edidHash') or '',
+                })
+
+        # 4. Drift — same edidHash, but one or more tracked fields changed.
+        # One event per drifted monitor (not bundled) per the task spec.
+        for edid_hash, new_monitor in new_by_hash.items():
+            prev_monitor = prev_by_hash.get(edid_hash)
+            if prev_monitor is None:
+                continue
+            changes = [
+                label for label, extract in self._DISPLAY_DRIFT_FIELDS
+                if extract(prev_monitor) != extract(new_monitor)
+            ]
+            if changes:
+                self._emit_display_event('display_drift', 'warning', {
+                    'monitor': self._display_monitor_summary(new_monitor),
+                    'changes': changes,
+                })
+
+        # 5. Mosaic disabled — grid active previously, not active now.
+        prev_mosaic = bool(prev_profile.get('mosaicActive'))
+        new_mosaic = bool(new_profile.get('mosaicActive'))
+        if prev_mosaic and not new_mosaic:
+            self._emit_display_event('display_mosaic_disabled', 'warning', {})
+
+        # 6. Sync lost — any device that was locked is no longer locked.
+        # Match devices by deviceId when available so reordering inside the
+        # syncDevices list doesn't trigger a false positive.
+        prev_sync = prev_profile.get('syncDevices') or []
+        new_sync = new_profile.get('syncDevices') or []
+        new_sync_by_id = {d.get('deviceId'): d for d in new_sync if d.get('deviceId')}
+        new_sync_fallback = new_sync  # used when deviceId is missing
+        for idx, prev_device in enumerate(prev_sync):
+            if not prev_device.get('locked'):
+                continue
+            device_id = prev_device.get('deviceId')
+            if device_id and device_id in new_sync_by_id:
+                new_device = new_sync_by_id[device_id]
+            elif not device_id and idx < len(new_sync_fallback):
+                new_device = new_sync_fallback[idx]
+            else:
+                new_device = None
+            if new_device is None or not new_device.get('locked'):
+                self._emit_display_event('display_sync_lost', 'warning', {
+                    'deviceId': device_id or '',
+                })
 
     def _check_scheduled_reboot(self):
         """State-machine driven scheduled reboot check.
@@ -4853,6 +5281,16 @@ with open(out_path, 'wb') as f:
         # baseline so subsequent intent writes have a file to mutate.
         self._classify_startup_session()
 
+        # Log any pending watchdog-restart snapshots from the previous process.
+        # Firestore submission happens later once the client is connected; this
+        # only surfaces them in the service log for immediate visibility.
+        try:
+            pending = watchdog_state.read_pending_history()
+            for entry in pending:
+                shared_utils.log_watchdog_restart_replay(entry)
+        except Exception as e:
+            logging.debug(f"watchdog restart replay skipped (non-fatal): {e}")
+
         # Start Firebase client and upload local config
         if self.firebase_client:
             try:
@@ -4878,6 +5316,12 @@ with open(out_path, 'wb') as f:
                 # Wire health callback
                 self.firebase_client.connection_manager.set_health_callback(
                     lambda code, msg: self._update_health_state('connection_failure', code, msg)
+                )
+
+                # Wire self-restart watchdog callback BEFORE start() so the
+                # watchdog thread (spawned by start) always has one registered.
+                self.firebase_client.connection_manager.set_restart_callback(
+                    self._handle_watchdog_restart
                 )
 
                 # NOW start Firebase background threads (including config listener)
@@ -4912,6 +5356,9 @@ with open(out_path, 'wb') as f:
                         self._pending_anomaly_event = None
                     except Exception as e:
                         logging.warning(f"Failed to log startup anomaly event to Firebase: {e}")
+
+                # Flush pending watchdog-restart events (deferred from prior process)
+                self._flush_pending_watchdog_events()
 
                 # Report update command completion to Firestore (closes the loop for web dashboard)
                 if hasattr(self, '_pending_update_completion') and self._pending_update_completion:
@@ -4980,6 +5427,42 @@ with open(out_path, 'wb') as f:
 
         # Detect if a previously-pending scheduled reboot succeeded across the boot
         self._detect_reboot_success_on_startup()
+
+        # Handle any stale display-revert sentinel left over from a prior
+        # apply_topology attempt that crashed / rebooted before it could ack
+        # or revert. If a sentinel exists at startup at all, the previous
+        # watchdog thread is dead — revert immediately regardless of deadline
+        # so we never leave an unacknowledged apply in place.
+        try:
+            sentinel_path = shared_utils.get_data_path('.display_revert_pending')
+            if os.path.exists(sentinel_path):
+                logging.warning(
+                    f"Found stale display revert sentinel at {sentinel_path} — "
+                    "previous apply did not complete cleanly, reverting"
+                )
+                apply_revert = getattr(display_manager, 'apply_revert_from_sentinel', None)
+                if callable(apply_revert):
+                    try:
+                        result = apply_revert()
+                        logging.info(f"Display revert from sentinel: {result}")
+                    except Exception as revert_err:
+                        logging.error(f"Display revert from sentinel failed: {revert_err}")
+                        # Still try to delete the sentinel so we don't loop on next start.
+                        try:
+                            os.remove(sentinel_path)
+                        except OSError as rm_err:
+                            logging.warning(f"Failed to delete stale display sentinel: {rm_err}")
+                else:
+                    logging.warning(
+                        "display_manager.apply_revert_from_sentinel not available; "
+                        "deleting sentinel without revert"
+                    )
+                    try:
+                        os.remove(sentinel_path)
+                    except OSError as rm_err:
+                        logging.warning(f"Failed to delete stale display sentinel: {rm_err}")
+        except Exception as e:
+            logging.warning(f"Display sentinel check failed: {e}")
 
         # The heart of owlette
         cleanup_counter = 0  # Counter for periodic cleanup
@@ -5125,6 +5608,14 @@ with open(out_path, 'wb') as f:
                     self._reboot_schedule_counter = 0
                     self._check_scheduled_reboot()
 
+                # Display topology signature check — runs every DISPLAY_CHECK_ITERATIONS.
+                # Logs real topology changes; Firestore upload is driven by the
+                # firebase_client metrics loop (Task 2.2), not from here.
+                self._display_check_counter += 1
+                if self._display_check_counter >= DISPLAY_CHECK_ITERATIONS:
+                    self._display_check_counter = 0
+                    self._check_display_topology()
+
                 if self.first_start:
                     logging.info('owlette initialized')
 
@@ -5161,6 +5652,11 @@ with open(out_path, 'wb') as f:
                                 logging.error(
                                     f"Failed to log startup anomaly event (deferred): {log_err}"
                                 )
+
+                        # Same pattern for watchdog-restart events — retry if the
+                        # primary flush after start() was skipped or any entry
+                        # failed to submit.
+                        self._flush_pending_watchdog_events()
 
                 self.first_start = False
 

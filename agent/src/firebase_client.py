@@ -35,6 +35,8 @@ from datetime import datetime
 import shared_utils
 import registry_utils
 import hardware_profile
+import display_manager
+import nvapi_display
 
 # Import new OAuth-based modules (replace firebase_admin)
 from auth_manager import AuthManager, AuthenticationError, TokenRefreshError
@@ -153,6 +155,16 @@ class FirebaseClient:
         self._cached_profile_hash: Optional[str] = None
         self._last_primary: Optional[Dict] = None
         self._profile_hash_path: str = shared_utils.get_data_path('tmp/profile_hash.json')
+
+        # Display profile state (schemaVersion 1). Mirrors the hardware-profile
+        # cache: rate-limited rebuild, signature-hashed uploads, on-disk hash
+        # persisted across service restarts so we don't re-upload on boot when
+        # nothing changed. Kept completely separate from metrics/presence —
+        # writes go to hardware/display, never touching online/lastHeartbeat.
+        self._last_display_check: float = 0.0
+        self._cached_display_profile: Optional[Dict] = None
+        self._cached_display_hash: Optional[str] = None
+        self._display_hash_path: str = shared_utils.get_data_path('.display_profile_hash')
 
         # =================================================================
         # Initialize Firebase connection
@@ -784,6 +796,7 @@ class FirebaseClient:
     # =========================================================================
 
     _PROFILE_CHECK_INTERVAL = 300.0  # seconds between full build_profile() rebuilds
+    _DISPLAY_CHECK_INTERVAL = 300.0  # seconds between full build_display_profile() rebuilds
 
     def _load_cached_profile_hash(self) -> Optional[str]:
         """Load the cached profile signature hash from disk (once per process)."""
@@ -864,6 +877,137 @@ class FirebaseClient:
 
         return profile
 
+    def _load_cached_display_hash(self) -> Optional[str]:
+        """Load the cached display profile signature hash from disk (once per process)."""
+        if self._cached_display_hash is not None:
+            return self._cached_display_hash
+        try:
+            data = shared_utils.read_json_from_file(self._display_hash_path)
+            if isinstance(data, dict):
+                hash_val = data.get('signatureHash')
+                if isinstance(hash_val, str) and hash_val:
+                    self._cached_display_hash = hash_val
+        except Exception as e:
+            self.logger.debug(f"No cached display profile hash available: {e}")
+        return self._cached_display_hash
+
+    def _write_cached_display_hash(self, signature_hash: str):
+        """Persist the display profile signature hash to disk."""
+        try:
+            os.makedirs(os.path.dirname(self._display_hash_path), exist_ok=True)
+            shared_utils.write_json_to_file({'signatureHash': signature_hash}, self._display_hash_path)
+            self._cached_display_hash = signature_hash
+        except Exception as e:
+            self.logger.warning(f"Failed to persist display profile hash: {e}")
+
+    def _ensure_display_profile(self, force: bool = False) -> Optional[Dict[str, Any]]:
+        """
+        Ensure the display profile is up-to-date in Firestore.
+
+        Rebuilds the display topology at most once every _DISPLAY_CHECK_INTERVAL
+        seconds — unless ``force=True`` is passed, in which case the rate-limit
+        gate is bypassed (used by the main-loop topology change detector to
+        push fresh state to the dashboard without waiting up to 5 minutes for
+        the next idle metrics tick). Merges NVAPI Mosaic / GSync data on top
+        of the CCD snapshot. If the signature hash changed since the last
+        upload, writes the new profile to
+        sites/{siteId}/machines/{machineId}/hardware/display and updates the
+        local cache. All errors are swallowed so heartbeat never crashes.
+
+        This document is entirely separate from metrics / presence writes —
+        it never touches online / lastHeartbeat fields.
+
+        Returns:
+            The current display profile dict, or the cached profile if the
+            rate-limit gate skipped a rebuild, or None on catastrophic failure.
+        """
+        # Kill switch — when displays.enabled is explicitly False, skip ALL
+        # display work (enumeration + upload). Checked before the rate-limit
+        # gate so operators toggling the flag see an immediate effect rather
+        # than waiting out the 5-minute cache window. Fail-open on unreadable
+        # config so first-boot (before config.json exists) is not blocked.
+        try:
+            if shared_utils.read_config(['displays', 'enabled']) is False:
+                return self._cached_display_profile
+        except Exception:
+            pass
+
+        now = time.monotonic()
+        if not force and self._cached_display_profile is not None and (now - self._last_display_check) < self._DISPLAY_CHECK_INTERVAL:
+            return self._cached_display_profile
+
+        # Stamp the check time BEFORE attempting build_display_profile so a
+        # persistent failure (e.g. stuck CCD call, driver hang) still honors
+        # the 5-minute gate instead of re-running expensive queries on every
+        # heartbeat tick.
+        self._last_display_check = now
+
+        try:
+            profile = display_manager.build_display_profile()
+        except Exception as e:
+            self.logger.warning(f"build_display_profile failed: {e}")
+            return self._cached_display_profile
+
+        # Merge NVAPI Mosaic data on top of the CCD snapshot. Mosaic presence
+        # also flips the signatureHash via display_signature(), which considers
+        # mosaicActive part of the identity — but build_display_profile() set
+        # the hash before we flipped mosaicActive, so recompute below.
+        try:
+            mosaic = nvapi_display.detect_mosaic()
+            if mosaic:
+                profile['mosaicActive'] = True
+                profile['mosaicGrids'] = mosaic.get('grids', [])
+        except Exception as e:
+            self.logger.debug(f"detect_mosaic failed: {e}")
+
+        try:
+            sync = nvapi_display.detect_sync()
+            if sync:
+                profile['syncDevices'] = sync.get('devices', [])
+        except Exception as e:
+            self.logger.debug(f"detect_sync failed: {e}")
+
+        # Recompute signature after merging Mosaic state so mosaicActive flips
+        # force a re-upload even when the underlying monitor layout is identical.
+        try:
+            profile['signatureHash'] = display_manager.display_signature(profile)
+        except Exception as e:
+            self.logger.warning(f"display_signature failed: {e}")
+
+        self._cached_display_profile = profile
+
+        # If CCD enumeration failed (timeout / driver stall), the profile is a
+        # placeholder with an empty monitors list — uploading it would clobber
+        # valid Firestore data. Retain the cached state and retry next tick.
+        if profile.get('enumerationFailed'):
+            self.logger.debug("Skipping display profile upload: enumeration failed")
+            return self._cached_display_profile
+
+        signature = profile.get('signatureHash')
+        if not signature:
+            return profile
+
+        cached_hash = self._load_cached_display_hash()
+        if signature == cached_hash:
+            return profile
+
+        # Signature changed — upload to Firestore.
+        if not self.connected or not self.db:
+            # Offline or not yet connected; retain cached state, retry next tick.
+            return profile
+
+        try:
+            profile_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('hardware').document('display')
+            profile_ref.set(profile, merge=False)
+            self._write_cached_display_hash(signature)
+            self.logger.info(f"Display profile uploaded (hash={signature[:12]})")
+        except Exception as e:
+            self.logger.warning(f"Failed to upload display profile: {e}")
+
+        return profile
+
     def _upload_metrics(self, metrics: Dict[str, Any]):
         """Upload system metrics to Firestore.
 
@@ -882,6 +1026,14 @@ class FirebaseClient:
         try:
             # Ensure profile is uploaded / up-to-date. Needed for IDs alignment.
             profile = self._ensure_profile()
+
+            # Ensure display topology is uploaded / up-to-date. Writes to its
+            # own hardware/display doc — never touches metrics or presence.
+            # Guarded so display failures can never break metrics upload.
+            try:
+                self._ensure_display_profile()
+            except Exception as e:
+                self.logger.warning(f"_ensure_display_profile failed: {e}")
 
             # Collect dynamic per-device metrics keyed by profile IDs.
             try:
@@ -906,6 +1058,26 @@ class FirebaseClient:
 
             profile_hash = profile.get('signatureHash') if profile else None
 
+            # Display drift count: published on every heartbeat so the
+            # dashboard list/card views can render the drift dot without each
+            # opening its own assigned-layout subscription. Computed from the
+            # cached display profile (live monitors) and the assigned layout
+            # in the agent's cached config doc.
+            try:
+                live_monitors = (
+                    self._cached_display_profile.get('monitors')
+                    if isinstance(self._cached_display_profile, dict) else None
+                )
+                assigned_monitors = shared_utils.read_config(
+                    ['displays', 'assigned', 'monitors']
+                )
+                display_drift_count = display_manager.compute_drift_count(
+                    live_monitors, assigned_monitors
+                )
+            except Exception as e:
+                self.logger.debug(f"compute_drift_count failed: {e}")
+                display_drift_count = 0
+
             # Use update() with dot notation so nested maps are REPLACED entirely
             # (not deep-merged). This ensures deleted processes/devices don't
             # persist as ghost entries in Firestore.
@@ -929,6 +1101,7 @@ class FirebaseClient:
                 'metrics.network': dynamic.get('network', {}),
                 'metrics.primary': primary,
                 'metrics.processes': processes_data,
+                'metrics.displayDriftCount': display_drift_count,
                 # Clean up legacy v1 singular fields so they don't linger
                 # alongside v2 plurals. DELETE_FIELD is a no-op if the key
                 # is already absent, so this is safe on fresh docs too.
@@ -1547,7 +1720,7 @@ class FirebaseClient:
     # Event Logging
     # =========================================================================
 
-    def log_event(self, action: str, level: str, process_name: str = None, details: str = None, user_id: str = None, **kwargs):
+    def log_event(self, action: str, level: str, process_name: str = None, details: str = None, user_id: str = None, extra_fields: dict = None, doc_id: str = None, **kwargs):
         """
         Log a process event to Firestore for dashboard monitoring.
         Non-blocking - failures are silently ignored to prevent logging from crashing the app.
@@ -1558,9 +1731,23 @@ class FirebaseClient:
             process_name: Name of the process involved (optional)
             details: Additional details about the event (optional)
             user_id: User ID if action was triggered by a user (optional)
+            extra_fields: Additional top-level fields to merge into the Firestore
+                event document (optional). Reserved keys (timestamp, action,
+                level, machineId, machineName, processName, details, userId,
+                screenshotUrl) are ignored to protect the canonical shape.
+            doc_id: Optional explicit Firestore document ID. If provided, acts
+                as a dedup key — re-submitting the same event idempotently
+                overwrites the existing document. Used for deferred flushes
+                (e.g. watchdog restart events) where the caller needs to
+                guarantee at-most-once-visible semantics.
+
+        Returns:
+            The Firestore document ID on success, or None on failure / when
+            not connected. Callers who need to record submission success
+            (e.g. watchdog_state.mark_submitted) should check this.
         """
         if not self.connected or not self.db:
-            return
+            return None
 
         try:
             logs_ref = self.db.collection('sites').document(self.site_id)\
@@ -1583,15 +1770,28 @@ class FirebaseClient:
             if kwargs.get('screenshot_url'):
                 event_data['screenshotUrl'] = kwargs['screenshot_url']
 
+            if extra_fields:
+                reserved = {
+                    'timestamp', 'action', 'level', 'machineId', 'machineName',
+                    'processName', 'details', 'userId', 'screenshotUrl',
+                }
+                for key, value in extra_fields.items():
+                    if key in reserved:
+                        continue
+                    event_data[key] = value
+
             import uuid
-            doc_id = str(uuid.uuid4())
+            if not doc_id:
+                doc_id = str(uuid.uuid4())
             doc_ref = logs_ref.document(doc_id)
             doc_ref.set(event_data)
 
             self.logger.debug(f"[EVENT LOGGED] {action} - {process_name} ({level})")
+            return doc_id
 
         except Exception as e:
             self.logger.debug(f"[EVENT LOG FAILED] {action}: {e}")
+            return None
 
     def send_process_alert(self, process_name, error_message, event_type='process_crash'):
         """Send process alert to web API. Non-blocking (fire and forget)."""

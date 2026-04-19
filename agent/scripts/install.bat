@@ -146,9 +146,19 @@ echo Configuring service to run as LocalSystem...
 
 :: Configure restart behavior
 :: - Exit code 0 (clean exit) -> Don't restart (user intentionally stopped it)
-:: - Default (crashes/errors) -> Restart (auto-recovery)
+:: - Default (crashes/errors)  -> Restart (auto-recovery)
+:: - Exit code 42 (tray "Restart") and 43 (self-restart watchdog) hit the
+::   Default rule and restart as intended.
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppExit Default Restart
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppExit 0 Exit
+
+:: Spacing between restarts:
+:: - AppRestartDelay: fixed wait before relaunch after any exit
+:: - AppThrottle: if process exits within this window, NSSM enters exponential
+::   backoff. Setting high enough that a healthy watchdog cycle (which always
+::   runs past the 180s boot grace) never trips NSSM's own throttling.
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppRestartDelay 5000
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppThrottle 10000
 
 :: Don't kill child processes on service stop.
 :: Managed processes (TouchDesigner, etc.) are launched via a helper script that
