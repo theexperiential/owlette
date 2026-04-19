@@ -341,6 +341,14 @@ service cloud.firestore {
       allow delete: if canAccessSite(siteId);
     }
 
+    match /config/{siteId}/project_distribution_presets/{presetId} {
+      // Project distribution presets shared across a site
+      // Users with site access can read and manage presets
+      allow read: if canAccessSite(siteId);
+      allow write: if canAccessSite(siteId);
+      allow delete: if canAccessSite(siteId);
+    }
+
     // ============================================
     // Users Collection (Admin System)
     // ============================================

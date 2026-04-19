@@ -15,11 +15,14 @@ owlette uses a serverless, event-driven architecture where all communication flo
 flowchart LR
     Agents["Desktop Services\n(Agents)"]
     FS[("Cloud Firestore\nReal-time NoSQL")]
+    CF["Cloud Functions\n(event-driven)"]
     Dashboard["Web Dashboard\n(Next.js)"]
     Auth["Firebase Auth"]
 
     Agents -- "metrics & heartbeats" --> FS
     FS -- "commands" --> Agents
+    FS -- "triggers" --> CF
+    CF -- "history / status" --> FS
     FS <--> Dashboard
     Auth -. "token validation" .-> FS
 ```
@@ -60,12 +63,39 @@ The dashboard is a Next.js 16 application deployed to Railway. It:
 
 ### firebase backend
 
-Firebase provides two services:
+Firebase provides three services:
 
-- **Cloud Firestore** — Real-time NoSQL database for all data sync
-- **Firebase Authentication** — User auth (email/password, Google OAuth) and agent auth (custom tokens)
+- **Cloud Firestore** — real-time NoSQL database for all data sync
+- **Firebase Authentication** — user auth (email/password, Google OAuth) and agent auth (custom tokens)
+- **Cloud Functions (2nd Gen)** — event-driven server-side logic (see below)
 
-There are no Cloud Functions or custom backend servers — the web dashboard's Next.js API routes handle server-side operations like token generation and email sending.
+the web dashboard's Next.js API routes handle most server-side operations (token generation, email sending, API endpoints). Cloud Functions handle event-driven tasks that must run in response to Firestore writes or on a schedule.
+
+### cloud functions
+
+three Cloud Functions run on Firebase (2nd Gen, Node.js 20). source: `functions/src/`.
+
+| function | trigger | purpose |
+|----------|---------|---------|
+| **onMetricsWrite** | Firestore `onDocumentWritten` on `sites/{siteId}/machines/{machineId}` | appends a compact sample to the daily `metrics_history/{YYYY-MM-DD}` bucket (per-CPU, per-disk, per-GPU, per-NIC). also evaluates threshold alert rules and fires notifications when breached. rate-limited to one sample per 55 seconds. |
+| **onCommandCompleted** | Firestore `onDocumentWritten` on `sites/{siteId}/machines/{machineId}/commands/completed` | when an agent finishes a command with a `deployment_id`, updates the deployment target's status, progress, and timestamps. recalculates overall deployment status across all targets. |
+| **sweepStaleDeployments** | Cloud Scheduler, every 5 minutes | catches deployments stuck in non-terminal states (agent crash, network loss). marks pending targets as failed after 15 min, downloading/installing targets after 30 min. |
+
+**deployment:**
+
+```bash
+# deploy all functions
+cd functions && firebase deploy --only functions
+
+# deploy a single function
+firebase deploy --only functions:onMetricsWrite
+
+# check which project is active
+firebase use
+# dev: owlette-dev-3838a | prod: owlette-prod-XXXXX
+```
+
+**environment:** `functions/.env` contains `CORTEX_INTERNAL_SECRET` (shared secret for internal API auth, must match `web/.env.local`). `API_BASE_URL` is auto-derived from the Firebase project ID.
 
 ---
 
@@ -77,9 +107,12 @@ There are no Cloud Functions or custom backend servers — the web dashboard's N
 flowchart LR
     Agent["Desktop Service\n(Agent)"]
     FS[("Firestore")]
+    CF["Cloud Function\n(onMetricsWrite)"]
     Dashboard["Web Dashboard"]
 
     Agent -->|"metrics + heartbeat\n5s / 30s / 120s adaptive"| FS
+    FS -->|"trigger"| CF
+    CF -->|"append sample to\nmetrics_history bucket"| FS
     FS -->|"onSnapshot"| Dashboard
 ```
 
@@ -90,11 +123,14 @@ flowchart LR
     Dashboard["Web Dashboard"]
     FS[("Firestore")]
     Agent["Desktop Service\n(Agent)"]
+    CF["Cloud Function\n(onCommandCompleted)"]
 
     Dashboard -->|"1. write command\nto pending"| FS
     FS -->|"2. listener\ndetects"| Agent
     Agent -->|"3. write result\nto completed"| FS
-    FS -->|"4. onSnapshot\nUI updates"| Dashboard
+    FS -->|"4. trigger"| CF
+    CF -->|"5. update deployment\nstatus"| FS
+    FS -->|"6. onSnapshot\nUI updates"| Dashboard
 ```
 
 ### configuration sync
@@ -212,6 +248,7 @@ stateDiagram-v2
 | **Database** | Cloud Firestore (real-time NoSQL) |
 | **Auth** | Firebase Authentication, iron-session, TOTP (2FA) |
 | **Email** | Resend API |
+| **Cloud Functions** | Firebase Functions (2nd Gen, Node.js 20) |
 | **Hosting** | Railway (web), Windows Service via NSSM (agent) |
 | **Build** | Inno Setup (agent installer), Nixpacks (web) |
 | **AI** | Vercel AI SDK, Anthropic Claude / OpenAI |
