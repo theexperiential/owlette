@@ -3,16 +3,7 @@
 import { useEffect, useState } from 'react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-
-export interface ProjectDistributionTemplate {
-  id: string;
-  name: string;
-  project_name: string;
-  project_url: string;
-  extract_path?: string;
-  verify_files?: string[];
-  createdAt: any; // Firestore Timestamp (new) or number (legacy)
-}
+import { useProjectDistributionPresets } from '@/hooks/useProjectDistributionPresets';
 
 export interface ProjectDistributionTarget {
   machineId: string;
@@ -25,7 +16,7 @@ export interface ProjectDistributionTarget {
 export interface ProjectDistribution {
   id: string;
   name: string;
-  project_name: string;
+  file_name: string;
   project_url: string;
   extract_path?: string;
   verify_files?: string[];
@@ -33,90 +24,6 @@ export interface ProjectDistribution {
   createdAt: any; // Firestore Timestamp (new) or number (legacy)
   completedAt?: any;
   status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial';
-}
-
-export function useProjectDistributionTemplates(siteId: string) {
-  const [templates, setTemplates] = useState<ProjectDistributionTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!db || !siteId) {
-      setLoading(false);
-      setError('Firebase not configured or no site selected');
-      return;
-    }
-
-    try {
-      const templatesRef = collection(db, 'sites', siteId, 'project_templates');
-
-      const unsubscribe = onSnapshot(
-        templatesRef,
-        (snapshot) => {
-          const templateData: ProjectDistributionTemplate[] = [];
-
-          snapshot.forEach((doc) => {
-            const data = doc.data();
-            templateData.push({
-              id: doc.id,
-              name: data.name || 'Unnamed Template',
-              project_name: data.project_name || '',
-              project_url: data.project_url || '',
-              extract_path: data.extract_path,
-              verify_files: data.verify_files,
-              createdAt: data.createdAt || Date.now(),
-            });
-          });
-
-          // Sort by created date (newest first)
-          templateData.sort((a, b) => (b.createdAt?.toMillis?.() ?? b.createdAt ?? 0) - (a.createdAt?.toMillis?.() ?? a.createdAt ?? 0));
-
-          setTemplates(templateData);
-          setLoading(false);
-        },
-        (err) => {
-          console.error('Error fetching project templates:', err);
-          setError(err.message);
-          setLoading(false);
-        }
-      );
-
-      return () => unsubscribe();
-    } catch (err: any) {
-      setError(err.message);
-      setLoading(false);
-    }
-  }, [siteId]);
-
-  const createTemplate = async (template: Omit<ProjectDistributionTemplate, 'id' | 'createdAt'>) => {
-    if (!db || !siteId) throw new Error('Firebase not configured');
-
-    const templateId = `project-template-${Date.now()}`;
-    const templateRef = doc(db!, 'sites', siteId, 'project_templates', templateId);
-
-    await setDoc(templateRef, {
-      ...template,
-      createdAt: serverTimestamp(),
-    });
-
-    return templateId;
-  };
-
-  const updateTemplate = async (templateId: string, template: Partial<Omit<ProjectDistributionTemplate, 'id' | 'createdAt'>>) => {
-    if (!db || !siteId) throw new Error('Firebase not configured');
-
-    const templateRef = doc(db!, 'sites', siteId, 'project_templates', templateId);
-    await setDoc(templateRef, template, { merge: true });
-  };
-
-  const deleteTemplate = async (templateId: string) => {
-    if (!db || !siteId) throw new Error('Firebase not configured');
-
-    const templateRef = doc(db!, 'sites', siteId, 'project_templates', templateId);
-    await deleteDoc(templateRef);
-  };
-
-  return { templates, loading, error, createTemplate, updateTemplate, deleteTemplate };
 }
 
 export function useProjectDistributions(siteId: string) {
@@ -144,7 +51,7 @@ export function useProjectDistributions(siteId: string) {
             distributionData.push({
               id: doc.id,
               name: data.name || 'Unnamed Distribution',
-              project_name: data.project_name || '',
+              file_name: data.file_name || '',
               project_url: data.project_url || '',
               extract_path: data.extract_path,
               verify_files: data.verify_files,
@@ -287,13 +194,27 @@ export function useProjectDistributions(siteId: string) {
       status: 'pending',
     }));
 
-    // Create distribution document
-    await setDoc(distributionRef, {
-      ...distribution,
+    // Create distribution document.
+    // Write file_name explicitly — firestore.rules requires this exact field name
+    // on project_distributions docs (hasRequiredFields). The command payload below
+    // keeps project_name since the agent reads that field and commands aren't
+    // subject to field-name rules.
+    //
+    // Optional fields (extract_path, verify_files) are omitted entirely when not
+    // set — Firestore rejects `undefined` field values with "invalid data".
+    const distributionDoc: Record<string, unknown> = {
+      name: distribution.name,
+      file_name: distribution.file_name,
+      project_url: distribution.project_url,
       targets,
       createdAt: serverTimestamp(),
       status: 'pending',
-    });
+    };
+    if (distribution.extract_path) distributionDoc.extract_path = distribution.extract_path;
+    if (distribution.verify_files && distribution.verify_files.length > 0) {
+      distributionDoc.verify_files = distribution.verify_files;
+    }
+    await setDoc(distributionRef, distributionDoc);
 
     // Send distribute_project command to each machine in parallel
     const commandPromises = machineIds.map(async (machineId) => {
@@ -303,17 +224,23 @@ export function useProjectDistributions(siteId: string) {
       const commandId = `distribute_${sanitizedDistributionId}_${sanitizedMachineId}_${Date.now()}`;
       const commandRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
 
+      const commandPayload: Record<string, unknown> = {
+        type: 'distribute_project',
+        project_url: distribution.project_url,
+        // Agent reads project_name from the command payload — keep the legacy
+        // field name here so we don't have to touch agent-side code.
+        project_name: distribution.file_name,
+        distribution_id: distributionId,
+        timestamp: serverTimestamp(),
+        status: 'pending',
+      };
+      if (distribution.extract_path) commandPayload.extract_path = distribution.extract_path;
+      if (distribution.verify_files && distribution.verify_files.length > 0) {
+        commandPayload.verify_files = distribution.verify_files;
+      }
+
       await setDoc(commandRef, {
-        [commandId]: {
-          type: 'distribute_project',
-          project_url: distribution.project_url,
-          project_name: distribution.project_name,
-          extract_path: distribution.extract_path,
-          verify_files: distribution.verify_files,
-          distribution_id: distributionId,
-          timestamp: serverTimestamp(),
-          status: 'pending',
-        }
+        [commandId]: commandPayload,
       }, { merge: true });
     });
 
@@ -328,7 +255,7 @@ export function useProjectDistributions(siteId: string) {
     return distributionId;
   };
 
-  const cancelDistribution = async (distributionId: string, machineId: string, project_name: string) => {
+  const cancelDistribution = async (distributionId: string, machineId: string, fileName: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
     // Send cancel command to the machine
@@ -339,7 +266,9 @@ export function useProjectDistributions(siteId: string) {
     await setDoc(commandRef, {
       [commandId]: {
         type: 'cancel_distribution',
-        project_name: project_name,
+        // Agent reads project_name from the command payload — keep the legacy
+        // field name here (see createDistribution for the same rationale).
+        project_name: fileName,
         distribution_id: distributionId,
         timestamp: serverTimestamp(),
       }
@@ -358,18 +287,15 @@ export function useProjectDistributions(siteId: string) {
   return { distributions, loading, error, createDistribution, cancelDistribution, deleteDistribution };
 }
 
-// Convenience hook to get both templates and distributions
+// Convenience hook to get both presets and distributions
 export function useProjectDistributionManager(siteId: string) {
-  const templates = useProjectDistributionTemplates(siteId);
+  const presets = useProjectDistributionPresets(siteId);
   const distributions = useProjectDistributions(siteId);
 
   return {
-    templates: templates.templates,
-    templatesLoading: templates.loading,
-    templatesError: templates.error,
-    createTemplate: templates.createTemplate,
-    updateTemplate: templates.updateTemplate,
-    deleteTemplate: templates.deleteTemplate,
+    presets: presets.presets,
+    presetsLoading: presets.loading,
+    presetsError: presets.error,
 
     distributions: distributions.distributions,
     distributionsLoading: distributions.loading,

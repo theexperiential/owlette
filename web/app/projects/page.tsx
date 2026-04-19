@@ -14,6 +14,7 @@ import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
+import { LoadingWord } from '@/components/LoadingWord';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 
 export default function ProjectsPage() {
@@ -33,11 +34,8 @@ export default function ProjectsPage() {
   const {
     distributions,
     distributionsLoading,
-    templates,
+    presets,
     createDistribution,
-    createTemplate,
-    updateTemplate,
-    deleteTemplate,
     cancelDistribution,
     deleteDistribution,
   } = useProjectDistributionManager(currentSiteId);
@@ -68,7 +66,7 @@ export default function ProjectsPage() {
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-muted-foreground">loading...</p>
+        <p className="text-muted-foreground"><LoadingWord /></p>
       </div>
     );
   }
@@ -156,11 +154,7 @@ export default function ProjectsPage() {
           open={distributionDialogOpen}
           onOpenChange={setDistributionDialogOpen}
           siteId={currentSiteId}
-          templates={templates}
           onCreateDistribution={createDistribution}
-          onCreateTemplate={createTemplate}
-          onUpdateTemplate={updateTemplate}
-          onDeleteTemplate={deleteTemplate}
         />
 
         {/* Section header with inline stats */}
@@ -203,9 +197,9 @@ export default function ProjectsPage() {
                 </div>
                 <div>
                   <div className="flex items-baseline gap-0.5">
-                    <span className="text-xl font-bold text-foreground">{templates.length}</span>
+                    <span className="text-xl font-bold text-foreground">{presets.length}</span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-tight">templates</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">presets</p>
                 </div>
               </div>
             </div>
@@ -307,7 +301,7 @@ export default function ProjectsPage() {
                           <div className="flex gap-2">
                             <span className="text-muted-foreground flex-shrink-0 w-24">extract path</span>
                             <span className="text-foreground select-text break-all">
-                              {distribution.extract_path || <span className="text-muted-foreground italic">~/Documents/OwletteProjects (default)</span>}
+                              {distribution.extract_path || <span className="text-muted-foreground italic">~/Documents/Owlette/ (default)</span>}
                             </span>
                           </div>
                           {distribution.verify_files && distribution.verify_files.length > 0 && (
@@ -335,7 +329,7 @@ export default function ProjectsPage() {
                                       variant="ghost"
                                       onClick={async () => {
                                         try {
-                                          await cancelDistribution(distribution.id, target.machineId, distribution.project_name);
+                                          await cancelDistribution(distribution.id, target.machineId, distribution.file_name);
                                         } catch (error: any) {
                                           console.error('Failed to cancel distribution:', error);
                                         }
