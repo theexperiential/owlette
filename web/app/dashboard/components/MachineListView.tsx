@@ -17,7 +17,7 @@
 
 'use client';
 
-import React, { memo, useMemo } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useMinuteTick } from '@/hooks/useMinuteTick';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -137,7 +137,7 @@ export const MemoizedTableHeader = memo(function MemoizedTableHeader() {
         <TableHead className="text-foreground w-[140px]">hostname</TableHead>
         <TableHead className="text-foreground w-[72px]">status</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[160px] sm:overflow-visible sm:!px-2">cpu</TableHead>
-        <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[120px] sm:overflow-visible sm:!px-2">memory</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[120px] sm:overflow-visible sm:!px-2">ram</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[160px] lg:overflow-visible lg:!px-2">disk</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[200px] lg:overflow-visible lg:!px-2">gpu</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 xl:w-[130px] xl:overflow-visible xl:!px-2">network</TableHead>
@@ -181,7 +181,7 @@ export const MachineTableHeader = memo(function MachineTableHeader({
             onSelect={setListPref}
           />
         </TableHead>
-        <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[120px] sm:overflow-visible sm:!px-2">memory</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[120px] sm:overflow-visible sm:!px-2">ram</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[160px] lg:overflow-visible lg:!px-2">
           <DeviceColumnHeader
             label="disk"
@@ -293,6 +293,42 @@ export function MachineRow({
   showLocalClock,
   listPref,
 }: MachineRowProps) {
+  // Keep the expanded row mounted through the close animation. The grid-rows
+  // transition on the inner wrapper animates in/out; the held flag prevents
+  // unmounting before the close animation completes.
+  //
+  // `animOpen` lags `isExpanded` by one animation frame on open so the row
+  // mounts at `grid-rows-[0fr]` and CSS sees a transition to `grid-rows-[1fr]`
+  // (without the lag, both initial renders see `1fr` and no transition fires).
+  const [heldExpanded, setHeldExpanded] = useState(isExpanded);
+  // Seeded false so a freshly-mounted-as-expanded row still gets a real
+  // 0fr → 1fr transition. The raf in the effect below flips it true on the
+  // next frame.
+  const [animOpen, setAnimOpen] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  if (isExpanded && !heldExpanded) {
+    setHeldExpanded(true);
+  }
+  useEffect(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    // Defer the open/close flip to the next frame so the previous (mount)
+    // frame's grid-rows class commits first — the CSS transition then has a
+    // from-state to interpolate against.
+    const raf = requestAnimationFrame(() => setAnimOpen(isExpanded));
+    if (!isExpanded && heldExpanded) {
+      closeTimerRef.current = setTimeout(() => setHeldExpanded(false), 220);
+    }
+    return () => {
+      cancelAnimationFrame(raf);
+      if (closeTimerRef.current) {
+        clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+    };
+  }, [isExpanded, heldExpanded]);
   const pref = listPref ?? {};
   const primary = machine.metrics?.primary;
   const cpuDevice = resolveDevice(machine.devices?.cpus, pref.cpu, primary?.cpu);
@@ -314,6 +350,12 @@ export function MachineRow({
   const { userPreferences: fullPrefs } = useAuth();
   const isMuted = fullPrefs.mutedMachines.includes(machine.machineId);
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
+
+  // Display drift indicator (amber dot next to the monitor icon). The agent
+  // computes this every heartbeat and writes it under `metrics.displayDriftCount`
+  // — reading from the machine doc avoids spinning up per-row subscriptions to
+  // the displayProfiles + displayAssignments docs just to render the dot.
+  const displayDriftCount = machine.metrics?.displayDriftCount ?? 0;
 
   // Format heartbeat time. The display tz is resolved per-machine according
   // to the user's chosen `timeDisplayMode` (preferences) — see getDisplayTimezone.
@@ -359,25 +401,34 @@ export function MachineRow({
         <TableCell className="w-[100px] font-medium text-white select-text overflow-hidden">
           <div className="flex flex-col gap-0.5 min-w-0">
             <div className="flex items-center gap-2">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onMetricClick?.('display');
-                    }}
-                    className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0"
-                    aria-label="view displays"
-                  >
-                    <Monitor className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>view displays</p>
-                </TooltipContent>
-              </Tooltip>
+              <div className="relative flex-shrink-0">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onMetricClick?.('display');
+                      }}
+                      className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0"
+                      aria-label="view displays"
+                    >
+                      <Monitor className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>view displays</p>
+                  </TooltipContent>
+                </Tooltip>
+                {displayDriftCount > 0 && (
+                  <span
+                    className="absolute -top-0.5 -right-0.5 inline-block w-2 h-2 rounded-full bg-amber-500 pointer-events-none"
+                    aria-label={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
+                    title={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
+                  />
+                )}
+              </div>
               <span className="truncate">{machine.machineId}</span>
               {isMuted && <span title="alerts muted"><BellOff className="h-3 w-3 text-muted-foreground flex-shrink-0" /></span>}
             </div>
@@ -562,7 +613,7 @@ export function MachineRow({
               : nicDevice.id;
             return (
               <div className={`relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden${staleClass}`}>
-                <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(maxUtil)}`} />
+                <div className={`absolute left-0 top-1/2 -translate-y-1/2 h-[52px] w-0.5 ${getUsageColorClass(maxUtil)}`} />
                 <div className="p-2 pl-2.5">
                   <div className="text-xs text-muted-foreground truncate" title={titleText}>
                     {nicDevice.id}
@@ -616,10 +667,18 @@ export function MachineRow({
         </TableCell>
       </TableRow>
 
-      {/* Expanded Process Details Row */}
-      {isExpanded && (
+      {/* Expanded Process Details Row — kept mounted while heldExpanded so
+          the close animation can play; the grid-template-rows transition on
+          the inner wrapper animates the height in/out. */}
+      {heldExpanded && (
         <TableRow key={`${machine.machineId}-processes`} className="border-border">
           <TableCell colSpan={10} className="p-0 overflow-hidden">
+            <div
+              className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+                animOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+              }`}
+            >
+            <div className="overflow-hidden min-h-0">
             <div className="pr-4 relative" style={{ paddingLeft: '12px', paddingTop: '8px', paddingBottom: '8px' }}>
               {machine.processes && machine.processes.length > 0 ? (
                 <>
@@ -865,6 +924,8 @@ export function MachineRow({
                   </Button>
                 </div>
               )}
+            </div>
+            </div>
             </div>
           </TableCell>
         </TableRow>

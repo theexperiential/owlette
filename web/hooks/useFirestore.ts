@@ -249,6 +249,15 @@ export interface Machine {
     processes?: Record<string, string>;
 
     /**
+     * Number of monitors whose live configuration differs from the assigned
+     * layout (matched by edidHash). Computed agent-side every heartbeat so
+     * the dashboard list/card views can render the drift dot without
+     * subscribing to displayProfiles + displayAssignments per row. Absent on
+     * agents older than the version that introduced this field — treat as 0.
+     */
+    displayDriftCount?: number;
+
+    /**
      * Per-logical-volume disk IO, keyed by volume id (e.g. `"C:"`, `"L:"`).
      * Sibling of `disks`; keys align 1:1 with `disks` entries so a card's
      * selected drive can look up its own IO directly. Populated by agents

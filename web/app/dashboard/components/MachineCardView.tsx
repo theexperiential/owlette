@@ -15,6 +15,7 @@
  * Used by: Dashboard page for card view display
  */
 
+import { useMemo } from 'react';
 import { useMinuteTick } from '@/hooks/useMinuteTick';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -139,18 +140,18 @@ function MachineCard({
   // Fetch sparkline data for this machine
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
-  // Live display topology (monitors + mosaic) for the displays collapsible.
-  // Only subscribe when the displays section is explicitly expanded — a
-  // 50-machine dashboard would otherwise open 100 Firestore listeners on
-  // mount.
+  // Live display topology (monitors + mosaic). Always subscribed so the
+  // collapsed card summary can show the resolution list — otherwise it'd
+  // render "no data" until the user expanded the section. We skip the
+  // assigned-layout sub here because the drift dot now reads from the
+  // heartbeat-published `metrics.displayDriftCount`, not a client-side diff.
   const { profile: displayProfile } = useDisplayState(
     currentSiteId,
     machine.machineId,
-    { enabled: displaysExpanded === true }
+    { enabled: true, subscribeAssigned: false }
   );
   const displayMonitors = displayProfile?.monitors ?? [];
-  const primaryMonitor =
-    displayMonitors.find((m) => m.primary) ?? displayMonitors[0] ?? null;
+  const displayDriftCount = machine.metrics?.displayDriftCount ?? 0;
   // Parent preference is the source of truth; default collapsed on first render.
   const effectiveDisplaysExpanded = displaysExpanded ?? false;
 
@@ -408,7 +409,7 @@ function MachineCard({
               </Button>
             </CollapsibleTrigger>
           )}
-          <CollapsibleContent>
+          <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
         <CollapsibleTrigger asChild>
           <div className="border-t border-border relative cursor-pointer group">
             <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -421,7 +422,7 @@ function MachineCard({
           {/* CPU Metric */}
           {cpuDevice && cpuDevice.percent != null && (
             <div
-              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(cpuDevice.percent)}`}
+              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(cpuDevice.percent)}`}
               onClick={onMetricClick ? () => onMetricClick('cpu') : undefined}
             >
               {/* Sparkline background */}
@@ -459,7 +460,7 @@ function MachineCard({
           {/* Memory Metric */}
           {memory?.percent != null && (
             <div
-              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(memory.percent)}`}
+              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(memory.percent)}`}
               onClick={onMetricClick ? () => onMetricClick('memory') : undefined}
             >
               {/* Sparkline background */}
@@ -471,7 +472,7 @@ function MachineCard({
               {/* Content */}
               <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                 <div className="flex items-center gap-3">
-                  <span className="text-sm font-medium text-muted-foreground">memory</span>
+                  <span className="text-sm font-medium text-muted-foreground">ram</span>
                   {memory.usedGb != null && memoryTotalGb != null && (
                     <span className="text-xs text-muted-foreground hidden sm:block">
                       {memory.usedGb.toFixed(1)} / {memoryTotalGb.toFixed(1)} GB
@@ -486,7 +487,7 @@ function MachineCard({
           {/* Disk Metric */}
           {diskDevice && diskDevice.percent != null && (
             <div
-              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(diskDevice.percent)}`}
+              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(diskDevice.percent)}`}
               onClick={onMetricClick ? () => onMetricClick('disk') : undefined}
             >
               {/* Sparkline background */}
@@ -535,7 +536,7 @@ function MachineCard({
           {/* GPU Metric */}
           {gpuDevice && gpuDevice.usagePercent != null && (
             <div
-              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(gpuDevice.usagePercent)}`}
+              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(gpuDevice.usagePercent)}`}
               onClick={onMetricClick ? () => onMetricClick('gpu') : undefined}
             >
               {/* Sparkline background */}
@@ -582,7 +583,7 @@ function MachineCard({
             const maxUtil = Math.max(nicDevice.txUtil ?? 0, nicDevice.rxUtil ?? 0);
             return (
               <div
-                className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(maxUtil)}`}
+                className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(maxUtil)}`}
                 onClick={onMetricClick ? () => onMetricClick(`${nicDevice.id}_tx_util` as MetricType) : undefined}
               >
                 <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(maxUtil)}`} />
@@ -616,16 +617,32 @@ function MachineCard({
             <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
               <div className="flex items-center gap-2 w-full select-none">
                 <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
-                {displayMonitors.length > 0 && primaryMonitor ? (
-                  <div className="flex items-center gap-2.5 text-sm text-muted-foreground overflow-hidden">
-                    <span className="tabular-nums">
+                {displayMonitors.length > 0 ? (
+                  <div className="flex items-center gap-2.5 text-sm text-muted-foreground overflow-hidden min-w-0">
+                    <span className="tabular-nums flex-shrink-0">
                       <span className="text-foreground font-medium">{displayMonitors.length}</span> display{displayMonitors.length === 1 ? '' : 's'}
                     </span>
-                    <span className="text-border">|</span>
-                    <span className="truncate">
-                      primary: <span className="text-foreground font-medium">{primaryMonitor.friendlyName || primaryMonitor.id}</span>
-                      <span className="ml-1 tabular-nums">@ {primaryMonitor.resolution.width}x{primaryMonitor.resolution.height}</span>
+                    <span className="text-border flex-shrink-0">|</span>
+                    <span className="truncate tabular-nums">
+                      {displayMonitors.map((m, i) => {
+                        const rotated = m.rotation === 90 || m.rotation === 270;
+                        const w = rotated ? m.resolution.height : m.resolution.width;
+                        const h = rotated ? m.resolution.width : m.resolution.height;
+                        return (
+                          <span key={m.id}>
+                            {i > 0 && <span className="mx-1.5 text-border">·</span>}
+                            <span className={m.primary ? 'text-foreground font-medium' : ''}>{w}x{h}</span>
+                          </span>
+                        );
+                      })}
                     </span>
+                    {displayDriftCount > 0 && (
+                      <span
+                        className="inline-block w-2 h-2 rounded-full bg-amber-500 ml-2 flex-shrink-0"
+                        aria-label={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
+                        title={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
+                      />
+                    )}
                   </div>
                 ) : (
                   <span className="text-muted-foreground text-sm">displays: no data</span>
@@ -634,7 +651,7 @@ function MachineCard({
             </Button>
           </CollapsibleTrigger>
         )}
-        <CollapsibleContent>
+        <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
           <CollapsibleTrigger asChild>
             <div className="border-t border-border relative cursor-pointer group">
               <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -648,20 +665,34 @@ function MachineCard({
             onClick={onMetricClick ? (e) => { e.stopPropagation(); onMetricClick('display'); } : undefined}
           >
             {displayMonitors.length > 0 ? (
-              <>
-                <DisplayCanvas
-                  monitors={displayMonitors}
-                  mosaicGrids={displayProfile?.mosaicGrids}
-                  className="h-[120px]"
-                />
-                <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-                  {displayMonitors.map((m) => (
-                    <div key={m.id} className="truncate">
-                      {m.friendlyName || m.id} &middot; {m.resolution.width}x{m.resolution.height} @{m.refreshHz}hz{m.primary ? ' \u00b7 primary' : ''}
-                    </div>
-                  ))}
+              <div className="grid grid-cols-2 gap-0">
+                <div className="min-w-0 h-[160px] border border-border/50 rounded-l-lg md:border-r-0 overflow-hidden">
+                  <DisplayCanvas
+                    monitors={displayMonitors}
+                    mosaicGrids={displayProfile?.mosaicGrids}
+                    labelMode="indexOnly"
+                    className="h-[160px]"
+                  />
                 </div>
-              </>
+                <div className="h-[160px] border border-border/50 rounded-r-lg overflow-hidden flex flex-col justify-center gap-1.5 px-3 text-xs text-muted-foreground">
+                  {displayMonitors.map((m, i) => {
+                    // Post-rotation dimensions match what Windows treats the
+                    // panel as (and what the canvas rect renders): a 4K panel
+                    // rotated 270° reads as 2160×3840, not 3840×2160.
+                    const isPortrait = m.rotation === 90 || m.rotation === 270;
+                    const effW = isPortrait ? m.resolution.height : m.resolution.width;
+                    const effH = isPortrait ? m.resolution.width : m.resolution.height;
+                    return (
+                      <div key={m.id} className="flex items-center gap-2 min-w-0">
+                        <span className="font-mono text-muted-foreground shrink-0">{i + 1}</span>
+                        <span className="text-foreground font-medium truncate">{m.friendlyName || m.id}</span>
+                        <span className="text-muted-foreground shrink-0 tabular-nums">{effW}×{effH}</span>
+                        {m.primary && <span className="text-amber-500 shrink-0" aria-label="primary">★</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             ) : (
               <div className="text-xs text-muted-foreground py-4 text-center">no display data reported</div>
             )}
@@ -675,16 +706,18 @@ function MachineCard({
           {!processesExpanded && (
             <CollapsibleTrigger asChild>
               <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
-                <div className="flex items-center gap-2 w-full select-none">
+                <div className="flex items-center gap-2.5 w-full select-none overflow-hidden">
                   <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
-                  <span className="text-muted-foreground text-sm flex-shrink-0">
-                    {machine.processes.length} process{machine.processes.length > 1 ? 'es' : ''}
+                  <span className="text-sm flex-shrink-0 text-muted-foreground">
+                    <span className="text-foreground font-medium">{machine.processes.length}</span> process{machine.processes.length > 1 ? 'es' : ''}
                   </span>
-                  <div className="flex items-center gap-3 overflow-hidden">
-                    {machine.processes.map((proc) => (
-                      <span key={proc.id} className="flex items-center gap-1 flex-shrink-0">
+                  <span className="text-border flex-shrink-0">|</span>
+                  <div className="flex items-center overflow-hidden min-w-0">
+                    {machine.processes.map((proc, i) => (
+                      <span key={proc.id} className="flex items-center flex-shrink-0">
+                        {i > 0 && <span className="mx-1.5 text-border">·</span>}
                         <span className="text-sm text-muted-foreground truncate max-w-[100px]">{proc.name}</span>
-                        <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${
+                        <span className={`ml-1 inline-block w-2 h-2 rounded-full flex-shrink-0 ${
                           !machine.online ? 'bg-muted-foreground/40' :
                           proc.status === 'RUNNING' ? 'bg-green-500' :
                           proc.status === 'INACTIVE' ? 'bg-slate-500' :
@@ -698,7 +731,7 @@ function MachineCard({
               </Button>
             </CollapsibleTrigger>
           )}
-          <CollapsibleContent>
+          <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
             <CollapsibleTrigger asChild>
               <div className="border-t border-border relative cursor-pointer group">
                 <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -885,7 +918,12 @@ export function MachineCardView({
   const showLocalClock = uniqueTimezones.size > 1;
 
   return (
-    <div className="grid gap-4 md:grid-cols-2">
+    // `machines-grid` is a hook for the slide-animation perf rule in
+    // globals.css — when the dashboard marks the ancestor with
+    // data-slide-pausing="true" during the detail panel's transition,
+    // each card here gets `content-visibility: auto` so offscreen cards
+    // skip layout/paint and don't compete with the slide for frame budget.
+    <div className="machines-grid grid gap-4 md:grid-cols-2">
       {machines.map((machine) => (
         <MachineCard
           key={machine.machineId}

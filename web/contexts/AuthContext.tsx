@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
+import { createContext, useContext, useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   User,
   signInWithEmailAndPassword,
@@ -40,6 +40,35 @@ function shallowEqual(a: Record<string, string>, b: Record<string, string>): boo
   if (keysA.length !== keysB.length) return false;
   for (const key of keysA) {
     if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
+// Structural deep-equal for preference snapshot diffing. Used instead of
+// JSON.stringify because Firestore does not guarantee object key order, so
+// stringify-based equality produces spurious mismatches (and reference churn
+// downstream) when the server returns the same logical object with a
+// different key order.
+function isDeepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== typeof b) return false;
+  if (typeof a !== 'object') return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!isDeepEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  const aObj = a as Record<string, unknown>;
+  const bObj = b as Record<string, unknown>;
+  const aKeys = Object.keys(aObj);
+  const bKeys = Object.keys(bObj);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(bObj, key)) return false;
+    if (!isDeepEqual(aObj[key], bObj[key])) return false;
   }
   return true;
 }
@@ -97,6 +126,7 @@ export interface UserPreferences {
   alertCcEmails: string[]; // Additional CC recipients for alert emails. Default: []
   statsExpanded: boolean; // Whether stats section is expanded in card view. Default: false
   processesExpanded: boolean; // Whether process list is expanded in card view. Default: false
+  displaysExpanded?: boolean; // Whether displays section is expanded in card view. Default: false
   /** Remembered graph tab selection for each machine's MetricsDetailPanel.
    * Keyed by machineId → array of namespaced tab ids (e.g. 'metric:cpu', 'nic:Ethernet 2', 'gpu:0').
    * Unknown namespaces are ignored on read, so new entity types slot in without migration. */
@@ -173,6 +203,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
   const [passkeyEnrolled, setPasskeyEnrolled] = useState(false);
   const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
+  // Mirror userPreferences in a ref so updateUserPreferences can read the
+  // current value without putting userPreferences in its useCallback deps —
+  // putting it in deps caused stale closures to overwrite recent changes
+  // when callers stacked rapid updates (e.g. cell-click + sparkline-toggle).
+  const userPreferencesRef = useRef(userPreferences);
+  useEffect(() => { userPreferencesRef.current = userPreferences; }, [userPreferences]);
   const [lastSiteId, setLastSiteId] = useState<string | null>(null);
   const [lastMachineIds, setLastMachineIds] = useState<Record<string, string>>({});
 
@@ -298,12 +334,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   alertCcEmails: preferences.alertCcEmails || [], // Default: []
                   statsExpanded: preferences.statsExpanded ?? true, // Default: expanded
                   processesExpanded: preferences.processesExpanded ?? true, // Default: expanded
+                  displaysExpanded: preferences.displaysExpanded ?? true, // Default: expanded
                   graphTabs: preferences.graphTabs || undefined,
                   activeGraphPanel: preferences.activeGraphPanel || null,
                   graphTimeRange: preferences.graphTimeRange || undefined,
                 };
                 setUserPreferences(prev => {
-                  if (
+                  // Per-field reference preservation: when a field's content
+                  // hasn't changed, keep prev's reference. This prevents
+                  // downstream consumers (e.g. MetricsDetailPanel's
+                  // reconciliation effect) from re-firing on identity changes
+                  // and reverting unrelated state.
+                  const graphTabsEqual = isDeepEqual(prev.graphTabs ?? null, newPrefs.graphTabs ?? null);
+                  const activeGraphPanelEqual = isDeepEqual(prev.activeGraphPanel ?? null, newPrefs.activeGraphPanel ?? null);
+                  const mutedEqual = arraysEqual(prev.mutedMachines, newPrefs.mutedMachines);
+                  const ccEqual = arraysEqual(prev.alertCcEmails, newPrefs.alertCcEmails);
+
+                  const allEqual =
                     prev.temperatureUnit === newPrefs.temperatureUnit &&
                     prev.timezone === newPrefs.timezone &&
                     prev.timeFormat === newPrefs.timeFormat &&
@@ -314,13 +361,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     prev.cortexAlerts === newPrefs.cortexAlerts &&
                     prev.statsExpanded === newPrefs.statsExpanded &&
                     prev.processesExpanded === newPrefs.processesExpanded &&
-                    arraysEqual(prev.mutedMachines, newPrefs.mutedMachines) &&
-                    arraysEqual(prev.alertCcEmails, newPrefs.alertCcEmails) &&
-                    JSON.stringify(prev.graphTabs || null) === JSON.stringify(newPrefs.graphTabs || null) &&
-                    JSON.stringify(prev.activeGraphPanel || null) === JSON.stringify(newPrefs.activeGraphPanel || null) &&
-                    prev.graphTimeRange === newPrefs.graphTimeRange
-                  ) return prev;
-                  return newPrefs;
+                    prev.displaysExpanded === newPrefs.displaysExpanded &&
+                    mutedEqual && ccEqual && graphTabsEqual && activeGraphPanelEqual &&
+                    prev.graphTimeRange === newPrefs.graphTimeRange;
+                  if (allEqual) return prev;
+
+                  // At least one field changed — build next, preserving stable
+                  // refs for unchanged object/array fields.
+                  return {
+                    ...newPrefs,
+                    graphTabs: graphTabsEqual ? prev.graphTabs : newPrefs.graphTabs,
+                    activeGraphPanel: activeGraphPanelEqual ? prev.activeGraphPanel : newPrefs.activeGraphPanel,
+                    mutedMachines: mutedEqual ? prev.mutedMachines : newPrefs.mutedMachines,
+                    alertCcEmails: ccEqual ? prev.alertCcEmails : newPrefs.alertCcEmails,
+                  };
                 });
 
                 setLoading(false);
@@ -626,19 +680,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const userDocRef = doc(db, 'users', auth.currentUser.uid);
 
-      // Merge with existing preferences
-      await setDoc(userDocRef, {
-        preferences: {
-          ...userPreferences,
-          ...preferences,
-        },
-      }, { merge: true });
+      // Always read the latest userPreferences via ref so rapid stacked
+      // updates don't overwrite each other with stale closure values.
+      const current = userPreferencesRef.current;
+      const merged = { ...current, ...preferences };
 
-      // Update local state
-      setUserPreferences({
-        ...userPreferences,
-        ...preferences,
-      });
+      // Strip undefined values — Firestore rejects them with
+      // `Function setDoc() called with invalid data. Unsupported field value:
+      // undefined`. Optional fields that have never been set (e.g.
+      // activeGraphPanel before the user opens a graph) sit in `current` as
+      // undefined and would otherwise propagate into every preference write.
+      const sanitized: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(merged)) {
+        if (value !== undefined) sanitized[key] = value;
+      }
+
+      // Merge with existing preferences in Firestore
+      await setDoc(userDocRef, { preferences: sanitized }, { merge: true });
+
+      // Update local state via functional setter so concurrent setUserPreferences
+      // calls (e.g. from the Firestore snapshot listener) compose correctly.
+      setUserPreferences((prev) => ({ ...prev, ...preferences }));
 
       if (!options?.silent) {
         toast.success('Preferences Updated', {
@@ -652,7 +714,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       throw error;
     }
-  }, [userPreferences]);
+  }, []);
 
   const updateLastSite = useCallback((siteId: string) => {
     setLastSiteId(siteId);
