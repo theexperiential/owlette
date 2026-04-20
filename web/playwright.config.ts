@@ -81,6 +81,16 @@ export default defineConfig({
       SESSION_SECRET: 'demo-session-secret-for-emulator-playwright-tests-32chars',
       // Silence Sentry in test.
       NEXT_PUBLIC_SENTRY_DSN: '',
+      // Disable Upstash-backed rate limiting. Without this override, the
+      // webServer inherits UPSTASH_REDIS_REST_URL from .env.local and the
+      // auth-session endpoint enforces a 10-per-minute limit per IP — which
+      // rapid E2E runs (global-setup signs in 3 roles back-to-back, then
+      // individual specs re-auth) can blow through, leaving global-setup to
+      // time out on /login redirects. Empty strings short-circuit the
+      // `if (url && token)` init block in web/lib/rateLimit.ts so every
+      // `withRateLimit(...)` wrapper no-ops.
+      UPSTASH_REDIS_REST_URL: '',
+      UPSTASH_REDIS_REST_TOKEN: '',
     },
   },
 });
