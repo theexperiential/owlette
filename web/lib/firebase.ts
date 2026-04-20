@@ -8,9 +8,9 @@
  */
 
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import { getAuth, Auth } from 'firebase/auth';
-import { getFirestore, Firestore } from 'firebase/firestore';
-import { getStorage, FirebaseStorage } from 'firebase/storage';
+import { getAuth, Auth, connectAuthEmulator } from 'firebase/auth';
+import { getFirestore, Firestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getStorage, FirebaseStorage, connectStorageEmulator } from 'firebase/storage';
 
 // Firebase configuration
 // These values come from Firebase Console > Project Settings > Web App
@@ -23,10 +23,19 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || 'placeholder',
 };
 
-// Check if Firebase is configured
-const isConfigured = typeof window !== 'undefined' &&
-                     process.env.NEXT_PUBLIC_FIREBASE_API_KEY &&
-                     process.env.NEXT_PUBLIC_FIREBASE_API_KEY !== 'placeholder';
+// Check if Firebase is configured. In emulator mode (Playwright E2E) the API
+// key doesn't need to be real — emulator accepts anything — so we treat that
+// as configured regardless of the env var value.
+const isEmulatorMode =
+  typeof window !== 'undefined' &&
+  process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
+const isConfigured = typeof window !== 'undefined' && (
+  isEmulatorMode ||
+  (
+    !!process.env.NEXT_PUBLIC_FIREBASE_API_KEY &&
+    process.env.NEXT_PUBLIC_FIREBASE_API_KEY !== 'placeholder'
+  )
+);
 
 // Initialize Firebase (singleton pattern) - only on client side
 let app: FirebaseApp | null = null;
@@ -34,16 +43,37 @@ let auth: Auth | null = null;
 let db: Firestore | null = null;
 let storage: FirebaseStorage | null = null;
 
+// Emulator wiring for Playwright E2E tests. Gated on NEXT_PUBLIC_USE_FIREBASE_EMULATOR
+// so production builds never connect to localhost. Called exactly once per app
+// instance (tracked on window to survive hot-reload re-execution of this module).
+function maybeConnectEmulators(
+  authInstance: Auth,
+  dbInstance: Firestore,
+  storageInstance: FirebaseStorage,
+) {
+  if (typeof window === 'undefined') return;
+  if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR !== 'true') return;
+  const w = window as Window & { __OWLETTE_EMULATORS_CONNECTED__?: boolean };
+  if (w.__OWLETTE_EMULATORS_CONNECTED__) return;
+
+  connectAuthEmulator(authInstance, 'http://127.0.0.1:9099', { disableWarnings: true });
+  connectFirestoreEmulator(dbInstance, '127.0.0.1', 8080);
+  connectStorageEmulator(storageInstance, '127.0.0.1', 9199);
+  w.__OWLETTE_EMULATORS_CONNECTED__ = true;
+}
+
 if (typeof window !== 'undefined' && !getApps().length && isConfigured) {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
   db = getFirestore(app);
   storage = getStorage(app);
+  maybeConnectEmulators(auth, db, storage);
 } else if (typeof window !== 'undefined' && getApps().length) {
   app = getApps()[0];
   auth = getAuth(app);
   db = getFirestore(app);
   storage = getStorage(app);
+  maybeConnectEmulators(auth, db, storage);
 }
 
 export { app, auth, db, storage, isConfigured };

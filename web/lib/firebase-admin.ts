@@ -28,28 +28,47 @@ import admin from 'firebase-admin';
  */
 if (!admin.apps.length) {
   try {
-    // Parse service account credentials from environment variables
-    const projectId = process.env.FIREBASE_PROJECT_ID;
-    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+    // Emulator mode (Playwright E2E): FIREBASE_AUTH_EMULATOR_HOST / FIRESTORE_EMULATOR_HOST
+    // / FIREBASE_STORAGE_EMULATOR_HOST are set by the test runner. The Admin SDK
+    // auto-routes to the emulator when these env vars are present — BUT only if
+    // initializeApp is called without a cert credential (cert triggers real-auth
+    // flow even when verifyIdToken respects the emulator env var). Branching here
+    // prevents the subtle "verify works against emulator, writes hit prod" footgun.
+    const isEmulatorMode =
+      !!process.env.FIREBASE_AUTH_EMULATOR_HOST ||
+      !!process.env.FIRESTORE_EMULATOR_HOST;
 
-    // Validate required credentials
-    if (!projectId || !clientEmail || !privateKey) {
-      console.error('Firebase Admin SDK: Missing required environment variables');
-      console.error('Required: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY');
-      // Don't throw - allow app to start but admin features won't work
-    } else {
-      // Initialize Admin SDK
+    if (isEmulatorMode) {
+      const projectId = process.env.FIREBASE_PROJECT_ID || 'demo-playwright-e2e';
       admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId,
-          clientEmail,
-          privateKey,
-        }),
-        storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || `${projectId}.firebasestorage.app`,
+        projectId,
+        storageBucket: `${projectId}.firebasestorage.app`,
       });
+      console.log(`Firebase Admin SDK initialized in emulator mode (project: ${projectId})`);
+    } else {
+      // Parse service account credentials from environment variables
+      const projectId = process.env.FIREBASE_PROJECT_ID;
+      const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+      const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
-      console.log('Firebase Admin SDK initialized successfully');
+      // Validate required credentials
+      if (!projectId || !clientEmail || !privateKey) {
+        console.error('Firebase Admin SDK: Missing required environment variables');
+        console.error('Required: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY');
+        // Don't throw - allow app to start but admin features won't work
+      } else {
+        // Initialize Admin SDK
+        admin.initializeApp({
+          credential: admin.credential.cert({
+            projectId,
+            clientEmail,
+            privateKey,
+          }),
+          storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || `${projectId}.firebasestorage.app`,
+        });
+
+        console.log('Firebase Admin SDK initialized successfully');
+      }
     }
   } catch (error) {
     console.error('Failed to initialize Firebase Admin SDK:', error);

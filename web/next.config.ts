@@ -3,6 +3,11 @@ import { withSentryConfig } from "@sentry/nextjs";
 import { version } from "./package.json";
 
 const isDev = process.env.NODE_ENV === 'development';
+// Emulator mode — signaled at build time by the e2e npm script. When true,
+// the CSP is widened to allow http://127.0.0.1:* + ws://127.0.0.1:* so the
+// Firebase Auth + Firestore + Storage emulators can reach the browser. Never
+// true in prod builds.
+const isEmulatorBuild = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
 
 const nextConfig: NextConfig = {
   reactStrictMode: false,
@@ -77,9 +82,9 @@ const nextConfig: NextConfig = {
               // do NOT remove this without testing `npm run dev` afterward.
               `script-src 'self' 'unsafe-inline' ${isDev ? "'unsafe-eval' " : ''}https://accounts.google.com https://apis.google.com https://*.gstatic.com`, // Google OAuth requires inline scripts
               "style-src 'self' 'unsafe-inline'", // Tailwind CSS requires unsafe-inline
-              "img-src 'self' data: blob: https:",
+              `img-src 'self' data: blob: https:${isEmulatorBuild ? ' http://127.0.0.1:*' : ''}`,
               "font-src 'self' data:",
-              "connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com https://*.ingest.sentry.io", // Firebase endpoints + Google OAuth
+              `connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com https://*.ingest.sentry.io${isEmulatorBuild ? ' http://127.0.0.1:* ws://127.0.0.1:*' : ''}`, // Firebase endpoints + Google OAuth (+ Firebase emulator hosts in E2E mode)
               "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com", // Allow Google OAuth popup and Firebase auth
               "frame-ancestors 'none'", // Equivalent to X-Frame-Options: DENY
               "base-uri 'self'",

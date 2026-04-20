@@ -64,6 +64,7 @@ const config = {
     '/node_modules/',
     '/.next/',
     '__tests__/api/helpers/',
+    '/e2e/', // Playwright specs — use `npm run e2e`, not jest.
   ],
 
   // Transform ignore patterns

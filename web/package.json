@@ -10,7 +10,11 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "validate:api": "npx tsx scripts/validate-openapi.ts"
+    "validate:api": "npx tsx scripts/validate-openapi.ts",
+    "e2e:build": "cross-env NEXT_PUBLIC_USE_FIREBASE_EMULATOR=true NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-playwright-e2e NEXT_PUBLIC_FIREBASE_API_KEY=demo-api-key NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-playwright-e2e.firebaseapp.com NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=demo-playwright-e2e.firebasestorage.app NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=000000000000 NEXT_PUBLIC_FIREBASE_APP_ID=demo-app-id next build",
+    "e2e": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test\"",
+    "e2e:ui": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --ui\"",
+    "e2e:install": "playwright install chromium"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.63",
@@ -64,6 +68,7 @@
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.0",
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.1.5",
     "@testing-library/react": "^14.1.2",
@@ -74,6 +79,7 @@
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cross-env": "^10.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.0.1",
     "jest": "^29.7.0",
