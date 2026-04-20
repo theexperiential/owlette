@@ -33,6 +33,7 @@ dev/active/
 .claude/memory/
 .claude/plans/
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 *.swp
 *.swo
 *~
