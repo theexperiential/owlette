@@ -4,6 +4,17 @@ Owlette is a cloud-connected Windows process management and remote deployment sy
 
 **Version**: 2.9.0 | **License**: FSL-1.1-Apache-2.0
 
+## In-Flight Major Initiative: roost (project distribution v2)
+
+A multi-quarter rewrite of project distribution into a content-addressed sync platform (Cloudflare R2, immutable manifests, atomic deploy, rollback). Branded as "roost" (always lowercase). Plan + tasks live at `dev/active/project-distribution-v2/`. Memory: `project_roost.md`.
+
+**Key decisions** (do not relitigate):
+- No `/api/v2/` URL prefix — the new routes ARE the API (`/api/chunks/`, `/api/folders/`).
+- No backwards compatibility with v1 agents — clean cutover, v3.0.0 agent is required to consume new uploads.
+- No header-based version negotiation (no `Accept: application/vnd.owlette.v2+json`).
+- v3-deferred (do NOT rebuild in v2): bidirectional sync, LAN swarm, Ed25519 manifest signing, public CLI, FastCDC.
+- Nav label `projects` → `roost`. `verify_files` field dropped (manifest is authoritative).
+
 ---
 
 ## Tech Stack
