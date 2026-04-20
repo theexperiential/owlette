@@ -9,7 +9,7 @@
 
 import { ArrowDown, ArrowUp, Thermometer } from 'lucide-react';
 import { formatThroughput } from '@/lib/networkUtils';
-import { DISK_IO_COLORS, isDiskIOKey, parseDiskIOKey } from '@/lib/diskIOUtils';
+import { DISK_IO_COLORS, formatDiskIO, isDiskIOKey, parseDiskIOKey } from '@/lib/diskIOUtils';
 
 export type MetricType = 'cpu' | 'memory' | 'disk' | 'gpu' | 'cpuTemp' | 'gpuTemp' | 'display';
 
@@ -194,20 +194,40 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
             );
           }
 
-          // Per-volume disk IO activity (e.g. "C:_io_read_pct"). Label is
-          // volume-qualified ("C: read" / "L: write") and the value is a
-          // percentage of the volume's max bandwidth.
+          // Per-volume disk IO activity. The chart-line side ships two
+          // parallel key families per (volume, channel): bytes/sec and
+          // percent-of-max-bandwidth. The tooltip always displays bytes/sec
+          // — `formatDiskIO` picks a human-readable unit — regardless of
+          // which family happens to be the visible chart line:
+          //
+          //   - Percent mode: visible line is `_pct`; read the sibling
+          //     bytes key from the payload (hidden Line carries it).
+          //   - Bytes mode: visible line is bytes; use `entry.value` directly.
+          //
+          // Dedupe: when both siblings are in the payload (percent mode),
+          // the bytes entry would otherwise render an identical second row.
+          // Skip it so each channel shows exactly once.
           if (diskIOChannel) {
+            if (!diskIOChannel.isPct && payload.some(e => String(e.dataKey) === `${key}_pct`)) {
+              return null;
+            }
             const label = `${diskIOChannel.id} ${diskIOChannel.channel}`;
             const dotColor = DISK_IO_COLORS[diskIOChannel.channel];
-            const numericValue = typeof entry.value === 'number' ? entry.value : Number(entry.value);
+            let bytes: number;
+            if (diskIOChannel.isPct) {
+              const bytesKey = key.replace(/_pct$/, '');
+              const bytesEntry = payload.find(e => String(e.dataKey) === bytesKey);
+              bytes = typeof bytesEntry?.value === 'number' ? bytesEntry.value : 0;
+            } else {
+              bytes = typeof entry.value === 'number' ? entry.value : Number(entry.value) || 0;
+            }
             return (
               <div key={key} className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: dotColor }} />
                   <span className="text-sm text-foreground">{label}</span>
                 </div>
-                <span className="text-sm font-medium text-foreground">{numericValue.toFixed(1)}%</span>
+                <span className="text-sm font-medium text-foreground">{formatDiskIO(bytes)}</span>
               </div>
             );
           }

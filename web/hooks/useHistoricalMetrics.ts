@@ -324,17 +324,20 @@ export function useHistoricalMetrics(
 
             // Expand per-volume disk IO into flat chart keys.
             //
-            // The chart shows utilization as % of the volume's max bandwidth
-            // (mb / "maxBps") — agent ships a hardware-class estimate that
-            // ratchets up on observed peaks. Samples without `mb` (older
-            // schema, or volumes the hardware-class lookup didn't find)
-            // get omitted from the chart entirely so we don't render
-            // misleading scale-relative spikes. Drive-letter filter:
-            // only `^[A-Z]:$` shapes — older samples may still contain
+            // Chart lines use % of the volume's max bandwidth (mb / "maxBps")
+            // so they share the 0-100 axis with the other metrics — agent
+            // ships a hardware-class estimate that ratchets up on observed
+            // peaks. Raw bytes/sec (`_io_read` / `_io_write`) ride alongside
+            // on the hidden axis so the tooltip and stats cards can display
+            // human-readable MB/KB/GB values (mirrors the NIC `_tx` / `_rx`
+            // vs `_tx_util` / `_rx_util` pairing). Drive-letter filter: only
+            // `^[A-Z]:$` shapes — older samples may still contain
             // `HarddiskVolumeN` raw partitions; skip them.
             if (sample.dios) {
               for (const dio of sample.dios) {
                 if (!/^[A-Z]:$/.test(dio.i)) continue;
+                point[`${dio.i}_io_read`] = dio.rb;
+                point[`${dio.i}_io_write`] = dio.wb;
                 if (dio.mb && dio.mb > 0) {
                   point[`${dio.i}_io_read_pct`] = Math.min(100, (dio.rb / dio.mb) * 100);
                   point[`${dio.i}_io_write_pct`] = Math.min(100, (dio.wb / dio.mb) * 100);
