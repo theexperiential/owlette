@@ -289,7 +289,7 @@ export default function ProjectDistributionDialog({
   const handleDistribute = async () => {
     // Validation
     if (!distributionName.trim()) {
-      toast.error('please provide a distribution name');
+      toast.error('please provide a roost name');
       return;
     }
 
@@ -338,7 +338,7 @@ export default function ProjectDistributionDialog({
         Array.from(selectedMachines)
       );
 
-      toast.success(`distribution started — syncing to ${selectedMachines.size} machine${selectedMachines.size > 1 ? 's' : ''}`);
+      toast.success(`roost started — syncing to ${selectedMachines.size} machine${selectedMachines.size > 1 ? 's' : ''}`);
 
       // Reset form
       setDistributionName('');
@@ -362,9 +362,9 @@ export default function ProjectDistributionDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="border-border bg-secondary text-white max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-white">distribute projects</DialogTitle>
+          <DialogTitle className="text-white">roost a project</DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            distribute project files (ZIPs, archives) across multiple machines
+            sync project files (zips, archives) to one or more machines
           </DialogDescription>
         </DialogHeader>
 
