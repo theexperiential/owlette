@@ -271,7 +271,10 @@ export function PageHeader({
           /* User Menu */
           <DropdownMenu onOpenChange={handleMenuOpenChange}>
             <DropdownMenuTrigger asChild>
-              <button className="inline-flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-secondary transition-colors cursor-pointer">
+              <button
+                data-testid="user-menu-trigger"
+                className="inline-flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-secondary transition-colors cursor-pointer"
+              >
                 <UserAvatar user={user} size="sm" />
                 {user?.displayName && (
                   <span className="text-sm text-foreground hidden lg:block">{getUserShortName(user)}</span>
