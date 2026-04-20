@@ -66,7 +66,16 @@ const nextConfig: NextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com https://*.gstatic.com", // Google OAuth requires inline scripts
+              // 'unsafe-eval' is added in DEV ONLY — Next.js Fast Refresh
+              // hot-reload runtime calls eval() to hot-swap modules. production
+              // builds do NOT use eval, so prod CSP stays fully hardened.
+              //
+              // History: commit 9d0ffa2 (2025-11-17) removed 'unsafe-eval'
+              // claiming "not required by Next.js 13+ App Router" — that's
+              // true for the production runtime only. dev-mode Fast Refresh
+              // broke silently; restored as a dev-conditional on 2026-04-19.
+              // do NOT remove this without testing `npm run dev` afterward.
+              `script-src 'self' 'unsafe-inline' ${isDev ? "'unsafe-eval' " : ''}https://accounts.google.com https://apis.google.com https://*.gstatic.com`, // Google OAuth requires inline scripts
               "style-src 'self' 'unsafe-inline'", // Tailwind CSS requires unsafe-inline
               "img-src 'self' data: blob: https:",
               "font-src 'self' data:",
