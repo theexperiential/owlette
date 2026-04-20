@@ -91,6 +91,12 @@ export default defineConfig({
       // `withRateLimit(...)` wrapper no-ops.
       UPSTASH_REDIS_REST_URL: '',
       UPSTASH_REDIS_REST_TOKEN: '',
+      // Disable the in-memory rate limiter too — it caps at 15 requests
+      // per minute per IP, which is easy to blow through with back-to-back
+      // admin-API E2E specs (tokens, installers, webhooks, admin-api-403,
+      // etc.) and produces flaky 429s unrelated to the contract under test.
+      // Only honored when explicitly set; production ignores this var.
+      E2E_DISABLE_RATE_LIMIT: 'true',
     },
   },
 });

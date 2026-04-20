@@ -221,6 +221,14 @@ export async function checkRateLimit(
   reset?: number;
   retryAfter?: number;
 }> {
+  // E2E escape hatch: Playwright runs many back-to-back admin API calls
+  // across specs, which trips the 15/min in-memory bucket and causes
+  // flaky 429s. Only honored when explicitly set in the webServer env
+  // (playwright.config.ts) — production ignores this var entirely.
+  if (process.env.E2E_DISABLE_RATE_LIMIT === 'true') {
+    return { success: true };
+  }
+
   // If rate limiting is disabled (no Redis configured), use in-memory fallback
   if (!ratelimiter) {
     return checkInMemoryRateLimit(identifier);

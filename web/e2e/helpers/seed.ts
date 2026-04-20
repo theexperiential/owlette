@@ -145,3 +145,162 @@ export async function seedBaseline(): Promise<void> {
   await Promise.all(TEST_SITES.map(seedSite));
   await Promise.all(Object.values(TEST_USERS).map(seedUser));
 }
+
+export interface SeedMachineOptions {
+  /** Custom display name (defaults to machineId). */
+  displayName?: string;
+  /**
+   * Seconds-to-backdate the `lastHeartbeat` field. Defaults to 0 (now),
+   * which renders the machine as online. Pass >180 to simulate a stale
+   * heartbeat (offline via the 180s threshold in useMachines).
+   */
+  heartbeatOffsetSec?: number;
+  /**
+   * Optional override for the number of monitors in the seeded display
+   * profile. Defaults to 2 (primary + secondary). Zero = no display
+   * subdoc written (machine card shows "no display data reported").
+   */
+  monitorCount?: number;
+  /**
+   * Simulate an in-flight reboot. When set, writes `rebooting: true` +
+   * `rebootScheduledAt` (offset seconds into the future) so the
+   * MachineStatusPill renders its clickable countdown variant for
+   * site-admins and the text-only variant for non-admins. Defaults to
+   * undefined (no active reboot).
+   */
+  rebootingInSec?: number;
+  /**
+   * Seed a "reboot pending" state — the amber banner on the machine card
+   * with approve/dismiss buttons, which the agent writes after a process
+   * crashes. Only the card view renders this banner. Pass `true` for a
+   * sensible default (`active: true`, generic reason) or an object for
+   * full control over the payload.
+   */
+  rebootPending?:
+    | boolean
+    | {
+        processName?: string;
+        reason?: string;
+      };
+}
+
+/**
+ * Seed a machine under `sites/{siteId}/machines/{machineId}` with enough
+ * state for the dashboard to render its card AND for the DisplayLayoutPanel
+ * to mount with a real display profile when the user clicks the display
+ * chart.
+ *
+ * Writes:
+ *   - `sites/{siteId}/machines/{machineId}` — status doc (lastHeartbeat,
+ *     online, minimal metrics scaffolding).
+ *   - `sites/{siteId}/machines/{machineId}/hardware/display` — the
+ *     DisplayProfile that `useDisplayState` subscribes to, with N monitors.
+ *
+ * The Admin SDK bypasses firestore.rules, so this works regardless of the
+ * caller's auth state. Safe to call multiple times — each call overwrites
+ * the prior doc.
+ */
+export async function seedMachine(
+  siteId: string,
+  machineId: string,
+  opts: SeedMachineOptions = {},
+): Promise<void> {
+  const db = getAdminDb();
+  const nowSec = Math.floor(Date.now() / 1000);
+  const heartbeat = nowSec - (opts.heartbeatOffsetSec ?? 0);
+  const monitorCount = opts.monitorCount ?? 2;
+
+  // Optional reboot state — mirrors the fields the agent writes during an
+  // in-flight reboot. Using a future `rebootScheduledAt` (Unix seconds) lights
+  // up the countdown path in MachineStatusPill; setting `rebooting: true`
+  // keeps the pill in "active" mode even if the clock moves past the target.
+  const rebootingExtras =
+    typeof opts.rebootingInSec === 'number'
+      ? {
+          rebooting: true,
+          rebootScheduledAt: nowSec + opts.rebootingInSec,
+        }
+      : {};
+
+  // Optional reboot-pending banner — the agent writes this shape after a
+  // process crash triggers the "needs reboot" pathway. Accept either `true`
+  // for a sensible default payload or an object to override processName /
+  // reason.
+  const rebootPendingExtras = opts.rebootPending
+    ? {
+        rebootPending: {
+          active: true,
+          processName:
+            typeof opts.rebootPending === 'object'
+              ? opts.rebootPending.processName ?? 'test-process'
+              : 'test-process',
+          reason:
+            typeof opts.rebootPending === 'object'
+              ? opts.rebootPending.reason ?? 'process crashed'
+              : 'process crashed',
+          timestamp: nowSec,
+        },
+      }
+    : {};
+
+  // Status doc — the dashboard's useMachines listener materializes this into
+  // the machine card. `online` + a fresh `lastHeartbeat` render the green
+  // status pill; empty `metrics` keeps the card minimal (no sparkline data
+  // required for the display-panel test).
+  await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('machines')
+    .doc(machineId)
+    .set({
+      online: true,
+      lastHeartbeat: heartbeat,
+      agent_version: '2.9.0',
+      machine_timezone_iana: 'UTC',
+      metrics: {
+        schemaVersion: 2,
+        timestamp: new Date(),
+      },
+      ...rebootingExtras,
+      ...rebootPendingExtras,
+    });
+
+  // Display profile — subscribed by useDisplayState. Two dummy monitors at
+  // offset positions so the DisplayCanvas has something non-trivial to
+  // render. `edidHash` is the identity key used for drift matching; we
+  // pick stable synthetic values so re-runs are deterministic.
+  if (monitorCount > 0) {
+    const monitors = Array.from({ length: monitorCount }, (_, i) => ({
+      id: `MONITOR\\TEST${i}`,
+      edidHash: `hash-${machineId}-${i}`,
+      manufacturerId: 'TST',
+      productCode: `000${i}`,
+      serialNumber: `SN${i}`,
+      friendlyName: `Test Monitor ${i + 1}`,
+      position: { x: i * 1920, y: 0 },
+      resolution: { width: 1920, height: 1080 },
+      refreshHz: 60,
+      rotation: 0,
+      scalePct: 100,
+      primary: i === 0,
+      connectionType: 'dp',
+      adapterLuid: '0:0',
+      targetId: i,
+    }));
+
+    await db
+      .collection('sites')
+      .doc(siteId)
+      .collection('machines')
+      .doc(machineId)
+      .collection('hardware')
+      .doc('display')
+      .set({
+        schemaVersion: 1,
+        signatureHash: `sig-${machineId}`,
+        capturedAt: Date.now(),
+        monitors,
+        mosaicActive: false,
+      });
+  }
+}

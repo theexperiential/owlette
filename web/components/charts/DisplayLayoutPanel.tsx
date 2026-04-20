@@ -273,10 +273,10 @@ export function DisplayLayoutPanel({
     if (!applyId) return;
     try {
       await actions.ackLayout(applyId);
-      toast.success('ack sent');
+      toast.success('layout kept');
     } catch (e) {
       console.error('Failed to ack display layout', e);
-      toast.error(`ack failed: ${formatError(e)}`);
+      toast.error(`keep failed: ${formatError(e)}`);
     }
   };
 
@@ -372,6 +372,7 @@ export function DisplayLayoutPanel({
               size="sm"
               disabled={captureDisabled}
               onClick={() => setCaptureDialogOpen(true)}
+              data-testid="display-store-current-button"
               className="h-7 px-2 text-xs"
             >
               {actions.applying ? (
@@ -445,7 +446,10 @@ export function DisplayLayoutPanel({
   };
 
   return (
-    <Card className="border-border bg-card py-0 gap-0">
+    <Card
+      data-testid="display-layout-panel"
+      className="border-border bg-card py-0 gap-0"
+    >
       <CardContent className="p-4">
         {/* Single header row: machine title, tabs, write actions, close.
             Consolidates the previous title + controls rows to save vertical
@@ -485,6 +489,7 @@ export function DisplayLayoutPanel({
                       size="sm"
                       disabled={captureDisabled}
                       onClick={() => setCaptureDialogOpen(true)}
+                      data-testid="display-store-button"
                       className="bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs"
                     >
                       {actions.applying ? (
@@ -507,6 +512,7 @@ export function DisplayLayoutPanel({
                       size="sm"
                       disabled={applyDisabled}
                       onClick={() => setApplyDialogOpen(true)}
+                      data-testid="display-recall-button"
                       style={
                         hasDrift
                           ? { boxShadow: 'inset 0 0 0 1px var(--chart-4)' }
@@ -543,6 +549,7 @@ export function DisplayLayoutPanel({
                         size="sm"
                         disabled={actions.applying}
                         onClick={() => setClearDialogOpen(true)}
+                        data-testid="display-clear-button"
                         className="bg-card border border-border text-muted-foreground hover:text-destructive h-8 px-3 text-xs"
                       >
                         clear
