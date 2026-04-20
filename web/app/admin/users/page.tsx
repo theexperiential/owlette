@@ -302,12 +302,40 @@ export default function UserManagementPage() {
                       )}
                     </td>
 
-                    {/* Sites Count */}
-                    <td className="p-4">
-                      <span className="text-foreground">{user.sites?.length || 0}</span>
-                      <span className="text-muted-foreground text-sm ml-1">
-                        site{user.sites?.length !== 1 ? 's' : ''}
-                      </span>
+                    {/* Sites */}
+                    <td className="p-4 align-top">
+                      {user.role === 'admin' ? (
+                        // Admins are site-scoped — show the exact sites they admin
+                        // so superadmins can see at a glance who's responsible for what.
+                        user.sites && user.sites.length > 0 ? (
+                          <div className="flex flex-wrap gap-1 max-w-sm">
+                            {user.sites.map((siteId) => (
+                              <span
+                                key={siteId}
+                                className="rounded bg-green-600/15 border border-green-600/40 text-green-400 text-xs font-mono px-1.5 py-0.5"
+                                title={`admin of ${siteId}`}
+                              >
+                                {siteId}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-sm italic">
+                            no sites assigned
+                          </span>
+                        )
+                      ) : user.role === 'superadmin' ? (
+                        <span className="text-muted-foreground text-sm italic">
+                          all sites (via superadmin)
+                        </span>
+                      ) : (
+                        <>
+                          <span className="text-foreground">{user.sites?.length || 0}</span>
+                          <span className="text-muted-foreground text-sm ml-1">
+                            site{user.sites?.length !== 1 ? 's' : ''}
+                          </span>
+                        </>
+                      )}
                     </td>
 
                     {/* Join Date */}

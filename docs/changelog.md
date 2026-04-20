@@ -11,6 +11,18 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ---
 
+## [Unreleased]
+
+### changed
+- **Three-role permission model** — `member` / `admin` / `superadmin` replaces the two-tier `user` / `admin` scheme. Superadmins retain platform-wide god-mode (user management, installer uploads, access to every site regardless of assignment). The new `admin` tier is site-scoped: site admins get elevated rights only on the sites in their `sites[]` — they can edit site config, delete machines, and manage display layouts without holding any platform-level powers. Members keep standard site-scoped access.
+- **User-management page redesigned** for the new model: role selector is now a three-option dropdown (with icons, colour, and inline descriptions of each role's capabilities); stats cards show per-role counts; admin rows display the specific sites each admin is responsible for (small pills, easy to scan). Self-demotion guard narrowed — superadmins are still blocked from self-demotion (platform-lockout risk), but admins can demote themselves since no cross-site powers are in play.
+- **Superadmin visual indicator** — small red "superadmin" Crown pill appears next to the user avatar on every authenticated page when signed in as a superadmin. Signals god-mode so routine site ops don't accidentally use elevated access.
+
+### migration
+- **Deploy order is load-bearing**: run `node scripts/migrate-roles.mjs --env=<dev|prod>` first, then `firebase deploy --only firestore:rules`, then the web deploy. The migration flips existing `role: 'user'` → `'member'` and `role: 'admin'` → `'superadmin'` idempotently; supports `--dry-run`. Existing admins become superadmins automatically (semantics preserved). The new site-scoped `admin` tier starts empty — superadmins promote members via the user-management page. Reversed deploy order would transiently lock current admins out of their sites until the migration runs.
+
+---
+
 ## [2.9.0] - 2026-04-18
 
 ### added
