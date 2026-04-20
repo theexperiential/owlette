@@ -15,6 +15,7 @@
 import { useEffect, useState } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { useDemoContext } from '@/contexts/DemoContext';
 
 export interface MonitorInfo {
   id: string;
@@ -208,6 +209,7 @@ export function useDisplayState(
 ): UseDisplayStateResult {
   const enabled = options?.enabled ?? true;
   const subscribeAssigned = options?.subscribeAssigned ?? true;
+  const demo = useDemoContext();
 
   // State is tagged with the target it belongs to so the async snapshot
   // callbacks can discard results for a prior (siteId, machineId) without the
@@ -223,8 +225,9 @@ export function useDisplayState(
   }));
 
   useEffect(() => {
-    if (!db || !siteId || !machineId || !enabled) {
+    if (!db || !siteId || !machineId || !enabled || demo) {
       // Nothing to subscribe to. The render path below handles these cases
+      // (including demo mode, which short-circuits with synthesized state)
       // without needing us to mutate state here. When `enabled` flips from
       // true -> false, the cleanup returned by the previous effect run tears
       // down the live subscriptions before this no-op body executes.
@@ -339,10 +342,27 @@ export function useDisplayState(
       unsubscribeProfile();
       if (unsubscribeAssigned) unsubscribeAssigned();
     };
-  }, [siteId, machineId, enabled, subscribeAssigned]);
+  }, [siteId, machineId, enabled, subscribeAssigned, demo]);
 
   // Derive the return value during render so the effect never has to
   // synchronously reset state.
+
+  // Demo route — return synthesized topology directly. Skip the live
+  // Firestore path entirely; the demo site/machine docs don't exist and
+  // would surface a permission error in the panel's loading state.
+  if (demo) {
+    if (!enabled || !machineId) {
+      return { profile: null, assigned: null, loading: false, error: null };
+    }
+    const { profile, assigned } = demo.getDisplayState(machineId);
+    return {
+      profile,
+      assigned: subscribeAssigned ? assigned : null,
+      loading: false,
+      error: null,
+    };
+  }
+
   if (!db) {
     return {
       profile: null,

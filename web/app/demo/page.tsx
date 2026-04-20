@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { LayoutGrid, List, Monitor, Cog, ChevronsUpDown, ChevronsDownUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Table, TableBody } from '@/components/ui/table';
 import { PageHeader } from '@/components/PageHeader';
 import { MetricsDetailPanel, type MetricType } from '@/components/charts';
+import { DisplayLayoutPanel } from '@/components/charts/DisplayLayoutPanel';
 import { MachineCardView } from '@/app/dashboard/components/MachineCardView';
 import { MachineRow, MemoizedTableHeader as ListViewTableHeader } from '@/app/dashboard/components/MachineListView';
 import { AddMachineButton } from '@/app/dashboard/components/AddMachineButton';
@@ -17,6 +18,7 @@ import {
   getDemoMachines,
   getDemoSparklineData,
   getDemoHistoricalData,
+  getDemoDisplayState,
 } from '@/lib/demo-data';
 
 type ViewType = 'card' | 'list';
@@ -33,6 +35,20 @@ const noopAsync = async () => {};
 const noop = () => {};
 
 export default function DemoPage() {
+  // Demo machine synthesis (`getDemoMachines()`) calls Math.random() and
+  // Date.now() — values that drift between SSR and client render. React 19
+  // discards the SSR DOM on hydration mismatch and re-renders fresh, which
+  // re-fires the wrapper's CSS fade-in. Gating the body on a post-mount flag
+  // makes SSR + initial CSR render identical (an empty shell), so the
+  // animation only plays once after hydration.
+  //
+  // The set-state-in-effect lint rule flags this pattern as cascading-render,
+  // but here that's exactly the point: the cascade is a single mount → render
+  // boundary, not a value-syncing loop.
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => setMounted(true), []);
+
   const machines = useMemo(() => getDemoMachines(), []);
   const [viewType, setViewType] = useState<ViewType>('list');
   const [statsExpanded, setStatsExpanded] = useState(false);
@@ -86,6 +102,7 @@ export default function DemoPage() {
     isDemo: true as const,
     getSparklineData: getDemoSparklineData,
     getHistoricalData: getDemoHistoricalData,
+    getDisplayState: getDemoDisplayState,
   }), []);
 
   return (
@@ -110,8 +127,10 @@ export default function DemoPage() {
           </div>
         </div>
 
-        {/* Main content */}
+        {/* Main content — gated on `mounted` so SSR returns an empty shell
+            (no random-data hydration mismatch, no double fade-in). */}
         <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
+         {mounted && (<>
           {/* Welcome + stats */}
           <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="flex-1">
@@ -155,16 +174,26 @@ export default function DemoPage() {
             </div>
           </div>
 
-          {/* Metrics Detail Panel */}
+          {/* Detail Panel — `display` opens the topology panel; everything
+              else opens the metrics panel. Mirrors the dashboard's split. */}
           {detailPanel && (
             <div className="mb-6">
-              <MetricsDetailPanel
-                machineId={detailPanel.machineId}
-                machineName={detailPanel.machineName}
-                siteId={DEMO_SITE_ID}
-                initialMetric={detailPanel.metric}
-                onClose={() => setDetailPanel(null)}
-              />
+              {detailPanel.metric === 'display' ? (
+                <DisplayLayoutPanel
+                  machineId={detailPanel.machineId}
+                  machineName={detailPanel.machineName}
+                  siteId={DEMO_SITE_ID}
+                  onClose={() => setDetailPanel(null)}
+                />
+              ) : (
+                <MetricsDetailPanel
+                  machineId={detailPanel.machineId}
+                  machineName={detailPanel.machineName}
+                  siteId={DEMO_SITE_ID}
+                  initialMetric={detailPanel.metric}
+                  onClose={() => setDetailPanel(null)}
+                />
+              )}
             </div>
           )}
 
@@ -288,6 +317,7 @@ export default function DemoPage() {
               </div>
             )}
           </div>
+         </>)}
         </main>
       </div>
     </DemoContext.Provider>
