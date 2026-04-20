@@ -86,7 +86,7 @@ export default function NotFound() {
   }, []);
 
   return (
-    <div className="relative min-h-[100dvh] flex flex-col items-center justify-center overflow-hidden">
+    <div className="relative min-h-[100dvh] flex flex-col items-center justify-center overflow-hidden pb-24">
       {/* Dot grid background */}
       <div className="absolute inset-0 dot-grid opacity-40" />
 
@@ -95,7 +95,7 @@ export default function NotFound() {
 
       {/* Radial glow behind the eye */}
       <div
-        className="absolute w-[600px] h-[600px] rounded-full blur-3xl opacity-30"
+        className="absolute w-[500px] h-[500px] rounded-full blur-3xl opacity-30"
         style={{
           background: 'radial-gradient(circle, oklch(0.70 0.14 30 / 0.4) 0%, oklch(0.72 0.16 55 / 0.15) 40%, transparent 70%)',
         }}
@@ -104,13 +104,13 @@ export default function NotFound() {
       {/* Content */}
       <div className="relative z-10 flex flex-col items-center text-center px-6">
         {/* The Eye */}
-        <div className="relative mb-10 animate-in fade-in zoom-in-50 duration-1000">
-          <OwletteEye size={180} className="drop-shadow-2xl" animated />
+        <div className="relative mb-5 animate-in fade-in zoom-in-50 duration-1000">
+          <OwletteEye size={110} className="drop-shadow-2xl" animated />
         </div>
 
         {/* 404 */}
         <h1
-          className={`font-mono text-[10rem] sm:text-[14rem] font-bold leading-none tracking-tighter mb-10 transition-all duration-100 ${
+          className={`font-mono text-[5.5rem] sm:text-[8.5rem] font-bold leading-none tracking-tighter mb-6 transition-all duration-100 ${
             glitch
               ? 'text-accent-coral skew-x-2 scale-x-[1.02]'
               : 'text-foreground/10'
@@ -125,17 +125,16 @@ export default function NotFound() {
         </h1>
 
         {/* One-liner */}
-        <p className="text-2xl sm:text-3xl text-muted-foreground font-light tracking-wide mb-20 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-300">
+        <p className="text-lg sm:text-xl text-muted-foreground font-light tracking-wide mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-300">
           all these pages will be lost in time...
           <br className="mb-0" />
-          <span className="inline-block mt-3">like tears in rain.</span>
+          <span className="inline-block mt-1.5">like tears in rain.</span>
         </p>
 
         {/* Single CTA */}
         <Button
           asChild
-          size="lg"
-          className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-semibold px-10 h-14 text-lg animate-in fade-in slide-in-from-bottom-6 duration-700 delay-500"
+          className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-semibold px-7 h-11 text-sm animate-in fade-in slide-in-from-bottom-6 duration-700 delay-500"
         >
           <Link href="/">go home</Link>
         </Button>
