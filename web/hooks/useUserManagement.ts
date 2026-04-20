@@ -116,16 +116,21 @@ export function useUserManagement() {
   );
 
   /**
-   * Get count of users by role
+   * Get count of users by role under the three-tier permission model.
+   * - superadmins: platform-wide god-mode
+   * - admins: site-scoped elevated tier (can edit site config on their assigned sites)
+   * - members: standard users with site-level access
    */
   const getUserCounts = useCallback(() => {
-    const adminCount = users.filter((u) => u.role === 'admin').length;
-    const userCount = users.filter((u) => u.role === 'member').length;
+    const superadmins = users.filter((u) => u.role === 'superadmin').length;
+    const admins = users.filter((u) => u.role === 'admin').length;
+    const members = users.filter((u) => u.role === 'member').length;
 
     return {
       total: users.length,
-      admins: adminCount,
-      users: userCount,
+      superadmins,
+      admins,
+      members,
     };
   }, [users]);
 

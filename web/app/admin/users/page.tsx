@@ -5,7 +5,7 @@ import { useUserManagement, type UserRole } from '@/hooks/useUserManagement';
 import type { FirestoreTs } from '@/hooks/useFirestore';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Users, Shield, ShieldAlert, Loader2, Settings, MoreVertical, UserCog, UserMinus, Trash2 } from 'lucide-react';
+import { Users, Shield, ShieldAlert, Crown, Loader2, Settings, MoreVertical, UserCog, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -25,6 +25,25 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+
+const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
+  member: 'standard access to assigned sites — view machines, dispatch commands, toggle per-machine settings.',
+  admin: 'site-scoped elevated tier — everything a member can do, plus delete machines, edit stored display layouts, and manage site webhooks/settings on assigned sites.',
+  superadmin: 'platform-wide god-mode — access every site, manage users and roles, upload installer versions, configure global settings. reserve for platform operators.',
+};
+
+const ROLE_LABELS: Record<UserRole, string> = {
+  member: 'member',
+  admin: 'admin',
+  superadmin: 'superadmin',
+};
 
 /**
  * User Management Page
@@ -55,36 +74,45 @@ export default function UserManagementPage() {
   };
 
   const handleOpenRoleChangeDialog = (userId: string, email: string, currentRole: UserRole) => {
-    // Prevent user from demoting themselves
-    if (userId === currentUser?.uid && currentRole === 'admin') {
-      toast.error('Cannot Demote Yourself', {
-        description: 'You cannot remove your own admin privileges.',
+    // Prevent self-demotion from superadmin — preserves the platform-admin guarantee
+    // so a lone superadmin can't accidentally lock themselves out of user management.
+    if (userId === currentUser?.uid && currentRole === 'superadmin') {
+      toast.error('cannot demote yourself', {
+        description: 'promote another superadmin first, then they can demote you.',
       });
       return;
     }
 
-    const newRole: UserRole = currentRole === 'admin' ? 'member' : 'admin';
-    setUserToChangeRole({ uid: userId, email, currentRole, newRole });
+    // newRole starts equal to currentRole; user picks a new value in the dialog.
+    setUserToChangeRole({ uid: userId, email, currentRole, newRole: currentRole });
     setRoleChangeDialogOpen(true);
+  };
+
+  const handleSelectNewRole = (role: UserRole) => {
+    setUserToChangeRole((prev) => (prev ? { ...prev, newRole: role } : prev));
   };
 
   const handleConfirmRoleChange = async () => {
     if (!userToChangeRole) return;
+    if (userToChangeRole.newRole === userToChangeRole.currentRole) {
+      // No-op — dialog shouldn't allow this state but guard anyway.
+      setRoleChangeDialogOpen(false);
+      setUserToChangeRole(null);
+      return;
+    }
 
     setUpdatingUser(userToChangeRole.uid);
     setRoleChangeDialogOpen(false);
 
-    const action = userToChangeRole.newRole === 'admin' ? 'promote' : 'demote';
-
     try {
       await updateUserRole(userToChangeRole.uid, userToChangeRole.newRole);
-      toast.success('Role Updated', {
-        description: `${userToChangeRole.email} has been ${action}d to ${userToChangeRole.newRole}.`,
+      toast.success('role updated', {
+        description: `${userToChangeRole.email} is now a ${ROLE_LABELS[userToChangeRole.newRole]}.`,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      toast.error('Update Failed', {
-        description: message || 'Failed to update user role.',
+      toast.error('update failed', {
+        description: message || 'failed to update user role.',
       });
     } finally {
       setUpdatingUser(null);
@@ -150,7 +178,7 @@ export default function UserManagementPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
         <div className="bg-card border border-border rounded-lg p-6">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-accent-cyan rounded-lg">
@@ -165,12 +193,24 @@ export default function UserManagementPage() {
 
         <div className="bg-card border border-border rounded-lg p-6">
           <div className="flex items-center gap-3">
+            <div className="p-3 bg-red-600 rounded-lg">
+              <Crown className="h-6 w-6 text-foreground" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-foreground">{counts.superadmins}</p>
+              <p className="text-sm text-muted-foreground">superadmins</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-card border border-border rounded-lg p-6">
+          <div className="flex items-center gap-3">
             <div className="p-3 bg-green-600 rounded-lg">
               <Shield className="h-6 w-6 text-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold text-foreground">{counts.admins}</p>
-              <p className="text-sm text-muted-foreground">administrators</p>
+              <p className="text-sm text-muted-foreground">site admins</p>
             </div>
           </div>
         </div>
@@ -181,8 +221,8 @@ export default function UserManagementPage() {
               <Users className="h-6 w-6 text-foreground" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-foreground">{counts.users}</p>
-              <p className="text-sm text-muted-foreground">regular users</p>
+              <p className="text-2xl font-bold text-foreground">{counts.members}</p>
+              <p className="text-sm text-muted-foreground">members</p>
             </div>
           </div>
         </div>
@@ -244,7 +284,12 @@ export default function UserManagementPage() {
 
                     {/* Role Badge */}
                     <td className="p-4">
-                      {user.role === 'admin' ? (
+                      {user.role === 'superadmin' ? (
+                        <Badge className="bg-red-600 flex items-center gap-1 w-fit">
+                          <Crown className="h-3 w-3" />
+                          superadmin
+                        </Badge>
+                      ) : user.role === 'admin' ? (
                         <Badge className="bg-green-600 flex items-center gap-1 w-fit">
                           <ShieldAlert className="h-3 w-3" />
                           admin
@@ -252,7 +297,7 @@ export default function UserManagementPage() {
                       ) : (
                         <Badge className="bg-secondary border border-border text-muted-foreground flex items-center gap-1 w-fit">
                           <Users className="h-3 w-3" />
-                          user
+                          member
                         </Badge>
                       )}
                     </td>
@@ -299,23 +344,18 @@ export default function UserManagementPage() {
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => handleOpenRoleChangeDialog(user.uid, user.email, user.role)}
-                              disabled={updatingUser === user.uid || user.uid === currentUser?.uid && user.role === 'admin'}
+                              disabled={updatingUser === user.uid || (user.uid === currentUser?.uid && user.role === 'superadmin')}
                               className="text-foreground hover:bg-accent cursor-pointer focus:bg-accent focus:text-foreground"
                             >
                               {updatingUser === user.uid ? (
                                 <>
                                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                  Updating...
-                                </>
-                              ) : user.role === 'admin' ? (
-                                <>
-                                  <UserMinus className="h-4 w-4 mr-2" />
-                                  demote to user
+                                  updating...
                                 </>
                               ) : (
                                 <>
                                   <UserCog className="h-4 w-4 mr-2" />
-                                  promote to admin
+                                  change role...
                                 </>
                               )}
                             </DropdownMenuItem>
@@ -351,12 +391,25 @@ export default function UserManagementPage() {
 
       {/* Info Box */}
       {!loading && !error && users.length > 0 && (
-        <div className="mt-6 bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-4">
-          <p className="text-accent-cyan text-sm">
-            <strong>Note:</strong> Admins have full access to the admin panel and can
-            manage users, upload installer versions, and configure system settings. Regular users
-            can only access the dashboard and their assigned sites.
-          </p>
+        <div className="mt-6 bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-4 space-y-2">
+          <div className="flex items-start gap-2 text-sm">
+            <Crown className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
+            <p className="text-accent-cyan">
+              <strong>superadmin:</strong> {ROLE_DESCRIPTIONS.superadmin}
+            </p>
+          </div>
+          <div className="flex items-start gap-2 text-sm">
+            <ShieldAlert className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
+            <p className="text-accent-cyan">
+              <strong>admin:</strong> {ROLE_DESCRIPTIONS.admin}
+            </p>
+          </div>
+          <div className="flex items-start gap-2 text-sm">
+            <Users className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
+            <p className="text-accent-cyan">
+              <strong>member:</strong> {ROLE_DESCRIPTIONS.member}
+            </p>
+          </div>
         </div>
       )}
 
@@ -379,24 +432,49 @@ export default function UserManagementPage() {
         <DialogContent className="border-border bg-card text-foreground">
           <DialogHeader>
             <DialogTitle className="text-foreground flex items-center gap-2">
-              {userToChangeRole?.newRole === 'admin' ? (
-                <UserCog className="h-5 w-5 text-accent-cyan" />
-              ) : (
-                <UserMinus className="h-5 w-5 text-muted-foreground" />
-              )}
-              {userToChangeRole?.newRole === 'admin' ? 'promote to admin' : 'demote to user'}
+              <UserCog className="h-5 w-5 text-accent-cyan" />
+              change role
             </DialogTitle>
             <DialogDescription className="text-foreground">
-              Are you sure you want to {userToChangeRole?.newRole === 'admin' ? 'promote' : 'demote'}{' '}
-              <strong className="text-foreground">{userToChangeRole?.email}</strong> to {userToChangeRole?.newRole}?
+              choose a new role for <strong className="text-foreground">{userToChangeRole?.email}</strong>. current role: <strong className="text-foreground">{userToChangeRole ? ROLE_LABELS[userToChangeRole.currentRole] : ''}</strong>.
             </DialogDescription>
           </DialogHeader>
-          <div className="bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-4 my-4">
-            <p className="text-accent-cyan text-sm">
-              {userToChangeRole?.newRole === 'admin'
-                ? 'Admins have full access to the admin panel and can manage users, upload installer versions, and configure system settings.'
-                : 'Regular users can only access the dashboard and their assigned sites.'}
-            </p>
+          <div className="my-4 space-y-3">
+            <Select
+              value={userToChangeRole?.newRole}
+              onValueChange={(v) => handleSelectNewRole(v as UserRole)}
+            >
+              <SelectTrigger className="w-full bg-secondary border-border text-foreground">
+                <SelectValue placeholder="select a role" />
+              </SelectTrigger>
+              <SelectContent className="bg-card border-border">
+                <SelectItem value="member" className="text-foreground focus:bg-accent focus:text-foreground">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-muted-foreground" />
+                    member
+                  </div>
+                </SelectItem>
+                <SelectItem value="admin" className="text-foreground focus:bg-accent focus:text-foreground">
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert className="h-4 w-4 text-green-500" />
+                    admin
+                  </div>
+                </SelectItem>
+                <SelectItem value="superadmin" className="text-foreground focus:bg-accent focus:text-foreground">
+                  <div className="flex items-center gap-2">
+                    <Crown className="h-4 w-4 text-red-500" />
+                    superadmin
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            {userToChangeRole && (
+              <div className="bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-4">
+                <p className="text-accent-cyan text-sm">
+                  {ROLE_DESCRIPTIONS[userToChangeRole.newRole]}
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter className="gap-2">
             <Button
@@ -408,19 +486,11 @@ export default function UserManagementPage() {
             </Button>
             <Button
               onClick={handleConfirmRoleChange}
+              disabled={!userToChangeRole || userToChangeRole.newRole === userToChangeRole.currentRole}
               className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             >
-              {userToChangeRole?.newRole === 'admin' ? (
-                <>
-                  <UserCog className="h-4 w-4 mr-2" />
-                  promote to admin
-                </>
-              ) : (
-                <>
-                  <UserMinus className="h-4 w-4 mr-2" />
-                  demote to user
-                </>
-              )}
+              <UserCog className="h-4 w-4 mr-2" />
+              save role
             </Button>
           </DialogFooter>
         </DialogContent>

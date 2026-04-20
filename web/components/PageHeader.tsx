@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { UserAvatar } from '@/components/UserAvatar';
-import { ArrowRight, ChevronDown, Settings, LogOut, Shield, Check, LayoutDashboard, Brain, Rocket, FolderSync, ScrollText, CircleHelp, Bug, BookOpen } from 'lucide-react';
+import { ArrowRight, ChevronDown, Settings, LogOut, Shield, Check, Crown, LayoutDashboard, Brain, Rocket, FolderSync, ScrollText, CircleHelp, Bug, BookOpen } from 'lucide-react';
 import { getUserShortName } from '@/lib/userUtils';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { ReportBugDialog } from '@/components/ReportBugDialog';
@@ -275,6 +275,17 @@ export function PageHeader({
                 <UserAvatar user={user} size="sm" />
                 {user?.displayName && (
                   <span className="text-sm text-foreground hidden lg:block">{getUserShortName(user)}</span>
+                )}
+                {/* Visible reminder when the signed-in user has platform god-mode,
+                    so destructive cross-site actions don't catch them off guard. */}
+                {isSuperadmin && (
+                  <span
+                    className="hidden sm:inline-flex items-center gap-1 rounded-full bg-red-600/15 border border-red-500/40 text-red-400 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 leading-none"
+                    aria-label="signed in as superadmin"
+                  >
+                    <Crown className="h-2.5 w-2.5" />
+                    superadmin
+                  </span>
                 )}
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground hidden sm:block" />
               </button>
