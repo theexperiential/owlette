@@ -99,7 +99,10 @@ export function PageHeader({
               <span className="text-muted-foreground/60 text-lg select-none">/</span>
               <DropdownMenu onOpenChange={handleMenuOpenChange}>
                 <DropdownMenuTrigger asChild>
-                  <button className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer truncate max-w-[200px] md:max-w-[320px]">
+                  <button
+                    data-testid="site-switcher-trigger"
+                    className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer truncate max-w-[200px] md:max-w-[320px]"
+                  >
                     <span className="truncate">{currentSiteName}</span>
                     <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
                   </button>
