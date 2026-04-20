@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useInstallerManagement } from '@/hooks/useInstallerManagement';
+import type { FirestoreTs } from '@/hooks/useFirestore';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -145,9 +146,12 @@ export default function InstallerVersionsPage() {
     }
   };
 
-  const formatDate = (timestamp: any) => {
+  const formatDate = (timestamp: FirestoreTs) => {
     if (!timestamp) return 'N/A';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const t = timestamp as { toDate?: () => Date } | null | undefined;
+    const date = t && typeof t.toDate === 'function'
+      ? t.toDate()
+      : new Date(timestamp as number | string | Date);
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',

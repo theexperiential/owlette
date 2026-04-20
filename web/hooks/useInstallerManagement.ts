@@ -208,21 +208,19 @@ export function useInstallerManagement() {
           throw new Error('Version not found');
         }
 
-        // Update the /latest document
+        // Update the /latest document (sparse — release_notes only when set)
         const latestRef = doc(db, 'installer_metadata', 'latest');
-        const latestData: any = {
+        const latestData: Omit<InstallerVersion, 'id' | 'is_latest'> = {
           version: versionData.version,
           download_url: versionData.download_url,
           file_size: versionData.file_size,
           release_date: versionData.release_date,
           checksum_sha256: versionData.checksum_sha256,
           uploaded_by: versionData.uploaded_by,
+          ...(versionData.release_notes !== undefined
+            ? { release_notes: versionData.release_notes }
+            : {}),
         };
-
-        // Only include release_notes if it exists
-        if (versionData.release_notes !== undefined) {
-          latestData.release_notes = versionData.release_notes;
-        }
 
         await setDoc(latestRef, latestData);
       } catch (err) {
@@ -293,10 +291,19 @@ export function useInstallerManagement() {
 
       return versions.filter((v) => {
         if (keepVersions.has(v.version)) return false;
-        // Keep if uploaded within retention window
-        const uploadDate = v.release_date?.toDate
-          ? v.release_date.toDate()
-          : new Date(v.release_date as any);
+        // Keep if uploaded within retention window. release_date is typed as
+        // Timestamp but can arrive as other shapes from cache rehydration /
+        // legacy writes — narrow structurally and fall through to new Date().
+        const rd = v.release_date as
+          | { toDate?: () => Date }
+          | number
+          | string
+          | Date
+          | null
+          | undefined;
+        const uploadDate = rd && typeof (rd as { toDate?: () => Date }).toDate === 'function'
+          ? (rd as { toDate: () => Date }).toDate()
+          : new Date(rd as number | string | Date);
         if (uploadDate > cutoff) return false;
         return true;
       });

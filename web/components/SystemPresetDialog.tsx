@@ -11,7 +11,6 @@ import { Loader2, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSystemPresets, type SystemPreset } from '@/hooks/useSystemPresets';
 import { useAuth } from '@/contexts/AuthContext';
-import { serverTimestamp } from 'firebase/firestore';
 
 /**
  * SystemPresetDialog Component
@@ -154,8 +153,9 @@ export default function SystemPresetDialog({
     setSaving(true);
 
     try {
-      // Build base preset data
-      const baseData: any = {
+      // Build base preset data (sparse — optional fields only included when set;
+      // Firestore doesn't accept undefined). `createdAt` is stamped by the hook.
+      const baseData: Omit<SystemPreset, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'> = {
         name,
         software_name: softwareName,
         category,
@@ -165,12 +165,10 @@ export default function SystemPresetDialog({
         is_owlette_agent: false,
         timeout_seconds: timeoutSeconds,
         order,
+        ...(description?.trim() ? { description: description.trim() } : {}),
+        ...(icon?.trim() ? { icon: icon.trim() } : {}),
+        ...(verifyPath?.trim() ? { verify_path: verifyPath.trim() } : {}),
       };
-
-      // Add optional fields only if they have values (Firestore doesn't accept undefined)
-      if (description?.trim()) baseData.description = description.trim();
-      if (icon?.trim()) baseData.icon = icon.trim();
-      if (verifyPath?.trim()) baseData.verify_path = verifyPath.trim();
 
       if (isEditMode && preset) {
         // Update existing preset
@@ -180,10 +178,9 @@ export default function SystemPresetDialog({
           description: `"${name}" has been updated successfully.`,
         });
       } else {
-        // Create new preset
+        // Create new preset (hook sets createdAt = serverTimestamp())
         await createPreset({
           ...baseData,
-          createdAt: serverTimestamp() as any,
           createdBy: user?.uid || 'unknown',
         });
 

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
-import { useDeploymentManager } from '@/hooks/useDeployments';
+import { useDeploymentManager, type Deployment, type DeploymentTarget } from '@/hooks/useDeployments';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -92,11 +92,11 @@ const DeploymentRow = React.memo(function DeploymentRow({
   siteTz,
   timeFormat,
 }: {
-  deployment: any;
+  deployment: Deployment;
   isSelected: boolean;
   onToggle: (id: string) => void;
-  onRetry: (deployment: any) => void;
-  onUninstall: (deployment: any) => void;
+  onRetry: (deployment: Deployment) => void;
+  onUninstall: (deployment: Deployment) => void;
   onDelete: (id: string) => void;
   onCancel: (deploymentId: string, machineId: string, installerName: string) => void;
   timeDisplayMode: 'user' | 'machine' | 'site';
@@ -104,8 +104,8 @@ const DeploymentRow = React.memo(function DeploymentRow({
   siteTz: string | undefined;
   timeFormat: '12h' | '24h';
 }) {
-  const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed' && t.error);
-  const errorMessages = failedTargets.map((t: any) => `${t.machineId}: ${t.error}`).join('\n');
+  const failedTargets = deployment.targets.filter((t: DeploymentTarget) => t.status === 'failed' && t.error);
+  const errorMessages = failedTargets.map((t: DeploymentTarget) => `${t.machineId}: ${t.error}`).join('\n');
 
   return (
     <div>
@@ -150,7 +150,7 @@ const DeploymentRow = React.memo(function DeploymentRow({
               </TooltipContent>
             </Tooltip>
             <DropdownMenuContent align="end" className="border-border bg-secondary">
-              {deployment.targets.some((t: any) => t.status === 'failed') && (
+              {deployment.targets.some((t: DeploymentTarget) => t.status === 'failed') && (
                 <DropdownMenuItem
                   onClick={(e) => {
                     e.stopPropagation();
@@ -214,7 +214,7 @@ const DeploymentRow = React.memo(function DeploymentRow({
             <div>
               <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">targets ({deployment.targets.length})</h4>
               <div className="space-y-1.5">
-                {deployment.targets.map((target: any) => (
+                {deployment.targets.map((target: DeploymentTarget) => (
                   <div key={target.machineId} className="flex items-center justify-between py-1.5 px-3 rounded border border-border/40 bg-background/50">
                     <span className="text-foreground text-sm select-text">{target.machineId}</span>
                     <div className="flex items-center gap-2">
@@ -303,16 +303,16 @@ export default function DeploymentsPage() {
     }
   };
 
-  const handleRetryDeployment = useCallback(async (deployment: any) => {
+  const handleRetryDeployment = useCallback(async (deployment: Deployment) => {
     try {
-      const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed');
+      const failedTargets = deployment.targets.filter((t: DeploymentTarget) => t.status === 'failed');
 
       if (failedTargets.length === 0) {
         toast.error('no failed targets to retry');
         return;
       }
 
-      const machineIds = failedTargets.map((t: any) => t.machineId);
+      const machineIds = failedTargets.map((t: DeploymentTarget) => t.machineId);
 
       await createDeployment({
         name: `${deployment.name} (Retry)`,
@@ -352,7 +352,7 @@ export default function DeploymentsPage() {
     setSelectedDeploymentId(prev => prev === id ? null : id);
   }, []);
 
-  const handleUninstallFromRow = useCallback((deployment: any) => {
+  const handleUninstallFromRow = useCallback((deployment: Deployment) => {
     setInitialSoftwareName(deployment.installer_name);
     setUninstallDeploymentId(deployment.id);
     setUninstallDialogOpen(true);

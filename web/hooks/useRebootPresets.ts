@@ -28,7 +28,8 @@ export interface RebootPreset {
   isBuiltIn: boolean;
   order: number;
   createdBy: string;
-  createdAt: Timestamp;
+  /** null for built-in presets that have no Firestore override (never persisted). */
+  createdAt: Timestamp | null;
   updatedAt?: Timestamp;
 }
 
@@ -105,7 +106,7 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
         isBuiltIn: true,
         order: i,
         createdBy: '',
-        createdAt: null as any,
+        createdAt: null,
       };
     });
 

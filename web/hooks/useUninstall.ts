@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { collection, doc, setDoc, getDoc, getDocs, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, getDocs, serverTimestamp, type FieldValue } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 interface Software {
@@ -12,6 +12,17 @@ interface Software {
   uninstall_command: string;
   installer_type: string;
   registry_key: string;
+}
+
+/** Uninstall command payload written to commands/pending. */
+interface UninstallCommand {
+  type: 'uninstall_software';
+  software_name: string;
+  uninstall_command: string;
+  installer_type: string;
+  verify_paths: string[];
+  timestamp: FieldValue;
+  deployment_id?: string;
 }
 
 /**
@@ -146,20 +157,17 @@ export function useUninstall() {
         const commandDoc = await getDoc(commandRef);
         const existingCommands = commandDoc.exists() ? commandDoc.data() : {};
 
-        // Add new uninstall command
-        const newCommand: any = {
+        // Add new uninstall command (deployment_id only when uninstalling
+        // from the deployment view — otherwise omitted; Firestore rejects undefined)
+        const newCommand: UninstallCommand = {
           type: 'uninstall_software',
           software_name: softwareDetails.name,
           uninstall_command: softwareDetails.uninstall_command,
           installer_type: softwareDetails.installer_type,
           verify_paths: softwareDetails.install_location ? [softwareDetails.install_location] : [],
           timestamp: serverTimestamp(),
+          ...(deploymentId ? { deployment_id: deploymentId } : {}),
         };
-
-        // Only include deployment_id if provided (when uninstalling from deployment view)
-        if (deploymentId) {
-          newCommand.deployment_id = deploymentId;
-        }
 
         console.log(`[useUninstall] Writing command to Firestore:`, newCommand);
 

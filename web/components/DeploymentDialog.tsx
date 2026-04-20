@@ -174,15 +174,15 @@ export default function DeploymentDialog({
       if (!templateCloseProcesses.includes(name)) templateCloseProcesses.push(name);
     });
 
-    const templateData: any = {
+    const templateData: Omit<DeploymentTemplate, 'id' | 'createdAt'> = {
       name: deploymentName,
       installer_name: installerName,
       installer_url: installerUrl,
       silent_flags: silentFlags,
       parallel_install: parallelInstall,
+      ...(verifyPath?.trim() ? { verify_path: verifyPath.trim() } : {}),
+      ...(templateCloseProcesses.length > 0 ? { close_processes: templateCloseProcesses } : {}),
     };
-    if (verifyPath?.trim()) templateData.verify_path = verifyPath.trim();
-    if (templateCloseProcesses.length > 0) templateData.close_processes = templateCloseProcesses;
 
     try {
       if (isTemplateSelected) {
@@ -278,18 +278,6 @@ export default function DeploymentDialog({
     setDeploying(true);
 
     try {
-      // Build deployment object
-      const deploymentData: any = {
-        name: effectiveName,
-        installer_name: installerName,
-        installer_url: installerUrl,
-        silent_flags: silentFlags,
-        parallel_install: parallelInstall,
-        targets: [],
-      };
-
-      if (verifyPath?.trim()) deploymentData.verify_path = verifyPath.trim();
-
       // Build close_processes and suppress_projects from UI selections
       const closeProcesses: string[] = [];
       const suppressProjects: string[] = [];
@@ -313,8 +301,18 @@ export default function DeploymentDialog({
         if (!closeProcesses.includes(name)) closeProcesses.push(name);
       });
 
-      if (closeProcesses.length > 0) deploymentData.close_processes = closeProcesses;
-      if (suppressProjects.length > 0) deploymentData.suppress_projects = suppressProjects;
+      // Build deployment object (sparse — only include optional fields when set)
+      const deploymentData: Omit<Deployment, 'id' | 'createdAt' | 'status'> = {
+        name: effectiveName,
+        installer_name: installerName,
+        installer_url: installerUrl,
+        silent_flags: silentFlags,
+        parallel_install: parallelInstall,
+        targets: [],
+        ...(verifyPath?.trim() ? { verify_path: verifyPath.trim() } : {}),
+        ...(closeProcesses.length > 0 ? { close_processes: closeProcesses } : {}),
+        ...(suppressProjects.length > 0 ? { suppress_projects: suppressProjects } : {}),
+      };
 
       await onCreateDeployment(
         deploymentData,

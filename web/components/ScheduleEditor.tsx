@@ -429,7 +429,7 @@ export default function ScheduleEditor({
 }: ScheduleEditorProps) {
   // Always show built-in presets, then append any custom presets from Firestore
   const builtInAsPresets = BUILT_IN_PRESETS.map((bp, i) => ({
-    id: `builtin-${i}`, ...bp, isBuiltIn: true, order: i, createdBy: '', createdAt: null as any,
+    id: `builtin-${i}`, ...bp, isBuiltIn: true, order: i, createdBy: '', createdAt: null,
   }));
   const customPresets = (presets || []).filter(p => !p.isBuiltIn);
   const displayPresets = [...builtInAsPresets, ...customPresets];

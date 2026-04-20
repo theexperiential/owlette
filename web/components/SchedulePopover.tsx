@@ -64,7 +64,7 @@ export default function SchedulePopover({
   const displayPresets = (presets && presets.length > 0)
     ? presets
     : BUILT_IN_PRESETS.map((bp, i) => ({
-        id: `builtin-${i}`, ...bp, isBuiltIn: true, order: i, createdBy: '', createdAt: null as any,
+        id: `builtin-${i}`, ...bp, isBuiltIn: true, order: i, createdBy: '', createdAt: null,
       }));
 
   return (

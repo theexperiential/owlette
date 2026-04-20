@@ -154,6 +154,22 @@ export interface Process {
   _optimisticPresetId?: string | null;
 }
 
+/**
+ * Shape of a process entry as it lives in the config doc (`config/{siteId}/machines/{machineId}`).
+ * This is narrower than `Process` (the enriched UI type) — the config doc only stores the
+ * persistent fields; runtime status/metrics are merged in from the status doc elsewhere.
+ * Indexed signature allows additional fields to pass through via spread without losing them.
+ */
+type ProcessConfig = {
+  id: string;
+  name?: string;
+  launch_mode?: LaunchMode;
+  autolaunch?: boolean;
+  schedules?: ScheduleBlock[] | null;
+  schedulePresetId?: string | null;
+  [key: string]: unknown;
+};
+
 export interface CpuProfile {
   id: string;              // "CPU0", "CPU1", ...
   model: string;
@@ -761,7 +777,7 @@ export function useMachines(siteId: string) {
 
   // Config doc overrides: authoritative launch_mode/schedules from config collection
   // This prevents the 10-second flicker on page load where status doc has stale values
-  const configOverridesRef = useRef<Record<string, Record<string, { launch_mode?: string; schedules?: any; schedulePresetId?: string | null }>>>({});
+  const configOverridesRef = useRef<Record<string, Record<string, { launch_mode?: string; schedules?: ScheduleBlock[] | null; schedulePresetId?: string | null }>>>({});
 
   // Reboot schedule lives in the config doc (not the status doc) so it can be
   // pushed down to the agent's local cache and survive Firestore disconnections.
@@ -779,7 +795,7 @@ export function useMachines(siteId: string) {
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
         if (data.processes && Array.isArray(data.processes)) {
-          const processMap: Record<string, { launch_mode?: string; schedules?: any; schedulePresetId?: string | null }> = {};
+          const processMap: Record<string, { launch_mode?: string; schedules?: ScheduleBlock[] | null; schedulePresetId?: string | null }> = {};
           for (const proc of data.processes) {
             if (proc.id) {
               processMap[proc.id] = {
@@ -967,7 +983,7 @@ export function useMachines(siteId: string) {
             // and avoid flicker when metrics uploads briefly lack launch_mode during write
             const prevProcessMap: Record<string, {
               launch_mode?: LaunchMode;
-              schedules?: any;
+              schedules?: ScheduleBlock[] | null;
               _optimisticLaunchMode?: LaunchMode;
               _optimisticAutolaunch?: boolean;
               _optimisticSchedules?: ScheduleBlock[] | null;
@@ -1220,7 +1236,7 @@ export function useMachines(siteId: string) {
           throw new Error('Invalid configuration structure');
         }
 
-        const updatedProcesses = config.processes.map((proc: any) =>
+        const updatedProcesses = config.processes.map((proc: ProcessConfig) =>
           proc.name === processName ? {
             ...proc,
             launch_mode: mode,
@@ -1294,7 +1310,7 @@ export function useMachines(siteId: string) {
       const cleanedData = { ...updatedData };
       if (cleanedData.schedules) {
         cleanedData.schedules = cleanedData.schedules.map(b => {
-          const clean: any = { days: b.days, ranges: b.ranges };
+          const clean: ScheduleBlock = { days: b.days, ranges: b.ranges };
           if (b.name) clean.name = b.name;
           if (b.colorIndex != null) clean.colorIndex = b.colorIndex;
           return clean;
@@ -1312,12 +1328,12 @@ export function useMachines(siteId: string) {
           throw new Error('Invalid configuration structure');
         }
 
-        const targetProcess = config.processes.find((proc: any) => proc.id === processId);
+        const targetProcess = config.processes.find((proc: ProcessConfig) => proc.id === processId);
         if (!targetProcess) {
           throw new Error('Process not found');
         }
 
-        const updatedProcesses = config.processes.map((proc: any) =>
+        const updatedProcesses = config.processes.map((proc: ProcessConfig) =>
           proc.id === processId ? { ...proc, ...cleanedData } : proc
         );
 
@@ -1385,12 +1401,12 @@ export function useMachines(siteId: string) {
           throw new Error('Invalid configuration structure');
         }
 
-        const targetProcess = config.processes.find((proc: any) => proc.id === processId);
+        const targetProcess = config.processes.find((proc: ProcessConfig) => proc.id === processId);
         if (!targetProcess) {
           throw new Error('Process not found');
         }
 
-        const updatedProcesses = config.processes.filter((proc: any) => proc.id !== processId);
+        const updatedProcesses = config.processes.filter((proc: ProcessConfig) => proc.id !== processId);
         transaction.update(configRef, { processes: updatedProcesses });
       });
 

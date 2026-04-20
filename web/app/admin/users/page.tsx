@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useUserManagement } from '@/hooks/useUserManagement';
+import type { FirestoreTs } from '@/hooks/useFirestore';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Users, Shield, ShieldAlert, Loader2, Settings, MoreVertical, UserCog, UserMinus, Trash2 } from 'lucide-react';
@@ -126,9 +127,12 @@ export default function UserManagementPage() {
     }
   };
 
-  const formatDate = (timestamp: any) => {
+  const formatDate = (timestamp: FirestoreTs) => {
     if (!timestamp) return 'N/A';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const t = timestamp as { toDate?: () => Date } | null | undefined;
+    const date = t && typeof t.toDate === 'function'
+      ? t.toDate()
+      : new Date(timestamp as number | string | Date);
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
