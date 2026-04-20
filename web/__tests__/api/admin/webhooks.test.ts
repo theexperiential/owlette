@@ -3,7 +3,7 @@
 import { NextRequest } from 'next/server';
 
 jest.mock('@/lib/withRateLimit', () => ({
-  withRateLimit: (handler: any) => handler,
+  withRateLimit: <H,>(handler: H): H => handler,
 }));
 jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },

@@ -1003,12 +1003,12 @@ export function useMachines(siteId: string) {
             }
 
             if (processesData && typeof processesData === 'object') {
-              processes = Object.entries(processesData)
-                .map(([id, processData]: [string, any]) => {
+              processes = (Object.entries(processesData) as Array<[string, Partial<Process>]>)
+                .map(([id, processData]) => {
                   const prev = prevProcessMap[id];
                   // Config doc is authoritative for launch_mode/schedules — override status doc values
                   const configOverride = configOverridesRef.current[doc.id]?.[id];
-                  const firestoreMode = configOverride?.launch_mode || processData.launch_mode || prev?.launch_mode || (processData.autolaunch ? 'always' : 'off') as LaunchMode;
+                  const firestoreMode: LaunchMode = (configOverride?.launch_mode as LaunchMode) || processData.launch_mode || prev?.launch_mode || (processData.autolaunch ? 'always' : 'off');
                   const firestoreSchedules = configOverride?.schedules ?? processData.schedules ?? prev?.schedules ?? null;
                   const firestorePresetId = configOverride?.schedulePresetId ?? processData.schedulePresetId ?? null;
 
@@ -1533,7 +1533,7 @@ export function useMachines(siteId: string) {
     }
   };
 
-  const sendMachineCommand = async (machineId: string, commandType: string, extraData: Record<string, any> = {}) => {
+  const sendMachineCommand = async (machineId: string, commandType: string, extraData: Record<string, unknown> = {}) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
     const commandId = `${commandType}_${Date.now()}`;

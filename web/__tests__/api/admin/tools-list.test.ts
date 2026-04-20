@@ -3,7 +3,7 @@
 import { NextRequest } from 'next/server';
 
 jest.mock('@/lib/withRateLimit', () => ({
-  withRateLimit: (handler: any) => handler,
+  withRateLimit: <H,>(handler: H): H => handler,
 }));
 
 jest.mock('@/lib/apiAuth.server', () => {
@@ -45,7 +45,7 @@ describe('GET /api/admin/tools', () => {
     expect(json.tools[0]).toHaveProperty('tier');
     expect(json.tools[0]).toHaveProperty('description');
     expect(json.tools[0]).toHaveProperty('parameters');
-    expect(json.tools.every((t: any) => [1, 2, 3].includes(t.tier))).toBe(true);
+    expect(json.tools.every((t: { tier: number }) => [1, 2, 3].includes(t.tier))).toBe(true);
   });
 
   it('filters by tier=1', async () => {
@@ -55,7 +55,7 @@ describe('GET /api/admin/tools', () => {
     expect(res.status).toBe(200);
     expect(json.count).toBeGreaterThan(0);
     expect(json.tools).toHaveLength(json.count);
-    expect(json.tools.every((t: any) => t.tier === 1)).toBe(true);
+    expect(json.tools.every((t: { tier: number }) => t.tier === 1)).toBe(true);
   });
 
   it('filters by tier=2 (includes tier 1)', async () => {
@@ -65,8 +65,8 @@ describe('GET /api/admin/tools', () => {
     expect(res.status).toBe(200);
     expect(json.count).toBeGreaterThan(0);
     expect(json.tools).toHaveLength(json.count);
-    expect(json.tools.every((t: any) => t.tier <= 2)).toBe(true);
-    expect(json.count).toBeGreaterThan(json.tools.filter((t: any) => t.tier === 1).length);
+    expect(json.tools.every((t: { tier: number }) => t.tier <= 2)).toBe(true);
+    expect(json.count).toBeGreaterThan(json.tools.filter((t: { tier: number }) => t.tier === 1).length);
   });
 
   it('clamps invalid tier values', async () => {
@@ -79,7 +79,7 @@ describe('GET /api/admin/tools', () => {
 
     const res2 = await GET(makeRequest('?tier=0'));
     const json2 = await res2.json();
-    expect(json2.tools.every((t: any) => t.tier === 1)).toBe(true); // clamped to 1
+    expect(json2.tools.every((t: { tier: number }) => t.tier === 1)).toBe(true); // clamped to 1
   });
 
   it('returns 401 when unauthorized', async () => {

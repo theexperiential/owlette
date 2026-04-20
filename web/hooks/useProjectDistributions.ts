@@ -109,7 +109,13 @@ export function useProjectDistributions(siteId: string) {
 
         // Check each completed command for distribution_id
         for (const [, commandData] of Object.entries(completedCommands)) {
-          const command = commandData as any;
+          const command = commandData as {
+            distribution_id?: string;
+            status?: 'pending' | 'completed' | 'failed' | 'downloading' | 'extracting';
+            progress?: number;
+            error?: string;
+            completedAt?: FirestoreTs;
+          };
 
           if (command.distribution_id) {
             const distribution = distributions.find(d => d.id === command.distribution_id);

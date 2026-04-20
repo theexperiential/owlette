@@ -1,9 +1,35 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, runTransaction, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, runTransaction, serverTimestamp, Timestamp, type FieldValue } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { firestoreTsToMs, type FirestoreTs } from './useFirestore';
+
+/** Install command payload written to machines/{id}/commands/pending. */
+interface InstallCommand {
+  type: 'install_software';
+  installer_url: string;
+  installer_name: string;
+  silent_flags: string;
+  deployment_id: string;
+  timestamp: FieldValue;
+  status: 'pending';
+  verify_path?: string;
+  close_processes?: string[];
+  suppress_projects?: string[];
+  parallel_install?: boolean;
+}
+
+/** Completed-command doc shape used when reconciling deployment/target status. */
+interface CompletedCommand {
+  type?: string;
+  status?: 'pending' | 'completed' | 'failed' | 'cancelled' | 'downloading' | 'installing' | 'closing_processes';
+  progress?: number;
+  error?: string;
+  deployment_id?: string;
+  distribution_id?: string;
+  completedAt?: FirestoreTs;
+}
 
 export interface DeploymentTemplate {
   id: string;
@@ -251,7 +277,7 @@ export function useDeployments(siteId: string) {
 
           // Check each completed command for deployment_id
           for (const [commandId, commandData] of Object.entries(completedCommands)) {
-            const command = commandData as any;
+            const command = commandData as CompletedCommand;
 
             // Skip if we've already processed this command TO COMPLETION
             // (but allow intermediate status updates like downloading/installing)
@@ -266,13 +292,7 @@ export function useDeployments(siteId: string) {
             // Skip commands completed before this hook mounted — they're already
             // reflected in the deployment docs and don't need re-processing.
             if (isTerminalState && command.completedAt) {
-              const completedMs = typeof command.completedAt === 'number'
-                ? command.completedAt
-                : command.completedAt?.seconds
-                  ? command.completedAt.seconds * 1000
-                  : command.completedAt?._seconds
-                    ? command.completedAt._seconds * 1000
-                    : 0;
+              const completedMs = firestoreTsToMs(command.completedAt);
               if (completedMs > 0 && completedMs < mountTimeRef.current) {
                 processedCommands.add(commandId);
                 continue;
@@ -470,7 +490,7 @@ export function useDeployments(siteId: string) {
     }));
 
     // Create deployment document (filter out undefined values)
-    const deploymentData: any = {
+    const deploymentData: Omit<Deployment, 'id' | 'createdAt'> & { createdAt: FieldValue } = {
       name: deployment.name,
       installer_name: deployment.installer_name,
       installer_url: deployment.installer_url,
@@ -478,21 +498,11 @@ export function useDeployments(siteId: string) {
       targets,
       createdAt: serverTimestamp(),
       status: 'pending',
+      ...(deployment.verify_path ? { verify_path: deployment.verify_path } : {}),
+      ...(deployment.close_processes?.length ? { close_processes: deployment.close_processes } : {}),
+      ...(deployment.suppress_projects?.length ? { suppress_projects: deployment.suppress_projects } : {}),
+      ...(deployment.parallel_install ? { parallel_install: true } : {}),
     };
-
-    // Only include optional fields if provided
-    if (deployment.verify_path) {
-      deploymentData.verify_path = deployment.verify_path;
-    }
-    if (deployment.close_processes?.length) {
-      deploymentData.close_processes = deployment.close_processes;
-    }
-    if (deployment.suppress_projects?.length) {
-      deploymentData.suppress_projects = deployment.suppress_projects;
-    }
-    if (deployment.parallel_install) {
-      deploymentData.parallel_install = true;
-    }
 
     console.log('[createDeployment] Creating deployment document...', { deploymentId, deploymentData });
     await setDoc(deploymentRef, deploymentData);
@@ -507,7 +517,7 @@ export function useDeployments(siteId: string) {
       const commandId = `install_${sanitizedDeploymentId}_${sanitizedMachineId}_${Date.now()}`;
       const commandRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
 
-      const commandData: any = {
+      const commandData: InstallCommand = {
         type: 'install_software',
         installer_url: deployment.installer_url,
         installer_name: deployment.installer_name,
@@ -515,22 +525,11 @@ export function useDeployments(siteId: string) {
         deployment_id: deploymentId,
         timestamp: serverTimestamp(),
         status: 'pending',
+        ...(deployment.verify_path ? { verify_path: deployment.verify_path } : {}),
+        ...(deployment.close_processes?.length ? { close_processes: deployment.close_processes } : {}),
+        ...(deployment.suppress_projects?.length ? { suppress_projects: deployment.suppress_projects } : {}),
+        ...(deployment.parallel_install ? { parallel_install: true } : {}),
       };
-
-      // Only include optional fields if provided
-      if (deployment.verify_path) {
-        commandData.verify_path = deployment.verify_path;
-      }
-      if (deployment.close_processes?.length) {
-        commandData.close_processes = deployment.close_processes;
-      }
-      if (deployment.suppress_projects?.length) {
-        // Filter suppress_projects to only include IDs that exist on this specific machine
-        commandData.suppress_projects = deployment.suppress_projects;
-      }
-      if (deployment.parallel_install) {
-        commandData.parallel_install = true;
-      }
 
       console.log('[createDeployment] Writing command to machine:', { machineId, commandId, commandPath: `sites/${siteId}/machines/${machineId}/commands/pending` });
       await setDoc(commandRef, {
@@ -584,7 +583,7 @@ export function useDeployments(siteId: string) {
         const targets = deploymentData.targets || [];
 
         // Find and update the target's status to 'cancelled'
-        const updatedTargets = targets.map((target: any) => {
+        const updatedTargets = (targets as DeploymentTarget[]).map((target) => {
           if (target.machineId === machineId) {
             return {
               ...target,

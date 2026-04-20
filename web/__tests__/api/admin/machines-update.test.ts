@@ -3,7 +3,7 @@
 import { NextRequest } from 'next/server';
 
 jest.mock('@/lib/withRateLimit', () => ({
-  withRateLimit: (handler: any) => handler,
+  withRateLimit: <H,>(handler: H): H => handler,
 }));
 jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -27,7 +27,7 @@ const { ApiAuthError } = jest.requireMock('@/lib/apiAuth.server');
 
 const mockRequireAdminWithSiteAccess = jest.fn().mockResolvedValue({ userId: 'test-admin' });
 jest.mock('@/lib/apiHelpers.server', () => ({
-  requireAdminWithSiteAccess: (...args: any[]) => mockRequireAdminWithSiteAccess(...args),
+  requireAdminWithSiteAccess: (...args: unknown[]) => mockRequireAdminWithSiteAccess(...args),
 }));
 
 const mockGet = jest.fn();

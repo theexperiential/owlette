@@ -39,7 +39,7 @@ jest.mock('@/lib/firebase-admin', () => ({
 
 const mockTestWebhook = jest.fn();
 jest.mock('@/lib/webhookSender.server', () => ({
-  testWebhook: (...args: any[]) => mockTestWebhook(...args),
+  testWebhook: (...args: unknown[]) => mockTestWebhook(...args),
 }));
 
 import { POST } from '@/app/api/webhooks/test/route';

@@ -9,14 +9,14 @@ import {
 import { createMockRequest } from '../helpers/utils';
 
 // --- jest.mock() calls (hoisted by Jest — must be top-level) ---
-jest.mock('@/lib/withRateLimit', () => ({ withRateLimit: (h: any) => h }));
+jest.mock('@/lib/withRateLimit', () => ({ withRateLimit: <H,>(h: H): H => h }));
 jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   __esModule: true,
 }));
 jest.mock('@/lib/apiHelpers.server', () => ({
-  requireAdminWithSiteAccess: (...a: any[]) => mocks.requireAdmin(...a),
-  getRouteParam: jest.fn((req: any, idx: number) => {
+  requireAdminWithSiteAccess: (...a: unknown[]) => mocks.requireAdmin(...a),
+  getRouteParam: jest.fn((req: { url: string }, idx: number) => {
     const s = new URL(req.url).pathname.split('/').filter(Boolean);
     return s[idx];
   }),
@@ -189,7 +189,7 @@ describe('POST /api/admin/deployments', () => {
 
     // First call = deployment doc set, subsequent calls = command sets (with merge)
     const mergeCalls = mocks.set.mock.calls.filter(
-      (call: any[]) => call[1]?.merge === true
+      (call: unknown[]) => (call[1] as { merge?: boolean })?.merge === true
     );
     expect(mergeCalls).toHaveLength(2); // one per machine
 

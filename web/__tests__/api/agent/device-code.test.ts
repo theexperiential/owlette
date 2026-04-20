@@ -2,7 +2,7 @@
 import { NextRequest } from 'next/server';
 
 jest.mock('@/lib/withRateLimit', () => ({
-  withRateLimit: (handler: any) => handler,
+  withRateLimit: <H,>(handler: H): H => handler,
 }));
 
 jest.mock('@/lib/logger', () => ({
@@ -36,8 +36,8 @@ jest.mock('@/lib/apiAuth.server', () => {
     }
   }
   return {
-    requireSession: (...args: any[]) => mockRequireSession(...args),
-    assertUserHasSiteAccess: (...args: any[]) =>
+    requireSession: (...args: unknown[]) => mockRequireSession(...args),
+    assertUserHasSiteAccess: (...args: unknown[]) =>
       mockAssertUserHasSiteAccess(...args),
     ApiAuthError: _ApiAuthError,
   };
@@ -63,13 +63,13 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
     collection: (_name: string) => ({
       doc: (_id: string) => mockDocRef,
-      where: (..._args: any[]) => ({
+      where: (..._args: unknown[]) => ({
         limit: (_n: number) => ({
           get: mockWhereGet,
         }),
       }),
     }),
-    runTransaction: (fn: any) => mockRunTransaction(fn),
+    runTransaction: (fn: (tx: unknown) => Promise<unknown>) => mockRunTransaction(fn),
   }),
   getAdminAuth: () => ({
     createCustomToken: mockCreateCustomToken,
@@ -83,7 +83,7 @@ import { POST as authorizePOST } from '@/app/api/agent/auth/device-code/authoriz
 
 function makeRequest(
   path: string,
-  body: Record<string, any>,
+  body: Record<string, unknown>,
 ): NextRequest {
   return new NextRequest(new URL(`http://localhost${path}`), {
     method: 'POST',
@@ -147,7 +147,7 @@ describe('POST /api/agent/auth/device-code/poll', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockRunTransaction.mockImplementation(async (fn: any) =>
+    mockRunTransaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
       fn(mockTransaction),
     );
   });
@@ -270,7 +270,7 @@ describe('POST /api/agent/auth/device-code/authorize', () => {
       siteId: 'site-1',
       siteData: {},
     });
-    mockRunTransaction.mockImplementation(async (fn: any) =>
+    mockRunTransaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
       fn(mockTransaction),
     );
     process.env.NEXT_PUBLIC_FIREBASE_API_KEY = 'test-api-key';

@@ -14,7 +14,7 @@ jest.mock('@/lib/firebase-admin', () => ({
 
 // Mock global fetch
 const mockFetch = jest.fn();
-global.fetch = mockFetch as any;
+global.fetch = mockFetch as unknown as typeof fetch;
 
 import { fireWebhooks, testWebhook } from '@/lib/webhookSender.server';
 import crypto from 'crypto';

@@ -8,14 +8,14 @@ import {
 import { createMockRequest } from '../helpers/utils';
 
 // --- jest.mock() calls (hoisted by Jest — must be top-level) ---
-jest.mock('@/lib/withRateLimit', () => ({ withRateLimit: (h: any) => h }));
+jest.mock('@/lib/withRateLimit', () => ({ withRateLimit: <H,>(h: H): H => h }));
 jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   __esModule: true,
 }));
 jest.mock('@/lib/apiHelpers.server', () => ({
-  requireAdminWithSiteAccess: (...a: any[]) => mocks.requireAdmin(...a),
-  getRouteParam: jest.fn((req: any, idx: number) => {
+  requireAdminWithSiteAccess: (...a: unknown[]) => mocks.requireAdmin(...a),
+  getRouteParam: jest.fn((req: { url: string }, idx: number) => {
     const s = new URL(req.url).pathname.split('/').filter(Boolean);
     return s[idx];
   }),
@@ -62,7 +62,7 @@ describe('POST /api/admin/deployments/[deploymentId]/cancel', () => {
 
     // Verify cancel_installation command was sent via set with merge
     const mergeCalls = mocks.set.mock.calls.filter(
-      (call: any[]) => call[1]?.merge === true
+      (call: unknown[]) => (call[1] as { merge?: boolean })?.merge === true
     );
     expect(mergeCalls).toHaveLength(1);
 
@@ -75,14 +75,14 @@ describe('POST /api/admin/deployments/[deploymentId]/cancel', () => {
     // Verify target status updated
     const updateCall = mocks.update.mock.calls[0][0];
     const cancelledTarget = updateCall.targets.find(
-      (t: any) => t.machineId === 'machine-1'
+      (t: { machineId: string }) => t.machineId === 'machine-1'
     );
     expect(cancelledTarget.status).toBe('cancelled');
     expect(cancelledTarget.cancelledAt).toBeDefined();
 
     // Other targets unchanged — deployment stays in_progress (not all terminal)
     const otherTarget = updateCall.targets.find(
-      (t: any) => t.machineId === 'machine-2'
+      (t: { machineId: string }) => t.machineId === 'machine-2'
     );
     expect(otherTarget.status).toBe('pending');
     expect(updateCall.status).toBeUndefined(); // not all terminal yet

@@ -9,14 +9,14 @@ import {
 import { createMockRequest } from '../helpers/utils';
 
 // --- jest.mock() calls (hoisted by Jest — must be top-level) ---
-jest.mock('@/lib/withRateLimit', () => ({ withRateLimit: (h: any) => h }));
+jest.mock('@/lib/withRateLimit', () => ({ withRateLimit: <H,>(h: H): H => h }));
 jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   __esModule: true,
 }));
 jest.mock('@/lib/apiHelpers.server', () => ({
-  requireAdminWithSiteAccess: (...a: any[]) => mocks.requireAdmin(...a),
-  getRouteParam: jest.fn((req: any, idx: number) => {
+  requireAdminWithSiteAccess: (...a: unknown[]) => mocks.requireAdmin(...a),
+  getRouteParam: jest.fn((req: { url: string }, idx: number) => {
     const s = new URL(req.url).pathname.split('/').filter(Boolean);
     return s[idx];
   }),

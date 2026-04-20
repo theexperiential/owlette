@@ -3,7 +3,7 @@
 import { NextRequest } from 'next/server';
 
 jest.mock('@/lib/withRateLimit', () => ({
-  withRateLimit: (handler: any) => handler,
+  withRateLimit: <H,>(handler: H): H => handler,
 }));
 jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -12,8 +12,8 @@ jest.mock('@/lib/logger', () => ({
 
 const mockRequireAdminWithSiteAccess = jest.fn().mockResolvedValue({ userId: 'test-admin' });
 jest.mock('@/lib/apiHelpers.server', () => ({
-  requireAdminWithSiteAccess: (...args: any[]) => mockRequireAdminWithSiteAccess(...args),
-  getRouteParam: jest.fn((req: any, idx: number) => {
+  requireAdminWithSiteAccess: (...args: unknown[]) => mockRequireAdminWithSiteAccess(...args),
+  getRouteParam: jest.fn((req: { url: string }, idx: number) => {
     const segments = new URL(req.url).pathname.split('/').filter(Boolean);
     return segments[idx];
   }),
@@ -50,7 +50,7 @@ jest.mock('@/lib/firebase-admin', () => ({
 
 const mockWithProcessConfig = jest.fn();
 jest.mock('@/lib/processConfig.server', () => ({
-  withProcessConfig: (...args: any[]) => mockWithProcessConfig(...args),
+  withProcessConfig: (...args: unknown[]) => mockWithProcessConfig(...args),
   ProcessConfigError: class extends Error {
     status: number;
     constructor(s: number, m: string) {

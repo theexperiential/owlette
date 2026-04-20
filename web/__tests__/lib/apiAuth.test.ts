@@ -5,7 +5,7 @@ import { createHash } from 'crypto';
 
 const mockGetSession = jest.fn();
 jest.mock('@/lib/sessionManager.server', () => ({
-  getSessionFromRequest: (...args: any[]) => mockGetSession(...args),
+  getSessionFromRequest: (...args: unknown[]) => mockGetSession(...args),
 }));
 
 const mockVerifyIdToken = jest.fn();
@@ -48,7 +48,7 @@ import {
 } from '@/lib/apiAuth.server';
 
 function makeRequest(url = 'http://localhost/test', init?: RequestInit) {
-  return new NextRequest(new URL(url), init as any);
+  return new NextRequest(new URL(url), init as unknown as ConstructorParameters<typeof NextRequest>[1]);
 }
 
 function validSession(overrides = {}) {

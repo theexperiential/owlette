@@ -9,8 +9,8 @@
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
 jest.mock('ai', () => ({
-  tool: jest.fn((opts: any) => opts),
-  jsonSchema: jest.fn((s: any) => s),
+  tool: jest.fn((opts: unknown) => opts),
+  jsonSchema: jest.fn((s: unknown) => s),
 }));
 
 jest.mock('@/lib/llm-encryption.server', () => ({
@@ -31,11 +31,11 @@ function createMockDb() {
   };
 
   const pendingDoc = {
-    set: jest.fn<Promise<void>, [data: Record<string, any>, options?: any]>(async () => {}),
-    update: jest.fn<Promise<void>, [data: Record<string, any>]>(async () => {}),
+    set: jest.fn<Promise<void>, [data: Record<string, unknown>, options?: unknown]>(async () => {}),
+    update: jest.fn<Promise<void>, [data: Record<string, unknown>]>(async () => {}),
   };
 
-  function buildDoc(): any {
+  function buildDoc(): Record<string, unknown> {
     return {
       get: jest.fn(),
       set: jest.fn(),
@@ -56,7 +56,7 @@ function createMockDb() {
   }
 
   return {
-    db: { collection: jest.fn(() => ({ doc: jest.fn(() => buildDoc()) })) } as any,
+    db: { collection: jest.fn(() => ({ doc: jest.fn(() => buildDoc()) })) } as unknown as FirebaseFirestore.Firestore,
     pendingDoc,
     completedDoc,
   };
@@ -160,7 +160,7 @@ describe('executeToolOnAgent', () => {
 
     await executeToolOnAgent(db, 's1', 'm1', 'get_running_processes', { name_filter: 'chrome', limit: 10 }, 'c1');
 
-    const written = pendingDoc.set.mock.calls[0][0];
+    const written = pendingDoc.set.mock.calls[0][0] as Record<string, { tool_params: Record<string, unknown> }>;
     const cmdId = Object.keys(written)[0];
     expect(written[cmdId].tool_params).toEqual({ name_filter: 'chrome', limit: 10 });
   });
@@ -200,7 +200,7 @@ describe('executeExistingCommand', () => {
 
 describe('buildExecutableTools', () => {
   it('creates an executable tool for each definition', () => {
-    const tools = buildExecutableTools({} as any, 's1', 'm1', 'c1', allTools);
+    const tools = buildExecutableTools({} as unknown as FirebaseFirestore.Firestore, 's1', 'm1', 'c1', allTools);
 
     expect(Object.keys(tools)).toHaveLength(allTools.length);
     for (const def of allTools) {
@@ -210,7 +210,7 @@ describe('buildExecutableTools', () => {
   });
 
   it('site mode creates tools for fan-out execution', () => {
-    const tools = buildExecutableTools({} as any, 's1', '', 'c1', allTools, true, ['m1', 'm2']);
+    const tools = buildExecutableTools({} as unknown as FirebaseFirestore.Firestore, 's1', '', 'c1', allTools, true, ['m1', 'm2']);
     expect(Object.keys(tools)).toHaveLength(allTools.length);
   });
 });

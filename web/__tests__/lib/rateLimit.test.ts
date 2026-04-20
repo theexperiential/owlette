@@ -1,6 +1,7 @@
 /** @jest-environment node */
 
 import { NextRequest } from 'next/server';
+import type { Ratelimit } from '@upstash/ratelimit';
 import { getClientIp, checkRateLimit, getRateLimitHeaders } from '@/lib/rateLimit';
 
 describe('getClientIp', () => {
@@ -56,7 +57,7 @@ describe('checkRateLimit', () => {
         reset: Date.now() + 60000,
       }),
     };
-    const result = await checkRateLimit(mockLimiter as any, 'redis-success');
+    const result = await checkRateLimit(mockLimiter as unknown as Ratelimit, 'redis-success');
     expect(result.success).toBe(true);
     expect(result.limit).toBe(10);
     expect(result.remaining).toBe(9);
@@ -74,7 +75,7 @@ describe('checkRateLimit', () => {
         reset: resetTime,
       }),
     };
-    const result = await checkRateLimit(mockLimiter as any, 'redis-denied');
+    const result = await checkRateLimit(mockLimiter as unknown as Ratelimit, 'redis-denied');
     expect(result.success).toBe(false);
     expect(result.retryAfter).toBeGreaterThan(0);
     expect(result.remaining).toBe(0);
@@ -84,7 +85,7 @@ describe('checkRateLimit', () => {
     const mockLimiter = {
       limit: jest.fn().mockRejectedValue(new Error('Redis connection failed')),
     };
-    const result = await checkRateLimit(mockLimiter as any, 'redis-error-fallback');
+    const result = await checkRateLimit(mockLimiter as unknown as Ratelimit, 'redis-error-fallback');
     expect(result.success).toBe(true);
   });
 });
