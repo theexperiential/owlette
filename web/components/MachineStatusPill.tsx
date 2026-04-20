@@ -55,11 +55,10 @@ export function MachineStatusPill({
     return () => clearInterval(interval);
   }, [isActive]);
 
-  // Optimistic cancelling state — clears once parent flips rebooting/shuttingDown back to false
-  const [cancelling, setCancelling] = useState(false);
-  useEffect(() => {
-    if (!isActive) setCancelling(false);
-  }, [isActive]);
+  // Optimistic cancelling state — derived so it auto-clears when parent flips
+  // rebooting/shuttingDown back to false (no effect needed).
+  const [userCancelling, setUserCancelling] = useState(false);
+  const cancelling = isActive && userCancelling;
 
   // Idle state: original online/offline pill, no interactivity
   if (!isActive) {
@@ -110,11 +109,11 @@ export function MachineStatusPill({
   // Clickable countdown with hover swap
   const handleClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    setCancelling(true);
+    setUserCancelling(true);
     try {
       await onCancel!();
     } catch {
-      setCancelling(false);
+      setUserCancelling(false);
     }
   };
 

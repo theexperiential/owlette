@@ -15,7 +15,6 @@
  * Used by: Dashboard page for card view display
  */
 
-import { useMemo } from 'react';
 import { useMinuteTick } from '@/hooks/useMinuteTick';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';

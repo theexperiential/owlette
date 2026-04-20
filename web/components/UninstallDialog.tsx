@@ -53,7 +53,11 @@ export default function UninstallDialog({
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
 
-  // Auto-select all online machines when dialog opens and reset filter when it closes
+  // Auto-select all online machines when dialog opens and reset filter when it closes.
+  // Intentionally omits `onlineMachines` (array identity changes on every render) and
+  // `selectedMachines` (would retrigger the auto-select after user manually deselects).
+  // Gating on `onlineMachines.length` instead gives us "fire when set of online machines
+  // changes size" without the identity churn.
   useEffect(() => {
     if (open && onlineMachines.length > 0 && selectedMachines.size === 0) {
       setSelectedMachines(new Set(onlineMachines.map(m => m.machineId)));
@@ -62,7 +66,8 @@ export default function UninstallDialog({
     if (!open) {
       setFilterText('');
     }
-  }, [open, onlineMachines.length]); // Only run when dialog opens or online machines change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, onlineMachines.length]);
 
   // Fetch installed software from selected machines
   useEffect(() => {
@@ -115,7 +120,11 @@ export default function UninstallDialog({
     };
 
     fetchSoftware();
-  }, [open, selectedMachines, siteId]); // Removed 'machines' to prevent infinite loop
+    // `machines` intentionally omitted: it's a Firestore-snapshot array whose identity
+    // changes on every heartbeat (~10s), which would refetch the software list
+    // continuously. We only need to refetch when the selected set changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedMachines, siteId]);
 
   // Auto-select software and set filter if initialSoftwareName matches
   useEffect(() => {

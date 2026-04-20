@@ -54,7 +54,7 @@ export default function DemoPage() {
       setStatsExpanded(true);
       return new Set(machines.map(m => m.machineId));
     });
-  }, []);
+  }, [machines]);
 
   const toggleMachineExpanded = useCallback((machineId: string) => {
     setExpandedMachineIds(prev => {
@@ -74,7 +74,7 @@ export default function DemoPage() {
       machineName: machine?.machineId || machineId,
       metric,
     });
-  }, []);
+  }, [machines]);
 
   const sites = useMemo(() => [DEMO_SITE], []);
   const onlineMachines = machines.filter(m => m.online).length;

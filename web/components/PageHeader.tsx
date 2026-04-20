@@ -13,6 +13,16 @@ import { ReportBugDialog } from '@/components/ReportBugDialog';
 
 const MENU_SURFACE = 'border-border bg-secondary/85 backdrop-blur-sm shadow-2xl shadow-black/50 ring-1 ring-white/10';
 
+const FEEDBACK_LABELS = [
+  'report a bug',
+  'share feedback',
+  'tell us how terrible we\'re doing',
+  'yell into the void',
+  'file a complaint',
+  'it\'s not you, it\'s us',
+  'we can take it',
+];
+
 interface Site {
   id: string;
   name: string;
@@ -51,16 +61,6 @@ export function PageHeader({
   const handleMenuOpenChange = (open: boolean) => {
     setOpenMenuCount((n) => Math.max(0, open ? n + 1 : n - 1));
   };
-
-  const FEEDBACK_LABELS = [
-    'report a bug',
-    'share feedback',
-    'tell us how terrible we\'re doing',
-    'yell into the void',
-    'file a complaint',
-    'it\'s not you, it\'s us',
-    'we can take it',
-  ];
 
   useEffect(() => {
     if (!helpMenuOpen) return;

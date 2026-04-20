@@ -15,6 +15,9 @@ const RANDOM_EMOJIS = [
 ];
 
 export function LandingFooter() {
+  // Server Component — Math.random() runs once per server render and is serialized
+  // into HTML. No hydration mismatch is possible (the client never re-runs this).
+  // eslint-disable-next-line react-hooks/purity
   const emoji = RANDOM_EMOJIS[Math.floor(Math.random() * RANDOM_EMOJIS.length)];
 
   return (

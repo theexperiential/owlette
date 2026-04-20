@@ -173,8 +173,11 @@ export function useDeployments(siteId: string) {
   const processedCommandsRef = useRef<Set<string>>(new Set());
   // Track retry counts for commands that fail — give up after 3 attempts
   const commandRetriesRef = useRef<Map<string, number>>(new Map());
-  // Skip commands completed before this hook mounted (prevents re-processing old history)
-  const mountTimeRef = useRef<number>(Date.now());
+  // Skip commands completed before this hook mounted (prevents re-processing old history).
+  // useState initializer runs exactly once per mount and is explicitly allowed to be
+  // impure by React's rules — captures the mount timestamp without the purity lint hit
+  // that useRef(Date.now()) or useMemo(() => Date.now()) trips.
+  const [mountTime] = useState(() => Date.now());
 
   useEffect(() => {
     if (!db) {
@@ -293,7 +296,7 @@ export function useDeployments(siteId: string) {
             // reflected in the deployment docs and don't need re-processing.
             if (isTerminalState && command.completedAt) {
               const completedMs = firestoreTsToMs(command.completedAt);
-              if (completedMs > 0 && completedMs < mountTimeRef.current) {
+              if (completedMs > 0 && completedMs < mountTime) {
                 processedCommands.add(commandId);
                 continue;
               }

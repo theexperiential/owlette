@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
@@ -44,33 +44,7 @@ export default function TokensPage() {
   const [tokenToRevoke, setTokenToRevoke] = useState<TokenInfo | null>(null);
   const [isRevoking, setIsRevoking] = useState(false);
 
-  // Fetch tokens when site changes
-  useEffect(() => {
-    if (selectedSiteId) {
-      fetchTokens();
-    } else {
-      setTokens([]);
-    }
-  }, [selectedSiteId]);
-
-  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
-  useEffect(() => {
-    if (sites.length > 0 && !selectedSiteId) {
-      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
-      if (savedSite && sites.find(s => s.id === savedSite)) {
-        setSelectedSiteId(savedSite);
-      } else {
-        setSelectedSiteId(sites[0].id);
-      }
-    }
-  }, [sites, selectedSiteId, lastSiteId]);
-
-  const handleSiteChange = (siteId: string) => {
-    setSelectedSiteId(siteId);
-    updateLastSite(siteId);
-  };
-
-  const fetchTokens = async () => {
+  const fetchTokens = useCallback(async () => {
     if (!selectedSiteId) return;
 
     setLoading(true);
@@ -91,6 +65,32 @@ export default function TokensPage() {
     } finally {
       setLoading(false);
     }
+  }, [selectedSiteId]);
+
+  // Fetch tokens when site changes
+  useEffect(() => {
+    if (selectedSiteId) {
+      fetchTokens();
+    } else {
+      setTokens([]);
+    }
+  }, [selectedSiteId, fetchTokens]);
+
+  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
+  useEffect(() => {
+    if (sites.length > 0 && !selectedSiteId) {
+      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
+      if (savedSite && sites.find(s => s.id === savedSite)) {
+        setSelectedSiteId(savedSite);
+      } else {
+        setSelectedSiteId(sites[0].id);
+      }
+    }
+  }, [sites, selectedSiteId, lastSiteId]);
+
+  const handleSiteChange = (siteId: string) => {
+    setSelectedSiteId(siteId);
+    updateLastSite(siteId);
   };
 
   const handleRevokeToken = async () => {
