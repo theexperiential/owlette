@@ -18,6 +18,7 @@ import session_state
 import watchdog_state
 import display_manager
 import nvapi_display
+from command_router import CommandRouter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import win32serviceutil
 import win32service
@@ -133,6 +134,13 @@ REBOOT_CHECK_ITERATIONS = max(1, REBOOT_CHECK_INTERVAL_SECONDS // SLEEP_INTERVAL
 # driven by firebase_client's own metrics loop.
 DISPLAY_CHECK_INTERVAL_SECONDS = 30
 DISPLAY_CHECK_ITERATIONS = max(1, DISPLAY_CHECK_INTERVAL_SECONDS // SLEEP_INTERVAL)
+# roost periodic on-disk scrub (wave 4b.7). The check itself is a cheap SQL
+# query against SyncState; the actual re-hash only fires per-distribution if
+# last_scrub_at is older than the scrub max-age (30 days). Hourly cadence
+# means ~720 cheap checks/month per agent — most are no-ops. Scrub work
+# runs on a daemon thread so it never stalls the main 5-second loop.
+ROOST_SCRUB_CHECK_INTERVAL_SECONDS = 3600
+ROOST_SCRUB_CHECK_ITERATIONS = max(1, ROOST_SCRUB_CHECK_INTERVAL_SECONDS // SLEEP_INTERVAL)
 # Manual-reboot grace: a manual reboot within this many seconds before a
 # scheduled instant counts as fulfilling that entry for the day
 REBOOT_MANUAL_GRACE_SECONDS = 30 * 60
@@ -262,9 +270,34 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self._display_check_counter = 0
         self._cached_display_hash = None
         self._cached_display_profile = None
+        # roost periodic on-disk scrub (wave 4b.7). Counter increments every
+        # main-loop iteration; when it reaches ROOST_SCRUB_CHECK_ITERATIONS
+        # the dispatcher considers running scrub_all_due() on a daemon thread.
+        # _roost_scrub_thread tracks the in-flight worker so we never start
+        # two scrubs concurrently (single-flight).
+        self._roost_scrub_check_counter = 0
+        self._roost_scrub_thread = None
         self._shutting_down = False  # Suppresses crash alerts during reboot/shutdown
         self._live_view_active = False
         self._live_view_stop_time = 0
+
+        # Command router for new-style handlers (roost v2 onwards). Existing
+        # v1 handlers in handle_firebase_command's if/elif chain remain in
+        # place; the router is checked first and falls through if the
+        # command type isn't registered. New handlers should register here
+        # via @self._command_router.register('cmd_type'). See command_router.py.
+        self._command_router = CommandRouter()
+        # Register roost v2 handlers (sync_pull, cancel_sync, rollback_to_manifest).
+        # Handlers execute on whatever thread invokes handle_firebase_command;
+        # long-running sync work inside them spawns its own daemon threads via
+        # sync_downloader / sync_assembler so the dispatch path stays quick.
+        try:
+            from sync_commands import register_handlers as _register_roost_handlers
+            _register_roost_handlers(self._command_router)
+        except Exception as e:
+            # Non-fatal — agent still runs v1 commands; v2 commands will return
+            # "Unknown command type" until the handlers are loadable.
+            logging.warning(f"Failed to register roost handlers: {e}")
 
         # Initialize Firebase client
         self.firebase_client = None
@@ -2788,6 +2821,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     return f"Rate limited: {cmd_type} executed too recently, try again in a few seconds"
                 self._command_rate_limits[cmd_type] = now
 
+            # CommandRouter dispatch (new-style handlers, roost v2 onwards).
+            # Falls through to legacy if/elif chain if no handler is registered
+            # for this cmd_type. Existing v1 handlers stay in place; new v2
+            # handlers (sync_pull, cancel_sync, rollback_to_manifest) register
+            # via self._command_router and are dispatched here.
+            if self._command_router.has_handler(cmd_type):
+                return self._command_router.dispatch(cmd_type, cmd_data, cmd_id, self)
+
             if cmd_type == 'restart_process':
                 # Restart a specific process by name
                 process_name = cmd_data.get('process_name')
@@ -3927,6 +3968,39 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self._emit_display_event('display_sync_lost', 'warning', {
                     'deviceId': device_id or '',
                 })
+
+    def _maybe_dispatch_roost_scrub(self):
+        """Run roost scrub_all_due() on a daemon thread if not already in-flight.
+
+        Called from the main loop every ROOST_SCRUB_CHECK_ITERATIONS. Single-flight:
+        if a previous scrub thread is still alive, this iteration is a no-op.
+        Scrub runs off-loop so a long re-hash never stalls process monitoring.
+        """
+        if self._roost_scrub_thread is not None and self._roost_scrub_thread.is_alive():
+            return
+
+        def _run_scrub():
+            try:
+                from sync_commands import _state_for
+                from sync_scrub import scrub_all_due
+                state = _state_for(self)
+                report_dir = os.path.join(
+                    os.environ.get('PROGRAMDATA', r'C:\ProgramData'),
+                    'Owlette', 'logs', 'roost_scrub_reports'
+                )
+                reports = scrub_all_due(state, report_dir=report_dir)
+                if reports:
+                    drifted = sum(1 for r in reports if not r.healthy)
+                    logging.info(
+                        f"roost scrub: {len(reports)} distribution(s) scrubbed, "
+                        f"{drifted} with drift"
+                    )
+            except Exception as e:
+                logging.warning(f"roost scrub failed: {e}")
+
+        t = threading.Thread(target=_run_scrub, daemon=True, name='roost-scrub')
+        t.start()
+        self._roost_scrub_thread = t
 
     def _check_scheduled_reboot(self):
         """State-machine driven scheduled reboot check.
@@ -5615,6 +5689,13 @@ with open(out_path, 'wb') as f:
                 if self._display_check_counter >= DISPLAY_CHECK_ITERATIONS:
                     self._display_check_counter = 0
                     self._check_display_topology()
+
+                # roost periodic scrub dispatch — hourly check, single-flight,
+                # daemon thread. Cheap when there's nothing due (one SQL query).
+                self._roost_scrub_check_counter += 1
+                if self._roost_scrub_check_counter >= ROOST_SCRUB_CHECK_ITERATIONS:
+                    self._roost_scrub_check_counter = 0
+                    self._maybe_dispatch_roost_scrub()
 
                 if self.first_start:
                     logging.info('owlette initialized')

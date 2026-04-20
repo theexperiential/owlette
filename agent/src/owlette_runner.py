@@ -174,6 +174,21 @@ if __name__ == '__main__':
             self._live_view_active = False
             self._live_view_stop_time = 0
             self.cortex_pid = None
+            # roost periodic scrub state (mirror OwletteService.__init__).
+            # without these the main-loop scrub hook crashes with AttributeError.
+            self._roost_scrub_check_counter = 0
+            self._roost_scrub_thread = None
+
+            # CommandRouter for roost v2 handlers (mirror OwletteService.__init__).
+            # MUST be set up here too — handle_firebase_command checks
+            # self._command_router.has_handler() before falling through.
+            from command_router import CommandRouter
+            self._command_router = CommandRouter()
+            try:
+                from sync_commands import register_handlers as _register_roost_handlers
+                _register_roost_handlers(self._command_router)
+            except Exception as e:
+                logging.warning(f"Failed to register roost handlers: {e}")
             # Throttle state for _write_service_status() — OwletteService has
             # a hasattr() guard, but mirror here so the safety net never has
             # to fire under NSSM.

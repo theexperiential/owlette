@@ -46,6 +46,45 @@ from firestore_rest_client import FirestoreRestClient, SERVER_TIMESTAMP, DELETE_
 from connection_manager import ConnectionManager, ConnectionState, ConnectionEvent
 
 
+def should_emit_progress(
+    prev_state: Optional[dict],
+    status: str,
+    progress: Optional[int],
+    force: bool,
+    now: float,
+    min_seconds: float,
+    min_pct: int,
+) -> tuple:
+    """
+    Pure throttle-decision helper for update_command_progress (wave 4b.5).
+
+    Returns (should_emit, new_state). Caller persists new_state on emit.
+
+    Coalesces same-status writes within BOTH thresholds (time AND percent).
+    Status changes always emit (transitions are observable cliffs).
+    force=True bypasses throttling — use for terminal events that MUST land.
+
+    Extracted as a module-level function so it can be unit-tested without
+    instantiating FirebaseClient (which pulls in cryptography/PyO3 and
+    fights pytest's interpreter reuse).
+    """
+    new_state = {'ts': now, 'status': status, 'progress': progress}
+    if force:
+        return True, new_state
+    if prev_state is None or prev_state.get('status') != status:
+        # never throttle status transitions or first writes
+        return True, new_state
+    elapsed = now - prev_state['ts']
+    last_pct = prev_state.get('progress')
+    if progress is not None and last_pct is not None:
+        pct_delta = abs(progress - last_pct)
+    else:
+        pct_delta = 0
+    if elapsed < min_seconds and pct_delta < min_pct:
+        return False, prev_state  # coalesce: skip this write
+    return True, new_state
+
+
 class FirebaseClient:
     """
     Main Firebase client for Owlette agent.
@@ -76,6 +115,13 @@ class FirebaseClient:
 
         # Logging
         self.logger = logging.getLogger("OwletteFirebase")
+
+        # Per-cmd_id throttle state for update_command_progress.
+        # {cmd_id: {'ts': float, 'status': str, 'progress': int|None}}
+        # Coalesces rapid-fire chunk-progress updates so a 64k-chunk roost
+        # distribution doesn't write 64k firestore docs per machine.
+        self._progress_throttle: Dict[str, dict] = {}
+        self._progress_throttle_lock = threading.Lock()
 
         # =================================================================
         # Connection Manager (centralized state management)
@@ -798,6 +844,12 @@ class FirebaseClient:
     _PROFILE_CHECK_INTERVAL = 300.0  # seconds between full build_profile() rebuilds
     _DISPLAY_CHECK_INTERVAL = 300.0  # seconds between full build_display_profile() rebuilds
 
+    # update_command_progress throttling. coalesce same-status writes that
+    # are within both thresholds (per cmd_id). status changes + force=True
+    # always write through.
+    PROGRESS_THROTTLE_SECONDS = 30.0
+    PROGRESS_THROTTLE_PERCENT = 5
+
     def _load_cached_profile_hash(self) -> Optional[str]:
         """Load the cached profile signature hash from disk (once per process)."""
         if self._cached_profile_hash is not None:
@@ -1212,7 +1264,7 @@ class FirebaseClient:
             finally:
                 self._slow_command_queue.task_done()
 
-    def update_command_progress(self, cmd_id: str, status: str, deployment_id: Optional[str] = None, progress: Optional[int] = None):
+    def update_command_progress(self, cmd_id: str, status: str, deployment_id: Optional[str] = None, progress: Optional[int] = None, force: bool = False):
         """
         Update command progress in Firestore (for intermediate states like downloading/installing).
 
@@ -1221,9 +1273,34 @@ class FirebaseClient:
             status: Current status (e.g., 'downloading', 'installing')
             deployment_id: Optional deployment ID to track
             progress: Optional progress percentage (0-100)
+            force: bypass throttling (use for terminal states + status transitions
+                   that MUST land — UI sticking at 95% is the bug throttling causes
+                   if the final 100% is dropped). default False.
+
+        Throttling: per-cmd_id, writes are coalesced to "every 5% OR every 30s,
+        whichever first" to prevent firestore cost explosion on a 64k-chunk
+        distribution. status changes always write through; only same-status
+        progress-only updates are subject to throttling.
         """
         if not self.connected or not self.db:
             return
+
+        # Pure throttle decision — extracted so it can be unit-tested in
+        # isolation without instantiating FirebaseClient (which pulls in
+        # cryptography/PyO3 and fights pytest's interpreter reuse).
+        should_emit, new_state = should_emit_progress(
+            prev_state=self._progress_throttle.get(cmd_id),
+            status=status,
+            progress=progress,
+            force=force,
+            now=time.time(),
+            min_seconds=self.PROGRESS_THROTTLE_SECONDS,
+            min_pct=self.PROGRESS_THROTTLE_PERCENT,
+        )
+        if not should_emit:
+            return
+        with self._progress_throttle_lock:
+            self._progress_throttle[cmd_id] = new_state
 
         try:
             completed_ref = self.db.collection('sites').document(self.site_id)\
@@ -1819,6 +1896,53 @@ class FirebaseClient:
 
         thread = threading.Thread(target=_send, daemon=True)
         thread.start()
+
+    def get_chunk_download_urls(self, chunk_hashes: list) -> dict:
+        """
+        Fetch signed R2 download URLs for one or more chunks. Used by
+        sync_downloader (roost v2) to materialize a fresh URL per chunk
+        — signed URLs are short-lived (≤15 min) so workers re-fetch on
+        403 / expired-url responses.
+
+        Calls POST /api/chunks/download-urls with the agent's OAuth
+        bearer token. The route enforces per-tenant siteId scoping
+        against the token claims, so a compromised agent token can only
+        fetch URLs for its own site's chunks.
+
+        Args:
+            chunk_hashes: list of lowercase 64-char SHA-256 hex strings.
+                Max 1000 per request (server-side cap).
+
+        Returns:
+            dict mapping {hash: download_url} for every requested chunk.
+
+        Raises:
+            requests.RequestException on network/HTTP failure.
+            ValueError if the response shape is malformed.
+        """
+        if not chunk_hashes:
+            return {}
+        token = self.auth_manager.get_valid_token()
+        api_base = shared_utils.get_api_base_url()
+        import requests
+        resp = requests.post(
+            f"{api_base}/chunks/download-urls",
+            json={
+                'siteId': self.site_id,
+                'hashes': list(chunk_hashes),
+            },
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        urls = body.get('urls')
+        if not isinstance(urls, dict):
+            raise ValueError(
+                f"chunks/download-urls returned malformed body "
+                f"(missing 'urls' dict): {body!r}"
+            )
+        return urls
 
     def ship_logs(self, log_entries: list):
         """
