@@ -104,7 +104,29 @@ const destroySessionCookie = async (): Promise<void> => {
   }
 };
 
-type UserRole = 'member' | 'admin' | 'superadmin';
+export type UserRole = 'member' | 'admin' | 'superadmin';
+
+/**
+ * Pure helper: is the user a platform-wide superadmin?
+ * Extracted (and exported) so it's unit-testable without mounting AuthProvider.
+ */
+export function computeIsSuperadmin(role: UserRole | null): boolean {
+  return role === 'superadmin';
+}
+
+/**
+ * Pure helper: is the user a site-admin for the given site?
+ * Superadmins pass for every siteId (god-mode fall-through); admins pass only
+ * when siteId is in their assigned `userSites[]`. Everyone else is false.
+ * Extracted (and exported) so it's unit-testable without mounting AuthProvider.
+ */
+export function computeIsSiteAdmin(
+  role: UserRole | null,
+  userSites: string[],
+  siteId: string
+): boolean {
+  return role === 'superadmin' || (role === 'admin' && userSites.includes(siteId));
+}
 
 export interface UserPreferences {
   temperatureUnit: 'C' | 'F'; // Default: 'C'
@@ -907,13 +929,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const isSuperadmin = role === 'superadmin';
+  const isSuperadmin = computeIsSuperadmin(role);
   // `isAdmin` is deprecated and aliases `isSuperadmin` — platform-wide god-mode.
   // The new site-scoped middle tier (role === 'admin') is exposed via `isSiteAdmin(siteId)`.
   const isAdmin = isSuperadmin;
   const isSiteAdmin = useCallback(
-    (siteId: string) =>
-      role === 'superadmin' || (role === 'admin' && userSites.includes(siteId)),
+    (siteId: string) => computeIsSiteAdmin(role, userSites, siteId),
     [role, userSites]
   );
 
