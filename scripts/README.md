@@ -83,6 +83,35 @@ node sync-versions.js 2.1.0-rc.1
 node sync-versions.js
 ```
 
+## Role Migration
+
+One-off data migration for the two-role → three-role permission model split. See [dev/active/permission-model-split/plan.md](../dev/active/permission-model-split/plan.md) for context.
+
+### Usage
+
+```bash
+# Preview changes against dev (read-only)
+node scripts/migrate-roles.mjs --env=dev --dry-run
+
+# Apply to dev
+node scripts/migrate-roles.mjs --env=dev
+
+# Preview against prod (prompts for confirmation on live runs)
+node scripts/migrate-roles.mjs --env=prod --dry-run
+```
+
+Flips `role: 'user'` → `'member'` and `role: 'admin'` → `'superadmin'` on the `users` collection. Idempotent — re-running after migration is a no-op because the three terminal values (`member`/`admin`/`superadmin`) are left untouched.
+
+### Credentials
+
+Reads `FIREBASE_PROJECT_ID_{DEV|PROD}`, `FIREBASE_CLIENT_EMAIL_{DEV|PROD}`, `FIREBASE_PRIVATE_KEY_{DEV|PROD}` from the environment. Falls back to the unsuffixed `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` / `FIREBASE_PRIVATE_KEY` (web/.env.local vars) with a warning — verify those point at the intended project before live runs.
+
+Auto-loads `web/.env.local`, `.claude/.env.local`, and `scripts/.env.local` (in that order; later files don't override earlier values).
+
+### Deploy order
+
+Run migration **before** pushing the updated `firestore.rules`. Reverse order would transiently lock existing admins out of their sites during the window between the rules deploy and the data migration.
+
 ## Related Documentation
 
 - [docs/version-management.md](../docs/version-management.md) - Complete version management guide
@@ -91,4 +120,4 @@ node sync-versions.js
 
 ---
 
-**Last Updated:** 2025-11-05
+**Last Updated:** 2026-04-19

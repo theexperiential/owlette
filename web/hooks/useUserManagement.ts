@@ -16,7 +16,7 @@ import {
 import { db } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
 
-export type UserRole = 'user' | 'admin';
+export type UserRole = 'member' | 'admin' | 'superadmin';
 
 export interface UserData {
   uid: string;
@@ -120,7 +120,7 @@ export function useUserManagement() {
    */
   const getUserCounts = useCallback(() => {
     const adminCount = users.filter((u) => u.role === 'admin').length;
-    const userCount = users.filter((u) => u.role === 'user').length;
+    const userCount = users.filter((u) => u.role === 'member').length;
 
     return {
       total: users.length,

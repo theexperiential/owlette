@@ -104,7 +104,7 @@ const destroySessionCookie = async (): Promise<void> => {
   }
 };
 
-type UserRole = 'user' | 'admin';
+type UserRole = 'member' | 'admin' | 'superadmin';
 
 export interface UserPreferences {
   temperatureUnit: 'C' | 'F'; // Default: 'C'
@@ -166,7 +166,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
-  role: 'user',
+  role: 'member',
   isAdmin: false,
   userSites: [],
   lastSiteId: null,
@@ -198,7 +198,7 @@ export const useAuth = () => {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [role, setRole] = useState<UserRole>('user');
+  const [role, setRole] = useState<UserRole>('member');
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
   const [passkeyEnrolled, setPasskeyEnrolled] = useState(false);
@@ -385,7 +385,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   const displayName = user.displayName || '';
                   await setDoc(userDocRef, {
                     email: user.email,
-                    role: 'user',
+                    role: 'member',
                     sites: [],
                     createdAt: new Date(),
                     displayName,
@@ -412,7 +412,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   const code = (firestoreError as { code?: string } | null)?.code;
                   console.error('❌ Listener failed to create document:', firestoreError);
                   console.error('Error code:', code);
-                  setRole('user');
+                  setRole('member');
                   setUserSites([]);
                   setLoading(false);
                 }
@@ -420,20 +420,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             },
             (error) => {
               console.error('Error listening to user document:', error);
-              setRole('user');
+              setRole('member');
               setUserSites([]);
               setLoading(false);
             }
           );
         } else {
-          setRole('user');
+          setRole('member');
           setUserSites([]);
           setLoading(false);
         }
       } else {
         // User is logged out - destroy server-side session and reset role
         destroySessionCookie();
-        setRole('user');
+        setRole('member');
         setUserSites([]);
         setLoading(false);
       }
@@ -491,7 +491,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const displayName = [firstName, lastName].filter(Boolean).join(' ') || '';
         await setDoc(userDocRef, {
           email: userCredential.user.email,
-          role: 'user',
+          role: 'member',
           sites: [],
           createdAt: new Date(),
           displayName,

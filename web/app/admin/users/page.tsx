@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useUserManagement } from '@/hooks/useUserManagement';
+import { useUserManagement, type UserRole } from '@/hooks/useUserManagement';
 import type { FirestoreTs } from '@/hooks/useFirestore';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -43,18 +43,18 @@ export default function UserManagementPage() {
   const [manageSitesDialogOpen, setManageSitesDialogOpen] = useState(false);
   const [deleteConfirmDialogOpen, setDeleteConfirmDialogOpen] = useState(false);
   const [roleChangeDialogOpen, setRoleChangeDialogOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<{ uid: string; email: string; role: 'user' | 'admin'; sites: string[] } | null>(null);
+  const [selectedUser, setSelectedUser] = useState<{ uid: string; email: string; role: UserRole; sites: string[] } | null>(null);
   const [userToDelete, setUserToDelete] = useState<{ uid: string; email: string } | null>(null);
-  const [userToChangeRole, setUserToChangeRole] = useState<{ uid: string; email: string; currentRole: 'user' | 'admin'; newRole: 'user' | 'admin' } | null>(null);
+  const [userToChangeRole, setUserToChangeRole] = useState<{ uid: string; email: string; currentRole: UserRole; newRole: UserRole } | null>(null);
 
   const counts = getUserCounts();
 
-  const handleOpenManageSites = (userId: string, email: string, role: 'user' | 'admin', sites: string[]) => {
+  const handleOpenManageSites = (userId: string, email: string, role: UserRole, sites: string[]) => {
     setSelectedUser({ uid: userId, email, role, sites });
     setManageSitesDialogOpen(true);
   };
 
-  const handleOpenRoleChangeDialog = (userId: string, email: string, currentRole: 'user' | 'admin') => {
+  const handleOpenRoleChangeDialog = (userId: string, email: string, currentRole: UserRole) => {
     // Prevent user from demoting themselves
     if (userId === currentUser?.uid && currentRole === 'admin') {
       toast.error('Cannot Demote Yourself', {
@@ -63,7 +63,7 @@ export default function UserManagementPage() {
       return;
     }
 
-    const newRole = currentRole === 'admin' ? 'user' : 'admin';
+    const newRole: UserRole = currentRole === 'admin' ? 'member' : 'admin';
     setUserToChangeRole({ uid: userId, email, currentRole, newRole });
     setRoleChangeDialogOpen(true);
   };

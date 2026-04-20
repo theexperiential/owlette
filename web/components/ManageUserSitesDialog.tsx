@@ -8,13 +8,14 @@ import { Plus, X, Loader2, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSites } from '@/hooks/useFirestore';
 import { useAuth } from '@/contexts/AuthContext';
+import type { UserRole } from '@/hooks/useUserManagement';
 
 interface ManageUserSitesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   userId: string;
   userEmail: string;
-  userRole: 'user' | 'admin';
+  userRole: UserRole;
   userSites: string[];
   onAssignSite: (userId: string, siteId: string) => Promise<void>;
   onRemoveSite: (userId: string, siteId: string) => Promise<void>;

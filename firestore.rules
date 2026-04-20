@@ -41,10 +41,20 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Check if user is admin (has role='admin' in users collection)
+    // Check if user is a platform superadmin (role='superadmin' in users collection)
+    // Superadmins have god-mode access across all sites and platform-wide operations
+    // (installer uploads, user role management, global settings, etc).
+    function isSuperadmin() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin';
+    }
+
+    // DEPRECATED: Use isSuperadmin() (platform-wide) or isSiteAdmin(siteId) (site-scoped).
+    // Kept as an alias during the permission-model-split migration to soften blast radius.
+    // Remove in Wave 0.7.3 after every call site has been re-pointed.
     function isAdmin() {
-      return request.auth != null &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return isSuperadmin();
     }
 
     // Check if request is from service account (Python agent)
@@ -84,18 +94,34 @@ service cloud.firestore {
              request.auth.token.machine_id == machineId;
     }
 
-    // Check if user has access to a site
-    // Admins can access all sites
-    // Regular users can only access sites in their assigned sites array
-    // Returns false if user document doesn't exist (graceful handling for new users)
+    // Check if user has access to a site.
+    // Access is granted to:
+    //   - site owners (direct ownership)
+    //   - superadmins (platform god-mode — every site, regardless of sites[] membership)
+    //   - any user whose role is 'member' or 'admin' AND has siteId in their sites[] array
+    // Returns false if user document doesn't exist (graceful handling for new users).
     function canAccessSite(siteId) {
       return isAuthenticated() && (
         isSiteOwner(siteId) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin' ||
           (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites is list &&
            siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites)))
       );
+    }
+
+    // Check if user is a site-scoped admin for a given site.
+    // True when the user's role is 'admin' or 'superadmin' AND they can access the site.
+    // - admin: role applies across every site in their sites[] array
+    // - superadmin: passes canAccessSite() unconditionally (god-mode fall-through)
+    // Use this for site-level elevated operations (delete machines, edit stored layouts,
+    // manage site-scoped webhooks / settings) — as opposed to isSuperadmin() which is
+    // reserved for platform-wide operations.
+    function isSiteAdmin(siteId) {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'superadmin'] &&
+             canAccessSite(siteId);
     }
 
     // Validate that required fields are present in write operations
@@ -265,13 +291,102 @@ service cloud.firestore {
       // ----------------------------------------
 
       match /project_distributions/{distributionId} {
-        // Project file distributions
+        // Project file distributions (v1, legacy)
         // Web dashboard creates and manages distributions
+        // Coexists with synced_folders/ (v2 / roost) during migration
         allow read: if canAccessSite(siteId);
         allow create: if canAccessSite(siteId) &&
                          hasRequiredFields(['name', 'file_name', 'targets', 'status', 'createdAt']);
         allow update: if canAccessSite(siteId);
         allow delete: if canAccessSite(siteId);
+      }
+
+      // ----------------------------------------
+      // Synced Folders Subcollection (roost / v2)
+      // ----------------------------------------
+      // The v2 replacement for project_distributions. Each synced_folder
+      // represents a project that's kept in sync with one or more machines.
+      // The doc itself stores ONLY the manifest pointer (currentManifestId,
+      // previousManifestId, manifestUrl) plus targets[] + metadata.
+      // Manifests themselves live in R2 (size: a 500GB project ~10MB
+      // manifest, well over Firestore's 1MB doc limit).
+      // schemaVersion: 2 distinguishes from v1 project_distributions.
+
+      match /synced_folders/{folderId} {
+        allow read: if canAccessSite(siteId);
+        // CREATE: site-scoped users can create the folder shell, but the
+        // pointer fields (currentManifestId, previousManifestId,
+        // manifestUrl) MUST be null/unset at create time. The first real
+        // manifest is published via /api/v2/folders/.../manifests using
+        // the admin SDK (which bypasses these rules). This prevents a
+        // direct-Firestore client from publishing a fake "v0" pointing
+        // at attacker-controlled storage.
+        allow create: if canAccessSite(siteId) &&
+                         hasRequiredFields(['name', 'targets', 'createdAt', 'schemaVersion']) &&
+                         request.resource.data.schemaVersion == 2 &&
+                         (!('currentManifestId' in request.resource.data) ||
+                          request.resource.data.currentManifestId == null) &&
+                         (!('previousManifestId' in request.resource.data) ||
+                          request.resource.data.previousManifestId == null) &&
+                         (!('manifestUrl' in request.resource.data) ||
+                          request.resource.data.manifestUrl == null);
+        // UPDATE: pointer fields cannot be flipped client-side. They go
+        // through the /api/v2/folders/.../manifests + /rollback routes,
+        // which use Firestore transactions (CAS) under admin SDK creds.
+        allow update: if canAccessSite(siteId) &&
+                         !request.resource.data.diff(resource.data).affectedKeys()
+                            .hasAny(['currentManifestId', 'previousManifestId', 'manifestUrl', 'schemaVersion']);
+        allow delete: if canAccessSite(siteId);
+
+        // ------------------------------------------
+        // Per-target reported state (one doc per machine)
+        // ------------------------------------------
+        // Agents write their own observed state here so the dashboard can
+        // show "machine X is ON manifest Y" vs the intended currentManifestId.
+        // This closes the loop between intent (set by web) and reality
+        // (reported by agent).
+
+        match /target_state/{machineId} {
+          // READ: any site member can see reported target state.
+          allow read: if canAccessSite(siteId);
+          // CREATE/UPDATE: ONLY the agent for this specific machine. Web
+          // users cannot spoof an agent's reported state (would let a
+          // malicious teammate hide pending rollouts by marking a machine
+          // as already-synced when it isn't).
+          allow create, update: if isAgent() &&
+                                  request.auth.token.site_id == siteId &&
+                                  request.auth.token.machine_id == machineId;
+          // DELETE: site members can clear stale state (manual cleanup
+          // when an agent is decommissioned). Agents do not delete their
+          // own state — they update it.
+          allow delete: if canAccessSite(siteId);
+        }
+
+        // ------------------------------------------
+        // Manifest history (immutable)
+        // ------------------------------------------
+        // Each finalized manifest is recorded here for the rollback UI.
+        // The manifest CONTENT lives in R2; this collection just holds
+        // metadata + the R2 url + timestamps + author for the version
+        // history dropdown.
+
+        match /manifests/{manifestId} {
+          // READ: any site member can list manifest history (for rollback ui).
+          allow read: if canAccessSite(siteId);
+          // CREATE: forbidden client-side. Manifests are written ONLY by
+          // /api/v2/folders/.../manifests using the admin SDK, after the
+          // chunk-presence check + r2 manifest body upload + transactional
+          // pointer flip on the parent. Allowing client-side create would
+          // let a site member publish a fake history entry pointing at
+          // attacker-controlled storage (manifestUrl is unvalidated).
+          allow create: if false;
+          // UPDATE/DELETE: history is immutable. Rollback works by
+          // repointing currentManifestId on the parent synced_folders
+          // doc, NOT by editing or deleting manifests here. GC is admin
+          // SDK only (bypasses these rules) and tombstone-protected.
+          allow update: if false;
+          allow delete: if false;
+        }
       }
 
       // ----------------------------------------
