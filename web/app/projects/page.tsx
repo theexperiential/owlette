@@ -18,8 +18,8 @@ import { LoadingWord } from '@/components/LoadingWord';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 
 export default function ProjectsPage() {
-  const { user, loading: authLoading, userSites, isAdmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
-  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
+  const { user, loading: authLoading, userSites, isSuperadmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
+  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
   const currentSite = sites.find(s => s.id === currentSiteId);
@@ -160,7 +160,7 @@ export default function ProjectsPage() {
         {/* Section header with inline stats */}
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-center gap-6 md:gap-8">
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">distributions</h2>
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">roost</h2>
 
             <div className="flex items-center gap-6 md:gap-8">
               <div className="flex items-center gap-2.5">
@@ -210,7 +210,7 @@ export default function ProjectsPage() {
             className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer flex-shrink-0"
           >
             <Plus className="h-4 w-4 mr-2" />
-            new distribution
+            new roost
           </Button>
         </div>
 
@@ -219,19 +219,19 @@ export default function ProjectsPage() {
           {distributionsLoading ? (
             <div className="p-8 text-center">
               <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
-              <p className="mt-2 text-muted-foreground">loading distributions...</p>
+              <p className="mt-2 text-muted-foreground">loading...</p>
             </div>
           ) : distributions.length === 0 ? (
             <div className="p-8 text-center">
-              <p className="text-foreground font-medium mb-1">no distributions yet</p>
-              <p className="text-sm text-muted-foreground mb-4">create your first distribution to sync project files across your machines</p>
+              <p className="text-foreground font-medium mb-1">nothing here yet</p>
+              <p className="text-sm text-muted-foreground mb-4">create your first roost to sync project files across your machines</p>
               <Button
                 onClick={() => setDistributionDialogOpen(true)}
                 className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                 size="sm"
               >
                 <Plus className="h-4 w-4 mr-1" />
-                new distribution
+                new roost
               </Button>
             </div>
           ) : (

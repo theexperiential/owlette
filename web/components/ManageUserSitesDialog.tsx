@@ -31,8 +31,8 @@ export function ManageUserSitesDialog({
   onAssignSite,
   onRemoveSite,
 }: ManageUserSitesDialogProps) {
-  const { user, isAdmin, userSites: adminSites } = useAuth();
-  const { sites, loading: sitesLoading } = useSites(user?.uid, adminSites, isAdmin);
+  const { user, isSuperadmin, userSites: adminSites } = useAuth();
+  const { sites, loading: sitesLoading } = useSites(user?.uid, adminSites, isSuperadmin);
   const [assigningTo, setAssigningTo] = useState<string | null>(null);
   const [removingFrom, setRemovingFrom] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');

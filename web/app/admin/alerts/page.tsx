@@ -131,8 +131,8 @@ function getMetricLabel(metric: string): string {
 /* ------------------------------------------------------------------ */
 
 export default function AlertsPage() {
-  const { user, isAdmin, userSites, lastSiteId, updateLastSite } = useAuth();
-  const { sites } = useSites(user?.uid, userSites, isAdmin);
+  const { user, isSuperadmin, userSites, lastSiteId, updateLastSite } = useAuth();
+  const { sites } = useSites(user?.uid, userSites, isSuperadmin);
 
   const [selectedSiteId, setSelectedSiteId] = useState<string>('');
   const [rules, setRules] = useState<AlertRule[]>([]);

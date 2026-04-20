@@ -15,8 +15,8 @@ import { Plus, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function SchedulePresetsPage() {
-  const { user, isAdmin, userSites, userPreferences } = useAuth();
-  const { sites } = useSites(user?.uid, userSites, isAdmin);
+  const { user, isSuperadmin, userSites, userPreferences } = useAuth();
+  const { sites } = useSites(user?.uid, userSites, isSuperadmin);
 
   // Use first site by default
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);

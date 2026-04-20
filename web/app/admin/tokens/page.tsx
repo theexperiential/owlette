@@ -34,8 +34,8 @@ interface TokenInfo {
 }
 
 export default function TokensPage() {
-  const { user, isAdmin, userSites, lastSiteId, updateLastSite, userPreferences } = useAuth();
-  const { sites } = useSites(user?.uid, userSites, isAdmin);
+  const { user, isSuperadmin, userSites, lastSiteId, updateLastSite, userPreferences } = useAuth();
+  const { sites } = useSites(user?.uid, userSites, isSuperadmin);
   const [selectedSiteId, setSelectedSiteId] = useState<string>('');
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [loading, setLoading] = useState(false);

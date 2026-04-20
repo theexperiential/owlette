@@ -548,7 +548,7 @@ function joinMachineDevices(machine: Machine): Machine {
   return { ...machine, devices };
 }
 
-export function useSites(userId?: string, userSites?: string[], isAdmin?: boolean) {
+export function useSites(userId?: string, userSites?: string[], isSuperadmin?: boolean) {
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -561,7 +561,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
     }
 
     // If user data not loaded yet, wait
-    if (userSites === undefined || isAdmin === undefined || userId === undefined) {
+    if (userSites === undefined || isSuperadmin === undefined || userId === undefined) {
       setLoading(true);
       return;
     }
@@ -582,8 +582,8 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
     setLoading(true);
 
     try {
-      // ADMINS: Query all sites
-      if (isAdmin) {
+      // SUPERADMINS: Query all sites (platform god-mode)
+      if (isSuperadmin) {
         const sitesRef = collection(db, 'sites');
         const unsubscribe = onSnapshot(
           sitesRef,
@@ -600,7 +600,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
               });
             });
             siteData.sort((a, b) => a.name.localeCompare(b.name));
-            console.log('👑 Admin - loaded all sites:', siteData.map(s => s.id));
+            console.log('👑 Superadmin - loaded all sites:', siteData.map(s => s.id));
             setSites(siteData);
             setLoading(false);
           },
@@ -613,7 +613,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
         return () => unsubscribe();
       }
 
-      // NON-ADMINS: Fetch each assigned site individually by ID.
+      // NON-SUPERADMINS: Fetch each assigned site individually by ID.
       // Collection queries (e.g. where('owner', '==', uid)) fail because
       // Firestore rules use get() calls that can't be evaluated for queries.
       const unsubscribes: (() => void)[] = [];
@@ -671,7 +671,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
       setError(message);
       setLoading(false);
     }
-  }, [userId, userSites, isAdmin]);
+  }, [userId, userSites, isSuperadmin]);
 
   const createSite = async (siteId: string, name: string, userId: string, timezone?: string): Promise<string> => {
     if (!db) throw new Error('Firebase not configured');

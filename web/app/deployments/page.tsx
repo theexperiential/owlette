@@ -245,8 +245,8 @@ const DeploymentRow = React.memo(function DeploymentRow({
 });
 
 export default function DeploymentsPage() {
-  const { user, loading: authLoading, userSites, isAdmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
-  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
+  const { user, loading: authLoading, userSites, isSuperadmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
+  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
   const currentSite = sites.find(s => s.id === currentSiteId);

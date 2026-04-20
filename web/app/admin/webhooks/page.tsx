@@ -9,8 +9,8 @@ import { Plus } from 'lucide-react';
 import AddWebhookDialog, { WebhookList } from '@/components/WebhookSettingsDialog';
 
 export default function WebhooksPage() {
-  const { user, isAdmin, userSites, lastSiteId, updateLastSite } = useAuth();
-  const { sites } = useSites(user?.uid, userSites, isAdmin);
+  const { user, isSuperadmin, userSites, lastSiteId, updateLastSite } = useAuth();
+  const { sites } = useSites(user?.uid, userSites, isSuperadmin);
   const [selectedSiteId, setSelectedSiteId] = useState<string>('');
   const [dialogOpen, setDialogOpen] = useState(false);
 

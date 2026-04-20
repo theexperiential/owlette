@@ -61,8 +61,8 @@ function groupConversationsByCategory(
 
 export default function CortexPage() {
   const router = useRouter();
-  const { user, userSites, isAdmin, loading: authLoading, lastSiteId, lastMachineIds, updateLastSite, updateLastMachine } = useAuth();
-  const { sites, loading: sitesLoading } = useSites(user?.uid, userSites, isAdmin);
+  const { user, userSites, isSuperadmin, loading: authLoading, lastSiteId, lastMachineIds, updateLastSite, updateLastMachine } = useAuth();
+  const { sites, loading: sitesLoading } = useSites(user?.uid, userSites, isSuperadmin);
 
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [selectedMachineId, setSelectedMachineId] = useState<string>(SITE_TARGET_ID);

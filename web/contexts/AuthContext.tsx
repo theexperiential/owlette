@@ -142,7 +142,13 @@ export interface UserPreferences {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  role: UserRole;
+  /** User's role from Firestore; null until the user doc loads (pre-auth, missing doc, or listener error). */
+  role: UserRole | null;
+  /** True when role === 'superadmin' — platform-wide god-mode. Use for installer uploads, role management, cross-site admining. */
+  isSuperadmin: boolean;
+  /** True when the user is an admin or superadmin of the given site. Superadmins pass for every siteId; admins pass only for sites in their userSites[]. Use for site-level elevated operations (delete machines, edit stored layouts, site webhooks/settings). */
+  isSiteAdmin: (siteId: string) => boolean;
+  /** @deprecated Use `isSuperadmin` for platform-wide checks or `isSiteAdmin(siteId)` for site-scoped checks. Kept as an alias for `isSuperadmin` during the permission-model-split migration; remove in wave 0.7.3. */
   isAdmin: boolean;
   userSites: string[]; // Sites the user has access to
   lastSiteId: string | null; // Last active site (synced to Firestore)
@@ -166,7 +172,9 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
-  role: 'member',
+  role: null,
+  isSuperadmin: false,
+  isSiteAdmin: () => false,
   isAdmin: false,
   userSites: [],
   lastSiteId: null,
@@ -198,7 +206,7 @@ export const useAuth = () => {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [role, setRole] = useState<UserRole>('member');
+  const [role, setRole] = useState<UserRole | null>(null);
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
   const [passkeyEnrolled, setPasskeyEnrolled] = useState(false);
@@ -300,7 +308,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             async (docSnap) => {
               if (docSnap.exists()) {
                 const userData = docSnap.data();
-                const newRole = userData.role || 'user';
+                const rawRole = userData.role;
+                const newRole: UserRole | null =
+                  rawRole === 'member' || rawRole === 'admin' || rawRole === 'superadmin'
+                    ? rawRole
+                    : null;
                 const newSites: string[] = userData.sites || [];
                 const newRequiresMfa = userData.requiresMfaSetup || false;
                 const newPasskeyEnrolled = userData.passkeyEnrolled || false;
@@ -412,7 +424,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   const code = (firestoreError as { code?: string } | null)?.code;
                   console.error('❌ Listener failed to create document:', firestoreError);
                   console.error('Error code:', code);
-                  setRole('member');
+                  setRole(null);
                   setUserSites([]);
                   setLoading(false);
                 }
@@ -420,20 +432,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             },
             (error) => {
               console.error('Error listening to user document:', error);
-              setRole('member');
+              setRole(null);
               setUserSites([]);
               setLoading(false);
             }
           );
         } else {
-          setRole('member');
+          setRole(null);
           setUserSites([]);
           setLoading(false);
         }
       } else {
         // User is logged out - destroy server-side session and reset role
         destroySessionCookie();
-        setRole('member');
+        setRole(null);
         setUserSites([]);
         setLoading(false);
       }
@@ -895,12 +907,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const isAdmin = role === 'admin';
+  const isSuperadmin = role === 'superadmin';
+  // `isAdmin` is deprecated and aliases `isSuperadmin` — platform-wide god-mode.
+  // The new site-scoped middle tier (role === 'admin') is exposed via `isSiteAdmin(siteId)`.
+  const isAdmin = isSuperadmin;
+  const isSiteAdmin = useCallback(
+    (siteId: string) =>
+      role === 'superadmin' || (role === 'admin' && userSites.includes(siteId)),
+    [role, userSites]
+  );
 
   const value = useMemo(() => ({
     user,
     loading,
     role,
+    isSuperadmin,
+    isSiteAdmin,
     isAdmin,
     userSites,
     lastSiteId,
@@ -919,7 +941,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     updateLastSite,
     updateLastMachine,
     deleteAccount,
-  }), [user, loading, role, isAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, passkeyEnrolled, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
+  }), [user, loading, role, isSuperadmin, isSiteAdmin, isAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, passkeyEnrolled, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
