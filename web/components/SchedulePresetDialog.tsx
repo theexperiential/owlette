@@ -64,17 +64,23 @@ export default function SchedulePresetDialog({
 
     setSaving(true);
     try {
+      // Firestore rejects `undefined` field values — only include description
+      // when the user actually entered one. Without this guard, submitting
+      // with an empty description throws `setDoc() called with invalid data`.
+      const trimmedDescription = description.trim();
+      const descriptionPatch = trimmedDescription ? { description: trimmedDescription } : {};
+
       if (isEditing) {
         await updatePreset(preset!.id, {
           name: name.trim(),
-          description: description.trim() || undefined,
+          ...descriptionPatch,
           blocks: validBlocks,
         });
         toast.success(`Preset "${name.trim()}" updated`);
       } else {
         await createPreset({
           name: name.trim(),
-          description: description.trim() || undefined,
+          ...descriptionPatch,
           blocks: validBlocks,
           isBuiltIn: false,
           order: 99,
@@ -104,8 +110,9 @@ export default function SchedulePresetDialog({
 
         <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label className="text-white text-sm">Name</Label>
+            <Label htmlFor="schedule-preset-name" className="text-white text-sm">Name</Label>
             <Input
+              id="schedule-preset-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Business Hours, Night Shift"
@@ -114,8 +121,9 @@ export default function SchedulePresetDialog({
           </div>
 
           <div className="space-y-2">
-            <Label className="text-white text-sm">Description</Label>
+            <Label htmlFor="schedule-preset-description" className="text-white text-sm">Description</Label>
             <Input
+              id="schedule-preset-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Optional description"
