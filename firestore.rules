@@ -395,10 +395,10 @@ service cloud.firestore {
 
       match /webhooks/{webhookId} {
         // Webhook notification endpoints
-        // READ: Users with site access can see webhooks
-        // WRITE: Only admins can create/update/delete webhooks
-        allow read: if isAuthenticated() && (isAdmin() || canAccessSite(siteId));
-        allow write: if isAuthenticated() && isAdmin();
+        // READ: any user with site access (superadmins fall through via canAccessSite)
+        // WRITE: site admins + superadmins only
+        allow read: if canAccessSite(siteId);
+        allow write: if isSiteAdmin(siteId);
       }
 
       // ----------------------------------------
@@ -471,8 +471,8 @@ service cloud.firestore {
     match /users/{userId} {
       // User profiles with role and site access
       // Users can read their own document
-      // Admins can read and write all user documents (for role management)
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      // Superadmins can read and write all user documents (platform-level role management)
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isSuperadmin());
 
       // Users can create their own document (on first login)
       allow create: if request.auth.uid == userId;
@@ -485,8 +485,8 @@ service cloud.firestore {
                        request.resource.data.email == resource.data.email &&
                        request.resource.data.sites == resource.data.sites;
 
-      // Only admins can delete users or update other users
-      allow write: if isAdmin();
+      // Only superadmins can delete users or update other users (platform-level role management)
+      allow write: if isSuperadmin();
     }
 
     // ============================================
@@ -498,7 +498,7 @@ service cloud.firestore {
       // PUBLIC READ: Anyone can download installers (unauthenticated allowed)
       // ADMIN WRITE: Only admins can upload/modify installer versions
       allow read: if true;  // Public read for download button
-      allow write: if isAdmin();  // Only admins can manage installers
+      allow write: if isSuperadmin();  // Only superadmins can manage installer versions (platform-level)
     }
 
     // ============================================
@@ -511,13 +511,13 @@ service cloud.firestore {
       // WRITE: Only admins can create/update/delete presets
       allow read: if isAuthenticated();
 
-      // Create requires all essential fields
-      allow create: if isAdmin() &&
+      // Create requires all essential fields — platform-level presets shared across sites
+      allow create: if isSuperadmin() &&
                        hasRequiredFields(['name', 'software_name', 'category',
                                          'installer_name', 'silent_flags', 'order', 'createdAt']);
 
-      // Update and delete: admin only
-      allow update, delete: if isAdmin();
+      // Update and delete: superadmin only (platform-level)
+      allow update, delete: if isSuperadmin();
     }
 
     // ============================================
@@ -546,7 +546,7 @@ service cloud.firestore {
       // Only admins can manage site-level settings
       // Regular users can read (to check if site key exists)
       allow read: if canAccessSite(siteId);
-      allow write: if isAdmin();
+      allow write: if isSiteAdmin(siteId);
     }
 
     // ============================================
