@@ -288,6 +288,7 @@ export function ManageSitesDialog({
                             variant="ghost"
                             size="sm"
                             onClick={() => startEditingSite(site)}
+                            aria-label={`edit ${site.name}`}
                             className="text-muted-foreground hover:text-accent-cyan hover:bg-muted cursor-pointer"
                           >
                             <Pencil className="h-4 w-4" />
@@ -303,6 +304,7 @@ export function ManageSitesDialog({
                             variant="ghost"
                             size="sm"
                             onClick={() => confirmDeleteSite(site.id)}
+                            aria-label={`delete ${site.name}`}
                             className="text-muted-foreground hover:text-red-400 hover:bg-muted cursor-pointer"
                             disabled={sites.length === 1}
                           >

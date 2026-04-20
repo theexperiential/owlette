@@ -47,7 +47,7 @@ test('superadmin can create a new site via the switcher', async ({ page }) => {
   await page.getByTestId('site-switcher-trigger').click();
   await page.getByRole('menuitem', { name: /manage sites/i }).click();
   await page.getByRole('dialog', { name: /manage sites/i })
-    .getByRole('button', { name: /new site/i }).click();
+    .getByRole('button', { name: 'new site', exact: true }).click();
 
   // Create-site dialog is now open.
   const createDialog = page.getByRole('dialog', { name: /create new site/i });
@@ -92,7 +92,7 @@ test('create-site blocks submission when site ID is already taken', async ({ pag
   await page.getByTestId('site-switcher-trigger').click();
   await page.getByRole('menuitem', { name: /manage sites/i }).click();
   await page.getByRole('dialog', { name: /manage sites/i })
-    .getByRole('button', { name: /new site/i }).click();
+    .getByRole('button', { name: 'new site', exact: true }).click();
 
   const createDialog = page.getByRole('dialog', { name: /create new site/i });
   await expect(createDialog).toBeVisible();
