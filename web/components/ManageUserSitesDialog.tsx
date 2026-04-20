@@ -253,10 +253,10 @@ export function ManageUserSitesDialog({
                       </div>
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="ghost"
                         onClick={() => handleAssignSite(site.id)}
                         disabled={assigningTo === site.id}
-                        className="border-accent-cyan/50 text-accent-cyan hover:bg-accent-cyan/10 hover:text-accent-cyan cursor-pointer"
+                        className="border border-accent-cyan/50 text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan cursor-pointer"
                       >
                         {assigningTo === site.id ? (
                           <>

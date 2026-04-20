@@ -177,7 +177,7 @@ export default function UserManagementPage() {
         <p className="text-muted-foreground">manage user roles and permissions</p>
       </div>
 
-      {/* Stats Cards */}
+      {/* Stats Cards — ordered by ascending privilege so the platform tier sits last. */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
         <div className="bg-card border border-border rounded-lg p-6">
           <div className="flex items-center gap-3">
@@ -193,12 +193,12 @@ export default function UserManagementPage() {
 
         <div className="bg-card border border-border rounded-lg p-6">
           <div className="flex items-center gap-3">
-            <div className="p-3 bg-red-600 rounded-lg">
-              <Crown className="h-6 w-6 text-foreground" />
+            <div className="p-3 bg-muted rounded-lg">
+              <Users className="h-6 w-6 text-foreground" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-foreground">{counts.superadmins}</p>
-              <p className="text-sm text-muted-foreground">superadmins</p>
+              <p className="text-2xl font-bold text-foreground">{counts.members}</p>
+              <p className="text-sm text-muted-foreground">members</p>
             </div>
           </div>
         </div>
@@ -217,12 +217,12 @@ export default function UserManagementPage() {
 
         <div className="bg-card border border-border rounded-lg p-6">
           <div className="flex items-center gap-3">
-            <div className="p-3 bg-muted rounded-lg">
-              <Users className="h-6 w-6 text-foreground" />
+            <div className="p-3 bg-red-600 rounded-lg">
+              <Crown className="h-6 w-6 text-foreground" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-foreground">{counts.members}</p>
-              <p className="text-sm text-muted-foreground">members</p>
+              <p className="text-2xl font-bold text-foreground">{counts.superadmins}</p>
+              <p className="text-sm text-muted-foreground">superadmins</p>
             </div>
           </div>
         </div>
@@ -303,7 +303,7 @@ export default function UserManagementPage() {
                     </td>
 
                     {/* Sites */}
-                    <td className="p-4 align-top">
+                    <td className="p-4">
                       {user.role === 'admin' ? (
                         // Admins are site-scoped — show the exact sites they admin
                         // so superadmins can see at a glance who's responsible for what.
@@ -326,7 +326,7 @@ export default function UserManagementPage() {
                         )
                       ) : user.role === 'superadmin' ? (
                         <span className="text-muted-foreground text-sm italic">
-                          all sites (via superadmin)
+                          all sites
                         </span>
                       ) : (
                         <>
@@ -417,13 +417,13 @@ export default function UserManagementPage() {
         </div>
       )}
 
-      {/* Info Box */}
+      {/* Info Box — ascending privilege order, matches the stats cards above. */}
       {!loading && !error && users.length > 0 && (
         <div className="mt-6 bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-4 space-y-2">
           <div className="flex items-start gap-2 text-sm">
-            <Crown className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
+            <Users className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
             <p className="text-accent-cyan">
-              <strong>superadmin:</strong> {ROLE_DESCRIPTIONS.superadmin}
+              <strong>member:</strong> {ROLE_DESCRIPTIONS.member}
             </p>
           </div>
           <div className="flex items-start gap-2 text-sm">
@@ -433,9 +433,9 @@ export default function UserManagementPage() {
             </p>
           </div>
           <div className="flex items-start gap-2 text-sm">
-            <Users className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
+            <Crown className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
             <p className="text-accent-cyan">
-              <strong>member:</strong> {ROLE_DESCRIPTIONS.member}
+              <strong>superadmin:</strong> {ROLE_DESCRIPTIONS.superadmin}
             </p>
           </div>
         </div>
