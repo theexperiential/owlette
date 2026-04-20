@@ -1142,6 +1142,7 @@ export default function DashboardPage() {
                         variant="ghost"
                         size="sm"
                         onClick={() => handleViewChange('list')}
+                        data-testid="view-toggle-list"
                         className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                       >
                         <List className="h-4 w-4" />

@@ -1099,6 +1099,11 @@ export function useMachines(siteId: string) {
                 // rebootSchedule lives in the config doc — sourced from rebootScheduleOverridesRef
                 rebootSchedule: rebootScheduleOverridesRef.current[doc.id],
                 rebootState: data.rebootState,
+                // rebootPending is the agent-published "needs reboot" banner
+                // payload — surfaced on the card view as the amber approve /
+                // dismiss row. Passed through verbatim; the shape is guarded
+                // by the Machine type declaration above.
+                rebootPending: data.rebootPending,
                 metrics,
                 processes,
               });

@@ -35,6 +35,14 @@ interface MachineContextMenuProps {
   isOnline: boolean;
   rebooting?: boolean;
   shuttingDown?: boolean;
+  /**
+   * Site-scoped admin gate. When false, the menu hides every write action
+   * (reboot/shutdown/cancel, revoke token, remove machine) and keeps only
+   * the user-scoped + read-only items (mute alerts, screenshot, live view).
+   * Matches the permission-model-split contract in
+   * dev/active/permission-model-split/manual-smoke-checklist.md.
+   */
+  isSiteAdmin?: boolean;
   onRemoveMachine: () => void;
   onReboot?: () => Promise<void>;
   onShutdown?: () => Promise<void>;
@@ -52,6 +60,7 @@ export function MachineContextMenu({
   isOnline,
   rebooting,
   shuttingDown,
+  isSiteAdmin,
   onRemoveMachine,
   onReboot,
   onShutdown,
@@ -165,6 +174,7 @@ export function MachineContextMenu({
               <Button
                 variant="ghost"
                 size="sm"
+                data-testid="machine-context-menu-trigger"
                 className="h-8 w-8 p-0 bg-card border border-border text-muted-foreground hover:text-white"
                 onClick={(e) => {
                   // Prevent row click event from firing
@@ -180,7 +190,7 @@ export function MachineContextMenu({
           </TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="end" className="border-border bg-secondary w-48">
-          {isOnline && (
+          {isOnline && isSiteAdmin && (
             <>
               {rebooting ? (
                 <DropdownMenuItem
@@ -189,6 +199,7 @@ export function MachineContextMenu({
                     handleCancelReboot();
                   }}
                   disabled={isSendingCommand}
+                  data-testid="machine-context-menu-cancel-reboot"
                   className="text-red-400 focus:bg-red-950/30 focus:text-red-300 cursor-pointer"
                 >
                   <XCircle className="mr-2 h-4 w-4" />
@@ -201,6 +212,7 @@ export function MachineContextMenu({
                     handleCancelReboot();
                   }}
                   disabled={isSendingCommand}
+                  data-testid="machine-context-menu-cancel-shutdown"
                   className="text-red-400 focus:bg-red-950/30 focus:text-red-300 cursor-pointer"
                 >
                   <XCircle className="mr-2 h-4 w-4" />
@@ -214,6 +226,7 @@ export function MachineContextMenu({
                         e.stopPropagation();
                         setShowRebootDialog(true);
                       }}
+                      data-testid="machine-context-menu-reboot"
                       className="flex-1 p-0 text-cyan-400 focus:bg-transparent focus:text-cyan-300 cursor-pointer"
                     >
                       <RotateCcw className="mr-2 h-4 w-4" />
@@ -241,6 +254,7 @@ export function MachineContextMenu({
                       e.stopPropagation();
                       setShowShutdownDialog(true);
                     }}
+                    data-testid="machine-context-menu-shutdown"
                     className="text-purple-400 focus:bg-purple-950/30 focus:text-purple-300 cursor-pointer"
                   >
                     <Power className="mr-2 h-4 w-4" />
@@ -248,6 +262,11 @@ export function MachineContextMenu({
                   </DropdownMenuItem>
                 </>
               )}
+              <DropdownMenuSeparator className="bg-accent" />
+            </>
+          )}
+          {isOnline && (
+            <>
               <DropdownMenuItem
                 onClick={(e) => {
                   e.stopPropagation();
@@ -281,28 +300,34 @@ export function MachineContextMenu({
             {isMuted ? <Bell className="mr-2 h-4 w-4" /> : <BellOff className="mr-2 h-4 w-4" />}
             {isMuted ? 'unmute alerts' : 'mute alerts'}
           </DropdownMenuItem>
-          <DropdownMenuSeparator className="bg-accent" />
-          <DropdownMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowRevokeDialog(true);
-            }}
-            className="text-amber-400 focus:bg-amber-950/30 focus:text-amber-300 cursor-pointer"
-          >
-            <KeyRound className="mr-2 h-4 w-4" />
-            revoke token
-          </DropdownMenuItem>
-          <DropdownMenuSeparator className="bg-accent" />
-          <DropdownMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemoveMachine();
-            }}
-            className="text-red-400 focus:bg-red-950/30 focus:text-red-300 cursor-pointer"
-          >
-            <Trash2 className="mr-2 h-4 w-4" />
-            remove machine
-          </DropdownMenuItem>
+          {isSiteAdmin && (
+            <>
+              <DropdownMenuSeparator className="bg-accent" />
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowRevokeDialog(true);
+                }}
+                data-testid="machine-context-menu-revoke-token"
+                className="text-amber-400 focus:bg-amber-950/30 focus:text-amber-300 cursor-pointer"
+              >
+                <KeyRound className="mr-2 h-4 w-4" />
+                revoke token
+              </DropdownMenuItem>
+              <DropdownMenuSeparator className="bg-accent" />
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemoveMachine();
+                }}
+                data-testid="machine-context-menu-remove"
+                className="text-red-400 focus:bg-red-950/30 focus:text-red-300 cursor-pointer"
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                remove machine
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 

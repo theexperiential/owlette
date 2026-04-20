@@ -126,6 +126,7 @@ export function MachineStatusPill({
         type="button"
         onClick={handleClick}
         title="click to cancel"
+        data-testid="machine-status-cancel-pill"
         className="group relative px-2 py-0.5 tabular-nums"
       >
         <span className="group-hover:invisible">{formatMMSS(remaining)}</span>

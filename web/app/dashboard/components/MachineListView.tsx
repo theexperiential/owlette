@@ -386,6 +386,7 @@ export function MachineRow({
   return (
     <>
       <TableRow
+        data-testid="machine-row"
         className="border-border hover:bg-secondary/30 cursor-pointer"
         onClick={handleRowClick}
       >
@@ -411,6 +412,7 @@ export function MachineRow({
                         e.stopPropagation();
                         onMetricClick?.('display');
                       }}
+                      data-testid="open-display-panel"
                       className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0"
                       aria-label="view displays"
                     >
@@ -654,6 +656,7 @@ export function MachineRow({
               isOnline={machine.online}
               rebooting={machine.rebooting}
               shuttingDown={machine.shuttingDown}
+              isSiteAdmin={isSiteAdmin}
               onRemoveMachine={onRemoveMachine}
               onReboot={onReboot}
               onShutdown={onShutdown}

@@ -222,7 +222,7 @@ function MachineCard({
   );
 
   return (
-    <Card className="border-border bg-card py-0 gap-0">
+    <Card data-testid="machine-card" className="border-border bg-card py-0 gap-0">
       <CardHeader className="py-3 px-4 gap-0">
         <div className="flex items-center justify-between">
           <div className="flex flex-col min-w-0">
@@ -275,6 +275,7 @@ function MachineCard({
                 isOnline={machine.online}
                 rebooting={machine.rebooting}
                 shuttingDown={machine.shuttingDown}
+                isSiteAdmin={isSiteAdmin}
                 onRemoveMachine={onRemoveMachine}
                 onReboot={onReboot}
                 onShutdown={onShutdown}
@@ -302,6 +303,7 @@ function MachineCard({
                 <Button
                   variant="ghost"
                   size="sm"
+                  data-testid="reboot-pending-approve"
                   className="h-7 px-2.5 text-xs bg-amber-600 hover:bg-amber-700 text-white cursor-pointer"
                   onClick={async (e) => {
                     e.stopPropagation();
@@ -316,6 +318,7 @@ function MachineCard({
                 <Button
                   variant="ghost"
                   size="sm"
+                  data-testid="reboot-pending-dismiss"
                   className="h-7 px-2.5 text-xs text-muted-foreground hover:text-white hover:bg-accent cursor-pointer"
                   onClick={async (e) => {
                     e.stopPropagation();
