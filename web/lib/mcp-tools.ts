@@ -24,7 +24,7 @@ export interface McpToolDefinition {
       description: string;
       enum?: string[];
       default?: unknown;
-      items?: any;
+      items?: unknown;
     }>;
     required?: string[];
   };

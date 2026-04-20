@@ -83,9 +83,10 @@ export default function TokensPage() {
       }
 
       setTokens(data.tokens);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       toast.error('Failed to load tokens', {
-        description: error.message,
+        description: message,
       });
     } finally {
       setLoading(false);
@@ -118,9 +119,10 @@ export default function TokensPage() {
 
       // Refresh token list
       fetchTokens();
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       toast.error('Failed to revoke token', {
-        description: error.message,
+        description: message,
       });
     } finally {
       setIsRevoking(false);
@@ -153,9 +155,10 @@ export default function TokensPage() {
 
       // Refresh token list
       fetchTokens();
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       toast.error('Failed to revoke tokens', {
-        description: error.message,
+        description: message,
       });
     } finally {
       setIsRevoking(false);

@@ -80,7 +80,7 @@ export const GET = withRateLimit(
 
       logger.info(`Status read for ${machineId} on site ${siteId}`, { context: 'admin/machines/status' });
       return NextResponse.json({ success: true, machine });
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }

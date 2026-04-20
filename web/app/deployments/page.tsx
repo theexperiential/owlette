@@ -282,8 +282,9 @@ export default function DeploymentsPage() {
   const handleCreateUninstall = async (softwareName: string, machineIds: string[], deploymentId?: string) => {
     try {
       await createUninstall(currentSiteId, softwareName, machineIds, deploymentId);
-    } catch (error: any) {
-      throw new Error(error.message || 'failed to create uninstall task');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(message || 'failed to create uninstall task');
     }
   };
 
@@ -293,9 +294,10 @@ export default function DeploymentsPage() {
     try {
       await deleteDeployment(deploymentToDelete);
       toast.success('deployment record deleted successfully');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to delete deployment:', error);
-      toast.error(error.message || 'failed to delete deployment record');
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'failed to delete deployment record');
     } finally {
       setDeploymentToDelete(null);
     }
@@ -322,9 +324,10 @@ export default function DeploymentsPage() {
       }, machineIds);
 
       toast.success(`retrying deployment for ${failedTargets.length} failed machine(s)`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to retry deployment:', error);
-      toast.error(error.message || 'failed to retry deployment');
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'failed to retry deployment');
     }
   }, [createDeployment]);
 
@@ -363,7 +366,7 @@ export default function DeploymentsPage() {
   const handleCancelTarget = useCallback(async (deploymentId: string, machineId: string, installerName: string) => {
     try {
       await cancelDeployment(deploymentId, machineId, installerName);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to cancel deployment:', error);
     }
   }, [cancelDeployment]);

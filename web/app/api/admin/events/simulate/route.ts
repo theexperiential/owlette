@@ -184,7 +184,7 @@ export const POST = withRateLimit(
         recipients,
         webhooksFired,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }

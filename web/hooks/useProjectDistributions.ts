@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useProjectDistributionPresets } from '@/hooks/useProjectDistributionPresets';
+import { firestoreTsToMs, type FirestoreTs } from './useFirestore';
 
 export interface ProjectDistributionTarget {
   machineId: string;
@@ -21,8 +22,8 @@ export interface ProjectDistribution {
   extract_path?: string;
   verify_files?: string[];
   targets: ProjectDistributionTarget[];
-  createdAt: any; // Firestore Timestamp (new) or number (legacy)
-  completedAt?: any;
+  createdAt: FirestoreTs;
+  completedAt?: FirestoreTs;
   status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial';
 }
 
@@ -63,7 +64,7 @@ export function useProjectDistributions(siteId: string) {
           });
 
           // Sort by created date (newest first)
-          distributionData.sort((a, b) => (b.createdAt?.toMillis?.() ?? b.createdAt ?? 0) - (a.createdAt?.toMillis?.() ?? a.createdAt ?? 0));
+          distributionData.sort((a, b) => firestoreTsToMs(b.createdAt) - firestoreTsToMs(a.createdAt));
 
           setDistributions(distributionData);
           setLoading(false);
@@ -76,8 +77,9 @@ export function useProjectDistributions(siteId: string) {
       );
 
       return () => unsubscribe();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
       setLoading(false);
     }
   }, [siteId]);

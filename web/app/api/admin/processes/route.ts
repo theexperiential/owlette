@@ -3,7 +3,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError } from '@/lib/apiAuth.server';
 import { requireAdminWithSiteAccess } from '@/lib/apiHelpers.server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { withProcessConfig, ProcessConfigError } from '@/lib/processConfig.server';
+import { withProcessConfig, ProcessConfigError, type ProcessConfig } from '@/lib/processConfig.server';
 import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
@@ -44,8 +44,13 @@ export const GET = withRateLimit(
       const metricsProcesses = statusData?.metrics?.processes || {};
 
       // Merge config (authoritative) with live status
-      const processes = configProcesses.map((proc: any, index: number) => {
-        const liveData = metricsProcesses[proc.id] || metricsProcesses[proc.name] || {};
+      const processes = (configProcesses as ProcessConfig[]).map((proc, index) => {
+        const live = (metricsProcesses[proc.id] || metricsProcesses[proc.name] || {}) as {
+          status?: string;
+          pid?: number | null;
+          responsive?: boolean;
+          last_updated?: string | number | null;
+        };
         return {
           id: proc.id,
           name: proc.name,
@@ -63,10 +68,10 @@ export const GET = withRateLimit(
           schedulePresetId: proc.schedulePresetId || null,
           index: proc.index ?? index,
           // Live status fields
-          status: liveData.status || 'unknown',
-          pid: liveData.pid ?? null,
-          responsive: liveData.responsive ?? false,
-          last_updated: liveData.last_updated ?? null,
+          status: live.status || 'unknown',
+          pid: live.pid ?? null,
+          responsive: live.responsive ?? false,
+          last_updated: live.last_updated ?? null,
         };
       });
 

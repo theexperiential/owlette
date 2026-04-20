@@ -109,8 +109,9 @@ export function ManageSitesDialog({
       await onUpdateSite(siteId, updates);
       toast.success('Site updated successfully!');
       cancelEditingSite();
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to update site');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to update site');
     } finally {
       setIsSaving(false);
     }
@@ -136,8 +137,9 @@ export function ManageSitesDialog({
       toast.success('Site deleted successfully!');
       setDeletingDialogOpen(false);
       setSiteToDelete(null);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete site');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to delete site');
     }
   };
 

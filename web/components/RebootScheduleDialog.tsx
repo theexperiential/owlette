@@ -266,8 +266,9 @@ export default function RebootScheduleDialog({
       toast.success('preset saved');
       setNewPresetName('');
       setSavingNewPreset(false);
-    } catch (err: any) {
-      toast.error('failed to save preset', { description: err.message });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('failed to save preset', { description: message });
     }
   };
 
@@ -281,8 +282,9 @@ export default function RebootScheduleDialog({
       setNewPresetName('');
       setSavingNewPreset(false);
       setActivePresetId(pendingReplacePreset.id);
-    } catch (err: any) {
-      toast.error('failed to replace preset', { description: err.message });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('failed to replace preset', { description: message });
     }
   };
 
@@ -292,8 +294,9 @@ export default function RebootScheduleDialog({
       await updatePreset(editingPresetId, { name: editPresetName.trim() });
       setEditingPresetId(null);
       setEditPresetName('');
-    } catch (err: any) {
-      toast.error('failed to rename preset', { description: err.message });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('failed to rename preset', { description: message });
     }
   };
 
@@ -312,9 +315,10 @@ export default function RebootScheduleDialog({
       await updateRebootSchedule(machineId, { enabled, entries });
       toast.success('reboot schedule saved');
       onOpenChange(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       toast.error('failed to save reboot schedule', {
-        description: error.message,
+        description: message,
       });
     } finally {
       setSaving(false);
@@ -463,8 +467,9 @@ export default function RebootScheduleDialog({
                         try {
                           await updatePreset(selectedPreset.id, { entries });
                           toast.success('preset updated');
-                        } catch (err: any) {
-                          toast.error('failed to update preset', { description: err.message });
+                        } catch (err: unknown) {
+                          const message = err instanceof Error ? err.message : String(err);
+                          toast.error('failed to update preset', { description: message });
                         }
                       }}
                       className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300 cursor-pointer transition-colors"
@@ -501,8 +506,9 @@ export default function RebootScheduleDialog({
                         setConfirmDeletePresetId(null);
                         setActivePresetId(null);
                         toast.success('preset deleted');
-                      } catch (err: any) {
-                        toast.error('failed to delete preset', { description: err.message });
+                      } catch (err: unknown) {
+                        const message = err instanceof Error ? err.message : String(err);
+                        toast.error('failed to delete preset', { description: message });
                       }
                     }}
                     className="flex items-center gap-1 px-2 py-0.5 rounded bg-red-600/20 text-red-400 hover:bg-red-600/40 hover:text-red-300 cursor-pointer transition-colors font-medium"

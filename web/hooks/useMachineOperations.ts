@@ -76,9 +76,10 @@ export function useMachineOperations(siteId: string) {
       // The checkMachineHasActiveDeployment function prevents removal if deployments are active
 
       console.log(`Successfully removed machine ${machineId} from site ${siteId}`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('Error removing machine:', err);
-      setError(err.message || 'Failed to remove machine');
+      setError(message || 'Failed to remove machine');
       throw err;
     } finally {
       setRemoving(false);

@@ -108,8 +108,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       siteId = result.siteId;
       version = result.version;
       agentUid = result.agentUid;
-    } catch (txError: any) {
-      logger.warn(`Refresh token transaction failed: ${txError.message}`);
+    } catch (txError: unknown) {
+      const message = txError instanceof Error ? txError.message : String(txError);
+      logger.warn(`Refresh token transaction failed: ${message}`);
       return NextResponse.json(
         { error: 'Token refresh failed. Please try again.' },
         { status: 500 }
@@ -171,10 +172,11 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       { status: 200 }
     );
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error refreshing token:', error);
+    const message = error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: message },
       { status: 500 }
     );
   }

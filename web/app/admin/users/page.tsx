@@ -80,9 +80,10 @@ export default function UserManagementPage() {
       toast.success('Role Updated', {
         description: `${userToChangeRole.email} has been ${action}d to ${userToChangeRole.newRole}.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Update Failed', {
-        description: err.message || 'Failed to update user role.',
+        description: message || 'Failed to update user role.',
       });
     } finally {
       setUpdatingUser(null);
@@ -114,9 +115,10 @@ export default function UserManagementPage() {
       toast.success('User Deleted', {
         description: `${userToDelete.email} has been permanently deleted.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Deletion Failed', {
-        description: err.message || 'Failed to delete user.',
+        description: message || 'Failed to delete user.',
       });
     } finally {
       setDeletingUser(null);

@@ -64,8 +64,9 @@ export async function uploadInstaller(
         try {
           const url = await getDownloadURL(versionUploadTask.snapshot.ref);
           resolve(url);
-        } catch (error: any) {
-          reject(new Error(`Failed to get download URL: ${error.message}`));
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          reject(new Error(`Failed to get download URL: ${message}`));
         }
       }
     );
@@ -111,8 +112,9 @@ export async function getInstallerDownloadUrl(version: string): Promise<string> 
 
   try {
     return await getDownloadURL(fileRef);
-  } catch (error: any) {
-    throw new Error(`Failed to get download URL: ${error.message}`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to get download URL: ${message}`);
   }
 }
 
@@ -135,8 +137,9 @@ export async function deleteInstallerVersion(version: string): Promise<void> {
 
   try {
     await deleteObject(fileRef);
-  } catch (error: any) {
-    throw new Error(`Failed to delete installer: ${error.message}`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to delete installer: ${message}`);
   }
 }
 

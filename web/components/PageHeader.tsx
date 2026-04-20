@@ -19,7 +19,7 @@ interface Site {
 }
 
 interface PageHeaderProps {
-  currentPage: 'Dashboard' | 'Deploy Software' | 'Distribute Projects' | 'Logs' | 'Cortex' | 'dashboard' | 'deploy software' | 'distribute projects' | 'logs' | 'cortex';
+  currentPage: 'Dashboard' | 'Deploy Software' | 'Distribute Projects' | 'Roost' | 'Logs' | 'Cortex' | 'dashboard' | 'deploy software' | 'distribute projects' | 'roost' | 'logs' | 'cortex';
   sites?: Site[];
   currentSiteId?: string;
   onSiteChange?: (siteId: string) => void;
@@ -138,7 +138,7 @@ export function PageHeader({
           {disableNav ? (
             <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground px-1.5 py-1">
               {(() => {
-                const pageIcons: Record<string, React.ElementType> = { dashboard: LayoutDashboard, cortex: Brain, 'deploy software': Rocket, 'distribute projects': FolderSync, logs: ScrollText };
+                const pageIcons: Record<string, React.ElementType> = { dashboard: LayoutDashboard, cortex: Brain, 'deploy software': Rocket, roost: FolderSync, logs: ScrollText };
                 const PageIcon = pageIcons[currentPage.toLowerCase()];
                 return PageIcon ? <PageIcon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground translate-y-[0.5px]" /> : null;
               })()}
@@ -149,12 +149,12 @@ export function PageHeader({
             <DropdownMenuTrigger asChild>
               <button className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer">
                 {(() => {
-                  const pageIcons: Record<string, React.ElementType> = { dashboard: LayoutDashboard, cortex: Brain, 'deploy software': Rocket, 'distribute projects': FolderSync, logs: ScrollText };
+                  const pageIcons: Record<string, React.ElementType> = { dashboard: LayoutDashboard, cortex: Brain, 'deploy software': Rocket, roost: FolderSync, logs: ScrollText };
                   const PageIcon = pageIcons[currentPage.toLowerCase()];
                   return PageIcon ? <PageIcon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground translate-y-[0.5px]" /> : null;
                 })()}
                 <span className="hidden sm:inline lowercase">{currentPage}</span>
-                <span className="sm:hidden lowercase">{currentPage.toLowerCase() === 'dashboard' ? 'dashboard' : currentPage.toLowerCase() === 'deploy software' ? 'deploy' : currentPage.toLowerCase() === 'logs' ? 'logs' : currentPage.toLowerCase() === 'cortex' ? 'cortex' : 'projects'}</span>
+                <span className="sm:hidden lowercase">{currentPage.toLowerCase() === 'dashboard' ? 'dashboard' : currentPage.toLowerCase() === 'deploy software' ? 'deploy' : currentPage.toLowerCase() === 'logs' ? 'logs' : currentPage.toLowerCase() === 'cortex' ? 'cortex' : 'roost'}</span>
                 <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
               </button>
             </DropdownMenuTrigger>
@@ -201,9 +201,9 @@ export function PageHeader({
               >
                 <FolderSync className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
                 <div className="flex flex-col gap-0.5">
-                  <span className="font-medium">distribute projects</span>
+                  <span className="font-medium">roost</span>
                   <span className="text-xs text-muted-foreground font-normal">
-                    share projects and files to machines
+                    sync project files to your machines
                   </span>
                 </div>
               </DropdownMenuItem>

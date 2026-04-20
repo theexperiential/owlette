@@ -63,7 +63,7 @@ export const GET = withRateLimit(
 
       logger.info(`Listed ${machines.length} machines for site ${siteId}`, { context: 'admin/machines' });
       return NextResponse.json({ success: true, machines });
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }

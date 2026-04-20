@@ -128,7 +128,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     return NextResponse.json(result.body, { status: result.status });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return apiError(error, 'agent/auth/device-code/poll');
   }
 }, {

@@ -91,8 +91,9 @@ export function useSchedulePresets(siteId: string | null): UseSchedulePresetsRet
       );
 
       return () => unsubscribe();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
       setLoading(false);
     }
   }, [siteId]);

@@ -52,12 +52,12 @@ const INTERNAL_ROUTES = new Set([
   '/api/openapi',
 ]);
 
-function loadSpec(): Record<string, any> {
+function loadSpec(): Record<string, unknown> {
   if (!existsSync(SPEC_PATH)) {
     console.error('ERROR: openapi.yaml not found at', SPEC_PATH);
     process.exit(1);
   }
-  return yaml.load(readFileSync(SPEC_PATH, 'utf-8')) as Record<string, any>;
+  return yaml.load(readFileSync(SPEC_PATH, 'utf-8')) as Record<string, unknown>;
 }
 
 /**

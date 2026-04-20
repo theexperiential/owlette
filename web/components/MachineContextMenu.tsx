@@ -98,9 +98,10 @@ export function MachineContextMenu({
       toast.success(`Token revoked for ${machineName}`, {
         description: 'The machine will need to be re-registered to reconnect.',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       toast.error('Failed to revoke token', {
-        description: error.message,
+        description: message,
       });
     } finally {
       setIsRevoking(false);
@@ -116,8 +117,9 @@ export function MachineContextMenu({
       toast.success(`Reboot command sent to ${machineName}`, {
         description: 'Reboot starting. Click the countdown to cancel.',
       });
-    } catch (error: any) {
-      toast.error('Failed to send reboot command', { description: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error('Failed to send reboot command', { description: message });
     } finally {
       setIsSendingCommand(false);
       setShowRebootDialog(false);
@@ -132,8 +134,9 @@ export function MachineContextMenu({
       toast.success(`Shutdown command sent to ${machineName}`, {
         description: 'Shutdown starting. Click the countdown to cancel.',
       });
-    } catch (error: any) {
-      toast.error('Failed to send shutdown command', { description: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error('Failed to send shutdown command', { description: message });
     } finally {
       setIsSendingCommand(false);
       setShowShutdownDialog(false);
@@ -146,8 +149,9 @@ export function MachineContextMenu({
     try {
       await onCancelReboot();
       toast.success(`Cancel sent to ${machineName}`);
-    } catch (error: any) {
-      toast.error('Failed to send cancel command', { description: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error('Failed to send cancel command', { description: message });
     } finally {
       setIsSendingCommand(false);
     }

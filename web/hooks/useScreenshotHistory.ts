@@ -3,11 +3,12 @@
 import { useEffect, useState } from 'react';
 import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import type { FirestoreTs } from './useFirestore';
 
 export interface ScreenshotRecord {
   id: string;
   url: string;
-  timestamp: any; // Firestore Timestamp (new) or number (legacy)
+  timestamp: FirestoreTs;
   sizeKB: number;
 }
 

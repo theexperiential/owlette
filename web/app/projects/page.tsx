@@ -112,7 +112,7 @@ export default function ProjectsPage() {
     <div className="relative min-h-screen pb-8">
       {/* Header */}
       <PageHeader
-        currentPage="distribute projects"
+        currentPage="roost"
         sites={sites}
         currentSiteId={currentSiteId}
         onSiteChange={handleSiteChange}
@@ -279,7 +279,7 @@ export default function ProjectsPage() {
                           e.stopPropagation();
                           try {
                             await deleteDistribution(distribution.id);
-                          } catch (error: any) {
+                          } catch (error: unknown) {
                             console.error('Failed to delete distribution:', error);
                           }
                         }}
@@ -330,7 +330,7 @@ export default function ProjectsPage() {
                                       onClick={async () => {
                                         try {
                                           await cancelDistribution(distribution.id, target.machineId, distribution.file_name);
-                                        } catch (error: any) {
+                                        } catch (error: unknown) {
                                           console.error('Failed to cancel distribution:', error);
                                         }
                                       }}

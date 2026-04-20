@@ -139,9 +139,10 @@ export default function UploadInstallerDialog({
 
       resetForm();
       onOpenChange(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       toast.error('Upload Failed', {
-        description: error.message || 'Failed to upload installer',
+        description: message || 'Failed to upload installer',
       });
     } finally {
       setUploading(false);

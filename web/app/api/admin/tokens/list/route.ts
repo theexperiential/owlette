@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
       count: tokens.length,
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }

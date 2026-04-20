@@ -17,6 +17,7 @@ import { db } from '@/lib/firebase';
 import { formatRelativeTime } from '@/lib/timeUtils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useScreenshotHistory, ScreenshotRecord } from '@/hooks/useScreenshotHistory';
+import type { FirestoreTs } from '@/hooks/useFirestore';
 import { TimezoneChip } from '@/components/TimezoneChip';
 import { toast } from 'sonner';
 
@@ -33,7 +34,7 @@ interface ScreenshotDialogProps {
   onCaptureScreenshot: () => Promise<void>;
   lastScreenshot?: {
     url: string;
-    timestamp: any;   // Firestore Timestamp (new) or number (legacy)
+    timestamp: FirestoreTs;
     sizeKB: number;
   };
   hasActiveDeployment?: boolean;
@@ -130,9 +131,10 @@ export function ScreenshotDialog({
             : 'Screenshot timed out — the machine may be offline or running headless with no active user session.'
         );
       }, 20000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setIsCapturing(false);
-      setError(err.message || 'Failed to send screenshot command');
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message || 'Failed to send screenshot command');
     }
   }, [onCaptureScreenshot]);
 
@@ -144,7 +146,11 @@ export function ScreenshotDialog({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${machineName}-screenshot-${new Date(displayedScreenshot.timestamp).toISOString().replace(/[:.]/g, '-')}.jpg`;
+      const ts = displayedScreenshot.timestamp as { toDate?: () => Date } | number | string | Date | null | undefined;
+      const tsDate = ts && typeof (ts as { toDate?: () => Date }).toDate === 'function'
+        ? (ts as { toDate: () => Date }).toDate()
+        : new Date(ts as number | string | Date);
+      a.download = `${machineName}-screenshot-${tsDate.toISOString().replace(/[:.]/g, '-')}.jpg`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
@@ -197,8 +203,9 @@ export function ScreenshotDialog({
         setSelectedHistorical(null);
       }
       toast.success('Screenshot deleted');
-    } catch (err: any) {
-      toast.error('Failed to delete screenshot', { description: err.message });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('Failed to delete screenshot', { description: message });
     } finally {
       setDeletingId(null);
     }
@@ -219,8 +226,9 @@ export function ScreenshotDialog({
       setSelectedHistorical(null);
       setScreenshot(undefined);
       toast.success(`Cleared ${data.deleted} screenshot${data.deleted === 1 ? '' : 's'}`);
-    } catch (err: any) {
-      toast.error('Failed to clear history', { description: err.message });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('Failed to clear history', { description: message });
     } finally {
       setClearingAll(false);
     }
@@ -243,8 +251,11 @@ export function ScreenshotDialog({
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const formatTimestamp = (ts: any) => {
-    const d = ts?.toDate ? ts.toDate() : new Date(ts);
+  const formatTimestamp = (ts: FirestoreTs) => {
+    const t = ts as { toDate?: () => Date } | null | undefined;
+    const d = t && typeof t.toDate === 'function'
+      ? t.toDate()
+      : new Date(ts as string | number | Date);
     return d.toLocaleString(undefined, {
       month: 'short',
       day: 'numeric',
@@ -351,7 +362,7 @@ export function ScreenshotDialog({
                           >
                             <div className="font-medium truncate">{formatTimestamp(hs.timestamp)}</div>
                             <div className="text-[10px] mt-0.5 opacity-70">
-                              {formatRelativeTime(hs.timestamp?.seconds ?? Math.floor((typeof hs.timestamp === 'number' ? hs.timestamp : 0) / 1000))} · {hs.sizeKB}KB
+                              {formatRelativeTime((hs.timestamp as { seconds?: number } | null | undefined)?.seconds ?? Math.floor((typeof hs.timestamp === 'number' ? hs.timestamp : 0) / 1000))} · {hs.sizeKB}KB
                             </div>
                           </button>
                           <button

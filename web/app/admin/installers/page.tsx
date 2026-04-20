@@ -102,9 +102,10 @@ export default function InstallerVersionsPage() {
       toast.success('Latest Version Updated', {
         description: `Version ${versionToSetLatest} is now the latest.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Update Failed', {
-        description: err.message || 'Failed to update latest version.',
+        description: message || 'Failed to update latest version.',
       });
     } finally {
       setSettingLatest(null);
@@ -133,9 +134,10 @@ export default function InstallerVersionsPage() {
       toast.success('Version Deleted', {
         description: `Version ${versionToDelete} has been deleted.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Delete Failed', {
-        description: err.message || 'Failed to delete version.',
+        description: message || 'Failed to delete version.',
       });
     } finally {
       setDeletingVersion(null);
@@ -165,9 +167,10 @@ export default function InstallerVersionsPage() {
         description: `Deleted ${count} old installer${count !== 1 ? 's' : ''}.`,
       });
       setCleanupDialogOpen(false);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Cleanup Failed', {
-        description: err.message || 'Failed to clean up versions.',
+        description: message || 'Failed to clean up versions.',
       });
     } finally {
       setCleaningUp(false);

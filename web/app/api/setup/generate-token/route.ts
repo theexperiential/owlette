@@ -62,7 +62,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       { status: 200 }
     );
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }

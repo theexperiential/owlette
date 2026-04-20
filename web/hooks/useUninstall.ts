@@ -39,9 +39,10 @@ export function useUninstall() {
       });
 
       return software.sort((a, b) => a.name.localeCompare(b.name));
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('Failed to fetch software:', err);
-      throw new Error(err.message || 'Failed to fetch installed software');
+      throw new Error(message || 'Failed to fetch installed software');
     }
   };
 
@@ -75,8 +76,9 @@ export function useUninstall() {
 
       const uniqueSoftware = Array.from(softwareMap.values());
       return uniqueSoftware.sort((a, b) => a.name.localeCompare(b.name));
-    } catch (err: any) {
-      const errorMsg = err.message || 'Failed to fetch software';
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const errorMsg = message || 'Failed to fetch software';
       setError(errorMsg);
       throw new Error(errorMsg);
     } finally {
@@ -171,9 +173,10 @@ export function useUninstall() {
       }
 
       console.log(`[useUninstall] All uninstall commands created for ${machineIds.length} machines`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('[useUninstall] Error:', err);
-      const errorMsg = err.message || 'Failed to create uninstall commands';
+      const errorMsg = message || 'Failed to create uninstall commands';
       setError(errorMsg);
       throw new Error(errorMsg);
     } finally {
@@ -223,8 +226,9 @@ export function useUninstall() {
       });
 
       console.log(`Cancel uninstall command sent for ${softwareName} on ${machineId}`);
-    } catch (err: any) {
-      const errorMsg = err.message || 'Failed to cancel uninstall';
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const errorMsg = message || 'Failed to cancel uninstall';
       setError(errorMsg);
       throw new Error(errorMsg);
     } finally {

@@ -1,9 +1,49 @@
 'use client';
 
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, runTransaction, serverTimestamp, type Unsubscribe } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, runTransaction, serverTimestamp, Timestamp, type Unsubscribe } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
+
+/**
+ * Every shape a Firestore timestamp-ish field can arrive in on the client:
+ * Timestamp instance, plain number (Unix seconds), plain {seconds,nanoseconds}
+ * from cache rehydration, legacy admin-SDK {_seconds,_nanoseconds}, ISO string,
+ * or Date. parseFirestoreSeconds handles all of them.
+ */
+export type FirestoreTs =
+  | Timestamp
+  | number
+  | { seconds: number; nanoseconds?: number }
+  | { _seconds: number; _nanoseconds?: number }
+  | string
+  | Date
+  | null
+  | undefined;
+
+/**
+ * Extract milliseconds from any FirestoreTs shape — used for sort comparisons
+ * on createdAt / completedAt / etc. Legacy numeric values are assumed to be
+ * milliseconds (written via Date.now()). Returns 0 for falsy / unparseable.
+ */
+export function firestoreTsToMs(ts: FirestoreTs): number {
+  if (ts == null) return 0;
+  if (typeof ts === 'number') return ts;
+  if (ts instanceof Date) return ts.getTime();
+  if (typeof ts === 'string') {
+    const n = Date.parse(ts);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (typeof ts === 'object') {
+    const v = ts as { toMillis?: () => number; seconds?: number; _seconds?: number };
+    if (typeof v.toMillis === 'function') {
+      try { return v.toMillis(); } catch { return 0; }
+    }
+    if (typeof v.seconds === 'number') return v.seconds * 1000;
+    if (typeof v._seconds === 'number') return v._seconds * 1000;
+  }
+  return 0;
+}
 
 /**
  * Robustly parse a Firestore timestamp-shaped value into Unix seconds.
@@ -18,7 +58,7 @@ import { logger } from '@/lib/logger';
  * (including plain `{seconds, nanoseconds}` objects rehydrated from cache),
  * which manifested as a flapping online/offline pill on the dashboard.
  */
-function parseFirestoreSeconds(value: any): number {
+function parseFirestoreSeconds(value: unknown): number {
   if (value == null) return 0;
 
   // Number (already in Unix seconds — written by client code or hook itself)
@@ -29,19 +69,24 @@ function parseFirestoreSeconds(value: any): number {
   // Object — could be Firebase Timestamp instance, plain {seconds, nanoseconds},
   // legacy admin SDK {_seconds, _nanoseconds}, or a JS Date.
   if (typeof value === 'object') {
+    const v = value as {
+      toMillis?: () => number;
+      seconds?: number;
+      _seconds?: number;
+    };
     // Firebase Timestamp instance — has toMillis(); prefer it for accuracy
-    if (typeof value.toMillis === 'function') {
+    if (typeof v.toMillis === 'function') {
       try {
-        const ms = value.toMillis();
+        const ms = v.toMillis();
         return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
       } catch {
         // fall through to property reads
       }
     }
     // Plain {seconds, nanoseconds} — emitted by cache rehydration in some SDK paths
-    if (typeof value.seconds === 'number') return value.seconds;
+    if (typeof v.seconds === 'number') return v.seconds;
     // Legacy admin-SDK shape {_seconds, _nanoseconds}
-    if (typeof value._seconds === 'number') return value._seconds;
+    if (typeof v._seconds === 'number') return v._seconds;
     // JS Date (defensive — shouldn't reach client this way, but handle it)
     if (value instanceof Date) return Math.floor(value.getTime() / 1000);
   }
@@ -140,7 +185,7 @@ export interface NicProfile {
 export interface HardwareProfile {
   schemaVersion: number;
   signatureHash: string;
-  capturedAt: any;         // Firestore Timestamp or number
+  capturedAt: FirestoreTs;
   agentVersion: string;
   cpus: CpuProfile[];
   disks: DiskProfile[];
@@ -205,13 +250,13 @@ export interface Machine {
     attempt?: {
       entryId: string;
       scheduledFor: string;       // ISO instant
-      lastAttemptAt: any;         // Firestore Timestamp
+      lastAttemptAt: FirestoreTs;
       status: 'pending' | 'failed';
     } | null;
   };
   lastScreenshot?: {
     url: string;       // Firebase Storage public URL
-    timestamp: any;    // Firestore Timestamp (new) or number (legacy)
+    timestamp: FirestoreTs;
     sizeKB: number;
   };
   liveView?: {
@@ -223,7 +268,7 @@ export interface Machine {
   metrics?: {
     schemaVersion?: number;
     profileHash?: string;
-    timestamp?: any;
+    timestamp?: FirestoreTs;
     cpus?:   Record<string, CpuMetric>;
     memory?: MemoryMetric;
     disks?:  Record<string, DiskMetric>;
@@ -298,7 +343,7 @@ export interface Machine {
 export interface Site {
   id: string;
   name: string;
-  createdAt: any; // Firestore Timestamp (new) or number (legacy)
+  createdAt: FirestoreTs;
   timezone?: string;  // IANA timezone, e.g., "America/New_York"
   owner?: string;  // UID of the user who owns this site
 }
@@ -604,9 +649,10 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
       return () => {
         unsubscribes.forEach(unsub => unsub());
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('Error in useSites:', err);
-      setError(err.message);
+      setError(message);
       setLoading(false);
     }
   }, [userId, userSites, isAdmin]);
@@ -633,8 +679,9 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
         owner: userId,
         timezone: timezone || 'UTC',
       });
-    } catch (err: any) {
-      if (err?.code === 'permission-denied') {
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      if (code === 'permission-denied') {
         throw new Error(`Site ID "${siteId}" is already taken. Please choose a different ID.`);
       }
       throw err;
@@ -1065,8 +1112,9 @@ export function useMachines(siteId: string) {
         profileListenersRef.current = {};
         setProfiles({});
       };
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
       setLoading(false);
     }
   }, [siteId]);
@@ -1286,25 +1334,27 @@ export function useMachines(siteId: string) {
       } catch {
         logger.debug('configChangeFlag write skipped (non-critical)', { context: 'updateProcess' });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.firestore.error('Failed to update process', error);
+
+      const e = error as { code?: string; message?: string };
 
       // Enhanced error logging for debugging
       console.error('[Firestore Error] updateProcess failed:', {
         error,
-        code: error?.code,
-        message: error?.message,
+        code: e?.code,
+        message: e?.message,
         siteId,
         machineId,
         processId
       });
 
       // Provide more descriptive error messages for common Firestore errors
-      if (error?.code === 'permission-denied') {
+      if (e?.code === 'permission-denied') {
         throw new Error('Permission denied: Unable to update process configuration. Please check Firestore security rules.');
-      } else if (error?.code === 'not-found') {
+      } else if (e?.code === 'not-found') {
         throw new Error('Machine or config document not found. The machine may have been removed.');
-      } else if (error?.code === 'unavailable') {
+      } else if (e?.code === 'unavailable') {
         throw new Error('Firestore is temporarily unavailable. Please try again in a moment.');
       }
 
@@ -1354,25 +1404,27 @@ export function useMachines(siteId: string) {
       } catch {
         logger.debug('configChangeFlag write skipped (non-critical)', { context: 'deleteProcess' });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.firestore.error('Failed to delete process', error);
+
+      const e = error as { code?: string; message?: string };
 
       // Enhanced error logging for debugging
       console.error('[Firestore Error] deleteProcess failed:', {
         error,
-        code: error?.code,
-        message: error?.message,
+        code: e?.code,
+        message: e?.message,
         siteId,
         machineId,
         processId
       });
 
       // Provide more descriptive error messages for common Firestore errors
-      if (error?.code === 'permission-denied') {
+      if (e?.code === 'permission-denied') {
         throw new Error('Permission denied: Unable to delete process configuration. Please check Firestore security rules.');
-      } else if (error?.code === 'not-found') {
+      } else if (e?.code === 'not-found') {
         throw new Error('Machine or config document not found. The machine may have been removed.');
-      } else if (error?.code === 'unavailable') {
+      } else if (e?.code === 'unavailable') {
         throw new Error('Firestore is temporarily unavailable. Please try again in a moment.');
       }
 
@@ -1437,25 +1489,27 @@ export function useMachines(siteId: string) {
       }
 
       return newProcessId;
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.firestore.error('Failed to create process', error);
+
+      const e = error as { code?: string; message?: string };
 
       // Enhanced error logging for debugging
       console.error('[Firestore Error] createProcess failed:', {
         error,
-        code: error?.code,
-        message: error?.message,
+        code: e?.code,
+        message: e?.message,
         siteId,
         machineId,
         processData
       });
 
       // Provide more descriptive error messages for common Firestore errors
-      if (error?.code === 'permission-denied') {
+      if (e?.code === 'permission-denied') {
         throw new Error('Permission denied: Unable to create process configuration. Please check Firestore security rules.');
-      } else if (error?.code === 'not-found') {
+      } else if (e?.code === 'not-found') {
         throw new Error('Machine or config document not found. The machine may have been removed.');
-      } else if (error?.code === 'unavailable') {
+      } else if (e?.code === 'unavailable') {
         throw new Error('Firestore is temporarily unavailable. Please try again in a moment.');
       }
 

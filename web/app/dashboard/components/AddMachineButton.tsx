@@ -67,8 +67,9 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
 
       setEnterSuccess(true);
       toast.success('Machine authorized! It will appear on your dashboard shortly.');
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to authorize machine');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to authorize machine');
     } finally {
       setIsAuthorizing(false);
     }
@@ -111,8 +112,9 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
 
       setGeneratedPhrase(phrase);
       setGenerateSuccess(true);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to generate code');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to generate code');
     } finally {
       setIsGenerating(false);
     }

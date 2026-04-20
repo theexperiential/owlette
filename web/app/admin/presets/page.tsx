@@ -62,9 +62,10 @@ export default function SystemPresetsPage() {
       });
       setDeleteDialogOpen(false);
       setPresetToDelete(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Delete Failed', {
-        description: err.message || 'Failed to delete preset.',
+        description: message || 'Failed to delete preset.',
       });
     } finally {
       setDeleting(false);

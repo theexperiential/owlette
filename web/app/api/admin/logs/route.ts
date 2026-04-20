@@ -87,12 +87,13 @@ export const GET = withRateLimit(
 
       logger.info(`Read ${logs.length} logs for site ${siteId}`, { context: 'admin/logs' });
       return NextResponse.json({ success: true, logs });
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
       console.error('admin/logs:', error);
-      return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      return NextResponse.json({ error: message }, { status: 500 });
     }
   },
   { strategy: 'api', identifier: 'ip' }

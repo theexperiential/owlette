@@ -106,7 +106,7 @@ export default function UninstallDialog({
         const softwareList = Array.from(softwareMap.values());
         softwareList.sort((a, b) => a.name.localeCompare(b.name));
         setAvailableSoftware(softwareList);
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('Failed to fetch software:', error);
         toast.error('Failed to fetch installed software');
       } finally {
@@ -233,9 +233,10 @@ export default function UninstallDialog({
       setFilterText('');
       setAvailableSoftware([]);
       setPendingUninstall(null);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Uninstall error:', error);
-      toast.error(error.message || 'Failed to create uninstall task');
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to create uninstall task');
       setConfirmDialogOpen(true); // Reopen confirm dialog so user can try again
     } finally {
       setUninstalling(false);

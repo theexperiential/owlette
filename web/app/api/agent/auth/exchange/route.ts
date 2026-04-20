@@ -186,10 +186,11 @@ export const POST = withRateLimit(async (request: NextRequest) => {
           agentUid,
         });
       });
-    } catch (txError: any) {
+    } catch (txError: unknown) {
       // Another request won the race — but we already generated tokens.
       // This is rare; the agent will get a 401 and can re-pair with a new code.
-      logger.warn(`Registration code claim race: ${txError.message}`);
+      const message = txError instanceof Error ? txError.message : String(txError);
+      logger.warn(`Registration code claim race: ${message}`);
       return NextResponse.json({ error: 'Registration code already used' }, { status: 401 });
     }
 
@@ -205,10 +206,11 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       { status: 200 }
     );
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error exchanging registration code:', error);
+    const message = error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: message },
       { status: 500 }
     );
   }

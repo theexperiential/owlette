@@ -84,8 +84,9 @@ export const GET = withRateLimit(
         builds: builds.slice(0, 10),
         scraped_at: new Date().toISOString(),
       });
-    } catch (error: any) {
-      if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+    } catch (error: unknown) {
+      const errName = error instanceof Error ? error.name : undefined;
+      if (errName === 'TimeoutError' || errName === 'AbortError') {
         logger.error('fetch-td-version: timeout fetching derivative.ca');
         return NextResponse.json(
           { error: 'Timeout fetching derivative.ca' },

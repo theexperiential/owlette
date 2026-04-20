@@ -141,7 +141,7 @@ export const POST = withRateLimit(
       }
 
       return NextResponse.json({ success: true, commandId, status: 'timeout' });
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }

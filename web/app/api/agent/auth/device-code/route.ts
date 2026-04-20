@@ -87,7 +87,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       expiresIn: 600, // 10 minutes
       interval: 5, // poll every 5 seconds
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return apiError(error, 'agent/auth/device-code');
   }
 }, {

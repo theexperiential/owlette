@@ -83,9 +83,10 @@ export default function SchedulePresetDialog({
         toast.success(`Preset "${name.trim()}" created`);
       }
       onOpenChange(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to save schedule preset:', error);
-      toast.error(error.message || 'Failed to save preset');
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to save preset');
     } finally {
       setSaving(false);
     }

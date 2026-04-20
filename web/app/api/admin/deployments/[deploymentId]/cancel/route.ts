@@ -6,6 +6,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
+import type { DeploymentTarget } from '@/hooks/useDeployments';
 
 /**
  * POST /api/admin/deployments/{deploymentId}/cancel
@@ -52,7 +53,7 @@ export const POST = withRateLimit(
 
       // Verify machine is a target in this deployment
       const target = (deploymentData.targets || []).find(
-        (t: any) => t.machineId === machineId
+        (t: DeploymentTarget) => t.machineId === machineId
       );
 
       if (!target) {
@@ -88,7 +89,7 @@ export const POST = withRateLimit(
         },
       }, { merge: true });
       const now = Timestamp.now();
-      const updatedTargets = (deploymentData.targets || []).map((target: any) => {
+      const updatedTargets: DeploymentTarget[] = (deploymentData.targets || []).map((target: DeploymentTarget) => {
         if (target.machineId === machineId) {
           return {
             ...target,
@@ -101,7 +102,7 @@ export const POST = withRateLimit(
 
       // Recalculate deployment-level status if all targets are now terminal
       const targetTerminalStatuses = ['completed', 'failed', 'cancelled', 'uninstalled'];
-      const allTerminal = updatedTargets.every((t: any) =>
+      const allTerminal = updatedTargets.every((t: DeploymentTarget) =>
         targetTerminalStatuses.includes(t.status)
       );
 
@@ -111,7 +112,7 @@ export const POST = withRateLimit(
       };
 
       if (allTerminal) {
-        const statuses = new Set(updatedTargets.map((t: any) => t.status));
+        const statuses = new Set(updatedTargets.map((t: DeploymentTarget) => t.status));
         if (statuses.size === 1 && statuses.has('cancelled')) {
           updatePayload.status = 'cancelled';
         } else if (statuses.size === 1 && statuses.has('completed')) {

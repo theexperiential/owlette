@@ -179,7 +179,7 @@ export default function AlertsPage() {
       } else {
         setRules([]);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to fetch alert rules:', err);
       toast.error('Failed to load alert rules');
     } finally {
@@ -201,7 +201,7 @@ export default function AlertsPage() {
       const alertsRef = doc(db, 'sites', selectedSiteId, 'settings', 'alerts');
       await setDoc(alertsRef, { rules: updatedRules }, { merge: true });
       setRules(updatedRules);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to save alert rules:', err);
       toast.error('Failed to save alert rules');
     } finally {

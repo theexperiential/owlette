@@ -63,8 +63,9 @@ export default function SchedulePresetsPage() {
       toast.success(`Preset "${presetToDelete.name}" deleted`);
       setDeleteDialogOpen(false);
       setPresetToDelete(null);
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to delete preset');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(message || 'Failed to delete preset');
     } finally {
       setDeleting(false);
     }

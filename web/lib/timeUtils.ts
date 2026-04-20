@@ -7,6 +7,8 @@
  * - Tooltip: Always shows full timestamp with timezone
  */
 
+import type { FirestoreTs } from '@/hooks/useFirestore';
+
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 /**
@@ -312,7 +314,7 @@ export function formatTimezoneShortName(tz: string | undefined): string {
  * Returns '—' if the input is falsy or unparseable.
  */
 export function formatSiteScopedTimestamp(
-  input: Date | number | string | undefined | null,
+  input: FirestoreTs,
   mode: TimeDisplayMode,
   userTz: string | undefined,
   siteTz: string | undefined,
@@ -327,6 +329,17 @@ export function formatSiteScopedTimestamp(
     ms = input;
   } else if (typeof input === 'string') {
     ms = Date.parse(input);
+  } else if (typeof input === 'object') {
+    const v = input as { toMillis?: () => number; seconds?: number; _seconds?: number };
+    if (typeof v.toMillis === 'function') {
+      try { ms = v.toMillis(); } catch { return '—'; }
+    } else if (typeof v.seconds === 'number') {
+      ms = v.seconds * 1000;
+    } else if (typeof v._seconds === 'number') {
+      ms = v._seconds * 1000;
+    } else {
+      return '—';
+    }
   } else {
     return '—';
   }

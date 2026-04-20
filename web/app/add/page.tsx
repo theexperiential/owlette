@@ -88,7 +88,7 @@ export default function AddMachinePage() {
         if (fetchedSites.length === 1) {
           setSelectedSiteId(fetchedSites[0].id);
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('Error fetching sites:', error);
         toast.error('Failed to load sites');
       } finally {
@@ -137,9 +137,10 @@ export default function AddMachinePage() {
       setIsAuthorized(true);
       setMachineId(data.machineId);
       toast.success('Machine authorized!');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error authorizing:', error);
-      toast.error(error.message || 'Failed to authorize machine');
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to authorize machine');
     } finally {
       setIsAuthorizing(false);
     }

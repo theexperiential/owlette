@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, runTransaction, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { firestoreTsToMs, type FirestoreTs } from './useFirestore';
 
 export interface DeploymentTemplate {
   id: string;
@@ -13,7 +14,7 @@ export interface DeploymentTemplate {
   verify_path?: string;
   close_processes?: string[];
   parallel_install?: boolean;
-  createdAt: any; // Firestore Timestamp (new) or number (legacy)
+  createdAt: FirestoreTs;
 }
 
 export interface DeploymentTarget {
@@ -21,9 +22,9 @@ export interface DeploymentTarget {
   status: 'pending' | 'closing_processes' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled' | 'uninstalled';
   progress?: number;
   error?: string;
-  completedAt?: any;
-  cancelledAt?: any;
-  uninstalledAt?: any;
+  completedAt?: FirestoreTs;
+  cancelledAt?: FirestoreTs;
+  uninstalledAt?: FirestoreTs;
 }
 
 export interface Deployment {
@@ -37,8 +38,8 @@ export interface Deployment {
   suppress_projects?: string[];
   parallel_install?: boolean;
   targets: DeploymentTarget[];
-  createdAt: any; // Firestore Timestamp (new) or number (legacy)
-  completedAt?: any;
+  createdAt: FirestoreTs;
+  completedAt?: FirestoreTs;
   status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial' | 'uninstalled';
 }
 
@@ -87,7 +88,7 @@ export function useDeploymentTemplates(siteId: string) {
           });
 
           // Sort by created date (newest first)
-          templateData.sort((a, b) => (b.createdAt?.toMillis?.() ?? b.createdAt ?? 0) - (a.createdAt?.toMillis?.() ?? a.createdAt ?? 0));
+          templateData.sort((a, b) => firestoreTsToMs(b.createdAt) - firestoreTsToMs(a.createdAt));
 
           setTemplates(templateData);
           setLoading(false);
@@ -100,8 +101,9 @@ export function useDeploymentTemplates(siteId: string) {
       );
 
       return () => unsubscribe();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
       setLoading(false);
     }
   }, [siteId]);
@@ -190,7 +192,7 @@ export function useDeployments(siteId: string) {
           });
 
           // Sort by created date (newest first)
-          deploymentData.sort((a, b) => (b.createdAt?.toMillis?.() ?? b.createdAt ?? 0) - (a.createdAt?.toMillis?.() ?? a.createdAt ?? 0));
+          deploymentData.sort((a, b) => firestoreTsToMs(b.createdAt) - firestoreTsToMs(a.createdAt));
 
           setDeployments(deploymentData);
           setLoading(false);
@@ -203,8 +205,9 @@ export function useDeployments(siteId: string) {
       );
 
       return () => unsubscribe();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
       setLoading(false);
     }
   }, [siteId]);
@@ -416,7 +419,7 @@ export function useDeployments(siteId: string) {
 
                 // Mark this command as processed ONLY for terminal states
                 processedCommands.add(commandId);
-              } catch (error: any) {
+              } catch (error: unknown) {
                 // Handle Firestore write errors gracefully
                 const retries = commandRetriesRef.current;
                 const attempts = (retries.get(commandId) || 0) + 1;

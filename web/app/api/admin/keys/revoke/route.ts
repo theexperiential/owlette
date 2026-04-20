@@ -48,7 +48,7 @@ export const DELETE = withRateLimit(
       await batch.commit();
 
       return NextResponse.json({ success: true });
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }

@@ -62,11 +62,12 @@ export function ManageUserSitesDialog({
       toast.success('Site Assigned', {
         description: `${userEmail} now has access to this site.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Revert optimistic update on error
       setLocalUserSites(prev => prev.filter(id => id !== siteId));
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Assignment Failed', {
-        description: err.message || 'Failed to assign site to user.',
+        description: message || 'Failed to assign site to user.',
       });
     } finally {
       setAssigningTo(null);
@@ -84,11 +85,12 @@ export function ManageUserSitesDialog({
       toast.success('Site Removed', {
         description: `${userEmail} no longer has access to this site.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Revert optimistic update on error
       setLocalUserSites(prev => [...prev, siteId]);
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Removal Failed', {
-        description: err.message || 'Failed to remove site from user.',
+        description: message || 'Failed to remove site from user.',
       });
     } finally {
       setRemovingFrom(null);

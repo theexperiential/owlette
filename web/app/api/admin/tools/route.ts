@@ -24,7 +24,7 @@ export const GET = withRateLimit(
       const tools = getToolsByTier(maxTier);
 
       return NextResponse.json({ tools, count: tools.length });
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }

@@ -195,8 +195,9 @@ export default function DeploymentDialog({
         setSelectedItem(`${TEMPLATE_PREFIX}${newId}`);
         toast.success('Saved as new template');
       }
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to save template');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to save template');
     }
   };
 
@@ -219,8 +220,9 @@ export default function DeploymentDialog({
       setSilentFlags('');
       setVerifyPath('');
       setShowDeleteConfirm(false);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete template');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to delete template');
       setShowDeleteConfirm(false);
     }
   };
@@ -335,9 +337,10 @@ export default function DeploymentDialog({
       setShowCloseProcesses(false);
 
       onOpenChange(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Deployment error:', error);
-      toast.error(error.message || 'Failed to create deployment');
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to create deployment');
     } finally {
       setDeploying(false);
     }

@@ -83,9 +83,10 @@ export function CreateSiteDialog({
         setAvailabilityStatus('available');
         setValidationError('');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error checking site availability:', error);
-      if (error?.code === 'permission-denied') {
+      const e = error as { code?: string };
+      if (e?.code === 'permission-denied') {
         setAvailabilityStatus('available');
         setValidationError('');
         return;
@@ -150,8 +151,9 @@ export function CreateSiteDialog({
       if (onSiteCreated) {
         onSiteCreated(createdSiteId);
       }
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to create site');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to create site');
     } finally {
       setIsCreating(false);
     }

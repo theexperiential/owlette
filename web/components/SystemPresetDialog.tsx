@@ -112,9 +112,10 @@ export default function SystemPresetDialog({
       toast.success('Auto-filled', {
         description: `TouchDesigner ${latest.version} ready to save.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Failed to fetch TD version', {
-        description: err.message || 'Could not reach derivative.ca',
+        description: message || 'Could not reach derivative.ca',
       });
     } finally {
       setFetchingTd(false);
@@ -192,9 +193,10 @@ export default function SystemPresetDialog({
       }
 
       onOpenChange(false);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error(isEditMode ? 'Update Failed' : 'Create Failed', {
-        description: err.message || 'An error occurred while saving the preset.',
+        description: message || 'An error occurred while saving the preset.',
       });
     } finally {
       setSaving(false);
