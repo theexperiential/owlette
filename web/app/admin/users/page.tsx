@@ -417,25 +417,34 @@ export default function UserManagementPage() {
         </div>
       )}
 
-      {/* Info Box — ascending privilege order, matches the stats cards above. */}
+      {/* Role-description cards — ascending privilege order, matches the stats cards above. */}
       {!loading && !error && users.length > 0 && (
-        <div className="mt-6 bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-4 space-y-2">
-          <div className="flex items-start gap-2 text-sm">
-            <Users className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
-            <p className="text-accent-cyan">
-              <strong>member:</strong> {ROLE_DESCRIPTIONS.member}
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-card border border-border rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Users className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+              <span className="text-sm font-semibold text-foreground">member</span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {ROLE_DESCRIPTIONS.member}
             </p>
           </div>
-          <div className="flex items-start gap-2 text-sm">
-            <ShieldAlert className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
-            <p className="text-accent-cyan">
-              <strong>admin:</strong> {ROLE_DESCRIPTIONS.admin}
+          <div className="bg-card border border-border rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <ShieldAlert className="h-4 w-4 text-green-500 flex-shrink-0" />
+              <span className="text-sm font-semibold text-foreground">admin</span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {ROLE_DESCRIPTIONS.admin}
             </p>
           </div>
-          <div className="flex items-start gap-2 text-sm">
-            <Crown className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
-            <p className="text-accent-cyan">
-              <strong>superadmin:</strong> {ROLE_DESCRIPTIONS.superadmin}
+          <div className="bg-card border border-border rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Crown className="h-4 w-4 text-red-400 flex-shrink-0" />
+              <span className="text-sm font-semibold text-foreground">superadmin</span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {ROLE_DESCRIPTIONS.superadmin}
             </p>
           </div>
         </div>

@@ -280,11 +280,13 @@ export function PageHeader({
                     so destructive cross-site actions don't catch them off guard. */}
                 {isSuperadmin && (
                   <span
-                    className="hidden sm:inline-flex items-center gap-1 rounded-full bg-red-600/15 border border-red-500/40 text-red-400 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 leading-none"
+                    className="hidden sm:inline-flex items-center rounded-full bg-red-600/15 border border-red-500/40 text-red-400 text-[10px] font-medium tracking-wide px-1.5 py-0.5 leading-none overflow-hidden group/superadmin"
                     aria-label="signed in as superadmin"
                   >
-                    <Crown className="h-2.5 w-2.5" />
-                    superadmin
+                    <Crown className="h-2.5 w-2.5 shrink-0" />
+                    <span className="max-w-0 group-hover/superadmin:max-w-20 group-hover/superadmin:ml-1 overflow-hidden whitespace-nowrap transition-all duration-200 ease-out">
+                      superadmin
+                    </span>
                   </span>
                 )}
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground hidden sm:block" />
