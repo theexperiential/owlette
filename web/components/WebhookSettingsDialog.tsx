@@ -358,8 +358,9 @@ export function WebhookList({ siteId }: { siteId: string }) {
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>name</Label>
+              <Label htmlFor="webhook-edit-name">name</Label>
               <Input
+                id="webhook-edit-name"
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
                 className="bg-background border-border"
@@ -367,8 +368,9 @@ export function WebhookList({ siteId }: { siteId: string }) {
             </div>
 
             <div className="space-y-2">
-              <Label>URL (https required)</Label>
+              <Label htmlFor="webhook-edit-url">URL (https required)</Label>
               <Input
+                id="webhook-edit-url"
                 value={editUrl}
                 onChange={(e) => setEditUrl(e.target.value)}
                 className="bg-background border-border"
@@ -516,8 +518,9 @@ export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebh
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>name</Label>
+              <Label htmlFor="webhook-add-name">name</Label>
               <Input
+                id="webhook-add-name"
                 placeholder='e.g. "Slack #alerts"'
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
@@ -526,8 +529,9 @@ export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebh
             </div>
 
             <div className="space-y-2">
-              <Label>URL (https required)</Label>
+              <Label htmlFor="webhook-add-url">URL (https required)</Label>
               <Input
+                id="webhook-add-url"
                 placeholder="https://hooks.slack.com/services/..."
                 value={newUrl}
                 onChange={(e) => setNewUrl(e.target.value)}
