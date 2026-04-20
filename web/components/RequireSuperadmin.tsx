@@ -6,20 +6,20 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 
 /**
- * RequireAdmin Component
+ * RequireSuperadmin Component
  *
- * Protects admin routes by checking if the user has admin role.
- * If not admin, redirects to dashboard with an error message.
+ * Protects superadmin-only routes by checking if the user has the superadmin role.
+ * If not superadmin, redirects to dashboard with an error message.
  *
  * Usage:
- * Wrap admin pages/layouts with this component:
+ * Wrap superadmin pages/layouts with this component:
  *
- * <RequireAdmin>
- *   <YourAdminContent />
- * </RequireAdmin>
+ * <RequireSuperadmin>
+ *   <YourSuperadminContent />
+ * </RequireSuperadmin>
  */
-export default function RequireAdmin({ children }: { children: React.ReactNode }) {
-  const { user, loading, isAdmin } = useAuth();
+export default function RequireSuperadmin({ children }: { children: React.ReactNode }) {
+  const { user, loading, isSuperadmin } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -33,17 +33,17 @@ export default function RequireAdmin({ children }: { children: React.ReactNode }
       return;
     }
 
-    // If user exists but is not admin, redirect to dashboard
-    if (!isAdmin) {
+    // If user exists but is not superadmin, redirect to dashboard
+    if (!isSuperadmin) {
       toast.error('access denied', {
         description: 'you do not have permission to access this page.',
       });
       router.push('/dashboard');
     }
-  }, [user, loading, isAdmin, router]);
+  }, [user, loading, isSuperadmin, router]);
 
   // Show nothing while loading or redirecting
-  if (loading || !user || !isAdmin) {
+  if (loading || !user || !isSuperadmin) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="text-center">
@@ -54,6 +54,6 @@ export default function RequireAdmin({ children }: { children: React.ReactNode }
     );
   }
 
-  // User is admin, render the protected content
+  // User is superadmin, render the protected content
   return <>{children}</>;
 }

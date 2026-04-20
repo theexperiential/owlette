@@ -10,7 +10,7 @@ interface MachineStatusPillProps {
   rebootScheduledAt?: number;    // Unix seconds — TARGET reboot time (when the OS will actually restart)
   shutdownScheduledAt?: number;  // Unix seconds — TARGET shutdown time
   onCancel?: () => Promise<void>;
-  isAdmin?: boolean;
+  isSiteAdmin?: boolean;
 }
 
 const CANCEL_LOCKOUT_THRESHOLD = 5; // Hide cancel in final 5s — Windows shutdown /a is unreliable
@@ -28,7 +28,7 @@ export function MachineStatusPill({
   rebootScheduledAt,
   shutdownScheduledAt,
   onCancel,
-  isAdmin,
+  isSiteAdmin,
 }: MachineStatusPillProps) {
   // Tick every second so the countdown and isActive check stay live.
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -95,7 +95,7 @@ export function MachineStatusPill({
     );
   }
 
-  const canCancel = isAdmin && !!onCancel && remaining > CANCEL_LOCKOUT_THRESHOLD;
+  const canCancel = isSiteAdmin && !!onCancel && remaining > CANCEL_LOCKOUT_THRESHOLD;
 
   // Final 5 seconds OR non-admin OR no cancel handler: text-only, no interaction
   if (!canCancel) {

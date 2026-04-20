@@ -68,7 +68,7 @@ interface DetailPanelState {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, loading, isAdmin, isSuperadmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences, updateUserPreferences } = useAuth();
+  const { user, loading, isSuperadmin, isSiteAdmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences, updateUserPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
   const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
@@ -961,7 +961,7 @@ export default function DashboardPage() {
         currentSiteId={currentSiteId}
         machineCount={machines.length}
         currentUserId={user?.uid}
-        isAdmin={isAdmin}
+        isSuperadmin={isSuperadmin}
         onUpdateSite={updateSite}
         onDeleteSite={async (siteId) => {
           await deleteSite(siteId);
@@ -1214,7 +1214,7 @@ export default function DashboardPage() {
                         siteTimezone={currentSite?.timezone || 'UTC'}
                         siteTimeFormat={userPreferences.timeFormat || '12h'}
                         userPreferences={userPreferences}
-                        isAdmin={isAdmin}
+                        isSiteAdmin={isSiteAdmin(currentSiteId)}
                         onToggleExpanded={() => toggleMachineExpanded(machine.machineId)}
                         onEditProcess={(process) => openEditProcessDialog(machine.machineId, process)}
                         onCreateProcess={() => openCreateProcessDialog(machine.machineId)}

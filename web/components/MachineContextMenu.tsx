@@ -33,7 +33,6 @@ interface MachineContextMenuProps {
   machineTimezone?: string;
   siteId: string;
   isOnline: boolean;
-  isAdmin?: boolean;
   rebooting?: boolean;
   shuttingDown?: boolean;
   onRemoveMachine: () => void;

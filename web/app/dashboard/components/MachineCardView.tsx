@@ -80,7 +80,7 @@ interface MachineCardProps {
   siteTimezone: string;
   siteTimeFormat: '12h' | '24h';
   userPreferences: { temperatureUnit: 'C' | 'F' };
-  isAdmin: boolean;
+  isSiteAdmin: boolean;
   cardPref: { cpu?: string; disk?: string; gpu?: string; nic?: string };
   onSetCardPref: (kind: DeviceKind, id: string | null) => void;
   onToggleStats: () => void;
@@ -111,7 +111,7 @@ function MachineCard({
   siteTimezone,
   siteTimeFormat,
   userPreferences,
-  isAdmin,
+  isSiteAdmin,
   cardPref,
   onSetCardPref,
   onToggleStats,
@@ -250,7 +250,7 @@ function MachineCard({
               shuttingDown={machine.shuttingDown}
               rebootScheduledAt={machine.rebootScheduledAt}
               shutdownScheduledAt={machine.shutdownScheduledAt}
-              isAdmin={isAdmin}
+              isSiteAdmin={isSiteAdmin}
               onCancel={onCancelReboot}
             />
             <Tooltip>
@@ -273,7 +273,6 @@ function MachineCard({
                 machineTimezone={machine.machineTimezone}
                 siteId={currentSiteId}
                 isOnline={machine.online}
-                isAdmin={isAdmin}
                 rebooting={machine.rebooting}
                 shuttingDown={machine.shuttingDown}
                 onRemoveMachine={onRemoveMachine}
@@ -298,7 +297,7 @@ function MachineCard({
                 reboot pending: {machine.rebootPending.reason || 'process crashed'}
               </span>
             </div>
-            {isAdmin && (
+            {isSiteAdmin && (
               <div className="flex items-center gap-1.5 flex-shrink-0">
                 <Button
                   variant="ghost"
@@ -911,7 +910,8 @@ export function MachineCardView({
   onScreenshot,
   onLiveView,
 }: MachineCardViewProps) {
-  const { userPreferences, isAdmin } = useAuth();
+  const { userPreferences, isSiteAdmin } = useAuth();
+  const canSiteAdmin = isSiteAdmin(currentSiteId);
   const { prefs, setCardPref } = useDevicePrefs();
   const uniqueTimezones = new Set(machines.map(m => m.machineTimezone).filter(Boolean));
   const showLocalClock = uniqueTimezones.size > 1;
@@ -934,7 +934,7 @@ export function MachineCardView({
           siteTimezone={siteTimezone}
           siteTimeFormat={siteTimeFormat}
           userPreferences={userPreferences}
-          isAdmin={isAdmin}
+          isSiteAdmin={canSiteAdmin}
           cardPref={prefs.cardView[machine.machineId] ?? {}}
           onSetCardPref={(kind, id) => setCardPref(machine.machineId, kind, id)}
           onToggleStats={onToggleStats}

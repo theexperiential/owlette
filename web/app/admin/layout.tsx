@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import RequireAdmin from '@/components/RequireAdmin';
+import RequireSuperadmin from '@/components/RequireSuperadmin';
 import { Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook, Clock, Bell } from 'lucide-react';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
  * Admin Layout
  *
  * Wraps all admin pages with:
- * - Admin permission check (RequireAdmin component)
+ * - Superadmin permission check (RequireSuperadmin component)
  * - Navigation sidebar for admin sections
  * - Consistent styling
  * - Mobile responsive with hamburger menu
@@ -93,7 +93,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   };
 
   return (
-    <RequireAdmin>
+    <RequireSuperadmin>
       <TooltipProvider delayDuration={100}>
         <div className="flex min-h-screen">
         {/* Mobile Menu Button */}
@@ -223,6 +223,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </main>
       </div>
       </TooltipProvider>
-    </RequireAdmin>
+    </RequireSuperadmin>
   );
 }

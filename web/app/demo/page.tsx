@@ -302,7 +302,7 @@ export default function DemoPage() {
                         siteTimezone={DEMO_SITE.timezone}
                         siteTimeFormat="12h"
                         userPreferences={{ temperatureUnit: 'C' }}
-                        isAdmin={false}
+                        isSiteAdmin={false}
                         onToggleExpanded={() => toggleMachineExpanded(machine.machineId)}
                         onEditProcess={noop}
                         onCreateProcess={noop}

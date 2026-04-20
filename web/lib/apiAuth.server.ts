@@ -100,8 +100,8 @@ export async function requireAdminOrIdToken(request: NextRequest): Promise<strin
   const userDoc = await db.collection('users').doc(userId).get();
   const role = userDoc.exists ? userDoc.data()?.role : null;
 
-  if (role !== 'admin') {
-    throw new ApiAuthError(403, 'Forbidden: Admin access required');
+  if (role !== 'superadmin') {
+    throw new ApiAuthError(403, 'Forbidden: Superadmin access required');
   }
 
   return userId;
@@ -134,11 +134,12 @@ export async function assertUserHasSiteAccess(
 
   const userDoc = await db.collection('users').doc(userId).get();
   const userData = userDoc.exists ? userDoc.data() : null;
-  const isAdmin = userData?.role === 'admin';
+  // Superadmins get god-mode site access (mirrors firestore.rules canAccessSite fall-through).
+  const isSuperadmin = userData?.role === 'superadmin';
   const assignedSites = Array.isArray(userData?.sites) ? userData?.sites : [];
   const isAssigned = assignedSites.includes(siteId);
 
-  if (!isAdmin && !isOwner && !isAssigned) {
+  if (!isSuperadmin && !isOwner && !isAssigned) {
     throw new ApiAuthError(403, 'Forbidden: You do not have access to this site');
   }
 

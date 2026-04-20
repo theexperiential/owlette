@@ -115,8 +115,8 @@ export async function verifyUserSiteAccess(
   }
   const userData = userDoc.data()!;
 
-  // Admins can access all sites
-  if (userData.role === 'admin') return;
+  // Superadmins can access all sites (platform god-mode — mirrors firestore.rules canAccessSite).
+  if (userData.role === 'superadmin') return;
 
   const userSites: string[] = userData.sites || [];
   if (!userSites.includes(siteId)) {

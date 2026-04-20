@@ -29,7 +29,7 @@ interface Site {
 }
 
 interface PageHeaderProps {
-  currentPage: 'Dashboard' | 'Deploy Software' | 'Distribute Projects' | 'Roost' | 'Logs' | 'Cortex' | 'dashboard' | 'deploy software' | 'distribute projects' | 'roost' | 'logs' | 'cortex';
+  currentPage: 'Dashboard' | 'Deploy Software' | 'Roost' | 'Logs' | 'Cortex' | 'dashboard' | 'deploy software' | 'roost' | 'logs' | 'cortex';
   sites?: Site[];
   currentSiteId?: string;
   onSiteChange?: (siteId: string) => void;
@@ -50,7 +50,7 @@ export function PageHeader({
   disableNav,
 }: PageHeaderProps) {
   const router = useRouter();
-  const { user, signOut, isAdmin } = useAuth();
+  const { user, signOut, isSuperadmin } = useAuth();
   const [reportBugOpen, setReportBugOpen] = useState(false);
   const [feedbackLabel, setFeedbackLabel] = useState('report a bug');
   const [feedbackFading, setFeedbackFading] = useState(false);
@@ -287,7 +287,7 @@ export function PageHeader({
                 <p className="text-xs text-muted-foreground truncate mt-0.5">{user?.email}</p>
               </div>
               <DropdownMenuSeparator className="bg-border" />
-              {isAdmin && (
+              {isSuperadmin && (
                 <DropdownMenuItem
                   onClick={() => router.push('/admin/installers')}
                   className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"

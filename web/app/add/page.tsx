@@ -20,7 +20,7 @@ interface Site {
 }
 
 export default function AddMachinePage() {
-  const { user, loading: authLoading, isAdmin } = useAuth();
+  const { user, loading: authLoading, isSuperadmin } = useAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [sites, setSites] = useState<Site[]>([]);
@@ -60,10 +60,10 @@ export default function AddMachinePage() {
         }
 
         const userData = userDoc.data();
-        const siteIds = isAdmin ? [] : (userData.sites || []);
+        const siteIds = isSuperadmin ? [] : (userData.sites || []);
         const fetchedSites: Site[] = [];
 
-        if (isAdmin) {
+        if (isSuperadmin) {
           // Admin: fetch all sites via collection (same as setup page)
           const { collection, getDocs } = await import('firebase/firestore');
           const sitesRef = collection(db, 'sites');
@@ -97,7 +97,7 @@ export default function AddMachinePage() {
     }
 
     fetchSites();
-  }, [user, isAdmin]);
+  }, [user, isSuperadmin]);
 
   // Redirect to login if not authenticated
   useEffect(() => {

@@ -245,7 +245,7 @@ interface MachineRowProps {
   siteTimezone: string;
   siteTimeFormat: '12h' | '24h';
   userPreferences: { temperatureUnit: 'C' | 'F' };
-  isAdmin?: boolean;
+  isSiteAdmin?: boolean;
   onToggleExpanded: () => void;
   onEditProcess: (process: Process) => void;
   onCreateProcess: () => void;
@@ -276,7 +276,7 @@ export function MachineRow({
   siteTimezone,
   siteTimeFormat,
   userPreferences,
-  isAdmin,
+  isSiteAdmin,
   onToggleExpanded,
   onEditProcess,
   onCreateProcess,
@@ -453,7 +453,7 @@ export function MachineRow({
             shuttingDown={machine.shuttingDown}
             rebootScheduledAt={machine.rebootScheduledAt}
             shutdownScheduledAt={machine.shutdownScheduledAt}
-            isAdmin={isAdmin}
+            isSiteAdmin={isSiteAdmin}
             onCancel={onCancelReboot}
           />
         </TableCell>
@@ -652,7 +652,6 @@ export function MachineRow({
               machineTimezone={machine.machineTimezone}
               siteId={currentSiteId}
               isOnline={machine.online}
-              isAdmin={isAdmin}
               rebooting={machine.rebooting}
               shuttingDown={machine.shuttingDown}
               onRemoveMachine={onRemoveMachine}

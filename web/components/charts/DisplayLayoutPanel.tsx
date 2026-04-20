@@ -71,7 +71,8 @@ export function DisplayLayoutPanel({
   siteId,
   onClose,
 }: DisplayLayoutPanelProps) {
-  const { isAdmin, user } = useAuth();
+  const { isSiteAdmin, user } = useAuth();
+  const canSiteAdmin = isSiteAdmin(siteId);
   const { profile, assigned, loading, error } = useDisplayState(siteId, machineId);
   // `applying` drives the disabled-state on every write button so repeat-clicks
   // during in-flight operations are blocked at the UI boundary.
@@ -365,7 +366,7 @@ export function DisplayLayoutPanel({
             no assigned layout yet. store the live arrangement to make it the
             one owlette keeps in place.
           </p>
-          {isAdmin && (
+          {canSiteAdmin && (
             <Button
               variant="outline"
               size="sm"
@@ -466,7 +467,7 @@ export function DisplayLayoutPanel({
 
           <div className="flex-1" />
 
-          {isAdmin && (
+          {canSiteAdmin && (
             <div className="flex items-center gap-1.5">
               {/* Action buttons match the machine row's more-options icon
                   button styling (bg-card border + muted->white hover) so the

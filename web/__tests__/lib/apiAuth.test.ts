@@ -134,10 +134,10 @@ describe('requireSessionOrIdToken', () => {
 describe('requireAdminOrIdToken', () => {
   const apiKeyHash = createHash('sha256').update('owk_test123').digest('hex');
 
-  it('returns userId for admin via x-api-key header', async () => {
+  it('returns userId for superadmin via x-api-key header', async () => {
     mockDocGet.mockImplementation((col: string) => {
-      if (col === 'api_keys') return Promise.resolve({ exists: true, data: () => ({ userId: 'admin-1', keyId: 'k1' }) });
-      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'admin' }) });
+      if (col === 'api_keys') return Promise.resolve({ exists: true, data: () => ({ userId: 'super-1', keyId: 'k1' }) });
+      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'superadmin' }) });
       return Promise.resolve({ exists: false });
     });
 
@@ -145,20 +145,20 @@ describe('requireAdminOrIdToken', () => {
       headers: { 'x-api-key': 'owk_test123' },
     });
     const result = await requireAdminOrIdToken(req);
-    expect(result).toBe('admin-1');
+    expect(result).toBe('super-1');
     expect(mockDoc).toHaveBeenCalledWith('api_keys', apiKeyHash);
   });
 
-  it('returns userId for admin via api_key query param', async () => {
+  it('returns userId for superadmin via api_key query param', async () => {
     mockDocGet.mockImplementation((col: string) => {
-      if (col === 'api_keys') return Promise.resolve({ exists: true, data: () => ({ userId: 'admin-2', keyId: 'k2' }) });
-      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'admin' }) });
+      if (col === 'api_keys') return Promise.resolve({ exists: true, data: () => ({ userId: 'super-2', keyId: 'k2' }) });
+      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'superadmin' }) });
       return Promise.resolve({ exists: false });
     });
 
     const req = makeRequest('http://localhost/test?api_key=owk_test456');
     const result = await requireAdminOrIdToken(req);
-    expect(result).toBe('admin-2');
+    expect(result).toBe('super-2');
   });
 
   it('throws 401 for invalid API key (doc does not exist)', async () => {
@@ -176,20 +176,32 @@ describe('requireAdminOrIdToken', () => {
   });
 
   it('falls back to session/token when no API key present', async () => {
-    mockGetSession.mockResolvedValue(validSession({ userId: 'session-admin' }));
+    mockGetSession.mockResolvedValue(validSession({ userId: 'session-super' }));
     mockDocGet.mockImplementation((col: string) => {
-      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'admin' }) });
+      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'superadmin' }) });
       return Promise.resolve({ exists: false });
     });
 
     const result = await requireAdminOrIdToken(makeRequest());
-    expect(result).toBe('session-admin');
+    expect(result).toBe('session-super');
   });
 
-  it('throws 403 for non-admin user', async () => {
+  it('throws 403 for non-superadmin user (member)', async () => {
     mockGetSession.mockResolvedValue(validSession());
     mockDocGet.mockImplementation((col: string) => {
-      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'user' }) });
+      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'member' }) });
+      return Promise.resolve({ exists: false });
+    });
+
+    await expect(requireAdminOrIdToken(makeRequest())).rejects.toThrow(
+      expect.objectContaining({ status: 403 })
+    );
+  });
+
+  it('throws 403 for site-admin user (not platform-superadmin)', async () => {
+    mockGetSession.mockResolvedValue(validSession());
+    mockDocGet.mockImplementation((col: string) => {
+      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'admin' }) });
       return Promise.resolve({ exists: false });
     });
 
@@ -210,14 +222,14 @@ describe('requireAdminOrIdToken', () => {
 
 describe('requireAdmin', () => {
   it('delegates to requireAdminOrIdToken', async () => {
-    mockGetSession.mockResolvedValue(validSession({ userId: 'admin-user' }));
+    mockGetSession.mockResolvedValue(validSession({ userId: 'super-user' }));
     mockDocGet.mockImplementation((col: string) => {
-      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'admin' }) });
+      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'superadmin' }) });
       return Promise.resolve({ exists: false });
     });
 
     const result = await requireAdmin(makeRequest());
-    expect(result).toBe('admin-user');
+    expect(result).toBe('super-user');
   });
 });
 
@@ -240,7 +252,7 @@ describe('assertUserHasSiteAccess', () => {
   it('allows access when user is site owner', async () => {
     mockDocGet.mockImplementation((col: string) => {
       if (col === 'sites') return Promise.resolve({ exists: true, data: () => ({ owner: 'user-1', name: 'Site A' }) });
-      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'user', sites: [] }) });
+      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'member', sites: [] }) });
       return Promise.resolve({ exists: false });
     });
 
@@ -248,10 +260,10 @@ describe('assertUserHasSiteAccess', () => {
     expect(result.siteId).toBe('site-1');
   });
 
-  it('allows access when user is admin', async () => {
+  it('allows access when user is superadmin', async () => {
     mockDocGet.mockImplementation((col: string) => {
       if (col === 'sites') return Promise.resolve({ exists: true, data: () => ({ owner: 'other', name: 'Site B' }) });
-      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'admin', sites: [] }) });
+      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'superadmin', sites: [] }) });
       return Promise.resolve({ exists: false });
     });
 
@@ -262,7 +274,7 @@ describe('assertUserHasSiteAccess', () => {
   it('allows access when user is assigned to site', async () => {
     mockDocGet.mockImplementation((col: string) => {
       if (col === 'sites') return Promise.resolve({ exists: true, data: () => ({ owner: 'other', name: 'Site C' }) });
-      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'user', sites: ['site-3'] }) });
+      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'member', sites: ['site-3'] }) });
       return Promise.resolve({ exists: false });
     });
 
@@ -273,7 +285,7 @@ describe('assertUserHasSiteAccess', () => {
   it('throws 403 when user has no access', async () => {
     mockDocGet.mockImplementation((col: string) => {
       if (col === 'sites') return Promise.resolve({ exists: true, data: () => ({ owner: 'other' }) });
-      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'user', sites: [] }) });
+      if (col === 'users') return Promise.resolve({ exists: true, data: () => ({ role: 'member', sites: [] }) });
       return Promise.resolve({ exists: false });
     });
 

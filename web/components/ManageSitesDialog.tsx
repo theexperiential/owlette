@@ -25,7 +25,7 @@ interface ManageSitesDialogProps {
   currentSiteId: string;
   machineCount?: number;
   currentUserId?: string;
-  isAdmin?: boolean;
+  isSuperadmin?: boolean;
   onUpdateSite: (siteId: string, updates: { name?: string; timezone?: string }) => Promise<void>;
   onDeleteSite: (siteId: string) => Promise<void>;
   onCreateSite: () => void;
@@ -38,7 +38,7 @@ export function ManageSitesDialog({
   currentSiteId,
   machineCount = 0,
   currentUserId,
-  isAdmin = false,
+  isSuperadmin = false,
   onUpdateSite,
   onDeleteSite,
   onCreateSite,
@@ -47,13 +47,13 @@ export function ManageSitesDialog({
   // Lazily resolve owner UIDs → emails for sites not owned by the current admin.
   const { users: allUsers } = useUserManagement();
   const ownerEmailByUid = React.useMemo(() => {
-    if (!isAdmin) return new Map<string, string>();
+    if (!isSuperadmin) return new Map<string, string>();
     const map = new Map<string, string>();
     for (const u of allUsers) {
       if (u.uid && u.email) map.set(u.uid, u.email);
     }
     return map;
-  }, [allUsers, isAdmin]);
+  }, [allUsers, isSuperadmin]);
   const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [editingTimezone, setEditingTimezone] = useState('UTC');
@@ -273,7 +273,7 @@ export function ManageSitesDialog({
                             {site.timezone}
                           </p>
                         )}
-                        {isAdmin && site.owner && currentUserId && site.owner !== currentUserId && (
+                        {isSuperadmin && site.owner && currentUserId && site.owner !== currentUserId && (
                           <p className="text-xs text-amber-400/80 mt-0.5 flex items-center gap-1">
                             <User className="h-3 w-3" />
                             owned by {ownerEmailByUid.get(site.owner) || site.owner}

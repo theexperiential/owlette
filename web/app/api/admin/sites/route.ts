@@ -24,15 +24,15 @@ export const GET = withRateLimit(
 
       const db = getAdminDb();
 
-      // Check if user is admin (admins see all sites)
+      // Check if user is superadmin (superadmins see all sites — platform god-mode).
       const userDoc = await db.collection('users').doc(userId).get();
       const userData = userDoc.data();
-      const isAdmin = userData?.role === 'admin';
+      const isSuperadmin = userData?.role === 'superadmin';
       const assignedSites: string[] = Array.isArray(userData?.sites) ? userData.sites : [];
 
       let siteDocs;
-      if (isAdmin) {
-        // Admins see all sites
+      if (isSuperadmin) {
+        // Superadmins see all sites
         const snap = await db.collection('sites').get();
         siteDocs = snap.docs;
       } else {
