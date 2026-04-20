@@ -8,12 +8,21 @@
  * Format bytes/sec into a human-readable throughput string.
  * Uses binary units (1 KB = 1024 bytes) consistent with how
  * memory/disk are displayed throughout Owlette.
+ *
+ * Promotes to the next unit at 1000 rather than 1024 so we never emit
+ * "1000 KB/s" — that value reads as "1 MB/s". Trims trailing ".0" so
+ * whole-unit values render as "500 KB/s" instead of "500.0 KB/s".
  */
 export function formatThroughput(bytesPerSec: number): string {
-  if (bytesPerSec >= 1_073_741_824) return `${(bytesPerSec / 1_073_741_824).toFixed(1)} GB/s`;
-  if (bytesPerSec >= 1_048_576) return `${(bytesPerSec / 1_048_576).toFixed(1)} MB/s`;
-  if (bytesPerSec >= 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
-  return `${Math.round(bytesPerSec)} B/s`;
+  if (bytesPerSec < 1024) return `${Math.round(bytesPerSec)} B/s`;
+  const units = ['KB/s', 'MB/s', 'GB/s'];
+  let v = bytesPerSec / 1024;
+  let i = 0;
+  while (i < units.length - 1 && Math.round(v * 10) / 10 >= 1000) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(1).replace(/\.0$/, '')} ${units[i]}`;
 }
 
 /**

@@ -37,7 +37,7 @@ import {
 } from './metricsTabs';
 import { useHistoricalMetrics } from '@/hooks/useHistoricalMetrics';
 import { getNicColors, getDiskColors, getGpuColors, formatThroughput } from '@/lib/networkUtils';
-import { DISK_IO_COLORS, formatDiskIO, isDiskIOKey, parseDiskIOKey } from '@/lib/diskIOUtils';
+import { DISK_IO_COLORS, formatDiskIO, isDiskIOKey, parseDiskIOKey, computeNiceByteTicks } from '@/lib/diskIOUtils';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import { LoadingWord } from '@/components/LoadingWord';
@@ -62,6 +62,17 @@ interface MetricsDetailPanelProps {
 // on the stats grid so the stat cards align flush with the chart's plot area
 // (the "0" on the x-axis) for a crisp visual edge.
 const CHART_Y_AXIS_WIDTH = 40;
+
+// Right-side bytes axis width — wider than the left to fit "1.2 MB/s" ticks.
+const CHART_BYTES_AXIS_WIDTH = 56;
+
+// When any selected disk-IO volume's peak in the visible data range reaches
+// this % of its max bandwidth, the disk IO lines flip from the auto-scaled
+// bytes axis (right) onto the 0-100% default axis (left) so approach-to-
+// saturation is legible. Below the threshold, bytes mode keeps low-activity
+// lines from flatlining near zero. Chosen at 70 to give clear headroom for
+// "getting close to maxed out" without triggering on routine bursts.
+const DISK_IO_PCT_MODE_THRESHOLD = 70;
 
 // Shared className for every metric/disk/GPU/NIC toggle button. Mirrors the
 // TimeRangeSelector styling: `variant="ghost"` at the call site (no variant
@@ -291,6 +302,27 @@ export function MetricsDetailPanel({
     [selectedDiskIO, volumeIds],
   );
 
+  // Pick the disk IO chart mode from the visible data:
+  //   - "percent" when any selected volume's peak hits the pct-mode threshold
+  //     (lines bind to the shared 0-100 axis so saturation is obvious)
+  //   - "bytes"   otherwise (lines bind to an auto-scaled right axis with
+  //     KB/MB/GB ticks so sub-%-of-max activity is still legible)
+  const diskIOMode: 'percent' | 'bytes' = useMemo(() => {
+    if (effectiveDiskIO.length === 0) return 'bytes';
+    let peakPct = 0;
+    for (const volumeId of effectiveDiskIO) {
+      const readKey = `${volumeId}_io_read_pct`;
+      const writeKey = `${volumeId}_io_write_pct`;
+      for (const d of chartData) {
+        const r = d[readKey];
+        const w = d[writeKey];
+        if (typeof r === 'number' && r > peakPct) peakPct = r;
+        if (typeof w === 'number' && w > peakPct) peakPct = w;
+      }
+    }
+    return peakPct >= DISK_IO_PCT_MODE_THRESHOLD ? 'percent' : 'bytes';
+  }, [effectiveDiskIO, chartData]);
+
   // Total number of selected lines across all categories. Each disk IO
   // toggle contributes 2 lines (read + write), matching the visual count
   // in the chart.
@@ -463,6 +495,28 @@ export function MetricsDetailPanel({
     }
   }, [timeRange, chartData, nowTs]);
 
+  // Explicit ticks at nice round throughput values (250 KB/s, 500 KB/s,
+  // 1 MB/s, etc.) for the bytes-mode right axis. Recharts' default tick
+  // picker divides the data max by 4 and lands on awkward values like
+  // "585.9 KB/s". Scans samples in the visible time domain for max
+  // read/write bytes/sec across selected volumes. Null when no data falls
+  // in range — recharts then falls back to its auto scale.
+  const diskIOBytesAxis = useMemo(() => {
+    if (diskIOMode !== 'bytes' || effectiveDiskIO.length === 0) return null;
+    const [start, end] = timeDomain;
+    let max = 0;
+    for (const d of chartData) {
+      if (d.time < start || d.time > end) continue;
+      for (const volumeId of effectiveDiskIO) {
+        const r = d[`${volumeId}_io_read`];
+        const w = d[`${volumeId}_io_write`];
+        if (typeof r === 'number' && r > max) max = r;
+        if (typeof w === 'number' && w > max) max = w;
+      }
+    }
+    return computeNiceByteTicks(max);
+  }, [diskIOMode, effectiveDiskIO, chartData, timeDomain]);
+
   // Explicit ticks keep the x-axis clean: one label per natural unit
   // (date / week-day / month), no repeats, and no auto-generated gaps where
   // the data is sparse.
@@ -552,11 +606,11 @@ export function MetricsDetailPanel({
 
   // Build the list of all active Line dataKeys and their display info.
   // `hidden: true` means the line renders with transparent stroke (tooltip-only
-  // data access). `axis: 'hidden'` binds the line to the hidden Y-axis so it
-  // doesn't blow out the 0-100% scale — used for visible throughput series
-  // like disk IO read/write bytes/sec.
+  // data access). `axis: 'bytes'` binds the line to the auto-scaled right
+  // bytes axis (used by disk IO in bytes mode) so its byte/sec values don't
+  // blow out the shared 0-100% scale.
   const activeLines = useMemo(() => {
-    const lines: { key: string; color: string; label: string; hidden?: boolean; axis?: 'default' | 'hidden' }[] = [];
+    const lines: { key: string; color: string; label: string; hidden?: boolean; axis?: 'default' | 'hidden' | 'bytes' }[] = [];
 
     // Standard metrics
     for (const metric of effectiveMetrics) {
@@ -593,32 +647,37 @@ export function MetricsDetailPanel({
       lines.push({ key: `${gpuName}_temp`, color: colors.temp, label: friendly });
     }
 
-    // Per-volume disk IO lines. Throughput (read/write) varies over orders of
-    // magnitude and shares the hidden axis with NIC bytes; busy % sits on the
-    // default 0-100 axis alongside CPU / memory / disk.
-    // Per-volume disk IO activity: 2 lines per selected volume (read + write)
-    // both as % of max bandwidth on the default 0-100 axis.
+    // Per-volume disk IO activity: 2 visible lines per selected volume
+    // (read + write). Which data family is visible depends on diskIOMode:
+    //   - percent mode: `_pct` on the default 0-100 axis, with the bytes
+    //     siblings present as hidden lines so the tooltip can still display
+    //     human-readable MB/KB/GB (mirrors the NIC `_tx_util` + hidden `_tx`
+    //     pairing).
+    //   - bytes mode: bytes keys on the right auto-scaled bytes axis. No
+    //     hidden sibling needed since the tooltip reads entry.value directly.
     for (const volumeId of effectiveDiskIO) {
-      lines.push({
-        key: `${volumeId}_io_read_pct`,
-        color: DISK_IO_COLORS.read,
-        label: `${volumeId} read`,
-      });
-      lines.push({
-        key: `${volumeId}_io_write_pct`,
-        color: DISK_IO_COLORS.write,
-        label: `${volumeId} write`,
-      });
+      if (diskIOMode === 'percent') {
+        lines.push({ key: `${volumeId}_io_read_pct`, color: DISK_IO_COLORS.read, label: `${volumeId} read` });
+        lines.push({ key: `${volumeId}_io_write_pct`, color: DISK_IO_COLORS.write, label: `${volumeId} write` });
+        lines.push({ key: `${volumeId}_io_read`, color: DISK_IO_COLORS.read, label: `${volumeId} read (bps)`, hidden: true });
+        lines.push({ key: `${volumeId}_io_write`, color: DISK_IO_COLORS.write, label: `${volumeId} write (bps)`, hidden: true });
+      } else {
+        lines.push({ key: `${volumeId}_io_read`, color: DISK_IO_COLORS.read, label: `${volumeId} read`, axis: 'bytes' });
+        lines.push({ key: `${volumeId}_io_write`, color: DISK_IO_COLORS.write, label: `${volumeId} write`, axis: 'bytes' });
+      }
     }
 
     return lines;
-  }, [effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIO, resolveGpuLabel]);
+  }, [effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIO, diskIOMode, resolveGpuLabel]);
 
   // Collect all selected metric/NIC/disk/GPU/disk-IO keys for stats summary.
   // `format: 'throughput'` switches the grid cell to byte-rate formatting
   // (e.g. "1.5 MB/s") instead of the default "{value}{unit}" percent display.
+  // `valueKey` overrides the chart-data source for avg/max/min (defaults to
+  // `key`); used by disk-IO cards so hover still matches the visible `_pct`
+  // chart line while stats are computed from the sibling bytes/sec key.
   const statsKeys = useMemo(() => {
-    const keys: { key: string; label: string; color: string; isNetwork: boolean; unit?: string; format?: 'throughput'; showThermometer?: boolean; direction?: 'tx' | 'rx' }[] = [];
+    const keys: { key: string; label: string; color: string; isNetwork: boolean; unit?: string; format?: 'throughput'; valueKey?: string; showThermometer?: boolean; direction?: 'tx' | 'rx' }[] = [];
 
     // Order must mirror the toggle-button row so users can associate a button
     // with its card at a glance:
@@ -664,19 +723,26 @@ export function MetricsDetailPanel({
         keys.push({ key: `${drive}_pct`, label: drive, color, isNetwork: false, unit: '%' });
       }
       if (effectiveDiskIO.includes(drive)) {
+        // Card `key` matches the visible chart line (varies by mode) so
+        // hover dimming hits the right Line; `valueKey` always points to
+        // bytes so avg/max/min are in KB/MB/GB regardless of mode.
+        const readKey = diskIOMode === 'percent' ? `${drive}_io_read_pct` : `${drive}_io_read`;
+        const writeKey = diskIOMode === 'percent' ? `${drive}_io_write_pct` : `${drive}_io_write`;
         keys.push({
-          key: `${drive}_io_read_pct`,
+          key: readKey,
+          valueKey: `${drive}_io_read`,
           label: `${drive} read`,
           color: DISK_IO_COLORS.read,
           isNetwork: false,
-          unit: '%',
+          format: 'throughput',
         });
         keys.push({
-          key: `${drive}_io_write_pct`,
+          key: writeKey,
+          valueKey: `${drive}_io_write`,
           label: `${drive} write`,
           color: DISK_IO_COLORS.write,
           isNetwork: false,
-          unit: '%',
+          format: 'throughput',
         });
       }
     }
@@ -701,7 +767,7 @@ export function MetricsDetailPanel({
     }
 
     return keys;
-  }, [availableMetrics, effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, driveOrder, selectedGpus, gpuNames, effectiveDiskIO, resolveGpuLabel]);
+  }, [availableMetrics, effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, driveOrder, selectedGpus, gpuNames, effectiveDiskIO, diskIOMode, resolveGpuLabel]);
 
   return (
     <Card className="border-border bg-card py-0 gap-0">
@@ -931,6 +997,24 @@ export function MetricsDetailPanel({
                 />
                 {/* Hidden Y-axis for raw throughput lines (prevents them from blowing out the % scale) */}
                 <YAxis yAxisId="hidden" hide />
+                {/* Right-side bytes axis — visible only when disk IO is
+                    rendering in bytes mode. Ticks format via formatDiskIO
+                    so each level picks its own unit (KB/MB/GB). */}
+                {diskIOMode === 'bytes' && effectiveDiskIO.length > 0 && (
+                  <YAxis
+                    yAxisId="bytes"
+                    orientation="right"
+                    width={CHART_BYTES_AXIS_WIDTH}
+                    stroke="oklch(0.708 0.05 250)"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(v: number) => formatDiskIO(v)}
+                    {...(diskIOBytesAxis
+                      ? { domain: [0, diskIOBytesAxis.domainMax], ticks: diskIOBytesAxis.ticks }
+                      : {})}
+                  />
+                )}
                 <Tooltip content={<ChartTooltip formatTime={formatTooltipTime} gpuLabels={gpuLabels} />} />
                 {/* Baseline reference line to show full time range */}
                 <ReferenceLine y={0} stroke="oklch(0.35 0.08 250)" strokeDasharray="3 3" />
@@ -953,10 +1037,11 @@ export function MetricsDetailPanel({
                       />
                     );
                   }
-                  // Visible line — bind to explicit axis ('hidden' keeps raw
-                  // throughput values off the 0-100% scale, 'default' is the
-                  // standard percent axis shared by cpu/memory/disk/gpu).
-                  const yAxisId = line.axis === 'hidden' ? 'hidden' : 'default';
+                  // Visible line — bind to explicit axis:
+                  //   'bytes'   → right auto-scaled bytes axis (disk IO in bytes mode)
+                  //   'hidden'  → hidden axis (kept off the 0-100% scale)
+                  //   default  → standard percent axis shared by cpu/memory/disk/gpu
+                  const yAxisId = line.axis === 'bytes' ? 'bytes' : line.axis === 'hidden' ? 'hidden' : 'default';
                   const isHovered = hoveredKey === line.key;
                   const isDimmed = hoveredKey !== null && !isHovered;
                   return (
@@ -988,9 +1073,10 @@ export function MetricsDetailPanel({
             style={{ paddingLeft: CHART_Y_AXIS_WIDTH }}
             onMouseLeave={() => setHoveredKey(null)}
           >
-            {statsKeys.map(({ key, label, color, isNetwork, unit: explicitUnit, format, showThermometer, direction }) => {
+            {statsKeys.map(({ key, valueKey, label, color, isNetwork, unit: explicitUnit, format, showThermometer, direction }) => {
+              const sourceKey = valueKey ?? key;
               const values = chartData
-                .map((d) => d[key] as number | undefined)
+                .map((d) => d[sourceKey] as number | undefined)
                 .filter((v): v is number => v != null);
 
               if (values.length === 0) return null;
