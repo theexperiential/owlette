@@ -121,3 +121,70 @@ export async function getPendingCommandIds(
   if (!snap.exists) return [];
   return Object.keys(snap.data() ?? {});
 }
+
+// ---------------------------------------------------------------------------
+// D1.2 — convenience helpers for state-mutation stubs
+//
+// Some agent behaviors aren't tied to a specific command doc — they're
+// observable only as changes to the machine's status fields. Two common ones:
+//   - a scheduled reboot completes (agent clears `rebooting` / `rebootScheduledAt`)
+//   - a screenshot capture lands (agent writes `lastScreenshot` with the
+//     Storage URL + size + timestamp)
+//
+// These stubs mutate the machine doc directly. They complement
+// completeCommand/failCommand: a reboot flow typically involves BOTH a
+// dispatched command (completeCommand) AND a status-field clear
+// (stubRebootSuccess) — spec code calls whichever subset it needs.
+// ---------------------------------------------------------------------------
+
+function machineRef(siteId: string, machineId: string) {
+  return getAdminDb().collection('sites').doc(siteId).collection('machines').doc(machineId);
+}
+
+/**
+ * Simulate the agent finishing a reboot cycle.
+ *
+ * Mirrors the agent's post-reboot clear at
+ * `agent/src/owlette_service.py:4260` — clears the three reboot-state
+ * flags on the machine doc so dashboard listeners flip the "rebooting"
+ * pill back to a stable online state.
+ */
+export async function stubRebootSuccess(siteId: string, machineId: string): Promise<void> {
+  await machineRef(siteId, machineId).set(
+    {
+      rebooting: false,
+      rebootScheduledAt: null,
+      rebootCancellable: false,
+    },
+    { merge: true },
+  );
+}
+
+/**
+ * Simulate a screenshot capture arriving on the machine doc.
+ *
+ * Mirrors the `lastScreenshot` field consumed by `useFirestore.ts:273`
+ * — `{ url, timestamp, sizeKB }` — which the machine card + chart
+ * components read to render the latest captured frame.
+ */
+export async function stubScreenshotCapture(
+  siteId: string,
+  machineId: string,
+  url: string,
+  sizeKB = 128,
+): Promise<void> {
+  await machineRef(siteId, machineId).set(
+    {
+      lastScreenshot: {
+        url,
+        // Tests use Timestamp.now() rather than FieldValue.serverTimestamp()
+        // because the emulator's clock is trusted and specs often want to
+        // assert on the written value immediately (serverTimestamp()
+        // resolves AFTER the set() resolves, introducing a readback race).
+        timestamp: Timestamp.now(),
+        sizeKB,
+      },
+    },
+    { merge: true },
+  );
+}
