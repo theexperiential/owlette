@@ -139,6 +139,7 @@ const DeploymentRow = React.memo(function DeploymentRow({
                     size="sm"
                     variant="ghost"
                     onClick={(e) => e.stopPropagation()}
+                    aria-label={`deployment actions for ${deployment.name}`}
                     className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
                   >
                     <MoreVertical className="h-4 w-4" />
