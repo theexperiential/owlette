@@ -881,6 +881,7 @@ export function MachineRow({
                                         variant="ghost"
                                         size="sm"
                                         onClick={() => onKillProcess(process.id, process.name)}
+                                        aria-label={`kill ${process.name}`}
                                         className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
                                         disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
                                       >
