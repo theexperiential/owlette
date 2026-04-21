@@ -227,6 +227,7 @@ const DeploymentRow = React.memo(function DeploymentRow({
                           size="sm"
                           variant="ghost"
                           onClick={() => onCancel(deployment.id, target.machineId, deployment.installer_name)}
+                          aria-label={`cancel deployment to ${target.machineId}`}
                           className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
                         >
                           <X className="h-4 w-4" />
