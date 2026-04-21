@@ -161,6 +161,42 @@ export async function stubRebootSuccess(siteId: string, machineId: string): Prom
 }
 
 /**
+ * Simulate the agent updating a single target on a deployment doc.
+ *
+ * Deployment targets are stored as an array on
+ * `sites/{siteId}/deployments/{deploymentId}.targets`. The agent
+ * mutates a single target's status / progress / error during the
+ * downloading → installing → completed lifecycle. Firestore array
+ * updates require a full read-modify-write of the array (no per-index
+ * primitive). This helper does that atomically — read, patch, write.
+ *
+ * If the deployment doc doesn't exist or no target matches `machineId`,
+ * this throws so the spec fails fast rather than silently no-op'ing.
+ */
+export async function stubDeploymentTarget(
+  siteId: string,
+  deploymentId: string,
+  machineId: string,
+  patch: { status?: string; progress?: number; error?: string },
+): Promise<void> {
+  const db = getAdminDb();
+  const ref = db.collection('sites').doc(siteId).collection('deployments').doc(deploymentId);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new Error(`stubDeploymentTarget: deployment ${deploymentId} not found`);
+  }
+  const targets = (snap.data()?.targets ?? []) as Array<Record<string, unknown>>;
+  const idx = targets.findIndex((t) => t.machineId === machineId);
+  if (idx === -1) {
+    throw new Error(
+      `stubDeploymentTarget: machine ${machineId} not in targets for ${deploymentId}`,
+    );
+  }
+  targets[idx] = { ...targets[idx], ...patch };
+  await ref.update({ targets });
+}
+
+/**
  * Simulate a screenshot capture arriving on the machine doc.
  *
  * Mirrors the `lastScreenshot` field consumed by `useFirestore.ts:273`
