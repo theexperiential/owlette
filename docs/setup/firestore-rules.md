@@ -49,19 +49,27 @@ Expected output:
 | function | purpose |
 |----------|---------|
 | `isAuthenticated()` | User has a valid Firebase Auth token |
-| `isAdmin()` | User's role is "admin" in Firestore |
-| `hasSiteAccess(siteId)` | User is admin OR has siteId in their sites array |
+| `isSuperadmin()` | User's `role` is `"superadmin"` — platform god-mode |
+| `isSiteAdmin(siteId)` | User's `role` is `"admin"` or `"superadmin"` AND the site is accessible (assigned via `sites[]` for admins, implicit for superadmins) |
+| `canAccessSite(siteId)` | User is superadmin, site owner, or has `siteId` in their `sites[]` array |
+| `isAdmin()` | **Deprecated alias for `isSuperadmin()`** — kept for backwards compatibility during the 2.9.0 → 2.10.0 rollout window; removed in a future release. Do not use in new rules. |
 | `isAgent()` | Token has `role: "agent"` claim |
 | `agentCanAccessSite(siteId)` | Agent's `site_id` claim matches |
 | `agentCanAccessMachine(siteId, machineId)` | Agent's claims match both site and machine |
 
 ### access matrix
 
-| collection | user | admin | agent |
-|-----------|------|-------|-------|
-| `sites/{siteId}/**` | Read if site in `sites[]` | Read/Write all | Read/Write own machine only |
-| `config/{siteId}/**` | Read if site access | Read/Write | Read/Write own machine |
-| `users/{userId}` | Read/Write own doc | Read/Write any | No access |
+| collection | member | admin | superadmin | agent |
+|-----------|:------:|:-----:|:----------:|:-----:|
+| `sites/{siteId}` read | Read if site in `sites[]` | Read if site in `sites[]` | Read all | Read own site |
+| `sites/{siteId}/machines/**` | Read if site in `sites[]` | Read/Write if site in `sites[]` | Read/Write all | Read/Write own machine only |
+| `sites/{siteId}/settings/**` | Read if site in `sites[]` | Read/Write if site in `sites[]` (gated by `isSiteAdmin(siteId)`) | Read/Write all | — |
+| `sites/{siteId}/webhooks/**` | Read if site in `sites[]` | Read/Write if site in `sites[]` (gated by `isSiteAdmin(siteId)`) | Read/Write all | — |
+| `users/{userId}` | Read/Write own doc | Read/Write own doc | Read/Write any user (gated by `isSuperadmin()`) | No access |
+| `installer_metadata/**` | Read public (version list only) | Read public | Read/Write all (gated by `isSuperadmin()`) | Read public |
+| `system_presets/**` | Read | Read | Read/Write (gated by `isSuperadmin()`) | — |
+
+Members and admins differ only on **write scope for site-scoped collections** (`machines`, `settings`, `webhooks`). Admins get writes on their assigned sites; members do not. Neither tier has any platform-wide powers — those are exclusive to `superadmin`.
 | `agent_tokens/**` | No access | No access | No access (server-only) |
 | `agent_refresh_tokens/**` | No access | No access | No access (server-only) |
 | `installer_metadata/**` | Read | Read/Write | No access |

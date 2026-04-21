@@ -1,8 +1,20 @@
 # user management
 
-Manage user accounts, roles, and site assignments from the Admin Panel.
+Manage user accounts, roles, and site assignments from the Admin Panel. Only superadmins can open this page.
 
 **Location**: Admin Panel → User Management (`/admin/users`)
+
+---
+
+## the three-role model
+
+| role | platform access | site access |
+|------|-----------------|-------------|
+| **member** | none | read-only on assigned sites |
+| **admin** | none | write access (reboot / delete machines, edit display layouts, site settings) on assigned sites |
+| **superadmin** | full Admin Panel | implicit access to every site |
+
+New users start as `member` by default. Superadmins promote to `admin` (site-scoped operator) or `superadmin` (platform administrator) from this page.
 
 ---
 
@@ -14,47 +26,45 @@ The user management page shows all registered users with:
 |--------|-------------|
 | **Email** | User's email address |
 | **Display Name** | Full name (if provided during registration) |
-| **Role** | `user` or `admin` |
-| **Sites** | Number of assigned sites |
+| **Role** | `member`, `admin`, or `superadmin` — colour-coded badge |
+| **Sites** | For members: number of assigned sites. For admins: pill list of each assigned site. For superadmins: "all sites (via superadmin)". |
 | **Joined** | Registration date |
 
 ### statistics
 
-The page header shows:
+The page header shows four cards:
 
 - **Total Users** — All registered accounts
-- **Admins** — Users with admin role
-- **Regular Users** — Non-admin users
+- **Superadmins** — Users with platform-wide god-mode (red Crown icon)
+- **Admins** — Site-scoped operators (green ShieldAlert icon)
+- **Members** — Read-only users on their assigned sites
 
 ---
 
-## promoting / demoting users
-
-### promote to admin
+## changing a user's role
 
 1. Find the user in the list
-2. Click **"Promote to Admin"**
-3. Confirm the action
-4. User immediately gains admin privileges
+2. Click the **⋮** menu on their row → **"Change role..."**
+3. In the dialog, pick one of the three roles from the dropdown. Each option shows an icon + one-line description of what that role can do.
+4. Click **Save**. The badge flips and the stats-card counts update immediately.
 
-### demote to user
+!!! note "Save-disabled-on-noop"
+    The save button is disabled when the selected role matches the current role, so accidental re-saves are impossible.
 
-1. Find the admin user in the list
-2. Click **"Demote to User"**
-3. Confirm the action
-4. User loses admin privileges immediately
+### self-demotion
 
-!!! warning "Self-demotion"
-    You cannot demote yourself — this prevents accidentally locking all admins out.
+The change-role menu item is **disabled on your own row if you're a superadmin** — demoting the last superadmin would lock everyone out of the Admin Panel. To step down, first promote another superadmin, then have them demote you.
 
-!!! note
-    Users must log out and log back in to see role changes reflected in their UI.
+Admins and members can demote themselves freely since neither tier grants cross-site powers that an unassigned admin could abuse after self-demotion.
+
+!!! note "Session refresh"
+    Users must log out and log back in (or wait for their session to refresh) to see role changes reflected in their own UI.
 
 ---
 
 ## site assignment
 
-Control which sites a user can access.
+Control which sites a user can access. Applies to both `member` and `admin` roles — `admin` gets elevated powers only on sites listed in their `sites` array. Superadmins ignore site assignments (god-mode).
 
 ### assign a site
 
@@ -62,7 +72,7 @@ Control which sites a user can access.
 2. Click **"Manage Sites"**
 3. View currently assigned sites and available sites
 4. Click **"Assign"** next to an available site
-5. The user can now access that site's machines and data
+5. The user can now access that site's machines and data (with member or admin capabilities depending on their role)
 
 ### remove a site
 
@@ -74,15 +84,16 @@ Control which sites a user can access.
 
 | role | site access |
 |------|-------------|
-| **User** | Only sites in their `sites` array |
-| **Admin** | All sites (regardless of assignment) |
+| **Member** | Read-only on sites in their `sites` array |
+| **Admin** | Read + elevated writes on sites in their `sites` array |
+| **Superadmin** | All sites, regardless of assignment |
 | **Agent** | Single site (from OAuth token claims) |
 
 ---
 
 ## best practices
 
-- **Principle of least privilege** — Only grant admin to users who need it
-- **Audit regularly** — Review who has admin access periodically
-- **Site-based organization** — Assign users to sites matching their responsibility (e.g., NYC office staff only see NYC machines)
-- **Redundancy** — Keep at least 2 admin accounts to prevent lockout
+- **Principle of least privilege** — Most users should be `member`. Promote to `admin` when they need to operate a specific site's machines. Reserve `superadmin` for platform administrators who manage users, installers, and cross-site settings.
+- **Audit superadmins regularly** — Review who has platform-wide access periodically; this is the only role that can read every site's data and promote other users.
+- **Site-based organization** — Assign users to sites matching their responsibility (e.g., NYC office staff only see NYC machines). Pair site assignment with the right role tier.
+- **Redundancy** — Keep at least 2 superadmin accounts to prevent lockout. If only one superadmin exists and they leave, you'll need Firebase Console access to promote a replacement manually.

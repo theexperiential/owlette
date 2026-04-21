@@ -259,8 +259,8 @@ User account document.
 |-------|------|-------------|
 | `email` | string | User's email address |
 | `displayName` | string | Full name (optional) |
-| `role` | string | `"user"` or `"admin"` |
-| `sites` | array[string] | Assigned site IDs |
+| `role` | string | `"member"`, `"admin"`, or `"superadmin"` — see [user management](../dashboard/admin/user-management.md#the-three-role-model) for capabilities per tier |
+| `sites` | array[string] | Assigned site IDs. Members get read-only access; admins get site-scoped write access. Superadmins ignore this array — they implicitly access every site. |
 | `createdAt` | timestamp | Registration date |
 | `mfaEnabled` | boolean | Whether 2FA is active |
 | `mfaSecret` | string | Encrypted TOTP secret (if MFA enabled) |

@@ -37,7 +37,7 @@ push software silently to any number of machines. supports NSIS, InnoSetup, MSI,
 LLM-powered fleet management with natural language. AI executes commands on agents via tool-calling across 3 tiers — from read-only diagnostics to privileged operations. screenshot analysis, autonomous crash investigation, and multi-provider support (Anthropic + OpenAI).
 
 **multi-site management**
-organize machines by location, department, or project. role-based access control with site-level permissions. multi-user accounts with admin and user roles.
+organize machines by location, department, or project. three-tier role-based access control (member / admin / superadmin) with site-level permissions. multi-user accounts, per-site admin delegation, and platform-wide administrator roles.
 
 **project distribution**
 sync project files (ZIPs, .toe files, media assets) across your fleet from any URL — Dropbox, Google Drive, your own hosting. zero infrastructure cost. automatic extraction and file verification.

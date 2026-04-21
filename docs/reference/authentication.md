@@ -249,19 +249,29 @@ Optional TOTP-based two-factor authentication. Passkey login bypasses MFA entire
 
 ## role-based access control
 
+Owlette uses a three-tier model for human users (plus a separate agent tier for service accounts):
+
 ### roles
 
-| role | access |
-|------|--------|
-| **user** | Assigned sites only, no admin features |
-| **admin** | All sites, admin panel, user management |
-| **agent** | Single site + single machine (custom token claims) |
+| role | platform | site access | typical usage |
+|------|----------|-------------|---------------|
+| **member** | none | read-only on assigned sites | viewers, read-only ops |
+| **admin** | none | write on assigned sites (reboot, delete machines, edit display layouts, site settings) | site operators delegated by platform admins |
+| **superadmin** | full Admin Panel (user management, installer uploads, etc.) | implicit access to every site | platform administrators |
+| **agent** | — | single site + single machine (custom token claims) | Owlette agent service accounts |
+
+New users default to `member`. Superadmins promote members to `admin` or `superadmin` from `/admin/users`.
 
 ### enforcement layers
 
-1. **Firestore Security Rules** — Database-level enforcement (cannot be bypassed)
-2. **API Route Middleware** — Server-side session and role verification
-3. **React Components** — `RequireAdmin` component for client-side UI gating
+1. **Firestore Security Rules** — Database-level enforcement (cannot be bypassed). Helpers: `isSuperadmin()`, `isSiteAdmin(siteId)`, `canAccessSite(siteId)`. See [firestore-rules.md](../setup/firestore-rules.md#key-functions).
+2. **API Route Middleware** — Server-side session and role verification via `requireAdminOrIdToken` (returns 403 for any role below `superadmin`).
+3. **React Components** — `RequireSuperadmin` for platform-scoped routes; `useAuth().isSiteAdmin(siteId)` for site-scoped UI gates.
+
+### backwards-compatibility notes
+
+- `isAdmin()` in `firestore.rules` is a **deprecated alias** for `isSuperadmin()` during the three-role rollout window. It will be removed in a future release; do not use in new code.
+- `useAuth().isAdmin` is JSDoc-deprecated for the same reason — use `useAuth().isSuperadmin` (platform god-mode) or `useAuth().isSiteAdmin(siteId)` (site-scoped elevated writes) instead.
 
 ### how role is determined
 

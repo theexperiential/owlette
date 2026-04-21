@@ -108,7 +108,7 @@ these are failure modes that would not be prevented by the baselines above unles
 - **mitigation (v2)**:
   1. agent **never** invokes touchdesigner — it only writes files; touchdesigner is launched by the supervised process tree, which has its own security boundary.
   2. optional virustotal scan hook on upload (cloud function `virusTotalScan.ts` deferred to v3 — tracked).
-  3. customer-level acl: only admin role can publish manifests; viewer role cannot.
+  3. customer-level acl: only `admin` and `superadmin` roles can publish manifests for a site (gated by `isSiteAdmin(siteId)`); `member` role cannot.
   4. audit log on every manifest publish (B8).
 - **mitigation (v3)**: drop agent below `system` (separate low-priv worker process); see "out of scope".
 - **verification**: code review checklist — no `subprocess.run(['touchdesigner.exe', ...])` in agent codebase; `tests/agent/test_no_touchdesigner_invocation.py` greps for it.
