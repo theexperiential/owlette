@@ -20,6 +20,7 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ### migration
 - **Deploy order is load-bearing**: run `node scripts/migrate-roles.mjs --env=<dev|prod>` first, then `firebase deploy --only firestore:rules`, then the web deploy. The migration flips existing `role: 'user'` → `'member'` and `role: 'admin'` → `'superadmin'` idempotently; supports `--dry-run`. Existing admins become superadmins automatically (semantics preserved). The new site-scoped `admin` tier starts empty — superadmins promote members via the user-management page. Reversed deploy order would transiently lock current admins out of their sites until the migration runs.
+- **`scripts/migrate-profiles.mjs`** — one-shot bootstrap script for the multi-device metrics schema (shipped at 2.8.1). Iterates every `sites/*/machines/*` doc and writes a best-effort `hardware/profile` subdoc from legacy singular `metrics.cpu/disk/gpu/network.interfaces` fields. Skips machines that already have a profile or are on schemaVersion 2. Idempotent; supports `--env=<dev|prod>`, `--site=<id|all>`, `--dry-run`, `--force`. Useful for offline/stale fleets that haven't upgraded to the 2.8.1+ agent yet — gives the dashboard something renderable until the agent overwrites the bootstrap on its next startup.
 
 ---
 
