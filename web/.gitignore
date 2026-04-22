@@ -13,9 +13,8 @@
 # testing
 /coverage
 
-# Playwright E2E
-/test-results/
-/playwright-report/
+# Playwright E2E — outputs clustered under e2e/.output/ via playwright.config.ts
+/e2e/.output/
 /playwright/.cache/
 /e2e/fixtures/
 /e2e/.auth/

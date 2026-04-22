@@ -15,13 +15,18 @@ const IS_CI = !!process.env.CI;
 
 export default defineConfig({
   testDir: './e2e/specs',
+  // Cluster ephemeral output under e2e/.output/ instead of Playwright's
+  // default web/test-results + web/playwright-report paths, which polluted
+  // the top of web/ with two separate build-output dirs. Both are
+  // gitignored via web/.gitignore.
+  outputDir: './e2e/.output/results',
   fullyParallel: false, // Emulator state is shared across tests; serial keeps seeding deterministic.
   forbidOnly: IS_CI, // Fail CI if a test is .only()'d
   retries: IS_CI ? 2 : 0,
   workers: 1, // Single worker for now — emulator-seeded state can't be parallel-shared without more plumbing
   reporter: IS_CI
-    ? [['list'], ['html', { open: 'never' }], ['github']]
-    : [['list'], ['html', { open: 'never' }]],
+    ? [['list'], ['html', { open: 'never', outputFolder: './e2e/.output/report' }], ['github']]
+    : [['list'], ['html', { open: 'never', outputFolder: './e2e/.output/report' }]],
 
   globalSetup: require.resolve('./e2e/global-setup'),
   globalTeardown: require.resolve('./e2e/global-teardown'),
