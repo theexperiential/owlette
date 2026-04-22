@@ -20,7 +20,14 @@ import { validateSessionFromRequest } from '@/lib/sessionManager.server';
  */
 
 export async function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
+
+  // Legacy redirect: /api/folders/* → /api/roosts/* (folders→roosts rename).
+  // Remove 30 days after external users migrated (added 2026-04-22).
+  if (pathname.startsWith('/api/folders/') || pathname === '/api/folders') {
+    const rewritten = pathname.replace(/^\/api\/folders/, '/api/roosts');
+    return NextResponse.redirect(new URL(rewritten + search, request.url), 308);
+  }
 
   // Define protected routes
   const protectedPaths = ['/dashboard', '/deployments', '/admin', '/roost', '/setup', '/add', '/cortex'];
