@@ -13,6 +13,72 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [Unreleased]
 
+### added — roost (project distribution v2)
+
+A content-addressed sync layer replacing v1's single-URL ZIP model. Turns roost into the release-engineering layer: deploy via drag-drop or URL, atomic rollback via pointer flip, dedup at chunk granularity, real retry + resume across tab close.
+
+**storage + manifest model**
+- 4 MiB fixed-chunk content addressing with per-tenant prefix `project-content/{siteId}/{hash[0:2]}/{hash}` on Cloudflare R2 — picked over S3/GCS for free egress, the only economic axis that matters at fleet fan-out.
+- OCI Image Manifest v1.1 derivation (`application/vnd.owlette.manifest.v1+json`), immutable once written. A firestore pointer at `sites/{siteId}/roosts/{roostId}.currentManifestId` is the only mutable head.
+- Schema spec + threat model + v1-to-v2 migration design at `docs/internal/{manifest-format,threat-model,v1-v2-migration}.md`.
+
+**browser upload pipeline (dashboard)**
+- `ProjectDistributionDialog` rebuilt as a two-mode dialog: `new deploy` (configure a new deployment — source is a sub-choice within: url vs upload files) + `history` (past manifests + rollback). Shared fields (distribution name, extract path, verify files, target machines, preset bar) apply across both sources. Dialog is mobile-responsive at 375px.
+- Off-main-thread chunker + SHA-256 hasher in a web worker (`web/lib/chunking.ts`); AbortSignal-aware between chunks, streamed-slice memory (O(1) per chunk regardless of file size).
+- IndexedDB-backed upload queue (`web/lib/uploadQueue.ts`) with parallelism (default 4), exponential backoff + jitter, 10-attempt cap. Crashed tabs leave `in_flight` tasks that get demoted to `pending` on re-open — close-and-re-drop resumes from wherever it stopped.
+- Pre-upload confirmation (`PreUploadSummary`) showing file count, total size + dedup preview, est. upload time, per-target disk-free check (warns on unknown, blocks on insufficient + 20% margin), quota check (80% warning, exceed-cap error). Start button gated on blocking checks.
+- Rollback confirmation dialog (`RollbackConfirmDialog`) with file-level diff (added/removed/changed), net byte delta, canary-vs-all-at-once strategy picker (canary default), problem+json error parsing.
+- Filename sanitization (`web/lib/sanitize.ts`) — NFC normalisation, strips C0/C1 control chars + zero-width/RTL-override invisibles (ZWSP, LRM/RLM, LRO/RLO, BOM, etc.), windows-canonical trailing-dot/space trim, codepoint-safe 255-char truncation, rejects NUL bytes, path separators, `.`/`..`/empty-after-clean.
+
+**server-side — web API surface (roost routes)**
+- New routes at clean paths (no `/v2/` prefix — deliberate decision): `POST /api/chunks/{check,upload-urls,download-urls}`, `GET/POST /api/roosts/{roostId}/manifests`, `POST /api/roosts/{roostId}/rollback`. All 6 currently return 501 `notImplementedYet` stubs pending R2 wiring.
+- RFC 7807 `application/problem+json` error envelope (`web/lib/apiErrors.ts`) — stable problem-type URIs, per-occurrence requestId for trace correlation, field-level error detail for 400/422. Replaces the legacy `{error: string}` shape for roost routes.
+- OpenAPI 3.1 spec extended (`web/openapi.yaml`) with Roost tag, all 6 paths, `ProblemDetails` + `OciManifest` + `ManifestSummary` schemas, reusable `Problem4xx` + `Problem501` responses, bearer-token scheme for firebase ID tokens. Live docs at `/docs/api` (Scalar renderer).
+- Strict CI drift gate: `.github/workflows/openapi-validate.yml` runs on PR + push; any undocumented route under `/api/chunks/*` or `/api/roosts/*` hard-errors.
+
+**server-side — cloud functions**
+- `onRoostWritten` + `onTargetStateWritten` (`functions/src/distributionFanout.ts`) — canary-first fan-out. 10%/floor-1/cap-50 canary cohort via stable FNV-1a hash of `machineId + manifestId` (deterministic across retries). Abort threshold evaluates against total-not-settled, so a rollout already past 25% failure aborts without waiting for stragglers. Cloudflare 2025-11-18 all-at-once lesson explicitly honored.
+- `verifyChunk` (`functions/src/chunkVerify.ts`) — SHA-256 verify on every R2 PUT via Cloudflare Worker webhook; planted-bytes get deleted + alerted.
+- `chunkGcNightly` (`functions/src/chunkGc.ts`) — two-phase mark-and-sweep with 30-day tombstone TTL. Resurrection guard: a chunk referenced again before TTL elapses has its tombstone cleared (never deleted). `CHUNK_GC_MODE=dry-run` default for the first production month.
+- `preUploadCheck` + `reconcileQuota` (`functions/src/quotaEnforce.ts`) — per-tenant storage quota. Admit reserves pending-bytes atomically (concurrent uploads can't both fit when sum > cap). Daily reconcile fires only newly-crossed 50%/80%/100% alarms (no refire at steady state). Pricing tiers: free 5 GB / starter $8 25 GB / pro $15 100 GB / enterprise BYO.
+- Telemetry + cost attribution (`functions/src/telemetry.ts`) — R2 pricing model ($0.015/GB-month storage, $4.50/M class-A, $0.36/M class-B, $0 egress), GB-day averaging on storage snapshots (not latest), OTLP-shaped structured logs for downstream collector.
+- Append-only audit log (`functions/src/auditLog.ts`) — SHA-256 hash-chained records; deletion + mutation both detectable. 7-year retention, BigQuery cold-storage sink.
+- Webhook dispatcher (`functions/src/webhookDispatch.ts`) — 7 event types (`distribution.{queued,started,succeeded,failed}`, `chunk.uploaded`, `manifest.published`, `rollback.executed`), HMAC-SHA256 signed (`sha256=<hex>`), retry queue with exponential backoff (5 s × 3 × 1 h cap × ±20% jitter, 10-attempt cap). `classifyResponse` maps 2xx=success, 408/425/429/5xx=retry, other-4xx=permanent.
+
+**agent sync pipeline (windows service)**
+- `sync_commands` / `sync_manifest` / `sync_downloader` / `sync_state` / `sync_assembler` / `sync_scrub` modules (`agent/src/`) implementing the end-to-end v2 pipeline. ~350 new unit tests covering fetch + diff + cache, range resume (`Range: bytes=N-`), verify failure, URL refresh, atomic assembly, drift detection.
+- Destination allowlist (`agent/src/destination_allowlist.py`) — fail-closed: empty/missing rejects all writes. Realpath-based; rejects symlinks/junctions (via `FILE_ATTRIBUTE_REPARSE_POINT` check — catches cve-2022-21658 / cve-2025-4330 class), windows reserved device names (NUL/CON/PRN/COM1-9/LPT1-9, any case, with or without extension), alternate data streams, path traversal.
+- Path-traversal + TOCTOU hardening (`sync_assembler.py`) — post-rename realpath check catches parent-dir symlink-swap between allowlist validation and the rename landing; suspect files get quarantine-deleted. Sibling-prefix regression (`/foo/bar-extra` must NOT satisfy root `/foo/bar`) covered via separator-suffixed prefix match.
+- Explicit ACL on extracted files — `SYSTEM` + `Administrators` only, inheritance stripped. Fixed a 0x80000000 overflow on python 3.9 + pywin32 that was silently no-op'ing the ACL hardening in prior builds.
+- Long-path support (`\\?\` prefix for >260-char paths), throttled progress reporting (every 5% or 30 s, not every chunk), real cancellation (flag checked between chunks, atomic rename completes if in flight, no corrupted files), locale + accented filename support (French/Spanish/German/Nordic accents, CJK, Arabic/Hebrew RTL, emoji with surrogate pairs, NFC/NFD).
+
+**security / ops / observability**
+- Per-site kill switch (`sites/{siteId}.roostEnabled`) — agent checks before every `sync_pull`; web routes gate via `gateOrProceed()` returning 503 problem+json. Fail-open on read error (a transient firestore blip must not silently disable a customer). 30 s TTL on both sides → flip propagates within 60 s. Matching python + ts implementations, field-name-pinned on both sides.
+- No-token-logs lint gate (`scripts/check-no-token-logs.mjs`) — scans TS/JS/TSX/MJS + Python for log calls that interpolate auth-token identifiers, handles f-strings and template literals, 6 must-flag + 5 must-pass self-test fixtures. Runs via `.github/workflows/no-token-logs.yml` on PR + push. Plus an ESLint `no-restricted-syntax` rule for dev-time IDE feedback.
+- SLSA Build Level 3 pipeline (`.github/workflows/build-installer.yml`, doc at `docs/internal/slsa-build-l3.md`) — hermetic windows build with pinned Inno Setup 6.2.2 + Python 3.11, keyless sigstore signing via github OIDC, reusable workflow pinned to `slsa-framework/slsa-github-generator@v2.0.0` (not `@main`, prevents silent chain-of-trust degradation). Verify job runs `slsa-verifier v2.6.0` against artifact + provenance before the release ships.
+- k6 load-test suite (`load-tests/k6/`) with SLO targets enforced as thresholds — chunks/check p99 < 200 ms, upload-urls < 500 ms, download-urls < 400 ms, finalize-manifest < 800 ms, rollback < 400 ms. Base reliability gate: `http_req_failed < 0.01`. Includes a **race scenario** on finalize-manifest (20 VUs × same `expectedCurrentManifestId` → P0 CAS regression guard: exactly one 201, rest 412).
+- Architecture doc (`docs/architecture.md`) extended with the roost section: storage layout, manifest format, browser upload pipeline mermaid, agent sync pipeline with per-module links, canary-first rollout algorithm, security floor, explicit restatement of the clean-cutover decision.
+
+### added — playwright e2e suite
+
+A Playwright end-to-end test suite running the full web dashboard against Firebase emulators (Auth :9099, Firestore :8080, Storage :9199). Covers 50+ specs across six phases:
+
+- **Phase A** — emulator wiring + smoke (4 specs): Admin SDK branch routing, sentinel canary for `firebase-admin.ts`
+- **Phase B** — auth flows (4 specs): login, logout, signup, HttpOnly session cookie round-trip via `page.evaluate(fetch)` pattern
+- **Phase C** — account + settings (8 specs): profile update, passkey enrol/delete, preferences, password change with fixture-isolation (dedicated `password-test-user` prevents Firebase token revocation from poisoning other specs)
+- **Phase D** — dispatch flows (22 specs): reboot, shutdown, kill-process, recall/store/clear display layouts, deployment create/progress/cancel/retry, roost create, rollback auth + validation
+- **Phase E** — time-travel flows (10 specs): `page.clock`-driven specs for reboot countdown, cancel-lockout threshold, display-apply deadline auto-revert, heartbeat staleness → offline flip, heartbeat recovery via onSnapshot overwrite
+- **Phase F** — CI + hardening: `.github/workflows/e2e.yml` with Temurin JDK 21, Playwright browser caching keyed on `@playwright/test` version, `firebase emulators:exec` wrapper, artifact upload on failure (14-day retention)
+
+Infrastructure highlights: `roleState()` helper for pre-authenticated specs, `stubCommand` / `completeCommand` agent-stub helpers, `seedMachine` + `seedBaseline` deterministic seeding, per-spec `page.clock.install({ time: Date.now() })` pattern (must precede `page.goto` for React's setInterval to bind to the fake clock). Full guide at `web/e2e/README.md`.
+
+### decisions locked (roost)
+
+- **No `/api/v2/` URL prefix** — the new routes ARE the API.
+- **No backwards compatibility with v1 agents** — clean cutover, v3.0.0 agent is a hard requirement. No dual-write window, no shadow-read, no `project_url` fallback. Operators re-roost on v2; existing v1 distributions end at cutover.
+- **No header-based versioning** (no `Accept: application/vnd.owlette.v2+json`).
+- **v3-deferred** (do NOT rebuild in v2): bidirectional sync, LAN swarm, Ed25519 manifest signing, public CLI + GitHub Action, FastCDC, chaos rack.
+
 ### changed
 - **Three-role permission model** — `member` / `admin` / `superadmin` replaces the two-tier `user` / `admin` scheme. Superadmins retain platform-wide god-mode (user management, installer uploads, access to every site regardless of assignment). The new `admin` tier is site-scoped: site admins get elevated rights only on the sites in their `sites[]` — they can edit site config, delete machines, and manage display layouts without holding any platform-level powers. Members keep standard site-scoped access.
 - **User-management page redesigned** for the new model: role selector is now a three-option dropdown (with icons, colour, and inline descriptions of each role's capabilities); stats cards show per-role counts; admin rows display the specific sites each admin is responsible for (small pills, easy to scan). Self-demotion guard narrowed — superadmins are still blocked from self-demotion (platform-lockout risk), but admins can demote themselves since no cross-site powers are in play.
