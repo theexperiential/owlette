@@ -408,3 +408,102 @@ def test_cancel_event_stops_after_current_file(tmp_path):
         assert result.cancelled is True
     finally:
         state.close()
+
+
+# ─── wave 4b.2: post-rename realpath TOCTOU defense ────────────────
+
+
+def test_post_rename_realpath_catches_escape(tmp_path, monkeypatch):
+    """
+    simulate a TOCTOU symlink-swap between destination_allowlist.validate()
+    and os.replace(): validate passes because no symlink exists yet, but
+    realpath resolves the landed file to a location OUTSIDE extract_root.
+    the assembler must detect this post-rename and quarantine the file.
+    """
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        content = tmp_path / 'content'
+        extract = tmp_path / 'extract'
+        outside = tmp_path / 'outside'
+        extract.mkdir()
+        outside.mkdir()
+        allowlist = DestinationAllowlist([str(extract)])
+
+        data = b'payload'
+        _put_chunk(content, data)
+        f = _mk_manifest_file('a.toe', [data])
+
+        # monkeypatch os.path.realpath so the post-rename check sees the
+        # target as resolving to `outside` even though validate() saw
+        # the clean path. the allowlist already consumed its own
+        # realpath() earlier (construction + validate-time), so only
+        # calls from sync_assembler are affected by this patch.
+        real_realpath = os.path.realpath
+        extract_real = real_realpath(str(extract))
+        outside_real = real_realpath(str(outside))
+
+        def fake_realpath(p, *args, **kwargs):
+            s = str(p)
+            # spoof ONLY the final target resolution; leave extract_root
+            # alone so the comparison actually triggers.
+            if s.endswith('a.toe'):
+                return os.path.join(outside_real, 'a.toe')
+            return real_realpath(s, *args, **kwargs)
+
+        monkeypatch.setattr('sync_assembler.os.path.realpath', fake_realpath)
+
+        dist_id = state.start_distribution(
+            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            files=[{'path': f.path, 'size': f.size}], chunks=[],
+        )
+        with pytest.raises(AssembleError, match="failed to assemble"):
+            assemble_all(
+                distribution_id=dist_id, files=[f], extract_root=str(extract),
+                state=state, allowlist=allowlist, content_store=str(content),
+            )
+        # the suspect file must have been quarantine-deleted.
+        assert not (extract / 'a.toe').exists(), \
+            "post-rename escape detection failed to quarantine the file"
+        # the per-file state row records the real detection message so the
+        # operator sees WHY it failed, not just the wrapper summary.
+        failed_rows = state.list_files(dist_id, state='failed')
+        assert len(failed_rows) == 1
+        assert 'post-rename integrity' in (failed_rows[0]['error'] or '')
+    finally:
+        state.close()
+
+
+def test_post_rename_allows_sibling_root_substring(tmp_path):
+    """
+    regression: `/foo/bar-extra/file` must NOT satisfy a root of `/foo/bar`
+    via naive prefix matching. the separator-appended compare in
+    _verify_under_root catches this.
+    """
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        content = tmp_path / 'content'
+        # `extract_bar` vs `extract` — latter is a prefix of the former
+        extract_bar = tmp_path / 'extract'
+        sibling = tmp_path / 'extract-sibling'
+        extract_bar.mkdir()
+        sibling.mkdir()
+        # only `extract_bar` is allowed
+        allowlist = DestinationAllowlist([str(extract_bar)])
+
+        data = b'content'
+        _put_chunk(content, data)
+        f = _mk_manifest_file('file.toe', [data])
+
+        # normal happy path — file lands under extract_bar, realpath stays there.
+        dist_id = state.start_distribution(
+            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            files=[{'path': f.path, 'size': f.size}], chunks=[],
+        )
+        result = assemble_all(
+            distribution_id=dist_id, files=[f], extract_root=str(extract_bar),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+        assert result.assembled == 1
+        assert (extract_bar / 'file.toe').exists()
+    finally:
+        state.close()

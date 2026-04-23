@@ -249,6 +249,16 @@ def _assemble_one(
         # MOVEFILE_REPLACE_EXISTING; on POSIX it's rename(2).
         os.replace(partial_str, target_str)
 
+        # post-rename realpath check (wave 4b.2 — TOCTOU defense).
+        # allowlist.validate() ran before the rename, but a privileged
+        # attacker could swap an intermediate parent dir to a symlink or
+        # junction in the window between validate and rename. resolve the
+        # target AFTER the rename lands and confirm it still sits under
+        # the expected extract_root. fail-closed: on mismatch, delete the
+        # file and raise. do NOT keep a potentially-exfiltrated file on
+        # disk.
+        _verify_under_root(resolved_target, extract_root)
+
         # fsync the parent directory so the rename itself is durable. on
         # windows this is a no-op (rename via MoveFileEx handles it).
         if os.name == 'posix':
@@ -318,6 +328,69 @@ def _ensure_parent_dir(target: 'Path') -> None:
         os.makedirs(_long_path(parent_str), exist_ok=True)
     else:
         parent.mkdir(parents=True, exist_ok=True)
+
+
+def _verify_under_root(resolved_target: 'Path', extract_root: 'Path') -> None:
+    """
+    confirm that `resolved_target` still lives under `extract_root` after the
+    atomic rename has landed. closes the TOCTOU window between
+    destination_allowlist.validate() and os.replace() — if a parent dir was
+    swapped to a symlink/junction during that window, the file would appear
+    to be under the root by path but resolve elsewhere.
+
+    on mismatch: best-effort delete of the suspect file and raise
+    AssembleError. we intentionally do NOT leave the file on disk — a
+    successful post-rename that points outside the root is a strong signal
+    of active tampering.
+
+    uses os.path.realpath (resolves symlinks AND junctions on windows) with
+    case-folded comparison on windows (NTFS is case-insensitive).
+    """
+    try:
+        real_target = os.path.realpath(str(resolved_target))
+        real_root = os.path.realpath(str(extract_root))
+    except (OSError, ValueError) as e:
+        # fail-closed: can't verify → delete + raise.
+        _quarantine_delete(resolved_target)
+        raise AssembleError(
+            f"post-rename realpath failed for {str(resolved_target)!r}: {e}"
+        ) from e
+
+    if os.name == 'nt':
+        real_target_cmp = real_target.casefold()
+        real_root_cmp = real_root.casefold()
+    else:
+        real_target_cmp = real_target
+        real_root_cmp = real_root
+
+    # ensure the real root ends with a separator for unambiguous prefix match
+    # (`/foo/bar` must not match root `/foo/ba`). str comparison, so normalize
+    # the separator and append.
+    root_with_sep = real_root_cmp.rstrip(os.sep) + os.sep
+    if not (real_target_cmp + os.sep).startswith(root_with_sep):
+        _quarantine_delete(resolved_target)
+        raise AssembleError(
+            f"post-rename integrity check failed: {str(resolved_target)!r} "
+            f"resolves to {real_target!r}, outside extract_root {real_root!r}. "
+            f"possible symlink/junction tampering — file quarantined."
+        )
+
+
+def _quarantine_delete(path: 'Path') -> None:
+    """
+    best-effort delete of a file whose post-rename location is suspect.
+    errors are swallowed (logged only) — the caller is about to raise and
+    the higher priority is that no caller acts on the file.
+    """
+    try:
+        p = path if isinstance(path, Path) else Path(str(path))
+        if p.exists():
+            p.unlink()
+    except OSError as e:
+        logger.error(
+            f"sync_assembler: failed to quarantine-delete {str(path)!r}: {e}. "
+            f"MANUAL CLEANUP REQUIRED."
+        )
 
 
 def _harden_acl(path_str: str) -> None:
