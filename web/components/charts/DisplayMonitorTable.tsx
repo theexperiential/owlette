@@ -21,6 +21,14 @@ interface DisplayMonitorTableProps {
   monitors: MonitorInfo[];
   selectedMonitorId?: string;
   onSelect?: (id: string) => void;
+  /**
+   * Id of the monitor currently hovered in either this table or a linked
+   * sibling view (e.g. DisplayCanvas). Drives a shared row highlight so
+   * hovering a rect on the canvas lights up the matching row here.
+   */
+  hoveredMonitorId?: string;
+  /** Fires on mouse enter/leave of a row — id is undefined on leave. */
+  onHover?: (id: string | undefined) => void;
   accentColor: string;
   driftMap?: Map<string, string[]>;
 }
@@ -60,6 +68,8 @@ function DisplayMonitorTableImpl({
   monitors,
   selectedMonitorId,
   onSelect,
+  hoveredMonitorId,
+  onHover,
   accentColor,
   driftMap,
 }: DisplayMonitorTableProps) {
@@ -90,6 +100,7 @@ function DisplayMonitorTableImpl({
             const yDrifted = drift.includes('position.y');
 
             const isSelected = selectedMonitorId === monitor.id;
+            const isHovered = hoveredMonitorId === monitor.id;
             const friendlyName = monitor.friendlyName || monitor.id;
             const effRes = effectiveResolution(monitor);
 
@@ -97,10 +108,14 @@ function DisplayMonitorTableImpl({
               <tr
                 key={monitor.id}
                 onClick={onSelect ? () => onSelect(monitor.id) : undefined}
+                onMouseEnter={onHover ? () => onHover(monitor.id) : undefined}
+                onMouseLeave={onHover ? () => onHover(undefined) : undefined}
                 className={cn(
                   'border-b border-border last:border-b-0 transition-colors',
-                  onSelect && 'cursor-pointer hover:bg-accent/30',
-                  isSelected && 'bg-accent/30',
+                  onSelect && 'cursor-pointer',
+                  isSelected
+                    ? 'bg-accent/30'
+                    : isHovered && 'bg-accent/20',
                 )}
                 style={
                   isSelected
@@ -121,7 +136,7 @@ function DisplayMonitorTableImpl({
                     </span>
                     {monitor.primary && (
                       <Star
-                        className="h-3 w-3 text-accent-warm fill-accent-warm shrink-0"
+                        className="h-2.5 w-2.5 text-accent-warm fill-accent-warm shrink-0"
                         aria-label="primary"
                       />
                     )}

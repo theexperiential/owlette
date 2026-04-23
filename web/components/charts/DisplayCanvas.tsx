@@ -34,6 +34,15 @@ interface DisplayCanvasProps {
   mosaicGrids?: MosaicGrid[];
   selectedMonitorId?: string;
   onMonitorClick?: (id: string) => void;
+  /**
+   * Id of the monitor currently hovered in either the canvas or a linked
+   * sibling view (e.g. DisplayMonitorTable). Drives a shared highlight so
+   * hovering a row in the table lights up the matching rect here, and vice
+   * versa.
+   */
+  hoveredMonitorId?: string;
+  /** Fires on mouse enter/leave of a clickable rect — id is undefined on leave. */
+  onMonitorHover?: (id: string | undefined) => void;
   ghostMonitors?: MonitorInfo[];
   /**
    * Color used for the selected-monitor stroke. Defaults to the primary CSS
@@ -145,6 +154,8 @@ function DisplayCanvasImpl({
   mosaicGrids,
   selectedMonitorId,
   onMonitorClick,
+  hoveredMonitorId,
+  onMonitorHover,
   ghostMonitors: ghostMonitorsProp,
   accentColor = 'var(--primary)',
   driftedMonitorIds,
@@ -239,6 +250,15 @@ function DisplayCanvasImpl({
     },
     [onMonitorClick],
   );
+  const handleRectEnter = useCallback(
+    (id: string) => {
+      onMonitorHover?.(id);
+    },
+    [onMonitorHover],
+  );
+  const handleRectLeave = useCallback(() => {
+    onMonitorHover?.(undefined);
+  }, [onMonitorHover]);
 
   const renderMonitor = (
     monitor: MonitorInfo,
@@ -260,8 +280,11 @@ function DisplayCanvasImpl({
     // in the cyan selection accent and lose the purple "assigned" signal.
     const isSelected =
       !opts.ghost && !!selectedMonitorId && selectedMonitorId === monitor.id;
+    const isHovered =
+      !opts.ghost && !!hoveredMonitorId && hoveredMonitorId === monitor.id;
     const isPrimary = monitor.primary;
     const clickable = !!onMonitorClick && !opts.ghost;
+    const hoverable = !opts.ghost && !!onMonitorHover;
 
     // Color system: fill carries identity/state, stroke carries interaction.
     // Every signal owns exactly one channel so combinations stack cleanly —
@@ -322,8 +345,13 @@ function DisplayCanvasImpl({
     // visible enough to actually communicate the assigned layout.
     const fillOpacity = opts.ghost ? 0.4 : 1;
     const strokeOpacity = opts.ghost ? 0.85 : 1;
+    // Cross-panel hover lights up both canvas rect and table row for the same
+    // monitor via a subtle brightness bump — state-driven (not :hover) so it
+    // fires when the sibling sees the hover.
     const rectStyle: React.CSSProperties = {
       cursor: clickable ? 'pointer' : 'default',
+      filter: isHovered ? 'brightness(1.15)' : undefined,
+      transition: 'filter 120ms ease',
     };
 
     // Text label tier driven by rendered area. Using the rect area (not just
@@ -465,6 +493,8 @@ function DisplayCanvasImpl({
       <g
         key={`${opts.ghost ? 'ghost-' : ''}${monitor.id}`}
         onClick={clickable ? () => handleRectClick(monitor.id) : undefined}
+        onMouseEnter={hoverable ? () => handleRectEnter(monitor.id) : undefined}
+        onMouseLeave={hoverable ? handleRectLeave : undefined}
       >
         <rect
           x={x}
@@ -480,7 +510,6 @@ function DisplayCanvasImpl({
           strokeDasharray={strokeDash}
           strokeOpacity={strokeOpacity}
           style={rectStyle}
-          className={clickable ? 'hover:brightness-110' : undefined}
         />
         {primaryBadge}
         {labelContent}
@@ -568,7 +597,7 @@ function DisplayCanvasImpl({
   const ghostElements = useMemo(
     () => (ghostMonitors ?? []).map((m) => renderMonitor(m, { ghost: true })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ghostMonitors, projection, selectedMonitorId, onMonitorClick, handleRectClick, monitorIndexById, accentColor, driftedMonitorIds, labelMode],
+    [ghostMonitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode],
   );
   // SVG paint order is document order, not z-index — there's no z-index for
   // SVG elements. So we render non-selected monitors first, then the selected
@@ -587,7 +616,7 @@ function DisplayCanvasImpl({
       ...selected.map((m) => renderMonitor(m, { ghost: false })),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monitors, projection, selectedMonitorId, onMonitorClick, handleRectClick, monitorIndexById, accentColor, driftedMonitorIds, labelMode]);
+  }, [monitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode]);
   const gridElements = useMemo(
     () => (mosaicGrids ?? []).map((g, i) => renderGrid(g, i)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
