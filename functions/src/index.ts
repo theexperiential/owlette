@@ -15,3 +15,4 @@ admin.initializeApp();
 export { onMetricsWrite } from './metricsHistory';
 export { onCommandCompleted } from './deploymentStatus';
 export { sweepStaleDeployments } from './deploymentSweeper';
+export { onRoostWritten, onTargetStateWritten } from './distributionFanout';
