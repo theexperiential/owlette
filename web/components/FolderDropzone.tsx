@@ -214,8 +214,8 @@ export function FolderDropzone({
           <div className="border-t border-border max-h-48 overflow-y-auto px-4 py-2 font-mono text-[11px] text-muted-foreground">
             <ul className="space-y-0.5">
               {previewFiles.slice(0, PREVIEW_CAP).map((f, idx) => (
-                <li key={`${f.path}-${idx}`} className="flex items-baseline gap-2">
-                  <span className="truncate text-foreground/90">{f.path}</span>
+                <li key={`${f.path}-${idx}`} className="flex items-baseline gap-2 min-w-0">
+                  <span className="truncate text-foreground/90 min-w-0 flex-1">{f.path}</span>
                   <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
                     {formatBytes((f.blob as { size?: number }).size ?? 0)}
                   </span>
@@ -257,7 +257,7 @@ export function FolderDropzone({
         {enumerating ? 'reading…' : 'drag a folder or files here to upload'}
       </div>
       <p className="text-xs text-muted-foreground">
-        roost chunks + hashes locally, uploads only what&apos;s new, resumes on tab close.
+        chunked + hashed locally. only new bytes get uploaded.
       </p>
       <div className="pt-1 flex items-center justify-center gap-2">
         {/*

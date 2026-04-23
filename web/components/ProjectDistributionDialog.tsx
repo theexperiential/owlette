@@ -512,7 +512,7 @@ export default function ProjectDistributionDialog({
           - sm+ (640px): reverts to the desktop `max-w-2xl` layout.
           - `max-h-[90vh]` + overflow-y keeps the body scrollable on
             short mobile viewports so the footer buttons stay reachable. */}
-      <DialogContent className="border-border bg-secondary text-white w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="border-border bg-secondary text-white w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] sm:max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle className="text-white">roost a project</DialogTitle>
           <DialogDescription className="text-muted-foreground">
