@@ -53,6 +53,14 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/* Enable height/width transitions between `auto` and concrete values.
+   Without this, `transition-[height]` is a no-op when going to/from
+   `height: auto`. Supported in Chrome/Edge 129+ and Safari 18+;
+   Firefox ignores it and falls back to an instant resize. */
+:root {
+  interpolate-size: allow-keywords;
+}
+
 :root {
   --radius: 0.375rem;
   --background: oklch(1 0 0);
