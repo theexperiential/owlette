@@ -1,0 +1,43 @@
+name: no token logs
+
+on:
+  pull_request:
+    paths:
+      - 'web/**/*.ts'
+      - 'web/**/*.tsx'
+      - 'web/**/*.js'
+      - 'web/**/*.mjs'
+      - 'agent/**/*.py'
+      - 'scripts/check-no-token-logs.mjs'
+      - '.github/workflows/no-token-logs.yml'
+  push:
+    branches: [main, dev]
+    paths:
+      - 'web/**/*.ts'
+      - 'web/**/*.tsx'
+      - 'web/**/*.js'
+      - 'web/**/*.mjs'
+      - 'agent/**/*.py'
+      - 'scripts/check-no-token-logs.mjs'
+
+concurrency:
+  group: no-token-logs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: scan for logged tokens
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: self-test the scanner
+        run: node scripts/check-no-token-logs.mjs --test
+
+      - name: scan repo for token logging
+        run: node scripts/check-no-token-logs.mjs
