@@ -66,13 +66,15 @@ const CHART_Y_AXIS_WIDTH = 40;
 // Right-side bytes axis width — wider than the left to fit "1.2 MB/s" ticks.
 const CHART_BYTES_AXIS_WIDTH = 56;
 
-// When any selected disk-IO volume's peak in the visible data range reaches
-// this % of its max bandwidth, the disk IO lines flip from the auto-scaled
-// bytes axis (right) onto the 0-100% default axis (left) so approach-to-
-// saturation is legible. Below the threshold, bytes mode keeps low-activity
-// lines from flatlining near zero. Chosen at 70 to give clear headroom for
-// "getting close to maxed out" without triggering on routine bursts.
-const DISK_IO_PCT_MODE_THRESHOLD = 70;
+// When any selected byte-rate series' peak in the visible data range reaches
+// this % of its max rate (disk-IO max bandwidth / NIC link speed), the lines
+// flip from the auto-scaled bytes axis (right) onto the 0-100% default axis
+// (left) so approach-to-saturation is legible. Below the threshold, bytes
+// mode keeps low-activity lines from flatlining near zero. Chosen at 70 to
+// give clear headroom for "getting close to maxed out" without triggering on
+// routine bursts. Shared by disk IO and NIC so both categories make the same
+// percent-vs-bytes decision independently from the same signal.
+const BYTES_MODE_PCT_THRESHOLD = 70;
 
 // Shared className for every metric/disk/GPU/NIC toggle button. Mirrors the
 // TimeRangeSelector styling: `variant="ghost"` at the call site (no variant
@@ -320,8 +322,29 @@ export function MetricsDetailPanel({
         if (typeof w === 'number' && w > peakPct) peakPct = w;
       }
     }
-    return peakPct >= DISK_IO_PCT_MODE_THRESHOLD ? 'percent' : 'bytes';
+    return peakPct >= BYTES_MODE_PCT_THRESHOLD ? 'percent' : 'bytes';
   }, [effectiveDiskIO, chartData]);
+
+  // Per-NIC analogue of diskIOMode. Same 70%-of-link-speed threshold: if any
+  // selected NIC's TX or RX utilization peak reaches the threshold, the NIC
+  // lines stay on the shared 0-100% axis (saturation visibility); otherwise
+  // they flip to the auto-scaled bytes axis so a 1 MB/s stream on a 1 Gbps
+  // link reads as "1 MB/s" instead of flatlining at "0.9%".
+  const networkMode: 'percent' | 'bytes' = useMemo(() => {
+    if (selectedNics.length === 0) return 'bytes';
+    let peakPct = 0;
+    for (const nicName of selectedNics) {
+      const txKey = `${nicName}_tx_util`;
+      const rxKey = `${nicName}_rx_util`;
+      for (const d of chartData) {
+        const tx = d[txKey];
+        const rx = d[rxKey];
+        if (typeof tx === 'number' && tx > peakPct) peakPct = tx;
+        if (typeof rx === 'number' && rx > peakPct) peakPct = rx;
+      }
+    }
+    return peakPct >= BYTES_MODE_PCT_THRESHOLD ? 'percent' : 'bytes';
+  }, [selectedNics, chartData]);
 
   // Total number of selected lines across all categories. Each disk IO
   // toggle contributes 2 lines (read + write), matching the visual count
@@ -495,27 +518,45 @@ export function MetricsDetailPanel({
     }
   }, [timeRange, chartData, nowTs]);
 
+  // Whether the right-side bytes axis should be rendered at all — true when
+  // any bytes-mode category has at least one selected series to draw.
+  const bytesAxisActive =
+    (diskIOMode === 'bytes' && effectiveDiskIO.length > 0) ||
+    (networkMode === 'bytes' && selectedNics.length > 0);
+
   // Explicit ticks at nice round throughput values (250 KB/s, 500 KB/s,
   // 1 MB/s, etc.) for the bytes-mode right axis. Recharts' default tick
   // picker divides the data max by 4 and lands on awkward values like
-  // "585.9 KB/s". Scans samples in the visible time domain for max
-  // read/write bytes/sec across selected volumes. Null when no data falls
-  // in range — recharts then falls back to its auto scale.
-  const diskIOBytesAxis = useMemo(() => {
-    if (diskIOMode !== 'bytes' || effectiveDiskIO.length === 0) return null;
+  // "585.9 KB/s". Scans samples in the visible time domain for max bytes/sec
+  // across every series currently bound to the bytes axis (disk IO read/write
+  // in bytes mode + NIC tx/rx in bytes mode) so one shared scale covers both
+  // categories. Null when no data falls in range — recharts then falls back
+  // to its auto scale.
+  const bytesAxis = useMemo(() => {
+    if (!bytesAxisActive) return null;
     const [start, end] = timeDomain;
     let max = 0;
     for (const d of chartData) {
       if (d.time < start || d.time > end) continue;
-      for (const volumeId of effectiveDiskIO) {
-        const r = d[`${volumeId}_io_read`];
-        const w = d[`${volumeId}_io_write`];
-        if (typeof r === 'number' && r > max) max = r;
-        if (typeof w === 'number' && w > max) max = w;
+      if (diskIOMode === 'bytes') {
+        for (const volumeId of effectiveDiskIO) {
+          const r = d[`${volumeId}_io_read`];
+          const w = d[`${volumeId}_io_write`];
+          if (typeof r === 'number' && r > max) max = r;
+          if (typeof w === 'number' && w > max) max = w;
+        }
+      }
+      if (networkMode === 'bytes') {
+        for (const nicName of selectedNics) {
+          const tx = d[`${nicName}_tx`];
+          const rx = d[`${nicName}_rx`];
+          if (typeof tx === 'number' && tx > max) max = tx;
+          if (typeof rx === 'number' && rx > max) max = rx;
+        }
       }
     }
     return computeNiceByteTicks(max);
-  }, [diskIOMode, effectiveDiskIO, chartData, timeDomain]);
+  }, [bytesAxisActive, diskIOMode, effectiveDiskIO, networkMode, selectedNics, chartData, timeDomain]);
 
   // Explicit ticks keep the x-axis clean: one label per natural unit
   // (date / week-day / month), no repeats, and no auto-generated gaps where
@@ -620,15 +661,26 @@ export function MetricsDetailPanel({
       }
     }
 
-    // Per-NIC lines: TX util + RX util (visible), TX bytes + RX bytes (hidden, for tooltip)
+    // Per-NIC lines. Mirrors the disk-IO dual-family routing:
+    //   - percent mode: `_tx_util` / `_rx_util` visible on the default 0-100%
+    //     axis; `_tx` / `_rx` bytes keys ride as hidden lines so the tooltip
+    //     can append the throughput value in parens.
+    //   - bytes   mode: `_tx` / `_rx` visible on the right auto-scaled bytes
+    //     axis so low-utilization traffic (e.g. 1 MB/s on a 1 Gbps link) is
+    //     legible instead of flatlining near zero. No hidden siblings needed
+    //     — the tooltip reads entry.value directly.
     for (const nicName of selectedNics) {
       const nicIdx = nicNames.indexOf(nicName);
       const colors = getNicColors(nicIdx >= 0 ? nicIdx : 0);
-      lines.push({ key: `${nicName}_tx_util`, color: colors.tx, label: `${nicName} TX` });
-      lines.push({ key: `${nicName}_rx_util`, color: colors.rx, label: `${nicName} RX` });
-      // Hidden throughput lines — included in data so tooltip can read them
-      lines.push({ key: `${nicName}_tx`, color: colors.tx, label: `${nicName} TX (bps)`, hidden: true });
-      lines.push({ key: `${nicName}_rx`, color: colors.rx, label: `${nicName} RX (bps)`, hidden: true });
+      if (networkMode === 'percent') {
+        lines.push({ key: `${nicName}_tx_util`, color: colors.tx, label: `${nicName} TX` });
+        lines.push({ key: `${nicName}_rx_util`, color: colors.rx, label: `${nicName} RX` });
+        lines.push({ key: `${nicName}_tx`, color: colors.tx, label: `${nicName} TX (bps)`, hidden: true });
+        lines.push({ key: `${nicName}_rx`, color: colors.rx, label: `${nicName} RX (bps)`, hidden: true });
+      } else {
+        lines.push({ key: `${nicName}_tx`, color: colors.tx, label: `${nicName} TX`, axis: 'bytes' });
+        lines.push({ key: `${nicName}_rx`, color: colors.rx, label: `${nicName} RX`, axis: 'bytes' });
+      }
     }
 
     // Per-disk lines: one usage% line per disk
@@ -668,7 +720,7 @@ export function MetricsDetailPanel({
     }
 
     return lines;
-  }, [effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIO, diskIOMode, resolveGpuLabel]);
+  }, [effectiveMetrics, selectedNics, nicNames, networkMode, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIO, diskIOMode, resolveGpuLabel]);
 
   // Collect all selected metric/NIC/disk/GPU/disk-IO keys for stats summary.
   // `format: 'throughput'` switches the grid cell to byte-rate formatting
@@ -759,15 +811,40 @@ export function MetricsDetailPanel({
     // NIC cards — TX + RX per NIC, in the same order as the NIC toggles.
     // Direction is an arrow icon (↑/↓) appended to the bare NIC name rather
     // than a " TX"/" RX" suffix, mirroring the thermometer pattern.
+    //
+    // Card `key` matches the visible chart line so hover-to-highlight hits
+    // the right Line (util key in percent mode, raw bytes key in bytes mode).
+    // In bytes mode we drop the `isNetwork` percent-with-throughput-in-parens
+    // formatting and switch to the throughput-only format used by disk IO
+    // cards so avg/max/min render as "1 MB/s" instead of "0.9%".
     for (const nicName of selectedNics) {
       const nicIdx = nicNames.indexOf(nicName);
       const colors = getNicColors(nicIdx >= 0 ? nicIdx : 0);
-      keys.push({ key: `${nicName}_tx_util`, label: nicName, color: colors.tx, isNetwork: true, direction: 'tx' });
-      keys.push({ key: `${nicName}_rx_util`, label: nicName, color: colors.rx, isNetwork: true, direction: 'rx' });
+      if (networkMode === 'percent') {
+        keys.push({ key: `${nicName}_tx_util`, label: nicName, color: colors.tx, isNetwork: true, direction: 'tx' });
+        keys.push({ key: `${nicName}_rx_util`, label: nicName, color: colors.rx, isNetwork: true, direction: 'rx' });
+      } else {
+        keys.push({
+          key: `${nicName}_tx`,
+          label: nicName,
+          color: colors.tx,
+          isNetwork: false,
+          format: 'throughput',
+          direction: 'tx',
+        });
+        keys.push({
+          key: `${nicName}_rx`,
+          label: nicName,
+          color: colors.rx,
+          isNetwork: false,
+          format: 'throughput',
+          direction: 'rx',
+        });
+      }
     }
 
     return keys;
-  }, [availableMetrics, effectiveMetrics, selectedNics, nicNames, selectedDisks, diskNames, driveOrder, selectedGpus, gpuNames, effectiveDiskIO, diskIOMode, resolveGpuLabel]);
+  }, [availableMetrics, effectiveMetrics, selectedNics, nicNames, networkMode, selectedDisks, diskNames, driveOrder, selectedGpus, gpuNames, effectiveDiskIO, diskIOMode, resolveGpuLabel]);
 
   return (
     <Card className="border-border bg-card py-0 gap-0">
@@ -967,7 +1044,7 @@ export function MetricsDetailPanel({
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 5, right: 0, bottom: 5, left: 0 }}>
+              <LineChart data={chartData} margin={{ top: 12, right: 0, bottom: 5, left: 0 }}>
                 <CartesianGrid
                   strokeDasharray="3 3"
                   stroke="oklch(0.55 0.06 250)"
@@ -997,10 +1074,12 @@ export function MetricsDetailPanel({
                 />
                 {/* Hidden Y-axis for raw throughput lines (prevents them from blowing out the % scale) */}
                 <YAxis yAxisId="hidden" hide />
-                {/* Right-side bytes axis — visible only when disk IO is
-                    rendering in bytes mode. Ticks format via formatDiskIO
-                    so each level picks its own unit (KB/MB/GB). */}
-                {diskIOMode === 'bytes' && effectiveDiskIO.length > 0 && (
+                {/* Right-side bytes axis — visible whenever any byte-rate
+                    category (disk IO, NIC) is rendering in bytes mode. Ticks
+                    format via formatDiskIO so each level picks its own unit
+                    (KB/MB/GB), and the domain is the union across all
+                    bytes-axis-bound series (see `bytesAxis`). */}
+                {bytesAxisActive && (
                   <YAxis
                     yAxisId="bytes"
                     orientation="right"
@@ -1010,8 +1089,8 @@ export function MetricsDetailPanel({
                     tickLine={false}
                     axisLine={false}
                     tickFormatter={(v: number) => formatDiskIO(v)}
-                    {...(diskIOBytesAxis
-                      ? { domain: [0, diskIOBytesAxis.domainMax], ticks: diskIOBytesAxis.ticks }
+                    {...(bytesAxis
+                      ? { domain: [0, bytesAxis.domainMax], ticks: bytesAxis.ticks }
                       : {})}
                   />
                 )}

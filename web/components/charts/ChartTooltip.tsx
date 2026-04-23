@@ -33,11 +33,22 @@ export function isNetworkMetricKey(key: string): boolean {
 }
 
 /**
- * Get the NIC name and direction from a network metric key
+ * Parse a per-NIC metric key. Matches both the percent (`_tx_util` /
+ * `_rx_util`) and raw bytes (`_tx` / `_rx`) families — MetricsDetailPanel
+ * flips between them per render via networkMode (percent when utilization
+ * approaches link saturation, bytes otherwise), so the tooltip needs to
+ * recognise either as the visible NIC line. `isPct` lets the caller route
+ * to the percent-with-throughput-in-parens branch vs the throughput-only
+ * bytes branch. Note: the `_tx_util` / `_rx_util` check must come first,
+ * since those strings also end in `_tx` / `_rx`.
  */
-function parseNetworkKey(key: string): { nic: string; direction: 'TX' | 'RX' } | null {
-  if (key.endsWith('_tx_util')) return { nic: key.replace('_tx_util', ''), direction: 'TX' };
-  if (key.endsWith('_rx_util')) return { nic: key.replace('_rx_util', ''), direction: 'RX' };
+function parseNetworkKey(
+  key: string,
+): { nic: string; direction: 'TX' | 'RX'; isPct: boolean } | null {
+  if (key.endsWith('_tx_util')) return { nic: key.slice(0, -'_tx_util'.length), direction: 'TX', isPct: true };
+  if (key.endsWith('_rx_util')) return { nic: key.slice(0, -'_rx_util'.length), direction: 'RX', isPct: true };
+  if (key.endsWith('_tx')) return { nic: key.slice(0, -'_tx'.length), direction: 'TX', isPct: false };
+  if (key.endsWith('_rx')) return { nic: key.slice(0, -'_rx'.length), direction: 'RX', isPct: false };
   return null;
 }
 
@@ -130,26 +141,49 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
           if (!config && !netInfo && !diskInfo && !gpuInfo && !diskIOChannel) return null;
           if (entry.value === undefined || entry.value === null) return null;
 
-          // For network metrics, find the corresponding throughput value
+          // Per-NIC network rows. The chart ships two parallel key families
+          // per (nic, direction): percent (`_tx_util` / `_rx_util`) and raw
+          // bytes (`_tx` / `_rx`). Which one is the visible line depends on
+          // networkMode; the tooltip handles both:
+          //
+          //   - Percent mode: visible is `_util`; bytes sibling is a hidden
+          //     Line present in the payload. Render "<nic> ↑  0.9% (1 MB/s)".
+          //     Dedupe: skip the raw bytes entry when its `_util` sibling is
+          //     also in the payload so each direction renders exactly once
+          //     (mirrors the disk-IO dedupe).
+          //   - Bytes   mode: visible is raw bytes, no `_util` sibling.
+          //     Render "<nic> ↑  1 MB/s" — throughput only, no percent (the
+          //     absolute value is what matters when utilization is sub-1%).
           if (netInfo) {
+            if (!netInfo.isPct && payload.some(e => String(e.dataKey) === `${key}_util`)) {
+              return null;
+            }
+            const DirectionIcon = netInfo.direction === 'TX' ? ArrowUp : ArrowDown;
+            if (!netInfo.isPct) {
+              const bytes = typeof entry.value === 'number' ? entry.value : Number(entry.value) || 0;
+              return (
+                <div key={key} className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
+                    <span className="text-sm text-foreground inline-flex items-center gap-1">
+                      {netInfo.nic}
+                      <DirectionIcon className="h-3 w-3" />
+                    </span>
+                  </div>
+                  <span className="text-sm font-medium text-foreground">{formatThroughput(bytes)}</span>
+                </div>
+              );
+            }
             const throughputKey = key.replace('_util', '');  // e.g., "Ethernet_tx"
             const throughputEntry = payload.find(e => String(e.dataKey) === throughputKey);
             const throughput = typeof throughputEntry?.value === 'number' ? throughputEntry.value : 0;
-
             return (
               <div key={key} className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
-                  <div
-                    className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: entry.color }}
-                  />
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
                   <span className="text-sm text-foreground inline-flex items-center gap-1">
                     {netInfo.nic}
-                    {netInfo.direction === 'TX' ? (
-                      <ArrowUp className="h-3 w-3" />
-                    ) : (
-                      <ArrowDown className="h-3 w-3" />
-                    )}
+                    <DirectionIcon className="h-3 w-3" />
                   </span>
                 </div>
                 <span className="text-sm font-medium text-foreground">
