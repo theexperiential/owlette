@@ -194,16 +194,16 @@ describe('_shared.ts (v2 route helpers)', () => {
 
   describe('validateResourceId', () => {
     it('accepts valid 8-64 char ids', () => {
-      expect(validateResourceId('abcd1234', 'folderId')).toBeNull();
-      expect(validateResourceId('a-b_c-1234567890', 'folderId')).toBeNull();
+      expect(validateResourceId('abcd1234', 'roostId')).toBeNull();
+      expect(validateResourceId('a-b_c-1234567890', 'roostId')).toBeNull();
     });
     it('rejects too-short', () => {
-      const res = validateResourceId('short', 'folderId');
+      const res = validateResourceId('short', 'roostId');
       expect(res).not.toBeNull();
       expect(res!.status).toBe(400);
     });
     it('rejects too-long (>64)', () => {
-      const res = validateResourceId('a'.repeat(65), 'folderId');
+      const res = validateResourceId('a'.repeat(65), 'roostId');
       expect(res).not.toBeNull();
       expect(res!.status).toBe(400);
     });

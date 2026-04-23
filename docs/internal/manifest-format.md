@@ -246,7 +246,7 @@ project-manifests/{siteId}/{folderId}/{manifestId}.json
 firestore stores **only the pointer** at:
 
 ```
-sites/{siteId}/synced_folders/{folderId}
+sites/{siteId}/roosts/{roostId}
 ```
 
 with these fields (excerpt):

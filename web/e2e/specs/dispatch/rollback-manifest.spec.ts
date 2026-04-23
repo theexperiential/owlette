@@ -1,9 +1,9 @@
 /**
  * Dispatch — rollback to manifest (D5.2, PARTIAL)
  *
- * **Scope note**: the backing `/api/folders/{folderId}/rollback` route
+ * **Scope note**: the backing `/api/roosts/{roostId}/rollback` route
  * is a STUB gated on roost wave 2a.6 — it validates auth, superadmin
- * role, folder id, body shape, and site scope, but the firestore CAS
+ * role, roost id, body shape, and site scope, but the firestore CAS
  * transaction that swaps `currentManifestId` hasn't been implemented
  * yet (returns 501, per `route.ts:67`).
  *
@@ -32,14 +32,14 @@ import { test, expect, type Page } from '@playwright/test';
 import { roleState } from '../../helpers/roles';
 
 const SITE_ID = 'site-A';
-const FOLDER_ID = 'e2e-roost-folder';
+const ROOST_ID = 'e2e-roost-folder';
 const TARGET_MANIFEST_ID = 'manifest-target-abc';
 
 async function rollbackStatus(page: Page, body: Record<string, unknown>): Promise<number> {
   await page.goto('/login');
   return page.evaluate(
-    async ({ folderId, body }) => {
-      const r = await fetch(`/api/folders/${folderId}/rollback`, {
+    async ({ roostId, body }) => {
+      const r = await fetch(`/api/roosts/${roostId}/rollback`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -47,7 +47,7 @@ async function rollbackStatus(page: Page, body: Record<string, unknown>): Promis
       });
       return r.status;
     },
-    { folderId: FOLDER_ID, body },
+    { roostId: ROOST_ID, body },
   );
 }
 
