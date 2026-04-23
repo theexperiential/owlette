@@ -84,7 +84,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline'", // Tailwind CSS requires unsafe-inline
               `img-src 'self' data: blob: https:${isEmulatorBuild ? ' http://127.0.0.1:*' : ''}`,
               "font-src 'self' data:",
-              `connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com https://*.ingest.sentry.io${isEmulatorBuild ? ' http://127.0.0.1:* ws://127.0.0.1:*' : ''}`, // Firebase endpoints + Google OAuth (+ Firebase emulator hosts in E2E mode)
+              `connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com https://*.ingest.sentry.io https://*.r2.cloudflarestorage.com${isEmulatorBuild ? ' http://127.0.0.1:* ws://127.0.0.1:*' : ''}`, // Firebase endpoints + Google OAuth + R2 presigned chunk uploads/downloads (wave 3.1) (+ Firebase emulator hosts in E2E mode)
               "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com", // Allow Google OAuth popup and Firebase auth
               "frame-ancestors 'none'", // Equivalent to X-Frame-Options: DENY
               "base-uri 'self'",
