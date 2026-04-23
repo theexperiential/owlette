@@ -129,7 +129,7 @@ export default function ApplyScheduleToMachinesDialog({
             </Button>
           </div>
 
-          <div className="border border-border rounded-md bg-background max-h-72 overflow-y-auto divide-y divide-border">
+          <div className="border border-border rounded-md bg-background/50 max-h-72 overflow-y-auto divide-y divide-border">
             {machines.length === 0 ? (
               <p className="text-muted-foreground text-sm text-center py-4">no machines available</p>
             ) : (

@@ -682,7 +682,7 @@ export default function DeploymentDialog({
                   variant="outline"
                   size="sm"
                   onClick={selectOnlyOnlineMachines}
-                  className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
+                  className="border-border bg-background/50 text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
                 >
                   online only ({onlineMachines.length})
                 </Button>
@@ -691,14 +691,14 @@ export default function DeploymentDialog({
                   variant="outline"
                   size="sm"
                   onClick={toggleAllMachines}
-                  className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
+                  className="border-border bg-background/50 text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
                 >
                   {allMachinesSelected ? 'deselect all' : 'select all'}
                 </Button>
               </div>
             </div>
 
-            <div className="border border-border rounded-lg p-3 bg-background max-h-48 overflow-y-auto space-y-2">
+            <div className="border border-border rounded-lg p-3 bg-background/50 max-h-48 overflow-y-auto space-y-2">
               {machines.length === 0 ? (
                 <p className="text-muted-foreground text-sm text-center py-2">no machines available</p>
               ) : (
