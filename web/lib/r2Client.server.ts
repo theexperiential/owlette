@@ -35,11 +35,25 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 export type RoostEnv = 'dev' | 'prod';
 
 export function currentEnv(): RoostEnv {
-  // Railway exposes RAILWAY_ENVIRONMENT; fall back to NODE_ENV.
-  const railway = process.env.RAILWAY_ENVIRONMENT;
-  if (railway === 'production') return 'prod';
-  if (railway === 'staging' || railway === 'development') return 'dev';
-  return process.env.NODE_ENV === 'production' ? 'prod' : 'dev';
+  // Authoritative override — set `ROOST_ENV=prod` or `ROOST_ENV=dev`
+  // explicitly in Railway if the heuristics below don't fit your setup.
+  const explicit = process.env.ROOST_ENV;
+  if (explicit === 'prod') return 'prod';
+  if (explicit === 'dev') return 'dev';
+
+  // Railway always builds with NODE_ENV=production, so NODE_ENV is
+  // useless as a prod/dev signal on Railway. Rely on RAILWAY_ENVIRONMENT
+  // (conventionally 'production' on the prod service) or the public
+  // hostname (owlette.app = prod, everything else = dev).
+  if (process.env.RAILWAY_ENVIRONMENT === 'production') return 'prod';
+  const domain = process.env.RAILWAY_PUBLIC_DOMAIN || '';
+  if (domain === 'owlette.app') return 'prod';
+
+  // Default to 'dev' — safer than defaulting to 'prod':
+  //   - dev bucket corruption is recoverable
+  //   - prod bucket writes from a misconfigured deploy aren't
+  // Localhost `npm run dev` also lands here (NODE_ENV != 'production').
+  return 'dev';
 }
 
 export function bucketFor(env: RoostEnv, kind: 'content' | 'manifests'): string {
