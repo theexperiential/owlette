@@ -21,6 +21,7 @@ import { FolderDropzone } from '@/components/FolderDropzone';
 import type { NamedBlob } from '@/lib/chunking';
 import { summariseManifest } from '@/lib/chunking';
 import { uploadFolder, type UploadProgress } from '@/lib/roostUpload';
+import { resolveExtractPath, isLikelyAllowed } from '@/lib/extractPath';
 
 interface ProjectDistributionDialogProps {
   open: boolean;
@@ -104,10 +105,11 @@ export default function ProjectDistributionDialog({
   const [droppedRootName, setDroppedRootName] = useState<string>('');
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   // Source mode — url (v1 one-shot download link) vs upload (v2 roost
-  // chunked upload). The main /roost page IS the history + rollback
-  // surface; this dialog is only for creating a new deploy.
+  // chunked upload). Upload is the default because it's the expected
+  // path for a first-party roost (drag a folder/files, go) — URL mode
+  // is the escape hatch for mirroring an existing public archive.
   type SourceMode = 'url' | 'upload';
-  const [sourceMode, setSourceMode] = useState<SourceMode>('url');
+  const [sourceMode, setSourceMode] = useState<SourceMode>('upload');
 
   // Preset bar state (mirrors RebootScheduleDialog pattern)
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
@@ -137,7 +139,7 @@ export default function ProjectDistributionDialog({
     setEditingPresetId(null);
     setConfirmDeletePresetId(null);
     setPendingReplacePreset(null);
-    setSourceMode('url');
+    setSourceMode('upload');
     setDroppedFiles(null);
     setDroppedRootName('');
     setUploadProgress(null);
@@ -360,7 +362,7 @@ export default function ProjectDistributionDialog({
           name: distributionName,
           file_name: projectName,
           project_url: projectUrl,
-          extract_path: extractPath || undefined,
+          extract_path: extractPath.trim() ? resolveExtractPath(extractPath) : undefined,
           targets: [],  // Will be filled by the hook
         },
         Array.from(selectedMachines)
@@ -418,7 +420,7 @@ export default function ProjectDistributionDialog({
         files: droppedFiles,
         name: distributionName.trim(),
         targets: Array.from(selectedMachines),
-        extractPath: extractPath.trim() || undefined,
+        extractPath: extractPath.trim() ? resolveExtractPath(extractPath) : undefined,
         onProgress: (p) => setUploadProgress(p),
       });
       toast.success(
@@ -453,7 +455,7 @@ export default function ProjectDistributionDialog({
         <DialogHeader>
           <DialogTitle className="text-white">roost a project</DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            sync project files (zips, archives) to one or more machines
+            push a folder or set of files to one or more machines. drag in files directly, or point at a <code className="font-mono text-xs">.zip</code> URL the agents should fetch.
           </DialogDescription>
         </DialogHeader>
 
@@ -691,7 +693,7 @@ export default function ProjectDistributionDialog({
               aria-label="source"
               className="inline-flex rounded-md border border-border bg-background/50 p-0.5 text-xs"
             >
-              {(['url', 'upload'] as const).map((src) => {
+              {(['upload', 'url'] as const).map((src) => {
                 const isActive = sourceMode === src;
                 const labels: Record<SourceMode, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
                   url: { label: 'by url', icon: Link2 },
@@ -762,22 +764,47 @@ export default function ProjectDistributionDialog({
                 files={droppedFiles ?? undefined}
                 disabled={distributing}
               />
-              {uploadProgress && uploadProgress.phase !== 'idle' && (
-                <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
-                  <div className="font-medium text-white">
-                    {uploadProgress.phase}
-                    {uploadProgress.hashFraction !== undefined &&
-                      ` — ${Math.round(uploadProgress.hashFraction * 100)}%`}
-                    {uploadProgress.uploadFraction !== undefined &&
-                      ` — ${Math.round(uploadProgress.uploadFraction * 100)}%`}
-                  </div>
-                  {uploadProgress.message && (
-                    <div className="mt-0.5 text-muted-foreground">
-                      {uploadProgress.message}
+              {uploadProgress && uploadProgress.phase !== 'idle' && (() => {
+                // Pick the fraction that belongs to the active phase so the
+                // bar doesn't snap 0% → 100% when we cross hashing→uploading
+                // (both fields can be set on the same payload during the
+                // transition tick).
+                const frac =
+                  uploadProgress.phase === 'hashing'
+                    ? uploadProgress.hashFraction
+                    : uploadProgress.phase === 'uploading'
+                      ? uploadProgress.uploadFraction
+                      : undefined;
+                const pct = frac !== undefined ? Math.round(frac * 100) : null;
+                const isError = uploadProgress.phase === 'error';
+                return (
+                  <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="font-medium text-white">
+                        {uploadProgress.phase}
+                      </span>
+                      {pct !== null && (
+                        <span className="text-muted-foreground tabular-nums">{pct}%</span>
+                      )}
                     </div>
-                  )}
-                </div>
-              )}
+                    {/* thin track — 3px, aligns with the roost-row overall bar
+                        so the upload→sync transition feels continuous. */}
+                    {frac !== undefined && !isError && (
+                      <div className="mt-1.5 h-[3px] w-full overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full bg-accent-cyan transition-[width] duration-200 ease-out"
+                          style={{ width: `${Math.max(0, Math.min(1, frac)) * 100}%` }}
+                        />
+                      </div>
+                    )}
+                    {uploadProgress.message && (
+                      <div className="mt-1 text-muted-foreground">
+                        {uploadProgress.message}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -792,8 +819,37 @@ export default function ProjectDistributionDialog({
               className="border-border bg-background text-white"
             />
             <p className="text-xs text-muted-foreground">
-              custom extraction path. default: <span className="font-mono text-accent-cyan">~/Documents/Owlette/</span>
+              {extractPath.trim() ? 'resolves to' : 'default'}:{' '}
+              <span className="font-mono text-accent-cyan">{resolveExtractPath(extractPath)}</span>
             </p>
+            {!isLikelyAllowed(extractPath) && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-400/90 space-y-1.5">
+                <p className="font-medium">
+                  absolute path — agent needs to be told this is OK to write to
+                </p>
+                <p className="text-amber-400/75">
+                  the agent runs as SYSTEM on the target machine, so by default we
+                  only allow writes under <code className="font-mono">~/Documents/</code>.
+                  to write to <code className="font-mono">{resolveExtractPath(extractPath)}</code>,
+                  add it to the allowlist on that machine:
+                </p>
+                <ol className="list-decimal list-inside space-y-0.5 pt-0.5 text-amber-400/75">
+                  <li>open <code className="font-mono">C:\ProgramData\Owlette\config\config.json</code> as admin</li>
+                  <li>
+                    add (or append to) the <code className="font-mono">agent_config</code> block:
+                    <pre className="mt-1 ml-4 p-2 rounded bg-background/60 text-[10px] leading-snug overflow-x-auto">
+{`"agent_config": {
+  "allowed_extract_roots": [
+    "~/Documents",
+    "${resolveExtractPath(extractPath).replace(/\\\\/g, '\\\\')}"
+  ]
+}`}
+                    </pre>
+                  </li>
+                  <li>right-click the owlette tray icon and pick <em>restart</em></li>
+                </ol>
+              </div>
+            )}
           </div>
 
           {/* Target Machines */}

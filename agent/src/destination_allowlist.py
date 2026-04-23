@@ -51,7 +51,13 @@ logger = logging.getLogger(__name__)
 # (auto-login user if set, else most-recently-active non-system profile)
 # so files land where the operator expects — their own Documents folder —
 # instead of stranded under Public.
-DEFAULT_ROOTS: List[str] = ['~/Documents/Owlette']
+#
+# Root is `~/Documents` (not `~/Documents/Owlette`) so that user-specified
+# relative extract paths like "projects/show1" resolve under Documents
+# directly rather than nested inside `Documents/Owlette`. The default
+# empty-field fallback still nests under `Owlette` — see the web-side
+# `resolveExtractPath` helper for the resolution rules.
+DEFAULT_ROOTS: List[str] = ['~/Documents']
 
 # Last-resort home when running as SYSTEM and we can't identify any
 # interactive user profile. `Public` is writable by SYSTEM, visible to
