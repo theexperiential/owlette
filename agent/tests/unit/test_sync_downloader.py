@@ -242,6 +242,65 @@ def test_signed_url_403_triggers_url_refresh(tmp_path):
         state.close()
 
 
+def test_range_resume_from_partial_file(tmp_path):
+    """
+    mid-download crash recovery (wave 4c.2 coverage): a `.partial` file
+    left from a prior run causes the next attempt to send
+    `Range: bytes=<offset>-` and append the tail rather than refetching
+    from byte 0. regression guard for the docstring claim + the code
+    path at src/sync_downloader.py:334.
+    """
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        store = tmp_path / 'content'
+        full_data = b'0123456789' * 10_000  # 100 KiB so the split is non-trivial
+        h = _hash(full_data)
+        split = 40_000
+        first_half = full_data[:split]
+        second_half = full_data[split:]
+
+        # pre-create the .partial file with the first half — simulates a
+        # prior download that got ~40% through before dying.
+        partial_target = chunk_path(store, h).with_suffix(chunk_path(store, h).suffix + '.partial')
+        partial_target.parent.mkdir(parents=True, exist_ok=True)
+        partial_target.write_bytes(first_half)
+
+        dist_id = state.start_distribution(
+            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            files=[], chunks=[{'hash': h, 'size': len(full_data)}],
+        )
+
+        captured_headers = {}
+
+        def fake_get(url, headers=None, **kwargs):
+            # record the headers the worker sent so we can assert Range.
+            captured_headers.update(headers or {})
+            resp = MagicMock(status_code=200, headers={})
+            resp.iter_content.return_value = iter([second_half])
+            resp.raise_for_status = MagicMock()
+            return resp
+
+        with patch('sync_downloader.requests.get', side_effect=fake_get):
+            result = download_all(
+                distribution_id=dist_id,
+                chunks=[{'hash': h, 'size': len(full_data)}],
+                url_provider=_bulk_provider(),
+                state=state,
+                content_store=str(store),
+                concurrency=1,
+            )
+
+        assert result.fetched == 1
+        # the worker must have sent a Range header starting from where
+        # the partial left off — otherwise it would refetch the whole file.
+        assert captured_headers.get('Range') == f'bytes={split}-'
+        # final file is the full assembly: first_half (preserved) + second_half (appended).
+        final = chunk_path(store, h)
+        assert final.read_bytes() == full_data
+    finally:
+        state.close()
+
+
 def test_bulk_prefetch_batches_above_threshold(tmp_path):
     """500-batch threshold: 1200 chunks → 3 batches (500, 500, 200)."""
     from sync_downloader import URL_PREFETCH_BATCH_SIZE
