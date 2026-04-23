@@ -293,7 +293,7 @@ service cloud.firestore {
       match /project_distributions/{distributionId} {
         // Project file distributions (v1, legacy)
         // Web dashboard creates and manages distributions
-        // Coexists with synced_folders/ (v2 / roost) during migration
+        // Coexists with roosts/ (v2 / roost) during migration
         allow read: if canAccessSite(siteId);
         allow create: if canAccessSite(siteId) &&
                          hasRequiredFields(['name', 'file_name', 'targets', 'status', 'createdAt']);
@@ -302,9 +302,9 @@ service cloud.firestore {
       }
 
       // ----------------------------------------
-      // Synced Folders Subcollection (roost / v2)
+      // Roosts Subcollection (roost / v2)
       // ----------------------------------------
-      // The v2 replacement for project_distributions. Each synced_folder
+      // The v2 replacement for project_distributions. Each roost
       // represents a project that's kept in sync with one or more machines.
       // The doc itself stores ONLY the manifest pointer (currentManifestId,
       // previousManifestId, manifestUrl) plus targets[] + metadata.
@@ -312,12 +312,12 @@ service cloud.firestore {
       // manifest, well over Firestore's 1MB doc limit).
       // schemaVersion: 2 distinguishes from v1 project_distributions.
 
-      match /synced_folders/{folderId} {
+      match /roosts/{roostId} {
         allow read: if canAccessSite(siteId);
-        // CREATE: site-scoped users can create the folder shell, but the
+        // CREATE: site-scoped users can create the roost shell, but the
         // pointer fields (currentManifestId, previousManifestId,
         // manifestUrl) MUST be null/unset at create time. The first real
-        // manifest is published via /api/v2/folders/.../manifests using
+        // manifest is published via /api/roosts/.../manifests using
         // the admin SDK (which bypasses these rules). This prevents a
         // direct-Firestore client from publishing a fake "v0" pointing
         // at attacker-controlled storage.
@@ -331,7 +331,7 @@ service cloud.firestore {
                          (!('manifestUrl' in request.resource.data) ||
                           request.resource.data.manifestUrl == null);
         // UPDATE: pointer fields cannot be flipped client-side. They go
-        // through the /api/v2/folders/.../manifests + /rollback routes,
+        // through the /api/roosts/.../manifests + /rollback routes,
         // which use Firestore transactions (CAS) under admin SDK creds.
         allow update: if canAccessSite(siteId) &&
                          !request.resource.data.diff(resource.data).affectedKeys()
@@ -374,14 +374,14 @@ service cloud.firestore {
           // READ: any site member can list manifest history (for rollback ui).
           allow read: if canAccessSite(siteId);
           // CREATE: forbidden client-side. Manifests are written ONLY by
-          // /api/v2/folders/.../manifests using the admin SDK, after the
+          // /api/roosts/.../manifests using the admin SDK, after the
           // chunk-presence check + r2 manifest body upload + transactional
           // pointer flip on the parent. Allowing client-side create would
           // let a site member publish a fake history entry pointing at
           // attacker-controlled storage (manifestUrl is unvalidated).
           allow create: if false;
           // UPDATE/DELETE: history is immutable. Rollback works by
-          // repointing currentManifestId on the parent synced_folders
+          // repointing currentManifestId on the parent roosts
           // doc, NOT by editing or deleting manifests here. GC is admin
           // SDK only (bypasses these rules) and tombstone-protected.
           allow update: if false;
@@ -518,6 +518,25 @@ service cloud.firestore {
 
       // Update and delete: superadmin only (platform-level)
       allow update, delete: if isSuperadmin();
+    }
+
+    // ============================================
+    // API Keys Subcollection
+    // ============================================
+
+    match /users/{userId}/api_keys/{keyId} {
+      // Users can read their own key inventory (for settings UI).
+      // Fields stored: name, keyPrefix, environment, scopes, expiresAt,
+      // createdAt, lastUsedAt, rotatedAt, revokedAt (never the raw key or hash).
+      // Writes are admin-SDK-only (route handlers) — client writes denied.
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    // Top-level api_keys lookup table (keyHash → userId + keyId + scopes).
+    // Never accessible client-side — admin SDK only.
+    match /api_keys/{keyHash} {
+      allow read, write: if false;
     }
 
     // ============================================
