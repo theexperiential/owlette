@@ -8,7 +8,7 @@
  */
 
 import React from 'react';
-import { CheckCircle2, CircleDashed, Download, FileCog, Loader2, XCircle, Ban } from 'lucide-react';
+import { CheckCircle2, CircleDashed, Download, FileCog, Loader2, XCircle, Ban, AlertTriangle } from 'lucide-react';
 import { useTargetStates, type TargetState, type TargetStatus } from '@/hooks/useTargetStates';
 
 interface RoostTargetsListProps {
@@ -17,6 +17,21 @@ interface RoostTargetsListProps {
   currentManifestId: string | null;
   targets: string[];
 }
+
+interface RoostStatusPillProps {
+  siteId: string;
+  roostId: string;
+  currentManifestId: string | null;
+  targets: string[];
+}
+
+type RollupStatus =
+  | 'synced'      // all targets committed for the current manifest
+  | 'syncing'     // at least one target in-flight, none failed
+  | 'partial'     // some targets synced, some still pending / in-flight
+  | 'pending'     // no target has started yet
+  | 'failed'      // at least one target reported failed
+  | 'unreported'; // zero targets, or nothing reported + can't tell
 
 interface StatusPresentation {
   label: string;
@@ -156,6 +171,153 @@ function TargetRow({
         </span>
       </div>
     </div>
+  );
+}
+
+/**
+ * Aggregate per-machine states into a single rollup for the collapsed row.
+ *
+ * A report only counts for the current manifest — a prior `committed` for
+ * an older manifest shouldn't make the new rollout look done.
+ */
+function rollup(
+  targets: string[],
+  currentManifestId: string | null,
+  byMachine: Map<string, TargetState>,
+): { status: RollupStatus; synced: number; total: number; failed: number; inFlight: number } {
+  const total = targets.length;
+  if (total === 0) {
+    return { status: 'unreported', synced: 0, total: 0, failed: 0, inFlight: 0 };
+  }
+  let synced = 0;
+  let failed = 0;
+  let inFlight = 0; // downloading | assembling | pending
+  let reported = 0;
+  for (const mid of targets) {
+    const s = byMachine.get(mid);
+    if (!s || !s.status) continue;
+    if (currentManifestId && s.reportedManifestId !== currentManifestId) continue;
+    reported++;
+    switch (s.status) {
+      case 'committed':
+        synced++;
+        break;
+      case 'failed':
+        failed++;
+        break;
+      case 'downloading':
+      case 'assembling':
+      case 'pending':
+        inFlight++;
+        break;
+    }
+  }
+  let status: RollupStatus;
+  if (failed > 0) status = 'failed';
+  else if (synced === total) status = 'synced';
+  else if (inFlight > 0 && synced === 0) status = 'syncing';
+  else if (inFlight > 0) status = 'partial';
+  else if (reported === 0) status = 'pending';
+  else status = 'partial';
+  return { status, synced, total, failed, inFlight };
+}
+
+function rollupPresentation(status: RollupStatus): StatusPresentation {
+  switch (status) {
+    case 'synced':
+      return {
+        label: 'synced',
+        className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+        icon: CheckCircle2,
+      };
+    case 'syncing':
+      return {
+        label: 'syncing',
+        className: 'bg-accent-cyan/10 text-accent-cyan border-accent-cyan/30',
+        icon: Download,
+      };
+    case 'partial':
+      return {
+        label: 'partial',
+        className: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+        icon: AlertTriangle,
+      };
+    case 'pending':
+      return {
+        label: 'queued',
+        className: 'bg-muted text-muted-foreground border-border',
+        icon: Loader2,
+        spin: true,
+      };
+    case 'failed':
+      return {
+        label: 'failed',
+        className: 'bg-red-500/10 text-red-400 border-red-500/30',
+        icon: XCircle,
+      };
+    case 'unreported':
+    default:
+      return {
+        label: 'no targets',
+        className: 'bg-muted text-muted-foreground border-border',
+        icon: CircleDashed,
+      };
+  }
+}
+
+/**
+ * Compact status pill for the collapsed roost row. Mounts ONE listener
+ * per roost (cheap — the target_state subcollection is small). Expanded
+ * rows have their own `RoostTargetsList`; React keeps both hooks alive
+ * when expanded so the snapshot is shared via Firestore's listener cache.
+ */
+export function RoostStatusPill({
+  siteId,
+  roostId,
+  currentManifestId,
+  targets,
+}: RoostStatusPillProps) {
+  const { states, loading } = useTargetStates(siteId, roostId);
+  const byMachine = React.useMemo(() => {
+    const m = new Map<string, TargetState>();
+    for (const s of states) m.set(s.machineId, s);
+    return m;
+  }, [states]);
+  const r = React.useMemo(
+    () => rollup(targets, currentManifestId, byMachine),
+    [targets, currentManifestId, byMachine],
+  );
+
+  // While the first snapshot is still in flight, render a neutral
+  // placeholder rather than flashing "queued" → something-else.
+  if (loading && targets.length > 0) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] bg-muted text-muted-foreground border-border">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        checking
+      </span>
+    );
+  }
+
+  const pres = rollupPresentation(r.status);
+  const Icon = pres.icon;
+  // Show counts when partial / syncing / failed — they're informative.
+  // For a clean "synced (3/3)" we also show on fully-synced so the
+  // operator can confirm total targets at a glance.
+  const showCount =
+    r.total > 0 && (r.status === 'synced' || r.status === 'partial' || r.status === 'syncing' || r.status === 'failed');
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${pres.className}`}
+    >
+      <Icon className={`h-3 w-3 ${pres.spin ? 'animate-spin' : ''}`} />
+      {pres.label}
+      {showCount && (
+        <span className="tabular-nums opacity-80">
+          {r.synced}/{r.total}
+        </span>
+      )}
+    </span>
   );
 }
 

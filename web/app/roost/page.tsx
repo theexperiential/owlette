@@ -6,10 +6,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
 import { useProjectDistributionManager } from '@/hooks/useProjectDistributions';
 import { useRoosts } from '@/hooks/useRoosts';
-import { RoostTargetsList } from '@/components/RoostTargetRow';
+import { RoostTargetsList, RoostStatusPill } from '@/components/RoostTargetRow';
 import { EmptyStateUpload } from '@/components/EmptyStateUpload';
 import { Button } from '@/components/ui/button';
-import { Plus, Loader2, FolderSync, Archive, ChevronDown, ChevronRight, MoreVertical, Trash2, RotateCcw } from 'lucide-react';
+import { Plus, Loader2, FolderSync, Archive, ChevronDown, ChevronRight, MoreVertical, Trash2, RotateCcw, RefreshCw } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -61,6 +61,7 @@ export default function ProjectsPage() {
   // the roost + whatever the action handler needs to fire off after confirm.
   const [pendingDelete, setPendingDelete] = useState<{ roostId: string; name: string } | null>(null);
   const [pendingRollback, setPendingRollback] = useState<{ roostId: string; targetManifestId: string } | null>(null);
+  const [pendingResync, setPendingResync] = useState<{ roostId: string; name: string; targetCount: number } | null>(null);
   const router = useRouter();
 
   const {
@@ -93,6 +94,26 @@ export default function ProjectsPage() {
       toast.success(`deleted ${name}`);
     } catch (err) {
       toast.error('delete failed', { description: (err as Error).message });
+    }
+  };
+
+  const performResync = async (roostId: string, name: string) => {
+    try {
+      const res = await fetch(`/api/roosts/${encodeURIComponent(roostId)}/resync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ siteId: currentSiteId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail ?? body.title ?? `HTTP ${res.status}`);
+      }
+      const body = (await res.json()) as { resynced: number };
+      toast.success(`re-syncing ${name}`, {
+        description: `${body.resynced} target${body.resynced === 1 ? '' : 's'} queued`,
+      });
+    } catch (err) {
+      toast.error('re-sync failed', { description: (err as Error).message });
     }
   };
 
@@ -278,6 +299,12 @@ export default function ProjectsPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-3 flex-shrink-0">
+                        <RoostStatusPill
+                          siteId={currentSiteId}
+                          roostId={roost.id}
+                          currentManifestId={roost.currentManifestId}
+                          targets={roost.targets}
+                        />
                         <span
                           className="hidden md:inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums select-none"
                           aria-label={`${roost.targets.length} target machine${roost.targets.length === 1 ? '' : 's'}`}
@@ -307,6 +334,22 @@ export default function ProjectsPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                            <DropdownMenuItem
+                              disabled={!roost.currentManifestId || roost.targets.length === 0}
+                              onClick={() => {
+                                if (roost.currentManifestId && roost.targets.length > 0) {
+                                  setPendingResync({
+                                    roostId: roost.id,
+                                    name: roost.name,
+                                    targetCount: roost.targets.length,
+                                  });
+                                }
+                              }}
+                              className="cursor-pointer"
+                            >
+                              <RefreshCw className="h-3.5 w-3.5 mr-2" />
+                              re-sync targets
+                            </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={!roost.previousManifestId}
                               onClick={() => {
@@ -411,6 +454,24 @@ export default function ProjectsPage() {
         onConfirm={() => {
           if (pendingDelete) {
             performDeleteRoost(pendingDelete.roostId, pendingDelete.name);
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={!!pendingResync}
+        onOpenChange={(open) => !open && setPendingResync(null)}
+        title="re-sync roost"
+        description={
+          pendingResync
+            ? `re-pull the current manifest on all ${pendingResync.targetCount} target${pendingResync.targetCount === 1 ? '' : 's'} for "${pendingResync.name}"? use this after a failed sync or to force targets back to the recorded state.`
+            : ''
+        }
+        confirmText="re-sync"
+        cancelText="cancel"
+        onConfirm={() => {
+          if (pendingResync) {
+            performResync(pendingResync.roostId, pendingResync.name);
           }
         }}
       />
