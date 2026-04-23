@@ -43,12 +43,19 @@ interface Roost {
   currentManifestId?: string;
   manifestUrl?: string;
   targets?: string[];
+  extractPath?: string;
 }
+
+// Fallback extraction root when the roost doc carries no explicit
+// extractPath. Matches agent DEFAULT_ROOTS in destination_allowlist.py —
+// keep these in sync.
+const DEFAULT_EXTRACT_ROOT = '~/Documents/Owlette';
 
 interface RolloutDoc {
   stage: RolloutStage;
   manifestId: string;
   manifestUrl: string;
+  extractRoot: string;
   canary: string[];
   fleet: string[];
   startedAt?: FirebaseFirestore.Timestamp;
@@ -77,6 +84,10 @@ export const onRoostWritten = onDocumentWritten(
     const manifestId = after.currentManifestId;
     const manifestUrl = after.manifestUrl;
     const targets = Array.isArray(after.targets) ? after.targets : [];
+    const extractRoot =
+      typeof after.extractPath === 'string' && after.extractPath.trim()
+        ? after.extractPath.trim()
+        : DEFAULT_EXTRACT_ROOT;
 
     if (targets.length === 0) {
       console.warn(
@@ -110,6 +121,7 @@ export const onRoostWritten = onDocumentWritten(
       stage: 'canary',
       manifestId,
       manifestUrl,
+      extractRoot,
       canary,
       fleet,
       startedAt: FieldValue.serverTimestamp() as unknown as FirebaseFirestore.Timestamp,
@@ -118,7 +130,7 @@ export const onRoostWritten = onDocumentWritten(
     const batch = db.batch();
     batch.set(rolloutRef, rolloutDoc);
     for (const machineId of canary) {
-      queueSyncCommand(batch, siteId, machineId, roostId, manifestId, manifestUrl);
+      queueSyncCommand(batch, siteId, machineId, roostId, manifestId, manifestUrl, extractRoot);
     }
     await batch.commit();
 
@@ -180,7 +192,10 @@ export const onTargetStateWritten = onDocumentWritten(
       if (!transition) return; // still in flight
 
       if (transition.stage === 'fleet') {
-        // promote: fire fleet commands in the same transaction
+        // promote: fire fleet commands in the same transaction.
+        // Older rollout docs predate the `extractRoot` field; fall back
+        // to the default so a mid-flight promotion still completes.
+        const extractRoot = rollout.extractRoot || DEFAULT_EXTRACT_ROOT;
         for (const mid of rollout.fleet) {
           queueSyncCommand(
             tx,
@@ -189,6 +204,7 @@ export const onTargetStateWritten = onDocumentWritten(
             roostId,
             reportedManifestId,
             rollout.manifestUrl,
+            extractRoot,
           );
         }
         tx.update(rolloutRef, {
@@ -266,6 +282,7 @@ function queueSyncCommand(
   roostId: string,
   manifestId: string,
   manifestUrl: string,
+  extractRoot: string,
 ): void {
   const pendingRef = db
     .collection('sites')
@@ -288,6 +305,7 @@ function queueSyncCommand(
         folder_id: roostId,
         manifest_id: manifestId,
         manifest_url: manifestUrl,
+        extract_root: extractRoot,
         queued_at: FieldValue.serverTimestamp(),
       },
     },

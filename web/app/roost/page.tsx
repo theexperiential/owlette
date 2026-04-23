@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
 import { useProjectDistributionManager } from '@/hooks/useProjectDistributions';
 import { useRoosts } from '@/hooks/useRoosts';
+import { RoostTargetsList } from '@/components/RoostTargetRow';
 import { EmptyStateUpload } from '@/components/EmptyStateUpload';
 import { Button } from '@/components/ui/button';
 import { Plus, Loader2, FolderSync, Archive, ChevronDown, ChevronRight, MoreVertical, Trash2, RotateCcw } from 'lucide-react';
@@ -368,20 +369,12 @@ export default function ProjectsPage() {
                             <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
                               targets ({roost.targets.length})
                             </h4>
-                            {roost.targets.length === 0 ? (
-                              <p className="text-xs text-muted-foreground italic">no targets assigned</p>
-                            ) : (
-                              <div className="space-y-1.5">
-                                {roost.targets.map((machineId) => (
-                                  <div
-                                    key={machineId}
-                                    className="flex items-center justify-between py-1.5 px-3 rounded border border-border/40 bg-background/50"
-                                  >
-                                    <span className="text-foreground text-sm select-text">{machineId}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                            <RoostTargetsList
+                              siteId={currentSiteId}
+                              roostId={roost.id}
+                              currentManifestId={roost.currentManifestId}
+                              targets={roost.targets}
+                            />
                           </div>
                         </div>
                       </div>

@@ -42,6 +42,11 @@ from sync_downloader import ChunkDownloadError, download_all
 from sync_manifest import Manifest, ManifestError, diff_manifests, fetch_manifest
 from sync_state import SyncState, SyncStateError
 
+try:
+    from firestore_rest_client import SERVER_TIMESTAMP
+except ImportError:  # pragma: no cover — only hit in isolated unit-test envs
+    SERVER_TIMESTAMP = "SERVER_TIMESTAMP"
+
 logger = logging.getLogger(__name__)
 
 # process-global registry of in-flight distributions. allows cancel_sync
@@ -113,10 +118,18 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
     allowlist = _allowlist_for(service)
     cancel_event = threading.Event()
 
+    # Report 'pending' the instant we accept the command so the web UI can
+    # surface "target queued" before manifest fetch even starts.
+    _report_target_state(service, site_id, folder_id, manifest_id, 'pending')
+
     # fetch + validate manifest
     try:
         manifest = fetch_manifest(manifest_url, expected_manifest_id=manifest_id)
     except ManifestError as e:
+        _report_target_state(
+            service, site_id, folder_id, manifest_id, 'failed',
+            error=f"manifest fetch/validate: {e}",
+        )
         return f"sync_pull failed: manifest fetch/validate: {e}"
 
     # diff against the most-recent committed manifest for this folder, if any
@@ -152,6 +165,10 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
 
     try:
         state.set_distribution_state(dist_id, 'downloading')
+        _report_target_state(
+            service, site_id, folder_id, manifest_id, 'downloading',
+            chunks_total=len(diff.chunks_to_fetch),
+        )
 
         # download chunks. url_provider talks to the web api per-chunk.
         url_provider = _make_chunk_url_provider(service, site_id)
@@ -166,14 +183,27 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
             )
         except ChunkDownloadError as e:
             state.set_distribution_state(dist_id, 'failed', error=str(e))
+            _report_target_state(
+                service, site_id, folder_id, manifest_id, 'failed',
+                error=f"chunk download: {e}",
+            )
             return f"sync_pull failed: chunk download: {e}"
 
         if cancel_event.is_set() and dl_result.failed == 0:
             state.set_distribution_state(dist_id, 'cancelled')
+            _report_target_state(
+                service, site_id, folder_id, manifest_id, 'cancelled',
+            )
             return f"sync_pull cancelled during download (distribution {dist_id})"
 
         # assemble files atomically.
         state.set_distribution_state(dist_id, 'assembling')
+        _report_target_state(
+            service, site_id, folder_id, manifest_id, 'assembling',
+            chunks_fetched=dl_result.fetched,
+            chunks_dedup=dl_result.already_present,
+            files_total=len(manifest.files),
+        )
         try:
             asm_result = assemble_all(
                 distribution_id=dist_id,
@@ -185,13 +215,27 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
             )
         except (AssembleError, DestinationNotAllowedError) as e:
             state.set_distribution_state(dist_id, 'failed', error=str(e))
+            _report_target_state(
+                service, site_id, folder_id, manifest_id, 'failed',
+                error=f"file assembly: {e}",
+            )
             return f"sync_pull failed: file assembly: {e}"
 
         if cancel_event.is_set() and asm_result.failed == 0:
             state.set_distribution_state(dist_id, 'cancelled')
+            _report_target_state(
+                service, site_id, folder_id, manifest_id, 'cancelled',
+            )
             return f"sync_pull cancelled during assembly (distribution {dist_id})"
 
         state.set_distribution_state(dist_id, 'committed')
+        _report_target_state(
+            service, site_id, folder_id, manifest_id, 'committed',
+            chunks_fetched=dl_result.fetched,
+            chunks_dedup=dl_result.already_present,
+            files_assembled=asm_result.assembled,
+            files_skipped=asm_result.skipped,
+        )
         return (
             f"sync_pull complete (distribution {dist_id}): "
             f"fetched {dl_result.fetched} chunks, "
@@ -355,6 +399,64 @@ def _load_prior_manifest(
             f"diffing against nothing"
         )
         return None
+
+
+def _report_target_state(
+    service: Any,
+    site_id: str,
+    folder_id: str,
+    manifest_id: str,
+    status: str,
+    *,
+    error: Optional[str] = None,
+    **metrics: Any,
+) -> None:
+    """
+    Write this machine's per-target sync status to:
+        sites/{site_id}/roosts/{folder_id}/target_state/{machine_id}
+
+    The `onTargetStateWritten` cloud function reads this to advance the
+    canary→fleet rollout state machine, and the web UI reads it to show
+    per-target progress on the roost page.
+
+    Never raises — a firestore blip must not take down an otherwise-healthy
+    sync. The operator still sees the local SyncState transition in logs
+    even if the report itself failed.
+    """
+    fb = getattr(service, 'firebase_client', None)
+    if fb is None or getattr(fb, 'db', None) is None:
+        return
+
+    try:
+        machine_id = fb.get_machine_id() if hasattr(fb, 'get_machine_id') else None
+    except Exception:
+        machine_id = None
+    if not machine_id:
+        # no identity → nothing coherent to write. Skip silently; lower layers
+        # will have already logged the root cause.
+        return
+
+    payload: Dict[str, Any] = {
+        'reportedManifestId': manifest_id,
+        'status': status,
+        'updatedAt': SERVER_TIMESTAMP,
+    }
+    if error:
+        # Truncate to keep the Firestore doc small — full error stays in the
+        # agent log + local SyncState row.
+        payload['error'] = error[:500]
+    for k, v in metrics.items():
+        if v is not None:
+            payload[k] = v
+
+    path = f'sites/{site_id}/roosts/{folder_id}/target_state/{machine_id}'
+    try:
+        fb.db.set_document(path, payload, merge=True)
+    except Exception as e:
+        logger.warning(
+            f"sync_commands: failed to report target_state "
+            f"({status}) for {folder_id}/{manifest_id}: {type(e).__name__}: {e}"
+        )
 
 
 def _make_chunk_url_provider(service: Any, site_id: str):
