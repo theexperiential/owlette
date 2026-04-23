@@ -5310,6 +5310,111 @@ with open(out_path, 'wb') as f:
             except OSError as marker_err:
                 logging.warning(f"Could not remove update marker during cleanup: {marker_err}")
 
+    def _migrate_legacy_roost_cache(self):
+        """
+        one-time migration: remove the legacy roost cache that earlier agent
+        builds wrote under `C:\\Windows\\System32\\config\\systemprofile\\Documents\\Owlette\\`.
+
+        background: pre-2.9.x versions of sync_downloader / sync_state / etc.
+        resolved `~/Documents/Owlette/...` at runtime. under LocalSystem, `~`
+        expands to the systemprofile directory, so the chunk cache + state DB
+        lived inside System32 — invisible to operators and unreachable without
+        elevation. we moved those caches to `%PROGRAMDATA%\\Owlette\\` in
+        2.9.x; this migration deletes the System32-resident leftovers so they
+        don't grow indefinitely.
+
+        the cache is REBUILDABLE from R2 — chunks re-download on the next
+        sync, state.db is recreated on first SyncState() construction,
+        manifests re-fetch. we intentionally DELETE rather than move: the
+        user's explicit ask is that only actual files live under the extract
+        location, and the new cache lives on a different drive anyway
+        (ProgramData vs user profile in System32).
+
+        gated by a one-shot flag file at `%PROGRAMDATA%\\Owlette\\.migrations\\content-store-moved`
+        so we don't walk the legacy tree every boot.
+        """
+        if os.name != 'nt':
+            return  # legacy layout only exists on windows LocalSystem
+
+        program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
+        flag_dir = os.path.join(program_data, 'Owlette', '.migrations')
+        flag_path = os.path.join(flag_dir, 'content-store-moved')
+        if os.path.exists(flag_path):
+            return  # already migrated on a prior boot
+
+        system_profile = os.environ.get(
+            'SystemRoot', 'C:\\Windows'
+        ).rstrip('\\') + '\\System32\\config\\systemprofile'
+        legacy_content = os.path.join(
+            system_profile, 'Documents', 'Owlette', '.owlette-content'
+        )
+        legacy_sync = os.path.join(
+            system_profile, 'Documents', 'Owlette', '.owlette-sync'
+        )
+
+        def _count_and_size(root):
+            """return (file_count, total_bytes). returns (0, 0) if root missing."""
+            count, size = 0, 0
+            if not os.path.isdir(root):
+                return count, size
+            for dirpath, _dirs, files in os.walk(root):
+                for name in files:
+                    try:
+                        size += os.path.getsize(os.path.join(dirpath, name))
+                        count += 1
+                    except OSError:
+                        pass
+            return count, size
+
+        import shutil
+
+        any_removed = False
+        for legacy_path in (legacy_content, legacy_sync):
+            if not os.path.isdir(legacy_path):
+                continue
+            count, size = _count_and_size(legacy_path)
+            gb = size / (1024 ** 3)
+            logging.info(
+                f"migration: removing legacy roost cache at {legacy_path!r} "
+                f"({count} files, {gb:.2f} GB)"
+            )
+            try:
+                shutil.rmtree(legacy_path, ignore_errors=False)
+                any_removed = True
+                logging.info(
+                    f"migration: removed legacy cache {legacy_path!r} "
+                    f"({count} files, {gb:.2f} GB freed)"
+                )
+            except OSError as e:
+                # best-effort — a locked file shouldn't block service start.
+                # if deletion fails, we deliberately do NOT write the flag
+                # so the next boot retries. this matters: a stuck 100GB
+                # cache in System32 is exactly what the migration is here
+                # to solve.
+                logging.warning(
+                    f"migration: failed to remove {legacy_path!r}: {e}; "
+                    f"will retry on next service start"
+                )
+                return
+
+        # write the one-shot flag so we don't walk the tree again. we write
+        # it unconditionally when reaching this point — either both paths
+        # existed and were cleaned, or neither existed (fresh install post-
+        # migration) in which case there's nothing more to do.
+        try:
+            os.makedirs(flag_dir, exist_ok=True)
+            with open(flag_path, 'w') as f:
+                f.write(
+                    f"legacy roost cache migrated at {datetime.datetime.now().isoformat()}\n"
+                )
+            if any_removed:
+                logging.info(f"migration: flag written at {flag_path!r}")
+        except OSError as e:
+            logging.warning(
+                f"migration: could not write migration flag at {flag_path!r}: {e}; "
+                f"migration will retry on next boot (idempotent — paths no longer exist)"
+            )
+
     # Main main
     def main(self):
 
@@ -5347,6 +5452,14 @@ with open(out_path, 'wb') as f:
 
         # Check for update marker (indicates a self-update was in progress)
         self._check_update_status()
+
+        # One-shot cleanup of pre-2.9.x roost cache that lived in System32
+        # under the LocalSystem profile. Safe to run on every boot (gated by
+        # a flag file); idempotent no-op once complete.
+        try:
+            self._migrate_legacy_roost_cache()
+        except Exception as e:
+            logging.warning(f"Legacy roost cache migration errored (non-fatal): {e}")
 
         # Classify the prior session — detects unexpected reboots, BSODs,
         # crashes, and operator-initiated reboots that bypassed Owlette.

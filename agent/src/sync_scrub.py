@@ -41,7 +41,26 @@ from sync_state import SyncState
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SCRUB_REPORT_DIR = '~/Documents/Owlette/.owlette-sync/scrub-reports'
+def _default_scrub_report_dir() -> str:
+    """
+    resolve the default scrub-report directory.
+
+    windows: %PROGRAMDATA%\\Owlette\\scrub-reports
+    POSIX:   $XDG_DATA_HOME/owlette/scrub-reports, else ~/.local/share/owlette/scrub-reports
+
+    see sync_state._default_state_db_path() for why we avoid `~/Documents/`
+    under LocalSystem.
+    """
+    if os.name == 'nt':
+        program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
+        return os.path.join(program_data, 'Owlette', 'scrub-reports')
+    xdg = os.environ.get('XDG_DATA_HOME')
+    if xdg:
+        return os.path.join(xdg, 'owlette', 'scrub-reports')
+    return os.path.join(os.path.expanduser('~'), '.local', 'share', 'owlette', 'scrub-reports')
+
+
+DEFAULT_SCRUB_REPORT_DIR = _default_scrub_report_dir()
 _SCRUB_BUFFER_BYTES = 1024 * 1024  # 1 MiB read buffer
 
 
@@ -143,8 +162,9 @@ def scrub_distribution(
         drifts=drifts,
     )
 
-    # persist the report locally (for debugging + replay)
-    _write_report(report, report_dir or DEFAULT_SCRUB_REPORT_DIR)
+    # persist the report locally (for debugging + replay). recompute the
+    # default each call so a test env override (XDG_DATA_HOME) takes effect.
+    _write_report(report, report_dir or _default_scrub_report_dir())
 
     if report.healthy:
         logger.info(

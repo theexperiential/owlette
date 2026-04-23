@@ -7,7 +7,49 @@ from pathlib import Path
 
 import pytest
 
-from sync_state import SCHEMA_VERSION, SyncState, SyncStateError
+from sync_state import SCHEMA_VERSION, SyncState, SyncStateError, _default_state_db_path
+
+
+# ─── default path resolution ────────────────────────────────────────
+
+
+def test_default_state_db_path_windows(monkeypatch):
+    """on windows the default db lives under %PROGRAMDATA%\\Owlette\\sync-state.db."""
+    if os.name != 'nt':
+        pytest.skip('windows-only default path test')
+    monkeypatch.setenv('PROGRAMDATA', 'C:\\FakeProgramData')
+    got = _default_state_db_path()
+    assert got == os.path.join('C:\\FakeProgramData', 'Owlette', 'sync-state.db')
+
+
+def test_default_state_db_path_posix_xdg(monkeypatch):
+    """on POSIX with XDG_DATA_HOME set, honor it."""
+    if os.name == 'nt':
+        pytest.skip('POSIX-only default path test')
+    monkeypatch.setenv('XDG_DATA_HOME', '/tmp/fake-xdg')
+    got = _default_state_db_path()
+    assert got == '/tmp/fake-xdg/owlette/sync-state.db'
+
+
+def test_default_state_db_path_posix_home_fallback(monkeypatch):
+    """without XDG_DATA_HOME, default to ~/.local/share/owlette/."""
+    if os.name == 'nt':
+        pytest.skip('POSIX-only default path test')
+    monkeypatch.delenv('XDG_DATA_HOME', raising=False)
+    monkeypatch.setenv('HOME', '/tmp/fake-home')
+    got = _default_state_db_path()
+    assert got == '/tmp/fake-home/.local/share/owlette/sync-state.db'
+
+
+def test_default_state_db_path_is_not_under_documents():
+    """
+    regression: the default path MUST NOT point at `~/Documents/Owlette/...`
+    since under LocalSystem that resolves to C:\\Windows\\System32\\config\\systemprofile\\.
+    """
+    got = _default_state_db_path()
+    assert 'Documents' not in got, (
+        f"default state DB path {got!r} must not live under user Documents"
+    )
 
 
 # ─── lifecycle ───────────────────────────────────────────────────────

@@ -37,19 +37,21 @@ import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Set
 
 from destination_allowlist import (
     DestinationAllowlist,
     DestinationNotAllowedError,
 )
-from sync_downloader import chunk_path
+from sync_downloader import chunk_path, _default_content_store
 from sync_manifest import ManifestFile
 from sync_state import SyncState
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONTENT_STORE = '~/Documents/Owlette/.owlette-content'
+# kept in sync with sync_downloader.DEFAULT_CONTENT_STORE — see
+# sync_downloader._default_content_store() for the canonical resolver.
+DEFAULT_CONTENT_STORE = _default_content_store()
 
 # read buffer for streaming chunks into the target file. small enough to
 # avoid OOM on 50GB files; large enough to keep IO efficient.
@@ -97,7 +99,12 @@ def assemble_all(
     """
     if cancel_event is None:
         cancel_event = threading.Event()
-    store = Path(os.path.expanduser(content_store or DEFAULT_CONTENT_STORE))
+    # recompute each call so env-var overrides in tests are honored; see
+    # sync_downloader.download_all for the matching pattern.
+    if content_store is None:
+        store = Path(_default_content_store())
+    else:
+        store = Path(os.path.expanduser(content_store))
 
     # validate the extract_root itself BEFORE doing any disk work. this
     # catches misconfiguration loud and early instead of failing per-file.
@@ -163,6 +170,30 @@ def assemble_all(
         raise AssembleError(
             f"distribution {distribution_id}: {failed} file(s) failed to assemble"
         )
+
+    # post-assembly cleanup: delete chunks referenced by this manifest from the
+    # content store. once a file has been atomically renamed into the extract
+    # location AND committed in the state DB, the chunks are pure duplication —
+    # R2 retains the authoritative copies, and a future re-sync or rollback
+    # re-downloads. for a 100GB roost this avoids 100GB of redundant disk usage.
+    #
+    # we only scope the delete to chunks referenced by THIS manifest so that
+    # if another distribution is mid-download against the same content store,
+    # its chunks stay untouched. slow commands are serialized in the agent
+    # command loop, so concurrent distributions are rare — this is
+    # belt-and-suspenders in case the contract changes.
+    #
+    # skipped on external cancellation (chunks may still be needed on resume)
+    # and on "nothing happened" runs where every file was a skip — no point
+    # churning the cache for idempotent re-runs.
+    if not result.cancelled and assembled > 0:
+        chunks_to_cleanup = {
+            c.hash
+            for f in files_list
+            for c in f.chunks
+        }
+        _cleanup_content_store(store, chunks_to_cleanup)
+
     return result
 
 
@@ -290,6 +321,60 @@ def _assemble_one(
         # 'assembling' state and the next run will retry. forcing a
         # cleanup here would lose the resume opportunity.
         raise
+
+
+# ─── post-assembly chunk cleanup ────────────────────────────────────
+
+
+def _cleanup_content_store(content_store: Path, chunks_to_cleanup: Set[str]) -> None:
+    """
+    best-effort delete of every chunk in `chunks_to_cleanup` from the content
+    store. iterates one chunk at a time; a failed delete logs a warning but
+    does NOT fail the sync — the assembled file is already on disk and
+    that's what matters.
+
+    we explicitly do NOT remove the shard parent dirs or the content-store
+    root. a future sync will download fresh chunks into the same directory
+    structure; removing the root would just force a re-mkdir on the next
+    run. empty shard dirs are harmless (a few bytes of inode overhead each)
+    and NTFS handles orphan directories fine.
+
+    callers should only invoke this on SUCCESSFUL assembly — deleting chunks
+    before the last file is committed would require re-downloading on any
+    retry.
+    """
+    deleted = 0
+    total_bytes = 0
+    failed = 0
+    for chunk_hash in chunks_to_cleanup:
+        path = chunk_path(content_store, chunk_hash)
+        try:
+            # stat before unlink so we can report freed bytes. missing_ok
+            # handles the race where the chunk was never downloaded (skip-
+            # worthy dedup hit against a prior sync that already cleaned up).
+            if path.exists():
+                try:
+                    total_bytes += path.stat().st_size
+                except OSError:
+                    pass
+                path.unlink()
+                deleted += 1
+        except OSError as e:
+            # don't fail the sync — log and move on. a leftover chunk is a
+            # wasted disk page, not a correctness issue.
+            failed += 1
+            logger.warning(
+                f"sync_assembler: failed to delete cached chunk "
+                f"{chunk_hash[:12]}… at {path!s}: {e}"
+            )
+    if deleted or failed:
+        # format bytes freed in human-friendly units for log readability
+        # (100GB syncs make the raw byte count unwieldy).
+        freed_mb = total_bytes / (1024 * 1024)
+        logger.info(
+            f"sync_assembler: cleaned up {deleted} chunk(s) from content store "
+            f"({freed_mb:.1f} MiB freed); {failed} delete(s) failed"
+        )
 
 
 # ─── windows long-path support ───────────────────────────────────────

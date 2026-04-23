@@ -11,6 +11,7 @@ import pytest
 from sync_downloader import (
     ChunkDownloadError,
     DownloadResult,
+    _default_content_store,
     chunk_path,
     download_all,
     has_chunk,
@@ -32,6 +33,36 @@ def _put_chunk(store: Path, data: bytes) -> str:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
     return h
+
+
+# ─── default content store resolution ──────────────────────────────
+
+
+def test_default_content_store_windows(monkeypatch):
+    """on windows the default content store lives under %PROGRAMDATA%\\Owlette\\content."""
+    if os.name != 'nt':
+        pytest.skip('windows-only default path test')
+    monkeypatch.setenv('PROGRAMDATA', 'C:\\FakeProgramData')
+    got = _default_content_store()
+    assert got == os.path.join('C:\\FakeProgramData', 'Owlette', 'content')
+
+
+def test_default_content_store_posix_xdg(monkeypatch):
+    """on POSIX with XDG_DATA_HOME set, honor it."""
+    if os.name == 'nt':
+        pytest.skip('POSIX-only default path test')
+    monkeypatch.setenv('XDG_DATA_HOME', '/tmp/fake-xdg')
+    got = _default_content_store()
+    assert got == '/tmp/fake-xdg/owlette/content'
+
+
+def test_default_content_store_not_under_documents():
+    """
+    regression: the default content store MUST NOT live under Documents
+    (because LocalSystem-expanded `~` points at System32).
+    """
+    got = _default_content_store()
+    assert 'Documents' not in got
 
 
 # ─── chunk_path + has_chunk ─────────────────────────────────────────

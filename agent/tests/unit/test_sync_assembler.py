@@ -473,6 +473,117 @@ def test_post_rename_realpath_catches_escape(tmp_path, monkeypatch):
         state.close()
 
 
+def test_chunks_are_deleted_after_successful_assembly(tmp_path):
+    """
+    post-assembly cleanup: on success, chunks referenced by the manifest
+    are deleted from the content store. R2 retains canonical copies — keeping
+    them locally would double disk usage for every sync.
+    """
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        content = tmp_path / 'content'
+        extract = tmp_path / 'extract'
+        extract.mkdir()
+        allowlist = DestinationAllowlist([str(extract)])
+
+        chunks_data = [b'alpha chunk bytes', b'bravo chunk bytes']
+        chunk_hashes = [_put_chunk(content, d) for d in chunks_data]
+        f = _mk_manifest_file('a.toe', chunks_data)
+
+        # precondition: both chunks on disk before assembly
+        for h in chunk_hashes:
+            assert chunk_path(content, h).exists()
+
+        dist_id = state.start_distribution(
+            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            files=[{'path': f.path, 'size': f.size}], chunks=[],
+        )
+        assemble_all(
+            distribution_id=dist_id, files=[f], extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+
+        # the assembled file IS present…
+        assert (extract / 'a.toe').read_bytes() == b''.join(chunks_data)
+        # …and both chunks were cleaned up from the content store.
+        for h in chunk_hashes:
+            assert not chunk_path(content, h).exists(), (
+                f"chunk {h[:12]}… should have been deleted post-assembly"
+            )
+    finally:
+        state.close()
+
+
+def test_chunks_kept_when_assembly_fails(tmp_path):
+    """
+    cleanup runs ONLY on success. if assembly fails, chunks must remain so
+    a resume / retry can reuse them (re-downloading 100GB would be awful).
+    """
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        content = tmp_path / 'content'
+        content.mkdir()
+        extract = tmp_path / 'extract'
+        extract.mkdir()
+        allowlist = DestinationAllowlist([str(extract)])
+
+        first_data = b'first chunk kept on failure'
+        first_hash = _put_chunk(content, first_data)
+        # second chunk missing from store → assembly fails
+        f = _mk_manifest_file('a.toe', [first_data, b'never-downloaded-chunk'])
+
+        dist_id = state.start_distribution(
+            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            files=[{'path': f.path, 'size': f.size}], chunks=[],
+        )
+        with pytest.raises(AssembleError):
+            assemble_all(
+                distribution_id=dist_id, files=[f], extract_root=str(extract),
+                state=state, allowlist=allowlist, content_store=str(content),
+            )
+        # the existing chunk is still on disk — resume needs it
+        assert chunk_path(content, first_hash).exists(), (
+            "chunks must be retained on assembly failure so resume can reuse them"
+        )
+    finally:
+        state.close()
+
+
+def test_chunks_kept_when_only_skips(tmp_path):
+    """
+    idempotent re-runs (every file already present + matches size) should not
+    churn the content store. no assembled=0 path triggers cleanup.
+    """
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        content = tmp_path / 'content'
+        extract = tmp_path / 'extract'
+        extract.mkdir()
+        allowlist = DestinationAllowlist([str(extract)])
+
+        data = b'pre-existing + matching'
+        chunk_hash = _put_chunk(content, data)
+        f = _mk_manifest_file('a.toe', [data])
+        # target already present with correct size → skip path
+        (extract / 'a.toe').write_bytes(data)
+
+        dist_id = state.start_distribution(
+            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            files=[{'path': f.path, 'size': f.size}], chunks=[],
+        )
+        result = assemble_all(
+            distribution_id=dist_id, files=[f], extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+        assert result.assembled == 0
+        assert result.skipped == 1
+        # chunk NOT deleted — nothing was assembled this run, so there's no
+        # reason to churn the cache.
+        assert chunk_path(content, chunk_hash).exists()
+    finally:
+        state.close()
+
+
 def test_post_rename_allows_sibling_root_substring(tmp_path):
     """
     regression: `/foo/bar-extra/file` must NOT satisfy a root of `/foo/bar`

@@ -2,7 +2,13 @@
 sync_downloader — parallel chunk fetcher for roost (project distribution v2).
 
 downloads content-addressed chunks (4 MiB each) from R2 signed URLs into
-the local content store at ~/Documents/Owlette/.owlette-content/{hash[0:2]}/{hash}.
+the local content store at %PROGRAMDATA%\Owlette\content\{hash[0:2]}\{hash}
+on windows (or $XDG_DATA_HOME/owlette/content/... on POSIX). the content
+store is a rebuildable cache — it lives OUTSIDE the user's Documents tree
+so operators never see it mixed with assembled files, and so LocalSystem
+doesn't have to stash it under `C:\Windows\System32\config\systemprofile\`.
+chunks are deleted by sync_assembler immediately after successful assembly
+(R2 retains the canonical copies; re-sync + rollback re-download).
 
 design:
 - thread pool of N workers (default 4) downloads chunks in parallel
@@ -44,8 +50,32 @@ from sync_state import SyncState
 logger = logging.getLogger(__name__)
 
 # default content store. one global pool shared across all distributions
-# (chunks are content-addressed, so dedup is automatic).
-DEFAULT_CONTENT_STORE = '~/Documents/Owlette/.owlette-content'
+# (chunks are content-addressed, so dedup is automatic). kept in sync with
+# sync_assembler.DEFAULT_CONTENT_STORE — see _default_content_store() below.
+def _default_content_store() -> str:
+    """
+    resolve the default content-store path.
+
+    windows: %PROGRAMDATA%\\Owlette\\content  (typically C:\\ProgramData\\Owlette\\content)
+    POSIX:   $XDG_DATA_HOME/owlette/content, else ~/.local/share/owlette/content
+
+    see sync_state._default_state_db_path() for the full rationale — same
+    argument: cache data has no business living under the user's Documents
+    or inside System32 under LocalSystem.
+    """
+    if os.name == 'nt':
+        program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
+        return os.path.join(program_data, 'Owlette', 'content')
+    xdg = os.environ.get('XDG_DATA_HOME')
+    if xdg:
+        return os.path.join(xdg, 'owlette', 'content')
+    return os.path.join(os.path.expanduser('~'), '.local', 'share', 'owlette', 'content')
+
+
+# eager default (module import time) for backwards-compat with any external
+# reader. the live resolution inside download_all() calls _default_content_store()
+# fresh each time so test env overrides are honored.
+DEFAULT_CONTENT_STORE = _default_content_store()
 
 # tuning constants
 DEFAULT_CONCURRENCY = 4
@@ -142,7 +172,13 @@ def download_all(
     """
     if cancel_event is None:
         cancel_event = threading.Event()  # never-fires sentinel
-    store = Path(os.path.expanduser(content_store or DEFAULT_CONTENT_STORE))
+    # recompute each call so env-var overrides in tests are honored.
+    # expanduser is still applied to a caller-supplied path to preserve the
+    # existing public contract (tests + callers that pass `~/...` explicitly).
+    if content_store is None:
+        store = Path(_default_content_store())
+    else:
+        store = Path(os.path.expanduser(content_store))
     store.mkdir(parents=True, exist_ok=True)
 
     chunks_list = list(chunks)

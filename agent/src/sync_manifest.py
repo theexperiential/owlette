@@ -8,7 +8,9 @@ the chunk-set delta against what's already on disk to know what to download.
 
 design:
 - manifest is JSON conforming to docs/internal/manifest-format.md
-- cached at ~/Documents/Owlette/.owlette-sync/manifests/{roostId}/{manifestId}.json
+- cached at %PROGRAMDATA%\Owlette\manifests\{roostId}\{manifestId}.json on
+  windows (XDG-equivalent on POSIX). kept OUT of the user's Documents tree
+  so operators don't see cache data mixed with assembled files.
 - diff against previous local manifest yields: chunks_to_fetch, chunks_to_keep,
   files_to_create, files_to_delete, files_to_keep
 - network errors retry via existing requests-library patterns (see installer_utils)
@@ -37,7 +39,26 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CACHE_DIR = '~/Documents/Owlette/.owlette-sync/manifests'
+def _default_cache_dir() -> str:
+    """
+    resolve the default manifest cache directory.
+
+    windows: %PROGRAMDATA%\\Owlette\\manifests
+    POSIX:   $XDG_DATA_HOME/owlette/manifests, else ~/.local/share/owlette/manifests
+
+    see sync_state._default_state_db_path() for why we avoid `~/Documents/`
+    under LocalSystem.
+    """
+    if os.name == 'nt':
+        program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
+        return os.path.join(program_data, 'Owlette', 'manifests')
+    xdg = os.environ.get('XDG_DATA_HOME')
+    if xdg:
+        return os.path.join(xdg, 'owlette', 'manifests')
+    return os.path.join(os.path.expanduser('~'), '.local', 'share', 'owlette', 'manifests')
+
+
+DEFAULT_CACHE_DIR = _default_cache_dir()
 
 # manifest mediatype + schema version we know how to consume.
 MANIFEST_MEDIA_TYPE = 'application/vnd.owlette.manifest.v1+json'
@@ -135,7 +156,10 @@ def fetch_manifest(
     """
     cache_path: Optional[Path] = None
     if expected_manifest_id is not None:
-        cache_root = Path(os.path.expanduser(cache_dir or DEFAULT_CACHE_DIR))
+        if cache_dir is None:
+            cache_root = Path(_default_cache_dir())
+        else:
+            cache_root = Path(os.path.expanduser(cache_dir))
         cache_path = cache_root / f'{expected_manifest_id}.json'
         if cache_path.exists():
             logger.debug(f"sync_manifest: cache hit at {cache_path}")

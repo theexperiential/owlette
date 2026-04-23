@@ -7,7 +7,10 @@ the manifest cache + chunk-download progress + reassembly intent live
 here; on startup, the agent walks pending sync ops and resumes them.
 
 design principles:
-- single state DB per agent install at ~/Documents/Owlette/.owlette-sync/state.db
+- single state DB per agent install at %PROGRAMDATA%\Owlette\sync-state.db on
+  windows, or $XDG_DATA_HOME/owlette/sync-state.db (≡ ~/.local/share/owlette/)
+  on POSIX. kept OUT of the user's Documents tree so the cache can't leak into
+  the same directory as user-visible assembled files.
 - WAL mode for atomic writes + concurrent readers (the cortex MCP can read
   sync state without blocking the worker thread)
 - every long-running op writes a row BEFORE starting and updates rows
@@ -45,8 +48,33 @@ logger = logging.getLogger(__name__)
 # the create_schema function below is the source of truth.
 SCHEMA_VERSION = 1
 
-# default state DB location. resolved relative to user home unless overridden.
-DEFAULT_STATE_DB_PATH = '~/Documents/Owlette/.owlette-sync/state.db'
+def _default_state_db_path() -> str:
+    """
+    resolve the default state DB path.
+
+    windows: %PROGRAMDATA%\\Owlette\\sync-state.db  (typically C:\\ProgramData\\Owlette\\...)
+    POSIX:   $XDG_DATA_HOME/owlette/sync-state.db, else ~/.local/share/owlette/sync-state.db
+
+    rationale: the agent runs as LocalSystem on windows. `~` expands to
+    `C:\\Windows\\System32\\config\\systemprofile` under that account, which
+    is not an appropriate place for a rebuildable cache — operators can't
+    see or clean it up without elevation. ProgramData is the canonical
+    machine-wide application-data location and LocalSystem has write access
+    without tricks. on POSIX (test environments only) we follow XDG.
+    """
+    if os.name == 'nt':
+        program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
+        return os.path.join(program_data, 'Owlette', 'sync-state.db')
+    xdg = os.environ.get('XDG_DATA_HOME')
+    if xdg:
+        return os.path.join(xdg, 'owlette', 'sync-state.db')
+    return os.path.join(os.path.expanduser('~'), '.local', 'share', 'owlette', 'sync-state.db')
+
+
+# default state DB location. computed lazily so a test-time env override
+# (XDG_DATA_HOME) takes effect; call sites that need the string should use
+# _default_state_db_path() rather than DEFAULT_STATE_DB_PATH directly.
+DEFAULT_STATE_DB_PATH = _default_state_db_path()
 
 # transition states for chunk + file rows.
 # CHUNK: planned -> downloading -> verified -> assembled
@@ -76,7 +104,9 @@ class SyncState:
 
     def __init__(self, db_path: Optional[str] = None) -> None:
         if db_path is None:
-            db_path = os.path.expanduser(DEFAULT_STATE_DB_PATH)
+            # recompute at construction so a test fixture mutating env vars
+            # (e.g. XDG_DATA_HOME) AFTER module import still takes effect.
+            db_path = _default_state_db_path()
         else:
             db_path = os.path.expanduser(db_path)
         self._db_path = Path(db_path)
