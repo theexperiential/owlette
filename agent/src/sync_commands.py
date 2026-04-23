@@ -36,6 +36,7 @@ from typing import Any, Dict, Optional
 
 from command_router import CommandRouter
 from destination_allowlist import DestinationAllowlist, DestinationNotAllowedError
+from roost_kill_switch import check_enabled as _roost_is_enabled
 from sync_assembler import AssembleError, assemble_all
 from sync_downloader import ChunkDownloadError, download_all
 from sync_manifest import Manifest, ManifestError, diff_manifests, fetch_manifest
@@ -86,6 +87,27 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
     manifest_id = _require_str(cmd_data, 'manifest_id')
     manifest_url = _require_str(cmd_data, 'manifest_url')
     extract_root = _require_str(cmd_data, 'extract_root')
+
+    # Wave 5.4 — kill-switch check. Admin sets sites/{siteId}.roostEnabled=false
+    # to halt all new roost work on this site. In-flight distributions are
+    # NOT cancelled here (cancel_sync handler owns that). Fail-open: a
+    # firestore read error treats the flag as enabled so a transient network
+    # blip doesn't pause deploys. See agent/src/roost_kill_switch.py.
+    try:
+        if not _roost_is_enabled(site_id, _firestore_reader_for(service)):
+            logger.warning(
+                f"sync_pull: refusing to start — roost is disabled on site {site_id!r} "
+                f"(manifest {manifest_id})"
+            )
+            return f"sync_pull skipped: roost kill-switch engaged for site {site_id}"
+    except Exception as e:
+        # defensive: the check itself should fail-open internally, but if
+        # something above it throws, keep going rather than silently
+        # declining commands.
+        logger.warning(
+            f"sync_pull: roost kill-switch check errored ({type(e).__name__}: {e}) — "
+            f"proceeding fail-open"
+        )
 
     state = _state_for(service)
     allowlist = _allowlist_for(service)
@@ -211,7 +233,7 @@ def _handle_rollback_to_manifest(cmd_data: dict, cmd_id: str, service: Any) -> s
     """
     treat rollback as a sync_pull of an older manifest. agent doesn't need
     special "rollback" logic — the manifest pointer flip happens server-side
-    (web /api/folders/.../rollback), and the agent simply sees a new
+    (web /api/roosts/.../rollback), and the agent simply sees a new
     distribute_to_manifest event for the older manifest id.
     """
     return _handle_sync_pull(cmd_data, cmd_id, service)
@@ -237,6 +259,49 @@ def _state_for(service: Any) -> SyncState:
         state = SyncState()
         service._sync_state = state
     return state
+
+
+def _firestore_reader_for(service: Any) -> Any:
+    """
+    wrap the service's firestore client so `roost_kill_switch.check_enabled`
+    sees the minimal `get_site_doc(site_id)` surface. lazy-cached on the
+    service instance — the real firestore client lives on `service.firebase_client`
+    (set up by owlette_service), but for tests the service is often a
+    plain object that already exposes `get_site_doc` directly.
+    """
+    reader = getattr(service, '_roost_site_reader', None)
+    if reader is not None:
+        return reader
+
+    # if the service itself quacks like a reader (tests, MockService), use it.
+    if hasattr(service, 'get_site_doc'):
+        service._roost_site_reader = service
+        return service
+
+    client = getattr(service, 'firebase_client', None)
+    if client is None:
+        # no client wired yet (very early boot) — return a stub that
+        # returns None, which check_enabled treats as fail-open.
+        class _NullReader:
+            def get_site_doc(self, _site_id: str):
+                return None
+        reader = _NullReader()
+    else:
+        class _FirebaseSiteReader:
+            def __init__(self, fc: Any) -> None:
+                self._fc = fc
+
+            def get_site_doc(self, site_id: str):
+                try:
+                    return self._fc.get_document(f'sites/{site_id}')
+                except Exception:
+                    # check_enabled handles exceptions at a higher level,
+                    # but returning None here is a cleaner contract.
+                    return None
+        reader = _FirebaseSiteReader(client)
+
+    service._roost_site_reader = reader
+    return reader
 
 
 def _allowlist_for(service: Any) -> DestinationAllowlist:
