@@ -61,10 +61,12 @@ test('admin creates a roost distribution — project_distributions doc + per-tar
   const dialog = page.getByRole('dialog', { name: /^roost a project$/i });
   await expect(dialog).toBeVisible();
 
-  // Defaults: activeMode='deploy', sourceMode='url' — both required for the
-  // distribute button to be enabled (per ProjectDistributionDialog's
-  // disabled={…activeMode !== 'deploy'…} gate).
+  // activeMode='deploy' by default. sourceMode flipped to 'upload' in
+  // 7b04ad9 ("upload-first dialog UX"), so switch to the 'by url'
+  // radio before filling #project-url — the input only renders when
+  // sourceMode === 'url'.
   await dialog.locator('#distribution-name').fill(distributionName);
+  await dialog.getByRole('radio', { name: /^by url$/i }).click();
   await dialog.locator('#project-url').fill(projectUrl);
 
   // Select the seeded machine row.
