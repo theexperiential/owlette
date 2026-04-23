@@ -1925,24 +1925,32 @@ class FirebaseClient:
         token = self.auth_manager.get_valid_token()
         api_base = shared_utils.get_api_base_url()
         import requests
-        resp = requests.post(
-            f"{api_base}/chunks/download-urls",
-            json={
-                'siteId': self.site_id,
-                'hashes': list(chunk_hashes),
-            },
-            headers={'Authorization': f'Bearer {token}'},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        body = resp.json()
-        urls = body.get('urls')
-        if not isinstance(urls, dict):
-            raise ValueError(
-                f"chunks/download-urls returned malformed body "
-                f"(missing 'urls' dict): {body!r}"
+
+        # Server-side cap is MAX_HASHES_PER_REQUEST=1000. Batch at 500 so
+        # (a) a future cap reduction doesn't regress us, (b) one transient
+        # failure only loses ~500 hashes of work, (c) we never hit the
+        # Cloudflare/edge request-size cap on pathological roosts.
+        BATCH = 500
+        hashes = list(chunk_hashes)
+        merged: dict = {}
+        for start in range(0, len(hashes), BATCH):
+            batch = hashes[start:start + BATCH]
+            resp = requests.post(
+                f"{api_base}/chunks/download-urls",
+                json={'siteId': self.site_id, 'hashes': batch},
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=30,
             )
-        return urls
+            resp.raise_for_status()
+            body = resp.json()
+            urls = body.get('urls')
+            if not isinstance(urls, dict):
+                raise ValueError(
+                    f"chunks/download-urls returned malformed body "
+                    f"(missing 'urls' dict): {body!r}"
+                )
+            merged.update(urls)
+        return merged
 
     def get_manifest_download_url(self, roost_id: str, manifest_id: str) -> str:
         """

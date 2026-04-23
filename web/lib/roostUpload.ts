@@ -123,21 +123,29 @@ export async function uploadFolder(
   }
 
   // ── 2. check ────────────────────────────────────────────────────
+  // Server-side cap is 1000 hashes per request (MAX_HASHES_PER_REQUEST in
+  // web/app/api/_shared.ts). Anything over that gets 400. Batch at 500 to
+  // leave headroom + keep individual requests small enough that one
+  // transient failure only costs a retry of that batch, not everything.
   report({ phase: 'checking', message: 'checking what is already uploaded' });
   let missing: string[];
   try {
-    const res = await fetchFn('/api/chunks/check', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        siteId: opts.siteId,
-        hashes: [...allHashes],
-      }),
-      signal: opts.signal,
-    });
-    if (!res.ok) throw await toProblem(res, 'check');
-    const body = (await res.json()) as { missing?: string[] };
-    missing = Array.isArray(body.missing) ? body.missing : [];
+    const allHashesArr = [...allHashes];
+    const missingBatches = await batchedHashRequest(
+      allHashesArr,
+      async (batch) => {
+        const res = await fetchFn('/api/chunks/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ siteId: opts.siteId, hashes: batch }),
+          signal: opts.signal,
+        });
+        if (!res.ok) throw await toProblem(res, 'check');
+        const body = (await res.json()) as { missing?: string[] };
+        return Array.isArray(body.missing) ? body.missing : [];
+      },
+    );
+    missing = missingBatches.flat();
   } catch (err) {
     if (isAbort(err)) throw err;
     throw new RoostUploadError(
@@ -152,18 +160,22 @@ export async function uploadFolder(
   if (missing.length > 0) {
     let urls: Record<string, string>;
     try {
-      const res = await fetchFn('/api/chunks/upload-urls', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `roost-${opts.siteId}-${opts.roostId}-${Date.now()}`,
-        },
-        body: JSON.stringify({ siteId: opts.siteId, hashes: missing }),
-        signal: opts.signal,
+      // Same batching story as /check above.
+      const urlBatches = await batchedHashRequest(missing, async (batch) => {
+        const res = await fetchFn('/api/chunks/upload-urls', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': `roost-${opts.siteId}-${opts.roostId}-${Date.now()}`,
+          },
+          body: JSON.stringify({ siteId: opts.siteId, hashes: batch }),
+          signal: opts.signal,
+        });
+        if (!res.ok) throw await toProblem(res, 'upload-urls');
+        const body = (await res.json()) as { urls?: Record<string, string> };
+        return body.urls ?? {};
       });
-      if (!res.ok) throw await toProblem(res, 'upload-urls');
-      const body = (await res.json()) as { urls?: Record<string, string> };
-      urls = body.urls ?? {};
+      urls = Object.assign({}, ...urlBatches);
     } catch (err) {
       if (isAbort(err)) throw err;
       throw new RoostUploadError(
@@ -373,4 +385,33 @@ function isAbort(err: unknown): boolean {
     err instanceof Error &&
     (err.name === 'AbortError' || err.message === 'aborted')
   );
+}
+
+/**
+ * Batch size for hash-list API calls. Server cap is
+ * MAX_HASHES_PER_REQUEST=1000 (see web/app/api/_shared.ts); we stay well
+ * under so a future cap reduction doesn't regress us, and so one failed
+ * batch only requires retrying ~500 hashes worth of work.
+ */
+const HASH_BATCH_SIZE = 500;
+
+/**
+ * Run `fn` on slices of `items` of up to `HASH_BATCH_SIZE`, sequentially.
+ * Sequential (not parallel) because the server-side operations that
+ * consume these batches — presign URL mint, R2 HEAD for /chunks/check —
+ * are CPU/IO-proportional to batch count and we don't want to swamp the
+ * edge with 20 concurrent presign bursts on a large roost. The batches
+ * themselves are cheap; total wall time for 10k hashes is ~5-10s on a
+ * warm connection.
+ */
+async function batchedHashRequest<R>(
+  items: readonly string[],
+  fn: (batch: string[]) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += HASH_BATCH_SIZE) {
+    out.push(await fn(items.slice(i, i + HASH_BATCH_SIZE)));
+  }
+  return out;
 }
