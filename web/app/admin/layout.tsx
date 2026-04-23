@@ -75,21 +75,21 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   ];
 
   const [backLabel, setBackLabel] = useState('go back');
+  const [backPath, setBackPath] = useState('/dashboard');
 
   useEffect(() => {
     const prev = sessionStorage.getItem('owlette_pre_admin_path');
     if (prev) {
       const name = prev.replace(/^\//, '').split('/')[0] || 'dashboard';
       setBackLabel(`back to ${name}`);
+      setBackPath(prev);
     }
   }, []);
 
+  // Jump directly to the pre-admin path instead of router.back() — the back-button
+  // should skip over any admin → admin internal navigation the user took on the way in.
   const handleBack = () => {
-    if (window.history.length > 1) {
-      router.back();
-    } else {
-      router.push('/dashboard');
-    }
+    router.push(backPath);
   };
 
   return (
