@@ -18,8 +18,7 @@ import {
   parseJsonBody,
   validateHashList,
   validateSiteIdBody,
-  requireAuthOrProblem,
-  requireSiteScope,
+  requireAgentOrSiteScope,
 } from '../../_shared';
 
 async function mintDownloadUrls(
@@ -40,9 +39,6 @@ async function mintDownloadUrls(
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireAuthOrProblem(request);
-    if (!auth.ok) return auth.response;
-
     const siteIdParam = request.nextUrl.searchParams.get('siteId');
     if (!siteIdParam) {
       return problemValidation('query param `siteId` is required', {
@@ -52,8 +48,8 @@ export async function GET(request: NextRequest) {
     const site = validateSiteIdBody(siteIdParam, 'query.siteId');
     if (!site.ok) return site.response;
 
-    const scopeError = await requireSiteScope(auth.userId, site.siteId);
-    if (scopeError) return scopeError;
+    const auth = await requireAgentOrSiteScope(request, site.siteId);
+    if (!auth.ok) return auth.response;
 
     const params = request.nextUrl.searchParams.getAll('hash');
     const validated = validateHashList(params, 'hash');
@@ -67,9 +63,6 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireAuthOrProblem(request);
-    if (!auth.ok) return auth.response;
-
     const parsed = await parseJsonBody(request);
     if (!parsed.ok) return parsed.response;
     const body = parsed.body as { siteId?: unknown; hashes?: unknown };
@@ -77,8 +70,8 @@ export async function POST(request: NextRequest) {
     const site = validateSiteIdBody(body.siteId);
     if (!site.ok) return site.response;
 
-    const scopeError = await requireSiteScope(auth.userId, site.siteId);
-    if (scopeError) return scopeError;
+    const auth = await requireAgentOrSiteScope(request, site.siteId);
+    if (!auth.ok) return auth.response;
 
     const validated = validateHashList(body.hashes, 'hashes');
     if (!validated.ok) return validated.response;

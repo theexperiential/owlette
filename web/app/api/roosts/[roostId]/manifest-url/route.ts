@@ -35,8 +35,7 @@ import {
   parseJsonBody,
   validateResourceId,
   validateSiteIdBody,
-  requireAuthOrProblem,
-  requireSiteScope,
+  requireAgentOrSiteScope,
 } from '../../../_shared';
 
 interface RouteParams {
@@ -45,9 +44,6 @@ interface RouteParams {
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requireAuthOrProblem(request);
-    if (!auth.ok) return auth.response;
-
     const { roostId } = await params;
     const roostError = validateResourceId(roostId, 'roostId');
     if (roostError) return roostError;
@@ -59,8 +55,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const site = validateSiteIdBody(body.siteId);
     if (!site.ok) return site.response;
 
-    const scopeError = await requireSiteScope(auth.userId, site.siteId);
-    if (scopeError) return scopeError;
+    const auth = await requireAgentOrSiteScope(request, site.siteId);
+    if (!auth.ok) return auth.response;
 
     if (typeof body.manifestId !== 'string') {
       return problemValidation('manifestId must be a string', {

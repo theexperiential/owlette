@@ -20,6 +20,7 @@ import {
   requireAdminOrIdToken,
   assertUserHasSiteAccess,
 } from '@/lib/apiAuth.server';
+import { getAdminAuth } from '@/lib/firebase-admin';
 
 export const MAX_HASHES_PER_REQUEST = 1000;
 
@@ -46,6 +47,64 @@ export async function requireAuthOrProblem(
     }
     throw err;
   }
+}
+
+/**
+ * Auth gate for roost endpoints that BOTH operators (from the web UI)
+ * AND agents need to call (manifest/chunk URL minting, etc.).
+ *
+ * - Operator path: the existing superadmin-or-site-member check
+ *   (`requireAuthOrProblem` → `requireSiteScope`). Same behaviour as
+ *   every other roost API.
+ * - Agent path: decode the bearer token directly; if the custom claims
+ *   show `role: 'agent'` AND `site_id` matches the requested siteId,
+ *   allow. Agents don't have `users/{uid}` docs so `assertUserHasSiteAccess`
+ *   would always fail for them — scoping is entirely by token claim.
+ *
+ * Call this INSTEAD OF the requireAuthOrProblem + requireSiteScope pair
+ * when the endpoint is on the agent's hot path.
+ */
+export async function requireAgentOrSiteScope(
+  req: NextRequest,
+  siteId: string,
+): Promise<{ ok: true; userId: string; isAgent: boolean } | { ok: false; response: NextResponse }> {
+  if (!SITE_ID_RE.test(siteId)) {
+    return {
+      ok: false,
+      response: problemValidation('invalid siteId format', {
+        siteId: ['must be 1-128 chars: letters, digits, underscore, hyphen'],
+      }),
+    };
+  }
+
+  // Try the agent-token path first — cheap decode, no firestore round-trip
+  // on the happy path for the common agent caller.
+  const authHeader = req.headers.get('authorization') || '';
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (match) {
+    try {
+      const decoded = await getAdminAuth().verifyIdToken(match[1]);
+      if (decoded.role === 'agent') {
+        if (decoded.site_id !== siteId) {
+          // Agent token scoped to a different site — treat as not-found
+          // to match the anti-enumeration posture of requireSiteScope.
+          return { ok: false, response: problemNotFound('site not found or no access') };
+        }
+        return { ok: true, userId: decoded.uid, isAgent: true };
+      }
+      // Non-agent bearer token — fall through to the operator path so the
+      // superadmin check can still happen via requireAdminOrIdToken.
+    } catch {
+      // Invalid token — let the operator path produce the 401.
+    }
+  }
+
+  // Operator path — reuse the existing helpers so behaviour stays consistent.
+  const auth = await requireAuthOrProblem(req);
+  if (!auth.ok) return { ok: false, response: auth.response };
+  const scopeError = await requireSiteScope(auth.userId, siteId);
+  if (scopeError) return { ok: false, response: scopeError };
+  return { ok: true, userId: auth.userId, isAgent: false };
 }
 
 export async function requireSiteScope(
