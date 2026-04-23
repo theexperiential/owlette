@@ -29,3 +29,4 @@ export {
   recordAuditEvent,
   verifyAuditChain,
 } from './auditLog';
+export { emitWebhook, processRetryQueue } from './webhookDispatch';
