@@ -48,11 +48,13 @@ jobs:
       # Cache the Playwright browser binaries keyed on the @playwright/test
       # version pinned in web/package-lock.json. Cache miss on a Playwright
       # upgrade is the right behavior — forces a fresh `playwright install`.
+      # Read from package.json (no node_modules required) so this step can
+      # safely run before npm ci.
       - name: resolve playwright version
         id: pw
         working-directory: web
         run: |
-          version=$(node -p "require('@playwright/test/package.json').version")
+          version=$(node -p "require('./package.json').devDependencies['@playwright/test']" | tr -d '^~')
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: cache playwright browsers
