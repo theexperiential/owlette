@@ -80,6 +80,14 @@ three Cloud Functions run on Firebase (2nd Gen, Node.js 20). source: `functions/
 | **onMetricsWrite** | Firestore `onDocumentWritten` on `sites/{siteId}/machines/{machineId}` | appends a compact sample to the daily `metrics_history/{YYYY-MM-DD}` bucket (per-CPU, per-disk usage, per-volume disk IO, per-GPU, per-NIC). also evaluates threshold alert rules and fires notifications when breached. rate-limited to one sample per 55 seconds. each numeric field is `Number.isFinite()`-guarded so a single poisoned reading can't reject the whole sample write. |
 | **onCommandCompleted** | Firestore `onDocumentWritten` on `sites/{siteId}/machines/{machineId}/commands/completed` | when an agent finishes a command with a `deployment_id`, updates the deployment target's status, progress, and timestamps. recalculates overall deployment status across all targets. |
 | **sweepStaleDeployments** | Cloud Scheduler, every 5 minutes | catches deployments stuck in non-terminal states (agent crash, network loss). marks pending targets as failed after 15 min, downloading/installing targets after 30 min. |
+| **onRoostWritten** | Firestore `onDocumentWritten` on `sites/{siteId}/roosts/{roostId}` | roost fan-out. detects `currentManifestId` change, partitions targets into canary + fleet cohorts (stable hash, ≤10% / cap 50 canary), creates the rollout state doc, dispatches canary `roost_sync` commands. |
+| **onTargetStateWritten** | Firestore `onDocumentWritten` on `sites/{siteId}/roosts/{roostId}/target_state/{machineId}` | roost rollout state machine. transactional canary→fleet promotion on ≥90% success, abort on >25% failure (mid-wave, not waiting for full settlement). |
+| **verifyChunk** | HTTPS callable | roost integrity check. streams an R2 chunk, computes SHA-256, deletes + alerts on hash mismatch (planted-bytes defense). invoked via Cloudflare Worker webhook on every R2 PUT. |
+| **chunkGcNightly** | Cloud Scheduler, 02:15 UTC | roost chunk garbage collection. two-phase mark-and-sweep with 30-day tombstone TTL, resurrection guard (a chunk re-referenced between mark and sweep has its tombstone cleared), pause-during-publish. `CHUNK_GC_MODE=dry-run` default. |
+| **preUploadCheck** + **reconcileQuota** | HTTPS + Cloud Scheduler (03:45 UTC) | roost per-tenant quota. pre-upload admit reserves pending bytes atomically; daily reconcile re-reads authoritative usage, fires only newly-crossed 50/80/100% alarms. |
+| **aggregateTelemetry** + **recordUsageEvent** + **getUsageSummaryHttp** | Cloud Scheduler (04:30 UTC) + HTTPS | roost telemetry. per-tenant cost attribution against R2 pricing ($0.015/GB-month, $4.50/M class-A, $0.36/M class-B, $0 egress). OTLP-shaped structured logs for downstream collector. |
+| **recordAuditEvent** + **exportAuditDaily** + **verifyAuditChain** | HTTPS + Cloud Scheduler (05:15 UTC) | roost append-only audit log. SHA-256 hash-chained records (tamper-evident by deletion + mutation), 7-year retention, BigQuery cold-storage sink at 05:15 UTC. |
+| **emitWebhook** + **processRetryQueue** | HTTPS + Cloud Scheduler (every 1 minute) | roost webhook dispatcher. 7 event types (`distribution.queued/started/succeeded/failed`, `chunk.uploaded`, `manifest.published`, `rollback.executed`), HMAC-SHA256 signed (`sha256=<hex>`), exponential backoff retry (5 s base × 3 × 1 h cap × ±20% jitter, 10-attempt cap). |
 
 **deployment:**
 
@@ -255,6 +263,99 @@ stateDiagram-v2
 
 ---
 
+## roost — content-addressed project distribution (v2)
+
+roost replaces v1's single-URL-per-distribution model with a content-addressed sync layer. a *synced folder* maps to an immutable sequence of *manifests*; flipping a folder's `currentManifestId` pointer is what triggers a deploy or rollback.
+
+### why the model changed
+
+v1 distribution was a one-shot download of a ZIP at a host-supplied URL. a one-byte change re-uploaded the whole archive, there was no rollback, and agents re-verified by re-downloading. roost fixes all three: content-addressed dedup transfers only changed bytes, rollback is an atomic pointer flip, and the manifest is authoritative (chunks are validated by hash, no verify-files list).
+
+### storage layout
+
+chunks are stored in **Cloudflare R2** at a per-tenant prefix:
+
+```
+project-content/{siteId}/{hash[0:2]}/{hash}
+```
+
+- `siteId` scopes per-customer, preventing cross-tenant access via signed-URL guessing
+- `hash[0:2]` shards within a tenant so R2 listings don't bottleneck on a single prefix
+- `hash` is the lowercase 64-char SHA-256 of the 4 MiB chunk
+
+manifests are stored at `project-manifests/{siteId}/{roostId}/{manifestId}.json`, immutable once written. a firestore pointer at `sites/{siteId}/roosts/{roostId}.currentManifestId` is the mutable head.
+
+### manifest format
+
+OCI image manifest v1.1 derivation, `application/vnd.owlette.manifest.v1+json`. canonical JSON. full schema at [`docs/internal/manifest-format.md`](internal/manifest-format.md). minimal shape:
+
+```json
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.owlette.manifest.v1+json",
+  "config": { "name": "lobby-show", "siteId": "nyc", "createdAt": "...", "createdBy": "uid" },
+  "files": [
+    { "path": "project.toe", "size": 123456, "chunks": [
+      { "hash": "a1b2...", "size": 4194304 }
+    ]}
+  ]
+}
+```
+
+### upload pipeline (browser)
+
+```mermaid
+flowchart LR
+    Drop["webkitdirectory drop"] --> Worker["web worker:\n4 MiB slice + SHA-256"]
+    Worker --> Check["/api/chunks/check\n(missing-set)"]
+    Check --> Upload["signed PUTs to R2\n(IndexedDB queue,\n4-way parallel)"]
+    Upload --> Finalize["/api/roosts/{id}/manifests\n(CAS on currentManifestId)"]
+    Finalize --> Trigger["onRoostWritten\ntriggers canary fan-out"]
+```
+
+- chunker + hasher off the main thread ([web/lib/chunking.ts](../web/lib/chunking.ts), worker at `web/lib/workers/manifestBuilder.worker.ts`)
+- upload queue persists to IndexedDB ([web/lib/uploadQueue.ts](../web/lib/uploadQueue.ts)) — closing the tab at 50% and re-dropping the same folder resumes from 50%
+- `admit` endpoint reserves `pendingBytes` atomically so concurrent uploads can't both fit when their sum would exceed quota
+- finalize is a firestore transaction — compare-and-swap on `currentManifestId` means concurrent finalizes serialise safely
+
+### agent sync pipeline
+
+agents receive a `roost_sync` command on the fan-out trigger, then:
+
+1. **manifest fetch** ([agent/src/sync_manifest.py](../agent/src/sync_manifest.py)) — pull from R2, cache at `~/Documents/Owlette/.owlette-sync/manifests/{manifestId}.json`, diff against previous to compute the chunk delta
+2. **chunk download** ([agent/src/sync_downloader.py](../agent/src/sync_downloader.py)) — parallel workers (default 4) with `Range: bytes=<offset>-` resume, per-chunk SHA-256 verify, signed-URL refresh on 403
+3. **atomic assembly** ([agent/src/sync_assembler.py](../agent/src/sync_assembler.py)) — write to `<path>.partial`, fsync, `os.replace` (atomic). post-rename realpath check guards against TOCTOU symlink-swap between the allowlist validation and the rename landing
+4. **scrub** ([agent/src/sync_scrub.py](../agent/src/sync_scrub.py)) — periodic re-hashing of on-disk files against their manifest chunk hashes to catch silent bit rot
+
+every write is gated by the **destination allowlist** ([agent/src/destination_allowlist.py](../agent/src/destination_allowlist.py)) — fail-closed: an empty or missing allowlist rejects all writes. symlinks, junctions, Windows reserved device names (NUL, CON, PRN…), alternate data streams, and paths outside the allowed roots are rejected with realpath resolution, not just string matching.
+
+### rollout strategy (canary-first)
+
+every manifest pointer flip goes through a **staged rollout** — never all-at-once. this is the standing cloudflare 2025-11-18 lesson in code form:
+
+```mermaid
+flowchart LR
+    Pub["manifest published\n(currentManifestId change)"] --> Canary["canary wave\n≤10%, cap 50 machines"]
+    Canary -->|"≥90% succeeded"| Fleet["fleet wave\nremaining machines"]
+    Canary -->|">25% failed"| Abort["abort\n(no fleet wave)"]
+    Fleet -->|"settled"| Complete["complete"]
+```
+
+canary cohort selection is deterministic (FNV-1a hash of `machineId + manifestId`) so trigger retries don't flap the chosen cohort. the abort threshold evaluates against `total`, not `settled`, so a rollout that's already past the 25% failure mark bails immediately without waiting for remaining machines.
+
+### security floor
+
+- **per-tenant signed-URL paths**: a signed URL issued for `site-a` cannot read `site-b`'s chunks — paths are scoped before signing
+- **allowlist**: fail-closed at the agent; admin UI at `web/components/AllowlistEditor.tsx`
+- **hash-chained audit log**: every `signed_url_issued` / `distribution_started` / `manifest_pointer_changed` / `api_key_used` / `gc_run` record embeds `hash(prev || canonicalPayload)` — tamper detection survives deletion + mutation
+- **no-token-logs lint gate**: `scripts/check-no-token-logs.mjs` blocks any commit that logs auth tokens (CI + optional pre-commit)
+
+### the clean-cutover decision
+
+roost does **not** support v1 agents. there is no dual-write phase, no shadow-read, no `project_url` fallback. v3.0.0 agent is a hard requirement for consuming v2 manifests. operators upgrade their fleet before the feature flag flips; older agents stop receiving new deploys post-cutover. see [`docs/internal/v1-v2-migration.md`](internal/v1-v2-migration.md) for the historical migration-design notes (most of that document is superseded by the clean-cutover decision).
+
+---
+
 ## technology stack
 
 | layer | technology |
@@ -263,6 +364,7 @@ stateDiagram-v2
 | **Web** | Next.js 16, React 19, TypeScript 5, Tailwind CSS 4 |
 | **UI Components** | shadcn/ui (Radix UI), Recharts, Lucide React |
 | **Database** | Cloud Firestore (real-time NoSQL) |
+| **Object storage (roost)** | Cloudflare R2 (S3-compatible, free egress) |
 | **Auth** | Firebase Authentication, iron-session, TOTP (2FA) |
 | **Email** | Resend API |
 | **Cloud Functions** | Firebase Functions (2nd Gen, Node.js 20) |
