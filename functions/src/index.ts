@@ -24,3 +24,8 @@ export {
   getUsageSummaryHttp,
   recordUsageEvent,
 } from './telemetry';
+export {
+  exportAuditDaily,
+  recordAuditEvent,
+  verifyAuditChain,
+} from './auditLog';
