@@ -84,6 +84,12 @@ jobs:
         working-directory: web
         env:
           CI: 'true'
+          # sessionManager.server.ts requires SESSION_SECRET ≥32 chars at
+          # module-load. The e2e suite runs against the Firestore/Auth
+          # emulators — no real sessions, so a fixed deterministic value
+          # is fine here. NOT a secret: the emulator doesn't validate it
+          # against anything external.
+          SESSION_SECRET: 'ci-e2e-emulator-session-secret-do-not-reuse-in-prod'
         run: npm run e2e
 
       # Upload the Playwright HTML report + traces / screenshots / videos on
