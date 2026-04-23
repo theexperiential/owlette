@@ -1,5 +1,6 @@
 /**
- * RFC 7807 problem+json error envelope for /api/v2/* routes (roost / project distribution v2).
+ * RFC 7807 problem+json error envelope for roost routes (project distribution v2):
+ * /api/chunks/*, /api/roosts/*, and the agent-facing sync endpoints.
  *
  * https://datatracker.ietf.org/doc/html/rfc7807
  *
