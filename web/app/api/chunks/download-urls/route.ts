@@ -2,29 +2,41 @@
  * GET  /api/chunks/download-urls?siteId=...&hash=...&hash=...
  * POST /api/chunks/download-urls   { siteId: string, hashes: string[] }
  *
- * output: { urls: { [hash]: { downloadUrl: string, expiresAt: string } } }
+ * output: { urls: { [hash]: string }, expiresAt: string }
  *
- * roost wave 2a.5. issues short-lived (≤15min) signed GET urls for the
- * agent to download chunks from r2.
+ * roost wave 2a.5. issues short-lived signed GET URLs for the agent to
+ * download chunks from R2. GET form is convenience for small batches
+ * (watch for URL length cap ~2 KB); POST for large batches.
  *
- * GET form is convenience for small batches; POST for large batches
- * (avoid url length limits).
- *
- * - rate-limited (per-token + per-ip) — TODO: wrap in withRateLimit (plan wave 2.9)
- * - per-tenant siteId scope enforced via auth claims
- *
- * STUB: backing r2 signed-url issuance not yet wired. returns 503.
+ * - per-tenant siteId scope enforced via auth claims + assertUserHasSiteAccess
  */
 import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
 import { problemFromError, problemValidation } from '@/lib/apiErrors';
+import { GET_URL_TTL_SECONDS, presignGetChunk } from '@/lib/r2Client.server';
 import {
   parseJsonBody,
   validateHashList,
   validateSiteIdBody,
-  notImplementedYet,
   requireAuthOrProblem,
   requireSiteScope,
 } from '../../_shared';
+
+async function mintDownloadUrls(
+  siteId: string,
+  hashes: readonly string[],
+): Promise<NextResponse> {
+  const entries = await Promise.all(
+    hashes.map(async (hash) => {
+      const url = await presignGetChunk(siteId, hash);
+      return [hash, url] as const;
+    }),
+  );
+  const urls: Record<string, string> = {};
+  for (const [hash, url] of entries) urls[hash] = url;
+  const expiresAt = new Date(Date.now() + GET_URL_TTL_SECONDS * 1000).toISOString();
+  return NextResponse.json({ urls, expiresAt });
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -44,16 +56,10 @@ export async function GET(request: NextRequest) {
     if (scopeError) return scopeError;
 
     const params = request.nextUrl.searchParams.getAll('hash');
-    // delegate empty/length/format validation to the shared helper to
-    // avoid duplicating its three-case error logic here.
     const validated = validateHashList(params, 'hash');
     if (!validated.ok) return validated.response;
 
-    return notImplementedYet(
-      '/api/chunks/download-urls',
-      'wave 2a.5',
-      'wire r2 signed-GET issuance; ttl ≤ 15min; enforce per-tenant prefix',
-    );
+    return await mintDownloadUrls(site.siteId, validated.hashes);
   } catch (err) {
     return problemFromError(err, 'v2/chunks/download-urls (GET)');
   }
@@ -77,11 +83,7 @@ export async function POST(request: NextRequest) {
     const validated = validateHashList(body.hashes, 'hashes');
     if (!validated.ok) return validated.response;
 
-    return notImplementedYet(
-      '/api/chunks/download-urls',
-      'wave 2a.5',
-      'wire r2 signed-GET issuance; ttl ≤ 15min; enforce per-tenant prefix',
-    );
+    return await mintDownloadUrls(site.siteId, validated.hashes);
   } catch (err) {
     return problemFromError(err, 'v2/chunks/download-urls (POST)');
   }

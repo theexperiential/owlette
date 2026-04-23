@@ -6,17 +6,15 @@
  *
  * roost wave 2a.1. used by the browser uploader and external CLI to
  * skip chunks that already exist in cloud storage (CAS dedup).
- *
- * STUB: backing r2 query not yet wired. returns 503 with a clear marker.
- * implement when wave 0.5 (cloudflare r2) is provisioned.
  */
 import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
 import { problemFromError } from '@/lib/apiErrors';
+import { missingChunks } from '@/lib/r2Client.server';
 import {
   parseJsonBody,
   validateHashList,
   validateSiteIdBody,
-  notImplementedYet,
   requireAuthOrProblem,
   requireSiteScope,
 } from '../../_shared';
@@ -39,14 +37,11 @@ export async function POST(request: NextRequest) {
     const validated = validateHashList(body.hashes, 'hashes');
     if (!validated.ok) return validated.response;
 
-    // TODO(wave 2a.1): query r2 for existing chunks under
-    //   project-content/{siteId}/{hash[0:2]}/{hash}
-    //   return only those not present.
-    return notImplementedYet(
-      '/api/chunks/check',
-      'wave 2a.1',
-      'wire to r2 head-object batch lookup; per-tenant prefix already site-scoped above',
-    );
+    // Batch-HEAD each hash against R2 at project-content/{siteId}/{hash[:2]}/{hash};
+    // return the subset that returned 404. Per-tenant scope is already
+    // enforced by `site.siteId` from the validated body + requireSiteScope.
+    const missing = await missingChunks(site.siteId, validated.hashes);
+    return NextResponse.json({ missing });
   } catch (err) {
     return problemFromError(err, 'v2/chunks/check');
   }

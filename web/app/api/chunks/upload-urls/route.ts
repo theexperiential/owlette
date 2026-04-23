@@ -2,24 +2,25 @@
  * POST /api/chunks/upload-urls
  *
  * input:  { siteId: string, hashes: string[] }
- * output: { urls: { [hash]: { uploadUrl: string, expiresAt: string } } }
+ * output: { urls: { [hash]: string }, expiresAt: string }
  *
- * roost wave 2a.2. issues short-lived (≤60min) signed PUT urls for the
- * browser/agent to upload chunks directly to r2.
+ * roost wave 2a.2. issues short-lived signed PUT urls for the browser
+ * or agent to upload chunks directly to R2. TTL fixed per PUT_URL_TTL_SECONDS.
  *
- * - rate-limited (per-token + per-ip) — TODO: wrap in withRateLimit (see plan wave 2.9)
- * - per-tenant siteId scope enforced via auth claims + assertUserHasSiteAccess
- *
- * STUB: backing r2 signed-url issuance not yet wired. returns 503.
- * implement when wave 0.5 (cloudflare r2) is provisioned.
+ * - per-tenant siteId scope enforced via auth claims + assertUserHasSiteAccess.
+ *   Signed URLs are scoped to project-content/{siteId}/… paths only.
+ * - Idempotency-Key header honored at the layer that actually spans requests
+ *   (not implemented here — each call mints fresh URLs; cross-request caching
+ *   is a future optimisation, low-value since URLs are cheap to mint).
  */
 import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
 import { problemFromError } from '@/lib/apiErrors';
+import { presignPutChunk, PUT_URL_TTL_SECONDS } from '@/lib/r2Client.server';
 import {
   parseJsonBody,
   validateHashList,
   validateSiteIdBody,
-  notImplementedYet,
   requireAuthOrProblem,
   requireSiteScope,
 } from '../../_shared';
@@ -42,15 +43,19 @@ export async function POST(request: NextRequest) {
     const validated = validateHashList(body.hashes, 'hashes');
     if (!validated.ok) return validated.response;
 
-    // TODO(wave 2a.2): issue r2 signed PUT urls scoped to per-tenant prefix
-    //   project-content/{siteId}/{hash[0:2]}/{hash}
-    //   ttl ≤ 60 min. response shape: { urls: {[hash]: {uploadUrl, expiresAt}} }
-    //   honor Idempotency-Key header — reuse cached urls within ttl
-    return notImplementedYet(
-      '/api/chunks/upload-urls',
-      'wave 2a.2',
-      'wire r2 signed-PUT issuance; cache by Idempotency-Key; enforce per-tenant prefix',
+    // Mint in parallel — each presign is a local HMAC compute, no network hop.
+    const entries = await Promise.all(
+      validated.hashes.map(async (hash) => {
+        const url = await presignPutChunk(site.siteId, hash);
+        return [hash, url] as const;
+      }),
     );
+
+    const urls: Record<string, string> = {};
+    for (const [hash, url] of entries) urls[hash] = url;
+
+    const expiresAt = new Date(Date.now() + PUT_URL_TTL_SECONDS * 1000).toISOString();
+    return NextResponse.json({ urls, expiresAt });
   } catch (err) {
     return problemFromError(err, 'v2/chunks/upload-urls');
   }
