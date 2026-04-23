@@ -20,6 +20,8 @@ import {
 import { toast } from 'sonner';
 import ProjectDistributionDialog from '@/components/ProjectDistributionDialog';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import { MinimizedUploadCard } from '@/components/MinimizedUploadCard';
+import { useRoostUpload } from '@/hooks/useRoostUpload';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
@@ -75,6 +77,14 @@ export default function ProjectsPage() {
   // wave 3.9: used by EmptyStateUpload to branch between "install agent first"
   // onboarding and "create your first roost" CTA.
   const { machines } = useMachines(currentSiteId);
+
+  // Upload execution lives at the page level so a multi-GB run survives
+  // dismissal of ProjectDistributionDialog. When the dialog is closed
+  // while `upload.state.status === 'uploading'`, the MinimizedUploadCard
+  // below takes over as the visible progress indicator.
+  const upload = useRoostUpload();
+  const showMinimizedCard =
+    upload.state.status !== 'idle' && !distributionDialogOpen;
 
   const handleSiteChange = (siteId: string) => {
     setUserPickedSiteId(siteId);
@@ -199,6 +209,7 @@ export default function ProjectsPage() {
           onOpenChange={setDistributionDialogOpen}
           siteId={currentSiteId}
           onCreateDistribution={createDistribution}
+          upload={upload}
         />
 
         {/* Section header with inline stats */}
@@ -429,6 +440,18 @@ export default function ProjectsPage() {
           )}
         </div>
       </main>
+
+      {/* Floating minimized-upload card. Only rendered when an upload is
+          running (or recently terminated) and the dialog isn't open —
+          otherwise the dialog IS the progress surface and duplicating it
+          on-screen would be noise. Clicking the card reopens the dialog,
+          which re-reads `upload.state` and resumes rendering progress. */}
+      {showMinimizedCard && (
+        <MinimizedUploadCard
+          upload={upload}
+          onRestore={() => setDistributionDialogOpen(true)}
+        />
+      )}
 
       {/* Account Settings Dialog */}
       <AccountSettingsDialog
