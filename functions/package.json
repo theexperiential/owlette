@@ -11,7 +11,8 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
-    "lint": "eslint --ext .ts src/"
+    "lint": "eslint --ext .ts src/",
+    "test": "tsc -p test/tsconfig.json && node --test lib-test/test/*.test.js"
   },
   "engines": {
     "node": "20"

@@ -1,5 +1,6 @@
-# Compiled output
-lib/
+# Compiled output (top-level only — src/lib/ holds source modules)
+/lib/
+/lib-test/
 
 # Dependencies
 node_modules/
