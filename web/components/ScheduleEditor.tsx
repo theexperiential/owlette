@@ -507,125 +507,160 @@ export default function ScheduleEditor({
           )}
         </DialogHeader>
 
-        {/* Preset bar */}
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {displayPresets.map((preset) => {
-              const isActive = activePresetId === preset.id;
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() => applyPreset(preset)}
-                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors cursor-pointer ${
-                    isActive
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
-                  }`}
-                >
-                  {preset.name}
-                </button>
-              );
-            })}
-            {/* New preset */}
-            {onCreatePreset && !savingPreset && (
-              <button
-                type="button"
-                onClick={() => setSavingPreset(true)}
-                className="px-3 py-1.5 rounded-full text-sm text-muted-foreground hover:text-foreground border border-dashed border-border hover:border-muted-foreground transition-colors cursor-pointer"
-              >
-                <Plus className="h-3.5 w-3.5 inline mr-1" />
-                new preset
-              </button>
-            )}
-          </div>
-          {/* Rename/delete row for selected custom preset */}
+        {/* Preset bar.
+            Each pill sits in a `relative` wrapper; the per-pill action row
+            (update/rename/delete) or inline rename form is absolutely
+            positioned under it and centered horizontally, so the actions
+            read as belonging to that specific chip without stretching the
+            pill's flex slot. The row reserves `pb-10` when a panel is
+            attached so the next section doesn't collide with the overlay. */}
+        <div className="space-y-1.5">
           {(() => {
             const selectedPreset = activePresetId ? displayPresets.find(p => p.id === activePresetId) : null;
-            if (editingPresetId) {
-              return (
-                <form onSubmit={(e) => { e.preventDefault(); handleRenamePreset(); }} className="flex items-center gap-1.5">
-                  <Input
-                    value={editPresetName}
-                    onChange={(e) => setEditPresetName(e.target.value)}
-                    className="h-7 w-28 text-[11px] px-2 bg-background border-border"
-                    autoFocus
-                  />
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button type="submit" className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"><Save className="h-3.5 w-3.5" /></button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>save</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <button type="button" onClick={() => setEditingPresetId(null)} className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"><X className="h-3.5 w-3.5" /></button>
-                </form>
-              );
-            }
-            if (savingPreset && onCreatePreset) {
-              return (
-                <form onSubmit={(e) => { e.preventDefault(); handleCreatePreset(); }} className="flex items-center gap-1.5">
-                  <Input
-                    value={newPresetName}
-                    onChange={(e) => setNewPresetName(e.target.value)}
-                    placeholder="preset name"
-                    className="h-7 w-28 text-[11px] px-2 bg-background border-border"
-                    autoFocus
-                  />
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button type="submit" className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"><Save className="h-3.5 w-3.5" /></button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>save preset</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <button type="button" onClick={() => { setSavingPreset(false); setNewPresetName(''); }} className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"><X className="h-3.5 w-3.5" /></button>
-                </form>
-              );
-            }
-            if (selectedPreset && !selectedPreset.isBuiltIn && onDeletePreset && onUpdatePreset) {
-              // Check if current blocks differ from the preset's stored blocks
-              const currentKey = JSON.stringify(blocks.map(b => ({ days: [...b.days].sort(), ranges: b.ranges })));
-              const presetKey = JSON.stringify(selectedPreset.blocks.map((b: ScheduleBlock) => ({ days: [...b.days].sort(), ranges: b.ranges })));
-              const hasChanges = currentKey !== presetKey;
+            // Dirty check: current blocks differ from the selected preset's stored blocks.
+            const currentKey = JSON.stringify(blocks.map(b => ({ days: [...b.days].sort(), ranges: b.ranges })));
+            const presetKey = selectedPreset
+              ? JSON.stringify(selectedPreset.blocks.map((b: ScheduleBlock) => ({ days: [...b.days].sort(), ranges: b.ranges })))
+              : '';
+            const hasChanges = !!selectedPreset && currentKey !== presetKey;
+            const hasAttachedPanel =
+              !!selectedPreset &&
+              !selectedPreset.isBuiltIn &&
+              !!onDeletePreset &&
+              !!onUpdatePreset &&
+              !savingPreset;
 
-              return (
-                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                  {hasChanges && (
+            return (
+              <>
+                <div
+                  className={`flex flex-wrap items-start gap-x-1.5 gap-y-2 ${
+                    hasAttachedPanel ? 'pb-10' : ''
+                  }`}
+                >
+                  {displayPresets.map((preset) => {
+                    const isActive = activePresetId === preset.id;
+                    const isCustom =
+                      isActive &&
+                      selectedPreset &&
+                      !selectedPreset.isBuiltIn &&
+                      !!onDeletePreset &&
+                      !!onUpdatePreset &&
+                      !savingPreset;
+                    const showRenameForm = isCustom && editingPresetId === preset.id;
+                    const showActions = isCustom && !showRenameForm;
+                    return (
+                      <div key={preset.id} className="relative">
+                        <button
+                          type="button"
+                          onClick={() => applyPreset(preset)}
+                          className={`px-2.5 py-1 rounded-full text-[13px] font-medium transition-colors duration-150 cursor-pointer ${
+                            isActive
+                              ? 'bg-blue-600/20 text-blue-100 ring-1 ring-blue-500/40'
+                              : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
+                          }`}
+                        >
+                          {preset.name}
+                        </button>
+
+                        {/* Per-pill inline rename form */}
+                        {showRenameForm && (
+                          <form
+                            onSubmit={(e) => { e.preventDefault(); handleRenamePreset(); }}
+                            className="absolute left-1/2 top-full z-10 mt-1 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap"
+                          >
+                            <Input
+                              value={editPresetName}
+                              onChange={(e) => setEditPresetName(e.target.value)}
+                              className="h-7 w-28 text-[11px] px-2 bg-background border-border"
+                              autoFocus
+                            />
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button type="submit" className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"><Save className="h-3.5 w-3.5" /></button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>save</p>
+                              </TooltipContent>
+                            </Tooltip>
+                            <button type="button" onClick={() => setEditingPresetId(null)} className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"><X className="h-3.5 w-3.5" /></button>
+                          </form>
+                        )}
+
+                        {/* Per-pill action row */}
+                        {showActions && selectedPreset && (
+                          <div className="absolute left-1/2 top-full z-10 mt-1 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap text-[11px] leading-5 text-muted-foreground">
+                            {hasChanges && onUpdatePreset && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const valid = blocks.filter(b => b.days.length > 0 && b.ranges.length > 0);
+                                  onUpdatePreset(selectedPreset.id, { blocks: valid });
+                                }}
+                                className="flex items-center gap-1 text-accent-cyan hover:text-accent-cyan-hover cursor-pointer transition-colors"
+                              >
+                                <Save className="h-3 w-3" />
+                                update preset
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => { setEditingPresetId(selectedPreset.id); setEditPresetName(selectedPreset.name); }}
+                              className="flex items-center gap-1 hover:text-foreground cursor-pointer transition-colors"
+                            >
+                              <Pencil className="h-3 w-3" />
+                              rename
+                            </button>
+                            {onDeletePreset && (
+                              <button
+                                type="button"
+                                onClick={() => onDeletePreset(selectedPreset.id)}
+                                className="flex items-center gap-1 hover:text-red-400 cursor-pointer transition-colors"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                delete
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {/* New preset */}
+                  {onCreatePreset && !savingPreset && (
                     <button
                       type="button"
-                      onClick={() => {
-                        const valid = blocks.filter(b => b.days.length > 0 && b.ranges.length > 0);
-                        onUpdatePreset(selectedPreset.id, { blocks: valid });
-                      }}
-                      className="flex items-center gap-1 text-accent-cyan hover:text-accent-cyan-hover cursor-pointer transition-colors"
+                      onClick={() => setSavingPreset(true)}
+                      className="px-2.5 py-1 rounded-full text-[13px] text-muted-foreground/80 hover:text-foreground border border-dashed border-border/70 hover:border-muted-foreground transition-colors duration-150 cursor-pointer"
                     >
-                      <Save className="h-3 w-3" />
-                      update preset
+                      <Plus className="h-3.5 w-3.5 inline mr-1" />
+                      new preset
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => { setEditingPresetId(selectedPreset.id); setEditPresetName(selectedPreset.name); }}
-                    className="flex items-center gap-1 hover:text-foreground cursor-pointer transition-colors"
-                  >
-                    <Pencil className="h-3 w-3" />
-                    rename
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDeletePreset(selectedPreset.id)}
-                    className="flex items-center gap-1 hover:text-red-400 cursor-pointer transition-colors"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                    delete
-                  </button>
                 </div>
-              );
-            }
-            return null;
+
+                {/* Inline create form — not scoped to any pill, sits below the row. */}
+                {savingPreset && onCreatePreset && (
+                  <form onSubmit={(e) => { e.preventDefault(); handleCreatePreset(); }} className="flex items-center gap-1.5">
+                    <Input
+                      value={newPresetName}
+                      onChange={(e) => setNewPresetName(e.target.value)}
+                      placeholder="preset name"
+                      className="h-7 w-28 text-[11px] px-2 bg-background border-border"
+                      autoFocus
+                    />
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button type="submit" className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"><Save className="h-3.5 w-3.5" /></button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>save preset</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <button type="button" onClick={() => { setSavingPreset(false); setNewPresetName(''); }} className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"><X className="h-3.5 w-3.5" /></button>
+                  </form>
+                )}
+              </>
+            );
           })()}
         </div>
 

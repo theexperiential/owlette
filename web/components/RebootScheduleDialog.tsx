@@ -344,32 +344,154 @@ export default function RebootScheduleDialog({
           </DialogHeader>
 
           <div className="space-y-5 py-2">
-            {/* Preset bar */}
-            <div className="space-y-2">
+            {/* Preset bar.
+                Each pill sits in a `relative` wrapper; the per-pill action
+                row (update/rename/delete) or inline rename/delete-confirm is
+                absolutely positioned under it and centered horizontally, so
+                the actions read as belonging to that specific chip without
+                stretching the pill's flex slot. The row reserves `pb-10`
+                when a panel is attached so the next section doesn't collide
+                with the overlay. */}
+            <div className="space-y-1.5">
               <Label className="text-sm text-muted-foreground">presets</Label>
-              <div className="flex flex-wrap items-center gap-1.5">
+              <div
+                className={`flex flex-wrap items-start gap-x-1.5 gap-y-2 ${
+                  selectedPreset && !selectedPreset.isBuiltIn && !savingNewPreset && !pendingReplacePreset ? 'pb-10' : ''
+                }`}
+              >
                 {presets.map(preset => {
                   const isActive = activePresetId === preset.id;
+                  const showActionRow =
+                    isActive &&
+                    selectedPreset &&
+                    !selectedPreset.isBuiltIn &&
+                    !savingNewPreset &&
+                    !pendingReplacePreset;
+                  const showRenameForm = showActionRow && editingPresetId === preset.id;
+                  const showDeleteConfirm = showActionRow && confirmDeletePresetId === preset.id;
+                  const showActions =
+                    showActionRow && !showRenameForm && !showDeleteConfirm;
                   return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => applyPreset(preset)}
-                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors cursor-pointer ${
-                        isActive
-                          ? 'bg-cyan-600 text-white'
-                          : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
-                      }`}
-                    >
-                      {preset.name}
-                    </button>
+                    <div key={preset.id} className="relative">
+                      <button
+                        type="button"
+                        onClick={() => applyPreset(preset)}
+                        className={`px-2.5 py-1 rounded-full text-[13px] font-medium transition-colors duration-150 cursor-pointer ${
+                          isActive
+                            ? 'bg-cyan-600/20 text-cyan-100 ring-1 ring-cyan-500/40'
+                            : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
+                        }`}
+                      >
+                        {preset.name}
+                      </button>
+
+                      {/* Per-pill inline rename form */}
+                      {showRenameForm && (
+                        <form
+                          onSubmit={(e) => { e.preventDefault(); handleRenamePreset(); }}
+                          className="absolute left-1/2 top-full z-10 mt-1 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap"
+                        >
+                          <Input
+                            value={editPresetName}
+                            onChange={(e) => setEditPresetName(e.target.value)}
+                            className="h-7 w-32 text-[11px] px-2 bg-background border-border"
+                            autoFocus
+                          />
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button type="submit" className="p-1 text-muted-foreground hover:text-foreground cursor-pointer">
+                                <Save className="h-3.5 w-3.5" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>save</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <button
+                            type="button"
+                            onClick={() => setEditingPresetId(null)}
+                            className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </form>
+                      )}
+
+                      {/* Per-pill two-step delete confirmation — destructive actions need a deliberate second click. */}
+                      {showDeleteConfirm && selectedPreset && (
+                        <div className="absolute left-1/2 top-full z-10 mt-1 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap text-[11px] leading-5">
+                          <span className="text-muted-foreground">delete &ldquo;{selectedPreset.name}&rdquo;?</span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await deletePreset(selectedPreset.id);
+                                setConfirmDeletePresetId(null);
+                                setActivePresetId(null);
+                                toast.success('preset deleted');
+                              } catch (err: unknown) {
+                                const message = err instanceof Error ? err.message : String(err);
+                                toast.error('failed to delete preset', { description: message });
+                              }
+                            }}
+                            className="flex items-center gap-1 px-2 py-0.5 rounded bg-red-600/20 text-red-400 hover:bg-red-600/40 hover:text-red-300 cursor-pointer transition-colors font-medium"
+                          >
+                            <Trash2 className="h-3 w-3" /> yes, delete
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeletePresetId(null)}
+                            className="px-2 py-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer transition-colors"
+                          >
+                            cancel
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Per-pill action row: update (when dirty) + rename + delete. */}
+                      {showActions && selectedPreset && (
+                        <div className="absolute left-1/2 top-full z-10 mt-1 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap text-[11px] leading-5 text-muted-foreground">
+                          {presetIsModified && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await updatePreset(selectedPreset.id, { entries });
+                                  toast.success('preset updated');
+                                } catch (err: unknown) {
+                                  const message = err instanceof Error ? err.message : String(err);
+                                  toast.error('failed to update preset', { description: message });
+                                }
+                              }}
+                              className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300 cursor-pointer transition-colors"
+                            >
+                              <Save className="h-3 w-3" /> update preset
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => { setEditingPresetId(selectedPreset.id); setEditPresetName(selectedPreset.name); }}
+                            className="flex items-center gap-1 hover:text-foreground cursor-pointer transition-colors"
+                          >
+                            <Pencil className="h-3 w-3" /> rename
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeletePresetId(selectedPreset.id)}
+                            className="flex items-center gap-1 hover:text-red-400 cursor-pointer transition-colors"
+                          >
+                            <Trash2 className="h-3 w-3" /> delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
                 {!savingNewPreset && (
                   <button
                     type="button"
                     onClick={() => setSavingNewPreset(true)}
-                    className="px-3 py-1.5 rounded-full text-sm text-muted-foreground hover:text-foreground border border-dashed border-border hover:border-muted-foreground transition-colors cursor-pointer"
+                    className="px-2.5 py-1 rounded-full text-[13px] text-muted-foreground/80 hover:text-foreground border border-dashed border-border/70 hover:border-muted-foreground transition-colors duration-150 cursor-pointer"
                   >
                     <Plus className="h-3.5 w-3.5 inline mr-1" />
                     new preset
@@ -377,7 +499,7 @@ export default function RebootScheduleDialog({
                 )}
               </div>
 
-              {/* Preset action row (rename/delete/save inline) */}
+              {/* Inline create form — not scoped to any one pill, sits below the row. */}
               {savingNewPreset && !pendingReplacePreset && (
                 <form onSubmit={(e) => { e.preventDefault(); handleCreatePreset(); }} className="flex items-center gap-1.5">
                   <Input
@@ -407,9 +529,11 @@ export default function RebootScheduleDialog({
                 </form>
               )}
 
-              {/* Inline replace-confirm — preset with this name already exists */}
+              {/* Inline replace-confirm — preset with this name already exists.
+                  Sits below the row; not scoped to the selected pill because the
+                  conflict is with a different preset (same name). */}
               {pendingReplacePreset && (
-                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <div className="flex flex-wrap items-center gap-2 text-[11px] leading-5">
                   <span className="text-muted-foreground">
                     preset &ldquo;{pendingReplacePreset.name}&rdquo; already exists. replace it?
                   </span>
@@ -423,101 +547,6 @@ export default function RebootScheduleDialog({
                   <button
                     type="button"
                     onClick={() => setPendingReplacePreset(null)}
-                    className="px-2 py-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer transition-colors"
-                  >
-                    cancel
-                  </button>
-                </div>
-              )}
-
-              {editingPresetId && (
-                <form onSubmit={(e) => { e.preventDefault(); handleRenamePreset(); }} className="flex items-center gap-1.5">
-                  <Input
-                    value={editPresetName}
-                    onChange={(e) => setEditPresetName(e.target.value)}
-                    className="h-7 w-32 text-[11px] px-2 bg-background border-border"
-                    autoFocus
-                  />
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button type="submit" className="p-1 text-muted-foreground hover:text-foreground cursor-pointer">
-                        <Save className="h-3.5 w-3.5" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>save</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <button
-                    type="button"
-                    onClick={() => setEditingPresetId(null)}
-                    className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </form>
-              )}
-
-              {selectedPreset && !selectedPreset.isBuiltIn && !editingPresetId && !savingNewPreset && confirmDeletePresetId !== selectedPreset.id && (
-                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                  {presetIsModified && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          await updatePreset(selectedPreset.id, { entries });
-                          toast.success('preset updated');
-                        } catch (err: unknown) {
-                          const message = err instanceof Error ? err.message : String(err);
-                          toast.error('failed to update preset', { description: message });
-                        }
-                      }}
-                      className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300 cursor-pointer transition-colors"
-                    >
-                      <Save className="h-3 w-3" /> update preset
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => { setEditingPresetId(selectedPreset.id); setEditPresetName(selectedPreset.name); }}
-                    className="flex items-center gap-1 hover:text-foreground cursor-pointer transition-colors"
-                  >
-                    <Pencil className="h-3 w-3" /> rename
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDeletePresetId(selectedPreset.id)}
-                    className="flex items-center gap-1 hover:text-red-400 cursor-pointer transition-colors"
-                  >
-                    <Trash2 className="h-3 w-3" /> delete
-                  </button>
-                </div>
-              )}
-
-              {/* Inline two-step delete confirmation — destructive actions need a deliberate second click. */}
-              {selectedPreset && confirmDeletePresetId === selectedPreset.id && (
-                <div className="flex items-center gap-2 text-[11px]">
-                  <span className="text-muted-foreground">delete preset &ldquo;{selectedPreset.name}&rdquo;?</span>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await deletePreset(selectedPreset.id);
-                        setConfirmDeletePresetId(null);
-                        setActivePresetId(null);
-                        toast.success('preset deleted');
-                      } catch (err: unknown) {
-                        const message = err instanceof Error ? err.message : String(err);
-                        toast.error('failed to delete preset', { description: message });
-                      }
-                    }}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-red-600/20 text-red-400 hover:bg-red-600/40 hover:text-red-300 cursor-pointer transition-colors font-medium"
-                  >
-                    <Trash2 className="h-3 w-3" /> yes, delete
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDeletePresetId(null)}
                     className="px-2 py-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer transition-colors"
                   >
                     cancel
