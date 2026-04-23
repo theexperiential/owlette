@@ -124,14 +124,27 @@ class DestinationAllowlist:
         build from a config dict. expected shape:
             {'agent_config': {'allowed_extract_roots': ['/path/a', '/path/b']}}
 
-        if either key is missing, returns a fail-closed (empty) allowlist.
+        policy:
+          - field missing entirely   → apply DEFAULT_ROOTS (the installer
+            hasn't seeded a per-site override, so fall back to the
+            documented default so roost works out of the box on v3.0+ agents).
+          - field present but empty  → fail-closed. explicit opt-out by an
+            admin who doesn't want the agent writing to disk.
+          - field present with items → use those items verbatim.
         """
         agent_config = config.get('agent_config') or {}
+        if 'allowed_extract_roots' not in agent_config:
+            logger.info(
+                f"destination_allowlist: 'allowed_extract_roots' not set in "
+                f"config — applying DEFAULT_ROOTS {DEFAULT_ROOTS}"
+            )
+            return cls(DEFAULT_ROOTS)
         roots = agent_config.get('allowed_extract_roots')
-        if roots is None:
+        if not roots:
             logger.warning(
-                "destination_allowlist: no 'allowed_extract_roots' in config — "
-                "fail-closed (rejects all paths). add the field to allow extraction."
+                "destination_allowlist: 'allowed_extract_roots' is empty — "
+                "fail-closed (rejects all paths). remove the field or add an "
+                "entry to allow extraction."
             )
         return cls(roots)
 

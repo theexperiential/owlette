@@ -40,16 +40,22 @@ def test_empty_roots_validate_raises_with_clear_message():
         allowlist.validate('/anything')
 
 
-def test_from_config_with_missing_agent_config_is_fail_closed():
-    """no agent_config key → empty allowlist → rejects everything."""
-    allowlist = DestinationAllowlist.from_config({})
-    assert not allowlist.is_allowed('/tmp/test')
+def test_from_config_with_missing_agent_config_applies_defaults(tmp_path, monkeypatch):
+    """no agent_config key → field unset → apply DEFAULT_ROOTS."""
+    # Point DEFAULT_ROOTS at tmp_path so the test doesn't depend on
+    # whether ~/Documents/Owlette exists on the CI runner.
+    import destination_allowlist as mod
+    monkeypatch.setattr(mod, 'DEFAULT_ROOTS', [str(tmp_path)])
+    allowlist = mod.DestinationAllowlist.from_config({})
+    assert allowlist.is_allowed(str(tmp_path / 'x' / 'y.toe'))
 
 
-def test_from_config_with_missing_allowed_extract_roots_is_fail_closed():
-    """agent_config exists but no allowed_extract_roots → reject all."""
-    allowlist = DestinationAllowlist.from_config({'agent_config': {}})
-    assert not allowlist.is_allowed('/tmp/test')
+def test_from_config_with_missing_allowed_extract_roots_applies_defaults(tmp_path, monkeypatch):
+    """agent_config exists but no allowed_extract_roots → apply DEFAULT_ROOTS."""
+    import destination_allowlist as mod
+    monkeypatch.setattr(mod, 'DEFAULT_ROOTS', [str(tmp_path)])
+    allowlist = mod.DestinationAllowlist.from_config({'agent_config': {}})
+    assert allowlist.is_allowed(str(tmp_path / 'x' / 'y.toe'))
 
 
 def test_from_config_with_explicit_empty_list_is_fail_closed():
