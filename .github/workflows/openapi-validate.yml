@@ -34,7 +34,10 @@ jobs:
 
       - name: install web deps
         working-directory: web
-        run: npm ci
+        # Matches `.github/workflows/e2e.yml`. `@ai-sdk/react@3.0.136` has a
+        # narrow peer range (`~19.1.2 || ^19.2.1`) that excludes our pinned
+        # `react@19.2.0`; plain `npm ci` fails ERESOLVE on a clean CI cache.
+        run: npm ci --legacy-peer-deps
 
       - name: validate openapi spec
         working-directory: web

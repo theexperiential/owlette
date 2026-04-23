@@ -1,39 +1,33 @@
 /**
- * Dispatch — rollback to manifest (D5.2, PARTIAL)
+ * Dispatch — rollback to manifest (D5.2)
  *
- * **Scope note**: the backing `/api/roosts/{roostId}/rollback` route
- * is a STUB gated on roost wave 2a.6 — it validates auth, superadmin
- * role, roost id, body shape, and site scope, but the firestore CAS
- * transaction that swaps `currentManifestId` hasn't been implemented
- * yet (returns 501, per `route.ts:67`).
+ * Covers `/api/roosts/{roostId}/rollback` end-to-end now that roost
+ * wave 2a.6 has landed (`feat(roost): replace folders API stubs with
+ * real roosts routes (cutover)`). The route runs a firestore CAS
+ * transaction that swaps `currentManifestId` to the target and pushes
+ * the old current onto `previousManifestId`.
  *
- * Until that wave lands, the "manifest currentId updated" assertion
- * from the plan can't be exercised end-to-end. This spec pins what IS
- * implemented — the auth + validation layers — so the route doesn't
- * silently regress while we wait.
- *
- * Role contract clarification discovered in iter 1: `requireAdminOrIdToken`
- * in `lib/apiAuth.server.ts:84` is a misnomer — it actually requires
- * `role === 'superadmin'` (line 103). Admin + member both 403 before
- * any site-scope check even runs. The roost admin endpoints are therefore
- * superadmin-only, matching the permission-model-split's platform-admin
- * carve-out for cross-cutting ops.
+ * Role contract: `requireAdminOrIdToken` in `lib/apiAuth.server.ts:84`
+ * is a misnomer — it actually requires `role === 'superadmin'` (line
+ * 103). Admin + member both 403 before any site-scope check even runs.
+ * The roost admin endpoints are therefore superadmin-only, matching
+ * the permission-model-split's platform-admin carve-out for cross-
+ * cutting ops.
  *
  * Uses the `page.evaluate(fetch)` pattern from B3.4 to preserve the
  * HttpOnly `__session` cookie Playwright's request context would
  * otherwise strip.
- *
- * When wave 2a.6 lands: flip the superadmin happy-path case from "501"
- * to "200 + Admin SDK confirms currentManifestId swapped", and add a
- * `[ ]` follow-up for end-to-end rollback.
  */
 
 import { test, expect, type Page } from '@playwright/test';
+import { Timestamp } from 'firebase-admin/firestore';
 import { roleState } from '../../helpers/roles';
+import { getAdminDb } from '../../helpers/emulator';
 
 const SITE_ID = 'site-A';
 const ROOST_ID = 'e2e-roost-folder';
 const TARGET_MANIFEST_ID = 'manifest-target-abc';
+const CURRENT_MANIFEST_ID = 'manifest-current-xyz';
 
 async function rollbackStatus(page: Page, body: Record<string, unknown>): Promise<number> {
   await page.goto('/login');
@@ -100,17 +94,44 @@ test.describe('rollback API — superadmin', () => {
     expect(status).toBe(400);
   });
 
-  test('valid body lands on the not-implemented stub (503)', async ({ page }) => {
-    // Full path through auth + role gate + body validation + site scope.
-    // The route's `notImplementedYet` returns 503 Service Unavailable
-    // (NOT 501, which is a common misread — 503 communicates "we know
-    // about this endpoint but can't serve it right now").
-    // Once roost wave 2a.6 lands, flip this to 200 + Admin SDK read of
-    // the swapped currentManifestId.
+  test('valid body atomically swaps currentManifestId (200)', async ({ page }) => {
+    // Full path: auth + role gate + body validation + site scope +
+    // firestore CAS transaction. Seed a roost with an explicit current
+    // manifest and the target manifest in its history, dispatch the
+    // rollback, then verify via Admin SDK that `currentManifestId`
+    // flipped to the target and `previousManifestId` captured the
+    // prior current.
+    const db = getAdminDb();
+    const roostRef = db
+      .collection('sites')
+      .doc(SITE_ID)
+      .collection('roosts')
+      .doc(ROOST_ID);
+
+    await roostRef.set({
+      currentManifestId: CURRENT_MANIFEST_ID,
+      previousManifestId: null,
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    await Promise.all(
+      [CURRENT_MANIFEST_ID, TARGET_MANIFEST_ID].map((id) =>
+        roostRef.collection('manifests').doc(id).set({
+          schemaVersion: 1,
+          createdAt: Timestamp.now(),
+        }),
+      ),
+    );
+
     const status = await rollbackStatus(page, {
       siteId: SITE_ID,
       targetManifestId: TARGET_MANIFEST_ID,
     });
-    expect(status).toBe(503);
+    expect(status).toBe(200);
+
+    const after = (await roostRef.get()).data() ?? {};
+    expect(after.currentManifestId).toBe(TARGET_MANIFEST_ID);
+    expect(after.previousManifestId).toBe(CURRENT_MANIFEST_ID);
+    expect(after.rolledBackFrom).toBe(CURRENT_MANIFEST_ID);
   });
 });

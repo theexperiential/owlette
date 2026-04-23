@@ -95,7 +95,12 @@ test('apply deadline expires without ack — banner clears + auto-revert toast f
   await expect(confirmDialog).toBeVisible();
   await confirmDialog.getByRole('button', { name: /^recall$/i }).click();
 
-  const banner = panel.getByRole('status');
+  // DisplayLayoutPanel has two role="status" elements: the ack banner
+  // and the loading spinner (aria-label="loading displays"). A recall
+  // dispatch can re-flip `loading` on the display hook mid-tick, so
+  // `getByRole('status')` alone hits a strict-mode violation. Scope to
+  // the banner via its distinctive text.
+  const banner = panel.getByRole('status').filter({ hasText: /keep this layout/i });
   await expect(banner).toBeVisible();
   await expect(banner).toContainText(/keep this layout\? auto-revert in \d+s/);
 
