@@ -889,24 +889,33 @@ export default function ProjectDistributionDialog({
                   throughput !== undefined &&
                   eta !== undefined &&
                   (uploadProgress.phase === 'hashing' || uploadProgress.phase === 'uploading');
+                // Friendlier label for the opaque "checking" phase.
+                const phaseCopy =
+                  uploadProgress.phase === 'checking'
+                    ? 'checking for duplicates'
+                    : uploadProgress.phase;
                 return (
                   <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="font-medium text-white">
-                        {uploadProgress.phase}
-                      </span>
-                      {pct !== null && (
-                        <span className="text-muted-foreground tabular-nums">{pct}%</span>
-                      )}
+                    <div className="flex items-baseline gap-2">
+                      <span className="font-medium text-white">{phaseCopy}</span>
                     </div>
-                    {/* thin track — 3px, aligns with the roost-row overall bar
-                        so the upload→sync transition feels continuous. */}
+                    {/* bar + % on one row — ratio reads at a glance, track is
+                        a darker bg-background + subtle border so unfilled
+                        portion is clearly visible on the dialog's bg-muted/20
+                        panel. aligned with MinimizedUploadCard. */}
                     {frac !== undefined && !isError && (
-                      <div className="mt-1.5 h-[3px] w-full overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full bg-accent-cyan transition-[width] duration-200 ease-out"
-                          style={{ width: `${Math.max(0, Math.min(1, frac)) * 100}%` }}
-                        />
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <div className="h-[4px] flex-1 overflow-hidden rounded-full bg-background border border-border/40">
+                          <div
+                            className="h-full bg-accent-cyan transition-[width] duration-200 ease-out"
+                            style={{ width: `${Math.max(0, Math.min(1, frac)) * 100}%` }}
+                          />
+                        </div>
+                        {pct !== null && (
+                          <span className="text-muted-foreground tabular-nums flex-shrink-0 min-w-[2.5rem] text-right">
+                            {pct}%
+                          </span>
+                        )}
                       </div>
                     )}
                     {showRate && throughput !== undefined && eta !== undefined && (

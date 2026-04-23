@@ -46,7 +46,7 @@ function phaseLabel(phase: string): string {
     case 'hashing':
       return 'hashing';
     case 'checking':
-      return 'checking';
+      return 'checking for duplicates';
     case 'uploading':
       return 'uploading';
     case 'finalizing':
@@ -179,15 +179,10 @@ export function MinimizedUploadCard({ upload, onRestore }: MinimizedUploadCardPr
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-baseline justify-between gap-2">
+            <div className="flex items-baseline gap-2">
               <span className="text-[13px] font-medium text-white truncate">
                 {isError ? 'upload failed' : isSuccess ? 'synced' : name}
               </span>
-              {pct !== null && !isError && !isSuccess && !isCancelled && (
-                <span className="text-[11px] text-muted-foreground tabular-nums flex-shrink-0">
-                  {pct}%
-                </span>
-              )}
             </div>
 
             {!isError && !isSuccess && !isCancelled && (
@@ -207,11 +202,21 @@ export function MinimizedUploadCard({ upload, onRestore }: MinimizedUploadCardPr
                     </>
                   )}
                 </div>
-                <div className="mt-1.5 h-[3px] w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full bg-accent-cyan transition-[width] duration-200 ease-out"
-                    style={{ width: `${frac !== undefined ? Math.max(0, Math.min(1, frac)) * 100 : 0}%` }}
-                  />
+                {/* bar + % on one row so the ratio is easy to read at a
+                    glance. darker track (bg-background + subtle border)
+                    sits visibly on the card's bg-secondary panel. */}
+                <div className="mt-1.5 flex items-center gap-2">
+                  <div className="h-[4px] flex-1 overflow-hidden rounded-full bg-background border border-border/40">
+                    <div
+                      className="h-full bg-accent-cyan transition-[width] duration-200 ease-out"
+                      style={{ width: `${frac !== undefined ? Math.max(0, Math.min(1, frac)) * 100 : 0}%` }}
+                    />
+                  </div>
+                  {pct !== null && (
+                    <span className="text-[10px] text-muted-foreground tabular-nums flex-shrink-0 min-w-[2.5rem] text-right">
+                      {pct}%
+                    </span>
+                  )}
                 </div>
               </>
             )}
