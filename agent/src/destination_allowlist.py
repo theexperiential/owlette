@@ -154,6 +154,32 @@ def _resolve_interactive_home() -> Optional[str]:
     return None
 
 
+def get_interactive_username() -> Optional[str]:
+    """
+    Public accessor for the detected interactive username — the `admin`
+    in `C:\\Users\\admin`, derived by `_resolve_interactive_home`.
+    Used by the assembler to include the operator in file DACLs so
+    extracted files are readable from the user's desktop session.
+
+    Returns None when:
+      - Not running on Windows, or
+      - Not running as LocalSystem (no redirection happened), or
+      - No interactive user could be identified (fell back to Public).
+
+    In those cases the caller should keep its existing ACL policy
+    without trying to add a user ACE.
+    """
+    if not _running_as_system():
+        return None
+    home = _get_interactive_home()
+    if home == _WINDOWS_SYSTEM_FALLBACK_HOME:
+        return None
+    # Profile directory name equals the username in every mainstream
+    # Windows configuration. DOMAIN\user profiles still resolve to
+    # `C:\Users\user`, which is what LookupAccountName wants anyway.
+    return Path(home).name or None
+
+
 def _get_interactive_home() -> str:
     """Memoised wrapper around `_resolve_interactive_home` + fallback."""
     global _cached_interactive_home_state

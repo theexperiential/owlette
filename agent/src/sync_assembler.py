@@ -192,6 +192,11 @@ def _assemble_one(
     if resolved_target.exists():
         try:
             if resolved_target.stat().st_size == manifest_file.size:
+                # Re-harden ACL even on skip — an operator re-sync after
+                # an agent upgrade is how stale DACLs (e.g. pre-operator-ACE
+                # hardening from earlier builds) get fixed. _harden_acl is
+                # a single syscall; cheap enough to run unconditionally.
+                _harden_acl(_long_path(str(resolved_target)))
                 state.set_file_state(distribution_id, manifest_file.path, 'committed')
                 logger.debug(f"sync_assembler: {manifest_file.path!r} already present + matches size")
                 return False
@@ -395,9 +400,10 @@ def _quarantine_delete(path: 'Path') -> None:
 
 def _harden_acl(path_str: str) -> None:
     """
-    set explicit DACL: SYSTEM (full) + Administrators (full), inheritance
-    stripped. windows-only; no-op on POSIX. best-effort: failure logs a
-    warning but doesn't raise (the file is on disk, show must keep playing).
+    set explicit DACL: SYSTEM (full) + Administrators (full) + the
+    interactive operator (modify, if detectable), inheritance stripped.
+    windows-only; no-op on POSIX. best-effort: failure logs a warning
+    but doesn't raise (the file is on disk, show must keep playing).
 
     win32security is deferred-imported so test environments without pywin32
     can still load this module. ImportError → skip silently (covered by the
@@ -405,8 +411,16 @@ def _harden_acl(path_str: str) -> None:
     assumes ACLs land on production machines that have pywin32 installed).
 
     threat addressed (B-class baseline): default windows ACL inheritance on
-    multi-user kiosks would let any local user read/modify assembled .toe
-    files (potential malicious-payload swap or IP exfiltration).
+    multi-user kiosks would let ANY local user read/modify assembled .toe
+    files (potential malicious-payload swap or IP exfiltration). We scope
+    access to SYSTEM + admins + the single operator account.
+
+    UX requirement: the interactive user must be able to open extracted
+    files from their desktop session (Photos, TouchDesigner, file
+    explorer) without elevation. Admins-group membership isn't enough on
+    Win10/11 because UAC hands non-elevated processes a filtered token
+    with the Admins SID stripped — without an explicit user ACE, those
+    processes see ACCESS_DENIED.
     """
     if os.name != 'nt':
         return
@@ -417,13 +431,45 @@ def _harden_acl(path_str: str) -> None:
         # pywin32 not installed (test env on non-windows, etc.) — skip.
         return
     try:
-        # build a fresh DACL: SYSTEM + Administrators get full control,
-        # NO other ACEs (everyone else implicitly denied since DACL is exclusive).
+        # build a fresh DACL: SYSTEM + Administrators full control, the
+        # interactive operator (if detected) MODIFY. No other ACEs —
+        # everyone else is implicitly denied since DACL is now exclusive.
         dacl = ws.ACL()
         system_sid, _, _ = ws.LookupAccountName('', 'SYSTEM')
         admins_sid, _, _ = ws.LookupAccountName('', 'Administrators')
         dacl.AddAccessAllowedAce(ws.ACL_REVISION, ntcon.GENERIC_ALL, system_sid)
         dacl.AddAccessAllowedAce(ws.ACL_REVISION, ntcon.GENERIC_ALL, admins_sid)
+
+        # Grant the operator MODIFY (read + write + delete, NOT take
+        # ownership / change permissions). Best-effort: if the username
+        # can't be resolved the DACL still works, just without the
+        # user-specific ACE — same as the pre-UX-fix behaviour.
+        try:
+            from destination_allowlist import get_interactive_username
+            username = get_interactive_username()
+        except ImportError:
+            username = None
+        if username:
+            try:
+                user_sid, _, _ = ws.LookupAccountName('', username)
+                # MODIFY = read+write+delete. Excludes WRITE_DAC (change
+                # perms) and WRITE_OWNER so the operator can't undo the
+                # hardening. Matches Windows "Modify" permission set.
+                MODIFY = (
+                    ntcon.FILE_GENERIC_READ
+                    | ntcon.FILE_GENERIC_WRITE
+                    | ntcon.FILE_GENERIC_EXECUTE
+                    | ntcon.DELETE
+                )
+                dacl.AddAccessAllowedAce(ws.ACL_REVISION, MODIFY, user_sid)
+            except Exception as e:
+                # LookupAccountName fails on detached / renamed accounts.
+                # Log once per file — rare and the user can still open via
+                # an elevated shell; better than failing the whole sync.
+                logger.warning(
+                    f"sync_assembler: couldn't add operator {username!r} to DACL "
+                    f"for {path_str!r}: {e}"
+                )
 
         sd = ws.GetFileSecurity(path_str, ws.DACL_SECURITY_INFORMATION)
         # SetSecurityDescriptorDacl(present=True, dacl=..., defaulted=False)
