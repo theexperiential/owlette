@@ -35,7 +35,7 @@ import os
 import stat
 import sys
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +47,30 @@ logger = logging.getLogger(__name__)
 # account (the default for the OwletteService), raw expansion would
 # land in `C:\Windows\System32\config\systemprofile\...` — correctly
 # rejected by `_is_dangerous_root` but leaving the allowlist empty.
-# Safe expander redirects `~` to `C:\Users\Public` under SYSTEM so
-# files land somewhere any logged-in user can actually find.
+# Safe expander resolves `~` to the interactive user's profile
+# (auto-login user if set, else most-recently-active non-system profile)
+# so files land where the operator expects — their own Documents folder —
+# instead of stranded under Public.
 DEFAULT_ROOTS: List[str] = ['~/Documents/Owlette']
 
-# Windows path used in place of the SYSTEM account's profile when
-# resolving `~`. `Public` is writable by SYSTEM, visible in File
-# Explorer for every user, and not under System32.
-_WINDOWS_SYSTEM_SAFE_HOME = r'C:\Users\Public'
+# Last-resort home when running as SYSTEM and we can't identify any
+# interactive user profile. `Public` is writable by SYSTEM, visible to
+# every user in File Explorer, and not under System32.
+_WINDOWS_SYSTEM_FALLBACK_HOME = r'C:\Users\Public'
+
+# Windows user directories we must NEVER treat as the interactive user
+# when scanning C:\Users\. Case-insensitive.
+_WINDOWS_PROFILE_EXCLUDES = frozenset({
+    'public', 'default', 'default user', 'defaultappgroup',
+    'all users', 'systemprofile', 'networkservice', 'localservice',
+})
+
+# Memoised result of `_resolve_interactive_home` — the logged-in user
+# doesn't change across a single service run on kiosk machines, so
+# skip the registry + filesystem scan on every path expansion.
+_cached_interactive_home: Optional[str] = None
+_cached_interactive_home_sentinel = object()  # distinguish "not cached" from "cached None"
+_cached_interactive_home_state: Any = _cached_interactive_home_sentinel
 
 
 def _running_as_system() -> bool:
@@ -68,12 +84,100 @@ def _running_as_system() -> bool:
     return 'system32' in profile.lower() and 'systemprofile' in profile.lower()
 
 
+def _resolve_interactive_home() -> Optional[str]:
+    """
+    Find the primary interactive user's profile directory — the one an
+    operator would expect `~` to resolve to on a kiosk / signage / media
+    server. Resolution order:
+
+      1. Auto-login user from HKLM\\…\\Winlogon\\DefaultUserName. Kiosks
+         run with auto-login ("password never expires" is standard per
+         the installation checklist), so this is the authoritative
+         signal when present.
+      2. Most-recently-modified profile under C:\\Users\\ excluding
+         system / default / public. Covers workstations without auto-login.
+
+    Returns None if nothing usable is found — caller falls back to
+    C:\\Users\\Public. Never raises.
+    """
+    if sys.platform != 'win32':
+        return None
+
+    # 1. auto-login default user
+    try:
+        import winreg
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon',
+        ) as k:
+            try:
+                name, _ = winreg.QueryValueEx(k, 'DefaultUserName')
+                if isinstance(name, str) and name.strip():
+                    # DefaultUserName can be `DOMAIN\user` — take the bare username.
+                    bare = name.strip().split('\\')[-1]
+                    candidate = Path('C:/Users') / bare
+                    if candidate.is_dir():
+                        resolved = str(candidate)
+                        logger.info(
+                            f"destination_allowlist: resolved `~` via auto-login "
+                            f"DefaultUserName → {resolved}"
+                        )
+                        return resolved
+            except FileNotFoundError:
+                pass  # key exists but no DefaultUserName value
+    except (OSError, ImportError):
+        pass
+
+    # 2. most recently modified non-system profile under C:\Users\
+    try:
+        users_dir = Path('C:/Users')
+        best: Optional[tuple] = None  # (mtime, path)
+        for entry in users_dir.iterdir():
+            if not entry.is_dir():
+                continue
+            if entry.name.lower() in _WINDOWS_PROFILE_EXCLUDES:
+                continue
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                continue
+            if best is None or mtime > best[0]:
+                best = (mtime, str(entry))
+        if best is not None:
+            logger.info(
+                f"destination_allowlist: resolved `~` via most-recent-profile → {best[1]}"
+            )
+            return best[1]
+    except OSError:
+        pass
+
+    return None
+
+
+def _get_interactive_home() -> str:
+    """Memoised wrapper around `_resolve_interactive_home` + fallback."""
+    global _cached_interactive_home_state
+    if _cached_interactive_home_state is _cached_interactive_home_sentinel:
+        resolved = _resolve_interactive_home()
+        if resolved is None:
+            logger.warning(
+                f"destination_allowlist: could not identify an interactive user "
+                f"under C:\\Users\\ — falling back to {_WINDOWS_SYSTEM_FALLBACK_HOME!r}. "
+                f"Files will be visible to every user but not under any specific "
+                f"user's Documents."
+            )
+            resolved = _WINDOWS_SYSTEM_FALLBACK_HOME
+        _cached_interactive_home_state = resolved
+    return _cached_interactive_home_state
+
+
 def _safe_expanduser(path: str) -> str:
     """
     Like `os.path.expanduser`, but under the Windows LocalSystem account
-    we redirect `~` to `C:\\Users\\Public` instead of
-    `C:\\Windows\\System32\\config\\systemprofile`. Other platforms and
-    non-SYSTEM Windows users behave exactly like the stdlib.
+    we redirect `~` to the interactive user's profile (or C:\\Users\\Public
+    as a last resort) instead of C:\\Windows\\System32\\config\\systemprofile.
+    Other platforms and non-SYSTEM Windows users behave exactly like the
+    stdlib.
 
     Only the leading `~` is substituted — a literal `~` in the middle of
     a path stays untouched, matching stdlib semantics.
@@ -82,11 +186,11 @@ def _safe_expanduser(path: str) -> str:
         return path
     if not _running_as_system():
         return os.path.expanduser(path)
-    # Only leading-tilde forms need redirection.
+    home = _get_interactive_home()
     if path == '~':
-        return _WINDOWS_SYSTEM_SAFE_HOME
+        return home
     if path.startswith('~/') or path.startswith('~\\'):
-        return _WINDOWS_SYSTEM_SAFE_HOME + path[1:]
+        return home + path[1:]
     # `~user/...` — let stdlib handle; if `user` doesn't exist, it leaves
     # the path unchanged (desired).
     return os.path.expanduser(path)
