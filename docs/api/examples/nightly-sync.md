@@ -1,0 +1,339 @@
+# nightly directory sync
+
+a node script that runs nightly on a build box, walks a local directory, diffs against the roost's currently published manifest, and publishes a new manifest only if something actually changed. most nights nothing has changed — the script must not publish empty manifests or burn quota. on `quota_exceeded` it emails an alert; structured logs go to stdout for systemd journald / windows event log capture.
+
+## required env vars
+
+- `ROOST_TOKEN` — api key with `roost:<id>:write` + `site:<id>:read` scope.
+- `ROOST_BASE` — `https://owlette.app` (prod) or `https://dev.owlette.app`.
+- `ROOST_ID` — target roost id.
+- `ROOST_SITE_ID` — site id hosting the roost.
+- `WATCH_DIR` — absolute path to the local tree to sync (e.g. `/mnt/creative/latest`).
+- `ALERT_EMAIL_TO` — comma-separated recipients for the quota alert.
+- `ALERT_EMAIL_FROM` — sender address configured in your mail relay.
+- `MAIL_RELAY_URL` — http endpoint of your internal mail service (e.g. `https://mail.internal/send`).
+
+## `nightly-sync.mjs`
+
+```js
+#!/usr/bin/env node
+// nightly-sync.mjs — node >=20
+// usage: node nightly-sync.mjs
+// exits: 0 = ok (published or no-op), 1 = recoverable failure, 2 = quota exceeded
+
+import { readdir, readFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import path from 'node:path';
+
+const {
+  ROOST_TOKEN, ROOST_BASE, ROOST_ID, ROOST_SITE_ID, WATCH_DIR,
+  ALERT_EMAIL_TO, ALERT_EMAIL_FROM, MAIL_RELAY_URL,
+} = process.env;
+
+for (const k of ['ROOST_TOKEN', 'ROOST_BASE', 'ROOST_ID', 'ROOST_SITE_ID', 'WATCH_DIR']) {
+  if (!process.env[k]) { log('fatal', 'missing env var', { var: k }); process.exit(1); }
+}
+
+const ROOST_VERSION = '2026-04-22';
+const H = {
+  authorization: `Bearer ${ROOST_TOKEN}`,
+  'roost-version': ROOST_VERSION,
+  'content-type': 'application/json',
+};
+
+function log(level, msg, extra = {}) {
+  // structured one-line json for journald / event-log ingestion
+  process.stdout.write(JSON.stringify({
+    ts: new Date().toISOString(), level, msg,
+    component: 'nightly-sync', roostId: ROOST_ID, ...extra,
+  }) + '\n');
+}
+
+async function api(pathAndQuery, init = {}) {
+  const res = await fetch(`${ROOST_BASE}${pathAndQuery}`, {
+    ...init,
+    headers: { ...H, ...(init.headers || {}) },
+  });
+  const bodyText = await res.text();
+  const body = bodyText ? JSON.parse(bodyText) : {};
+  if (!res.ok) {
+    const err = new Error(`${res.status} ${body.code || res.statusText}`);
+    err.status = res.status;
+    err.code = body.code;
+    err.detail = body.detail;
+    err.body = body;
+    throw err;
+  }
+  return body;
+}
+
+async function walk(dir) {
+  const out = [];
+  for (const ent of await readdir(dir, { withFileTypes: true })) {
+    const p = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      out.push(...await walk(p));
+    } else if (ent.isFile()) {
+      const buf = await readFile(p);
+      out.push({
+        path: path.relative(WATCH_DIR, p).replaceAll(path.sep, '/'),
+        hash: 'sha256:' + createHash('sha256').update(buf).digest('hex'),
+        size: buf.length,
+        abs: p,
+      });
+    }
+  }
+  return out;
+}
+
+async function emailAlert(subject, body) {
+  if (!MAIL_RELAY_URL || !ALERT_EMAIL_TO) {
+    log('warn', 'mail relay not configured, cannot send alert', { subject });
+    return;
+  }
+  try {
+    await fetch(MAIL_RELAY_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        from: ALERT_EMAIL_FROM,
+        to: ALERT_EMAIL_TO.split(',').map(s => s.trim()),
+        subject, text: body,
+      }),
+    });
+    log('info', 'alert email sent', { subject });
+  } catch (e) {
+    log('error', 'alert email failed', { error: String(e) });
+  }
+}
+
+function buildOciManifest(files) {
+  const configBody = JSON.stringify({ syncedAt: new Date().toISOString(), source: WATCH_DIR });
+  const configDigest = 'sha256:' + createHash('sha256').update(configBody).digest('hex');
+  return {
+    schemaVersion: 2,
+    mediaType: 'application/vnd.owlette.manifest.v1+json',
+    config: {
+      mediaType: 'application/vnd.owlette.roost.config.v1+json',
+      digest: configDigest,
+      size: Buffer.byteLength(configBody),
+    },
+    layers: files.map(f => ({
+      mediaType: 'application/vnd.owlette.file.v1',
+      path: f.path,
+      digest: f.hash,
+      size: f.size,
+    })),
+  };
+}
+
+async function main() {
+  log('info', 'nightly sync started', { watchDir: WATCH_DIR });
+
+  // 1. fetch current roost head
+  const roost = await api(`/api/roosts/${ROOST_ID}`);
+  const currentManifestId = roost.currentManifestId;
+
+  // 2. fetch current manifest file list (paginated)
+  const currentMap = new Map();
+  if (currentManifestId) {
+    let pageToken = '';
+    do {
+      const url = `/api/roosts/${ROOST_ID}/manifests/${currentManifestId}/files?page_size=1000${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''}`;
+      const page = await api(url);
+      for (const f of page.items) currentMap.set(f.path, f.digest);
+      pageToken = page.next_page_token;
+    } while (pageToken);
+  }
+
+  // 3. walk local tree + compute diff
+  const local = await walk(WATCH_DIR);
+  const localPaths = new Set(local.map(f => f.path));
+  const changed = local.filter(f => currentMap.get(f.path) !== f.hash);
+  const removed = [...currentMap.keys()].filter(p => !localPaths.has(p));
+
+  if (changed.length === 0 && removed.length === 0) {
+    log('info', 'no changes, skipping publish', {
+      localFiles: local.length, currentFiles: currentMap.size,
+    });
+    process.exit(0);
+  }
+  log('info', 'diff computed', {
+    changed: changed.length, removed: removed.length, totalLocal: local.length,
+  });
+
+  // 4. dedup-check changed chunks (batches of 1000)
+  const changedHashes = [...new Set(changed.map(c => c.hash))];
+  const missing = [];
+  for (let i = 0; i < changedHashes.length; i += 1000) {
+    const batch = changedHashes.slice(i, i + 1000);
+    const { missing: batchMissing } = await api('/api/chunks/check', {
+      method: 'POST',
+      body: JSON.stringify({ siteId: ROOST_SITE_ID, hashes: batch }),
+    });
+    missing.push(...batchMissing);
+  }
+  log('info', 'dedup check', {
+    changedHashes: changedHashes.length, missing: missing.length,
+  });
+
+  // 5. upload missing chunks
+  if (missing.length) {
+    for (let i = 0; i < missing.length; i += 1000) {
+      const batch = missing.slice(i, i + 1000);
+      const { urls } = await api('/api/chunks/upload-urls', {
+        method: 'POST',
+        headers: { 'idempotency-key': randomUUID() },
+        body: JSON.stringify({ siteId: ROOST_SITE_ID, hashes: batch }),
+      });
+      for (const h of batch) {
+        const file = changed.find(c => c.hash === h);
+        const put = await fetch(urls[h], {
+          method: 'PUT',
+          headers: { 'content-type': 'application/octet-stream' },
+          body: await readFile(file.abs),
+        });
+        if (!put.ok) throw new Error(`r2 put failed for ${h}: ${put.status}`);
+      }
+      log('info', 'uploaded batch', { count: batch.length });
+    }
+  }
+
+  // 6. publish new manifest (cas-guarded via expectedCurrentManifestId)
+  const manifest = buildOciManifest(local);
+  const publish = await api(`/api/roosts/${ROOST_ID}/manifests`, {
+    method: 'POST',
+    headers: {
+      'idempotency-key': randomUUID(),
+      ...(currentManifestId ? { 'if-match': currentManifestId } : {}),
+    },
+    body: JSON.stringify({
+      siteId: ROOST_SITE_ID,
+      manifest,
+      ...(currentManifestId ? { expectedCurrentManifestId: currentManifestId } : {}),
+    }),
+  });
+  log('info', 'manifest published', {
+    manifestId: publish.manifestId,
+    totalFiles: local.length,
+    changed: changed.length,
+    removed: removed.length,
+  });
+}
+
+try {
+  await main();
+  process.exit(0);
+} catch (e) {
+  if (e.code === 'quota_exceeded') {
+    log('error', 'quota exceeded', { detail: e.detail });
+    await emailAlert(
+      `[roost] quota exceeded on ${ROOST_SITE_ID}`,
+      `the nightly sync for roost ${ROOST_ID} hit a storage/bandwidth quota limit.\n\n` +
+      `detail: ${e.detail}\nsite: ${ROOST_SITE_ID}\n\nsee ${ROOST_BASE}/sites/${ROOST_SITE_ID}/quota`,
+    );
+    process.exit(2);
+  }
+  if (e.code === 'precondition_failed') {
+    log('warn', 'cas miss — another publish happened concurrently, will retry tomorrow', { detail: e.detail });
+    process.exit(1);
+  }
+  log('error', 'sync failed', { status: e.status, code: e.code, detail: e.detail });
+  process.exit(1);
+}
+```
+
+the script is structured as six sequential api interactions: read roost head, enumerate current manifest, walk local, dedup-check, upload missing, publish. every step emits a structured json log line with `ts`, `level`, `msg`, and relevant metadata, so journald's default json detector indexes each field for `journalctl -o json -u roost-nightly-sync.service`-style queries. a no-op night logs two lines (`started`, `no changes`) and exits 0 — cheap enough to run without rate-limit worries.
+
+## systemd timer (linux)
+
+drop these two unit files under `/etc/systemd/system/` and enable with `sudo systemctl enable --now roost-nightly-sync.timer`.
+
+### `/etc/systemd/system/roost-nightly-sync.service`
+
+```ini
+[Unit]
+Description=roost nightly sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=roost
+WorkingDirectory=/opt/roost-sync
+EnvironmentFile=/etc/roost-sync.env
+ExecStart=/usr/bin/node /opt/roost-sync/nightly-sync.mjs
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=30min
+```
+
+### `/etc/systemd/system/roost-nightly-sync.timer`
+
+```ini
+[Unit]
+Description=run roost nightly sync at 03:00 local time
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=15min
+Persistent=true
+Unit=roost-nightly-sync.service
+
+[Install]
+WantedBy=timers.target
+```
+
+`EnvironmentFile=/etc/roost-sync.env` holds the `ROOST_TOKEN=...` etc. lock that file down to `chmod 0600`. `RandomizedDelaySec=15min` spreads load for operators running this on many boxes.
+
+## windows scheduled task (alternative)
+
+save as `roost-nightly-sync.xml` and import with `schtasks /create /tn "roost nightly sync" /xml roost-nightly-sync.xml`.
+
+```xml
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>roost nightly sync</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2026-04-22T03:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+      <RandomDelay>PT15M</RandomDelay>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>S-1-5-18</UserId>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <ExecutionTimeLimit>PT30M</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>C:\Program Files\nodejs\node.exe</Command>
+      <Arguments>C:\roost-sync\nightly-sync.mjs</Arguments>
+      <WorkingDirectory>C:\roost-sync</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+```
+
+set the env vars machine-wide via `setx /M` or inject them through a small wrapper `.cmd` if you prefer keeping secrets out of the registry. task scheduler captures stdout/stderr to the event log when you run under `S-1-5-18` (local system) — the json lines are searchable via `Get-WinEvent -LogName "Microsoft-Windows-TaskScheduler/Operational"`.
+
+## error handling summary
+
+- `precondition_failed` (412) on publish — someone else published between the `GET /api/roosts/{id}` and the `POST .../manifests`. script exits 1, the operator's alerting picks up the failed unit, next night's run tries again against the new head.
+- `quota_exceeded` (402) — script emails ops with a direct link to the quota dashboard. exit code 2 is distinct from 1 so an operator's `OnFailure=` unit can escalate differently.
+- `rate_limited` (429) — not explicitly handled; at this endpoint volume (1 roost/night) it won't trigger. for fleets syncing hundreds of roosts from one host, add a `Retry-After`-aware retry loop around `api()`.
+- `chunk_not_found` during a later download (not this script's concern) — gc ran on an orphan; safe because the next nightly run re-uploads missing chunks.
