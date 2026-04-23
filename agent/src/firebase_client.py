@@ -1944,6 +1944,48 @@ class FirebaseClient:
             )
         return urls
 
+    def get_manifest_download_url(self, roost_id: str, manifest_id: str) -> str:
+        """
+        Mint a fresh short-lived signed GET URL for a manifest JSON body.
+
+        Manifest URLs are only valid for 15 min, so a URL baked into the
+        roost doc at publish time is usually already expired by the time
+        a canary wave starts. Each sync_pull attempt calls this to get a
+        fresh URL just before the fetch — matches the per-chunk pattern.
+
+        Args:
+            roost_id: the roost this manifest belongs to.
+            manifest_id: the 64-char SHA-256 hex id of the manifest.
+
+        Returns:
+            A signed GET URL the agent can fetch directly.
+
+        Raises:
+            requests.RequestException on network/HTTP failure.
+            ValueError if the response shape is malformed.
+        """
+        token = self.auth_manager.get_valid_token()
+        api_base = shared_utils.get_api_base_url()
+        import requests
+        resp = requests.post(
+            f"{api_base}/roosts/{roost_id}/manifest-url",
+            json={
+                'siteId': self.site_id,
+                'manifestId': manifest_id,
+            },
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        url = body.get('url')
+        if not isinstance(url, str) or not url:
+            raise ValueError(
+                f"manifest-url returned malformed body "
+                f"(missing 'url' string): {body!r}"
+            )
+        return url
+
     def ship_logs(self, log_entries: list):
         """
         Ship log entries to Firestore for centralized monitoring.

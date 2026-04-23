@@ -41,7 +41,55 @@ logger = logging.getLogger(__name__)
 
 # default allowlist applied at install time when no explicit config is
 # provided. matches the recommended owlette projects directory.
+#
+# `~` is expanded via `_safe_expanduser` below, NOT plain
+# os.path.expanduser. When the agent runs as the Windows LocalSystem
+# account (the default for the OwletteService), raw expansion would
+# land in `C:\Windows\System32\config\systemprofile\...` — correctly
+# rejected by `_is_dangerous_root` but leaving the allowlist empty.
+# Safe expander redirects `~` to `C:\Users\Public` under SYSTEM so
+# files land somewhere any logged-in user can actually find.
 DEFAULT_ROOTS: List[str] = ['~/Documents/Owlette']
+
+# Windows path used in place of the SYSTEM account's profile when
+# resolving `~`. `Public` is writable by SYSTEM, visible in File
+# Explorer for every user, and not under System32.
+_WINDOWS_SYSTEM_SAFE_HOME = r'C:\Users\Public'
+
+
+def _running_as_system() -> bool:
+    """True when the current process is the Windows LocalSystem account."""
+    if sys.platform != 'win32':
+        return False
+    # USERNAME is 'SYSTEM' under LocalSystem; USERPROFILE points at
+    # the systemprofile dir. Checking USERPROFILE avoids false positives
+    # from a real user literally named 'SYSTEM'.
+    profile = os.environ.get('USERPROFILE', '')
+    return 'system32' in profile.lower() and 'systemprofile' in profile.lower()
+
+
+def _safe_expanduser(path: str) -> str:
+    """
+    Like `os.path.expanduser`, but under the Windows LocalSystem account
+    we redirect `~` to `C:\\Users\\Public` instead of
+    `C:\\Windows\\System32\\config\\systemprofile`. Other platforms and
+    non-SYSTEM Windows users behave exactly like the stdlib.
+
+    Only the leading `~` is substituted — a literal `~` in the middle of
+    a path stays untouched, matching stdlib semantics.
+    """
+    if not path:
+        return path
+    if not _running_as_system():
+        return os.path.expanduser(path)
+    # Only leading-tilde forms need redirection.
+    if path == '~':
+        return _WINDOWS_SYSTEM_SAFE_HOME
+    if path.startswith('~/') or path.startswith('~\\'):
+        return _WINDOWS_SYSTEM_SAFE_HOME + path[1:]
+    # `~user/...` — let stdlib handle; if `user` doesn't exist, it leaves
+    # the path unchanged (desired).
+    return os.path.expanduser(path)
 
 # windows: file attribute bit indicating any reparse point — covers BOTH
 # IO_REPARSE_TAG_SYMLINK (symlinks) and IO_REPARSE_TAG_MOUNT_POINT
@@ -92,7 +140,7 @@ class DestinationAllowlist:
                     )
                     continue
                 try:
-                    expanded = Path(os.path.expanduser(r)).resolve(strict=False)
+                    expanded = Path(_safe_expanduser(r)).resolve(strict=False)
                 except (OSError, ValueError) as e:
                     # ValueError covers NULL-byte injection in the root spec;
                     # OSError covers transient resolution issues.
@@ -183,7 +231,7 @@ class DestinationAllowlist:
         # normalize + expand user. ValueError catches NULL-byte injection
         # (`/path/file\x00.evil`) which os.path.expanduser raises on.
         try:
-            expanded = Path(os.path.expanduser(target))
+            expanded = Path(_safe_expanduser(target))
         except (ValueError, TypeError) as e:
             raise DestinationNotAllowedError(
                 f"invalid characters in target path {target!r}: {e}"

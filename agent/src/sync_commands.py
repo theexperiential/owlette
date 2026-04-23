@@ -122,9 +122,26 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
     # surface "target queued" before manifest fetch even starts.
     _report_target_state(service, site_id, folder_id, manifest_id, 'pending')
 
+    # Mint a fresh signed GET URL. `manifest_url` in the command payload
+    # is either unsigned (the stored object URL — not fetchable from a
+    # private bucket) or expired (15-min TTL), so ignore it and request
+    # a fresh URL right before the fetch. If minting fails, fall back to
+    # the payload URL on the thin chance it was still valid — no reason
+    # to turn a transient API blip into a hard failure.
+    fetch_url = manifest_url
+    fb = getattr(service, 'firebase_client', None)
+    if fb is not None and hasattr(fb, 'get_manifest_download_url'):
+        try:
+            fetch_url = fb.get_manifest_download_url(folder_id, manifest_id)
+        except Exception as e:
+            logger.warning(
+                f"sync_pull: failed to mint fresh manifest URL "
+                f"({type(e).__name__}: {e}); falling back to payload URL"
+            )
+
     # fetch + validate manifest
     try:
-        manifest = fetch_manifest(manifest_url, expected_manifest_id=manifest_id)
+        manifest = fetch_manifest(fetch_url, expected_manifest_id=manifest_id)
     except ManifestError as e:
         _report_target_state(
             service, site_id, folder_id, manifest_id, 'failed',
@@ -389,13 +406,29 @@ def _load_prior_manifest(
         row = cur.fetchone()
     if row is None:
         return None
+    prior_id = row['manifest_id']
+    # Prefer a fresh signed URL. The stored `manifest_url` in the local
+    # sqlite row is the one handed over in the original sync_pull command
+    # (unsigned or long-expired), so relying on it would only work when
+    # the local manifest cache still has the file. Requesting a fresh
+    # URL lets us recover even after cache eviction.
+    prior_url = row['manifest_url']
+    fb = getattr(service, 'firebase_client', None)
+    if fb is not None and hasattr(fb, 'get_manifest_download_url'):
+        try:
+            prior_url = fb.get_manifest_download_url(folder_id, prior_id)
+        except Exception as e:
+            logger.warning(
+                f"sync_commands: failed to mint fresh url for prior manifest "
+                f"{prior_id}: {type(e).__name__}: {e}; falling back to stored url"
+            )
     try:
-        return fetch_manifest(row['manifest_url'], expected_manifest_id=row['manifest_id'])
+        return fetch_manifest(prior_url, expected_manifest_id=prior_id)
     except ManifestError as e:
         # prior manifest unfetchable (cache evicted + url expired);
         # treat as "no prior" so the diff includes everything.
         logger.warning(
-            f"sync_commands: prior manifest {row['manifest_id']} unfetchable: {e}; "
+            f"sync_commands: prior manifest {prior_id} unfetchable: {e}; "
             f"diffing against nothing"
         )
         return None
