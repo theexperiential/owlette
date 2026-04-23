@@ -92,6 +92,112 @@ def test_absolute_path_rejected():
             fetch_manifest('http://example/m.json')
 
 
+def test_backslash_traversal_rejected():
+    """windows-style traversal with backslash separators — wave 4b.2."""
+    body = _valid_manifest_json(files=[
+        {'path': '..\\etc\\evil', 'size': 100, 'chunks': [{'hash': 'a' * 64, 'size': 100}]},
+    ])
+    raw = json.dumps(body).encode('utf-8')
+    with patch('sync_manifest._http_fetch', return_value=raw):
+        with pytest.raises(ManifestError, match="path constraints"):
+            fetch_manifest('http://example/m.json')
+
+
+def test_mixed_traversal_rejected():
+    """path like `foo/../../bar` — survives segment split — wave 4b.2."""
+    body = _valid_manifest_json(files=[
+        {'path': 'foo/../../bar', 'size': 100, 'chunks': [{'hash': 'a' * 64, 'size': 100}]},
+    ])
+    raw = json.dumps(body).encode('utf-8')
+    with patch('sync_manifest._http_fetch', return_value=raw):
+        with pytest.raises(ManifestError, match="path constraints"):
+            fetch_manifest('http://example/m.json')
+
+
+def test_windows_drive_absolute_rejected():
+    """`C:/foo` or `C:\\foo` — rejected — wave 4b.2."""
+    for path_val in ('C:/foo.toe', 'C:\\foo.toe', 'D:relative.toe'):
+        body = _valid_manifest_json(files=[
+            {'path': path_val, 'size': 100, 'chunks': [{'hash': 'a' * 64, 'size': 100}]},
+        ])
+        raw = json.dumps(body).encode('utf-8')
+        with patch('sync_manifest._http_fetch', return_value=raw):
+            with pytest.raises(ManifestError, match="path constraints"):
+                fetch_manifest('http://example/m.json')
+
+
+def test_null_byte_rejected():
+    """NUL byte anywhere in path — rejected — wave 4b.2."""
+    body = _valid_manifest_json(files=[
+        {'path': 'inno\x00cent.toe', 'size': 100, 'chunks': [{'hash': 'a' * 64, 'size': 100}]},
+    ])
+    raw = json.dumps(body).encode('utf-8')
+    with patch('sync_manifest._http_fetch', return_value=raw):
+        with pytest.raises(ManifestError, match="path constraints"):
+            fetch_manifest('http://example/m.json')
+
+
+def test_dot_segment_rejected():
+    """path with `.` segment — rejected (non-canonical) — wave 4b.2."""
+    body = _valid_manifest_json(files=[
+        {'path': 'a/./b.toe', 'size': 100, 'chunks': [{'hash': 'a' * 64, 'size': 100}]},
+    ])
+    raw = json.dumps(body).encode('utf-8')
+    with patch('sync_manifest._http_fetch', return_value=raw):
+        with pytest.raises(ManifestError, match="path constraints"):
+            fetch_manifest('http://example/m.json')
+
+
+def test_empty_segment_rejected():
+    """path with `//` — rejected (non-canonical) — wave 4b.2."""
+    body = _valid_manifest_json(files=[
+        {'path': 'a//b.toe', 'size': 100, 'chunks': [{'hash': 'a' * 64, 'size': 100}]},
+    ])
+    raw = json.dumps(body).encode('utf-8')
+    with patch('sync_manifest._http_fetch', return_value=raw):
+        with pytest.raises(ManifestError, match="path constraints"):
+            fetch_manifest('http://example/m.json')
+
+
+def test_ads_colon_in_segment_rejected():
+    """windows alternate data stream syntax (`file.toe:hidden`) — rejected — wave 4b.2."""
+    body = _valid_manifest_json(files=[
+        {'path': 'a/file.toe:hidden', 'size': 100, 'chunks': [{'hash': 'a' * 64, 'size': 100}]},
+    ])
+    raw = json.dumps(body).encode('utf-8')
+    with patch('sync_manifest._http_fetch', return_value=raw):
+        with pytest.raises(ManifestError, match="path constraints"):
+            fetch_manifest('http://example/m.json')
+
+
+def test_unc_path_rejected():
+    """UNC-style path `\\\\server\\share\\foo` — starts with separator — rejected — wave 4b.2."""
+    body = _valid_manifest_json(files=[
+        {'path': '\\\\server\\share\\foo.toe', 'size': 100, 'chunks': [{'hash': 'a' * 64, 'size': 100}]},
+    ])
+    raw = json.dumps(body).encode('utf-8')
+    with patch('sync_manifest._http_fetch', return_value=raw):
+        with pytest.raises(ManifestError, match="path constraints"):
+            fetch_manifest('http://example/m.json')
+
+
+def test_unicode_double_dot_lookalike_allowed():
+    """
+    cve-2025-4330 regression — unicode lookalike (U+2025 TWO DOT LEADER) is
+    NOT `..`. the parser rejects literal `..` not visually similar glyphs;
+    the real defense against exotic unicode escaping is realpath enforcement
+    in destination_allowlist (at write time). confirm the parser doesn't
+    false-positive and drop legit unicode filenames.
+    """
+    body = _valid_manifest_json(files=[
+        {'path': 'docs/\u2025note.toe', 'size': 100, 'chunks': [{'hash': 'a' * 64, 'size': 100}]},
+    ])
+    raw = json.dumps(body).encode('utf-8')
+    with patch('sync_manifest._http_fetch', return_value=raw):
+        manifest = fetch_manifest('http://example/m.json')
+        assert manifest.files[0].path == 'docs/\u2025note.toe'
+
+
 def test_uppercase_hash_rejected():
     body = _valid_manifest_json(files=[
         {'path': 'a.toe', 'size': 100, 'chunks': [{'hash': 'A' * 64, 'size': 100}]},

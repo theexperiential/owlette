@@ -8,7 +8,7 @@ the chunk-set delta against what's already on disk to know what to download.
 
 design:
 - manifest is JSON conforming to docs/internal/manifest-format.md
-- cached at ~/Documents/Owlette/.owlette-sync/manifests/{folderId}/{manifestId}.json
+- cached at ~/Documents/Owlette/.owlette-sync/manifests/{roostId}/{manifestId}.json
 - diff against previous local manifest yields: chunks_to_fetch, chunks_to_keep,
   files_to_create, files_to_delete, files_to_keep
 - network errors retry via existing requests-library patterns (see installer_utils)
@@ -299,8 +299,13 @@ def _parse_and_validate(raw: bytes) -> Manifest:
         if path in seen_paths:
             raise ManifestError(f"manifest.files[{i}].path duplicated: {path!r}")
         seen_paths.add(path)
-        # path constraints: POSIX-style, no `..`, no leading `/`, no absolutes
-        if path.startswith('/') or path.startswith('\\') or '..' in path.replace('\\', '/').split('/'):
+        # path constraints (wave 4b.2): POSIX-style relative path only.
+        # rejects absolute paths, traversal segments, drive-letter prefixes,
+        # embedded NUL bytes, dot / empty segments. realpath enforcement at
+        # write-time is done by destination_allowlist; these checks fail
+        # the manifest loudly BEFORE any disk work begins so a hostile
+        # manifest never gets cached or partially applied.
+        if _invalid_manifest_path(path):
             raise ManifestError(
                 f"manifest.files[{i}].path violates path constraints: {path!r}"
             )
@@ -344,6 +349,52 @@ def _parse_and_validate(raw: bytes) -> Manifest:
         files=parsed_files,
         raw_bytes=raw,
     )
+
+
+def _invalid_manifest_path(path: str) -> bool:
+    """
+    true if `path` is NOT safe to use as a manifest file path (wave 4b.2).
+
+    reject:
+    - NUL byte anywhere (smuggles past string comparisons; truncates on
+      some syscalls; rare enough that legitimate manifests never contain it)
+    - absolute paths (`/foo`, `\foo`, `C:/foo`, `C:\foo`, `\\server\share\foo`)
+    - windows drive-letter relative paths (`C:foo` — relative to drive's cwd)
+    - `..` as any normalized segment (path traversal)
+    - `.` as any segment (ambiguous; would be normalized away anyway —
+      reject to keep manifests canonical)
+    - empty segments (`a//b` splits to `['a', '', 'b']`; reject so the
+      manifest stays canonical across generators)
+
+    realpath + reparse-point checks are destination_allowlist's job at
+    write-time; this function filters before any disk touch.
+    """
+    if not path:
+        return True
+    if '\x00' in path:
+        return True
+    # normalize to forward slashes for segment analysis. after this:
+    #   "a\\b\\c" -> "a/b/c"
+    #   "C:\\foo" -> "C:/foo"
+    normalized = path.replace('\\', '/')
+    if normalized.startswith('/'):
+        return True
+    # windows drive-letter prefix: single letter + colon at position 1.
+    # catches `C:foo` (drive-relative), `C:/foo` (drive-absolute), and also
+    # defeats ADS attempts on the first segment (`foo:bar` in seg 0).
+    # NOTE: '.' in file extensions is fine; we only flag an early colon.
+    if len(normalized) >= 2 and normalized[1] == ':':
+        return True
+    segments = normalized.split('/')
+    for seg in segments:
+        if seg in ('', '.', '..'):
+            return True
+        # NUL was checked above; colons appearing in non-leading segments
+        # are windows ADS (`file.toe:hidden`). destination_allowlist also
+        # rejects these at validate-time, but fail-loud at manifest level.
+        if ':' in seg:
+            return True
+    return False
 
 
 def _files_identical(a: ManifestFile, b: ManifestFile) -> bool:
