@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { FolderArchive, Link2, Loader2, Pencil, Plus, Save, Trash2, Upload, X } from 'lucide-react';
+import { FolderArchive, Link2, Loader2, Pencil, Plus, Save, Trash2, TriangleAlert, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useMachines } from '@/hooks/useFirestore';
 import { ProjectDistribution } from '@/hooks/useProjectDistributions';
@@ -20,8 +20,9 @@ import { sanitizeError } from '@/lib/errorHandler';
 import { FolderDropzone } from '@/components/FolderDropzone';
 import type { NamedBlob } from '@/lib/chunking';
 import { summariseManifest } from '@/lib/chunking';
-import { uploadFolder, type UploadProgress } from '@/lib/roostUpload';
 import { resolveExtractPath, isLikelyAllowed } from '@/lib/extractPath';
+import { formatBytes } from '@/lib/preUploadCheck';
+import { useRoostUpload, type UseRoostUploadApi } from '@/hooks/useRoostUpload';
 
 interface ProjectDistributionDialogProps {
   open: boolean;
@@ -31,6 +32,13 @@ interface ProjectDistributionDialogProps {
     distribution: Omit<ProjectDistribution, 'id' | 'createdAt' | 'status'>,
     machineIds: string[]
   ) => Promise<string>;
+  /**
+   * Upload state lives on the parent page (via `useRoostUpload`) so a
+   * multi-GB run isn't killed when the user dismisses the dialog. When
+   * omitted, falls back to dialog-local state — tests use that path to
+   * avoid wiring a full hook into every render call.
+   */
+  upload?: UseRoostUploadApi;
 }
 
 /**
@@ -59,6 +67,18 @@ function formatBytesShort(n: number): string {
   return `${(n / 1024 ** 3).toFixed(1)} GB`;
 }
 
+/** Compact duration formatter for ETA ("2m 14s", "42s", "1h 5m"). */
+function formatDurationShort(seconds: number): string {
+  if (!isFinite(seconds) || seconds < 0) return '—';
+  if (seconds < 60) return `${Math.max(1, Math.round(seconds))}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds - m * 60);
+  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m - h * 60;
+  return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
+}
+
 /** Stable key for detecting whether current form matches a preset's config. */
 function presetConfigKey(
   projectUrl: string | undefined,
@@ -75,9 +95,18 @@ export default function ProjectDistributionDialog({
   onOpenChange,
   siteId,
   onCreateDistribution,
+  upload: externalUpload,
 }: ProjectDistributionDialogProps) {
   const { machines } = useMachines(siteId);
   const { presets, createPreset, updatePreset, deletePreset } = useProjectDistributionPresets(siteId);
+
+  // Upload state lives outside the dialog (via `useRoostUpload`) so the
+  // in-flight run survives a dismissal. If the parent didn't supply one
+  // (e.g. standalone render in tests), fall back to a hook scoped to the
+  // dialog — conditional call is safe because the fallback never toggles
+  // within a component's lifetime (prop is fixed at construction time).
+  const localUpload = useRoostUpload();
+  const upload: UseRoostUploadApi = externalUpload ?? localUpload;
 
   const [distributionName, setDistributionName] = useState('');
   const namePlaceholder = React.useMemo(() => {
@@ -100,16 +129,24 @@ export default function ProjectDistributionDialog({
   const [distributing, setDistributing] = useState(false);
 
   // Wave 3.1 — upload-source state. Files dropped via FolderDropzone land here;
-  // clicking "start upload" runs the uploadFolder() orchestrator.
+  // clicking "start upload" runs the uploadFolder() orchestrator. The
+  // actual upload execution + progress lives on the `upload` hook above
+  // (see JSDoc on props) so a dismissal while uploading doesn't kill the
+  // run — the floating minimized card picks it up.
   const [droppedFiles, setDroppedFiles] = useState<NamedBlob[] | null>(null);
   const [droppedRootName, setDroppedRootName] = useState<string>('');
-  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   // Source mode — url (v1 one-shot download link) vs upload (v2 roost
   // chunked upload). Upload is the default because it's the expected
   // path for a first-party roost (drag a folder/files, go) — URL mode
   // is the escape hatch for mirroring an existing public archive.
   type SourceMode = 'url' | 'upload';
   const [sourceMode, setSourceMode] = useState<SourceMode>('upload');
+
+  // Derive upload runtime state from the hook. `uploadProgress` is the
+  // live payload we render into the in-dialog progress card; `uploading`
+  // is the boolean form used for button/cancel gating.
+  const uploadProgress = upload.state.progress;
+  const uploading = upload.state.status === 'uploading';
 
   // Preset bar state (mirrors RebootScheduleDialog pattern)
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
@@ -130,7 +167,11 @@ export default function ProjectDistributionDialog({
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
 
-  // Reset form state when dialog opens
+  // Reset form state when dialog opens. We deliberately DO NOT reset
+  // the upload hook here — if the user dismissed the dialog mid-upload
+  // and then reopened, the in-flight progress needs to resume rendering
+  // (minimize-to-corner handoff). The hook resets itself on a new
+  // `start()` call, or on terminal states inside the minimized card.
   useEffect(() => {
     if (!open) return;
     setActivePresetId(null);
@@ -140,10 +181,13 @@ export default function ProjectDistributionDialog({
     setConfirmDeletePresetId(null);
     setPendingReplacePreset(null);
     setSourceMode('upload');
-    setDroppedFiles(null);
-    setDroppedRootName('');
-    setUploadProgress(null);
-  }, [open]);
+    // Preserve droppedFiles + name if the upload is live so reopening
+    // mid-run shows the same summary chip the user dropped.
+    if (upload.state.status !== 'uploading') {
+      setDroppedFiles(null);
+      setDroppedRootName('');
+    }
+  }, [open, upload.state.status]);
 
   // Autosave field edits back to the active non-builtin preset, debounced.
   // Built-ins are excluded so editing one doesn't silently create an override.
@@ -388,13 +432,13 @@ export default function ProjectDistributionDialog({
   const selectedPreset = activePresetId ? presets.find(p => p.id === activePresetId) : null;
 
   // Wave 3.1 — upload-source handler. Runs the roost orchestrator
-  // (chunk → check → upload → finalize). The dialog's target-machines
-  // selector still applies: once the manifest is finalised, the fan-out
-  // cloud function (wave 2b.3) dispatches sync_pull commands to targets
-  // stored on the roost doc. This handler owns the client-side
-  // upload + publish; target assignment is a separate firestore write
-  // that the current app already does via v1 hooks when v1 distribute
-  // runs, and will need parity wiring for v2 once 2a routes land.
+  // (chunk → check → upload → finalize) via the `useRoostUpload` hook.
+  // Execution state lives on the hook, not the dialog, so a dismissal
+  // while uploading doesn't kill the run — the minimized card picks up.
+  //
+  // The dialog's target-machines selector still applies: once the manifest
+  // is finalised, the fan-out cloud function (wave 2b.3) dispatches
+  // sync_pull commands to targets stored on the roost doc.
   const handleUploadDistribute = async () => {
     if (!droppedFiles || droppedFiles.length === 0) {
       toast.error('drop a folder first');
@@ -409,39 +453,56 @@ export default function ProjectDistributionDialog({
       return;
     }
 
-    setDistributing(true);
-    setUploadProgress({ phase: 'idle' });
     const roostId = slugify(distributionName) || droppedRootName || 'roost-folder';
+    const totalBytes = droppedFiles.reduce((n, f) => n + f.blob.size, 0);
 
-    try {
-      const result = await uploadFolder({
-        siteId,
-        roostId,
-        files: droppedFiles,
-        name: distributionName.trim(),
-        targets: Array.from(selectedMachines),
-        extractPath: extractPath.trim() ? resolveExtractPath(extractPath) : undefined,
-        onProgress: (p) => setUploadProgress(p),
-      });
+    // Fire and forget — the hook tracks progress + result. We close the
+    // dialog immediately after kickoff so the user is free to navigate;
+    // the minimized card will surface completion (success toast fired by
+    // the effect below that watches `upload.state.status`).
+    upload.start({
+      siteId,
+      roostId,
+      files: droppedFiles,
+      name: distributionName.trim(),
+      targets: Array.from(selectedMachines),
+      extractPath: extractPath.trim() ? resolveExtractPath(extractPath) : undefined,
+      totalBytes,
+      fileCount: droppedFiles.length,
+    });
+  };
+
+  // React to upload hook terminal states. We fire the user-facing toast
+  // here rather than inside handleUploadDistribute because the dialog may
+  // have been dismissed by the time the hook resolves — the toast still
+  // needs to land. The `lastReportedStatusRef` guards against emitting
+  // the same toast twice when the status is read across multiple renders.
+  const lastReportedStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    const status = upload.state.status;
+    if (status === lastReportedStatusRef.current) return;
+    lastReportedStatusRef.current = status;
+    if (status === 'success' && upload.state.result) {
+      const result = upload.state.result;
       toast.success(
         `roost published — manifest ${result.manifestId.slice(0, 12)}…` +
           ` (uploaded ${formatBytesShort(result.uploadedBytes)} of ${formatBytesShort(result.totalBytes)})`,
       );
+      // Clear the per-deploy inputs so a follow-up roost starts clean.
       setDistributionName('');
       setExtractPath('');
       setDroppedFiles(null);
       setDroppedRootName('');
       setSelectedMachines(new Set());
-      setUploadProgress(null);
-      onOpenChange(false);
-    } catch (err) {
-      console.error('roost upload error:', err);
-      toast.error('upload failed', { description: sanitizeError(err) });
-      setUploadProgress({ phase: 'error', message: sanitizeError(err) });
-    } finally {
-      setDistributing(false);
+      // Close the dialog on success if it's still open — matches the
+      // prior behavior where the distribute button awaited completion
+      // and then dismissed the modal. The minimized card flashes
+      // "synced" for a moment before disappearing on its own.
+      if (open) onOpenChange(false);
+    } else if (status === 'error' && upload.state.error) {
+      toast.error('upload failed', { description: upload.state.error });
     }
-  };
+  }, [upload.state.status, upload.state.result, upload.state.error, open, onOpenChange]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -762,8 +823,49 @@ export default function ProjectDistributionDialog({
                     : undefined
                 }
                 files={droppedFiles ?? undefined}
-                disabled={distributing}
+                disabled={distributing || uploading}
               />
+              {/* Sanity warnings — non-blocking. Surface BEFORE submit so the
+                  user knows upfront that the run will take time and what the
+                  minimize-to-corner indicator is for. Thresholds match what
+                  we've seen hit the pain points in practice:
+                    - >5k files → manifest size + hashing time get noticeable
+                    - >20 GB   → expect minutes, warn about keeping the tab
+                  Both can trigger together; we only show whichever apply. */}
+              {droppedFiles && droppedFiles.length > 0 && (() => {
+                const fileCount = droppedFiles.length;
+                const totalBytes = droppedFiles.reduce((n, f) => n + f.blob.size, 0);
+                const LARGE_FILE_COUNT = 5_000;
+                const LARGE_TOTAL_BYTES = 20 * 1024 ** 3; // 20 GiB
+                const warnCount = fileCount > LARGE_FILE_COUNT;
+                const warnBytes = totalBytes > LARGE_TOTAL_BYTES;
+                if (!warnCount && !warnBytes) return null;
+                return (
+                  <div
+                    role="status"
+                    className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-400/90 space-y-1"
+                  >
+                    <div className="flex items-center gap-1.5 font-medium text-amber-300">
+                      <TriangleAlert className="h-3.5 w-3.5" />
+                      heads up
+                    </div>
+                    {warnCount && (
+                      <p className="text-amber-400/75">
+                        large file count ({fileCount.toLocaleString()}) — manifest will be big;
+                        hashing may take several minutes. consider archiving into fewer files
+                        if this is a one-off.
+                      </p>
+                    )}
+                    {warnBytes && (
+                      <p className="text-amber-400/75">
+                        large upload ({formatBytes(totalBytes)}) — hashing and upload will take
+                        significant time. keep this tab open; the minimize-to-corner indicator
+                        handles if you click away.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
               {uploadProgress && uploadProgress.phase !== 'idle' && (() => {
                 // Pick the fraction that belongs to the active phase so the
                 // bar doesn't snap 0% → 100% when we cross hashing→uploading
@@ -777,6 +879,16 @@ export default function ProjectDistributionDialog({
                       : undefined;
                 const pct = frac !== undefined ? Math.round(frac * 100) : null;
                 const isError = uploadProgress.phase === 'error';
+                // ETA/throughput are populated by useRoostUpload once it has
+                // enough samples (~3s). Below that we deliberately hide them
+                // rather than flash a nonsense number.
+                const throughput = uploadProgress.throughputBytesPerSec;
+                const eta = uploadProgress.etaSeconds;
+                const showRate =
+                  !isError &&
+                  throughput !== undefined &&
+                  eta !== undefined &&
+                  (uploadProgress.phase === 'hashing' || uploadProgress.phase === 'uploading');
                 return (
                   <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
                     <div className="flex items-baseline justify-between gap-2">
@@ -795,6 +907,11 @@ export default function ProjectDistributionDialog({
                           className="h-full bg-accent-cyan transition-[width] duration-200 ease-out"
                           style={{ width: `${Math.max(0, Math.min(1, frac)) * 100}%` }}
                         />
+                      </div>
+                    )}
+                    {showRate && throughput !== undefined && eta !== undefined && (
+                      <div className="mt-1 text-muted-foreground tabular-nums">
+                        {formatBytes(throughput)}/s · ~{formatDurationShort(eta)} remaining
                       </div>
                     )}
                     {uploadProgress.message && (
@@ -909,13 +1026,18 @@ export default function ProjectDistributionDialog({
         </div>
 
         <DialogFooter>
+          {/* Cancel: always enabled — the whole point of the minimize-to-corner
+              flow is the user can dismiss during an upload. The URL-source
+              path still blocks dismissal because its handleDistribute doesn't
+              have a lifted hook; while distributing=true the dialog is the
+              only thing holding that promise alive. */}
           <Button
             variant="ghost"
             onClick={() => onOpenChange(false)}
             className="bg-secondary border border-border cursor-pointer"
             disabled={distributing}
           >
-            cancel
+            {uploading && sourceMode === 'upload' ? 'minimize' : 'cancel'}
           </Button>
           {/*
             Gating: disable until the user has provided enough to submit.
@@ -923,6 +1045,9 @@ export default function ProjectDistributionDialog({
             (a URL for `url`, a dropped folder for `upload`). `title`
             surfaces the first missing requirement so the user knows
             what to fill in next.
+
+            `uploading` also disables re-submit — a second start() would
+            abort the first one, which is almost never what the user wants.
           */}
           {(() => {
             const missing: string[] = [];
@@ -936,7 +1061,8 @@ export default function ProjectDistributionDialog({
               missing.length === 0
                 ? undefined
                 : `needs: ${missing.join(', ')}`;
-            const isDisabled = distributing || missing.length > 0;
+            const busy = distributing || (sourceMode === 'upload' && uploading);
+            const isDisabled = busy || missing.length > 0;
             return (
           <Button
             onClick={
@@ -946,10 +1072,10 @@ export default function ProjectDistributionDialog({
             disabled={isDisabled}
             title={reason}
           >
-            {distributing ? (
+            {busy ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                distributing...
+                {uploading && sourceMode === 'upload' ? 'uploading...' : 'distributing...'}
               </>
             ) : (
               <>
