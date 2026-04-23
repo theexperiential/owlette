@@ -19,3 +19,8 @@ export { onRoostWritten, onTargetStateWritten } from './distributionFanout';
 export { verifyChunk } from './chunkVerify';
 export { chunkGcNightly } from './chunkGc';
 export { preUploadCheck, reconcileQuota } from './quotaEnforce';
+export {
+  aggregateTelemetry,
+  getUsageSummaryHttp,
+  recordUsageEvent,
+} from './telemetry';
