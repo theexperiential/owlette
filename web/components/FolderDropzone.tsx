@@ -19,7 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { FolderUp, Loader2, X } from 'lucide-react';
+import { Files, FolderUp, Loader2, X } from 'lucide-react';
 import { sanitizeFilename } from '@/lib/sanitize';
 import type { NamedBlob } from '@/lib/chunking';
 
@@ -50,6 +50,7 @@ export function FolderDropzone({
   const [isDragOver, setIsDragOver] = useState(false);
   const [enumerating, setEnumerating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const filesInputRef = useRef<HTMLInputElement>(null);
 
   // File System Access API support check. Falls back to webkitdirectory
   // on Firefox/Safari. Set via useEffect so SSR initial render matches
@@ -99,6 +100,61 @@ export function FolderDropzone({
     },
     [onFilesReady],
   );
+
+  const handleLooseFilesPick = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const fileList = e.target.files;
+      if (!fileList || fileList.length === 0) return;
+      setEnumerating(true);
+      try {
+        // Loose-file picker → no folder structure. Use each file's name
+        // as its manifest path (enumerateInputFiles already handles the
+        // webkitRelativePath-absent case).
+        const files = enumerateInputFiles(fileList);
+        if (files.length === 0) return;
+        const rootName = deriveRootName(files);
+        onFilesReady(files, rootName);
+      } finally {
+        setEnumerating(false);
+        if (filesInputRef.current) filesInputRef.current.value = '';
+      }
+    },
+    [onFilesReady],
+  );
+
+  // FSA-native path for multi-file selection — same per-origin permission
+  // persistence as showDirectoryPicker. Chrome/Edge only; Firefox/Safari
+  // fall through to the `<input type="file" multiple>` below.
+  const handleFsaFilesPick = useCallback(async () => {
+    if (disabled || enumerating) return;
+    setEnumerating(true);
+    try {
+      const picker = (
+        window as unknown as {
+          showOpenFilePicker: (opts?: {
+            multiple?: boolean;
+          }) => Promise<FileSystemFileHandle[]>;
+        }
+      ).showOpenFilePicker;
+      const handles = await picker({ multiple: true });
+      const out: NamedBlob[] = [];
+      for (const h of handles) {
+        const file = await h.getFile();
+        if (file.size === 0) continue;
+        const cleaned = toManifestPath(file.name);
+        if (cleaned === null) continue;
+        out.push({ path: cleaned, blob: file });
+      }
+      if (out.length === 0) return;
+      const rootName = deriveRootName(out);
+      onFilesReady(out, rootName);
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return;
+      throw err;
+    } finally {
+      setEnumerating(false);
+    }
+  }, [disabled, enumerating, onFilesReady]);
 
   // Preferred path on Chrome/Edge — the File System Access API asks the
   // user for permission ONCE per origin (and persists the grant) instead
@@ -198,73 +254,108 @@ export function FolderDropzone({
     >
       <FolderUp className="mx-auto h-6 w-6 text-muted-foreground" />
       <div className="font-medium text-white">
-        {enumerating ? 'reading folder…' : 'drag a folder here to upload'}
+        {enumerating ? 'reading…' : 'drag a folder or files here to upload'}
       </div>
       <p className="text-xs text-muted-foreground">
         roost chunks + hashes locally, uploads only what&apos;s new, resumes on tab close.
       </p>
-      <div className="pt-1">
+      <div className="pt-1 flex items-center justify-center gap-2">
         {/*
-          Chrome/Edge: prefer showDirectoryPicker() — asks for permission
-          ONCE per origin and persists, vs. webkitdirectory's per-upload
-          "Upload all files from X?" trust prompt.
-          Firefox/Safari: fall back to <label>-wrapped webkitdirectory.
-          Wrapping the input in a `<label>` keeps the click a native user
-          gesture so the browser's scripted-click guard is skipped (note:
-          this still doesn't suppress the separate folder-upload prompt,
-          which is why we feature-detect FSA first).
+          Two browse modes — folder preserves tree structure, files is a
+          flat multi-select. Drag-drop handles both automatically via
+          webkitGetAsEntry so the buttons are only needed for click-to-
+          browse paths.
+
+          Chrome/Edge: prefer showDirectoryPicker / showOpenFilePicker —
+          they ask for permission ONCE per origin and persist, vs.
+          webkitdirectory's per-upload "Upload all files from X?" prompt.
+          Firefox/Safari: fall back to <label>-wrapped inputs. Wrapping
+          keeps the click a native user gesture so the scripted-click
+          guard is skipped.
         */}
         {supportsFSA ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleFsaPick}
-            disabled={disabled || enumerating}
-            className="border-border bg-background/50 text-white transition-colors cursor-pointer hover:bg-cyan-500/10 hover:border-cyan-500/40 hover:text-cyan-100"
-          >
-            {enumerating ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                working…
-              </>
-            ) : (
-              <>
-                <FolderUp className="h-3.5 w-3.5 mr-1" />
-                or browse
-              </>
-            )}
-          </Button>
-        ) : (
-          <label
-            className={`inline-flex items-center justify-center gap-1 h-8 px-3 py-1.5 rounded-md text-sm font-medium border border-border bg-background/50 text-white transition-colors select-none ${
-              disabled || enumerating
-                ? 'opacity-50 cursor-not-allowed'
-                : 'cursor-pointer hover:bg-cyan-500/10 hover:border-cyan-500/40 hover:text-cyan-100'
-            }`}
-          >
-            {enumerating ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                working…
-              </>
-            ) : (
-              <>
-                <FolderUp className="h-3.5 w-3.5 mr-1" />
-                or browse
-              </>
-            )}
-            <input
-              ref={inputRef}
-              type="file"
-              // webkitdirectory typing isn't in stock React — attribute spread.
-              {...({ webkitdirectory: '', directory: '' } as React.HTMLAttributes<HTMLInputElement>)}
-              multiple
-              hidden
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleFsaPick}
               disabled={disabled || enumerating}
-              onChange={handleFilePick}
-            />
-          </label>
+              className="border-border bg-background/50 text-white transition-colors cursor-pointer hover:bg-cyan-500/10 hover:border-cyan-500/40 hover:text-cyan-100"
+            >
+              {enumerating ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                  working…
+                </>
+              ) : (
+                <>
+                  <FolderUp className="h-3.5 w-3.5 mr-1" />
+                  browse folder
+                </>
+              )}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleFsaFilesPick}
+              disabled={disabled || enumerating}
+              className="border-border bg-background/50 text-white transition-colors cursor-pointer hover:bg-cyan-500/10 hover:border-cyan-500/40 hover:text-cyan-100"
+            >
+              <Files className="h-3.5 w-3.5 mr-1" />
+              browse files
+            </Button>
+          </>
+        ) : (
+          <>
+            <label
+              className={`inline-flex items-center justify-center gap-1 h-8 px-3 py-1.5 rounded-md text-sm font-medium border border-border bg-background/50 text-white transition-colors select-none ${
+                disabled || enumerating
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'cursor-pointer hover:bg-cyan-500/10 hover:border-cyan-500/40 hover:text-cyan-100'
+              }`}
+            >
+              {enumerating ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                  working…
+                </>
+              ) : (
+                <>
+                  <FolderUp className="h-3.5 w-3.5 mr-1" />
+                  browse folder
+                </>
+              )}
+              <input
+                ref={inputRef}
+                type="file"
+                {...({ webkitdirectory: '', directory: '' } as React.HTMLAttributes<HTMLInputElement>)}
+                multiple
+                hidden
+                disabled={disabled || enumerating}
+                onChange={handleFilePick}
+              />
+            </label>
+            <label
+              className={`inline-flex items-center justify-center gap-1 h-8 px-3 py-1.5 rounded-md text-sm font-medium border border-border bg-background/50 text-white transition-colors select-none ${
+                disabled || enumerating
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'cursor-pointer hover:bg-cyan-500/10 hover:border-cyan-500/40 hover:text-cyan-100'
+              }`}
+            >
+              <Files className="h-3.5 w-3.5 mr-1" />
+              browse files
+              <input
+                ref={filesInputRef}
+                type="file"
+                multiple
+                hidden
+                disabled={disabled || enumerating}
+                onChange={handleLooseFilesPick}
+              />
+            </label>
+          </>
         )}
       </div>
     </div>

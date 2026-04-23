@@ -99,7 +99,7 @@ describe('ProjectDistributionDialog — source picker (inside deploy)', () => {
     expect(screen.queryByLabelText(/project URL/i)).not.toBeInTheDocument();
     // real dropzone — wave 3.1 wiring (no longer a "coming soon" stub).
     expect(screen.getByRole('region', { name: /folder drop zone/i })).toBeInTheDocument();
-    expect(screen.getByText(/drag a folder here to upload/i)).toBeInTheDocument();
+    expect(screen.getByText(/drag a folder or files here to upload/i)).toBeInTheDocument();
   });
 
   it('shared fields stay visible regardless of source choice', async () => {
