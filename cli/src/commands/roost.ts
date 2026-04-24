@@ -16,6 +16,7 @@
 
 import { Command } from 'commander';
 import { loadConfig } from '../config';
+import { humanBytes, isJson, renderTable, truncate } from '../lib/output';
 
 interface RoostListItem {
   roostId: string;
@@ -310,33 +311,20 @@ function formatDiff(d: DiffResponse): string {
   return out.join('\n') + '\n';
 }
 
-function renderTable(headers: readonly string[], rows: readonly string[][]): string {
-  const widths = headers.map((h, i) => {
-    const max = rows.reduce((w, r) => Math.max(w, (r[i] ?? '').length), h.length);
-    return max;
-  });
-  const fmt = (cells: readonly string[]): string =>
-    cells.map((c, i) => c.padEnd(widths[i] ?? 0)).join('  ').replace(/\s+$/, '');
-  const sep = widths.map((w) => '-'.repeat(w)).join('  ');
-  const lines = [fmt(headers), sep, ...rows.map(fmt)];
-  return lines.join('\n') + '\n';
-}
-
 /* --------------------------------------------------------------------- */
 /*  util                                                                 */
 /* --------------------------------------------------------------------- */
 
 function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json: boolean } {
-  const globals = cmd.optsWithGlobals();
-  const { apiUrl, token } = loadConfig({ profile: globals.profile });
+  const { apiUrl, token } = loadConfig({ profile: cmd.optsWithGlobals().profile });
   if (!token) {
     process.stderr.write(
       'roost: no token configured. run `roost auth login` or set ROOST_TOKEN.\n',
     );
     process.exitCode = 2;
-    return { apiUrl, token: null, json: globals.json === true };
+    return { apiUrl, token: null, json: isJson(cmd) };
   }
-  return { apiUrl, token, json: globals.json === true };
+  return { apiUrl, token, json: isJson(cmd) };
 }
 
 function fatal(msg: string): void {
@@ -350,24 +338,7 @@ function clampInt(raw: unknown, min: number, max: number, fallback: number): num
   return Math.min(Math.max(Math.floor(n), min), max);
 }
 
-function humanBytes(n: number): string {
-  const abs = Math.abs(n);
-  const sign = n < 0 ? '-' : '';
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
-  let v = abs;
-  let u = 0;
-  while (v >= 1024 && u < units.length - 1) {
-    v /= 1024;
-    u++;
-  }
-  return `${sign}${v.toFixed(v < 10 && u > 0 ? 2 : 1)} ${units[u]}`;
-}
-
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : s.slice(0, n) + '…';
-}
-
-/** Export for unit tests. */
+/** Export for unit tests. re-exports the shared helpers for backcompat. */
 export const _internals = {
   formatRoostDetail,
   formatDiff,

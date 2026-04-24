@@ -1,0 +1,329 @@
+/**
+ * `roost trigger <event>` — wave 4.9.
+ *
+ * Fires a synthetic webhook for local testing. Two modes:
+ *
+ *   1. server probe (default)
+ *      POSTs to /api/webhooks/probe with { kind, siteId, payload? }.
+ *      The server re-signs with the caller's own signing key (whoever
+ *      owns the webhook subscription being probed) and dispatches it
+ *      through the same pipeline as a real event — so `roost listen`
+ *      will pick it up just like production traffic.
+ *
+ *   2. direct (`--to <url>`)
+ *      bypasses the server. builds the event body, signs with
+ *      --signing-secret (stripe-style t=<unix>,v1=<hmac>), and POSTs
+ *      to the supplied url directly. useful before the server probe
+ *      endpoint ships, and for fully-offline local test loops.
+ *
+ * A small canned library of payload templates gives sensible defaults
+ * per event kind; --payload / --payload-file overrides anything.
+ */
+
+import { Command } from 'commander';
+import { createHmac, randomUUID } from 'crypto';
+import { readFileSync } from 'fs';
+import { loadConfig } from '../config';
+
+const CANNED_PAYLOADS: Record<string, Record<string, unknown>> = {
+  'manifest.published': {
+    roostId: 'rst_synthetic_01',
+    manifestId: 'manifest_synthetic_01',
+    siteId: null, // filled in per-run
+    totalSize: 123456,
+    totalFiles: 3,
+    createdBy: 'roost-cli-trigger',
+  },
+  'deploy.completed': {
+    roostId: 'rst_synthetic_01',
+    rolloutId: 'manifest_synthetic_01',
+    siteId: null,
+    stage: 'complete',
+    succeeded: 10,
+    failed: 0,
+  },
+  'deploy.failed': {
+    roostId: 'rst_synthetic_01',
+    rolloutId: 'manifest_synthetic_01',
+    siteId: null,
+    stage: 'aborted',
+    abortReason: 'canary_failure_rate_exceeded',
+    succeeded: 3,
+    failed: 7,
+  },
+  'rollback.triggered': {
+    roostId: 'rst_synthetic_01',
+    siteId: null,
+    fromManifestId: 'manifest_synthetic_02',
+    toManifestId: 'manifest_synthetic_01',
+    triggeredBy: 'roost-cli-trigger',
+  },
+  'chunk.uploaded': {
+    hash: 'a'.repeat(64),
+    size: 4 * 1024 * 1024,
+    siteId: null,
+  },
+  'quota.warning': {
+    siteId: null,
+    tier: 'pro',
+    usedBytes: 80 * 1024 * 1024 * 1024,
+    limitBytes: 100 * 1024 * 1024 * 1024,
+    threshold: 0.8,
+  },
+  'machine.online': {
+    siteId: null,
+    machineId: 'DESKTOP-SYNTHETIC',
+    lastHeartbeat: null, // filled in at runtime
+  },
+  'machine.offline': {
+    siteId: null,
+    machineId: 'DESKTOP-SYNTHETIC',
+    lastHeartbeat: null,
+  },
+};
+
+const KNOWN_EVENTS = Object.keys(CANNED_PAYLOADS);
+
+export function registerTriggerCommand(program: Command): void {
+  const existing = program.commands.find((c) => c.name() === 'trigger');
+  if (existing) {
+    const list = program.commands as Command[];
+    const idx = list.indexOf(existing);
+    if (idx >= 0) list.splice(idx, 1);
+  }
+
+  program
+    .command('trigger <event>')
+    .description(
+      `fire a synthetic webhook for local testing (events: ${KNOWN_EVENTS.join(', ')})`,
+    )
+    .option('--site <siteId>', 'site id for the probe (required when not using --to)')
+    .option(
+      '--to <url>',
+      'bypass the server probe and POST directly to this url (--signing-secret pairs with it)',
+    )
+    .option(
+      '--signing-secret <secret>',
+      'hmac-sha256 secret for --to mode; unused when firing via the server probe',
+    )
+    .option('--payload <json>', 'inline JSON payload overriding the canned body')
+    .option('--payload-file <path>', 'path to a JSON file supplying the payload')
+    .option('--id <delivery-id>', 'set Roost-Delivery id (default: random uuid)')
+    .action(async (event: string, opts, cmd) => {
+      const globals = cmd.optsWithGlobals();
+      const { apiUrl, token } = loadConfig({ profile: globals.profile });
+      const json = globals.json === true;
+
+      if (!KNOWN_EVENTS.includes(event) && !opts.payload && !opts.payloadFile) {
+        process.stderr.write(
+          `roost: event '${event}' has no canned payload; pass --payload or --payload-file\n` +
+            `       known events: ${KNOWN_EVENTS.join(', ')}\n`,
+        );
+        process.exitCode = 2;
+        return;
+      }
+
+      // Resolve the payload.
+      let payload: Record<string, unknown>;
+      if (opts.payload) {
+        try {
+          payload = JSON.parse(String(opts.payload)) as Record<string, unknown>;
+        } catch (err) {
+          process.stderr.write(
+            `roost: --payload is not valid json: ${(err as Error).message}\n`,
+          );
+          process.exitCode = 2;
+          return;
+        }
+      } else if (opts.payloadFile) {
+        try {
+          payload = JSON.parse(readFileSync(opts.payloadFile, 'utf-8')) as Record<
+            string,
+            unknown
+          >;
+        } catch (err) {
+          process.stderr.write(
+            `roost: --payload-file ${opts.payloadFile} unreadable or not json: ${(err as Error).message}\n`,
+          );
+          process.exitCode = 2;
+          return;
+        }
+      } else {
+        payload = { ...CANNED_PAYLOADS[event] };
+      }
+
+      // Fill per-run defaults on the canned payload.
+      if (opts.site && payload.siteId === null) payload.siteId = String(opts.site);
+      if (event === 'machine.online' || event === 'machine.offline') {
+        if (payload.lastHeartbeat === null) {
+          payload.lastHeartbeat = new Date().toISOString();
+        }
+      }
+
+      const deliveryId = String(opts.id ?? randomUUID());
+
+      if (opts.to) {
+        // Direct mode — bypass the server.
+        await fireDirect({
+          to: String(opts.to),
+          event,
+          deliveryId,
+          payload,
+          signingSecret: typeof opts.signingSecret === 'string' ? opts.signingSecret : undefined,
+          json,
+        });
+        return;
+      }
+
+      // Server-probe mode — requires auth + siteId.
+      if (!token) {
+        process.stderr.write(
+          'roost: no token configured. run `roost auth login` or set ROOST_TOKEN.\n',
+        );
+        process.exitCode = 2;
+        return;
+      }
+      if (!opts.site) {
+        process.stderr.write('roost: --site <siteId> is required when firing via the server probe\n');
+        process.exitCode = 2;
+        return;
+      }
+
+      await fireServerProbe({
+        apiUrl,
+        token,
+        siteId: String(opts.site),
+        event,
+        deliveryId,
+        payload,
+        json,
+      });
+    });
+}
+
+/* --------------------------------------------------------------------- */
+/*  direct mode                                                          */
+/* --------------------------------------------------------------------- */
+
+interface FireDirectOpts {
+  to: string;
+  event: string;
+  deliveryId: string;
+  payload: Record<string, unknown>;
+  signingSecret?: string;
+  json: boolean;
+}
+
+async function fireDirect(opts: FireDirectOpts): Promise<void> {
+  const body = JSON.stringify(opts.payload);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Roost-Event': opts.event,
+    'Roost-Delivery': opts.deliveryId,
+  };
+  if (opts.signingSecret) {
+    const t = Math.floor(Date.now() / 1000);
+    const v1 = createHmac('sha256', opts.signingSecret)
+      .update(`${t}.${body}`)
+      .digest('hex');
+    headers['Roost-Signature'] = `t=${t},v1=${v1}`;
+  }
+
+  process.stderr.write(
+    `roost: → POST ${opts.to} ${opts.event} [delivery ${opts.deliveryId}]\n` +
+      (headers['Roost-Signature']
+        ? `       sig: ${headers['Roost-Signature']}\n`
+        : '       (no --signing-secret; forwarded unsigned)\n'),
+  );
+
+  try {
+    const res = await fetch(opts.to, { method: 'POST', headers, body });
+    const text = await res.text().catch(() => '');
+    if (opts.json) {
+      process.stdout.write(
+        JSON.stringify(
+          { mode: 'direct', to: opts.to, status: res.status, headers, body: opts.payload, responseText: text },
+          null,
+          2,
+        ) + '\n',
+      );
+    } else {
+      process.stderr.write(`roost: ← ${res.status}${text ? ` — ${truncate(text, 120)}` : ''}\n`);
+    }
+    if (!res.ok) process.exitCode = 1;
+  } catch (err) {
+    process.stderr.write(`roost: direct post failed: ${(err as Error).message}\n`);
+    process.exitCode = 1;
+  }
+}
+
+/* --------------------------------------------------------------------- */
+/*  server-probe mode                                                    */
+/* --------------------------------------------------------------------- */
+
+interface FireProbeOpts {
+  apiUrl: string;
+  token: string;
+  siteId: string;
+  event: string;
+  deliveryId: string;
+  payload: Record<string, unknown>;
+  json: boolean;
+}
+
+async function fireServerProbe(opts: FireProbeOpts): Promise<void> {
+  const body = {
+    kind: opts.event,
+    siteId: opts.siteId,
+    deliveryId: opts.deliveryId,
+    payload: opts.payload,
+  };
+
+  process.stderr.write(
+    `roost: → POST ${opts.apiUrl}/api/webhooks/probe ${opts.event} [delivery ${opts.deliveryId}]\n`,
+  );
+
+  try {
+    const res = await fetch(`${opts.apiUrl}/api/webhooks/probe`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${opts.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+
+    if (res.status === 404) {
+      process.stderr.write(
+        `roost: /api/webhooks/probe not available yet (ships in wave 6.8). ` +
+          `use --to <url> to fire the probe directly at a local listener.\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    if (opts.json) {
+      process.stdout.write(
+        JSON.stringify({ mode: 'server-probe', status: res.status, request: body, response: data }, null, 2) + '\n',
+      );
+    } else {
+      process.stderr.write(`roost: ← ${res.status} ${JSON.stringify(data)}\n`);
+    }
+    if (!res.ok) process.exitCode = 1;
+  } catch (err) {
+    process.stderr.write(`roost: probe post failed: ${(err as Error).message}\n`);
+    process.exitCode = 1;
+  }
+}
+
+/* --------------------------------------------------------------------- */
+/*  util                                                                 */
+/* --------------------------------------------------------------------- */
+
+function truncate(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n) + '…';
+}
+
+/** Export for tests. */
+export const _internals = { CANNED_PAYLOADS, KNOWN_EVENTS };
