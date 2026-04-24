@@ -12,7 +12,7 @@ import { EmptyStateUpload } from '@/components/EmptyStateUpload';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Plus, Loader2, FolderSync, Archive, ChevronDown, ChevronRight, ChevronsUpDown, ChevronsDownUp, MoreVertical, Trash2, RotateCcw, RefreshCw } from 'lucide-react';
+import { Plus, Loader2, FolderSync, Archive, ChevronDown, ChevronRight, ChevronsUpDown, ChevronsDownUp, MoreVertical, Trash2, RefreshCw } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,7 +68,6 @@ export default function ProjectsPage() {
   // Pending row-level actions. `null` = no prompt open. Each object carries
   // the roost + whatever the action handler needs to fire off after confirm.
   const [pendingDelete, setPendingDelete] = useState<{ roostId: string; name: string } | null>(null);
-  const [pendingRollback, setPendingRollback] = useState<{ roostId: string; targetManifestId: string } | null>(null);
   const [pendingResync, setPendingResync] = useState<{ roostId: string; name: string; targetCount: number } | null>(null);
   const router = useRouter();
 
@@ -148,23 +147,6 @@ export default function ProjectsPage() {
       });
     } catch (err) {
       toast.error('re-sync failed', { description: (err as Error).message });
-    }
-  };
-
-  const performRollback = async (roostId: string, targetManifestId: string) => {
-    try {
-      const res = await fetch(`/api/roosts/${encodeURIComponent(roostId)}/rollback`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ siteId: currentSiteId, targetManifestId }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail ?? body.title ?? `HTTP ${res.status}`);
-      }
-      toast.success('rolled back — fanout redispatching to targets');
-    } catch (err) {
-      toast.error('rollback failed', { description: (err as Error).message });
     }
   };
 
@@ -408,21 +390,6 @@ export default function ProjectsPage() {
                                 <RefreshCw className="h-3.5 w-3.5 mr-2" />
                                 re-sync targets
                               </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={!roost.previousManifestId}
-                                onClick={() => {
-                                  if (roost.previousManifestId) {
-                                    setPendingRollback({
-                                      roostId: roost.id,
-                                      targetManifestId: roost.previousManifestId,
-                                    });
-                                  }
-                                }}
-                                className="cursor-pointer"
-                              >
-                                <RotateCcw className="h-3.5 w-3.5 mr-2" />
-                                roll back to previous
-                              </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 onClick={() => setPendingDelete({ roostId: roost.id, name: roost.name })}
@@ -451,14 +418,6 @@ export default function ProjectsPage() {
                                 {roost.currentManifestId || <span className="text-muted-foreground italic">none</span>}
                               </span>
                             </div>
-                            {roost.previousManifestId && (
-                              <div className="flex gap-2">
-                                <span className="text-muted-foreground flex-shrink-0 w-28">previous</span>
-                                <span className="text-foreground select-text break-all font-mono text-xs">
-                                  {roost.previousManifestId}
-                                </span>
-                              </div>
-                            )}
                             <div className="flex gap-2">
                               <span className="text-muted-foreground flex-shrink-0 w-28">extract path</span>
                               <span className="text-foreground select-text break-all">
@@ -550,24 +509,6 @@ export default function ProjectsPage() {
         onConfirm={() => {
           if (pendingResync) {
             performResync(pendingResync.roostId, pendingResync.name);
-          }
-        }}
-      />
-
-      <ConfirmDialog
-        open={!!pendingRollback}
-        onOpenChange={(open) => !open && setPendingRollback(null)}
-        title="roll back roost"
-        description={
-          pendingRollback
-            ? `roll back to manifest ${pendingRollback.targetManifestId.slice(0, 12)}…? the fanout trigger will redispatch the change to all targets.`
-            : ''
-        }
-        confirmText="roll back"
-        cancelText="cancel"
-        onConfirm={() => {
-          if (pendingRollback) {
-            performRollback(pendingRollback.roostId, pendingRollback.targetManifestId);
           }
         }}
       />

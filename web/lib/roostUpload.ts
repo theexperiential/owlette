@@ -260,7 +260,7 @@ export async function uploadFolder(
 
   // ── 4. finalize ─────────────────────────────────────────────────
   report({ phase: 'finalizing', message: 'publishing manifest' });
-  const manifest = buildOciManifest(entries, opts.siteId, opts.roostId);
+  const manifest = buildOciManifest(entries);
   let body: {
     manifestId?: string;
     currentManifestId?: string;
@@ -341,20 +341,23 @@ export function locateChunkBytes(
   return null;
 }
 
-function buildOciManifest(
-  entries: ManifestFileEntry[],
-  siteId: string,
-  roostId: string,
-) {
+function buildOciManifest(entries: ManifestFileEntry[]) {
+  // Content-addressed: manifest body contains ONLY content-identifying
+  // fields. `createdAt` / `createdBy` / `siteId` / `name` previously
+  // lived in `config` but they're metadata, not content — and embedding
+  // a wall-clock timestamp in the hashed body meant byte-identical
+  // uploads produced different manifest IDs, defeating dedup at the
+  // manifest level. Those fields are already stored on the Firestore
+  // manifest subdoc (see web/app/api/roosts/[roostId]/manifests/route.ts),
+  // so removing them here is a pure de-duplication without any loss
+  // of metadata.
+  //
+  // `config: {}` satisfies agent-side sync_manifest validation, which
+  // requires `config` to be a dict but doesn't inspect its contents.
   return {
     schemaVersion: 2,
     mediaType: 'application/vnd.owlette.manifest.v1+json',
-    config: {
-      name: roostId,
-      createdAt: new Date().toISOString(),
-      createdBy: 'web-upload',
-      siteId,
-    },
+    config: {},
     files: entries,
   };
 }

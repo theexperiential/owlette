@@ -1594,56 +1594,6 @@ paths:
         '501':
           $ref: '#/components/responses/Problem501'
 
-  /api/roosts/{roostId}/rollback:
-    post:
-      operationId: rollbackRoost
-      tags: [Roost]
-      summary: Atomically roll back to a previous manifest
-      description: |
-        Atomically swaps `currentManifestId` to `previousManifestId` (or
-        a specified prior version) via a Firestore transaction. The agent
-        fleet receives the pointer change and syncs to the older content
-        in the same way it would for a forward deploy. Fully auditable.
-      security:
-        - apiKey: []
-        - firebaseIdToken: []
-      parameters:
-        - $ref: '#/components/parameters/RoostIdPath'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [siteId]
-              properties:
-                siteId:
-                  type: string
-                targetManifestId:
-                  type: string
-                  nullable: true
-                  description: Defaults to the folder's `previousManifestId`.
-      responses:
-        '200':
-          description: Rollback executed; fan-out triggered.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  currentManifestId:
-                    type: string
-                  previousManifestId:
-                    type: string
-                    nullable: true
-        '400': { $ref: '#/components/responses/Problem400' }
-        '401': { $ref: '#/components/responses/Problem401' }
-        '403': { $ref: '#/components/responses/Problem403' }
-        '404': { $ref: '#/components/responses/Problem404' }
-        '409': { $ref: '#/components/responses/Problem409' }
-        '501':
-          $ref: '#/components/responses/Problem501'
-
   /api/roosts/{roostId}/manifest-url:
     post:
       operationId: mintRoostManifestUrl
