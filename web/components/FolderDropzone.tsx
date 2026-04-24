@@ -211,8 +211,32 @@ export function FolderDropzone({
     const previewFiles = files ?? [];
     const PREVIEW_CAP = 200;
     const overflow = previewFiles.length - PREVIEW_CAP;
+    const canAppend = !!onFilesAppend;
     return (
-      <div className="rounded-md border border-border bg-muted/30 text-sm">
+      <div
+        className={`rounded-md border bg-muted/30 text-sm transition-colors ${
+          isDragOver && canAppend
+            ? 'border-cyan-500 bg-cyan-500/5'
+            : 'border-border'
+        }`}
+        onDragOver={
+          canAppend
+            ? (e) => {
+                e.preventDefault();
+                if (!disabled) setIsDragOver(true);
+              }
+            : undefined
+        }
+        onDragLeave={
+          canAppend
+            ? (e) => {
+                e.preventDefault();
+                setIsDragOver(false);
+              }
+            : undefined
+        }
+        onDrop={canAppend ? handleDrop : undefined}
+      >
         <div className="flex items-center justify-between gap-2 px-4 py-3">
           <div className="flex items-center gap-2 min-w-0">
             <FolderUp className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -223,83 +247,15 @@ export function FolderDropzone({
               · {formatBytes(summary.totalBytes)}
             </span>
           </div>
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {/* Append mode — show "+ folder" and "+ files" when the parent
-                wired onFilesAppend. Routing through `deliver` means these
-                buttons use the exact same pickers as the initial-select
-                buttons below; the only difference is the callback target. */}
-            {onFilesAppend && (
-              <>
-                {supportsFSA ? (
-                  <>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleFsaPick}
-                      disabled={disabled || enumerating}
-                      className="h-7 px-2 text-xs text-muted-foreground hover:text-accent-cyan cursor-pointer"
-                      aria-label="add another folder to selection"
-                    >
-                      <FolderUp className="h-3.5 w-3.5 mr-1" />
-                      folder
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleFsaFilesPick}
-                      disabled={disabled || enumerating}
-                      className="h-7 px-2 text-xs text-muted-foreground hover:text-accent-cyan cursor-pointer"
-                      aria-label="add more files to selection"
-                    >
-                      <Files className="h-3.5 w-3.5 mr-1" />
-                      files
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <label
-                      className={`inline-flex items-center justify-center h-7 px-2 rounded text-xs text-muted-foreground hover:text-accent-cyan transition-colors select-none ${disabled || enumerating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                      aria-label="add another folder"
-                    >
-                      <FolderUp className="h-3.5 w-3.5 mr-1" />
-                      folder
-                      <input
-                        type="file"
-                        {...({ webkitdirectory: '', directory: '' } as React.HTMLAttributes<HTMLInputElement>)}
-                        multiple
-                        hidden
-                        disabled={disabled || enumerating}
-                        onChange={handleFilePick}
-                      />
-                    </label>
-                    <label
-                      className={`inline-flex items-center justify-center h-7 px-2 rounded text-xs text-muted-foreground hover:text-accent-cyan transition-colors select-none ${disabled || enumerating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                      aria-label="add more files"
-                    >
-                      <Files className="h-3.5 w-3.5 mr-1" />
-                      files
-                      <input
-                        type="file"
-                        multiple
-                        hidden
-                        disabled={disabled || enumerating}
-                        onChange={handleLooseFilesPick}
-                      />
-                    </label>
-                  </>
-                )}
-              </>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onClear}
-              disabled={disabled}
-              aria-label="clear selection"
-            >
-              <X className="h-3.5 w-3.5" />
-            </Button>
-          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onClear}
+            disabled={disabled}
+            aria-label="clear selection"
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
         </div>
         {previewFiles.length > 0 && (
           <div className="border-t border-border max-h-48 overflow-y-auto px-4 py-2 font-mono text-[11px] text-muted-foreground">
@@ -318,6 +274,60 @@ export function FolderDropzone({
                 </li>
               )}
             </ul>
+          </div>
+        )}
+        {canAppend && (
+          <div className="border-t border-border px-4 py-2.5 flex items-center gap-3 text-xs text-muted-foreground">
+            <span className="flex-1">
+              drop more here, or add a{' '}
+              {supportsFSA ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleFsaPick}
+                    disabled={disabled || enumerating}
+                    className="underline underline-offset-2 hover:text-accent-cyan disabled:opacity-50 disabled:no-underline cursor-pointer"
+                  >
+                    folder
+                  </button>
+                  {' or '}
+                  <button
+                    type="button"
+                    onClick={handleFsaFilesPick}
+                    disabled={disabled || enumerating}
+                    className="underline underline-offset-2 hover:text-accent-cyan disabled:opacity-50 disabled:no-underline cursor-pointer"
+                  >
+                    more files
+                  </button>
+                </>
+              ) : (
+                <>
+                  <label className={`underline underline-offset-2 hover:text-accent-cyan ${disabled || enumerating ? 'opacity-50 no-underline cursor-not-allowed' : 'cursor-pointer'}`}>
+                    folder
+                    <input
+                      type="file"
+                      {...({ webkitdirectory: '', directory: '' } as React.HTMLAttributes<HTMLInputElement>)}
+                      multiple
+                      hidden
+                      disabled={disabled || enumerating}
+                      onChange={handleFilePick}
+                    />
+                  </label>
+                  {' or '}
+                  <label className={`underline underline-offset-2 hover:text-accent-cyan ${disabled || enumerating ? 'opacity-50 no-underline cursor-not-allowed' : 'cursor-pointer'}`}>
+                    more files
+                    <input
+                      type="file"
+                      multiple
+                      hidden
+                      disabled={disabled || enumerating}
+                      onChange={handleLooseFilesPick}
+                    />
+                  </label>
+                </>
+              )}
+              .
+            </span>
           </div>
         )}
       </div>
