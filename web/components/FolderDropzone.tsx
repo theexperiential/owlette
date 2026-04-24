@@ -26,6 +26,14 @@ import type { NamedBlob } from '@/lib/chunking';
 interface FolderDropzoneProps {
   /** Called with the enumerated files once the user finishes dropping or selecting. */
   onFilesReady: (files: NamedBlob[], rootFolderName: string) => void;
+  /**
+   * Called with ADDITIONAL files the user picks / drops after the initial
+   * selection (summary view shows "+ folder" and "+ files" buttons in that
+   * mode). Parent is responsible for merging — typically by path, with
+   * later entries winning. Omit to disable append mode; summary then
+   * shows only the clear button.
+   */
+  onFilesAppend?: (newFiles: NamedBlob[]) => void;
   /** Called when the user clears the selection. */
   onClear?: () => void;
   /** Total byte / file-count display for the currently-selected folder. */
@@ -42,11 +50,26 @@ interface FolderDropzoneProps {
 
 export function FolderDropzone({
   onFilesReady,
+  onFilesAppend,
   onClear,
   summary,
   files,
   disabled = false,
 }: FolderDropzoneProps) {
+  // Unified dispatch: when the summary is visible and the parent opted
+  // into append mode, new picks get routed to onFilesAppend. Otherwise
+  // (initial pick, or parent doesn't support append) we go through the
+  // normal replace path.
+  const deliver = useCallback(
+    (newFiles: NamedBlob[], rootName: string) => {
+      if (summary && onFilesAppend) {
+        onFilesAppend(newFiles);
+      } else {
+        onFilesReady(newFiles, rootName);
+      }
+    },
+    [summary, onFilesAppend, onFilesReady],
+  );
   const [isDragOver, setIsDragOver] = useState(false);
   const [enumerating, setEnumerating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -74,12 +97,12 @@ export function FolderDropzone({
         const files = await enumerateDataTransfer(e.dataTransfer);
         if (files.length === 0) return;
         const rootName = deriveRootName(files);
-        onFilesReady(files, rootName);
+        deliver(files, rootName);
       } finally {
         setEnumerating(false);
       }
     },
-    [disabled, onFilesReady],
+    [disabled, deliver],
   );
 
   const handleFilePick = useCallback(
@@ -91,14 +114,14 @@ export function FolderDropzone({
         const files = enumerateInputFiles(fileList);
         if (files.length === 0) return;
         const rootName = deriveRootName(files);
-        onFilesReady(files, rootName);
+        deliver(files, rootName);
       } finally {
         setEnumerating(false);
         // allow the same folder to be re-dropped if the user clears + picks again
         if (inputRef.current) inputRef.current.value = '';
       }
     },
-    [onFilesReady],
+    [deliver],
   );
 
   const handleLooseFilesPick = useCallback(
@@ -113,13 +136,13 @@ export function FolderDropzone({
         const files = enumerateInputFiles(fileList);
         if (files.length === 0) return;
         const rootName = deriveRootName(files);
-        onFilesReady(files, rootName);
+        deliver(files, rootName);
       } finally {
         setEnumerating(false);
         if (filesInputRef.current) filesInputRef.current.value = '';
       }
     },
-    [onFilesReady],
+    [deliver],
   );
 
   // FSA-native path for multi-file selection — same per-origin permission
@@ -147,14 +170,14 @@ export function FolderDropzone({
       }
       if (out.length === 0) return;
       const rootName = deriveRootName(out);
-      onFilesReady(out, rootName);
+      deliver(out, rootName);
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
       throw err;
     } finally {
       setEnumerating(false);
     }
-  }, [disabled, enumerating, onFilesReady]);
+  }, [disabled, enumerating, deliver]);
 
   // Preferred path on Chrome/Edge — the File System Access API asks the
   // user for permission ONCE per origin (and persists the grant) instead
@@ -174,7 +197,7 @@ export function FolderDropzone({
       }
       if (out.length === 0) return;
       const rootName = handle.name || deriveRootName(out);
-      onFilesReady(out, rootName);
+      deliver(out, rootName);
     } catch (err) {
       // user cancelled the picker — silent no-op.
       if ((err as Error).name === 'AbortError') return;
@@ -182,7 +205,7 @@ export function FolderDropzone({
     } finally {
       setEnumerating(false);
     }
-  }, [disabled, enumerating, onFilesReady]);
+  }, [disabled, enumerating, deliver]);
 
   if (summary) {
     const previewFiles = files ?? [];
@@ -200,15 +223,83 @@ export function FolderDropzone({
               · {formatBytes(summary.totalBytes)}
             </span>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onClear}
-            disabled={disabled}
-            aria-label="clear selection"
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {/* Append mode — show "+ folder" and "+ files" when the parent
+                wired onFilesAppend. Routing through `deliver` means these
+                buttons use the exact same pickers as the initial-select
+                buttons below; the only difference is the callback target. */}
+            {onFilesAppend && (
+              <>
+                {supportsFSA ? (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleFsaPick}
+                      disabled={disabled || enumerating}
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-accent-cyan cursor-pointer"
+                      aria-label="add another folder to selection"
+                    >
+                      <FolderUp className="h-3.5 w-3.5 mr-1" />
+                      folder
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleFsaFilesPick}
+                      disabled={disabled || enumerating}
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-accent-cyan cursor-pointer"
+                      aria-label="add more files to selection"
+                    >
+                      <Files className="h-3.5 w-3.5 mr-1" />
+                      files
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <label
+                      className={`inline-flex items-center justify-center h-7 px-2 rounded text-xs text-muted-foreground hover:text-accent-cyan transition-colors select-none ${disabled || enumerating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                      aria-label="add another folder"
+                    >
+                      <FolderUp className="h-3.5 w-3.5 mr-1" />
+                      folder
+                      <input
+                        type="file"
+                        {...({ webkitdirectory: '', directory: '' } as React.HTMLAttributes<HTMLInputElement>)}
+                        multiple
+                        hidden
+                        disabled={disabled || enumerating}
+                        onChange={handleFilePick}
+                      />
+                    </label>
+                    <label
+                      className={`inline-flex items-center justify-center h-7 px-2 rounded text-xs text-muted-foreground hover:text-accent-cyan transition-colors select-none ${disabled || enumerating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                      aria-label="add more files"
+                    >
+                      <Files className="h-3.5 w-3.5 mr-1" />
+                      files
+                      <input
+                        type="file"
+                        multiple
+                        hidden
+                        disabled={disabled || enumerating}
+                        onChange={handleLooseFilesPick}
+                      />
+                    </label>
+                  </>
+                )}
+              </>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClear}
+              disabled={disabled}
+              aria-label="clear selection"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
         {previewFiles.length > 0 && (
           <div className="border-t border-border max-h-48 overflow-y-auto px-4 py-2 font-mono text-[11px] text-muted-foreground">

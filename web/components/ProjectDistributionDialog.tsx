@@ -806,6 +806,17 @@ export default function ProjectDistributionDialog({
                   // Pre-fill distribution name from the folder if the field is empty.
                   if (!distributionName) setDistributionName(rootName);
                 }}
+                onFilesAppend={(newFiles) => {
+                  // Merge by manifest path — later entries win so a user
+                  // can re-pick a folder to refresh its contents. Keeps
+                  // the existing rootName + distribution name.
+                  setDroppedFiles((prev) => {
+                    const byPath = new Map<string, NamedBlob>();
+                    for (const f of prev ?? []) byPath.set(f.path, f);
+                    for (const f of newFiles) byPath.set(f.path, f);
+                    return Array.from(byPath.values());
+                  });
+                }}
                 onClear={() => {
                   setDroppedFiles(null);
                   setDroppedRootName('');
