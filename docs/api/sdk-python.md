@@ -87,15 +87,16 @@ every top-level noun is a resource class hung off the client. all methods are `a
 ```python
 # list — async generator, transparent paging
 async for r in client.roosts.list(site_id="site-1"):
-    print(r.id, r.name, r.current_manifest.id if r.current_manifest else None)
+    print(r.roost_id, r.name, r.current_manifest_id)
 
 # single page explicitly (for resumable batch jobs)
 rows, cursor = await client.roosts.list_page(site_id="site-1", page_size=20)
 if cursor:
     rows2, _ = await client.roosts.list_page(site_id="site-1", cursor=cursor)
 
-# fetch one
+# fetch one — returns RoostDetail with current_manifest (object, not id)
 r = await client.roosts.get("rst_abc", site_id="site-1")
+print(r.current_manifest.manifest_id if r.current_manifest else None)
 
 # create
 created = await client.roosts.create(
@@ -392,14 +393,14 @@ the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring
 
 ## cancellation
 
-pass an `asyncio.Event` via `cancel_event` to abort in-flight requests cooperatively, or just wrap the call in `asyncio.wait_for` / `asyncio.timeout`:
+wrap any call in `asyncio.timeout()` or `asyncio.wait_for()` — the underlying `httpx.AsyncClient` respects python's cancellation protocol and raises `CancelledError` through the await chain:
 
 ```python
 async with asyncio.timeout(30):
     rows = [r async for r in client.roosts.list(site_id="site-1")]
 ```
 
-for `push()`, raising `CancelledError` inside the `on_progress` callback stops the upload queue cooperatively — in-flight PUTs complete, pending ones are dropped, and the coroutine re-raises.
+for `push()`, raising any exception inside the `on_progress` callback stops the upload queue — in-flight PUTs complete, pending ones are dropped, and the coroutine re-raises your exception.
 
 ---
 
