@@ -2,7 +2,7 @@
 
 /**
  * RoostTargetsList — renders per-target sync status for an expanded
- * roost row on the /roost page. Owns ONE `useTargetStates` listener
+ * roost row on the /roosts page. Owns ONE `useTargetStates` listener
  * per expanded roost (parent RoostTargetRow is a pure render component)
  * so expanding N roosts mounts N listeners, not N×M.
  */

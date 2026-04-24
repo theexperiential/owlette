@@ -32,7 +32,6 @@ import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
 import { LoadingWord } from '@/components/LoadingWord';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
-import { formatBytes as formatContentSize } from '@/lib/preUploadCheck';
 
 export default function ProjectsPage() {
   const { user, loading: authLoading, userSites, isSuperadmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
@@ -240,7 +239,7 @@ export default function ProjectsPage() {
         {/* Section header with inline stats */}
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-center gap-6 md:gap-8">
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">roost</h2>
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">roosts</h2>
 
             <div className="flex items-center gap-6 md:gap-8">
               <div className="flex items-center gap-2.5">

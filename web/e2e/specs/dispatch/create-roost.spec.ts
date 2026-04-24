@@ -3,7 +3,7 @@
  *
  * Flow mirrors D4.1 (create deployment) but targets the roost surface:
  *   1. Seed a machine on site-A.
- *   2. UI: /roost → "new roost" → ProjectDistributionDialog ("roost a
+ *   2. UI: /roosts → "new roost" → ProjectDistributionDialog ("roost a
  *      project") → fill distribution name + project URL → check target
  *      machine → "distribute to 1 machine".
  *   3. Firestore (per useProjectDistributions.createDistribution):
@@ -51,8 +51,8 @@ test('admin creates a roost distribution — project_distributions doc + per-tar
   const distributionName = `E2E Roost ${Date.now()}`;
   const projectUrl = `https://example.com/test-project-${Date.now()}.zip`;
 
-  await page.goto('/roost');
-  await expect(page.getByRole('heading', { name: 'roost', exact: true })).toBeVisible({ timeout: 10_000 });
+  await page.goto('/roosts');
+  await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
 
   // Open the dialog. "new roost" button appears in the header and the empty
   // state — first() tolerates both without a deployments-list-loaded race.

@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * EmptyStateUpload — first-run onboarding for /roost (wave 3.9).
+ * EmptyStateUpload — first-run onboarding for /roosts (wave 3.9).
  *
  * Rendered on the roost page when the current site has zero synced folders.
  * Branches on machine count because the natural first-run blocker is

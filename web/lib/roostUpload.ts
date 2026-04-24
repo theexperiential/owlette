@@ -37,7 +37,7 @@ export interface UploadFolderOptions {
   siteId: string;
   roostId: string;
   files: NamedBlob[];
-  /** Human-readable name — shown on the /roost page. */
+  /** Human-readable name — shown on the /roosts page. */
   name: string;
   /** Machine IDs to dispatch sync_pull to once the manifest finalises. */
   targets: string[];

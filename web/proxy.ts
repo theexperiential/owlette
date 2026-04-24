@@ -30,7 +30,7 @@ export async function proxy(request: NextRequest) {
   }
 
   // Define protected routes
-  const protectedPaths = ['/dashboard', '/deployments', '/admin', '/roost', '/setup', '/add', '/cortex'];
+  const protectedPaths = ['/dashboard', '/deployments', '/admin', '/roosts', '/setup', '/add', '/cortex'];
 
   // Check if current path is protected
   const isProtectedPath = protectedPaths.some(path =>

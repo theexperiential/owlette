@@ -4,7 +4,7 @@
  * useRoosts — real-time listener for the v2 roost collection.
  * Reads `sites/{siteId}/roosts/{roostId}` docs, which each
  * represent one deploy target (current manifest pointer + metadata).
- * Per clean-cutover, this is the authoritative source for the /roost
+ * Per clean-cutover, this is the authoritative source for the /roosts
  * page. v1 `project_distributions` is legacy.
  */
 

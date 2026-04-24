@@ -16,7 +16,7 @@ import type { NamedBlob } from '@/lib/chunking';
 export interface UploadInputs {
   siteId: string;
   roostId: string;
-  /** Human-readable name shown on the /roost page. */
+  /** Human-readable name shown on the /roosts page. */
   name: string;
   files: NamedBlob[];
   targets: string[];

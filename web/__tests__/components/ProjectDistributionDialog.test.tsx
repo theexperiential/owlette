@@ -62,7 +62,7 @@ describe('ProjectDistributionDialog — shell', () => {
     expect(screen.getByText(/roost a project/i)).toBeInTheDocument();
   });
 
-  it('has no history tab — the main /roost page is the history', () => {
+  it('has no history tab — the main /roosts page is the history', () => {
     renderDialog();
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /history/i })).not.toBeInTheDocument();

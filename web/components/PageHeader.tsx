@@ -198,7 +198,7 @@ export function PageHeader({
                 </div>
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => router.push('/roost')}
+                onClick={() => router.push('/roosts')}
                 className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex items-start gap-3"
               >
                 <FolderSync className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
