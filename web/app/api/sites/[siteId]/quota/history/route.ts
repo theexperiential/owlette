@@ -12,6 +12,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { Timestamp } from 'firebase-admin/firestore';
+import { timestampToMs } from '@/lib/firestoreTime.server';
 import {
   problemFromError,
   problemValidation,
@@ -101,7 +102,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         count?: number;
         timestamp?: unknown;
       };
-      const ts = tsToMs(evt.timestamp);
+      const ts = timestampToMs(evt.timestamp);
       if (!ts) continue;
       const date = new Date(ts).toISOString().slice(0, 10);
       const bucket = buckets.get(date);
@@ -150,13 +151,4 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     return problemFromError(err, 'v2/sites/[siteId]/quota/history:GET');
   }
-}
-
-function tsToMs(v: unknown): number | null {
-  if (v instanceof Timestamp) return v.toMillis();
-  if (typeof v === 'number') return v;
-  if (v && typeof v === 'object' && 'toMillis' in v && typeof (v as { toMillis: () => number }).toMillis === 'function') {
-    return (v as { toMillis: () => number }).toMillis();
-  }
-  return null;
 }

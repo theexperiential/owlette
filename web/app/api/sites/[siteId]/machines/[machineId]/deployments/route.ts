@@ -10,7 +10,7 @@
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { Timestamp } from 'firebase-admin/firestore';
+import { timestampToIso } from '@/lib/firestoreTime.server';
 import { problemFromError } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
@@ -75,18 +75,4 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     return problemFromError(err, 'v2/sites/[siteId]/machines/[machineId]/deployments:GET');
   }
-}
-
-function timestampToIso(v: unknown): string | null {
-  if (v === null || v === undefined) return null;
-  if (v instanceof Timestamp) return v.toDate().toISOString();
-  if (typeof v === 'number') return new Date(v).toISOString();
-  if (typeof v === 'string') {
-    const parsed = Date.parse(v);
-    return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
-  }
-  if (v && typeof v === 'object' && 'toDate' in v && typeof (v as { toDate: () => Date }).toDate === 'function') {
-    return (v as { toDate: () => Date }).toDate().toISOString();
-  }
-  return null;
 }

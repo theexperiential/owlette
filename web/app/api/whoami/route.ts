@@ -10,7 +10,7 @@
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { Timestamp } from 'firebase-admin/firestore';
+import { timestampToMs } from '@/lib/firestoreTime.server';
 import {
   problem,
   problemFromError,
@@ -85,7 +85,7 @@ export async function GET(request: NextRequest) {
           const d = keyDocSnap.data() ?? {};
           name = typeof d.name === 'string' ? d.name : null;
           keyPrefix = typeof d.keyPrefix === 'string' ? d.keyPrefix : null;
-          lastUsedAt = tsToMs(d.lastUsedAt);
+          lastUsedAt = timestampToMs(d.lastUsedAt);
         }
       } catch {
         /* tolerate — whoami should never fail for metadata enrichment. */
@@ -179,14 +179,4 @@ async function loadQuotaSummary(siteId: string): Promise<Record<string, unknown>
   } catch {
     return null;
   }
-}
-
-function tsToMs(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
-  if (v instanceof Timestamp) return v.toMillis();
-  if (typeof v === 'number') return v;
-  if (v && typeof v === 'object' && 'toMillis' in v && typeof (v as { toMillis: () => number }).toMillis === 'function') {
-    return (v as { toMillis: () => number }).toMillis();
-  }
-  return null;
 }

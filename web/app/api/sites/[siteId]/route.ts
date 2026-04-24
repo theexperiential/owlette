@@ -8,7 +8,7 @@
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { Timestamp } from 'firebase-admin/firestore';
+import { timestampToIso } from '@/lib/firestoreTime.server';
 import {
   problem,
   problemFromError,
@@ -60,12 +60,3 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-function timestampToIso(v: unknown): string | null {
-  if (v === null || v === undefined) return null;
-  if (v instanceof Timestamp) return v.toDate().toISOString();
-  if (v && typeof v === 'object' && 'toDate' in v && typeof (v as { toDate: () => Date }).toDate === 'function') {
-    return (v as { toDate: () => Date }).toDate().toISOString();
-  }
-  if (typeof v === 'number') return new Date(v).toISOString();
-  return null;
-}

@@ -17,6 +17,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { Timestamp } from 'firebase-admin/firestore';
+import { timestampToMs } from '@/lib/firestoreTime.server';
 import {
   problemFromError,
   problemValidation,
@@ -121,7 +122,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         actor: typeof evt.actor === 'string' ? evt.actor : '',
         siteId: typeof evt.siteId === 'string' ? evt.siteId : siteId,
         occurredAt: typeof evt.occurredAt === 'number' ? evt.occurredAt : null,
-        recordedAt: tsToMs(data.recordedAt),
+        recordedAt: timestampToMs(data.recordedAt),
         attributes: evt.attributes && typeof evt.attributes === 'object' ? evt.attributes : {},
       };
     });
@@ -151,14 +152,4 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     return problemFromError(err, 'v2/sites/[siteId]/audit-log:GET');
   }
-}
-
-function tsToMs(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
-  if (v instanceof Timestamp) return v.toMillis();
-  if (typeof v === 'number') return v;
-  if (v && typeof v === 'object' && 'toMillis' in v && typeof (v as { toMillis: () => number }).toMillis === 'function') {
-    return (v as { toMillis: () => number }).toMillis();
-  }
-  return null;
 }

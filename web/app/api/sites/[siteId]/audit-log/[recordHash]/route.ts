@@ -9,7 +9,7 @@
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { Timestamp } from 'firebase-admin/firestore';
+import { timestampToMs } from '@/lib/firestoreTime.server';
 import {
   problem,
   problemFromError,
@@ -116,7 +116,7 @@ function normalise(raw: Record<string, unknown>, fallbackHash: string): AuditRec
   ) {
     return null;
   }
-  const recordedAt = tsToMs(raw.recordedAt);
+  const recordedAt = timestampToMs(raw.recordedAt);
   if (recordedAt === null) return null;
   const attributes =
     event.attributes && typeof event.attributes === 'object' && !Array.isArray(event.attributes)
@@ -134,14 +134,4 @@ function normalise(raw: Record<string, unknown>, fallbackHash: string): AuditRec
     previousHash: typeof raw.previousHash === 'string' ? raw.previousHash : GENESIS_HASH,
     hash: typeof raw.hash === 'string' ? raw.hash : fallbackHash,
   };
-}
-
-function tsToMs(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
-  if (v instanceof Timestamp) return v.toMillis();
-  if (typeof v === 'number') return v;
-  if (v && typeof v === 'object' && 'toMillis' in v && typeof (v as { toMillis: () => number }).toMillis === 'function') {
-    return (v as { toMillis: () => number }).toMillis();
-  }
-  return null;
 }
