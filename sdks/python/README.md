@@ -1,0 +1,131 @@
+# owlette-roost — python SDK
+
+Async Python SDK for the [roost](https://owlette.app) public API. Built on
+`httpx.AsyncClient`, typed end-to-end, mypy-strict clean.
+
+Requires Python ≥ 3.10.
+
+## install
+
+```bash
+pip install owlette-roost
+```
+
+## quickstart
+
+```python
+import asyncio
+from roost import Roost, PushOptions
+
+async def main() -> None:
+    async with Roost(token="owk_live_...") as client:
+        result = await client.roosts.push(
+            "./dist",
+            "rst_abc",
+            PushOptions(
+                site_id="site-1",
+                on_progress=lambda evt: print(evt),
+            ),
+        )
+        print("published", result.manifest_id)
+
+asyncio.run(main())
+```
+
+## client options
+
+```python
+Roost(
+    token="owk_live_...",             # required
+    api_url="https://owlette.app",    # default
+    environment="live",               # 'live' | 'test'
+    roost_version="2026-04-22",       # default
+    retry=RetryPolicy(max_attempts=3),  # optional
+    transport=my_httpx_transport,     # for proxy / mTLS / recording
+    timeout=30.0,
+)
+```
+
+## resources
+
+| resource          | methods                                                                 |
+|-------------------|-------------------------------------------------------------------------|
+| `roost.roosts`    | `list`, `list_page`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy` |
+| `roost.chunks`    | `check`, `upload_urls`, `download_urls`, `mount`, `referrers`           |
+| `roost.manifests` | `list`, `get`, `files`, `diff`                                          |
+| `roost.deployments` | `list`, `get`                                                         |
+| `roost.keys`      | `create`, `list`, `rotate`, `revoke`                                    |
+| `roost.webhooks`  | `subscribe`, `list`, `get`, `update`, `remove`, `rotate_secret`, `probe` |
+| `roost.sites`     | `list`, `get`                                                           |
+| `roost.machines`  | `list`, `get`, `deployments`                                            |
+| `roost.quotas`    | `current`, `history`                                                    |
+
+Paginated lists are exposed as **async generators** that auto-walk the
+`nextPageToken` cursor:
+
+```python
+async with Roost(token=...) as client:
+    async for r in client.roosts.list(site_id="site-1"):
+        print(r.roost_id, r.name)
+```
+
+If you need explicit control of paging, use `list_page()` instead.
+
+## push progress
+
+```python
+from roost import Roost, PushOptions
+
+def on_progress(evt):
+    # evt is tagged by .phase: 'discover' | 'hash' | 'check-missing'
+    #                          | 'upload' | 'publish'
+    print(evt)
+
+async with Roost(token="owk_live_...") as client:
+    await client.roosts.push(
+        "./dist",
+        "rst_abc",
+        PushOptions(site_id="site-1", on_progress=on_progress),
+    )
+```
+
+`on_progress` may be a plain callable or an async coroutine — both are
+awaited correctly.
+
+## webhook signature verification
+
+```python
+from roost import verify_signature
+
+result = verify_signature(
+    request.headers.get("roost-signature"),
+    await request.body(),           # raw bytes
+    secret="whsec_...",
+)
+if not result.ok:
+    return Response(status_code=401, content=result.reason)
+```
+
+Matches the server dispatcher exactly: `t=<unix>,v1=<hmac-sha256-hex>`
+with a 5-minute replay tolerance. Uses `hmac.compare_digest` internally.
+
+## errors
+
+All non-2xx responses raise `RoostApiError`:
+
+```python
+from roost import Roost, RoostApiError
+
+async with Roost(token=...) as client:
+    try:
+        await client.roosts.get("rst_missing", site_id="site-1")
+    except RoostApiError as err:
+        print(err.status, err.code, err.request_id)
+```
+
+The SDK auto-retries `429` and `5xx` with exponential backoff + jitter,
+honoring server `retryAfter` hints. Everything else bubbles.
+
+## license
+
+FSL-1.1-Apache-2.0
