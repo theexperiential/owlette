@@ -65,6 +65,14 @@ interface DisplayCanvasProps {
    * detail lives outside the canvas.
    */
   labelMode?: 'auto' | 'indexOnly';
+  /**
+   * When true, monitor rects respond to pointer drags and emit `onMonitorMove`
+   * with the updated virtual-desktop position. Pure drag snaps to 1px virtual;
+   * shift-drag snaps to 16px multiples. Callers wire this to a draft-state
+   * setter — the canvas never mutates monitor data itself.
+   */
+  editable?: boolean;
+  onMonitorMove?: (id: string, position: { x: number; y: number }) => void;
   className?: string;
 }
 
@@ -123,6 +131,69 @@ function computeBBox(all: MonitorInfo[]): BBox | null {
 }
 
 /**
+ * Pull the dragged monitor's edges toward any other-monitor edge that sits
+ * within `thresholdVirt` virtual units. Each axis is snapped independently
+ * from the closest candidate across all other monitors, so the rect can
+ * align its left edge with one neighbour while its top edge aligns with
+ * another — the common "tile into the gap" case.
+ *
+ * Edges considered per axis: same-side alignment (left↔left / right↔right /
+ * top↔top / bottom↔bottom) and touching alignment (left↔right / right↔left /
+ * top↔bottom / bottom↔top). Together these cover every natural "click
+ * together" outcome.
+ */
+function computeSnappedPosition(
+  dragged: { id: string; width: number; height: number },
+  candidate: { x: number; y: number },
+  others: MonitorInfo[],
+  thresholdVirt: number,
+): { x: number; y: number } {
+  let snappedX = candidate.x;
+  let snappedY = candidate.y;
+  let bestDx = thresholdVirt;
+  let bestDy = thresholdVirt;
+  const draggedLeft = candidate.x;
+  const draggedRight = candidate.x + dragged.width;
+  const draggedTop = candidate.y;
+  const draggedBottom = candidate.y + dragged.height;
+  for (const other of others) {
+    if (other.id === dragged.id) continue;
+    const { w: ow, h: oh } = effectiveDimensions(other);
+    const oLeft = other.position.x;
+    const oRight = other.position.x + ow;
+    const oTop = other.position.y;
+    const oBottom = other.position.y + oh;
+    const xPairs: [number, number][] = [
+      [draggedLeft, oLeft],
+      [draggedLeft, oRight],
+      [draggedRight, oLeft],
+      [draggedRight, oRight],
+    ];
+    for (const [dEdge, oEdge] of xPairs) {
+      const dist = Math.abs(dEdge - oEdge);
+      if (dist < bestDx) {
+        bestDx = dist;
+        snappedX = candidate.x + (oEdge - dEdge);
+      }
+    }
+    const yPairs: [number, number][] = [
+      [draggedTop, oTop],
+      [draggedTop, oBottom],
+      [draggedBottom, oTop],
+      [draggedBottom, oBottom],
+    ];
+    for (const [dEdge, oEdge] of yPairs) {
+      const dist = Math.abs(dEdge - oEdge);
+      if (dist < bestDy) {
+        bestDy = dist;
+        snappedY = candidate.y + (oEdge - dEdge);
+      }
+    }
+  }
+  return { x: snappedX, y: snappedY };
+}
+
+/**
  * Locate the Mosaic member display whose virtual-desktop position is the
  * top-left corner of the composite surface. Used to anchor the outer border.
  *
@@ -160,6 +231,8 @@ function DisplayCanvasImpl({
   accentColor = 'var(--primary)',
   driftedMonitorIds,
   labelMode = 'auto',
+  editable = false,
+  onMonitorMove,
   className,
 }: DisplayCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -260,6 +333,107 @@ function DisplayCanvasImpl({
     onMonitorHover?.(undefined);
   }, [onMonitorHover]);
 
+  // Drag state lives in a ref so mid-drag pointer moves don't cascade into
+  // parent renders — only the onMonitorMove callback (fired for virtual-coord
+  // changes) triggers a draft update. `startScale` is captured at pointerdown
+  // so mid-drag bbox growth (the rect expanding the viewport) doesn't wobble
+  // the cursor-to-rect mapping.
+  const dragStateRef = useRef<{
+    monitorId: string;
+    startClientX: number;
+    startClientY: number;
+    startPosX: number;
+    startPosY: number;
+    startScale: number;
+    draggedW: number;
+    draggedH: number;
+    pointerId: number;
+    moved: boolean;
+  } | null>(null);
+  // Set on pointerup when a drag occurred; consumed+cleared by the next click
+  // so drag-release doesn't also toggle selection.
+  const suppressClickRef = useRef(false);
+
+  const handleRectPointerDown = useCallback(
+    (e: React.PointerEvent<SVGGElement>, monitor: MonitorInfo) => {
+      if (!editable || !onMonitorMove || !projection || projection.scale <= 0) return;
+      if (e.button !== 0) return;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Some browsers reject capture on SVG — drag still works without it,
+        // it just loses tracking when the pointer leaves the rect.
+      }
+      const { w, h } = effectiveDimensions(monitor);
+      dragStateRef.current = {
+        monitorId: monitor.id,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        startPosX: monitor.position.x,
+        startPosY: monitor.position.y,
+        startScale: projection.scale,
+        draggedW: w,
+        draggedH: h,
+        pointerId: e.pointerId,
+        moved: false,
+      };
+    },
+    [editable, onMonitorMove, projection],
+  );
+
+  const handleRectPointerMove = useCallback(
+    (e: React.PointerEvent<SVGGElement>) => {
+      const state = dragStateRef.current;
+      if (!state || e.pointerId !== state.pointerId) return;
+      const dxCss = e.clientX - state.startClientX;
+      const dyCss = e.clientY - state.startClientY;
+      // 3px dead-zone separates a click-with-microshake from an intent to drag.
+      if (!state.moved && Math.hypot(dxCss, dyCss) < 3) return;
+      state.moved = true;
+      const dxVirt = dxCss / state.startScale;
+      const dyVirt = dyCss / state.startScale;
+      let newX = state.startPosX + dxVirt;
+      let newY = state.startPosY + dyVirt;
+      if (e.shiftKey) {
+        // Shift-drag opts out of edge-snap in favor of an explicit 16px grid.
+        newX = Math.round(newX / 16) * 16;
+        newY = Math.round(newY / 16) * 16;
+      } else {
+        // Edge-snap threshold is CSS-px-derived so it feels consistent at
+        // any zoom level. 8 CSS px is wide enough for quick alignment,
+        // narrow enough to avoid "sticky" feel when dragging away.
+        const snapThresholdVirt = 8 / state.startScale;
+        const snapped = computeSnappedPosition(
+          { id: state.monitorId, width: state.draggedW, height: state.draggedH },
+          { x: newX, y: newY },
+          monitors,
+          snapThresholdVirt,
+        );
+        newX = Math.round(snapped.x);
+        newY = Math.round(snapped.y);
+      }
+      onMonitorMove?.(state.monitorId, { x: newX, y: newY });
+    },
+    [onMonitorMove, monitors],
+  );
+
+  const handleRectPointerUp = useCallback(
+    (e: React.PointerEvent<SVGGElement>) => {
+      const state = dragStateRef.current;
+      if (!state || e.pointerId !== state.pointerId) return;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore — capture may have already been lost
+      }
+      if (state.moved) {
+        suppressClickRef.current = true;
+      }
+      dragStateRef.current = null;
+    },
+    [],
+  );
+
   const renderMonitor = (
     monitor: MonitorInfo,
     opts: { ghost: boolean }
@@ -348,10 +522,12 @@ function DisplayCanvasImpl({
     // Cross-panel hover lights up both canvas rect and table row for the same
     // monitor via a subtle brightness bump — state-driven (not :hover) so it
     // fires when the sibling sees the hover.
+    const draggable = editable && !opts.ghost && !!onMonitorMove;
     const rectStyle: React.CSSProperties = {
-      cursor: clickable ? 'pointer' : 'default',
+      cursor: draggable ? 'grab' : clickable ? 'pointer' : 'default',
       filter: isHovered ? 'brightness(1.15)' : undefined,
       transition: 'filter 120ms ease',
+      touchAction: draggable ? 'none' : undefined,
     };
 
     // Text label tier driven by rendered area. Using the rect area (not just
@@ -489,12 +665,28 @@ function DisplayCanvasImpl({
         </text>
       ) : null;
 
+    const handleGroupClick = clickable
+      ? () => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false;
+            return;
+          }
+          handleRectClick(monitor.id);
+        }
+      : undefined;
+
     return (
       <g
         key={`${opts.ghost ? 'ghost-' : ''}${monitor.id}`}
-        onClick={clickable ? () => handleRectClick(monitor.id) : undefined}
+        onClick={handleGroupClick}
         onMouseEnter={hoverable ? () => handleRectEnter(monitor.id) : undefined}
         onMouseLeave={hoverable ? handleRectLeave : undefined}
+        onPointerDown={
+          draggable ? (e) => handleRectPointerDown(e, monitor) : undefined
+        }
+        onPointerMove={draggable ? handleRectPointerMove : undefined}
+        onPointerUp={draggable ? handleRectPointerUp : undefined}
+        onPointerCancel={draggable ? handleRectPointerUp : undefined}
       >
         <rect
           x={x}
@@ -597,7 +789,7 @@ function DisplayCanvasImpl({
   const ghostElements = useMemo(
     () => (ghostMonitors ?? []).map((m) => renderMonitor(m, { ghost: true })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ghostMonitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode],
+    [ghostMonitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode, editable, onMonitorMove, handleRectPointerDown, handleRectPointerMove, handleRectPointerUp],
   );
   // SVG paint order is document order, not z-index — there's no z-index for
   // SVG elements. So we render non-selected monitors first, then the selected
@@ -616,7 +808,7 @@ function DisplayCanvasImpl({
       ...selected.map((m) => renderMonitor(m, { ghost: false })),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode]);
+  }, [monitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode, editable, onMonitorMove, handleRectPointerDown, handleRectPointerMove, handleRectPointerUp]);
   const gridElements = useMemo(
     () => (mosaicGrids ?? []).map((g, i) => renderGrid(g, i)),
     // eslint-disable-next-line react-hooks/exhaustive-deps

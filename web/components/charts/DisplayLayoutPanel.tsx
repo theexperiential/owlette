@@ -36,6 +36,7 @@ import {
   type MonitorInfo,
 } from '@/hooks/useDisplayState';
 import { useDisplayActions } from '@/hooks/useDisplayActions';
+import { useDisplayDraft } from '@/hooks/useDisplayDraft';
 import { DisplayCanvas } from './DisplayCanvas';
 import { DisplayMonitorTable } from './DisplayMonitorTable';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -65,6 +66,35 @@ function sortByPosition(monitors: MonitorInfo[]): MonitorInfo[] {
   });
 }
 
+/**
+ * True if any two monitors occupy overlapping virtual-desktop rects. Windows
+ * tolerates overlaps, so this is strictly advisory — shown as a warning, never
+ * a block. Rotation swaps effective width/height (portrait panels).
+ */
+function hasOverlappingMonitors(monitors: MonitorInfo[]): boolean {
+  const rect = (m: MonitorInfo) => {
+    const rot = m.rotation % 180;
+    const w = rot === 0 ? m.resolution.width : m.resolution.height;
+    const h = rot === 0 ? m.resolution.height : m.resolution.width;
+    return { x: m.position.x, y: m.position.y, w, h };
+  };
+  for (let i = 0; i < monitors.length; i++) {
+    const a = rect(monitors[i]);
+    for (let j = i + 1; j < monitors.length; j++) {
+      const b = rect(monitors[j]);
+      if (
+        a.x < b.x + b.w &&
+        a.x + a.w > b.x &&
+        a.y < b.y + b.h &&
+        a.y + a.h > b.y
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export function DisplayLayoutPanel({
   machineId,
   machineName,
@@ -79,12 +109,30 @@ export function DisplayLayoutPanel({
   const actions = useDisplayActions(siteId, machineId);
 
   const [activeTab, setActiveTab] = useState<DisplayTab>('live');
+  const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [selectedMonitorId, setSelectedMonitorId] = useState<string | undefined>(
     undefined,
   );
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false);
   const [applyDialogOpen, setApplyDialogOpen] = useState(false);
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
+  const [closeUnsavedDialogOpen, setCloseUnsavedDialogOpen] = useState(false);
+
+  const { draft, isDirty, updateMonitor, resetToLive, clearDraft } = useDisplayDraft({
+    siteId,
+    machineId,
+    assigned,
+    mode,
+  });
+
+  // Drag-to-reposition callback — only the assigned canvas in edit mode wires
+  // this in, so a no-op outside edit mode keeps the existing read-only flow.
+  const handleMonitorMove = useCallback(
+    (id: string, position: { x: number; y: number }) => {
+      updateMonitor(id, { position });
+    },
+    [updateMonitor],
+  );
 
   // Post-apply ack state. When a dispatch succeeds we store the wall-clock
   // deadline (Date.now() + ack_timeout_ms) and the apply's generation token.
@@ -112,6 +160,13 @@ export function DisplayLayoutPanel({
   const driftCount = driftMap.size;
   const hasDrift = driftCount > 0;
 
+  // [RECONSTRUCTED — Wave A1.4] Drift signals are zeroed in edit mode so the
+  // user isn't flagged for changes they are deliberately making. Raw hasDrift
+  // stays available for non-UI math paths; UI surfaces use the hasDriftVisible
+  // / effectiveDriftCount forms.
+  const effectiveDriftCount = mode === 'edit' ? 0 : driftCount;
+  const hasDriftVisible = mode === 'edit' ? false : hasDrift;
+
   // Stable Set of drifted monitor ids — passed to the canvas so it can
   // amber-stroke drifted rects. Memoized so the Set identity is stable
   // across renders when the underlying drift map hasn't changed.
@@ -132,33 +187,55 @@ export function DisplayLayoutPanel({
     [assigned],
   );
 
+  // [A2.1 / Wave A1.5] In edit mode the draft is the source of truth — the
+  // table, canvas, and ghost overlay on the live tab all reflect draft edits
+  // in real time. Outside edit mode this collapses back to the persisted value.
+  const effectiveAssignedMonitors = useMemo<MonitorInfo[]>(
+    () => (mode === 'edit' && draft ? draft : assignedMonitors),
+    [mode, draft, assignedMonitors],
+  );
+
   const sortedLive = useMemo(() => sortByPosition(liveMonitors), [liveMonitors]);
   const sortedAssigned = useMemo(
-    () => sortByPosition(assignedMonitors),
-    [assignedMonitors],
+    () => sortByPosition(effectiveAssignedMonitors),
+    [effectiveAssignedMonitors],
   );
+
+  // [A4.1] Overlap check runs only while editing — outside edit mode an
+  // overlapping saved layout is the operator's deliberate choice and not
+  // worth nagging.
+  const draftHasOverlap = useMemo(() => {
+    if (mode !== 'edit') return false;
+    return hasOverlappingMonitors(effectiveAssignedMonitors);
+  }, [mode, effectiveAssignedMonitors]);
 
   // Cards and canvas render from the same slice of data so selection stays
   // in sync. Ghost overlay is only meaningful on the live tab, and only when
   // there's an assigned layout to compare against.
   const cardsMonitors = activeTab === 'live' ? sortedLive : sortedAssigned;
-  const canvasMonitors = activeTab === 'live' ? liveMonitors : assignedMonitors;
-  // Only render ghosts for assigned monitors whose live counterpart has drifted
-  // (or is missing entirely). Non-drifted ghosts sit exactly under the live
-  // rect and would bleed through its 50%-transparent fill as redundant dashes.
+  const canvasMonitors =
+    activeTab === 'live' ? liveMonitors : effectiveAssignedMonitors;
+  // [Wave A1.5 — RECONSTRUCTED] In edit mode the ghost overlay on the live tab
+  // mirrors the current draft (not persisted assigned) so operators see the
+  // draft-vs-live comparison live. The drift filter is relaxed in edit mode
+  // because the whole point is to surface every pending change.
   const ghostMonitors = useMemo<MonitorInfo[] | undefined>(() => {
     if (activeTab !== 'live' || !assigned) return undefined;
+    const source = mode === 'edit' && draft ? draft : assignedMonitors;
+    if (mode === 'edit') {
+      return source;
+    }
     const liveByHash = new Map<string, MonitorInfo>();
     for (const m of liveMonitors) {
       if (m.edidHash) liveByHash.set(m.edidHash, m);
     }
-    return assignedMonitors.filter((a) => {
+    return source.filter((a) => {
       if (!a.edidHash) return true;
       const live = liveByHash.get(a.edidHash);
       if (!live) return true;
       return driftedMonitorIds.has(live.id);
     });
-  }, [activeTab, assigned, assignedMonitors, liveMonitors, driftedMonitorIds]);
+  }, [activeTab, assigned, assignedMonitors, liveMonitors, driftedMonitorIds, mode, draft]);
 
   // Single source of truth for the active tab's semantic color. Threaded into
   // the canvas (selection ring), monitor cards (left border + selected ring),
@@ -170,12 +247,20 @@ export function DisplayLayoutPanel({
   const hasLiveProfile = !!profile && liveMonitors.length > 0;
   const hasAssignedLayout = !!assigned && assignedMonitors.length > 0;
 
+  // [RECONSTRUCTED — Wave A1.2] Defensive render-phase guard: if the admin
+  // flag disappears or the assigned layout gets cleared mid-edit, drop back
+  // to view. Uses the same pattern as useDisplayDraft's prevMode tracker.
+  if (mode === 'edit' && (!canSiteAdmin || !hasAssignedLayout)) {
+    setMode('view');
+  }
+
   // Button disabled-state logic:
   //  - store: needs live data to store (otherwise there's nothing to save)
   //  - recall: needs an assigned layout to push
   // `actions.applying` blocks repeat-clicks during in-flight writes.
   const captureDisabled = !hasLiveProfile || actions.applying;
   const applyDisabled = !hasAssignedLayout || actions.applying;
+  const editDisabled = !hasAssignedLayout || !!profile?.mosaicActive;
 
   // Stable click handler so memoized children (DisplayCanvas, DisplayMonitorCard)
   // can shallow-compare props and skip re-renders when only unrelated parent
@@ -194,6 +279,9 @@ export function DisplayLayoutPanel({
   const isInitialMountRef = useRef(true);
 
   useEffect(() => {
+    // [RECONSTRUCTED — Wave A1.4] Suppress drift toasts during edit mode.
+    if (mode === 'edit') return;
+
     // First commit: record current state but don't toast — user just opened
     // the panel and shouldn't get a toast for pre-existing drift.
     if (isInitialMountRef.current) {
@@ -217,7 +305,7 @@ export function DisplayLayoutPanel({
         action: { label: 'review', onClick: () => setActiveTab('assigned') },
       },
     );
-  }, [hasDrift, profile?.signatureHash, machineId, machineName, driftCount, setActiveTab]);
+  }, [hasDrift, profile?.signatureHash, machineId, machineName, driftCount, setActiveTab, mode]);
 
   /**
    * Extract a readable error string from unknown throwables. Firestore errors
@@ -317,6 +405,50 @@ export function DisplayLayoutPanel({
     }
   };
 
+  // [RECONSTRUCTED — Wave A1.2] Close-with-unsaved-changes gate. Ack countdown
+  // disables the close button via the existing disabled prop; this handler
+  // only fires for the clean case.
+  const handleCloseClick = () => {
+    if (mode === 'edit' && isDirty) {
+      setCloseUnsavedDialogOpen(true);
+      return;
+    }
+    onClose();
+  };
+
+  // [RECONSTRUCTED — Wave A1.2] Discard + close confirmation.
+  const handleDiscardAndClose = () => {
+    clearDraft();
+    setMode('view');
+    onClose();
+  };
+
+  const handleDiscardEdit = () => {
+    clearDraft();
+    setMode('view');
+  };
+
+  const handleResetToLive = () => {
+    resetToLive(liveMonitors);
+  };
+
+  // Save commits the draft as the new assigned layout. Uses the same
+  // captureLayout path as store — the only difference is which monitors we
+  // persist (draft vs current live). On success, drop the sessionStorage
+  // draft + exit edit mode so the panel returns to a clean view state.
+  const handleSaveDraft = async () => {
+    if (!draft) return;
+    try {
+      await actions.captureLayout(draft, user?.email ?? 'unknown');
+      toast.success('layout saved');
+      clearDraft();
+      setMode('view');
+    } catch (e) {
+      console.error('Failed to save draft', e);
+      toast.error(`save failed: ${formatError(e)}`);
+    }
+  };
+
   const renderBody = () => {
     if (error) {
       return (
@@ -397,7 +529,17 @@ export function DisplayLayoutPanel({
             onMonitorClick={handleMonitorClick}
             accentColor={tabAccentColor}
             driftedMonitorIds={
-              activeTab === 'live' ? driftedMonitorIds : undefined
+              mode === 'edit'
+                ? undefined
+                : activeTab === 'live'
+                  ? driftedMonitorIds
+                  : undefined
+            }
+            editable={mode === 'edit' && activeTab === 'assigned'}
+            onMonitorMove={
+              mode === 'edit' && activeTab === 'assigned'
+                ? handleMonitorMove
+                : undefined
             }
             className="h-[280px]"
           />
@@ -408,7 +550,13 @@ export function DisplayLayoutPanel({
           selectedMonitorId={selectedMonitorId}
           onSelect={handleMonitorClick}
           accentColor={tabAccentColor}
-          driftMap={activeTab === 'live' ? driftMap : undefined}
+          driftMap={
+            mode === 'edit'
+              ? undefined
+              : activeTab === 'live'
+                ? driftMap
+                : undefined
+          }
         />
       </div>
     );
@@ -465,22 +613,27 @@ export function DisplayLayoutPanel({
             {renderTab(
               'assigned',
               'assigned',
-              hasDrift ? `(${driftCount})` : undefined,
+              hasDriftVisible ? `(${effectiveDriftCount})` : undefined,
+            )}
+            {/* [RECONSTRUCTED — Wave A1.4] drift-paused pill in edit mode. */}
+            {mode === 'edit' && (
+              <span className="text-[10px] text-muted-foreground px-2 py-1 rounded bg-muted/40 border border-border">
+                editing assigned — drift check paused
+              </span>
             )}
           </div>
 
           <div className="flex-1" />
 
-          {canSiteAdmin && (
+          {/* [RECONSTRUCTED — Wave A1.2] Admin action block is mode-aware:
+              view-mode shows store/recall/clear/edit; edit-mode shows
+              save/discard/reset-to-live. Exact button ordering, tooltips,
+              and classes here are best-effort; the subagent reported that
+              every button matches the existing store/recall styling
+              (bg-card border border-border text-muted-foreground
+              hover:text-white h-8 px-3 text-xs). */}
+          {canSiteAdmin && mode === 'view' && (
             <div className="flex items-center gap-1.5">
-              {/* Action buttons match the machine row's more-options icon
-                  button styling (bg-card border + muted->white hover) so the
-                  whole panel header reads as one consistent control bar.
-                  Tooltips are wrapped in a span so they still trigger when the
-                  underlying button is disabled — disabled buttons swallow
-                  pointer events, which would otherwise hide the tooltip in
-                  exactly the case where it's most useful (explaining *why*
-                  the action is unavailable). */}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span tabIndex={captureDisabled ? 0 : -1}>
@@ -514,13 +667,13 @@ export function DisplayLayoutPanel({
                       onClick={() => setApplyDialogOpen(true)}
                       data-testid="display-recall-button"
                       style={
-                        hasDrift
+                        hasDriftVisible
                           ? { boxShadow: 'inset 0 0 0 1px var(--chart-4)' }
                           : undefined
                       }
                       className={cn(
                         'bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs',
-                        hasDrift && 'border-transparent',
+                        hasDriftVisible && 'border-transparent',
                       )}
                     >
                       {actions.applying ? (
@@ -532,14 +685,11 @@ export function DisplayLayoutPanel({
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {hasDrift
+                  {hasDriftVisible
                     ? 'drift detected — recall the assigned layout to fix it'
                     : 'recall the assigned layout — push it to this machine'}
                 </TooltipContent>
               </Tooltip>
-              {/* Clear is only meaningful on the assigned tab and only when a
-                  layout actually exists. Subdued styling — destructive on hover —
-                  keeps it from competing with the primary capture/apply actions. */}
               {activeTab === 'assigned' && hasAssignedLayout && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -561,6 +711,96 @@ export function DisplayLayoutPanel({
                   </TooltipContent>
                 </Tooltip>
               )}
+              {activeTab === 'assigned' && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span tabIndex={editDisabled ? 0 : -1}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={editDisabled}
+                        onClick={() => setMode('edit')}
+                        data-testid="display-edit-button"
+                        className="bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs"
+                      >
+                        edit
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {!hasAssignedLayout
+                      ? 'store a layout first'
+                      : profile?.mosaicActive
+                        ? 'editing unavailable while mosaic is active'
+                        : 'edit the assigned layout'}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+          )}
+
+          {canSiteAdmin && mode === 'edit' && (
+            <div className="flex items-center gap-1.5">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={!isDirty || actions.applying ? 0 : -1}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={!isDirty || actions.applying}
+                      onClick={handleSaveDraft}
+                      data-testid="display-save-button"
+                      className="bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs"
+                    >
+                      {actions.applying ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        'save'
+                      )}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {isDirty
+                    ? 'save draft as the assigned layout'
+                    : 'no unsaved changes'}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={-1}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleDiscardEdit}
+                      data-testid="display-discard-button"
+                      className="bg-card border border-border text-muted-foreground hover:text-destructive h-8 px-3 text-xs"
+                    >
+                      discard
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>discard edits and return to view</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={!hasLiveProfile ? 0 : -1}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={!hasLiveProfile}
+                      onClick={handleResetToLive}
+                      data-testid="display-reset-to-live-button"
+                      className="bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs"
+                    >
+                      reset to live
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  replace draft with the current live arrangement
+                </TooltipContent>
+              </Tooltip>
             </div>
           )}
 
@@ -569,7 +809,7 @@ export function DisplayLayoutPanel({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={onClose}
+                onClick={handleCloseClick}
                 disabled={ackSecondsLeft !== null}
                 className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0 shrink-0"
               >
@@ -600,6 +840,16 @@ export function DisplayLayoutPanel({
             >
               keep
             </Button>
+          </div>
+        )}
+
+        {draftHasOverlap && (
+          <div
+            className="mt-3 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs text-amber-200"
+            role="status"
+            aria-live="polite"
+          >
+            <span>monitors overlap — usually unintentional</span>
           </div>
         )}
 
@@ -640,6 +890,19 @@ export function DisplayLayoutPanel({
         cancelText="cancel"
         confirmText="clear"
         onConfirm={handleClearConfirm}
+      />
+
+      {/* [RECONSTRUCTED — Wave A1.2] Close-with-unsaved-changes confirmation.
+          Exact copy is reconstructed from subagent intent ("discard and close"
+          / "keep editing") and may differ from the actual shipped text. */}
+      <ConfirmDialog
+        open={closeUnsavedDialogOpen}
+        onOpenChange={setCloseUnsavedDialogOpen}
+        title="discard unsaved edits?"
+        description="you have pending draft edits. close will discard them."
+        cancelText="keep editing"
+        confirmText="discard and close"
+        onConfirm={handleDiscardAndClose}
       />
     </Card>
   );
