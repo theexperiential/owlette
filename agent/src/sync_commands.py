@@ -201,6 +201,38 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         # different from "what the agent actually needs to download", which
         # is a function of the local content store, not manifest deltas.
         url_provider = _make_chunk_url_provider(service, site_id)
+        # Throttled progress reporter for the download phase. Firing a
+        # firestore write per-chunk on a 3739-chunk upload would be a
+        # cost + rate-limit nightmare, so we emit at most once per ~2s
+        # OR every 5% progress change (whichever comes first). The very
+        # first call (triggered by download_all's initial emit) always
+        # goes through so the UI sees a real number immediately.
+        _last_emit = {'ts': 0.0, 'fetched': -1}
+
+        def _download_progress(done: int, total: int) -> None:
+            import time
+            now = time.monotonic()
+            elapsed = now - _last_emit['ts']
+            pct_delta = (
+                abs((done / total) - (_last_emit['fetched'] / total))
+                if total > 0 and _last_emit['fetched'] >= 0
+                else 1.0
+            )
+            is_terminal = done >= total
+            if (
+                _last_emit['fetched'] < 0
+                or elapsed >= 2.0
+                or pct_delta >= 0.05
+                or is_terminal
+            ):
+                _last_emit['ts'] = now
+                _last_emit['fetched'] = done
+                _report_target_state(
+                    service, site_id, folder_id, manifest_id, 'downloading',
+                    chunks_fetched=done,
+                    chunks_total=total,
+                )
+
         try:
             dl_result = download_all(
                 distribution_id=dist_id,
@@ -209,6 +241,7 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
                 url_provider=url_provider,
                 state=state,
                 cancel_event=cancel_event,
+                progress_cb=_download_progress,
             )
         except ChunkDownloadError as e:
             state.set_distribution_state(dist_id, 'failed', error=str(e))

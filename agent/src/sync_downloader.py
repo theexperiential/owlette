@@ -156,6 +156,7 @@ def download_all(
     content_store: Optional[str] = None,
     concurrency: int = DEFAULT_CONCURRENCY,
     retry_budget: int = DEFAULT_PER_CHUNK_RETRY_BUDGET,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> DownloadResult:
     """
     fetch every chunk in `chunks` into the content store. chunks already
@@ -281,6 +282,17 @@ def download_all(
     # cancelled" from "chunk failure short-circuit" in the result.
     was_externally_cancelled = cancel_event.is_set()
 
+    # Progress reporting: total includes both already-present (dedup) and
+    # the chunks we'll actually fetch, so the UI shows 100% when both
+    # legs finish. Emit an initial event immediately so the caller can
+    # see the already-present baseline before any download completes.
+    total_chunks = already_present + len(pending)
+    if progress_cb:
+        try:
+            progress_cb(already_present, total_chunks)
+        except Exception:
+            pass  # progress reporting is best-effort
+
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         futures = {
             pool.submit(
@@ -295,6 +307,11 @@ def download_all(
             try:
                 fut.result()
                 fetched += 1
+                if progress_cb:
+                    try:
+                        progress_cb(already_present + fetched, total_chunks)
+                    except Exception:
+                        pass
             except ChunkDownloadError:
                 failed += 1
                 # state already marked 'failed' by _download_one; signal
