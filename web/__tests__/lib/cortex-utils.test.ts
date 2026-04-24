@@ -72,6 +72,8 @@ import {
   executeToolOnAgent,
   executeExistingCommand,
   buildExecutableTools,
+  verifyUserSiteAccess,
+  resolveCortexMaxTier,
   COMMAND_TIMEOUT_MS,
 } from '@/lib/cortex-utils.server';
 
@@ -212,5 +214,135 @@ describe('buildExecutableTools', () => {
   it('site mode creates tools for fan-out execution', () => {
     const tools = buildExecutableTools({} as unknown as FirebaseFirestore.Firestore, 's1', '', 'c1', allTools, true, ['m1', 'm2']);
     expect(Object.keys(tools)).toHaveLength(allTools.length);
+  });
+});
+
+// ─── verifyUserSiteAccess ───────────────────────────────────────────────────
+
+/**
+ * Build a db stub whose `collection(name).doc(id).get()` resolves to the
+ * data in `docs[name]`. Absent entries return `{ exists: false }`.
+ */
+function makeAccessDb(docs: {
+  users?: Record<string, unknown> | null;
+  sites?: Record<string, unknown> | null;
+  siteExists?: boolean;
+}) {
+  return {
+    collection: (name: string) => ({
+      doc: (_id: string) => ({
+        get: async () => {
+          if (name === 'users') {
+            return docs.users
+              ? { exists: true, data: () => docs.users }
+              : { exists: false, data: () => undefined };
+          }
+          if (name === 'sites') {
+            if (docs.siteExists === false) {
+              return { exists: false };
+            }
+            return { exists: true, data: () => docs.sites ?? {} };
+          }
+          return { exists: false };
+        },
+      }),
+    }),
+  } as unknown as FirebaseFirestore.Firestore;
+}
+
+describe('verifyUserSiteAccess', () => {
+  it('throws when the user doc does not exist', async () => {
+    const db = makeAccessDb({ users: null, sites: { owner: 'someone' } });
+    await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow('User not found');
+  });
+
+  it('throws when the site doc does not exist', async () => {
+    const db = makeAccessDb({ users: { role: 'member', sites: ['s1'] }, siteExists: false });
+    await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow('Site not found');
+  });
+
+  it('grants superadmin full access with isSiteAdmin=true', async () => {
+    const db = makeAccessDb({
+      users: { role: 'superadmin', sites: [] },
+      sites: { owner: 'someone' },
+    });
+    const access = await verifyUserSiteAccess(db, 'u1', 's1');
+    expect(access.isSuperadmin).toBe(true);
+    expect(access.isSiteAdmin).toBe(true);
+  });
+
+  it('grants a freshly-created site owner access even without sites[] entry', async () => {
+    // Regression: previously rejected fresh owners because the user doc's
+    // sites[] array is not updated on site creation.
+    const db = makeAccessDb({
+      users: { role: 'admin', sites: [] },
+      sites: { owner: 'u1' },
+    });
+    const access = await verifyUserSiteAccess(db, 'u1', 's1');
+    expect(access.isSiteOwner).toBe(true);
+    expect(access.isSiteAdmin).toBe(true);
+  });
+
+  it('grants admin role with site assignment isSiteAdmin=true', async () => {
+    const db = makeAccessDb({
+      users: { role: 'admin', sites: ['s1'] },
+      sites: { owner: 'other' },
+    });
+    const access = await verifyUserSiteAccess(db, 'u1', 's1');
+    expect(access.isSiteAdmin).toBe(true);
+  });
+
+  it('grants member with assignment site access but NOT admin', async () => {
+    const db = makeAccessDb({
+      users: { role: 'member', sites: ['s1'] },
+      sites: { owner: 'other' },
+    });
+    const access = await verifyUserSiteAccess(db, 'u1', 's1');
+    expect(access.isSiteAdmin).toBe(false);
+    expect(access.role).toBe('member');
+  });
+
+  it('grants member-owner site access but NOT admin', async () => {
+    const db = makeAccessDb({
+      users: { role: 'member', sites: [] },
+      sites: { owner: 'u1' },
+    });
+    const access = await verifyUserSiteAccess(db, 'u1', 's1');
+    expect(access.isSiteOwner).toBe(true);
+    expect(access.isSiteAdmin).toBe(false);
+  });
+
+  it('rejects users who are not superadmin/owner/assigned', async () => {
+    const db = makeAccessDb({
+      users: { role: 'member', sites: ['other'] },
+      sites: { owner: 'other' },
+    });
+    await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow(
+      /do not have access/
+    );
+  });
+});
+
+// ─── resolveCortexMaxTier ───────────────────────────────────────────────────
+
+describe('resolveCortexMaxTier', () => {
+  it('returns 3 for site admins', () => {
+    expect(
+      resolveCortexMaxTier({ role: 'superadmin', isSuperadmin: true, isSiteAdmin: true, isSiteOwner: false })
+    ).toBe(3);
+    expect(
+      resolveCortexMaxTier({ role: 'admin', isSuperadmin: false, isSiteAdmin: true, isSiteOwner: true })
+    ).toBe(3);
+  });
+
+  it('caps non-admins (members) at tier 1 — read-only', () => {
+    // Regression: members with site access must not receive tier 2/3 tools,
+    // which include registry writes, execute_script, run_powershell, etc.
+    expect(
+      resolveCortexMaxTier({ role: 'member', isSuperadmin: false, isSiteAdmin: false, isSiteOwner: true })
+    ).toBe(1);
+    expect(
+      resolveCortexMaxTier({ role: 'member', isSuperadmin: false, isSiteAdmin: false, isSiteOwner: false })
+    ).toBe(1);
   });
 });

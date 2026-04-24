@@ -11,6 +11,7 @@ import { decryptApiKey } from '@/lib/llm-encryption.server';
 import {
   EXISTING_COMMAND_MAPPINGS,
   type McpToolDefinition,
+  type ToolTier,
 } from '@/lib/mcp-tools';
 import type { LlmConfig } from '@/lib/llm';
 
@@ -102,26 +103,77 @@ export async function resolveLlmConfig(
 }
 
 /**
- * Verify user has access to the target site.
+ * Resolved access level for a user against a site. Used to choose which
+ * Cortex tool tier the caller is allowed to drive.
+ *
+ * `isSiteAdmin` mirrors the canonical client-side `isSiteAdmin(siteId)` in
+ * AuthContext — superadmin, or `admin` role with ownership/assignment.
+ */
+export interface SiteAccessLevel {
+  role: string | null;
+  isSuperadmin: boolean;
+  isSiteAdmin: boolean;
+  isSiteOwner: boolean;
+}
+
+/**
+ * Verify user has access to the target site, and return their access level.
+ *
+ * Access is granted iff the user is superadmin, the site owner, or listed in
+ * `users/{uid}.sites[]`. Matches `assertUserHasSiteAccess` in apiAuth.server.
+ * Site owners are explicitly honored so a freshly-created site's owner is not
+ * locked out before the user's `sites[]` array has been updated.
+ *
+ * Throws on no-access. Callers use the returned access level to decide what
+ * the user is allowed to do once past the gate (e.g. which tool tier to grant).
  */
 export async function verifyUserSiteAccess(
   db: FirebaseFirestore.Firestore,
   userId: string,
   siteId: string
-): Promise<void> {
-  const userDoc = await db.collection('users').doc(userId).get();
+): Promise<SiteAccessLevel> {
+  const [userDoc, siteDoc] = await Promise.all([
+    db.collection('users').doc(userId).get(),
+    db.collection('sites').doc(siteId).get(),
+  ]);
+
   if (!userDoc.exists) {
     throw new Error('User not found');
   }
+  if (!siteDoc.exists) {
+    throw new Error('Site not found');
+  }
+
   const userData = userDoc.data()!;
+  const siteData = siteDoc.data() || {};
+  const role: string | null = typeof userData.role === 'string' ? userData.role : null;
+  const isSuperadmin = role === 'superadmin';
+  const isSiteOwner = siteData.owner === userId;
+  const userSites: string[] = Array.isArray(userData.sites) ? userData.sites : [];
+  const isAssigned = userSites.includes(siteId);
 
-  // Superadmins can access all sites (platform god-mode — mirrors firestore.rules canAccessSite).
-  if (userData.role === 'superadmin') return;
-
-  const userSites: string[] = userData.sites || [];
-  if (!userSites.includes(siteId)) {
+  if (!isSuperadmin && !isSiteOwner && !isAssigned) {
     throw new Error('You do not have access to this site');
   }
+
+  // Mirrors AuthContext.isSiteAdmin: superadmin, or admin role with
+  // ownership/assignment. Members never get admin privileges.
+  const isSiteAdmin = isSuperadmin || (role === 'admin' && (isSiteOwner || isAssigned));
+
+  return { role, isSuperadmin, isSiteAdmin, isSiteOwner };
+}
+
+/**
+ * Resolve the maximum Cortex tool tier a caller is allowed to drive based on
+ * their site access level.
+ *
+ * - Site admins (superadmin, or `admin` with site access) → tier 3 (full).
+ * - Everyone else with site access → tier 1 (read-only). Members must not be
+ *   able to trigger tier 2 (registry writes, feature installs, disk cleans)
+ *   or tier 3 (run_powershell, execute_script, deploy_software, reboot, etc.).
+ */
+export function resolveCortexMaxTier(access: SiteAccessLevel): ToolTier {
+  return access.isSiteAdmin ? 3 : 1;
 }
 
 /**

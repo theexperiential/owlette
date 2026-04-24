@@ -21,10 +21,12 @@ import { apiError } from '@/lib/apiErrorResponse';
 import {
   resolveLlmConfig,
   verifyUserSiteAccess,
+  resolveCortexMaxTier,
   isMachineOnline,
   isCortexEnabled,
   getOnlineMachines,
   buildExecutableTools,
+  type SiteAccessLevel,
 } from '@/lib/cortex-utils.server';
 
 const SITE_TARGET_ID = '__site__';
@@ -135,12 +137,13 @@ export async function POST(request: NextRequest) {
     const db = getAdminDb();
     const isSiteMode = machineId === SITE_TARGET_ID;
 
-    // Verify access
-    await verifyUserSiteAccess(db, userId, siteId);
+    // Verify access and resolve tier ceiling. Members with site access only
+    // get read-only tools; destructive tools require site-admin privileges.
+    const access = await verifyUserSiteAccess(db, userId, siteId);
 
     // ─── Site-Wide Mode (unchanged — web-side LLM) ─────────────────────
     if (isSiteMode) {
-      return handleSiteWideMode(db, userId, siteId, messages, chatId);
+      return handleSiteWideMode(db, userId, siteId, messages, chatId, access);
     }
 
     // ─── Single Machine Mode ───────────────────────────────────────────
@@ -167,15 +170,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if local Cortex is running
-    const cortexLocal = await isCortexLocal(db, siteId, machineId);
+    // Non-admins are forced through the server-side LLM path so the tier
+    // cap (tier 1, read-only) is actually enforced. The local Cortex path
+    // runs tools inside the agent and does not yet honor a per-user tier
+    // cap — routing members through it would reopen the tier-3 exposure.
+    const cortexLocal = access.isSiteAdmin
+      ? await isCortexLocal(db, siteId, machineId)
+      : false;
 
     if (cortexLocal) {
       // ─── Local Cortex Path (SSE via Firestore onSnapshot) ──────────
       return handleLocalCortex(db, siteId, machineId, machineName, messages, chatId);
     } else {
       // ─── Fallback: Server-side LLM (existing approach) ────────────
-      return handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId);
+      return handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, access);
     }
   } catch (error: unknown) {
     return apiError(error, 'cortex');
@@ -348,13 +356,14 @@ async function handleServerSideLLM(
   machineName: string,
   messages: ModelMessage[],
   chatId: string,
+  access: SiteAccessLevel,
 ): Promise<Response> {
   const [llmConfig, processes] = await Promise.all([
     resolveLlmConfig(db, userId, siteId),
     fetchProcessSummaries(db, siteId, machineId),
   ]);
 
-  const toolDefs = getToolsByTier(3);
+  const toolDefs = getToolsByTier(resolveCortexMaxTier(access));
   const executableTools = buildExecutableTools(
     db, siteId, machineId, chatId, toolDefs,
     false, [],
@@ -383,6 +392,7 @@ async function handleSiteWideMode(
   siteId: string,
   messages: ModelMessage[],
   chatId: string,
+  access: SiteAccessLevel,
 ): Promise<Response> {
   const onlineMachines = await getOnlineMachines(db, siteId);
   if (onlineMachines.length === 0) {
@@ -394,7 +404,7 @@ async function handleSiteWideMode(
 
   const llmConfig = await resolveLlmConfig(db, userId, siteId);
 
-  const toolDefs = getToolsByTier(3);
+  const toolDefs = getToolsByTier(resolveCortexMaxTier(access));
   const executableTools = buildExecutableTools(
     db, siteId, SITE_TARGET_ID, chatId, toolDefs,
     true, onlineMachines,

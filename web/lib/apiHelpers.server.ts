@@ -16,7 +16,15 @@ import { ApiAuthError } from '@/lib/apiAuth.server';
 
 /**
  * Resolves user ID from API key, session, or ID token — plus validates
- * admin role and site access in a single pass (2 Firestore reads instead of 3).
+ * site-admin access in a single pass (2 Firestore reads instead of 3).
+ *
+ * Mirrors the canonical client-side `isSiteAdmin(siteId)` check
+ * (see AuthContext): a caller is a site admin iff
+ *   role === 'superadmin', OR
+ *   role === 'admin' AND (they own the site OR siteId is in their users.sites[]).
+ *
+ * Plain `member` role — even with site access — is rejected. These routes
+ * back `/api/admin/*` endpoints and must not expose admin surface to members.
  */
 export async function requireAdminWithSiteAccess(
   request: NextRequest,
@@ -25,7 +33,6 @@ export async function requireAdminWithSiteAccess(
   const userId = await resolveUserId(request);
   const db = getAdminDb();
 
-  // Single user doc read for both role check and site access
   const [userDoc, siteDoc] = await Promise.all([
     db.collection('users').doc(userId).get(),
     db.collection('sites').doc(siteId).get(),
@@ -38,19 +45,22 @@ export async function requireAdminWithSiteAccess(
   const userData = userDoc.exists ? userDoc.data() : null;
   const role = userData?.role;
 
-  if (role !== 'admin') {
-    // Non-admin: check site access
+  if (role === 'superadmin') {
+    return { userId };
+  }
+
+  if (role === 'admin') {
     const siteData = siteDoc.data() || {};
     const isOwner = siteData.owner === userId;
     const assignedSites = Array.isArray(userData?.sites) ? userData?.sites : [];
     const isAssigned = assignedSites.includes(siteId);
 
-    if (!isOwner && !isAssigned) {
-      throw new ApiAuthError(403, 'Forbidden: You do not have access to this site');
+    if (isOwner || isAssigned) {
+      return { userId };
     }
   }
 
-  return { userId };
+  throw new ApiAuthError(403, 'Forbidden: Site admin access required');
 }
 
 /**
