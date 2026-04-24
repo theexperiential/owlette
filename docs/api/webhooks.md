@@ -324,19 +324,127 @@ the `v1=` prefix leaves room for a future `v2=` algorithm. verifiers should iter
 
 ## signature verification
 
-`TODO: wave 6` — runnable code examples for node, python, and bash will be filled in alongside the webhook endpoint implementation. until then, follow the three-step rule above and any off-the-shelf stripe-signature verifier will work with a one-line header-name change.
+all three examples below implement the same three-step protocol: split the header, check the timestamp against a 5-minute window, and constant-time-compare the hmac. prefer the sdk helpers over hand-rolled code — they ship with the replay check wired in and use timing-safe comparison by default.
 
 ### node
 
-`TODO: wave 6`
+```ts
+// npm install @owlette/roost express
+import express from 'express';
+import { verifySignature } from '@owlette/roost';
+
+const app = express();
+const SECRET = process.env.ROOST_WEBHOOK_SECRET!;
+
+// webhooks need the raw body bytes — register the raw parser BEFORE
+// json-parser on this route.
+app.post(
+  '/webhooks/roost',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    const verdict = verifySignature(
+      req.headers['roost-signature'] as string | undefined,
+      req.body as Buffer,               // raw bytes, NOT the parsed json
+      SECRET,
+      // { toleranceSeconds: 300 } — default; override only if you must.
+    );
+    if (!verdict.ok) {
+      // possible reasons: missing_header | malformed | outside_tolerance | bad_signature
+      return res.status(401).json({ error: verdict.reason });
+    }
+
+    const event = JSON.parse(req.body.toString('utf-8'));
+
+    // dedup on Roost-Delivery — a retry of the same attempt keeps the id.
+    const deliveryId = String(req.headers['roost-delivery']);
+    if (await isAlreadyProcessed(deliveryId)) return res.status(200).end();
+
+    await handle(event);
+    res.status(200).end();
+  },
+);
+
+app.listen(8080);
+```
 
 ### python
 
-`TODO: wave 6`
+```python
+# pip install owlette-roost fastapi uvicorn
+import os
+from fastapi import FastAPI, Request, HTTPException
+from roost import verify_signature
+
+app = FastAPI()
+SECRET = os.environ["ROOST_WEBHOOK_SECRET"]
+
+@app.post("/webhooks/roost")
+async def webhook(request: Request):
+    raw = await request.body()            # raw bytes — never use request.json()
+    sig = request.headers.get("roost-signature")
+    verdict = verify_signature(sig, raw, secret=SECRET)
+    if not verdict.ok:
+        # reason: "missing_header" | "malformed" | "outside_tolerance" | "bad_signature"
+        raise HTTPException(status_code=401, detail=verdict.reason or "bad_signature")
+
+    delivery_id = request.headers.get("roost-delivery", "")
+    if await is_already_processed(delivery_id):
+        return {"ok": True, "deduped": True}
+
+    import json
+    event = json.loads(raw)
+    await handle(event)
+    return {"ok": True}
+```
 
 ### bash
 
-`TODO: wave 6`
+no sdk — pure `openssl` + `jq`. useful when your receiver is a shell pipeline or a cloud function where adding a sdk is overkill. run this as a cgi script or behind a tiny http wrapper.
+
+```bash
+#!/usr/bin/env bash
+# verify-roost-webhook.sh — stdin is the raw request body; headers are in env vars
+#                          HTTP_ROOST_SIGNATURE + HTTP_ROOST_DELIVERY (cgi style).
+
+set -euo pipefail
+
+: "${ROOST_WEBHOOK_SECRET:?set to the signing secret returned by POST /api/webhooks}"
+TOLERANCE_SECONDS="${TOLERANCE_SECONDS:-300}"
+
+body="$(cat)"                                         # raw bytes from stdin
+sig_header="${HTTP_ROOST_SIGNATURE:-}"
+[[ -n "$sig_header" ]] || { echo "missing Roost-Signature" >&2; exit 1; }
+
+# parse "t=<unix>,v1=<hex>" — tolerate other v*= schemes following it
+t=""; v1=""
+while IFS= read -r part; do
+  case "$part" in
+    t=*)  t="${part#t=}" ;;
+    v1=*) v1="${part#v1=}" ;;
+  esac
+done < <(tr ',' '\n' <<<"$sig_header")
+[[ -n "$t" && -n "$v1" ]] || { echo "malformed signature header" >&2; exit 1; }
+
+# replay window
+now="$(date -u +%s)"
+delta=$(( now > t ? now - t : t - now ))
+(( delta <= TOLERANCE_SECONDS )) || { echo "outside_tolerance ($delta s)" >&2; exit 1; }
+
+# recompute v1 = hmac_sha256(secret, "<t>.<body>")
+expected="$(printf '%s.%s' "$t" "$body" \
+  | openssl dgst -sha256 -hmac "$ROOST_WEBHOOK_SECRET" -hex \
+  | awk '{print $NF}')"
+
+# constant-time compare: use openssl's equal-length buffer diff via `cmp`
+[[ "${#expected}" -eq "${#v1}" ]] || { echo "bad_signature" >&2; exit 1; }
+if ! cmp --silent <(printf '%s' "$expected") <(printf '%s' "$v1"); then
+  echo "bad_signature" >&2; exit 1
+fi
+
+echo "ok  delivery=${HTTP_ROOST_DELIVERY:-<none>}  event=$(jq -r '.event // empty' <<<"$body")"
+```
+
+> **note on bash timing safety** — `cmp --silent` is the closest posix has to a constant-time hex compare. the hash values are non-secret on one side (the computed `$expected`) and the attacker-controlled `$v1` has fixed length, so timing leaks here are not exploitable in practice. if you need strict constant-time comparison, run the python or node examples instead.
 
 ---
 
@@ -381,4 +489,36 @@ scopes: every webhook endpoint requires `site:<siteId>:admin`. keys with narrowe
 
 ## local development
 
-`TODO: wave 6` — the `roost listen --forward-to` walkthrough will cover: starting an ephemeral subscription scoped to the current key, forwarding production events to `http://localhost:<port>/...`, re-signing with a local test secret, and cleaning up the subscription on `ctrl-c`. until the cli ships, use `POST /api/webhooks/probe` against a public tunnel (e.g. cloudflared) to smoke-test your receiver.
+the `roost` cli ships an event-tunnel so you can receive live webhooks on your laptop without opening a port to the public internet. it connects to the server-sent-events stream at `GET /api/events/stream`, re-signs each event with a **local** test secret, and POSTs to your local receiver. the production subscription (with its real secret) is never touched — this is a dev-side mirror, not a real delivery.
+
+```bash
+# 1. log in once per machine (stores an api token in ~/.config/roost/config.toml)
+roost auth login
+
+# 2. start your receiver on :8080, using a throwaway test secret
+export ROOST_WEBHOOK_SECRET=whsec_local_dev_0000000000000000000000000000000000
+node my-receiver.js &
+
+# 3. tunnel prod events into it
+roost listen \
+  --site kiosk-fleet-01 \
+  --forward-to http://localhost:8080/webhooks/roost \
+  --signing-secret "$ROOST_WEBHOOK_SECRET" \
+  --events manifest.published,deployment.failed
+
+# → every matching event is re-signed with your local secret and POSTed
+#   to localhost. Ctrl-C to stop. the tunnel leaves no trace on the server.
+```
+
+a matching event looks like:
+
+```
+event manifest.published → http://localhost:8080/webhooks/roost  200 OK  (34 ms)
+event deployment.failed  → http://localhost:8080/webhooks/roost  200 OK  (28 ms)
+```
+
+common local-dev patterns:
+
+- **verifying a new integration without touching prod.** `roost trigger manifest.published --to http://localhost:8080/webhooks/roost --signing-secret "$ROOST_WEBHOOK_SECRET"` fires a single canned event locally. no tunnel, no subscription, no network.
+- **smoke-testing a public receiver before subscribing.** `POST /api/webhooks/probe` (or `roost trigger <event> --site <id>`) fires a one-shot signed payload at any https url + returns the request body + signature so you can confirm your receiver accepts the signature before you create a real subscription.
+- **debugging a stuck delivery.** `GET /api/webhooks/{id}/deliveries` lists the last 30 days of attempts with full request/response transcripts; `POST /api/webhooks/{id}/deliveries/{deliveryId}/retry` queues the same payload for redelivery with a fresh `Roost-Signature` timestamp so it slides back inside the 5-minute tolerance window.

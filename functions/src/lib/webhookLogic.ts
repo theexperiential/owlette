@@ -1,5 +1,5 @@
 /**
- * Pure logic for the roost webhook subsystem (wave 5.1).
+ * Pure logic for the roost webhook subsystem.
  *
  * Roost emits structured events for the release-engineering lifecycle.
  * External pipelines (CI runners, operator alerting) subscribe per-site
@@ -7,19 +7,19 @@
  * module handles the signing, canonicalisation, backoff, and retry-budget
  * decisions; the handler in webhookDispatch.ts does the HTTP.
  *
- * Wire format:
+ * Wire format (stripe-style, wave 6.9):
  *   POST {subscriber.url}
- *   X-owlette-Event: <event.type>
- *   X-owlette-Delivery-Id: <uuid>
- *   X-owlette-Signature: sha256=<hex>
- *   X-owlette-Timestamp: <iso8601>
  *   Content-Type: application/json
+ *   Roost-Event:     <event.type>
+ *   Roost-Delivery:  <uuid>                    (stable across retries for dedup)
+ *   Roost-Signature: t=<unix>,v1=<hex>         (unix seconds + hmac-sha256 over "t.body")
  *   {canonical JSON body}
  *
- * The signature covers the raw bytes the receiver sees, so receivers
- * re-derive the HMAC from the body + their shared secret. Replay
- * protection: receivers should reject deliveries with timestamps older
- * than a small window (e.g. 5 minutes).
+ * The signature is `v1 = hmac_sha256(secret, "<t>.<raw_body>")` where
+ * `<t>` is the unix-seconds timestamp encoded in the same header. The
+ * timestamp is *part* of the signed payload, which prevents replay:
+ * receivers reject any delivery whose `t` is more than 5 minutes away
+ * from their own clock (`DEFAULT_REPLAY_TOLERANCE_SECONDS`).
  */
 
 import { createHash, createHmac } from 'crypto';
@@ -89,41 +89,112 @@ function sortForCanonical(v: unknown): unknown {
 }
 
 /* --------------------------------------------------------------------- */
-/*  Signing                                                              */
+/*  Signing (stripe-style: t=<unix>,v1=<hex> over "t.body")              */
 /* --------------------------------------------------------------------- */
 
+/** 5-minute default replay-window for verifiers. */
+export const DEFAULT_REPLAY_TOLERANCE_SECONDS = 300;
+
 /**
- * Compute the signature for a payload given a shared secret.
- * Returned as `sha256=<hex>` so the `X-owlette-Signature` header is
- * unambiguous about the algorithm (mirrors GitHub's webhook convention).
+ * Compute the `Roost-Signature` header value for a payload given a shared
+ * secret. The signature is
+ *
+ *     v1 = hmac_sha256(secret, "<t>.<canonicalBody>")
+ *
+ * encoded as `t=<unix>,v1=<hex>` so the timestamp is part of the signed
+ * material. Receivers MUST re-compute v1 and reject any `t` older than
+ * `DEFAULT_REPLAY_TOLERANCE_SECONDS` (5 min) to block replay attacks.
+ *
+ * `nowMs` is injectable for deterministic tests; production callers pass
+ * nothing and get `Date.now()`.
  */
 export function signPayload(
   canonicalBody: string,
   secret: string,
+  nowMs: number = Date.now(),
 ): string {
-  const hex = createHmac('sha256', secret).update(canonicalBody).digest('hex');
-  return `sha256=${hex}`;
+  const t = Math.floor(nowMs / 1000);
+  const hex = createHmac('sha256', secret).update(`${t}.${canonicalBody}`).digest('hex');
+  return `t=${t},v1=${hex}`;
+}
+
+/** Reasons verification can fail — exposed so callers can log a stable code. */
+export type VerifyFailureReason =
+  | 'missing_header'
+  | 'malformed_header'
+  | 'missing_timestamp'
+  | 'missing_v1'
+  | 'timestamp_out_of_tolerance'
+  | 'bad_signature';
+
+export interface VerifyResult {
+  ok: boolean;
+  reason?: VerifyFailureReason;
+  timestamp: number | null;
 }
 
 /**
- * Constant-time signature verification helper for use by receivers.
- * Kept here so first-party integrations can import a shared implementation
+ * Constant-time signature verification helper for use by receivers. Kept
+ * here so first-party integrations can import a shared implementation
  * instead of rolling their own (common source of timing leaks).
+ *
+ * Returns a structured result so callers can distinguish stale-timestamp
+ * from bad-hmac in their logs / metrics.
  */
 export function verifySignature(
   canonicalBody: string,
   secret: string,
-  receivedSignature: string,
-): boolean {
-  const expected = signPayload(canonicalBody, secret);
-  if (expected.length !== receivedSignature.length) return false;
-  // timing-safe comparison over hex digests.
-  const a = Buffer.from(expected, 'utf-8');
-  const b = Buffer.from(receivedSignature, 'utf-8');
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
-  return diff === 0;
+  receivedHeader: string | null | undefined,
+  opts: { toleranceSeconds?: number; nowMs?: number } = {},
+): VerifyResult {
+  if (!receivedHeader || receivedHeader.length === 0) {
+    return { ok: false, reason: 'missing_header', timestamp: null };
+  }
+
+  const parts = receivedHeader.split(',').map((p) => p.trim()).filter(Boolean);
+  let t: number | null = null;
+  const v1s: string[] = [];
+  for (const part of parts) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) return { ok: false, reason: 'malformed_header', timestamp: t };
+    const key = part.slice(0, eq);
+    const value = part.slice(eq + 1);
+    if (key === 't') {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) {
+        return { ok: false, reason: 'malformed_header', timestamp: null };
+      }
+      t = n;
+    } else if (key === 'v1') {
+      if (!/^[0-9a-f]+$/i.test(value)) {
+        return { ok: false, reason: 'malformed_header', timestamp: t };
+      }
+      v1s.push(value.toLowerCase());
+    }
+    // unknown scheme prefixes (e.g. future `v2=`) ignored per stripe convention.
+  }
+
+  if (t === null) return { ok: false, reason: 'missing_timestamp', timestamp: null };
+  if (v1s.length === 0) return { ok: false, reason: 'missing_v1', timestamp: t };
+
+  const tolerance = opts.toleranceSeconds ?? DEFAULT_REPLAY_TOLERANCE_SECONDS;
+  if (Number.isFinite(tolerance)) {
+    const nowSec = Math.floor((opts.nowMs ?? Date.now()) / 1000);
+    if (Math.abs(nowSec - t) > tolerance) {
+      return { ok: false, reason: 'timestamp_out_of_tolerance', timestamp: t };
+    }
+  }
+
+  const expected = createHmac('sha256', secret).update(`${t}.${canonicalBody}`).digest('hex');
+  const expectedBuf = Buffer.from(expected, 'utf-8');
+  for (const candidate of v1s) {
+    if (candidate.length !== expected.length) continue;
+    const candBuf = Buffer.from(candidate, 'utf-8');
+    let diff = 0;
+    for (let i = 0; i < expectedBuf.length; i++) diff |= expectedBuf[i] ^ candBuf[i];
+    if (diff === 0) return { ok: true, timestamp: t };
+  }
+  return { ok: false, reason: 'bad_signature', timestamp: t };
 }
 
 /**

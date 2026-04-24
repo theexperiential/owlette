@@ -62,6 +62,13 @@ export interface DeliveryRecord {
   nextAttemptAt: number; // unix ms
   createdAt: number;
   completedAt?: number;
+  /**
+   * Signing secret pinned at build time. Used by `attemptDelivery` to
+   * re-sign with a fresh `t=` on every retry — otherwise receivers
+   * that enforce the 5-min replay tolerance would reject any retry
+   * past the backoff window. Never shipped off-server.
+   */
+  secret: string;
 }
 
 export interface HttpClient {
@@ -98,15 +105,19 @@ export function buildDelivery(
   now: Date = new Date(),
 ): DeliveryRecord {
   const canonicalBody = canonicalJson(payload);
-  // The X-owlette-Delivery-Id header is stable per (event, site, body) so
-  // the receiver can dedup retries cleanly. The firestore record id needs
+  // The Roost-Delivery header is stable per (event, site, body) so the
+  // receiver can dedup retries cleanly. The firestore record id needs
   // per-subscriber uniqueness — otherwise two subscribers for the same
   // event would collide and only one delivery would be tracked. Combine
   // `{publicId}__{subId}` for storage; the header stays the pure content
-  // hash so receivers see a stable id across retries.
+  // hash so receivers see a stable id across retries. Signature is
+  // stripe-style `t=<unix>,v1=<hex>` — the timestamp is part of the
+  // signed material, so `nowMs` is pinned here to `now` rather than the
+  // `occurredAt` of the payload (a replay of a month-old event should
+  // still be rejectable on timestamp grounds).
   const publicDeliveryId = deliveryId(payload, canonicalBody);
   const recordId = `${publicDeliveryId}__${subscriber.id}`;
-  const signature = signPayload(canonicalBody, subscriber.secret);
+  const signature = signPayload(canonicalBody, subscriber.secret, now.getTime());
 
   return {
     id: recordId,
@@ -116,16 +127,16 @@ export function buildDelivery(
     canonicalBody,
     headers: {
       'Content-Type': 'application/json',
-      'X-owlette-Event': payload.event,
-      'X-owlette-Delivery-Id': publicDeliveryId,
-      'X-owlette-Signature': signature,
-      'X-owlette-Timestamp': payload.occurredAt,
+      'Roost-Event': payload.event,
+      'Roost-Delivery': publicDeliveryId,
+      'Roost-Signature': signature,
     },
     event: payload.event,
     attempt: 0,
     state: 'pending',
     nextAttemptAt: now.getTime(),
     createdAt: now.getTime(),
+    secret: subscriber.secret,
   };
 }
 
@@ -161,9 +172,18 @@ export async function attemptDelivery(
   const now = deps.now ? deps.now() : new Date();
   const attempt = record.attempt + 1;
 
+  // Re-sign with the current wall-clock so receivers that enforce the
+  // 5-min tolerance accept retries past the backoff window. The stored
+  // signature in `record.headers` is just the last attempt's value; it's
+  // overwritten here for the new POST and then persisted back on the
+  // updated record below (so the ui shows the signature that was
+  // actually transmitted).
+  const freshSignature = signPayload(record.canonicalBody, record.secret, now.getTime());
+  const headers = { ...record.headers, 'Roost-Signature': freshSignature };
+
   let status: number | null = null;
   try {
-    const resp = await deps.http.post(record.url, record.headers, record.canonicalBody);
+    const resp = await deps.http.post(record.url, headers, record.canonicalBody);
     status = resp.status;
   } catch {
     status = null; // network error
@@ -174,6 +194,7 @@ export async function attemptDelivery(
   if (outcome.kind === 'success') {
     const updated: DeliveryRecord = {
       ...record,
+      headers,
       attempt,
       state: 'succeeded',
       lastStatus: outcome.status,
@@ -187,6 +208,7 @@ export async function attemptDelivery(
   if (outcome.kind === 'permanent_failure') {
     const updated: DeliveryRecord = {
       ...record,
+      headers,
       attempt,
       state: 'failed',
       lastStatus: status ?? undefined,
@@ -201,6 +223,7 @@ export async function attemptDelivery(
   if (shouldGiveUp(attempt, deps.backoff)) {
     const updated: DeliveryRecord = {
       ...record,
+      headers,
       attempt,
       state: 'failed',
       lastStatus: status ?? undefined,
@@ -217,6 +240,7 @@ export async function attemptDelivery(
   const delay = nextRetryDelayMs(attempt, deps.backoff);
   const updated: DeliveryRecord = {
     ...record,
+    headers,
     attempt,
     state: 'pending',
     lastStatus: status ?? undefined,

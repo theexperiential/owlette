@@ -100,28 +100,74 @@ describe('canonicalJson', () => {
 /*  Signing + verification                                               */
 /* --------------------------------------------------------------------- */
 
-describe('signPayload / verifySignature', () => {
+describe('signPayload / verifySignature (stripe-style)', () => {
+  const NOW_MS = Date.parse('2026-04-22T15:30:00Z');
+
   it('round-trips: a signature verifies against its own body + secret', () => {
     const body = canonicalJson(samplePayload());
-    const sig = signPayload(body, 'secret');
-    assert.equal(verifySignature(body, 'secret', sig), true);
+    const sig = signPayload(body, 'secret', NOW_MS);
+    const result = verifySignature(body, 'secret', sig, { nowMs: NOW_MS });
+    assert.equal(result.ok, true);
+    assert.equal(result.timestamp, Math.floor(NOW_MS / 1000));
   });
 
-  it('wrong secret → false', () => {
+  it('wrong secret → bad_signature', () => {
     const body = canonicalJson(samplePayload());
-    const sig = signPayload(body, 'secret');
-    assert.equal(verifySignature(body, 'DIFFERENT', sig), false);
+    const sig = signPayload(body, 'secret', NOW_MS);
+    const result = verifySignature(body, 'DIFFERENT', sig, { nowMs: NOW_MS });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'bad_signature');
   });
 
-  it('tampered body → false', () => {
+  it('tampered body → bad_signature', () => {
     const body = canonicalJson(samplePayload());
-    const sig = signPayload(body, 'secret');
+    const sig = signPayload(body, 'secret', NOW_MS);
     const tampered = body.replace('"site-a"', '"site-attacker"');
-    assert.equal(verifySignature(tampered, 'secret', sig), false);
+    const result = verifySignature(tampered, 'secret', sig, { nowMs: NOW_MS });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'bad_signature');
   });
 
-  it('starts with sha256= (algorithm-tagged; mirrors GitHub convention)', () => {
-    assert.match(signPayload('x', 'y'), /^sha256=[0-9a-f]{64}$/);
+  it('matches the t=<unix>,v1=<hex> header shape', () => {
+    assert.match(signPayload('x', 'y', NOW_MS), /^t=\d+,v1=[0-9a-f]{64}$/);
+  });
+
+  it('missing header → missing_header', () => {
+    assert.equal(verifySignature('body', 'secret', undefined).reason, 'missing_header');
+    assert.equal(verifySignature('body', 'secret', '').reason, 'missing_header');
+  });
+
+  it('missing timestamp component → missing_timestamp', () => {
+    assert.equal(
+      verifySignature('body', 'secret', 'v1=abc').reason,
+      'missing_timestamp',
+    );
+  });
+
+  it('missing v1 component → missing_v1', () => {
+    assert.equal(
+      verifySignature('body', 'secret', 't=1700000000').reason,
+      'missing_v1',
+    );
+  });
+
+  it('timestamp outside 5-min tolerance → timestamp_out_of_tolerance', () => {
+    const body = canonicalJson(samplePayload());
+    const sig = signPayload(body, 'secret', NOW_MS);
+    // 6 minutes after signing
+    const later = NOW_MS + 6 * 60 * 1000;
+    const result = verifySignature(body, 'secret', sig, { nowMs: later });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'timestamp_out_of_tolerance');
+  });
+
+  it('timestamp inside 5-min tolerance → ok', () => {
+    const body = canonicalJson(samplePayload());
+    const sig = signPayload(body, 'secret', NOW_MS);
+    // 4 minutes after signing
+    const later = NOW_MS + 4 * 60 * 1000;
+    const result = verifySignature(body, 'secret', sig, { nowMs: later });
+    assert.equal(result.ok, true);
   });
 });
 
@@ -251,14 +297,15 @@ describe('buildDelivery', () => {
     // record id is `{contentHash}__{subId}` so two subs for the same event
     // don't collide in the delivery store.
     assert.match(rec.id, /^[0-9a-f]{32}__sub-1$/);
-    assert.equal(rec.headers['X-owlette-Event'], 'distribution.succeeded');
+    assert.equal(rec.headers['Roost-Event'], 'distribution.succeeded');
     // the PUBLIC delivery-id header is just the content hash — receivers
     // dedup on this and it stays stable across retries + across subscribers.
-    assert.match(rec.headers['X-owlette-Delivery-Id'], /^[0-9a-f]{32}$/);
-    assert.match(rec.headers['X-owlette-Signature'], /^sha256=[0-9a-f]{64}$/);
-    assert.equal(rec.headers['X-owlette-Timestamp'], NOW.toISOString());
+    assert.match(rec.headers['Roost-Delivery'], /^[0-9a-f]{32}$/);
+    assert.match(rec.headers['Roost-Signature'], /^t=\d+,v1=[0-9a-f]{64}$/);
     assert.equal(rec.state, 'pending');
     assert.equal(rec.attempt, 0);
+    // secret pinned on the record so retries can re-sign with a fresh `t=`.
+    assert.equal(rec.secret, 'shhh');
   });
 
   it('two subscribers for the same event get distinct record ids (same public delivery id)', () => {
@@ -267,18 +314,21 @@ describe('buildDelivery', () => {
     const recB = buildDelivery(p, sub({ id: 'sub-b' }), NOW);
     assert.notEqual(recA.id, recB.id);
     assert.equal(
-      recA.headers['X-owlette-Delivery-Id'],
-      recB.headers['X-owlette-Delivery-Id'],
+      recA.headers['Roost-Delivery'],
+      recB.headers['Roost-Delivery'],
     );
   });
 
   it('signature verifies against the secret used to sign it', () => {
     const s = sub({ secret: 'shared' });
     const rec = buildDelivery(samplePayload(), s, NOW);
-    assert.equal(
-      verifySignature(rec.canonicalBody, 'shared', rec.headers['X-owlette-Signature']),
-      true,
+    const result = verifySignature(
+      rec.canonicalBody,
+      'shared',
+      rec.headers['Roost-Signature'],
+      { nowMs: NOW.getTime() },
     );
+    assert.equal(result.ok, true);
   });
 });
 
