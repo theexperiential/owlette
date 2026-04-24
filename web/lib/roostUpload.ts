@@ -9,7 +9,8 @@
  * chunker is off-main-thread; pre-upload + dedup happen at the check step.
  */
 
-import { buildManifestEntries, type ManifestFileEntry, type NamedBlob } from './chunking';
+import { type ManifestFileEntry, type NamedBlob } from './chunking';
+import { buildManifest } from './manifestBuilder';
 import { openIndexedDBStore } from './uploadQueue.idb';
 import { runUploadQueue, type QueueStore } from './uploadQueue';
 
@@ -82,10 +83,14 @@ export async function uploadFolder(
   const report = (p: UploadProgress) => opts.onProgress?.(p);
 
   // ── 1. hash ─────────────────────────────────────────────────────
+  // Runs in a Web Worker (see manifestBuilder.ts) so a 100 GB folder's
+  // hashing doesn't freeze the dashboard. Main thread only handles
+  // progress ticks. Pre-worker-wiring the UI would visibly jank during
+  // any meaningful upload.
   report({ phase: 'hashing', message: 'reading + hashing your roost' });
   let entries: ManifestFileEntry[];
   try {
-    entries = await buildManifestEntries(opts.files, {
+    entries = await buildManifest(opts.files, {
       signal: opts.signal,
       onProgress: (p) =>
         report({

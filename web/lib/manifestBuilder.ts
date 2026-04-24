@@ -68,10 +68,21 @@ export interface WorkerLike {
  * is hashed. Rejects on worker error or abort. The worker is terminated
  * on resolve, reject, or abort — no lingering threads.
  */
-export function buildManifest(
+export async function buildManifest(
   files: readonly NamedBlob[],
   opts: BuildOptions = {},
 ): Promise<ManifestFileEntry[]> {
+  // Env without Worker (Jest/Node unit tests, SSR snapshots, etc.) falls
+  // back to the sync in-process path so behaviour is correct everywhere.
+  // Browser prod always has Worker, so this branch doesn't cost real users
+  // anything.
+  if (!opts.workerFactory && typeof Worker === 'undefined') {
+    const { buildManifestEntries } = await import('./chunking');
+    return buildManifestEntries(files, {
+      signal: opts.signal,
+      onProgress: opts.onProgress,
+    });
+  }
   return new Promise<ManifestFileEntry[]>((resolve, reject) => {
     const worker = (opts.workerFactory ?? defaultWorkerFactory)();
     let done = false;
