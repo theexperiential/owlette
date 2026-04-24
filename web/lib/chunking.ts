@@ -104,13 +104,32 @@ export async function hashOneFile(
     );
   }
 
+  // Double-buffered read/hash pipeline: while subtle.digest is computing
+  // the hash for chunk N, we kick off the arrayBuffer() read for chunk
+  // N+1. On disk-bound workloads this halves the per-chunk wall time
+  // (read and hash overlap instead of sequencing). On compute-bound
+  // paths (hot disk cache, SSD) it's a no-op — the `await nextRead`
+  // resolves immediately.
+  //
+  // Peak memory in flight: two chunk buffers (8 MiB at the default
+  // CHUNK_SIZE_BYTES). Negligible versus typical upload sizes.
+  const kickOffRead = (start: number): Promise<ArrayBuffer> | null => {
+    if (start >= size) return null;
+    const endLocal = Math.min(start + CHUNK_SIZE_BYTES, size);
+    return named.blob.slice(start, endLocal).arrayBuffer();
+  };
+
+  let pendingRead = kickOffRead(0);
   for (let offset = 0; offset < size; offset += CHUNK_SIZE_BYTES) {
-    if (opts.signal?.aborted) {
-      throw makeAbortError();
-    }
+    if (opts.signal?.aborted) throw makeAbortError();
     const end = Math.min(offset + CHUNK_SIZE_BYTES, size);
-    const slice = named.blob.slice(offset, end);
-    const bytes = await slice.arrayBuffer();
+    // pendingRead is never null inside the loop — we only enter with
+    // offset < size, and kickOffRead only returns null when start >= size.
+    const bytes = await pendingRead!;
+    // Prefetch the next chunk's bytes BEFORE starting the hash of this
+    // one. The microtask scheduler lets both operations progress
+    // concurrently inside the worker.
+    pendingRead = kickOffRead(end);
     const digest = await subtle.digest('SHA-256', bytes);
     chunks.push({
       hash: bufferToHex(digest),

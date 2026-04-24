@@ -83,6 +83,31 @@ export async function buildManifest(
       onProgress: opts.onProgress,
     });
   }
+
+  // Multi-worker fan-out for multi-file uploads. A single worker is
+  // sequential across files, so a 3-file × 4.9 GB upload pipelines only
+  // one file at a time. Splitting across N workers — where N is capped
+  // by file count and CPU cores — lets independent files hash in
+  // parallel. For the typical media-asset workload (a handful of large
+  // .orbx / .toe files) this yields near-linear speedup up to file count.
+  const hardwareConcurrency =
+    typeof navigator !== 'undefined' && navigator.hardwareConcurrency
+      ? navigator.hardwareConcurrency
+      : 4;
+  // Cap workers: one per file (no benefit beyond), and at most 4 to
+  // avoid thrashing (SHA-NI + disk bandwidth saturate before CPU count).
+  const workerCount = Math.min(files.length, hardwareConcurrency, 4);
+  if (workerCount <= 1) {
+    return runSingleWorker(files, opts);
+  }
+  return runMultiWorker(files, workerCount, opts);
+}
+
+/** Single-worker path — preserved behaviour for 0/1-file uploads. */
+function runSingleWorker(
+  files: readonly NamedBlob[],
+  opts: BuildOptions,
+): Promise<ManifestFileEntry[]> {
   return new Promise<ManifestFileEntry[]>((resolve, reject) => {
     const worker = (opts.workerFactory ?? defaultWorkerFactory)();
     let done = false;
@@ -132,6 +157,144 @@ export async function buildManifest(
     });
 
     worker.postMessage({ type: 'start', files: [...files] });
+  });
+}
+
+/**
+ * Partition files across `workerCount` workers using largest-first
+ * balanced bin-packing (greedy: put the biggest file in the bin with
+ * the smallest current load). For heterogeneous file sizes this keeps
+ * the slowest worker from dominating total wall time.
+ */
+function partitionFiles(
+  files: readonly NamedBlob[],
+  workerCount: number,
+): NamedBlob[][] {
+  const bins: { files: NamedBlob[]; bytes: number }[] = Array.from(
+    { length: workerCount },
+    () => ({ files: [], bytes: 0 }),
+  );
+  const sorted = [...files].sort((a, b) => b.blob.size - a.blob.size);
+  for (const f of sorted) {
+    let lightest = bins[0];
+    for (const bin of bins) if (bin.bytes < lightest.bytes) lightest = bin;
+    lightest.files.push(f);
+    lightest.bytes += f.blob.size;
+  }
+  return bins.map((b) => b.files).filter((b) => b.length > 0);
+}
+
+/**
+ * Multi-worker path — each worker gets a disjoint subset of the files,
+ * runs the same sequential pipeline internally. Entries are reassembled
+ * in the caller's original file order; progress is aggregated to a
+ * single global view so the UI still sees a monotonic bar.
+ */
+function runMultiWorker(
+  files: readonly NamedBlob[],
+  workerCount: number,
+  opts: BuildOptions,
+): Promise<ManifestFileEntry[]> {
+  const partitions = partitionFiles(files, workerCount);
+  const totalBytes = files.reduce((n, f) => n + f.blob.size, 0);
+  const totalFiles = files.length;
+  // Per-worker progress state; aggregation sums these.
+  const perWorkerBytes: number[] = partitions.map(() => 0);
+  const perWorkerCompleted: number[] = partitions.map(() => 0);
+  // Collection: results indexed by worker, then merged back to original
+  // file order by matching `path`.
+  const pathIndex = new Map<string, number>();
+  files.forEach((f, i) => pathIndex.set(f.path, i));
+  const ordered: (ManifestFileEntry | undefined)[] = new Array(files.length);
+
+  return new Promise<ManifestFileEntry[]>((resolve, reject) => {
+    const workers: WorkerLike[] = partitions.map(
+      () => (opts.workerFactory ?? defaultWorkerFactory)(),
+    );
+    let settled = false;
+    let remaining = workers.length;
+
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      for (const w of workers) {
+        try {
+          w.terminate();
+        } catch {
+          // ignore — already terminated
+        }
+      }
+      if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
+    };
+
+    const onAbort = () => {
+      for (const w of workers) {
+        try {
+          w.postMessage({ type: 'abort' });
+        } catch {
+          // ignore
+        }
+      }
+      cleanup();
+      reject(makeAbortError());
+    };
+
+    if (opts.signal) {
+      if (opts.signal.aborted) {
+        for (const w of workers) w.terminate();
+        reject(makeAbortError());
+        return;
+      }
+      opts.signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    const emitAggregateProgress = (currentPath?: string) => {
+      const bytesHashed = perWorkerBytes.reduce((n, x) => n + x, 0);
+      const filesCompleted = perWorkerCompleted.reduce((n, x) => n + x, 0);
+      opts.onProgress?.({
+        bytesHashed,
+        bytesTotal: totalBytes,
+        filesCompleted,
+        filesTotal: totalFiles,
+        currentFilePath: currentPath,
+      });
+    };
+
+    workers.forEach((worker, wi) => {
+      worker.addEventListener('message', (ev) => {
+        if (settled) return;
+        const msg = ev.data;
+        switch (msg.type) {
+          case 'progress':
+            perWorkerBytes[wi] = msg.progress.bytesHashed;
+            perWorkerCompleted[wi] = msg.progress.filesCompleted;
+            emitAggregateProgress(msg.progress.currentFilePath);
+            break;
+          case 'done':
+            for (const entry of msg.entries) {
+              const idx = pathIndex.get(entry.path);
+              if (idx !== undefined) ordered[idx] = entry;
+            }
+            remaining--;
+            if (remaining === 0) {
+              cleanup();
+              resolve(ordered.filter((e): e is ManifestFileEntry => !!e));
+            }
+            break;
+          case 'error':
+            cleanup();
+            reject(
+              Object.assign(new Error(msg.message), { name: msg.name ?? 'Error' }),
+            );
+            break;
+        }
+      });
+      worker.addEventListener('error', (ev) => {
+        cleanup();
+        reject(new Error(ev.message || 'worker error'));
+      });
+      worker.postMessage({ type: 'start', files: [...partitions[wi]] });
+    });
   });
 }
 
