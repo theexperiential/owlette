@@ -612,7 +612,7 @@ export function DisplayLayoutPanel({
             {renderTab('live', 'live')}
             {renderTab(
               'assigned',
-              'assigned',
+              'stored',
               hasDriftVisible ? `(${effectiveDriftCount})` : undefined,
             )}
             {/* [RECONSTRUCTED — Wave A1.4] drift-paused pill in edit mode. */}
@@ -648,13 +648,14 @@ export function DisplayLayoutPanel({
                       {actions.applying ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
-                        'store'
+                        'capture'
                       )}
                     </Button>
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  store the current arrangement as the assigned layout
+                  capture the current live arrangement as the assigned layout
+                  (replaces any saved edits)
                 </TooltipContent>
               </Tooltip>
               <Tooltip>
