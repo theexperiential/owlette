@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Plus, CheckCircle2, XCircle, Clock, Loader2, Trash2, X, MoreVertical, RefreshCw, Package, PlayCircle, Archive } from 'lucide-react';
 import DeploymentDialog from '@/components/DeploymentDialog';
 import UninstallDialog from '@/components/UninstallDialog';
@@ -108,15 +109,23 @@ const DeploymentRow = React.memo(function DeploymentRow({
   const errorMessages = failedTargets.map((t: DeploymentTarget) => `${t.machineId}: ${t.error}`).join('\n');
 
   return (
-    <div>
-      <div
-        className="flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer"
-        onClick={() => {
-          const selection = window.getSelection();
-          if (selection && selection.toString().length > 0) return;
-          onToggle(deployment.id);
-        }}
-      >
+    <Collapsible
+      open={isSelected}
+      onOpenChange={() => onToggle(deployment.id)}
+    >
+      <CollapsibleTrigger asChild>
+        <div
+          className="flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer"
+          onClick={(e) => {
+            // Don't toggle if the user's mid-drag-selecting text in the summary
+            // (names are `select-text`). preventDefault here short-circuits
+            // Radix's trigger (composeEventHandlers respects defaultPrevented).
+            const selection = window.getSelection();
+            if (selection && selection.toString().length > 0) {
+              e.preventDefault();
+            }
+          }}
+        >
         <div className="flex items-center gap-3 min-w-0">
           {getStatusIcon(deployment.status)}
           <div className="min-w-0">
@@ -188,9 +197,10 @@ const DeploymentRow = React.memo(function DeploymentRow({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </div>
+        </div>
+      </CollapsibleTrigger>
 
-      {isSelected && (
+      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
         <div className="border-t border-border">
           <div className="mx-4 my-3 rounded-lg border border-border bg-background p-4 space-y-4">
             <div className="grid gap-2 text-sm">
@@ -241,8 +251,8 @@ const DeploymentRow = React.memo(function DeploymentRow({
             </div>
           </div>
         </div>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 });
 
@@ -305,6 +315,13 @@ export default function DeploymentsPage() {
     }
   };
 
+  // useDeploymentManager returns non-memoized functions, so referencing them
+  // directly in useCallback deps recreates handlers on every render and
+  // defeats React.memo on DeploymentRow. Keep a latest-ref and depend on
+  // nothing, so the handlers keep stable identity for the whole list.
+  const createDeploymentRef = useRef(createDeployment);
+  createDeploymentRef.current = createDeployment;
+
   const handleRetryDeployment = useCallback(async (deployment: Deployment) => {
     try {
       const failedTargets = deployment.targets.filter((t: DeploymentTarget) => t.status === 'failed');
@@ -316,7 +333,7 @@ export default function DeploymentsPage() {
 
       const machineIds = failedTargets.map((t: DeploymentTarget) => t.machineId);
 
-      await createDeployment({
+      await createDeploymentRef.current({
         name: `${deployment.name} (Retry)`,
         installer_name: deployment.installer_name,
         installer_url: deployment.installer_url,
@@ -331,7 +348,7 @@ export default function DeploymentsPage() {
       const message = error instanceof Error ? error.message : String(error);
       toast.error(message || 'failed to retry deployment');
     }
-  }, [createDeployment]);
+  }, []);
 
   // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
   useEffect(() => {
@@ -365,13 +382,16 @@ export default function DeploymentsPage() {
     setDeleteDialogOpen(true);
   }, []);
 
+  const cancelDeploymentRef = useRef(cancelDeployment);
+  cancelDeploymentRef.current = cancelDeployment;
+
   const handleCancelTarget = useCallback(async (deploymentId: string, machineId: string, installerName: string) => {
     try {
-      await cancelDeployment(deploymentId, machineId, installerName);
+      await cancelDeploymentRef.current(deploymentId, machineId, installerName);
     } catch (error: unknown) {
       console.error('Failed to cancel deployment:', error);
     }
-  }, [cancelDeployment]);
+  }, []);
 
   useEffect(() => {
     if (!authLoading && !user) {

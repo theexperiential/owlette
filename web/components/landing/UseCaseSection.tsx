@@ -40,6 +40,10 @@ export function UseCaseSection() {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  // Mirror dragRef.current.dragging as state for the transition toggle in
+  // render — React 19 forbids reading ref.current during render. The state
+  // only flips on drag start/end (not per-mousemove) so it's cheap.
+  const [isDragging, setIsDragging] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ dragging: boolean; didDrag: boolean; startX: number; startY: number; startPanX: number; startPanY: number }>({
@@ -319,6 +323,7 @@ export function UseCaseSection() {
             if (!isZoomed) return;
             e.preventDefault();
             dragRef.current = { dragging: true, didDrag: false, startX: e.clientX, startY: e.clientY, startPanX: pan.x, startPanY: pan.y };
+            setIsDragging(true);
           }}
           onMouseMove={(e) => {
             if (!dragRef.current.dragging) return;
@@ -327,8 +332,8 @@ export function UseCaseSection() {
             if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragRef.current.didDrag = true;
             setPan({ x: dragRef.current.startPanX + dx, y: dragRef.current.startPanY + dy });
           }}
-          onMouseUp={() => { dragRef.current.dragging = false; }}
-          onMouseLeave={() => { dragRef.current.dragging = false; }}
+          onMouseUp={() => { dragRef.current.dragging = false; setIsDragging(false); }}
+          onMouseLeave={() => { dragRef.current.dragging = false; setIsDragging(false); }}
         >
           <button
             onClick={closeLightbox}
@@ -364,7 +369,7 @@ export function UseCaseSection() {
             }`}
             style={{
               transformOrigin: 'center center',
-              transition: dragRef.current.dragging ? 'none' : 'transform 0.2s ease-out',
+              transition: isDragging ? 'none' : 'transform 0.2s ease-out',
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
             }}
             onClick={(e) => {

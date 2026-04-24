@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import { ScheduleBlocksEditor } from '@/components/ScheduleEditor';
@@ -31,29 +31,76 @@ export default function SchedulePopover({
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = controlledOpen !== undefined;
   const open = isControlled ? controlledOpen : internalOpen;
-  const setOpen = isControlled ? (controlledOnOpenChange ?? setInternalOpen) : setInternalOpen;
+  const rawSetOpen = isControlled ? (controlledOnOpenChange ?? setInternalOpen) : setInternalOpen;
 
-  // Track if popover has ever been opened — defer portal creation until first use
-  const [hasOpened, setHasOpened] = useState(false);
-  const [blocks, setBlocks] = useState<ScheduleBlock[]>([]);
+  // `openInstance` bumps each time the popover is opened. PopoverContent
+  // mounts only after the first open (deferred portal creation — avoids N
+  // portals for N processes on a page) and is re-keyed each subsequent open,
+  // so its internal `blocks` state re-seeds from the current `schedules`
+  // prop via useState's lazy initializer. This replaces a sync setState-in-
+  // effect reset and keeps the dialog-reset-on-open behavior.
+  const [openInstance, setOpenInstance] = useState(0);
+  const setOpen = useCallback((next: boolean) => {
+    if (next) setOpenInstance((n) => n + 1);
+    rawSetOpen(next);
+  }, [rawSetOpen]);
 
-  useEffect(() => {
-    if (open) {
-      setHasOpened(true);
-      // Reset blocks from props each time popover opens
-      if (schedules && schedules.length > 0) {
-        setBlocks(ensureBlockColors(schedules));
-      } else {
-        setBlocks(ensureBlockColors([{ colorIndex: 0, days: ['mon', 'tue', 'wed', 'thu', 'fri'], ranges: [{ start: '09:00', stop: '17:00' }] }]));
-      }
-    }
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        {children}
+      </PopoverTrigger>
+      {openInstance > 0 && (
+        <PopoverContent
+          align="end"
+          sideOffset={8}
+          className="w-[380px] bg-card border-border text-foreground p-4"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <SchedulePopoverBody
+            key={openInstance}
+            schedules={schedules}
+            presets={presets}
+            siteTimezone={siteTimezone}
+            onApply={onApply}
+            onCancel={() => setOpen(false)}
+          />
+        </PopoverContent>
+      )}
+    </Popover>
+  );
+}
+
+interface SchedulePopoverBodyProps {
+  schedules: ScheduleBlock[] | null | undefined;
+  presets?: SchedulePreset[];
+  siteTimezone?: string;
+  onApply: (schedules: ScheduleBlock[]) => void;
+  onCancel: () => void;
+}
+
+function SchedulePopoverBody({
+  schedules,
+  presets,
+  siteTimezone,
+  onApply,
+  onCancel,
+}: SchedulePopoverBodyProps) {
+  // Seed blocks from the current `schedules` prop — mounts fresh each time
+  // the popover opens, so this initializer runs once per open.
+  const [blocks, setBlocks] = useState<ScheduleBlock[]>(() =>
+    schedules && schedules.length > 0
+      ? ensureBlockColors(schedules)
+      : ensureBlockColors([
+          { colorIndex: 0, days: ['mon', 'tue', 'wed', 'thu', 'fri'], ranges: [{ start: '09:00', stop: '17:00' }] },
+        ])
+  );
 
   const handleApply = useCallback(() => {
     const valid = blocks.filter(b => b.days.length > 0 && b.ranges.length > 0);
     onApply(valid.length > 0 ? valid : blocks);
-    setOpen(false);
-  }, [blocks, onApply, setOpen]);
+    onCancel();
+  }, [blocks, onApply, onCancel]);
 
   const applyPreset = useCallback((preset: { blocks: ScheduleBlock[] }) => {
     setBlocks(preset.blocks.map(b => ({ ...b, days: [...b.days], ranges: b.ranges.map(r => ({ ...r })) })));
@@ -67,93 +114,77 @@ export default function SchedulePopover({
         id: `builtin-${i}`, ...bp, isBuiltIn: true, order: i, createdBy: '', createdAt: null,
       }));
 
+  const matchesAnyPreset = displayPresets.some(
+    (p) => JSON.stringify(blocks) === JSON.stringify(p.blocks),
+  );
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        {children}
-      </PopoverTrigger>
-      {/* Defer portal creation until first open — avoids mounting N portals for N processes */}
-      {hasOpened && (
-        <PopoverContent
-          align="end"
-          sideOffset={8}
-          className="w-[380px] bg-card border-border text-foreground p-4"
-          onClick={(e) => e.stopPropagation()}
+    <>
+      {/* Visual summary — enlarged, no text */}
+      <div className="flex justify-center mb-3">
+        <WeekSummaryBar schedules={blocks} tall />
+      </div>
+
+      {/* Preset pills + Custom */}
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {displayPresets.map((preset) => {
+          const isMatch = JSON.stringify(blocks) === JSON.stringify(preset.blocks);
+          return (
+            <button
+              key={preset.id ?? preset.name}
+              type="button"
+              onClick={() => applyPreset(preset)}
+              className={`px-2.5 py-1 rounded-full text-[13px] font-medium transition-colors duration-150 cursor-pointer ${
+                isMatch
+                  ? 'bg-blue-600/20 text-blue-100 ring-1 ring-blue-500/40'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
+              }`}
+            >
+              {preset.name}
+            </button>
+          );
+        })}
+        <span
+          className={`px-2.5 py-1 rounded-full text-[13px] font-medium ${
+            !matchesAnyPreset
+              ? 'bg-blue-600/20 text-blue-100 ring-1 ring-blue-500/40'
+              : 'bg-muted text-muted-foreground'
+          }`}
         >
-          {/* Visual summary — enlarged, no text */}
-          <div className="flex justify-center mb-3">
-            <WeekSummaryBar schedules={blocks} tall />
-          </div>
+          custom
+        </span>
+      </div>
 
-          {/* Preset pills + Custom */}
-          <div className="flex flex-wrap gap-1.5 mb-3">
-            {displayPresets.map((preset) => {
-              const isMatch = JSON.stringify(blocks) === JSON.stringify(preset.blocks);
-              return (
-                <button
-                  key={preset.id ?? preset.name}
-                  type="button"
-                  onClick={() => applyPreset(preset)}
-                  className={`px-2.5 py-1 rounded-full text-[13px] font-medium transition-colors duration-150 cursor-pointer ${
-                    isMatch
-                      ? 'bg-blue-600/20 text-blue-100 ring-1 ring-blue-500/40'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
-                  }`}
-                >
-                  {preset.name}
-                </button>
-              );
-            })}
-            {(() => {
-              const matchesAnyPreset = displayPresets.some(
-                (p) => JSON.stringify(blocks) === JSON.stringify(p.blocks)
-              );
-              return (
-                <span
-                  className={`px-2.5 py-1 rounded-full text-[13px] font-medium ${
-                    !matchesAnyPreset
-                      ? 'bg-blue-600/20 text-blue-100 ring-1 ring-blue-500/40'
-                      : 'bg-muted text-muted-foreground'
-                  }`}
-                >
-                  custom
-                </span>
-              );
-            })()}
-          </div>
+      {/* Schedule blocks editor */}
+      <div className="max-h-[300px] overflow-y-auto pr-1 mb-3">
+        <ScheduleBlocksEditor blocks={blocks} onChange={setBlocks} compact />
+      </div>
 
-          {/* Schedule blocks editor */}
-          <div className="max-h-[300px] overflow-y-auto pr-1 mb-3">
-            <ScheduleBlocksEditor blocks={blocks} onChange={setBlocks} compact />
-          </div>
-
-          {/* Footer */}
-          <div className="flex items-center justify-between pt-2 border-t border-border">
-            {siteTimezone ? (
-              <span className="text-[10px] text-muted-foreground">
-                times in {siteTimezone.replace(/_/g, ' ').split('/').pop()}
-              </span>
-            ) : <span />}
-            <div className="flex gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setOpen(false)}
-                className="bg-secondary border border-border cursor-pointer text-xs"
-              >
-                cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleApply}
-                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer text-xs"
-              >
-                apply schedule
-              </Button>
-            </div>
-          </div>
-        </PopoverContent>
-      )}
-    </Popover>
+      {/* Footer */}
+      <div className="flex items-center justify-between pt-2 border-t border-border">
+        {siteTimezone ? (
+          <span className="text-[10px] text-muted-foreground">
+            times in {siteTimezone.replace(/_/g, ' ').split('/').pop()}
+          </span>
+        ) : <span />}
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onCancel}
+            className="bg-secondary border border-border cursor-pointer text-xs"
+          >
+            cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleApply}
+            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer text-xs"
+          >
+            apply schedule
+          </Button>
+        </div>
+      </div>
+    </>
   );
 }

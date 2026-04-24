@@ -29,7 +29,7 @@ interface Site {
 }
 
 interface PageHeaderProps {
-  currentPage: 'Dashboard' | 'Deploy Software' | 'Roost' | 'Logs' | 'Cortex' | 'dashboard' | 'deploy software' | 'roost' | 'logs' | 'cortex';
+  currentPage: 'Dashboard' | 'Deploy Software' | 'Roost' | 'Logs' | 'Cortex' | 'API Keys' | 'dashboard' | 'deploy software' | 'roost' | 'logs' | 'cortex' | 'api keys';
   sites?: Site[];
   currentSiteId?: string;
   onSiteChange?: (siteId: string) => void;

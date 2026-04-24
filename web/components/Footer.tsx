@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useMemo } from "react";
 import { usePathname } from "next/navigation";
 
 const RANDOM_EMOJIS = [
@@ -26,13 +26,18 @@ const RANDOM_EMOJIS = [
 ];
 
 export function Footer() {
-  const [emoji, setEmoji] = useState("❤️");
   const pathname = usePathname();
-
-  useEffect(() => {
-    // Pick a random emoji whenever the route changes
-    const randomEmoji = RANDOM_EMOJIS[Math.floor(Math.random() * RANDOM_EMOJIS.length)];
-    setEmoji(randomEmoji);
+  // Deterministically pick an emoji from the pathname so SSR and client render
+  // the same glyph (no hydration mismatch) and the emoji changes per route.
+  // The previous Math.random()-in-effect approach tripped
+  // react-hooks/set-state-in-effect; a pure hash is simpler and identical in
+  // spirit — every route gets its own emoji, same one every time.
+  const emoji = useMemo(() => {
+    const hash = Array.from(pathname || '').reduce(
+      (h, c) => (h * 31 + c.charCodeAt(0)) | 0,
+      0,
+    );
+    return RANDOM_EMOJIS[Math.abs(hash) % RANDOM_EMOJIS.length];
   }, [pathname]);
 
   // Hide footer on admin pages (admin panel has its own footer)

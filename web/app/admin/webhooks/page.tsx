@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -11,23 +11,27 @@ import AddWebhookDialog, { WebhookList } from '@/components/WebhookSettingsDialo
 export default function WebhooksPage() {
   const { user, isSuperadmin, userSites, lastSiteId, updateLastSite } = useAuth();
   const { sites } = useSites(user?.uid, userSites, isSuperadmin);
-  const [selectedSiteId, setSelectedSiteId] = useState<string>('');
+  // User-chosen site (empty until the user picks). The effective selection is
+  // derived below so we don't need a post-mount setState when sites resolve.
+  const [userSelectedSiteId, setUserSelectedSiteId] = useState<string>('');
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  // Load saved site
-  useEffect(() => {
-    if (sites.length > 0 && !selectedSiteId) {
-      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
-      if (savedSite && sites.find((s) => s.id === savedSite)) {
-        setSelectedSiteId(savedSite);
-      } else {
-        setSelectedSiteId(sites[0].id);
-      }
-    }
-  }, [sites, selectedSiteId, lastSiteId]);
+  // Derive the effective site: user's explicit choice if any, otherwise the
+  // saved site (from auth context or localStorage) if it still exists in the
+  // list, otherwise the first site. Recomputes whenever sites or lastSiteId
+  // change without needing an effect to sync state.
+  const selectedSiteId = useMemo(() => {
+    if (userSelectedSiteId) return userSelectedSiteId;
+    if (sites.length === 0) return '';
+    const savedSite =
+      lastSiteId ||
+      (typeof window !== 'undefined' ? localStorage.getItem('owlette_current_site') : null);
+    if (savedSite && sites.find((s) => s.id === savedSite)) return savedSite;
+    return sites[0].id;
+  }, [userSelectedSiteId, sites, lastSiteId]);
 
   const handleSiteChange = (siteId: string) => {
-    setSelectedSiteId(siteId);
+    setUserSelectedSiteId(siteId);
     updateLastSite(siteId);
   };
 

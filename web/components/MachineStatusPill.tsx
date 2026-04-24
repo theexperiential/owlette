@@ -48,7 +48,9 @@ export function MachineStatusPill({
 
   useEffect(() => {
     if (!isActive) return;
-    setNow(Math.floor(Date.now() / 1000));
+    // No sync setNow before the interval — that tripped
+    // react-hooks/set-state-in-effect. `now` starts at the mount value and
+    // the first interval tick catches it up within 1s of activation.
     const interval = setInterval(() => {
       setNow(Math.floor(Date.now() / 1000));
     }, 1000);

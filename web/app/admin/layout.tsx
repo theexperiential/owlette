@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import RequireSuperadmin from '@/components/RequireSuperadmin';
@@ -74,17 +74,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     },
   ];
 
-  const [backLabel, setBackLabel] = useState('go back');
-  const [backPath, setBackPath] = useState('/dashboard');
-
-  useEffect(() => {
+  // Read sessionStorage in a lazy initializer so the initial render already
+  // has the correct back-target — avoids a post-mount setState inside an
+  // effect (which violates react-hooks/set-state-in-effect). Guarded on
+  // `window` for SSR safety; falls back to the dashboard when unavailable.
+  const [{ backLabel, backPath }] = useState(() => {
+    if (typeof window === 'undefined') return { backLabel: 'go back', backPath: '/dashboard' };
     const prev = sessionStorage.getItem('owlette_pre_admin_path');
-    if (prev) {
-      const name = prev.replace(/^\//, '').split('/')[0] || 'dashboard';
-      setBackLabel(`back to ${name}`);
-      setBackPath(prev);
-    }
-  }, []);
+    if (!prev) return { backLabel: 'go back', backPath: '/dashboard' };
+    const name = prev.replace(/^\//, '').split('/')[0] || 'dashboard';
+    return { backLabel: `back to ${name}`, backPath: prev };
+  });
 
   // Jump directly to the pre-admin path instead of router.back() — the back-button
   // should skip over any admin → admin internal navigation the user took on the way in.

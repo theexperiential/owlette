@@ -59,15 +59,17 @@ export default function DayPillSelector({
   // Drag-select state. dragModeRef avoids re-render churn during drag.
   const [isDragging, setIsDragging] = useState(false);
   const dragModeRef = useRef<'add' | 'remove' | null>(null);
-  const valueRef = useRef(value);
-  valueRef.current = value;
 
-  // Detect coarse pointers (touch) to skip drag wiring entirely.
-  const [supportsDrag, setSupportsDrag] = useState(false);
-  useEffect(() => {
-    if (!enableDragSelect || typeof window === 'undefined') return;
-    setSupportsDrag(window.matchMedia('(pointer: fine)').matches);
-  }, [enableDragSelect]);
+  // Detect coarse pointers (touch) to skip drag wiring entirely. Lazy
+  // initializer so we don't sync the pointer check via setState-in-effect;
+  // SSR-guarded for safety, and pointer fineness doesn't change at runtime
+  // in any browser we care about.
+  const [supportsDrag] = useState(
+    () =>
+      enableDragSelect &&
+      typeof window !== 'undefined' &&
+      window.matchMedia('(pointer: fine)').matches,
+  );
 
   // End drag on any mouseup, even outside the component.
   useEffect(() => {
@@ -81,15 +83,13 @@ export default function DayPillSelector({
   }, [isDragging]);
 
   const setDay = (day: DayKey, mode: 'add' | 'remove') => {
-    const current = valueRef.current;
-    const has = current.includes(day);
-    if (mode === 'add' && !has) onChange([...current, day]);
-    else if (mode === 'remove' && has) onChange(current.filter((d) => d !== day));
+    const has = value.includes(day);
+    if (mode === 'add' && !has) onChange([...value, day]);
+    else if (mode === 'remove' && has) onChange(value.filter((d) => d !== day));
   };
 
   const toggleDay = (day: DayKey) => {
-    const current = valueRef.current;
-    onChange(current.includes(day) ? current.filter((d) => d !== day) : [...current, day]);
+    onChange(value.includes(day) ? value.filter((d) => d !== day) : [...value, day]);
   };
 
   const handleMouseDown = (day: DayKey, e: React.MouseEvent) => {
@@ -98,7 +98,7 @@ export default function DayPillSelector({
       return;
     }
     e.preventDefault(); // suppress focus + drag-select of text
-    const wasSelected = valueRef.current.includes(day);
+    const wasSelected = value.includes(day);
     const mode: 'add' | 'remove' = wasSelected ? 'remove' : 'add';
     dragModeRef.current = mode;
     setIsDragging(true);

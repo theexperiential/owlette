@@ -12,6 +12,7 @@ import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { ChevronDown, ChevronsUpDown, ChevronsDownUp, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle, Camera } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -150,6 +151,135 @@ const formatAction = (action: string) => {
     .split('_')
     .join(' ');
 };
+
+// Extracted + memoized so toggling one row's expanded state doesn't re-render
+// every other row in the list. Without this, a click burns ~100–300ms on a
+// full page of logs before Radix can flip `data-state` and the animation can
+// start, which reads as "delay before expand."
+const LogRow = React.memo(function LogRow({
+  log,
+  isExpanded,
+  onToggle,
+  onOpenScreenshot,
+  timeDisplayMode,
+  userTz,
+  siteTz,
+  timeFormat,
+}: {
+  log: LogEvent;
+  isExpanded: boolean;
+  onToggle: (id: string) => void;
+  onOpenScreenshot: (url: string) => void;
+  timeDisplayMode: 'user' | 'machine' | 'site';
+  userTz?: string;
+  siteTz?: string;
+  timeFormat: '12h' | '24h';
+}) {
+  return (
+    <Collapsible
+      open={isExpanded}
+      onOpenChange={() => onToggle(log.id)}
+      className={`group/row hover:bg-muted/50 transition-colors border-b border-border last:border-b-0 ${isExpanded ? 'bg-muted/30' : ''}`}
+    >
+      <CollapsibleTrigger asChild>
+        <div className="px-4 py-3 cursor-pointer">
+          <div className="flex items-center justify-between gap-4 text-sm">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
+                <div className="w-[60px] flex-shrink-0">{getLevelBadge(log.level)}</div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-foreground font-medium truncate max-w-[140px] flex-shrink-0 text-left cursor-help">
+                      {formatAction(log.action)}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{formatAction(log.action)}</TooltipContent>
+                </Tooltip>
+              </div>
+              <span className="text-muted-foreground">•</span>
+              <span className="text-foreground whitespace-nowrap">{log.machineName}</span>
+              {log.processName && (
+                <>
+                  <span className="text-muted-foreground">•</span>
+                  <span className="text-foreground whitespace-nowrap">{log.processName}</span>
+                </>
+              )}
+              {!isExpanded && log.screenshotUrl && (
+                <>
+                  <span className="text-muted-foreground">•</span>
+                  <Camera className="w-3 h-3 text-muted-foreground" />
+                </>
+              )}
+              {!isExpanded && log.details && (
+                <>
+                  <span className="text-muted-foreground">•</span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="text-muted-foreground truncate min-w-0 cursor-help">{log.details}</span>
+                    </TooltipTrigger>
+                    <TooltipContent><p className="max-w-xs">{log.details}</p></TooltipContent>
+                  </Tooltip>
+                </>
+              )}
+            </div>
+            <div className="text-muted-foreground whitespace-nowrap text-xs">
+              {formatSiteScopedTimestamp(
+                log.timestamp?.toDate(),
+                timeDisplayMode,
+                userTz,
+                siteTz,
+                timeFormat
+              )}
+            </div>
+          </div>
+        </div>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+        <div className="px-4 pb-3 pt-3 border-t border-border/50 text-sm flex gap-6">
+          <div className="flex-shrink-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 self-start">
+            <span className="text-muted-foreground">machine id</span>
+            <span className="text-foreground text-xs font-mono">{log.machineId}</span>
+            {log.userId && (
+              <>
+                <span className="text-muted-foreground">user</span>
+                <span className="text-foreground text-xs font-mono">{log.userId}</span>
+              </>
+            )}
+            <span className="text-muted-foreground">timestamp</span>
+            <span className="text-foreground">
+              {formatSiteScopedTimestamp(
+                log.timestamp?.toDate(),
+                timeDisplayMode,
+                userTz,
+                siteTz,
+                timeFormat
+              )}
+            </span>
+          </div>
+          {log.details && (
+            <div className="flex-1 min-w-0 border-l border-border/50 pl-6">
+              <span className="text-muted-foreground text-xs">details</span>
+              <p className="text-foreground mt-1 whitespace-pre-wrap break-words select-text">{log.details}</p>
+            </div>
+          )}
+          {log.screenshotUrl && (
+            <div className="flex-shrink-0 border-l border-border/50 pl-6">
+              <span className="text-muted-foreground text-xs">crash screenshot</span>
+              <button onClick={() => onOpenScreenshot(log.screenshotUrl!)} className="block mt-1">
+                <img
+                  src={log.screenshotUrl}
+                  alt="Crash screenshot"
+                  className="rounded border border-border/50 max-w-[200px] max-h-[120px] object-cover hover:opacity-80 transition-opacity cursor-pointer"
+                />
+              </button>
+            </div>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+});
 
 export default function LogsPage() {
   const router = useRouter();
@@ -725,112 +855,19 @@ export default function LogsPage() {
                 no logs found for this site
               </div>
             ) : (
-              logs.map((log) => {
-                const isExpanded = expandedLogIds.has(log.id);
-                return (
-                  <div
-                    key={log.id}
-                    className={`group/row px-4 py-3 hover:bg-muted/50 transition-colors border-b border-border last:border-b-0 ${isExpanded ? 'bg-muted/30' : ''}`}
-                  >
-                    <div className="flex items-center justify-between gap-4 text-sm">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <button
-                          type="button"
-                          onClick={() => toggleLogExpanded(log.id)}
-                          className="group/expand flex items-center gap-3 cursor-pointer hover:opacity-80 flex-shrink-0"
-                        >
-                          <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
-                          <div className="w-[60px] flex-shrink-0">{getLevelBadge(log.level)}</div>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="text-foreground font-medium truncate max-w-[140px] flex-shrink-0 text-left cursor-help">
-                                {formatAction(log.action)}
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent>{formatAction(log.action)}</TooltipContent>
-                          </Tooltip>
-                        </button>
-                        <span className="text-muted-foreground">•</span>
-                        <span className="text-foreground whitespace-nowrap">{log.machineName}</span>
-                        {log.processName && (
-                          <>
-                            <span className="text-muted-foreground">•</span>
-                            <span className="text-foreground whitespace-nowrap">{log.processName}</span>
-                          </>
-                        )}
-                        {!isExpanded && log.screenshotUrl && (
-                          <>
-                            <span className="text-muted-foreground">•</span>
-                            <Camera className="w-3 h-3 text-muted-foreground" />
-                          </>
-                        )}
-                        {!isExpanded && log.details && (
-                          <>
-                            <span className="text-muted-foreground">•</span>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className="text-muted-foreground truncate min-w-0 cursor-help">{log.details}</span>
-                              </TooltipTrigger>
-                              <TooltipContent><p className="max-w-xs">{log.details}</p></TooltipContent>
-                            </Tooltip>
-                          </>
-                        )}
-                      </div>
-                      <div className="text-muted-foreground whitespace-nowrap text-xs">
-                        {formatSiteScopedTimestamp(
-                          log.timestamp?.toDate(),
-                          userPreferences.timeDisplayMode || 'machine',
-                          userPreferences.timezone,
-                          siteTimezone,
-                          userPreferences.timeFormat || '12h'
-                        )}
-                      </div>
-                    </div>
-                    {isExpanded && (
-                      <div className="mt-3 pt-3 border-t border-border/50 text-sm flex gap-6">
-                        <div className="flex-shrink-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 self-start">
-                          <span className="text-muted-foreground">machine id</span>
-                          <span className="text-foreground text-xs font-mono">{log.machineId}</span>
-                          {log.userId && (
-                            <>
-                              <span className="text-muted-foreground">user</span>
-                              <span className="text-foreground text-xs font-mono">{log.userId}</span>
-                            </>
-                          )}
-                          <span className="text-muted-foreground">timestamp</span>
-                          <span className="text-foreground">
-                            {formatSiteScopedTimestamp(
-                              log.timestamp?.toDate(),
-                              userPreferences.timeDisplayMode || 'machine',
-                              userPreferences.timezone,
-                              siteTimezone,
-                              userPreferences.timeFormat || '12h'
-                            )}
-                          </span>
-                        </div>
-                        {log.details && (
-                          <div className="flex-1 min-w-0 border-l border-border/50 pl-6">
-                            <span className="text-muted-foreground text-xs">details</span>
-                            <p className="text-foreground mt-1 whitespace-pre-wrap break-words select-text">{log.details}</p>
-                          </div>
-                        )}
-                        {log.screenshotUrl && (
-                          <div className="flex-shrink-0 border-l border-border/50 pl-6">
-                            <span className="text-muted-foreground text-xs">crash screenshot</span>
-                            <button onClick={() => setScreenshotModalUrl(log.screenshotUrl!)} className="block mt-1">
-                              <img
-                                src={log.screenshotUrl}
-                                alt="Crash screenshot"
-                                className="rounded border border-border/50 max-w-[200px] max-h-[120px] object-cover hover:opacity-80 transition-opacity cursor-pointer"
-                              />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
+              logs.map((log) => (
+                <LogRow
+                  key={log.id}
+                  log={log}
+                  isExpanded={expandedLogIds.has(log.id)}
+                  onToggle={toggleLogExpanded}
+                  onOpenScreenshot={setScreenshotModalUrl}
+                  timeDisplayMode={userPreferences.timeDisplayMode || 'machine'}
+                  userTz={userPreferences.timezone}
+                  siteTz={siteTimezone}
+                  timeFormat={userPreferences.timeFormat || '12h'}
+                />
+              ))
             )}
           </div>
         </Card>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -38,15 +38,34 @@ export default function ApplyScheduleToMachinesDialog({
   currentMachineId,
   schedule,
 }: ApplyScheduleToMachinesDialogProps) {
-  const { machines, updateRebootSchedule } = useMachines(siteId);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [applying, setApplying] = useState(false);
+  // Mount the body only while open so useState seeds fresh initial selection
+  // each time the dialog opens — cleaner than a sync setState in an effect
+  // (which violates react-hooks/set-state-in-effect).
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="bg-card border-border sm:max-w-md">
+        {open && (
+          <ApplyScheduleToMachinesDialogBody
+            onOpenChange={onOpenChange}
+            siteId={siteId}
+            currentMachineId={currentMachineId}
+            schedule={schedule}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
-  // Initialize selection when dialog opens
-  useEffect(() => {
-    if (!open) return;
-    setSelected(new Set([currentMachineId]));
-  }, [open, currentMachineId]);
+function ApplyScheduleToMachinesDialogBody({
+  onOpenChange,
+  siteId,
+  currentMachineId,
+  schedule,
+}: Omit<ApplyScheduleToMachinesDialogProps, 'open'>) {
+  const { machines, updateRebootSchedule } = useMachines(siteId);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set([currentMachineId]));
+  const [applying, setApplying] = useState(false);
 
   const otherMachines = useMemo(
     () => machines.filter(m => m.machineId !== currentMachineId),
@@ -103,89 +122,87 @@ export default function ApplyScheduleToMachinesDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-card border-border sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>apply reboot schedule to...</DialogTitle>
-          <DialogDescription className="text-muted-foreground text-pretty">
-            this will overwrite the reboot schedule on the selected machines.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <DialogHeader>
+        <DialogTitle>apply reboot schedule to...</DialogTitle>
+        <DialogDescription className="text-muted-foreground text-pretty">
+          this will overwrite the reboot schedule on the selected machines.
+        </DialogDescription>
+      </DialogHeader>
 
-        <div className="space-y-2 py-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">
-              {otherSelectedCount} of {otherCount} selected
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={toggleAllOthers}
-              disabled={otherCount === 0}
-              className="bg-secondary border-border hover:bg-accent text-xs"
-            >
-              {allOthersSelected ? 'deselect all' : 'select all'}
-            </Button>
-          </div>
-
-          <div className="border border-border rounded-md bg-background/50 max-h-72 overflow-y-auto divide-y divide-border">
-            {machines.length === 0 ? (
-              <p className="text-muted-foreground text-sm text-center py-4">no machines available</p>
-            ) : (
-              machines.map((machine) => {
-                const isCurrent = machine.machineId === currentMachineId;
-                const isChecked = selected.has(machine.machineId);
-                return (
-                  <div
-                    key={machine.machineId}
-                    className={`flex items-center justify-between p-2 ${
-                      isCurrent ? 'opacity-60' : 'hover:bg-secondary cursor-pointer'
-                    }`}
-                    onClick={() => toggleMachine(machine.machineId)}
-                  >
-                    <div className="flex items-center gap-3">
-                      <Checkbox
-                        checked={isChecked}
-                        onCheckedChange={() => toggleMachine(machine.machineId)}
-                        disabled={isCurrent}
-                        className="cursor-pointer"
-                      />
-                      <span className="text-foreground text-sm">{machine.machineId}</span>
-                      {isCurrent && (
-                        <span className="text-[10px] text-muted-foreground">(current)</span>
-                      )}
-                    </div>
-                    <Badge className={`text-xs ${machine.online ? 'bg-green-600' : 'bg-red-600'}`}>
-                      {machine.online ? 'online' : 'offline'}
-                    </Badge>
-                  </div>
-                );
-              })
-            )}
-          </div>
+      <div className="space-y-2 py-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">
+            {otherSelectedCount} of {otherCount} selected
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={toggleAllOthers}
+            disabled={otherCount === 0}
+            className="bg-secondary border-border hover:bg-accent text-xs"
+          >
+            {allOthersSelected ? 'deselect all' : 'select all'}
+          </Button>
         </div>
 
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => onOpenChange(false)}
-            disabled={applying}
-            className="bg-secondary border border-border cursor-pointer"
-          >
-            cancel
-          </Button>
-          <Button
-            type="button"
-            onClick={handleApply}
-            disabled={applying || otherSelectedCount === 0}
-            className="bg-cyan-600 hover:bg-cyan-700"
-          >
-            {applying ? 'applying...' : `apply to ${otherSelectedCount}`}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <div className="border border-border rounded-md bg-background/50 max-h-72 overflow-y-auto divide-y divide-border">
+          {machines.length === 0 ? (
+            <p className="text-muted-foreground text-sm text-center py-4">no machines available</p>
+          ) : (
+            machines.map((machine) => {
+              const isCurrent = machine.machineId === currentMachineId;
+              const isChecked = selected.has(machine.machineId);
+              return (
+                <div
+                  key={machine.machineId}
+                  className={`flex items-center justify-between p-2 ${
+                    isCurrent ? 'opacity-60' : 'hover:bg-secondary cursor-pointer'
+                  }`}
+                  onClick={() => toggleMachine(machine.machineId)}
+                >
+                  <div className="flex items-center gap-3">
+                    <Checkbox
+                      checked={isChecked}
+                      onCheckedChange={() => toggleMachine(machine.machineId)}
+                      disabled={isCurrent}
+                      className="cursor-pointer"
+                    />
+                    <span className="text-foreground text-sm">{machine.machineId}</span>
+                    {isCurrent && (
+                      <span className="text-[10px] text-muted-foreground">(current)</span>
+                    )}
+                  </div>
+                  <Badge className={`text-xs ${machine.online ? 'bg-green-600' : 'bg-red-600'}`}>
+                    {machine.online ? 'online' : 'offline'}
+                  </Badge>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      <DialogFooter>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => onOpenChange(false)}
+          disabled={applying}
+          className="bg-secondary border border-border cursor-pointer"
+        >
+          cancel
+        </Button>
+        <Button
+          type="button"
+          onClick={handleApply}
+          disabled={applying || otherSelectedCount === 0}
+          className="bg-cyan-600 hover:bg-cyan-700"
+        >
+          {applying ? 'applying...' : `apply to ${otherSelectedCount}`}
+        </Button>
+      </DialogFooter>
+    </>
   );
 }
