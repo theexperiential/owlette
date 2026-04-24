@@ -42,9 +42,17 @@ const CORS_ENABLED_BUCKETS = [
   'owlette-dev-content',
 ];
 
+// Next.js dev server falls back to 3001, 3002, etc. when the primary
+// port is taken (e.g. an orphaned session). Allow a small range so
+// accidental port-hopping doesn't surface as a CORS preflight failure
+// on roost uploads (which PUT directly to R2 from the browser).
+// If you add a port, re-run this script to push the updated CORS policy
+// to R2: `node scripts/provision-r2.mjs`.
 const CORS_ALLOWED_ORIGINS = [
-  'http://localhost:3000',  // next.js dev
-  'http://127.0.0.1:3000',  // alt local loopback
+  ...[3000, 3001, 3002, 3003, 3100].flatMap((port) => [
+    `http://localhost:${port}`,
+    `http://127.0.0.1:${port}`,
+  ]),
   'https://dev.owlette.app',
   'https://owlette.app',
 ];

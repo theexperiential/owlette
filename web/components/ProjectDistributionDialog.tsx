@@ -1053,19 +1053,42 @@ export default function ProjectDistributionDialog({
         </div>
 
         <DialogFooter>
-          {/* Cancel: always enabled — the whole point of the minimize-to-corner
-              flow is the user can dismiss during an upload. The URL-source
-              path still blocks dismissal because its handleDistribute doesn't
-              have a lifted hook; while distributing=true the dialog is the
-              only thing holding that promise alive. */}
-          <Button
-            variant="ghost"
-            onClick={() => onOpenChange(false)}
-            className="bg-secondary border border-border cursor-pointer"
-            disabled={distributing}
-          >
-            {uploading && sourceMode === 'upload' ? 'minimize' : 'cancel'}
-          </Button>
+          {/* During an upload the footer surfaces BOTH actions explicitly:
+              - "cancel upload" aborts the in-flight run (AbortController
+                fires, fetches bail out, minimized card hides)
+              - "minimize" closes the dialog but keeps the upload running
+                (MinimizedUploadCard takes over the visibility)
+              This replaces the previous single-button "minimize/cancel"
+              toggle that was ambiguous about whether close = abort.
+              The URL-source path still has no cancel — its handleDistribute
+              doesn't use the lifted hook. */}
+          {uploading && sourceMode === 'upload' ? (
+            <>
+              <Button
+                variant="ghost"
+                onClick={() => upload.cancel()}
+                className="bg-secondary border border-border text-red-400 hover:text-red-300 cursor-pointer"
+              >
+                cancel upload
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => onOpenChange(false)}
+                className="bg-secondary border border-border cursor-pointer"
+              >
+                minimize
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+              className="bg-secondary border border-border cursor-pointer"
+              disabled={distributing}
+            >
+              cancel
+            </Button>
+          )}
           {/*
             Gating: disable until the user has provided enough to submit.
             Required: name, a target machine, and source-specific bytes
