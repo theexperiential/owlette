@@ -6,11 +6,11 @@
  * caches results in a module-level map keyed by manifestId so
  * collapse/expand cycles don't refetch.
  *
- * The manifest JSON lives in R2 (signed GET URL minted by
- * /api/roosts/{roostId}/manifest-url, which has a 15 min TTL). We only
- * pull out `path` + `size` per file — enough to render the expanded
- * list without pulling the chunk arrays, which can be huge on a 100 GB
- * roost but don't matter to the user at read time.
+ * Calls GET /api/roosts/{roostId}/manifests/{manifestId}/files — a
+ * server-side proxy that fetches the manifest from R2 and returns just
+ * the file list. Proxying through our API avoids the CORS issue the
+ * browser hits when fetching R2 signed URLs directly (R2 doesn't send
+ * Access-Control-Allow-Origin on private-bucket signed GETs).
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -43,42 +43,44 @@ async function fetchManifestFiles(
   if (existing) return existing;
 
   const p = (async () => {
-    const urlRes = await fetch(
-      `/api/roosts/${encodeURIComponent(roostId)}/manifest-url`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ siteId, manifestId }),
-      },
-    );
-    if (!urlRes.ok) {
-      const body = await urlRes.json().catch(() => ({}));
-      throw new Error(body.detail ?? body.title ?? `HTTP ${urlRes.status}`);
-    }
-    const { url } = (await urlRes.json()) as { url?: string };
-    if (typeof url !== 'string' || !url) {
-      throw new Error('manifest-url response missing `url`');
-    }
-
-    const manifestRes = await fetch(url);
-    if (!manifestRes.ok) {
-      throw new Error(`manifest fetch failed: HTTP ${manifestRes.status}`);
-    }
-    const manifest = (await manifestRes.json()) as {
-      files?: Array<{ path?: unknown; size?: unknown }>;
-    };
-    const files: ManifestFile[] = [];
-    for (const f of manifest.files ?? []) {
-      if (typeof f.path === 'string' && typeof f.size === 'number') {
-        files.push({ path: f.path, size: f.size });
+    // Server-side proxy — avoids R2's missing CORS headers on signed URLs.
+    // The endpoint supports pagination via limit + cursor; we page through
+    // until nextPageToken is empty so the caller gets the full list.
+    // max limit is 500 per request.
+    const collected: ManifestFile[] = [];
+    let cursor = '';
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const qs = new URLSearchParams({
+        siteId,
+        limit: '500',
+      });
+      if (cursor) qs.set('cursor', cursor);
+      const res = await fetch(
+        `/api/roosts/${encodeURIComponent(roostId)}/manifests/${encodeURIComponent(manifestId)}/files?${qs}`,
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail ?? body.title ?? `HTTP ${res.status}`);
       }
+      const body = (await res.json()) as {
+        files?: Array<{ path?: unknown; size?: unknown }>;
+        nextPageToken?: string;
+      };
+      for (const f of body.files ?? []) {
+        if (typeof f.path === 'string' && typeof f.size === 'number') {
+          collected.push({ path: f.path, size: f.size });
+        }
+      }
+      cursor = body.nextPageToken ?? '';
+      if (!cursor) break;
     }
-    // sort: paths alphabetically so the list is deterministic regardless
-    // of upload order. mirrors how file explorers default.
-    files.sort((a, b) => a.path.localeCompare(b.path));
-    Object.freeze(files);
-    cache.set(manifestId, files);
-    return files as readonly ManifestFile[];
+    // Sort alphabetically by path so the list is deterministic
+    // regardless of upload order. Mirrors how file explorers default.
+    collected.sort((a, b) => a.path.localeCompare(b.path));
+    Object.freeze(collected);
+    cache.set(manifestId, collected);
+    return collected as readonly ManifestFile[];
   })();
   inflight.set(manifestId, p);
   try {
