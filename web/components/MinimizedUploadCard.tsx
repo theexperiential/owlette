@@ -202,21 +202,16 @@ export function MinimizedUploadCard({ upload, onRestore }: MinimizedUploadCardPr
                     </>
                   )}
                 </div>
-                {/* bar + % on one row so the ratio is easy to read at a
-                    glance. darker track (bg-background + subtle border)
-                    sits visibly on the card's bg-secondary panel. */}
-                <div className="mt-1.5 flex items-center gap-2">
-                  <div className="h-[4px] flex-1 overflow-hidden rounded-full bg-background border border-border/40">
-                    <div
-                      className="h-full bg-accent-cyan transition-[width] duration-200 ease-out"
-                      style={{ width: `${frac !== undefined ? Math.max(0, Math.min(1, frac)) * 100 : 0}%` }}
-                    />
-                  </div>
-                  {pct !== null && (
-                    <span className="text-[10px] text-muted-foreground tabular-nums flex-shrink-0 min-w-[2.5rem] text-right">
-                      {pct}%
-                    </span>
-                  )}
+                {/* Full-width bar — the % lives under the X in the
+                    absolute action area so the track has maximum room
+                    for the unfilled/filled ratio to be legible. Darker
+                    track (bg-background + subtle border) for contrast
+                    on the card's bg-secondary panel. */}
+                <div className="mt-1.5 h-[4px] w-full overflow-hidden rounded-full bg-background border border-border/40">
+                  <div
+                    className="h-full bg-accent-cyan transition-[width] duration-200 ease-out"
+                    style={{ width: `${frac !== undefined ? Math.max(0, Math.min(1, frac)) * 100 : 0}%` }}
+                  />
                 </div>
               </>
             )}
@@ -239,6 +234,16 @@ export function MinimizedUploadCard({ upload, onRestore }: MinimizedUploadCardPr
           </div>
         </div>
       </button>
+
+      {/* Percentage pinned top-right below the X — frees the full card
+          width for the progress bar itself so the ratio is readable at
+          a glance. Only shown during active phases (not on success /
+          error / cancel where the header copy carries the signal). */}
+      {pct !== null && !isError && !isSuccess && !isCancelled && (
+        <span className="pointer-events-none absolute bottom-2.5 right-2.5 text-[10px] text-muted-foreground tabular-nums">
+          {pct}%
+        </span>
+      )}
 
       {/* Action row — rendered outside the main restore-button so the X
           doesn't collide with the "click to restore" semantics. For errors

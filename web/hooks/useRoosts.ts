@@ -23,6 +23,11 @@ export interface Roost {
   manifestUrl: string | null;
   extractPath?: string;
   targets: string[];
+  /** Denormalised summary for the current manifest — populated by the
+   *  publish transaction on new roosts. Legacy roosts (no publish since
+   *  this field was added) will show `undefined` until next redeploy. */
+  totalFiles?: number;
+  totalSize?: number;
   createdAt: FirestoreTs;
   updatedAt?: FirestoreTs;
   createdBy?: string;
@@ -54,6 +59,8 @@ export function useRoosts(siteId: string) {
             manifestUrl: (x.manifestUrl as string | null) ?? null,
             extractPath: typeof x.extractPath === 'string' ? x.extractPath : undefined,
             targets: Array.isArray(x.targets) ? (x.targets as string[]) : [],
+            totalFiles: typeof x.totalFiles === 'number' ? x.totalFiles : undefined,
+            totalSize: typeof x.totalSize === 'number' ? x.totalSize : undefined,
             createdAt: x.createdAt ?? Date.now(),
             updatedAt: x.updatedAt,
             createdBy: typeof x.createdBy === 'string' ? x.createdBy : undefined,

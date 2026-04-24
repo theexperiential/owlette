@@ -918,14 +918,21 @@ export default function ProjectDistributionDialog({
                         )}
                       </div>
                     )}
-                    {showRate && throughput !== undefined && eta !== undefined && (
+                    {/* Single consolidated status line: "281/1841 chunks
+                        uploaded · 1 KB/s · ~9h 30m remaining". The rate +
+                        ETA are latched across ticks so they don't flicker
+                        when a brief sample window has no byte progress. */}
+                    {(uploadProgress.message || (showRate && throughput !== undefined)) && (
                       <div className="mt-1 text-muted-foreground tabular-nums">
-                        {formatBytes(throughput)}/s · ~{formatDurationShort(eta)} remaining
-                      </div>
-                    )}
-                    {uploadProgress.message && (
-                      <div className="mt-1 text-muted-foreground">
                         {uploadProgress.message}
+                        {showRate && throughput !== undefined && eta !== undefined && (
+                          <>
+                            {uploadProgress.message ? ' · ' : ''}
+                            {formatBytes(throughput)}/s
+                            {' · ~'}
+                            {formatDurationShort(eta)} remaining
+                          </>
+                        )}
                       </div>
                     )}
                   </div>

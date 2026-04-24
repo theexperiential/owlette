@@ -220,11 +220,25 @@ export function useRoostUpload(): UseRoostUploadApi {
           }
 
           if (!aliveRef.current) return;
-          setState((prev) => ({
-            ...prev,
-            status: 'uploading',
-            progress: { ...p, ...rate },
-          }));
+          // Latch throughput + ETA across ticks: if this sample window
+          // didn't produce a new rate (too short, zero byte delta, etc.),
+          // keep the previous values so the UI doesn't flicker on/off
+          // while a slow upload plods along. Phase change resets explicitly.
+          setState((prev) => {
+            const prevProgress = prev.progress;
+            const phaseChanged = prevProgress?.phase !== p.phase;
+            const throughputBytesPerSec =
+              rate.throughputBytesPerSec
+              ?? (phaseChanged ? undefined : prevProgress?.throughputBytesPerSec);
+            const etaSeconds =
+              rate.etaSeconds
+              ?? (phaseChanged ? undefined : prevProgress?.etaSeconds);
+            return {
+              ...prev,
+              status: 'uploading',
+              progress: { ...p, throughputBytesPerSec, etaSeconds },
+            };
+          });
         },
       });
 

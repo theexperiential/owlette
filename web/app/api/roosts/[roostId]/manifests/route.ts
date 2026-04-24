@@ -28,11 +28,11 @@ import {
   putManifestBody,
 } from '@/lib/r2Client.server';
 import {
+  applyAuthDeprecations,
   parseJsonBody,
+  requireRoostAuthAndScope,
   validateResourceId,
   validateSiteIdBody,
-  requireAuthOrProblem,
-  requireSiteScope,
 } from '../../../_shared';
 
 interface RouteParams {
@@ -49,9 +49,6 @@ const MAX_LIST_LIMIT = 100;
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requireAuthOrProblem(request);
-    if (!auth.ok) return auth.response;
-
     const { roostId } = await params;
     const roostError = validateResourceId(roostId, 'roostId');
     if (roostError) return roostError;
@@ -65,8 +62,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const site = validateSiteIdBody(siteIdParam, 'query.siteId');
     if (!site.ok) return site.response;
 
-    const scopeError = await requireSiteScope(auth.userId, site.siteId);
-    if (scopeError) return scopeError;
+    const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'read');
+    if (!auth.ok) return auth.response;
 
     const limitRaw = Number(request.nextUrl.searchParams.get('limit') ?? DEFAULT_LIST_LIMIT);
     const limit = Math.min(
@@ -122,7 +119,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       };
     });
 
-    return NextResponse.json({ manifests, nextCursor });
+    return applyAuthDeprecations(
+      NextResponse.json({ manifests, nextCursor }),
+      auth.scopeCheck,
+    );
   } catch (err) {
     return problemFromError(err, 'v2/roosts/[roostId]/manifests (GET)');
   }
@@ -145,9 +145,6 @@ interface ManifestShape {
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requireAuthOrProblem(request);
-    if (!auth.ok) return auth.response;
-
     const { roostId } = await params;
     const roostError = validateResourceId(roostId, 'roostId');
     if (roostError) return roostError;
@@ -166,8 +163,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const site = validateSiteIdBody(body.siteId);
     if (!site.ok) return site.response;
 
-    const scopeError = await requireSiteScope(auth.userId, site.siteId);
-    if (scopeError) return scopeError;
+    const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'write');
+    if (!auth.ok) return auth.response;
 
     const manifest = body.manifest;
     const manifestError = validateManifestShape(manifest);
@@ -303,6 +300,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           currentManifestId: manifestId,
           previousManifestId: currentId,
           manifestUrl,
+          // Denormalised summary so the /roost list can show "N files · X MB"
+          // without needing to load each roost's manifest subdoc on render.
+          // Matches what we write to the manifests subcollection above.
+          totalFiles: m.files.length,
+          totalSize,
           updatedAt: FieldValue.serverTimestamp(),
           ...nameField,
           ...targetsField,
@@ -337,13 +339,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    return NextResponse.json(
-      {
-        manifestId: result.manifestId,
-        currentManifestId: result.currentManifestId,
-        previousManifestId: result.previousManifestId,
-      },
-      { status: 201 },
+    return applyAuthDeprecations(
+      NextResponse.json(
+        {
+          manifestId: result.manifestId,
+          currentManifestId: result.currentManifestId,
+          previousManifestId: result.previousManifestId,
+        },
+        { status: 201 },
+      ),
+      auth.scopeCheck,
     );
   } catch (err) {
     return problemFromError(err, 'v2/roosts/[roostId]/manifests (POST)');

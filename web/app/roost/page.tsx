@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
@@ -9,7 +9,9 @@ import { useRoosts } from '@/hooks/useRoosts';
 import { RoostTargetsList, RoostStatusPill } from '@/components/RoostTargetRow';
 import { EmptyStateUpload } from '@/components/EmptyStateUpload';
 import { Button } from '@/components/ui/button';
-import { Plus, Loader2, FolderSync, Archive, ChevronDown, ChevronRight, MoreVertical, Trash2, RotateCcw, RefreshCw } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Plus, Loader2, FolderSync, Archive, ChevronDown, ChevronRight, ChevronsUpDown, ChevronsDownUp, MoreVertical, Trash2, RotateCcw, RefreshCw } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,6 +31,7 @@ import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
 import { LoadingWord } from '@/components/LoadingWord';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
+import { formatBytes as formatContentSize } from '@/lib/preUploadCheck';
 
 export default function ProjectsPage() {
   const { user, loading: authLoading, userSites, isSuperadmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
@@ -55,7 +58,9 @@ export default function ProjectsPage() {
   const currentSite = sites.find(s => s.id === currentSiteId);
   const siteTimezone = currentSite?.timezone;
   const [distributionDialogOpen, setDistributionDialogOpen] = useState(false);
-  const [selectedDistributionId, setSelectedDistributionId] = useState<string | null>(null);
+  // Multi-expand — mirrors dashboard + logs. Ephemeral (no Firestore persistence):
+  // roost expansion is transient inspection, not a user preference.
+  const [expandedRoostIds, setExpandedRoostIds] = useState<Set<string>>(new Set());
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
@@ -73,6 +78,24 @@ export default function ProjectsPage() {
 
   // Main page IS the history. Source of truth is roosts (v2).
   const { roosts, loading: roostsLoading, error: roostsError } = useRoosts(currentSiteId);
+
+  const toggleRoostExpanded = useCallback((roostId: string) => {
+    setExpandedRoostIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(roostId)) {
+        next.delete(roostId);
+      } else {
+        next.add(roostId);
+      }
+      return next;
+    });
+  }, []);
+
+  const allExpanded = roosts.length > 0 && expandedRoostIds.size === roosts.length;
+
+  const toggleAllExpanded = useCallback(() => {
+    setExpandedRoostIds((prev) => (prev.size === roosts.length ? new Set() : new Set(roosts.map((r) => r.id))));
+  }, [roosts]);
 
   // wave 3.9: used by EmptyStateUpload to branch between "install agent first"
   // onboarding and "create your first roost" CTA.
@@ -246,13 +269,32 @@ export default function ProjectsPage() {
             </div>
           </div>
 
-          <Button
-            onClick={() => setDistributionDialogOpen(true)}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer flex-shrink-0"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            new roost
-          </Button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {roosts.length > 0 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    onClick={toggleAllExpanded}
+                    className="hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                    size="icon"
+                  >
+                    {allExpanded ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{allExpanded ? 'collapse all' : 'expand all'}</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+            <Button
+              onClick={() => setDistributionDialogOpen(true)}
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              new roost
+            </Button>
+          </div>
         </div>
 
         {/* Roosts list — main page IS the history. Each row is a roost
@@ -285,111 +327,116 @@ export default function ProjectsPage() {
           ) : (
             <div className="divide-y divide-border">
               {roosts.map((roost) => {
-                const isExpanded = selectedDistributionId === roost.id;
+                const isExpanded = expandedRoostIds.has(roost.id);
                 const manifestShort = roost.currentManifestId
                   ? `${roost.currentManifestId.slice(0, 12)}…`
                   : 'no manifest';
                 return (
-                  <div key={roost.id}>
-                    <div
-                      className="relative flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer"
-                      onClick={() => setSelectedDistributionId(roost.id === selectedDistributionId ? null : roost.id)}
-                    >
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        {isExpanded ? (
-                          <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
-                        )}
-                        <FolderSync className="h-4 w-4 text-accent-cyan flex-shrink-0" aria-hidden="true" />
-                        <div className="min-w-0 flex-1">
-                          <span className="text-foreground font-medium select-text">{roost.name}</span>
-                          <p className="text-xs text-muted-foreground select-text truncate font-mono">
-                            manifest {manifestShort}
-                          </p>
+                  <Collapsible
+                    key={roost.id}
+                    open={isExpanded}
+                    onOpenChange={() => toggleRoostExpanded(roost.id)}
+                  >
+                    <CollapsibleTrigger asChild>
+                      <div
+                        className="relative flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          {isExpanded ? (
+                            <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
+                          )}
+                          <FolderSync className="h-4 w-4 text-accent-cyan flex-shrink-0" aria-hidden="true" />
+                          <div className="min-w-0 flex-1">
+                            <span className="text-foreground font-medium select-text">{roost.name}</span>
+                            <p className="text-xs text-muted-foreground select-text truncate font-mono">
+                              manifest {manifestShort}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 flex-shrink-0">
+                          <RoostStatusPill
+                            siteId={currentSiteId}
+                            roostId={roost.id}
+                            currentManifestId={roost.currentManifestId}
+                            targets={roost.targets}
+                          />
+                          <span
+                            className="hidden md:inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums select-none"
+                            aria-label={`${roost.targets.length} target machine${roost.targets.length === 1 ? '' : 's'}`}
+                          >
+                            <span className="text-foreground">{roost.targets.length}</span>
+                            <span>target{roost.targets.length === 1 ? '' : 's'}</span>
+                          </span>
+                          <span className="text-xs text-muted-foreground hidden sm:block w-[150px] text-right">
+                            {formatSiteScopedTimestamp(
+                              roost.updatedAt ?? roost.createdAt,
+                              userPreferences.timeDisplayMode || 'machine',
+                              userPreferences.timezone,
+                              siteTimezone,
+                              userPreferences.timeFormat || '12h',
+                            )}
+                          </span>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => e.stopPropagation()}
+                                aria-label="row actions"
+                                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                              >
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                              <DropdownMenuItem
+                                disabled={!roost.currentManifestId || roost.targets.length === 0}
+                                onClick={() => {
+                                  if (roost.currentManifestId && roost.targets.length > 0) {
+                                    setPendingResync({
+                                      roostId: roost.id,
+                                      name: roost.name,
+                                      targetCount: roost.targets.length,
+                                    });
+                                  }
+                                }}
+                                className="cursor-pointer"
+                              >
+                                <RefreshCw className="h-3.5 w-3.5 mr-2" />
+                                re-sync targets
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={!roost.previousManifestId}
+                                onClick={() => {
+                                  if (roost.previousManifestId) {
+                                    setPendingRollback({
+                                      roostId: roost.id,
+                                      targetManifestId: roost.previousManifestId,
+                                    });
+                                  }
+                                }}
+                                className="cursor-pointer"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5 mr-2" />
+                                roll back to previous
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => setPendingDelete({ roostId: roost.id, name: roost.name })}
+                                className="cursor-pointer text-red-400 focus:text-red-300 focus:bg-red-950/30"
+                              >
+                                <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                delete roost
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3 flex-shrink-0">
-                        <RoostStatusPill
-                          siteId={currentSiteId}
-                          roostId={roost.id}
-                          currentManifestId={roost.currentManifestId}
-                          targets={roost.targets}
-                        />
-                        <span
-                          className="hidden md:inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums select-none"
-                          aria-label={`${roost.targets.length} target machine${roost.targets.length === 1 ? '' : 's'}`}
-                        >
-                          <span className="text-foreground">{roost.targets.length}</span>
-                          <span>target{roost.targets.length === 1 ? '' : 's'}</span>
-                        </span>
-                        <span className="text-xs text-muted-foreground hidden sm:block w-[150px] text-right">
-                          {formatSiteScopedTimestamp(
-                            roost.updatedAt ?? roost.createdAt,
-                            userPreferences.timeDisplayMode || 'machine',
-                            userPreferences.timezone,
-                            siteTimezone,
-                            userPreferences.timeFormat || '12h',
-                          )}
-                        </span>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => e.stopPropagation()}
-                              aria-label="row actions"
-                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
-                            >
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                            <DropdownMenuItem
-                              disabled={!roost.currentManifestId || roost.targets.length === 0}
-                              onClick={() => {
-                                if (roost.currentManifestId && roost.targets.length > 0) {
-                                  setPendingResync({
-                                    roostId: roost.id,
-                                    name: roost.name,
-                                    targetCount: roost.targets.length,
-                                  });
-                                }
-                              }}
-                              className="cursor-pointer"
-                            >
-                              <RefreshCw className="h-3.5 w-3.5 mr-2" />
-                              re-sync targets
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={!roost.previousManifestId}
-                              onClick={() => {
-                                if (roost.previousManifestId) {
-                                  setPendingRollback({
-                                    roostId: roost.id,
-                                    targetManifestId: roost.previousManifestId,
-                                  });
-                                }
-                              }}
-                              className="cursor-pointer"
-                            >
-                              <RotateCcw className="h-3.5 w-3.5 mr-2" />
-                              roll back to previous
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={() => setPendingDelete({ roostId: roost.id, name: roost.name })}
-                              className="cursor-pointer text-red-400 focus:text-red-300 focus:bg-red-950/30"
-                            >
-                              <Trash2 className="h-3.5 w-3.5 mr-2" />
-                              delete roost
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </div>
+                    </CollapsibleTrigger>
 
-                    {isExpanded && (
+                    <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
                       <div className="border-t border-border">
                         <div className="mx-4 my-3 rounded-lg border border-border bg-background p-4 space-y-4">
                           <div className="grid gap-2 text-sm">
@@ -417,6 +464,20 @@ export default function ProjectsPage() {
                                 {roost.extractPath || <span className="text-muted-foreground italic">~/Documents/Owlette/ (default)</span>}
                               </span>
                             </div>
+                            {(roost.totalFiles !== undefined || roost.totalSize !== undefined) && (
+                              <div className="flex gap-2">
+                                <span className="text-muted-foreground flex-shrink-0 w-28">contents</span>
+                                <span className="text-foreground select-text tabular-nums">
+                                  {roost.totalFiles !== undefined && (
+                                    <>
+                                      {roost.totalFiles.toLocaleString()} file{roost.totalFiles === 1 ? '' : 's'}
+                                    </>
+                                  )}
+                                  {roost.totalFiles !== undefined && roost.totalSize !== undefined && ' · '}
+                                  {roost.totalSize !== undefined && formatContentSize(roost.totalSize)}
+                                </span>
+                              </div>
+                            )}
                           </div>
 
                           <div>
@@ -432,8 +493,8 @@ export default function ProjectsPage() {
                           </div>
                         </div>
                       </div>
-                    )}
-                  </div>
+                    </CollapsibleContent>
+                  </Collapsible>
                 );
               })}
             </div>
