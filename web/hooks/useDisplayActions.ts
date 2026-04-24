@@ -27,7 +27,7 @@
 import { useState } from 'react';
 import { doc, setDoc, serverTimestamp, deleteField } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import type { MonitorInfo } from '@/hooks/useDisplayState';
+import { normalizePrimaryToOrigin, type MonitorInfo } from '@/hooks/useDisplayState';
 
 interface ApplyDispatchResult {
   commandId: string;
@@ -49,6 +49,12 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
    * Persist `monitors` as the assigned layout on the config doc. Uses a nested
    * merge-write so sibling fields under `displays` (and the rest of the config
    * doc) are preserved.
+   *
+   * Normalizes the primary to the origin before writing — Windows pins the
+   * primary at (0, 0), so any non-canonical coordinates would either be lost
+   * on apply or masquerade as drift on the next heartbeat. This is the final
+   * boundary that guarantees stored layouts obey the invariant regardless of
+   * what the caller passed in.
    */
   const captureLayout = async (monitors: MonitorInfo[], userEmail: string): Promise<void> => {
     if (!db) throw new Error('Firebase not configured');
@@ -62,7 +68,7 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
         {
           displays: {
             assigned: {
-              monitors,
+              monitors: normalizePrimaryToOrigin(monitors),
               capturedAt: serverTimestamp(),
               capturedBy: userEmail,
             },
@@ -108,6 +114,12 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
    * client-generated `applyId` (UUID). The agent stamps the same id into
    * the sentinel and requires the follow-up ack to carry it; this closes
    * the "stale ack cancels newer apply" race.
+   *
+   * Normalizes the primary to the origin before dispatch — mirrors the
+   * guarantee `captureLayout` makes at the storage boundary. Without this,
+   * a recall of a legacy non-canonical assigned layout would push a primary
+   * at (0, −130) to the agent, which Windows would silently re-anchor on
+   * apply and report back as drift on the next heartbeat.
    */
   const dispatchTopologyCommand = async (
     monitors: MonitorInfo[],
@@ -123,7 +135,7 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
       {
         [commandId]: {
           type: 'apply_display_topology',
-          layout: { monitors },
+          layout: { monitors: normalizePrimaryToOrigin(monitors) },
           applyId,
           timestamp: serverTimestamp(),
           status: 'pending',

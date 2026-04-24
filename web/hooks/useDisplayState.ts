@@ -156,36 +156,111 @@ const DRIFT_FIELDS: ReadonlyArray<{
 ];
 
 /**
- * Compare live monitors against an assigned layout and return per-monitor drift.
+ * Translate every monitor's position so the primary lands at (0, 0).
  *
- * Matching is keyed on `edidHash` (physical identity) so connector reshuffles
- * don't register as drift. Monitors present in `live` but missing from
- * `assigned` (or vice versa) are not reported here — that's a higher-level
- * "layout changed" signal handled by the caller.
+ * Windows pins the primary monitor to the origin of the virtual desktop —
+ * any layout we persist or preview must obey that invariant, otherwise the
+ * OS will silently re-anchor on apply and the stored coordinates drift from
+ * what the operator saw. We enforce it at two boundaries: draft seed (so
+ * pre-existing bad data self-heals the first time a user enters edit mode)
+ * and capture (so we never write non-canonical data to Firestore). A pure
+ * helper means both call sites — plus the in-edit normalization in
+ * `useDisplayDraft.updateMonitor` — share one implementation.
  *
- * @returns Map of `monitorId` (live monitor id) -> list of drifted field labels.
+ * No-op when there is no primary, or when the primary is already at (0, 0).
+ * Returns a new array; input is not mutated.
+ */
+export function normalizePrimaryToOrigin(monitors: MonitorInfo[]): MonitorInfo[] {
+  const primary = monitors.find((m) => m.primary);
+  if (!primary) return monitors;
+  const dx = primary.position.x;
+  const dy = primary.position.y;
+  if (dx === 0 && dy === 0) return monitors;
+  return monitors.map((m) => ({
+    ...m,
+    position: { x: m.position.x - dx, y: m.position.y - dy },
+  }));
+}
+
+/**
+ * Result of comparing a live display snapshot against an assigned layout.
+ *
+ * `byLiveId` and `byAssignedId` are the same per-field drift signal keyed
+ * two different ways — live-id for the live tab's table and canvas
+ * (identified by the agent's adapter-LUID/target-id pair), assigned-id for
+ * the stored tab (assigned monitors carry their own ids that may differ
+ * after a reconnect even when the physical panel is identical). Callers
+ * pick the one that matches what they're rendering.
+ *
+ * `addedHashes` and `removedHashes` carry the "layout changed" signal the
+ * per-field drift maps can't express: a monitor with no match on the other
+ * side never makes it into either map. Without these, disconnecting a
+ * monitor registered as zero drift even though the topology clearly changed.
+ */
+export interface DisplayDriftReport {
+  byLiveId: Map<string, string[]>;
+  byAssignedId: Map<string, string[]>;
+  addedHashes: Set<string>;
+  removedHashes: Set<string>;
+}
+
+/**
+ * Total number of changes worth surfacing to the operator — per-field
+ * drifts plus added/removed monitors. Counting drifts from `byLiveId` only
+ * (not byAssignedId) avoids double-counting since the two maps describe
+ * the same physical deltas under different keys.
+ */
+export function totalDriftCount(report: DisplayDriftReport): number {
+  return report.byLiveId.size + report.addedHashes.size + report.removedHashes.size;
+}
+
+/**
+ * Compare live monitors against an assigned layout and return the full
+ * drift report: per-monitor field drifts (keyed both by live id and by
+ * assigned id) plus the sets of added / removed edidHashes.
+ *
+ * Matching is keyed on `edidHash` (physical identity) so connector
+ * reshuffles don't register as drift. Monitors present in `live` but
+ * missing from `assigned` (or vice versa) land in `addedHashes` /
+ * `removedHashes` — callers should factor those into any drift count or
+ * badge so a disconnected or newly-plugged monitor doesn't silently show
+ * as "no changes".
  */
 export function computeDisplayDrift(
   live: MonitorInfo[],
   assigned: MonitorInfo[]
-): Map<string, string[]> {
-  const drift = new Map<string, string[]>();
+): DisplayDriftReport {
+  const empty: DisplayDriftReport = {
+    byLiveId: new Map<string, string[]>(),
+    byAssignedId: new Map<string, string[]>(),
+    addedHashes: new Set<string>(),
+    removedHashes: new Set<string>(),
+  };
 
-  if (!live || !assigned || assigned.length === 0) {
-    return drift;
-  }
+  if (!live || !assigned) return empty;
+  // With no assigned layout stored, there's nothing to drift against —
+  // matches the previous contract's "no assigned = no drift" behavior.
+  if (assigned.length === 0) return empty;
+
+  const byLiveId = new Map<string, string[]>();
+  const byAssignedId = new Map<string, string[]>();
+  const addedHashes = new Set<string>();
+  const removedHashes = new Set<string>();
 
   const assignedByHash = new Map<string, MonitorInfo>();
   for (const m of assigned) {
-    if (m.edidHash) {
-      assignedByHash.set(m.edidHash, m);
-    }
+    if (m.edidHash) assignedByHash.set(m.edidHash, m);
   }
 
+  const liveHashes = new Set<string>();
   for (const liveMonitor of live) {
     if (!liveMonitor.edidHash) continue;
+    liveHashes.add(liveMonitor.edidHash);
     const assignedMonitor = assignedByHash.get(liveMonitor.edidHash);
-    if (!assignedMonitor) continue;
+    if (!assignedMonitor) {
+      addedHashes.add(liveMonitor.edidHash);
+      continue;
+    }
 
     const drifted: string[] = [];
     for (const { label, extract } of DRIFT_FIELDS) {
@@ -195,11 +270,18 @@ export function computeDisplayDrift(
     }
 
     if (drifted.length > 0) {
-      drift.set(liveMonitor.id, drifted);
+      byLiveId.set(liveMonitor.id, drifted);
+      byAssignedId.set(assignedMonitor.id, drifted);
     }
   }
 
-  return drift;
+  for (const m of assigned) {
+    if (m.edidHash && !liveHashes.has(m.edidHash)) {
+      removedHashes.add(m.edidHash);
+    }
+  }
+
+  return { byLiveId, byAssignedId, addedHashes, removedHashes };
 }
 
 export function useDisplayState(

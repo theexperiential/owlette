@@ -73,6 +73,15 @@ interface DisplayCanvasProps {
    */
   editable?: boolean;
   onMonitorMove?: (id: string, position: { x: number; y: number }) => void;
+  /**
+   * Optional callback fired while the user drags the primary monitor. The
+   * primary is pinned at (0, 0) by Windows, so we can't move it directly —
+   * instead we translate the drag into an inverse shift of every other
+   * monitor, which visually reads as "the primary moved". Delta is
+   * incremental (frame-over-frame), in virtual-desktop units. When omitted,
+   * the primary stays non-draggable.
+   */
+  onLayoutShift?: (dx: number, dy: number) => void;
   className?: string;
 }
 
@@ -233,6 +242,7 @@ function DisplayCanvasImpl({
   labelMode = 'auto',
   editable = false,
   onMonitorMove,
+  onLayoutShift,
   className,
 }: DisplayCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -334,12 +344,20 @@ function DisplayCanvasImpl({
   }, [onMonitorHover]);
 
   // Drag state lives in a ref so mid-drag pointer moves don't cascade into
-  // parent renders — only the onMonitorMove callback (fired for virtual-coord
-  // changes) triggers a draft update. `startScale` is captured at pointerdown
-  // so mid-drag bbox growth (the rect expanding the viewport) doesn't wobble
-  // the cursor-to-rect mapping.
+  // parent renders — only the onMonitorMove / onLayoutShift callbacks (fired
+  // for virtual-coord changes) trigger draft updates. `startScale` is
+  // captured at pointerdown so mid-drag bbox growth (the rect expanding the
+  // viewport) doesn't wobble the cursor-to-rect mapping.
+  //
+  // For primary drags, `lastEmittedDx/Dy` tracks the cumulative (snapped)
+  // virtual delta we've already pushed to `onLayoutShift`, so each
+  // pointermove can emit the *incremental* delta instead of an absolute.
+  // Absolutes would compound: the secondaries have already shifted, and
+  // re-applying the full cumulative against the shifted state would move
+  // them twice as far as intended.
   const dragStateRef = useRef<{
     monitorId: string;
+    isPrimary: boolean;
     startClientX: number;
     startClientY: number;
     startPosX: number;
@@ -349,6 +367,17 @@ function DisplayCanvasImpl({
     draggedH: number;
     pointerId: number;
     moved: boolean;
+    lastEmittedDx: number;
+    lastEmittedDy: number;
+    /**
+     * Initial positions of the non-dragged monitors, snapshotted at
+     * pointerdown. Used for snap-target comparison during primary drag so
+     * thresholds are measured against where the operator *sees* the
+     * secondaries — not against their mid-drag shifted positions, which
+     * move in lock-step with the virtual primary and would halve the
+     * effective snap distance.
+     */
+    initialOthersForSnap: MonitorInfo[];
   } | null>(null);
   // Set on pointerup when a drag occurred; consumed+cleared by the next click
   // so drag-release doesn't also toggle selection.
@@ -356,7 +385,10 @@ function DisplayCanvasImpl({
 
   const handleRectPointerDown = useCallback(
     (e: React.PointerEvent<SVGGElement>, monitor: MonitorInfo) => {
-      if (!editable || !onMonitorMove || !projection || projection.scale <= 0) return;
+      if (!editable || !projection || projection.scale <= 0) return;
+      // Primary uses onLayoutShift; secondaries use onMonitorMove. Bail if
+      // the caller didn't wire up the matching callback for this monitor.
+      if (monitor.primary ? !onLayoutShift : !onMonitorMove) return;
       if (e.button !== 0) return;
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -367,6 +399,7 @@ function DisplayCanvasImpl({
       const { w, h } = effectiveDimensions(monitor);
       dragStateRef.current = {
         monitorId: monitor.id,
+        isPrimary: monitor.primary,
         startClientX: e.clientX,
         startClientY: e.clientY,
         startPosX: monitor.position.x,
@@ -376,9 +409,16 @@ function DisplayCanvasImpl({
         draggedH: h,
         pointerId: e.pointerId,
         moved: false,
+        lastEmittedDx: 0,
+        lastEmittedDy: 0,
+        // Only populated for primary drags — snap targets need initial
+        // positions because secondaries shift mid-drag under our feet.
+        initialOthersForSnap: monitor.primary
+          ? monitors.filter((m) => m.id !== monitor.id)
+          : [],
       };
     },
-    [editable, onMonitorMove, projection],
+    [editable, onMonitorMove, onLayoutShift, projection, monitors],
   );
 
   const handleRectPointerMove = useCallback(
@@ -402,19 +442,41 @@ function DisplayCanvasImpl({
         // Edge-snap threshold is CSS-px-derived so it feels consistent at
         // any zoom level. 8 CSS px is wide enough for quick alignment,
         // narrow enough to avoid "sticky" feel when dragging away.
+        //
+        // Primary drag snaps against the *initial* positions of the other
+        // monitors (snapshotted at pointerdown). Current positions shift in
+        // lock-step with the virtual primary as the drag proceeds, so
+        // using them would double the effective distance and make snap
+        // fire at half the apparent gap. Secondary drags snap against
+        // current positions, which are stable relative to the drag.
+        const snapTargets = state.isPrimary ? state.initialOthersForSnap : monitors;
         const snapThresholdVirt = 8 / state.startScale;
         const snapped = computeSnappedPosition(
           { id: state.monitorId, width: state.draggedW, height: state.draggedH },
           { x: newX, y: newY },
-          monitors,
+          snapTargets,
           snapThresholdVirt,
         );
         newX = Math.round(snapped.x);
         newY = Math.round(snapped.y);
       }
-      onMonitorMove?.(state.monitorId, { x: newX, y: newY });
+      if (state.isPrimary) {
+        // Translate the primary's virtual delta into an inverse shift of
+        // every other monitor. Emit *incremental* deltas so the hook's
+        // shift logic doesn't compound the cumulative movement on top of
+        // already-shifted state.
+        const incDx = newX - state.lastEmittedDx;
+        const incDy = newY - state.lastEmittedDy;
+        if (incDx !== 0 || incDy !== 0) {
+          onLayoutShift?.(-incDx, -incDy);
+          state.lastEmittedDx = newX;
+          state.lastEmittedDy = newY;
+        }
+      } else {
+        onMonitorMove?.(state.monitorId, { x: newX, y: newY });
+      }
     },
-    [onMonitorMove, monitors],
+    [onMonitorMove, onLayoutShift, monitors],
   );
 
   const handleRectPointerUp = useCallback(
@@ -522,9 +584,17 @@ function DisplayCanvasImpl({
     // Cross-panel hover lights up both canvas rect and table row for the same
     // monitor via a subtle brightness bump — state-driven (not :hover) so it
     // fires when the sibling sees the hover.
-    const draggable = editable && !opts.ghost && !!onMonitorMove;
+    // Primary is pinned at (0, 0) by Windows, so we can't emit a plain
+    // position update for it — instead we rely on `onLayoutShift` to
+    // translate every *other* monitor inversely, which reads to the operator
+    // as "the primary moved". Falls back to non-draggable when that callback
+    // isn't wired.
+    const draggable =
+      editable &&
+      !opts.ghost &&
+      (monitor.primary ? !!onLayoutShift : !!onMonitorMove);
     const rectStyle: React.CSSProperties = {
-      cursor: draggable ? 'grab' : clickable ? 'pointer' : 'default',
+      cursor: draggable ? 'move' : clickable ? 'pointer' : 'default',
       filter: isHovered ? 'brightness(1.15)' : undefined,
       transition: 'filter 120ms ease',
       touchAction: draggable ? 'none' : undefined,
@@ -675,10 +745,31 @@ function DisplayCanvasImpl({
         }
       : undefined;
 
+    // Clickable groups get button semantics + keyboard activation so
+    // screen readers announce them as selectable and keyboard-only users
+    // can cycle through and select monitors with Tab + Enter/Space. Drag
+    // remains pointer-only — the stored tab's editable table is the
+    // keyboard-reachable way to adjust positions numerically.
+    const handleKeyDown = clickable
+      ? (e: React.KeyboardEvent<SVGGElement>) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleRectClick(monitor.id);
+          }
+        }
+      : undefined;
+
     return (
       <g
         key={`${opts.ghost ? 'ghost-' : ''}${monitor.id}`}
+        role={clickable ? 'button' : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        aria-label={
+          clickable ? (monitor.friendlyName || monitor.id) : undefined
+        }
+        aria-pressed={clickable ? isSelected : undefined}
         onClick={handleGroupClick}
+        onKeyDown={handleKeyDown}
         onMouseEnter={hoverable ? () => handleRectEnter(monitor.id) : undefined}
         onMouseLeave={hoverable ? handleRectLeave : undefined}
         onPointerDown={
@@ -789,7 +880,7 @@ function DisplayCanvasImpl({
   const ghostElements = useMemo(
     () => (ghostMonitors ?? []).map((m) => renderMonitor(m, { ghost: true })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ghostMonitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode, editable, onMonitorMove, handleRectPointerDown, handleRectPointerMove, handleRectPointerUp],
+    [ghostMonitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode, editable, onMonitorMove, onLayoutShift, handleRectPointerDown, handleRectPointerMove, handleRectPointerUp],
   );
   // SVG paint order is document order, not z-index — there's no z-index for
   // SVG elements. So we render non-selected monitors first, then the selected
@@ -808,7 +899,7 @@ function DisplayCanvasImpl({
       ...selected.map((m) => renderMonitor(m, { ghost: false })),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode, editable, onMonitorMove, handleRectPointerDown, handleRectPointerMove, handleRectPointerUp]);
+  }, [monitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode, editable, onMonitorMove, onLayoutShift, handleRectPointerDown, handleRectPointerMove, handleRectPointerUp]);
   const gridElements = useMemo(
     () => (mosaicGrids ?? []).map((g, i) => renderGrid(g, i)),
     // eslint-disable-next-line react-hooks/exhaustive-deps

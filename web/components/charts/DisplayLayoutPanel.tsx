@@ -33,6 +33,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   useDisplayState,
   computeDisplayDrift,
+  totalDriftCount,
   type MonitorInfo,
 } from '@/hooks/useDisplayState';
 import { useDisplayActions } from '@/hooks/useDisplayActions';
@@ -115,15 +116,15 @@ export function DisplayLayoutPanel({
   );
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false);
   const [applyDialogOpen, setApplyDialogOpen] = useState(false);
-  const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [closeUnsavedDialogOpen, setCloseUnsavedDialogOpen] = useState(false);
 
-  const { draft, isDirty, updateMonitor, resetToLive, clearDraft } = useDisplayDraft({
-    siteId,
-    machineId,
-    assigned,
-    mode,
-  });
+  const { draft, isDirty, updateMonitor, shiftSecondariesBy, clearDraft } =
+    useDisplayDraft({
+      siteId,
+      machineId,
+      assigned,
+      mode,
+    });
 
   // Drag-to-reposition callback — only the assigned canvas in edit mode wires
   // this in, so a no-op outside edit mode keeps the existing read-only flow.
@@ -132,6 +133,17 @@ export function DisplayLayoutPanel({
       updateMonitor(id, { position });
     },
     [updateMonitor],
+  );
+
+  // Primary-drag callback — translates a drag of the primary rect into an
+  // inverse shift of every secondary so the operator sees the primary "move"
+  // while the data model keeps primary pinned at (0, 0). Delta arrives as
+  // incremental (frame-over-frame) virtual units from the canvas.
+  const handleLayoutShift = useCallback(
+    (dx: number, dy: number) => {
+      shiftSecondariesBy(dx, dy);
+    },
+    [shiftSecondariesBy],
   );
 
   // Post-apply ack state. When a dispatch succeeds we store the wall-clock
@@ -149,15 +161,22 @@ export function DisplayLayoutPanel({
     return Math.max(0, Math.ceil((ackDeadlineMs - nowMs) / 1000));
   }, [ackDeadlineMs, nowMs]);
 
-  // Drift is keyed on live monitor id and computed from the live+assigned
-  // snapshot. A missing assigned layout yields an empty map, which the UI
-  // renders as "no assigned layout" in the status card.
-  const driftMap = useMemo(() => {
-    if (!profile || !assigned) return new Map<string, string[]>();
-    return computeDisplayDrift(profile.monitors, assigned.monitors);
-  }, [profile, assigned]);
+  // Full drift report, computed from the live+assigned snapshot. Callers
+  // pick the key they need: live-id for the live tab's table and canvas,
+  // assigned-id for the stored tab. `addedHashes` / `removedHashes` cover
+  // the "layout changed" case the per-field maps can't express — a
+  // disconnected monitor that used to be in the stored layout still counts
+  // as drift even though neither side has a per-field row for it.
+  const driftReport = useMemo(
+    () =>
+      computeDisplayDrift(
+        profile?.monitors ?? [],
+        assigned?.monitors ?? [],
+      ),
+    [profile, assigned],
+  );
 
-  const driftCount = driftMap.size;
+  const driftCount = totalDriftCount(driftReport);
   const hasDrift = driftCount > 0;
 
   // [RECONSTRUCTED — Wave A1.4] Drift signals are zeroed in edit mode so the
@@ -168,11 +187,18 @@ export function DisplayLayoutPanel({
   const hasDriftVisible = mode === 'edit' ? false : hasDrift;
 
   // Stable Set of drifted monitor ids — passed to the canvas so it can
-  // amber-stroke drifted rects. Memoized so the Set identity is stable
-  // across renders when the underlying drift map hasn't changed.
+  // amber-stroke drifted rects. The canvas renders from the live- or
+  // assigned-keyed monitor array depending on the active tab, so we pick
+  // the matching side of the drift report. Memoized so the Set identity
+  // is stable across renders when the underlying drift map hasn't changed.
   const driftedMonitorIds = useMemo(
-    () => new Set(driftMap.keys()),
-    [driftMap],
+    () =>
+      new Set(
+        activeTab === 'live'
+          ? driftReport.byLiveId.keys()
+          : driftReport.byAssignedId.keys(),
+      ),
+    [driftReport, activeTab],
   );
 
   // Stable array references across renders so the sort/drift useMemos below
@@ -210,11 +236,13 @@ export function DisplayLayoutPanel({
   }, [mode, effectiveAssignedMonitors]);
 
   // Cards and canvas render from the same slice of data so selection stays
-  // in sync. Ghost overlay is only meaningful on the live tab, and only when
-  // there's an assigned layout to compare against.
+  // in sync AND the index labels match. Previously the canvas took the
+  // unsorted array while the table took the position-sorted one, so
+  // "monitor #1" on the canvas could be "monitor #2" in the table —
+  // subtle, confusing, and easy to miss unless you happened to watch both
+  // panes at once.
   const cardsMonitors = activeTab === 'live' ? sortedLive : sortedAssigned;
-  const canvasMonitors =
-    activeTab === 'live' ? liveMonitors : effectiveAssignedMonitors;
+  const canvasMonitors = cardsMonitors;
   // [Wave A1.5 — RECONSTRUCTED] In edit mode the ghost overlay on the live tab
   // mirrors the current draft (not persisted assigned) so operators see the
   // draft-vs-live comparison live. The drift filter is relaxed in edit mode
@@ -250,8 +278,15 @@ export function DisplayLayoutPanel({
   // [RECONSTRUCTED — Wave A1.2] Defensive render-phase guard: if the admin
   // flag disappears or the assigned layout gets cleared mid-edit, drop back
   // to view. Uses the same pattern as useDisplayDraft's prevMode tracker.
+  //
+  // Also discards the sessionStorage draft. If we only flip the mode, the
+  // stale draft survives in storage; next time an assigned layout exists
+  // and the operator enters edit, useDisplayDraft's own staleness check
+  // catches most cases by edidHash — but the admin-flag case can't be
+  // detected there, so we handle both reasons the same way here.
   if (mode === 'edit' && (!canSiteAdmin || !hasAssignedLayout)) {
     setMode('view');
+    clearDraft();
   }
 
   // Button disabled-state logic:
@@ -300,7 +335,7 @@ export function DisplayLayoutPanel({
 
     const noun = driftCount === 1 ? 'change' : 'changes';
     toast.info(
-      `display drift detected on ${machineName || machineId} — ${driftCount} ${noun}. open assigned tab to review.`,
+      `display drift detected on ${machineName || machineId} — ${driftCount} ${noun}. open stored tab to review.`,
       {
         action: { label: 'review', onClick: () => setActiveTab('assigned') },
       },
@@ -354,17 +389,23 @@ export function DisplayLayoutPanel({
   // Dispatch ack and clear the countdown banner. The applyId threaded
   // through ensures the agent only acks the apply this banner corresponds
   // to — a stale click on a prior apply is rejected.
+  //
+  // Banner state is cleared only after the ack write resolves. If we cleared
+  // optimistically and the write then failed, the operator would have no
+  // countdown to retry against and the agent's auto-revert watchdog would
+  // keep running on the far side — the "keep" click would silently turn
+  // into a revert.
   const handleAckKeep = async () => {
     const applyId = pendingApplyId;
-    setAckDeadlineMs(null);
-    setPendingApplyId(null);
     if (!applyId) return;
     try {
       await actions.ackLayout(applyId);
+      setAckDeadlineMs(null);
+      setPendingApplyId(null);
       toast.success('layout kept');
     } catch (e) {
       console.error('Failed to ack display layout', e);
-      toast.error(`keep failed: ${formatError(e)}`);
+      toast.error(`keep failed: ${formatError(e)} — try again before the countdown ends`);
     }
   };
 
@@ -374,11 +415,22 @@ export function DisplayLayoutPanel({
   // state-based countdown drifts — using the wall clock corrects on resume).
   // State-mutation for the auto-revert transition happens inside the tick
   // callback, keeping the effect a pure synchronizer.
+  //
+  // Once we cross the deadline we clear the interval *immediately* and
+  // latch a `fired` flag. Without the latch, a backgrounded tab can let
+  // multiple 250ms ticks queue up between `setAckDeadlineMs(null)` and the
+  // effect-cleanup run, firing the auto-revert toast more than once. The
+  // flag is re-created per effect instance, so a fresh deadline resets it.
   useEffect(() => {
     if (ackDeadlineMs === null) return;
+    let fired = false;
+    let id: ReturnType<typeof setInterval> | null = null;
     const tick = () => {
+      if (fired) return;
       const now = Date.now();
       if (now >= ackDeadlineMs) {
+        fired = true;
+        if (id !== null) clearInterval(id);
         toast.error('no confirmation sent — agent will auto-revert');
         setAckDeadlineMs(null);
         setPendingApplyId(null);
@@ -387,23 +439,12 @@ export function DisplayLayoutPanel({
       setNowMs(now);
     };
     tick();
-    const id = setInterval(tick, 250);
-    return () => clearInterval(id);
+    id = setInterval(tick, 250);
+    return () => {
+      if (id !== null) clearInterval(id);
+    };
   }, [ackDeadlineMs]);
 
-  // Clear is destructive (operator loses the saved baseline) so it goes
-  // through a confirmation dialog. The agent stops drift-tracking once the
-  // assigned layout is gone — Windows is free to do whatever it wants.
-  const handleClearConfirm = async () => {
-    try {
-      await actions.clearLayout();
-      toast.success('assigned layout cleared');
-    } catch (e) {
-      console.error('Failed to clear assigned layout', e);
-      toast.error(`clear failed: ${formatError(e)}`);
-      setClearDialogOpen(true);
-    }
-  };
 
   // [RECONSTRUCTED — Wave A1.2] Close-with-unsaved-changes gate. Ack countdown
   // disables the close button via the existing disabled prop; this handler
@@ -426,10 +467,6 @@ export function DisplayLayoutPanel({
   const handleDiscardEdit = () => {
     clearDraft();
     setMode('view');
-  };
-
-  const handleResetToLive = () => {
-    resetToLive(liveMonitors);
   };
 
   // Save commits the draft as the new assigned layout. Uses the same
@@ -495,8 +532,8 @@ export function DisplayLayoutPanel({
       return (
         <div className="h-[320px] flex flex-col items-center justify-center px-6 text-center gap-3">
           <p className="text-sm text-muted-foreground max-w-md">
-            no assigned layout yet. store the live arrangement to make it the
-            one owlette keeps in place.
+            nothing stored yet. store the current live arrangement to make it
+            the one owlette keeps in place.
           </p>
           {canSiteAdmin && (
             <Button
@@ -541,6 +578,11 @@ export function DisplayLayoutPanel({
                 ? handleMonitorMove
                 : undefined
             }
+            onLayoutShift={
+              mode === 'edit' && activeTab === 'assigned'
+                ? handleLayoutShift
+                : undefined
+            }
             className="h-[280px]"
           />
         </div>
@@ -550,12 +592,18 @@ export function DisplayLayoutPanel({
           selectedMonitorId={selectedMonitorId}
           onSelect={handleMonitorClick}
           accentColor={tabAccentColor}
+          editable={mode === 'edit' && activeTab === 'assigned'}
+          onUpdateMonitor={
+            mode === 'edit' && activeTab === 'assigned'
+              ? updateMonitor
+              : undefined
+          }
           driftMap={
             mode === 'edit'
               ? undefined
               : activeTab === 'live'
-                ? driftMap
-                : undefined
+                ? driftReport.byLiveId
+                : driftReport.byAssignedId
           }
         />
       </div>
@@ -624,39 +672,39 @@ export function DisplayLayoutPanel({
 
           <div className="flex-1" />
 
-          {/* [RECONSTRUCTED — Wave A1.2] Admin action block is mode-aware:
-              view-mode shows store/recall/clear/edit; edit-mode shows
-              save/discard/reset-to-live. Exact button ordering, tooltips,
-              and classes here are best-effort; the subagent reported that
-              every button matches the existing store/recall styling
-              (bg-card border border-border text-muted-foreground
-              hover:text-white h-8 px-3 text-xs). */}
+          {/* Admin action bar. Four verbs: store / recall / edit / discard.
+                - live tab (view): store, recall
+                - stored tab (view): recall, edit
+                - edit mode: store, discard
+              Recall is visible on both view tabs so drift can be fixed from
+              wherever the operator noticed it. */}
           {canSiteAdmin && mode === 'view' && (
             <div className="flex items-center gap-1.5">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span tabIndex={captureDisabled ? 0 : -1}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={captureDisabled}
-                      onClick={() => setCaptureDialogOpen(true)}
-                      data-testid="display-store-button"
-                      className="bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs"
-                    >
-                      {actions.applying ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        'capture'
-                      )}
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  capture the current live arrangement as the assigned layout
-                  (replaces any saved edits)
-                </TooltipContent>
-              </Tooltip>
+              {activeTab === 'live' && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span tabIndex={captureDisabled ? 0 : -1}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={captureDisabled}
+                        onClick={() => setCaptureDialogOpen(true)}
+                        data-testid="display-store-button"
+                        className="bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs"
+                      >
+                        {actions.applying ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          'store'
+                        )}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    store the current live arrangement as the stored layout
+                  </TooltipContent>
+                </Tooltip>
+              )}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span tabIndex={applyDisabled ? 0 : -1}>
@@ -686,31 +734,10 @@ export function DisplayLayoutPanel({
                 </TooltipTrigger>
                 <TooltipContent>
                   {hasDriftVisible
-                    ? 'drift detected — recall the assigned layout to fix it'
-                    : 'recall the assigned layout — push it to this machine'}
+                    ? 'drift detected — recall the stored layout to fix it'
+                    : 'recall the stored layout — push it to this machine'}
                 </TooltipContent>
               </Tooltip>
-              {activeTab === 'assigned' && hasAssignedLayout && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span tabIndex={actions.applying ? 0 : -1}>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={actions.applying}
-                        onClick={() => setClearDialogOpen(true)}
-                        data-testid="display-clear-button"
-                        className="bg-card border border-border text-muted-foreground hover:text-destructive h-8 px-3 text-xs"
-                      >
-                        clear
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    delete the assigned layout — agent stops enforcing it
-                  </TooltipContent>
-                </Tooltip>
-              )}
               {activeTab === 'assigned' && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -732,7 +759,7 @@ export function DisplayLayoutPanel({
                       ? 'store a layout first'
                       : profile?.mosaicActive
                         ? 'editing unavailable while mosaic is active'
-                        : 'edit the assigned layout'}
+                        : 'edit the stored layout'}
                   </TooltipContent>
                 </Tooltip>
               )}
@@ -755,14 +782,14 @@ export function DisplayLayoutPanel({
                       {actions.applying ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
-                        'save'
+                        'store'
                       )}
                     </Button>
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
                   {isDirty
-                    ? 'save draft as the assigned layout'
+                    ? 'store edits as the stored layout'
                     : 'no unsaved changes'}
                 </TooltipContent>
               </Tooltip>
@@ -781,25 +808,6 @@ export function DisplayLayoutPanel({
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>discard edits and return to view</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span tabIndex={!hasLiveProfile ? 0 : -1}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={!hasLiveProfile}
-                      onClick={handleResetToLive}
-                      data-testid="display-reset-to-live-button"
-                      className="bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs"
-                    >
-                      reset to live
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  replace draft with the current live arrangement
-                </TooltipContent>
               </Tooltip>
             </div>
           )}
@@ -856,12 +864,13 @@ export function DisplayLayoutPanel({
         <div className="mt-3">{renderBody()}</div>
       </CardContent>
 
-      {/* Store confirmation — replaces whatever layout is currently saved. */}
+      {/* Store confirmation — replaces the stored layout (including any saved
+          edits) with the current live arrangement. */}
       <ConfirmDialog
         open={captureDialogOpen}
         onOpenChange={setCaptureDialogOpen}
         title="store current arrangement?"
-        description="this replaces your saved layout. the agent will keep monitors in this arrangement going forward."
+        description="this replaces the stored layout (including any saved edits) with the current live arrangement. the agent will keep monitors in this arrangement going forward."
         cancelText="cancel"
         confirmText="store"
         onConfirm={handleCaptureConfirm}
@@ -880,21 +889,6 @@ export function DisplayLayoutPanel({
         onConfirm={handleApplyConfirm}
       />
 
-      {/* Clear confirmation — destructive: removes the saved baseline so the
-          agent stops drift-tracking and stops auto-restoring after reboot. */}
-      <ConfirmDialog
-        open={clearDialogOpen}
-        onOpenChange={setClearDialogOpen}
-        title="clear assigned layout?"
-        description="the agent will stop enforcing this layout. your monitors stay where they are right now, but owlette will no longer auto-restore them after reboot or driver changes."
-        cancelText="cancel"
-        confirmText="clear"
-        onConfirm={handleClearConfirm}
-      />
-
-      {/* [RECONSTRUCTED — Wave A1.2] Close-with-unsaved-changes confirmation.
-          Exact copy is reconstructed from subagent intent ("discard and close"
-          / "keep editing") and may differ from the actual shipped text. */}
       <ConfirmDialog
         open={closeUnsavedDialogOpen}
         onOpenChange={setCloseUnsavedDialogOpen}
