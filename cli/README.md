@@ -1,4 +1,4 @@
-# @owlette/roost — cli
+# @owlette/roost-cli
 
 Command-line interface for the [roost](https://owlette.app) public api.
 Scaffold only — real commands are implemented across tasks 4.2–4.9 of the

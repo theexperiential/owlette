@@ -1,5 +1,5 @@
 {
-  "name": "@owlette/roost",
+  "name": "@owlette/roost-cli",
   "version": "0.1.0",
   "description": "roost — command line for the roost public api (owlette.app)",
   "license": "FSL-1.1-Apache-2.0",
