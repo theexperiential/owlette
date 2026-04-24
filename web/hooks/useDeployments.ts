@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, runTransaction, serverTimestamp, Timestamp, type FieldValue } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { firestoreTsToMs, type FirestoreTs } from './useFirestore';
@@ -70,69 +70,62 @@ export interface Deployment {
 }
 
 export function useDeploymentTemplates(siteId: string) {
-  const [templates, setTemplates] = useState<DeploymentTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // loadedSiteId pins state to the site it was populated for — lets us derive
+  // `loading` at render (loadedSiteId !== siteId => we're still fetching) so
+  // the effect never needs to synchronously flip loading true on siteId change.
+  const [state, setState] = useState<{
+    templates: DeploymentTemplate[];
+    loadedSiteId: string | null;
+    error: string | null;
+  }>({
+    templates: [],
+    loadedSiteId: null,
+    error: db ? null : 'Firebase not configured',
+  });
 
   useEffect(() => {
-    if (!db) {
-      setLoading(false);
-      setError('Firebase not configured');
-      return;
-    }
-    if (!siteId) {
-      // Params not ready — stay in loading until site resolves.
-      setLoading(true);
-      setTemplates([]);
-      return;
-    }
+    if (!db || !siteId) return;
 
-    setLoading(true);
-    setError(null);
+    const templatesRef = collection(db, 'sites', siteId, 'installer_templates');
 
-    try {
-      const templatesRef = collection(db, 'sites', siteId, 'installer_templates');
+    const unsubscribe = onSnapshot(
+      templatesRef,
+      (snapshot) => {
+        const templateData: DeploymentTemplate[] = [];
 
-      const unsubscribe = onSnapshot(
-        templatesRef,
-        (snapshot) => {
-          const templateData: DeploymentTemplate[] = [];
-
-          snapshot.forEach((doc) => {
-            const data = doc.data();
-            templateData.push({
-              id: doc.id,
-              name: data.name || 'Unnamed Template',
-              installer_name: data.installer_name || '',
-              installer_url: data.installer_url || '',
-              silent_flags: data.silent_flags || '',
-              verify_path: data.verify_path,
-              close_processes: data.close_processes,
-              parallel_install: data.parallel_install,
-              createdAt: data.createdAt || Date.now(),
-            });
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          templateData.push({
+            id: doc.id,
+            name: data.name || 'Unnamed Template',
+            installer_name: data.installer_name || '',
+            installer_url: data.installer_url || '',
+            silent_flags: data.silent_flags || '',
+            verify_path: data.verify_path,
+            close_processes: data.close_processes,
+            parallel_install: data.parallel_install,
+            createdAt: data.createdAt || Date.now(),
           });
+        });
 
-          // Sort by created date (newest first)
-          templateData.sort((a, b) => firestoreTsToMs(b.createdAt) - firestoreTsToMs(a.createdAt));
+        // Sort by created date (newest first)
+        templateData.sort((a, b) => firestoreTsToMs(b.createdAt) - firestoreTsToMs(a.createdAt));
 
-          setTemplates(templateData);
-          setLoading(false);
-        },
-        (err) => {
-          console.error('Error fetching templates:', err);
-          setError(err.message);
-          setLoading(false);
-        }
-      );
+        setState({ templates: templateData, loadedSiteId: siteId, error: null });
+      },
+      (err) => {
+        console.error('Error fetching templates:', err);
+        setState((prev) => ({ ...prev, error: err.message }));
+      }
+    );
 
-      return () => unsubscribe();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-      setLoading(false);
-    }
+    return () => unsubscribe();
   }, [siteId]);
+
+  // Only surface data that matches the currently-requested site.
+  const templates = state.loadedSiteId === siteId ? state.templates : [];
+  const loading = !!db && !!siteId && state.loadedSiteId !== siteId;
+  const error = state.error;
 
   const createTemplate = async (template: Omit<DeploymentTemplate, 'id' | 'createdAt'>) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
@@ -166,9 +159,16 @@ export function useDeploymentTemplates(siteId: string) {
 }
 
 export function useDeployments(siteId: string) {
-  const [deployments, setDeployments] = useState<Deployment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // See useDeploymentTemplates for the loadedSiteId rationale.
+  const [state, setState] = useState<{
+    deployments: Deployment[];
+    loadedSiteId: string | null;
+    error: string | null;
+  }>({
+    deployments: [],
+    loadedSiteId: null,
+    error: db ? null : 'Firebase not configured',
+  });
   // Track processed commands across renders to prevent infinite loops
   const processedCommandsRef = useRef<Set<string>>(new Set());
   // Track retry counts for commands that fail — give up after 3 attempts
@@ -180,66 +180,54 @@ export function useDeployments(siteId: string) {
   const [mountTime] = useState(() => Date.now());
 
   useEffect(() => {
-    if (!db) {
-      setLoading(false);
-      setError('Firebase not configured');
-      return;
-    }
-    if (!siteId) {
-      // Params not ready — stay in loading until site resolves. Avoids a
-      // brief "no deployments" flash on the deployments page on reload.
-      setLoading(true);
-      setDeployments([]);
-      return;
-    }
+    if (!db || !siteId) return;
 
-    setLoading(true);
-    setError(null);
+    const deploymentsRef = collection(db, 'sites', siteId, 'deployments');
 
-    try {
-      const deploymentsRef = collection(db, 'sites', siteId, 'deployments');
+    const unsubscribe = onSnapshot(
+      deploymentsRef,
+      (snapshot) => {
+        const deploymentData: Deployment[] = [];
 
-      const unsubscribe = onSnapshot(
-        deploymentsRef,
-        (snapshot) => {
-          const deploymentData: Deployment[] = [];
-
-          snapshot.forEach((doc) => {
-            const data = doc.data();
-            deploymentData.push({
-              id: doc.id,
-              name: data.name || 'Unnamed Deployment',
-              installer_name: data.installer_name || '',
-              installer_url: data.installer_url || '',
-              silent_flags: data.silent_flags || '',
-              verify_path: data.verify_path,
-              targets: data.targets || [],
-              createdAt: data.createdAt || Date.now(),
-              completedAt: data.completedAt,
-              status: data.status || 'pending',
-            });
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          deploymentData.push({
+            id: doc.id,
+            name: data.name || 'Unnamed Deployment',
+            installer_name: data.installer_name || '',
+            installer_url: data.installer_url || '',
+            silent_flags: data.silent_flags || '',
+            verify_path: data.verify_path,
+            targets: data.targets || [],
+            createdAt: data.createdAt || Date.now(),
+            completedAt: data.completedAt,
+            status: data.status || 'pending',
           });
+        });
 
-          // Sort by created date (newest first)
-          deploymentData.sort((a, b) => firestoreTsToMs(b.createdAt) - firestoreTsToMs(a.createdAt));
+        // Sort by created date (newest first)
+        deploymentData.sort((a, b) => firestoreTsToMs(b.createdAt) - firestoreTsToMs(a.createdAt));
 
-          setDeployments(deploymentData);
-          setLoading(false);
-        },
-        (err) => {
-          console.error('Error fetching deployments:', err);
-          setError(err.message);
-          setLoading(false);
-        }
-      );
+        setState({ deployments: deploymentData, loadedSiteId: siteId, error: null });
+      },
+      (err) => {
+        console.error('Error fetching deployments:', err);
+        setState((prev) => ({ ...prev, error: err.message }));
+      }
+    );
 
-      return () => unsubscribe();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-      setLoading(false);
-    }
+    return () => unsubscribe();
   }, [siteId]);
+
+  // Surface only data that matches the currently-requested site; derive loading.
+  // useMemo keeps the reference stable when the branch is taken so the
+  // command-completion effect's deps don't churn every render.
+  const deployments = useMemo(
+    () => (state.loadedSiteId === siteId ? state.deployments : []),
+    [state.loadedSiteId, state.deployments, siteId],
+  );
+  const loading = !!db && !!siteId && state.loadedSiteId !== siteId;
+  const error = state.error;
 
   // Listen for command completions and update deployment status
   useEffect(() => {

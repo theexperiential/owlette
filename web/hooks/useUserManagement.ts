@@ -42,52 +42,45 @@ export interface UserData {
  */
 export function useUserManagement() {
   const [users, setUsers] = useState<UserData[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(!!db);
+  const [error, setError] = useState<string | null>(db ? null : 'Firebase is not configured');
 
   // Fetch all users with real-time updates
   useEffect(() => {
-    if (!db) {
-      setError('Firebase is not configured');
-      setLoading(false);
-      return;
-    }
+    if (!db) return;
 
-    try {
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, orderBy('createdAt', 'desc'));
+    // No try/catch: `collection()`/`query()` only throw for invalid path or
+    // query shape (both literals here), and onSnapshot surfaces runtime
+    // listener errors through its error callback. A sync catch-block setState
+    // would violate react-hooks/set-state-in-effect.
+    const usersRef = collection(db, 'users');
+    const q = query(usersRef, orderBy('createdAt', 'desc'));
 
-      const unsubscribe = onSnapshot(
-        q,
-        (snapshot) => {
-          const usersData: UserData[] = [];
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const usersData: UserData[] = [];
 
-          snapshot.forEach((doc) => {
-            usersData.push({
-              uid: doc.id,
-              ...doc.data(),
-            } as UserData);
-          });
+        snapshot.forEach((doc) => {
+          usersData.push({
+            uid: doc.id,
+            ...doc.data(),
+          } as UserData);
+        });
 
-          setUsers(usersData);
-          setLoading(false);
-          setError(null);
-        },
-        (err) => {
-          console.error('Error fetching users:', err);
-          const friendlyMessage = handleError(err);
-          setError(friendlyMessage);
-          setLoading(false);
-        }
-      );
+        setUsers(usersData);
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        console.error('Error fetching users:', err);
+        const friendlyMessage = handleError(err);
+        setError(friendlyMessage);
+        setLoading(false);
+      }
+    );
 
-      return () => unsubscribe();
-    } catch (err) {
-      console.error('Error setting up users listener:', err);
-      const friendlyMessage = handleError(err);
-      setError(friendlyMessage);
-      setLoading(false);
-    }
+    return () => unsubscribe();
   }, []);
 
   /**

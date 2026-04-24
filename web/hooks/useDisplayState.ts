@@ -273,9 +273,9 @@ export function useDisplayState(
     // Assigned-layout sub is opt-out: callers that only need the live profile
     // (e.g. the dashboard card's collapsed monitor summary) skip it via
     // `subscribeAssigned: false` and read drift state from the heartbeat-
-    // published `metrics.displayDriftCount` instead. When skipped, we mark
-    // assignedLoaded=true so consumers' loading checks don't hang waiting on
-    // a sub that will never arrive.
+    // published `metrics.displayDriftCount` instead. When skipped, the render
+    // path below treats `assignedLoaded` as implicitly satisfied so consumers'
+    // loading checks don't hang waiting on a sub that will never arrive.
     let unsubscribeAssigned: (() => void) | undefined;
     if (subscribeAssigned) {
       const configRef = doc(db, 'config', siteId, 'machines', machineId);
@@ -323,19 +323,6 @@ export function useDisplayState(
           });
         }
       );
-    } else {
-      setState((prev) => {
-        const sameTarget = prev.siteId === siteId && prev.machineId === machineId;
-        return {
-          siteId,
-          machineId,
-          profile: sameTarget ? prev.profile : null,
-          assigned: null,
-          profileLoaded: sameTarget ? prev.profileLoaded : false,
-          assignedLoaded: true,
-          error: sameTarget ? prev.error : null,
-        };
-      });
     }
 
     return () => {
@@ -407,8 +394,11 @@ export function useDisplayState(
 
   return {
     profile: state.profile,
-    assigned: state.assigned,
-    loading: !state.profileLoaded || !state.assignedLoaded,
+    // Opt-out callers never see an assigned layout; the effect skips the sub.
+    assigned: subscribeAssigned ? state.assigned : null,
+    // When subscribeAssigned is false, treat assignedLoaded as implicitly
+    // satisfied so `loading` flips as soon as the profile sub lands.
+    loading: !state.profileLoaded || (subscribeAssigned && !state.assignedLoaded),
     error: state.error,
   };
 }

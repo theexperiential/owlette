@@ -20,6 +20,9 @@ function builtInId(name: string): string {
   return `builtin-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 }
 
+/** Stable empty array so useMemo deps don't churn while no site is loaded. */
+const EMPTY_SCHEDULE_PRESETS: SchedulePreset[] = [];
+
 export interface SchedulePreset {
   id: string;
   name: string;
@@ -50,54 +53,50 @@ export interface UseSchedulePresetsReturn {
  * If an admin edits a built-in, the override is saved to Firestore and takes precedence.
  */
 export function useSchedulePresets(siteId: string | null): UseSchedulePresetsReturn {
-  const [firestorePresets, setFirestorePresets] = useState<SchedulePreset[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // loadedSiteId pins Firestore presets to the site they came from so that
+  // `loading` can be derived at render (no sync setState in the effect body).
+  // The original behavior — staying in loading while siteId is null so the
+  // editor doesn't flash built-in defaults as if Firestore had no overrides —
+  // is preserved: `loadedSiteId` is null until the first snapshot lands.
+  const [state, setState] = useState<{
+    firestorePresets: SchedulePreset[];
+    loadedSiteId: string | null;
+    error: string | null;
+  }>({
+    firestorePresets: [],
+    loadedSiteId: null,
+    error: null,
+  });
 
   useEffect(() => {
-    if (!db) {
-      setLoading(false);
-      return;
-    }
-    if (!siteId) {
-      // Params not ready — stay in loading until the site resolves. Flipping
-      // to loading=false here caused the preset editor to briefly render
-      // built-in defaults as if Firestore overrides didn't exist.
-      setLoading(true);
-      setFirestorePresets([]);
-      return;
-    }
+    if (!db || !siteId) return;
 
-    setLoading(true);
+    const presetsRef = collection(db, 'config', siteId, 'schedule_presets');
 
-    try {
-      const presetsRef = collection(db, 'config', siteId, 'schedule_presets');
+    const unsubscribe = onSnapshot(
+      presetsRef,
+      (snapshot) => {
+        const data: SchedulePreset[] = [];
+        snapshot.forEach((docSnap) => {
+          data.push({ id: docSnap.id, ...docSnap.data() } as SchedulePreset);
+        });
+        setState({ firestorePresets: data, loadedSiteId: siteId, error: null });
+      },
+      (err) => {
+        console.error('Error fetching schedule presets:', err);
+        setState((prev) => ({ ...prev, error: err.message }));
+      }
+    );
 
-      const unsubscribe = onSnapshot(
-        presetsRef,
-        (snapshot) => {
-          const data: SchedulePreset[] = [];
-          snapshot.forEach((docSnap) => {
-            data.push({ id: docSnap.id, ...docSnap.data() } as SchedulePreset);
-          });
-          setFirestorePresets(data);
-          setLoading(false);
-          setError(null);
-        },
-        (err) => {
-          console.error('Error fetching schedule presets:', err);
-          setError(err.message);
-          setLoading(false);
-        }
-      );
-
-      return () => unsubscribe();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-      setLoading(false);
-    }
+    return () => unsubscribe();
   }, [siteId]);
+
+  // Surface only data that matches the currently-requested site. When siteId
+  // is null, stay in loading — otherwise the editor briefly renders built-in
+  // defaults as if no Firestore overrides existed (see original comment).
+  const firestorePresets = state.loadedSiteId === siteId ? state.firestorePresets : EMPTY_SCHEDULE_PRESETS;
+  const loading = !!db && (!siteId || state.loadedSiteId !== siteId);
+  const error = state.error;
 
   // Merge built-in defaults with Firestore overrides + custom presets
   const presets = useMemo(() => {

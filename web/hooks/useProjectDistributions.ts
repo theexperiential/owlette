@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useProjectDistributionPresets } from '@/hooks/useProjectDistributionPresets';
@@ -28,61 +28,67 @@ export interface ProjectDistribution {
 }
 
 export function useProjectDistributions(siteId: string) {
-  const [distributions, setDistributions] = useState<ProjectDistribution[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // loadedSiteId pins data to the site it was populated for so `loading` can be
+  // derived at render — the effect never has to synchronously flip state on
+  // siteId change (which would violate react-hooks/set-state-in-effect).
+  const [state, setState] = useState<{
+    distributions: ProjectDistribution[];
+    loadedSiteId: string | null;
+    error: string | null;
+  }>({
+    distributions: [],
+    loadedSiteId: null,
+    error: !db || !siteId ? 'Firebase not configured or no site selected' : null,
+  });
 
   useEffect(() => {
-    if (!db || !siteId) {
-      setLoading(false);
-      setError('Firebase not configured or no site selected');
-      return;
-    }
+    if (!db || !siteId) return;
 
-    try {
-      const distributionsRef = collection(db, 'sites', siteId, 'project_distributions');
+    const distributionsRef = collection(db, 'sites', siteId, 'project_distributions');
 
-      const unsubscribe = onSnapshot(
-        distributionsRef,
-        (snapshot) => {
-          const distributionData: ProjectDistribution[] = [];
+    const unsubscribe = onSnapshot(
+      distributionsRef,
+      (snapshot) => {
+        const distributionData: ProjectDistribution[] = [];
 
-          snapshot.forEach((doc) => {
-            const data = doc.data();
-            distributionData.push({
-              id: doc.id,
-              name: data.name || 'Unnamed Distribution',
-              file_name: data.file_name || '',
-              project_url: data.project_url || '',
-              extract_path: data.extract_path,
-              verify_files: data.verify_files,
-              targets: data.targets || [],
-              createdAt: data.createdAt || Date.now(),
-              completedAt: data.completedAt,
-              status: data.status || 'pending',
-            });
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          distributionData.push({
+            id: doc.id,
+            name: data.name || 'Unnamed Distribution',
+            file_name: data.file_name || '',
+            project_url: data.project_url || '',
+            extract_path: data.extract_path,
+            verify_files: data.verify_files,
+            targets: data.targets || [],
+            createdAt: data.createdAt || Date.now(),
+            completedAt: data.completedAt,
+            status: data.status || 'pending',
           });
+        });
 
-          // Sort by created date (newest first)
-          distributionData.sort((a, b) => firestoreTsToMs(b.createdAt) - firestoreTsToMs(a.createdAt));
+        // Sort by created date (newest first)
+        distributionData.sort((a, b) => firestoreTsToMs(b.createdAt) - firestoreTsToMs(a.createdAt));
 
-          setDistributions(distributionData);
-          setLoading(false);
-        },
-        (err) => {
-          console.error('Error fetching project distributions:', err);
-          setError(err.message);
-          setLoading(false);
-        }
-      );
+        setState({ distributions: distributionData, loadedSiteId: siteId, error: null });
+      },
+      (err) => {
+        console.error('Error fetching project distributions:', err);
+        setState((prev) => ({ ...prev, error: err.message }));
+      }
+    );
 
-      return () => unsubscribe();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-      setLoading(false);
-    }
+    return () => unsubscribe();
   }, [siteId]);
+
+  // Derive outputs: surface only data that matches the currently-requested
+  // site, and derive loading from whether we've loaded that site yet.
+  const distributions = useMemo(
+    () => (state.loadedSiteId === siteId ? state.distributions : []),
+    [state.loadedSiteId, state.distributions, siteId],
+  );
+  const loading = !!db && !!siteId && state.loadedSiteId !== siteId;
+  const error = state.error;
 
   // Listen for command completions and update distribution status
   useEffect(() => {

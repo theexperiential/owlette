@@ -77,53 +77,47 @@ export interface UseSystemPresetsReturn {
  */
 export function useSystemPresets(): UseSystemPresetsReturn {
   const [presets, setPresets] = useState<SystemPreset[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(!!db);
+  const [error, setError] = useState<string | null>(db ? null : 'Firebase not configured');
 
   // Real-time listener for system presets
   useEffect(() => {
-    if (!db) {
-      setLoading(false);
-      setError('Firebase not configured');
-      return;
-    }
+    if (!db) return;
 
-    try {
-      const presetsRef = collection(db, 'system_presets');
+    // No try/catch: `collection()` only throws for invalid path segments (the
+    // literal 'system_presets' here) and onSnapshot routes runtime listener
+    // errors through the separate error callback. A sync catch-block setState
+    // would violate react-hooks/set-state-in-effect.
+    const presetsRef = collection(db, 'system_presets');
 
-      const unsubscribe = onSnapshot(
-        presetsRef,
-        (snapshot) => {
-          const data: SystemPreset[] = [];
-          snapshot.forEach((doc) => {
-            data.push({ id: doc.id, ...doc.data() } as SystemPreset);
-          });
+    const unsubscribe = onSnapshot(
+      presetsRef,
+      (snapshot) => {
+        const data: SystemPreset[] = [];
+        snapshot.forEach((doc) => {
+          data.push({ id: doc.id, ...doc.data() } as SystemPreset);
+        });
 
-          // Sort by order, then by name
-          data.sort((a, b) => {
-            if (a.order !== b.order) {
-              return a.order - b.order;
-            }
-            return a.name.localeCompare(b.name);
-          });
+        // Sort by order, then by name
+        data.sort((a, b) => {
+          if (a.order !== b.order) {
+            return a.order - b.order;
+          }
+          return a.name.localeCompare(b.name);
+        });
 
-          setPresets(data);
-          setLoading(false);
-          setError(null);
-        },
-        (err) => {
-          console.error('Error fetching system presets:', err);
-          setError(err.message);
-          setLoading(false);
-        }
-      );
+        setPresets(data);
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        console.error('Error fetching system presets:', err);
+        setError(err.message);
+        setLoading(false);
+      }
+    );
 
-      return () => unsubscribe();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-      setLoading(false);
-    }
+    return () => unsubscribe();
   }, []);
 
   /**

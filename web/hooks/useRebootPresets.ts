@@ -20,6 +20,9 @@ function builtInId(name: string): string {
   return `builtin-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 }
 
+/** Stable empty array so useMemo deps don't churn while no site is loaded. */
+const EMPTY_REBOOT_PRESETS: RebootPreset[] = [];
+
 export interface RebootPreset {
   id: string;
   name: string;
@@ -51,44 +54,45 @@ export interface UseRebootPresetsReturn {
  * override is saved to Firestore and takes precedence on next read.
  */
 export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn {
-  const [firestorePresets, setFirestorePresets] = useState<RebootPreset[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // loadedSiteId pins the loaded presets to the site they came from so that
+  // loading can be derived at render (no sync setState in the effect body).
+  const [state, setState] = useState<{
+    firestorePresets: RebootPreset[];
+    loadedSiteId: string | null;
+    error: string | null;
+  }>({
+    firestorePresets: [],
+    loadedSiteId: null,
+    error: null,
+  });
 
   useEffect(() => {
-    if (!db || !siteId) {
-      setLoading(false);
-      return;
-    }
+    if (!db || !siteId) return;
 
-    try {
-      const presetsRef = collection(db, 'config', siteId, 'reboot_presets');
+    const presetsRef = collection(db, 'config', siteId, 'reboot_presets');
 
-      const unsubscribe = onSnapshot(
-        presetsRef,
-        (snapshot) => {
-          const data: RebootPreset[] = [];
-          snapshot.forEach((docSnap) => {
-            data.push({ id: docSnap.id, ...docSnap.data() } as RebootPreset);
-          });
-          setFirestorePresets(data);
-          setLoading(false);
-          setError(null);
-        },
-        (err) => {
-          console.error('Error fetching reboot presets:', err);
-          setError(err.message);
-          setLoading(false);
-        }
-      );
+    const unsubscribe = onSnapshot(
+      presetsRef,
+      (snapshot) => {
+        const data: RebootPreset[] = [];
+        snapshot.forEach((docSnap) => {
+          data.push({ id: docSnap.id, ...docSnap.data() } as RebootPreset);
+        });
+        setState({ firestorePresets: data, loadedSiteId: siteId, error: null });
+      },
+      (err) => {
+        console.error('Error fetching reboot presets:', err);
+        setState((prev) => ({ ...prev, error: err.message }));
+      }
+    );
 
-      return () => unsubscribe();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-      setLoading(false);
-    }
+    return () => unsubscribe();
   }, [siteId]);
+
+  // Surface only data that matches the currently-requested site; derive loading.
+  const firestorePresets = state.loadedSiteId === siteId ? state.firestorePresets : EMPTY_REBOOT_PRESETS;
+  const loading = !!db && !!siteId && state.loadedSiteId !== siteId;
+  const error = state.error;
 
   // Merge built-in defaults with Firestore overrides + custom presets
   const presets = useMemo(() => {
