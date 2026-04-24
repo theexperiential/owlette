@@ -91,26 +91,49 @@ describe('checkRateLimit', () => {
 });
 
 describe('getRateLimitHeaders', () => {
-  it('returns all headers when all fields present', () => {
+  it('returns both IETF and legacy headers when all fields present', () => {
+    const resetMs = Date.now() + 60_000;
     const headers = getRateLimitHeaders({
       limit: 10,
       remaining: 5,
-      reset: 1700000000,
+      reset: resetMs,
       retryAfter: 30,
     });
-    expect(headers).toEqual({
-      'X-RateLimit-Limit': '10',
-      'X-RateLimit-Remaining': '5',
-      'X-RateLimit-Reset': '1700000000',
-      'Retry-After': '30',
-    });
+    expect(headers['RateLimit-Limit']).toBe('10');
+    expect(headers['RateLimit-Remaining']).toBe('5');
+    expect(headers['RateLimit-Reset']).toMatch(/^\d+$/);
+    expect(headers['X-RateLimit-Limit']).toBe('10');
+    expect(headers['X-RateLimit-Remaining']).toBe('5');
+    expect(headers['X-RateLimit-Reset']).toBe(String(resetMs));
+    expect(headers['Retry-After']).toBe('30');
+  });
+
+  it('emits RateLimit-Reset as delta-seconds (ietf), X- form as unix-ms', () => {
+    const now = Date.now();
+    const future = now + 90_000;
+    const headers = getRateLimitHeaders({ reset: future });
+    const delta = Number(headers['RateLimit-Reset']);
+    expect(delta).toBeGreaterThanOrEqual(89);
+    expect(delta).toBeLessThanOrEqual(91);
+    expect(headers['X-RateLimit-Reset']).toBe(String(future));
+  });
+
+  it('includes Roost-Rate-Limited-Reason when reason supplied', () => {
+    const headers = getRateLimitHeaders({ retryAfter: 5, reason: 'key-rate' });
+    expect(headers['Roost-Rate-Limited-Reason']).toBe('key-rate');
+  });
+
+  it('omits Roost-Rate-Limited-Reason when reason unspecified', () => {
+    const headers = getRateLimitHeaders({ limit: 10 });
+    expect(headers).not.toHaveProperty('Roost-Rate-Limited-Reason');
   });
 
   it('omits undefined fields from headers', () => {
     const headers = getRateLimitHeaders({ limit: 10 });
-    expect(headers).toEqual({ 'X-RateLimit-Limit': '10' });
-    expect(headers).not.toHaveProperty('X-RateLimit-Remaining');
-    expect(headers).not.toHaveProperty('X-RateLimit-Reset');
+    expect(headers['RateLimit-Limit']).toBe('10');
+    expect(headers['X-RateLimit-Limit']).toBe('10');
+    expect(headers).not.toHaveProperty('RateLimit-Remaining');
+    expect(headers).not.toHaveProperty('RateLimit-Reset');
     expect(headers).not.toHaveProperty('Retry-After');
   });
 });

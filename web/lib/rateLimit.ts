@@ -252,30 +252,54 @@ export async function checkRateLimit(
 }
 
 /**
- * Format rate limit headers for HTTP response
+ * Reason taxonomy for 429 responses. Emitted as the
+ * `Roost-Rate-Limited-Reason` header so clients can decide whether a
+ * retry is worthwhile and over what horizon.
+ */
+export type RateLimitedReason =
+  | 'global-rate'
+  | 'endpoint-rate'
+  | 'key-rate'
+  | 'site-concurrency';
+
+/**
+ * Format rate limit headers for HTTP response.
+ *
+ * Emits BOTH the IETF draft-standard names (`RateLimit-*` — no `X-`
+ * prefix) and the legacy `X-RateLimit-*` names so existing clients keep
+ * working through the transition.
  */
 export function getRateLimitHeaders(result: {
   limit?: number;
   remaining?: number;
   reset?: number;
   retryAfter?: number;
+  reason?: RateLimitedReason;
 }): Record<string, string> {
   const headers: Record<string, string> = {};
 
   if (result.limit !== undefined) {
+    headers['RateLimit-Limit'] = result.limit.toString();
     headers['X-RateLimit-Limit'] = result.limit.toString();
   }
 
   if (result.remaining !== undefined) {
+    headers['RateLimit-Remaining'] = result.remaining.toString();
     headers['X-RateLimit-Remaining'] = result.remaining.toString();
   }
 
   if (result.reset !== undefined) {
+    const deltaSeconds = Math.max(0, Math.ceil((result.reset - Date.now()) / 1000));
+    headers['RateLimit-Reset'] = deltaSeconds.toString();
     headers['X-RateLimit-Reset'] = result.reset.toString();
   }
 
   if (result.retryAfter !== undefined) {
     headers['Retry-After'] = result.retryAfter.toString();
+  }
+
+  if (result.reason) {
+    headers['Roost-Rate-Limited-Reason'] = result.reason;
   }
 
   return headers;

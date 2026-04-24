@@ -36,6 +36,8 @@ export const ProblemType = {
   ValidationFailed: 'https://owlette.app/problems/validation-failed',
   Unauthorized: 'https://owlette.app/problems/unauthorized',
   Forbidden: 'https://owlette.app/problems/forbidden',
+  ScopeInsufficient: 'https://owlette.app/problems/scope-insufficient',
+  TokenExpired: 'https://owlette.app/problems/token-expired',
   NotFound: 'https://owlette.app/problems/not-found',
   Conflict: 'https://owlette.app/problems/conflict',
   PreconditionFailed: 'https://owlette.app/problems/precondition-failed',
@@ -193,5 +195,30 @@ export function problemQuotaExceeded(detail: string, upgradeUrl?: string): NextR
     status: 402,
     detail,
     ...(upgradeUrl ? { upgradeUrl } : {}),
+  });
+}
+
+export function problemScopeInsufficient(
+  detail: string,
+  required: { resource: string; id: string; permission: string },
+): NextResponse {
+  return problem({
+    type: ProblemType.ScopeInsufficient,
+    title: 'insufficient scope',
+    status: 403,
+    detail,
+    code: 'scope_insufficient',
+    required,
+  });
+}
+
+export function problemTokenExpired(expiredAt?: number, detail?: string): NextResponse {
+  return problem({
+    type: ProblemType.TokenExpired,
+    title: 'token expired',
+    status: 401,
+    detail: detail ?? 'the api key has expired; rotate or create a new key',
+    code: 'token_expired',
+    ...(typeof expiredAt === 'number' ? { expiredAt } : {}),
   });
 }

@@ -31,6 +31,7 @@ import {
   getClientIp,
   checkRateLimit,
   getRateLimitHeaders,
+  type RateLimitedReason,
 } from './rateLimit';
 
 type RateLimitStrategy = 'auth' | 'tokenExchange' | 'tokenRefresh' | 'user' | 'agentAlert' | 'upload' | 'api';
@@ -39,7 +40,22 @@ type IdentifierType = 'ip' | 'user';
 interface RateLimitOptions {
   strategy: RateLimitStrategy;
   identifier: IdentifierType;
-  getUserId?: (request: NextRequest) => Promise<string | null>; // Custom function to extract user ID
+  getUserId?: (request: NextRequest) => Promise<string | null>;
+  /** Override the derived reason used in the Roost-Rate-Limited-Reason header. */
+  reason?: RateLimitedReason;
+}
+
+function reasonFor(strategy: RateLimitStrategy, identifier: IdentifierType): RateLimitedReason {
+  if (strategy === 'user' || strategy === 'api') {
+    return identifier === 'user' ? 'key-rate' : 'endpoint-rate';
+  }
+  if (strategy === 'auth' || strategy === 'tokenExchange' || strategy === 'tokenRefresh') {
+    return 'endpoint-rate';
+  }
+  if (strategy === 'upload' || strategy === 'agentAlert') {
+    return 'endpoint-rate';
+  }
+  return 'global-rate';
 }
 
 /**
@@ -83,12 +99,13 @@ export function withRateLimit(
 
     // Check rate limit
     const result = await checkRateLimit(ratelimiter, identifier);
+    const reason = options.reason ?? reasonFor(options.strategy, options.identifier);
 
     // If rate limit exceeded, return 429 response
     if (!result.success) {
       console.warn(`[RateLimit] Rate limit exceeded for ${options.strategy}:`, identifier);
 
-      const headers = getRateLimitHeaders(result);
+      const headers = getRateLimitHeaders({ ...result, reason });
 
       return NextResponse.json(
         {
@@ -104,11 +121,15 @@ export function withRateLimit(
     }
 
     // Rate limit passed, call the handler
-
     const response = await handler(request);
 
-    // Add rate limit headers to successful response
-    const headers = getRateLimitHeaders(result);
+    // Add rate limit headers to successful response (counters only — no
+    // Retry-After or reason on 200s).
+    const headers = getRateLimitHeaders({
+      limit: result.limit,
+      remaining: result.remaining,
+      reset: result.reset,
+    });
     Object.entries(headers).forEach(([key, value]) => {
       response.headers.set(key, value);
     });

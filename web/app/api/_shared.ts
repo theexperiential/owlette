@@ -1,5 +1,5 @@
 /**
- * shared helpers for roost API routes (chunks/, folders/).
+ * shared helpers for roost API routes (chunks/, roosts/).
  *
  * no URL or header versioning — the routes ARE the API. backward compat
  * with the legacy single-url distribution is NOT a goal; v3.0.0 agents
@@ -12,14 +12,24 @@ import {
   problemUnauthorized,
   problemForbidden,
   problemNotFound,
+  problemScopeInsufficient,
+  problemTokenExpired,
   problem,
   ProblemType,
 } from '@/lib/apiErrors';
 import {
   ApiAuthError,
+  applyAuthDeprecations,
+  auditApiKeyUse,
   requireAdminOrIdToken,
+  requireScope,
+  resolveAuth,
   assertUserHasSiteAccess,
+  type ResolvedAuth,
+  type ScopeCheckResult,
 } from '@/lib/apiAuth.server';
+import type { ApiKeyPermission, ApiKeyResource } from '@/lib/apiKeyTypes';
+import { checkRoostVersion } from '@/lib/versionHeader';
 import { getAdminAuth } from '@/lib/firebase-admin';
 
 export const MAX_HASHES_PER_REQUEST = 1000;
@@ -28,11 +38,10 @@ const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 const RESOURCE_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const SITE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
-/**
- * NOTE: ApiAuthError exposes `status` (NOT `statusCode`). The previous
- * typo silently bypassed every status mapping. Generic problem messages
- * here (no `err.message` echo) to avoid leaking internal error text.
- */
+/* ------------------------------------------------------------------------- */
+/*  legacy helpers kept for routes that still use requireAdminOrIdToken      */
+/* ------------------------------------------------------------------------- */
+
 export async function requireAuthOrProblem(
   req: NextRequest,
 ): Promise<{ ok: true; userId: string } | { ok: false; response: NextResponse }> {
@@ -49,21 +58,6 @@ export async function requireAuthOrProblem(
   }
 }
 
-/**
- * Auth gate for roost endpoints that BOTH operators (from the web UI)
- * AND agents need to call (manifest/chunk URL minting, etc.).
- *
- * - Operator path: the existing superadmin-or-site-member check
- *   (`requireAuthOrProblem` → `requireSiteScope`). Same behaviour as
- *   every other roost API.
- * - Agent path: decode the bearer token directly; if the custom claims
- *   show `role: 'agent'` AND `site_id` matches the requested siteId,
- *   allow. Agents don't have `users/{uid}` docs so `assertUserHasSiteAccess`
- *   would always fail for them — scoping is entirely by token claim.
- *
- * Call this INSTEAD OF the requireAuthOrProblem + requireSiteScope pair
- * when the endpoint is on the agent's hot path.
- */
 export async function requireAgentOrSiteScope(
   req: NextRequest,
   siteId: string,
@@ -77,8 +71,6 @@ export async function requireAgentOrSiteScope(
     };
   }
 
-  // Try the agent-token path first — cheap decode, no firestore round-trip
-  // on the happy path for the common agent caller.
   const authHeader = req.headers.get('authorization') || '';
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   if (match) {
@@ -86,20 +78,15 @@ export async function requireAgentOrSiteScope(
       const decoded = await getAdminAuth().verifyIdToken(match[1]);
       if (decoded.role === 'agent') {
         if (decoded.site_id !== siteId) {
-          // Agent token scoped to a different site — treat as not-found
-          // to match the anti-enumeration posture of requireSiteScope.
           return { ok: false, response: problemNotFound('site not found or no access') };
         }
         return { ok: true, userId: decoded.uid, isAgent: true };
       }
-      // Non-agent bearer token — fall through to the operator path so the
-      // superadmin check can still happen via requireAdminOrIdToken.
     } catch {
-      // Invalid token — let the operator path produce the 401.
+      /* fall through */
     }
   }
 
-  // Operator path — reuse the existing helpers so behaviour stays consistent.
   const auth = await requireAuthOrProblem(req);
   if (!auth.ok) return { ok: false, response: auth.response };
   const scopeError = await requireSiteScope(auth.userId, siteId);
@@ -121,7 +108,6 @@ export async function requireSiteScope(
     return null;
   } catch (err) {
     if (err instanceof ApiAuthError) {
-      // collapse 404 + 403 to 404 (anti-enumeration); never echo err.message.
       if (err.status === 404 || err.status === 403) {
         return problemNotFound('site not found or no access');
       }
@@ -220,3 +206,241 @@ export async function parseJsonBody(
     return { ok: false, response: problemValidation('request body is not valid json') };
   }
 }
+
+/**
+ * Read the request body as text once, then JSON-parse. Returns both the
+ * raw text (for idempotency body-hashing) and the parsed body.
+ */
+export async function readAndParseJsonBody(
+  req: NextRequest,
+): Promise<
+  | { ok: true; raw: string; body: unknown }
+  | { ok: false; response: NextResponse }
+> {
+  let raw: string;
+  try {
+    raw = await req.text();
+  } catch {
+    return { ok: false, response: problemValidation('could not read request body') };
+  }
+  let body: unknown = {};
+  if (raw.length > 0) {
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      return { ok: false, response: problemValidation('request body is not valid json') };
+    }
+  }
+  return { ok: true, raw, body };
+}
+
+/* ------------------------------------------------------------------------- */
+/*  scope-aware auth helpers (roost public api wave 2)                       */
+/* ------------------------------------------------------------------------- */
+
+export interface ScopedAuthSuccess {
+  ok: true;
+  userId: string;
+  auth: ResolvedAuth;
+  scopeCheck: ScopeCheckResult;
+}
+
+export type ScopedAuthResult =
+  | ScopedAuthSuccess
+  | { ok: false; response: NextResponse };
+
+async function resolveAuthOrProblem(
+  req: NextRequest,
+): Promise<{ ok: true; auth: ResolvedAuth } | { ok: false; response: NextResponse }> {
+  try {
+    const auth = await resolveAuth(req);
+    return { ok: true, auth };
+  } catch (err) {
+    if (err instanceof ApiAuthError) {
+      if (err.code === 'token_expired') {
+        const expiredAt =
+          typeof err.details?.expiredAt === 'number' ? err.details.expiredAt : undefined;
+        return { ok: false, response: problemTokenExpired(expiredAt) };
+      }
+      if (err.status === 403) return { ok: false, response: problemForbidden() };
+      if (err.status === 404) return { ok: false, response: problemNotFound() };
+      return { ok: false, response: problemUnauthorized() };
+    }
+    throw err;
+  }
+}
+
+function runScopeCheck(
+  auth: ResolvedAuth,
+  resource: ApiKeyResource,
+  id: string,
+  permission: ApiKeyPermission,
+): { ok: true; scopeCheck: ScopeCheckResult } | { ok: false; response: NextResponse } {
+  try {
+    const scopeCheck = requireScope(auth, resource, id, permission);
+    return { ok: true, scopeCheck };
+  } catch (err) {
+    if (err instanceof ApiAuthError && err.code === 'scope_insufficient') {
+      return {
+        ok: false,
+        response: problemScopeInsufficient(err.message, {
+          resource,
+          id,
+          permission,
+        }),
+      };
+    }
+    throw err;
+  }
+}
+
+async function assertSiteAccessOrProblem(
+  userId: string,
+  siteId: string,
+): Promise<NextResponse | null> {
+  try {
+    await assertUserHasSiteAccess(userId, siteId);
+    return null;
+  } catch (err) {
+    if (err instanceof ApiAuthError) {
+      if (err.status === 404 || err.status === 403) {
+        return problemNotFound('site not found or no access');
+      }
+      return problemForbidden();
+    }
+    throw err;
+  }
+}
+
+export async function requireSiteAuthAndScope(
+  req: NextRequest,
+  siteId: string,
+  permission: ApiKeyPermission,
+): Promise<ScopedAuthResult> {
+  if (!SITE_ID_RE.test(siteId)) {
+    return {
+      ok: false,
+      response: problemValidation('invalid siteId format', {
+        siteId: ['must be 1-128 chars: letters, digits, underscore, hyphen'],
+      }),
+    };
+  }
+
+  const versionCheck = checkRoostVersion(req);
+  if (!versionCheck.ok) return { ok: false, response: versionCheck.response };
+
+  const authResult = await resolveAuthOrProblem(req);
+  if (!authResult.ok) return authResult;
+
+  const accessError = await assertSiteAccessOrProblem(authResult.auth.userId, siteId);
+  if (accessError) return { ok: false, response: accessError };
+
+  const scopeResult = runScopeCheck(authResult.auth, 'site', siteId, permission);
+  if (!scopeResult.ok) return scopeResult;
+
+  auditApiKeyUse(authResult.auth, siteId, req);
+
+  return {
+    ok: true,
+    userId: authResult.auth.userId,
+    auth: authResult.auth,
+    scopeCheck: { ...scopeResult.scopeCheck, missingVersion: versionCheck.missing },
+  };
+}
+
+export async function requireRoostAuthAndScope(
+  req: NextRequest,
+  siteId: string,
+  roostId: string,
+  permission: ApiKeyPermission,
+): Promise<ScopedAuthResult> {
+  if (!SITE_ID_RE.test(siteId)) {
+    return {
+      ok: false,
+      response: problemValidation('invalid siteId format', {
+        siteId: ['must be 1-128 chars: letters, digits, underscore, hyphen'],
+      }),
+    };
+  }
+  if (!RESOURCE_ID_RE.test(roostId)) {
+    return {
+      ok: false,
+      response: problemValidation(
+        'roostId must be 8-64 chars: letters, digits, underscore, hyphen',
+        { roostId: ['invalid format'] },
+      ),
+    };
+  }
+
+  const versionCheck = checkRoostVersion(req);
+  if (!versionCheck.ok) return { ok: false, response: versionCheck.response };
+
+  const authResult = await resolveAuthOrProblem(req);
+  if (!authResult.ok) return authResult;
+
+  const accessError = await assertSiteAccessOrProblem(authResult.auth.userId, siteId);
+  if (accessError) return { ok: false, response: accessError };
+
+  const scopeResult = runScopeCheck(authResult.auth, 'roost', roostId, permission);
+  if (!scopeResult.ok) return scopeResult;
+
+  auditApiKeyUse(authResult.auth, siteId, req);
+
+  return {
+    ok: true,
+    userId: authResult.auth.userId,
+    auth: authResult.auth,
+    scopeCheck: { ...scopeResult.scopeCheck, missingVersion: versionCheck.missing },
+  };
+}
+
+export async function requireAgentOrSiteAuthAndScope(
+  req: NextRequest,
+  siteId: string,
+  permission: ApiKeyPermission,
+): Promise<
+  | { ok: true; userId: string; isAgent: boolean; scopeCheck: ScopeCheckResult }
+  | { ok: false; response: NextResponse }
+> {
+  if (!SITE_ID_RE.test(siteId)) {
+    return {
+      ok: false,
+      response: problemValidation('invalid siteId format', {
+        siteId: ['must be 1-128 chars: letters, digits, underscore, hyphen'],
+      }),
+    };
+  }
+
+  const authHeader = req.headers.get('authorization') || '';
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (match && !match[1].startsWith('owk_')) {
+    try {
+      const decoded = await getAdminAuth().verifyIdToken(match[1]);
+      if (decoded.role === 'agent') {
+        if (decoded.site_id !== siteId) {
+          return { ok: false, response: problemNotFound('site not found or no access') };
+        }
+        return {
+          ok: true,
+          userId: decoded.uid,
+          isAgent: true,
+          scopeCheck: { isLegacy: false },
+        };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  const operator = await requireSiteAuthAndScope(req, siteId, permission);
+  if (!operator.ok) return operator;
+
+  return {
+    ok: true,
+    userId: operator.userId,
+    isAgent: false,
+    scopeCheck: operator.scopeCheck,
+  };
+}
+
+export { applyAuthDeprecations };
