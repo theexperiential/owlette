@@ -12,7 +12,7 @@ import { EmptyStateUpload } from '@/components/EmptyStateUpload';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Plus, Loader2, FolderSync, Archive, ChevronDown, ChevronRight, ChevronsUpDown, ChevronsDownUp, MoreVertical, Trash2, RefreshCw } from 'lucide-react';
+import { Plus, Loader2, FolderSync, Archive, ChevronDown, ChevronRight, ChevronsUpDown, ChevronsDownUp, MoreVertical, Trash2, RefreshCw, Copy } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -112,6 +112,25 @@ export default function ProjectsPage() {
   const handleSiteChange = (siteId: string) => {
     setUserPickedSiteId(siteId);
     updateLastSite(siteId);
+  };
+
+  // Discreet copy-to-clipboard helper used by the "copy roost id" /
+  // "copy manifest id" dropdown items. Most operators never touch these
+  // — they exist for the rare debugging / support-ticket moment. Falls
+  // back to a "couldn't copy" toast when the Clipboard API isn't
+  // available (older browser, insecure context), which also reveals the
+  // id so the user can copy it manually.
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        toast.success(`${label} copied`);
+      } else {
+        toast.error(`couldn't copy — ${label}: ${text}`);
+      }
+    } catch {
+      toast.error(`couldn't copy — ${label}: ${text}`);
+    }
   };
 
   const performDeleteRoost = async (roostId: string, name: string) => {
@@ -311,9 +330,6 @@ export default function ProjectsPage() {
             <div className="divide-y divide-border">
               {roosts.map((roost) => {
                 const isExpanded = expandedRoostIds.has(roost.id);
-                const manifestShort = roost.currentManifestId
-                  ? `${roost.currentManifestId.slice(0, 12)}…`
-                  : 'no manifest';
                 return (
                   <Collapsible
                     key={roost.id}
@@ -333,12 +349,9 @@ export default function ProjectsPage() {
                           <FolderSync className="h-4 w-4 text-accent-cyan flex-shrink-0" aria-hidden="true" />
                           <div className="min-w-0 flex-1">
                             <span className="text-foreground font-medium select-text">{roost.name}</span>
-                            <p className="text-xs text-muted-foreground select-text truncate font-mono">
-                              manifest {manifestShort}
-                            </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3 flex-shrink-0">
+                        <div className="flex items-center gap-4 flex-shrink-0">
                           <RoostStatusPill
                             siteId={currentSiteId}
                             roostId={roost.id}
@@ -346,13 +359,13 @@ export default function ProjectsPage() {
                             targets={roost.targets}
                           />
                           <span
-                            className="hidden md:inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums select-none"
+                            className="hidden md:inline-flex items-center gap-1 text-sm text-muted-foreground tabular-nums select-none"
                             aria-label={`${roost.targets.length} target machine${roost.targets.length === 1 ? '' : 's'}`}
                           >
                             <span className="text-foreground">{roost.targets.length}</span>
                             <span>target{roost.targets.length === 1 ? '' : 's'}</span>
                           </span>
-                          <span className="text-xs text-muted-foreground hidden sm:block w-[150px] text-right">
+                          <span className="text-sm text-muted-foreground hidden sm:block w-[200px] text-right whitespace-nowrap">
                             {formatSiteScopedTimestamp(
                               roost.updatedAt ?? roost.createdAt,
                               userPreferences.timeDisplayMode || 'machine',
@@ -392,6 +405,26 @@ export default function ProjectsPage() {
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
+                                onClick={() => copyToClipboard(roost.id, 'roost id')}
+                                className="cursor-pointer"
+                              >
+                                <Copy className="h-3.5 w-3.5 mr-2" />
+                                copy roost id
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={!roost.currentManifestId}
+                                onClick={() => {
+                                  if (roost.currentManifestId) {
+                                    copyToClipboard(roost.currentManifestId, 'manifest id');
+                                  }
+                                }}
+                                className="cursor-pointer"
+                              >
+                                <Copy className="h-3.5 w-3.5 mr-2" />
+                                copy manifest id
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
                                 onClick={() => setPendingDelete({ roostId: roost.id, name: roost.name })}
                                 className="cursor-pointer text-red-400 focus:text-red-300 focus:bg-red-950/30"
                               >
@@ -409,16 +442,6 @@ export default function ProjectsPage() {
                         <div className="mx-4 my-3 rounded-lg border border-border bg-background p-4 space-y-4">
                           <div className="grid gap-2 text-sm">
                             <div className="flex gap-2">
-                              <span className="text-muted-foreground flex-shrink-0 w-28">roost id</span>
-                              <span className="text-foreground select-text break-all font-mono text-xs">{roost.id}</span>
-                            </div>
-                            <div className="flex gap-2">
-                              <span className="text-muted-foreground flex-shrink-0 w-28">current manifest</span>
-                              <span className="text-foreground select-text break-all font-mono text-xs">
-                                {roost.currentManifestId || <span className="text-muted-foreground italic">none</span>}
-                              </span>
-                            </div>
-                            <div className="flex gap-2">
                               <span className="text-muted-foreground flex-shrink-0 w-28">extract path</span>
                               <span className="text-foreground select-text break-all">
                                 {roost.extractPath || <span className="text-muted-foreground italic">~/Documents/Owlette/ (default)</span>}
@@ -434,7 +457,7 @@ export default function ProjectsPage() {
                           </div>
 
                           <div>
-                            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                            <h4 className="text-sm font-medium text-muted-foreground mb-2">
                               targets ({roost.targets.length})
                             </h4>
                             <RoostTargetsList
