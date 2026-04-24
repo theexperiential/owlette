@@ -77,7 +77,7 @@ every top-level noun is a resource class hung off the client.
 ```ts
 // list roosts in a site (cursor-paged)
 const page = await roost.roosts.list({ siteId: 'site-1', pageSize: 20 });
-for (const r of page.roosts) console.log(r.id, r.name, r.currentManifest?.id);
+for (const r of page.roosts) console.log(r.roostId, r.name, r.currentManifestId);
 if (page.nextPageToken) {
   const page2 = await roost.roosts.list({
     siteId: 'site-1',
@@ -129,46 +129,45 @@ const deploy = await roost.roosts.deploy('rst_abc', {
 most users never touch these; `roosts.push()` is the high-level wrapper. when you need raw control (network shares, custom uploaders, reuse across roosts) the methods are here:
 
 ```ts
-// dedup-check — pass sha-256 digests, get back which ones r2 needs
-const { missing } = await roost.chunks.check({
-  siteId: 'site-1',
-  hashes: ['sha256:ab12...', 'sha256:cd34...'],
-});
+// dedup-check — returns the hashes r2 is missing
+const missing = await roost.chunks.check('site-1', ['sha256:ab12...', 'sha256:cd34...']);
 
-// mint signed r2 put urls (60 min ttl)
-const { uploads } = await roost.chunks.uploadUrls({ siteId: 'site-1', hashes: missing });
-for (const { hash, url } of uploads) {
+// mint signed r2 put urls (60 min ttl) — returns { urls, expiresAt }
+const { urls } = await roost.chunks.uploadUrls('site-1', missing);
+for (const [hash, url] of Object.entries(urls)) {
   await fetch(url, { method: 'PUT', body: await chunkBytes(hash) });
 }
 
-// mint signed r2 get urls (15 min ttl) — agent-side / downstream consumers
-const { downloads } = await roost.chunks.downloadUrls({ siteId: 'site-1', hashes: ['sha256:ab12...'] });
+// mint signed r2 get urls (15 min ttl) — same { urls, expiresAt } shape
+const { urls: downloadUrls } = await roost.chunks.downloadUrls('site-1', ['sha256:ab12...']);
 
-// mount an existing chunk under a different roost (no re-upload)
-await roost.chunks.mount('sha256:ab12...', { siteId: 'site-1', roostId: 'rst_abc' });
+// mount an existing chunk from one roost into another (no re-upload)
+await roost.chunks.mount('sha256:ab12...', 'site-1', 'rst_source', 'rst_target');
 
 // which roosts reference this chunk?
-const refs = await roost.chunks.referrers('sha256:ab12...', { siteId: 'site-1' });
+const refs = await roost.chunks.referrers('sha256:ab12...', 'site-1');
 ```
 
 ### manifests
 
 ```ts
-// list manifests for a roost (paged)
-const page = await roost.manifests.list({ siteId: 'site-1', roostId: 'rst_abc' });
+// list manifests for a roost (paged — cursor-based)
+const page = await roost.manifests.list('rst_abc', { siteId: 'site-1', limit: 20 });
+for (const mf of page.manifests) console.log(mf.id, mf.createdAt);
 
 // fetch one — full oci manifest doc
-const mf = await roost.manifests.get('mf_xyz', { siteId: 'site-1', roostId: 'rst_abc' });
+const mf = await roost.manifests.get('rst_abc', 'mf_xyz', { siteId: 'site-1' });
 
-// file listing (paths + per-file digests)
-const files = await roost.manifests.files('mf_xyz', { siteId: 'site-1', roostId: 'rst_abc' });
-
-// diff two manifests (what changed between versions)
-const diff = await roost.manifests.diff({
+// file listing (paths + per-file digests, paged)
+const files = await roost.manifests.files('rst_abc', 'mf_xyz', {
   siteId: 'site-1',
-  roostId: 'rst_abc',
-  from: 'mf_old',
-  to: 'mf_new',
+  limit: 500,
+});
+
+// diff two manifests — `against` is the baseline being compared to
+const diff = await roost.manifests.diff('rst_abc', 'mf_new', {
+  siteId: 'site-1',
+  against: 'mf_old',
 });
 ```
 
@@ -176,52 +175,59 @@ const diff = await roost.manifests.diff({
 
 ```ts
 // create a scoped key (response contains `key` once — store it now)
-const key = await roost.keys.create({
+const created = await roost.keys.create({
   name: 'ci publisher',
-  environment: 'live',
   scopes: [
     { resource: 'site', id: 'site-1', permissions: ['read'] },
     { resource: 'roost', id: '*', permissions: ['read', 'write', 'deploy'] },
   ],
   ttlDays: 90,
 });
-console.log(key.key);                  // owk_live_...  <-- shown exactly once
+console.log(created.key);              // owk_live_...  <-- shown exactly once
 
 // list, rotate (24h grace), revoke
-await roost.keys.list();
-await roost.keys.rotate(key.id, { ttlDays: 90 });
-await roost.keys.revoke(key.id);
+const all = await roost.keys.list();
+await roost.keys.rotate(created.keyId, 90);
+await roost.keys.revoke(created.keyId);
 ```
 
 ### sites / machines / quotas
 
 ```ts
-await roost.sites.list();
-await roost.sites.get('site-1');
-await roost.machines.list({ siteId: 'site-1' });
-await roost.machines.get('machine-a7f3', { siteId: 'site-1' });
-await roost.machines.deployments('machine-a7f3', { siteId: 'site-1' });
-await roost.quotas.current({ siteId: 'site-1' });
-await roost.quotas.history({ siteId: 'site-1', days: 30 });
+const sites = await roost.sites.list();                 // Site[]
+const site = await roost.sites.get('site-1');           // Site
+
+const machines = await roost.machines.list('site-1');   // MachineSummary[]
+const machine = await roost.machines.get('site-1', 'machine-a7f3');
+const deploys = await roost.machines.deployments('site-1', 'machine-a7f3');
+
+const quota = await roost.quotas.current('site-1');     // QuotaSnapshot
+const history = await roost.quotas.history('site-1', '30d');  // '7d' | '14d' | '30d' | '60d' | '90d'
 ```
 
 ### webhooks
 
 ```ts
 // subscribe — signing secret is returned ONCE; store it now
-const hook = await roost.webhooks.subscribe({
-  url: 'https://example.com/hooks/roost',
-  events: ['manifest.published', 'deploy.failed'],
-});
+const hook = await roost.webhooks.subscribe(
+  'site-1',
+  'https://example.com/hooks/roost',
+  ['manifest.published', 'deploy.failed'],
+);
 console.log(hook.signingSecret);
 
 // crud + send a test event
-await roost.webhooks.list();
-await roost.webhooks.get(hook.id);
-await roost.webhooks.update(hook.id, { events: ['manifest.published'] });
-await roost.webhooks.rotateSecret(hook.id);
-await roost.webhooks.remove(hook.id);
-await roost.webhooks.probe(hook.id, { event: 'manifest.published' });
+await roost.webhooks.list('site-1');
+await roost.webhooks.get(hook.id, 'site-1');
+await roost.webhooks.update(hook.id, 'site-1', { events: ['manifest.published'] });
+await roost.webhooks.rotateSecret(hook.id, 'site-1');
+await roost.webhooks.remove(hook.id, 'site-1');
+
+// probe fires a signed test delivery — `kind` must be a known event name
+await roost.webhooks.probe('site-1', 'manifest.published', {
+  roostId: 'rst_abc',
+  manifestId: 'mf_xyz',
+});
 ```
 
 ---
@@ -237,11 +243,11 @@ await roost.roosts.push('./dist', 'rst_abc', {
   siteId: 'site-1',
   onProgress: (evt) => {
     switch (evt.phase) {
-      case 'discover': console.log(`found ${evt.files} files`); break;
-      case 'hash':     console.log(`hashing ${evt.file} (${evt.hashed}/${evt.total})`); break;
-      case 'check':    console.log(`${evt.missing} of ${evt.total} chunks need upload`); break;
-      case 'upload':   console.log(`${evt.uploaded}/${evt.total} chunks (${evt.bytesUploaded} bytes)`); break;
-      case 'publish':  console.log('publishing manifest'); break;
+      case 'discover':      console.log(`found ${evt.fileCount} files (${evt.totalBytes} bytes)`); break;
+      case 'hash':          console.log(`hashing ${evt.file} (${evt.filesDone}/${evt.filesTotal})`); break;
+      case 'check-missing': console.log(`${evt.missing} of ${evt.total} chunks need upload`); break;
+      case 'upload':        console.log(`${evt.uploaded}/${evt.total} chunks uploaded`); break;
+      case 'publish':       console.log(`publishing manifest (attempt ${evt.attempt})`); break;
     }
   },
 });
@@ -262,17 +268,16 @@ result.events.on('progress', (evt) => {
 
 ```ts
 interface PushOptions {
-  siteId: string;
-  concurrency?: number;                // parallel chunk uploads (default 8)
-  idempotencyKey?: string;             // override auto-generated key
-  manifestMetadata?: Record<string, string>;
+  siteId: string;                      // required — the site the roost belongs to
+  name?: string;                       // optional — overrides the roost's name on publish
+  targets?: string[];                  // optional — machine ids to retarget to on publish
+  extractPath?: string;                // optional — on-disk extract root for the agent
   onProgress?: (evt: PushProgressEvent) => void;
-  signal?: AbortSignal;                // cooperative cancel
-  ignore?: string[];                   // glob patterns (default: ['.git/**', 'node_modules/**'])
+  ignore?: readonly string[];          // extra names to skip during the file walk
 }
 ```
 
-**retry on concurrent publish (412).** if another writer publishes between your `push()` starting and the manifest post, the sdk re-reads the current manifest, re-diffs, and retries up to 3 times before surfacing `RoostApiError`. your chunk uploads never re-run — they're already addressed by hash.
+**retry on concurrent publish.** if another writer publishes between your `push()` starting and the manifest post, the sdk re-reads the current manifest, re-diffs, and retries before surfacing `RoostApiError`. your chunk uploads never re-run — they're already addressed by hash.
 
 ---
 
@@ -351,15 +356,15 @@ the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring
 
 ## cancellation
 
-every resource method accepts an `AbortSignal` to abort in-flight requests:
+the low-level `roost.http.request()` accepts an `AbortSignal`:
 
 ```ts
 const ctl = new AbortController();
 setTimeout(() => ctl.abort(), 30_000);
-await roost.roosts.list({ siteId: 'site-1', signal: ctl.signal });
+await roost.http.request('/api/sites', { signal: ctl.signal });
 ```
 
-for `push()` the signal also stops the chunk-upload queue cooperatively — in-flight PUTs complete, pending ones are dropped, and the promise rejects with an `AbortError`.
+high-level resource methods don't yet surface the signal parameter — wrap the promise in `Promise.race()` against a timeout if you need to bound list/get calls. for `push()`, throwing inside the `onProgress` callback is the current cooperative-cancel mechanism.
 
 ---
 
