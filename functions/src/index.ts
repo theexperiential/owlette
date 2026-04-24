@@ -30,3 +30,5 @@ export {
   verifyAuditChain,
 } from './auditLog';
 export { emitWebhook, processRetryQueue } from './webhookDispatch';
+export { sweepExpiredApiKeysDaily } from './apiKeyExpire';
+export { sweepExpiredIdempotencyCacheDaily } from './idempotencyCleanup';
