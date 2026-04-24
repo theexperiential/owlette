@@ -7,6 +7,7 @@ import { useSites, useMachines } from '@/hooks/useFirestore';
 import { useProjectDistributionManager } from '@/hooks/useProjectDistributions';
 import { useRoosts } from '@/hooks/useRoosts';
 import { RoostTargetsList, RoostStatusPill } from '@/components/RoostTargetRow';
+import { RoostContentsRow } from '@/components/RoostContentsRow';
 import { EmptyStateUpload } from '@/components/EmptyStateUpload';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -464,20 +465,13 @@ export default function ProjectsPage() {
                                 {roost.extractPath || <span className="text-muted-foreground italic">~/Documents/Owlette/ (default)</span>}
                               </span>
                             </div>
-                            {(roost.totalFiles !== undefined || roost.totalSize !== undefined) && (
-                              <div className="flex gap-2">
-                                <span className="text-muted-foreground flex-shrink-0 w-28">contents</span>
-                                <span className="text-foreground select-text tabular-nums">
-                                  {roost.totalFiles !== undefined && (
-                                    <>
-                                      {roost.totalFiles.toLocaleString()} file{roost.totalFiles === 1 ? '' : 's'}
-                                    </>
-                                  )}
-                                  {roost.totalFiles !== undefined && roost.totalSize !== undefined && ' · '}
-                                  {roost.totalSize !== undefined && formatContentSize(roost.totalSize)}
-                                </span>
-                              </div>
-                            )}
+                            <RoostContentsRow
+                              siteId={currentSiteId}
+                              roostId={roost.id}
+                              manifestId={roost.currentManifestId}
+                              totalFiles={roost.totalFiles}
+                              totalSize={roost.totalSize}
+                            />
                           </div>
 
                           <div>
