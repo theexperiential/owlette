@@ -615,10 +615,9 @@ export function DisplayLayoutPanel({
               'stored',
               hasDriftVisible ? `(${effectiveDriftCount})` : undefined,
             )}
-            {/* [RECONSTRUCTED — Wave A1.4] drift-paused pill in edit mode. */}
             {mode === 'edit' && (
               <span className="text-[10px] text-muted-foreground px-2 py-1 rounded bg-muted/40 border border-border">
-                editing assigned — drift check paused
+                editing stored — drift check paused
               </span>
             )}
           </div>
