@@ -11,6 +11,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import {
   problem,
   problemFromError,
+  problemTokenExpired,
   problemUnauthorized,
   problemValidation,
   ProblemType,
@@ -204,6 +205,11 @@ export const POST = withRateLimit(
       });
     } catch (error: unknown) {
       if (error instanceof ApiAuthError) {
+        if (error.code === 'token_expired') {
+          const expiredAt =
+            typeof error.details?.expiredAt === 'number' ? error.details.expiredAt : undefined;
+          return problemTokenExpired(expiredAt);
+        }
         if (error.status === 401) {
           return problemUnauthorized(error.message);
         }
@@ -263,6 +269,11 @@ export const GET = withRateLimit(
       return NextResponse.json({ success: true, keys });
     } catch (error: unknown) {
       if (error instanceof ApiAuthError) {
+        if (error.code === 'token_expired') {
+          const expiredAt =
+            typeof error.details?.expiredAt === 'number' ? error.details.expiredAt : undefined;
+          return problemTokenExpired(expiredAt);
+        }
         if (error.status === 401) {
           return problemUnauthorized(error.message);
         }

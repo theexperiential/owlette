@@ -1,0 +1,93 @@
+/**
+ * GET /api/sites/{siteId}/machines/{machineId}
+ *      → Machine detail: list fields + metrics + processes.
+ *
+ * roost public api wave 3.6.
+ */
+import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
+import { Timestamp } from 'firebase-admin/firestore';
+import {
+  problem,
+  problemFromError,
+  ProblemType,
+} from '@/lib/apiErrors';
+import { getAdminDb } from '@/lib/firebase-admin';
+import {
+  applyAuthDeprecations,
+  requireSiteAuthAndScope,
+} from '../../../../_shared';
+
+interface RouteParams {
+  params: Promise<{ siteId: string; machineId: string }>;
+}
+
+export async function GET(request: NextRequest, { params }: RouteParams) {
+  try {
+    const { siteId, machineId } = await params;
+    const auth = await requireSiteAuthAndScope(request, siteId, 'read');
+    if (!auth.ok) return auth.response;
+
+    const db = getAdminDb();
+    const machineRef = db
+      .collection('sites')
+      .doc(siteId)
+      .collection('machines')
+      .doc(machineId);
+
+    const machineSnap = await machineRef.get();
+    if (!machineSnap.exists) {
+      return problem({
+        type: ProblemType.NotFound,
+        title: 'machine not found',
+        status: 404,
+        detail: `machine ${machineId} not found on site ${siteId}`,
+        instance: `/api/sites/${siteId}/machines/${machineId}`,
+      });
+    }
+
+    const data = machineSnap.data() ?? {};
+    const lastHeartbeat = data.lastHeartbeat ?? data.presence?.lastHeartbeat ?? null;
+
+    return applyAuthDeprecations(
+      NextResponse.json({
+        id: machineId,
+        siteId,
+        name: typeof data.name === 'string'
+          ? data.name
+          : typeof data.machine_name === 'string'
+            ? data.machine_name
+            : machineId,
+        online: data.online === true,
+        lastHeartbeat: heartbeatToIso(lastHeartbeat),
+        agentVersion:
+          data.agent_version ?? data.presence?.agent_version ?? null,
+        os: data.os ?? data.presence?.os ?? null,
+        hostname: data.hostname ?? data.presence?.hostname ?? null,
+        metrics: data.metrics ?? data.status?.metrics ?? null,
+        processes: Array.isArray(data.processes)
+          ? data.processes
+          : Array.isArray(data.status?.processes)
+            ? data.status.processes
+            : [],
+      }),
+      auth.scopeCheck,
+    );
+  } catch (err) {
+    return problemFromError(err, 'v2/sites/[siteId]/machines/[machineId]:GET');
+  }
+}
+
+function heartbeatToIso(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Timestamp) return v.toDate().toISOString();
+  if (typeof v === 'number') return new Date(v).toISOString();
+  if (typeof v === 'string') {
+    const parsed = Date.parse(v);
+    return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+  }
+  if (v && typeof v === 'object' && 'toDate' in v && typeof (v as { toDate: () => Date }).toDate === 'function') {
+    return (v as { toDate: () => Date }).toDate().toISOString();
+  }
+  return null;
+}
