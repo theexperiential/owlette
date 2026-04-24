@@ -416,7 +416,7 @@ export default function DeploymentsPage() {
     <div className="relative min-h-screen pb-8">
       {/* Header */}
       <PageHeader
-        currentPage="deploy software"
+        currentPage="deploy"
         sites={sites}
         currentSiteId={currentSiteId}
         onSiteChange={handleSiteChange}
