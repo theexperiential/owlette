@@ -19,7 +19,8 @@ import {
   ProblemType,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { FieldValue } from 'firebase-admin/firestore';
+import { timestampToIso } from '@/lib/firestoreTime.server';
 import {
   bucketFor,
   currentEnv,
@@ -29,11 +30,12 @@ import {
 } from '@/lib/r2Client.server';
 import {
   applyAuthDeprecations,
-  parseJsonBody,
+  readAndParseJsonBody,
   requireRoostAuthAndScope,
   validateResourceId,
   validateSiteIdBody,
 } from '../../../_shared';
+import { checkIdempotency, saveIdempotency } from '@/lib/idempotency';
 
 interface RouteParams {
   params: Promise<{ roostId: string }>;
@@ -149,7 +151,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const roostError = validateResourceId(roostId, 'roostId');
     if (roostError) return roostError;
 
-    const parsed = await parseJsonBody(request);
+    const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
     const body = parsed.body as {
       siteId?: unknown;
@@ -165,6 +167,18 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'write');
     if (!auth.ok) return auth.response;
+
+    const idem = await checkIdempotency(
+      request,
+      {
+        userId: auth.userId,
+        environment: auth.auth.keyContext?.environment ?? 'unknown',
+      },
+      parsed.raw,
+    );
+    if (idem.mode === 'invalid' || idem.mode === 'replay' || idem.mode === 'mismatch') {
+      return idem.response;
+    }
 
     const manifest = body.manifest;
     const manifestError = validateManifestShape(manifest);
@@ -300,7 +314,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           currentManifestId: manifestId,
           previousManifestId: currentId,
           manifestUrl,
-          // Denormalised summary so the /roost list can show "N files · X MB"
+          // Denormalised summary so the /roosts list can show "N files · X MB"
           // without needing to load each roost's manifest subdoc on render.
           // Matches what we write to the manifests subcollection above.
           totalFiles: m.files.length,
@@ -339,7 +353,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    return applyAuthDeprecations(
+    const response = applyAuthDeprecations(
       NextResponse.json(
         {
           manifestId: result.manifestId,
@@ -350,6 +364,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       ),
       auth.scopeCheck,
     );
+    if (idem.mode === 'proceed') await saveIdempotency(idem.token, response);
+    return response;
   } catch (err) {
     return problemFromError(err, 'v2/roosts/[roostId]/manifests (POST)');
   }
@@ -471,12 +487,4 @@ async function sha256Hex(input: string): Promise<string> {
   return [...new Uint8Array(buf)]
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
-}
-
-function timestampToIso(v: unknown): string | null {
-  if (v instanceof Timestamp) return v.toDate().toISOString();
-  if (v && typeof v === 'object' && 'toDate' in v && typeof (v as { toDate: () => Date }).toDate === 'function') {
-    return (v as { toDate: () => Date }).toDate().toISOString();
-  }
-  return null;
 }

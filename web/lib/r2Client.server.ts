@@ -254,6 +254,35 @@ export async function presignGetManifest(
   );
 }
 
+/**
+ * Read + parse a manifest body from R2. Returns null if the key does not
+ * exist. Throws on transport / parse errors.
+ */
+export async function getManifestBody(
+  siteId: string,
+  roostId: string,
+  manifestId: string,
+): Promise<unknown | null> {
+  const client = getR2Client();
+  const bucket = bucketFor(currentEnv(), 'manifests');
+  try {
+    const resp = await client.send(
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: manifestKey(siteId, roostId, manifestId),
+      }),
+    );
+    if (!resp.Body) return null;
+    const text = await resp.Body.transformToString('utf-8');
+    return JSON.parse(text);
+  } catch (err) {
+    const code = (err as { name?: string; Code?: string }).name
+      ?? (err as { Code?: string }).Code;
+    if (code === 'NoSuchKey' || code === 'NotFound') return null;
+    throw err;
+  }
+}
+
 /** Used by the chunk-verify callback if a verified chunk is a hash mismatch. */
 export async function deleteChunk(
   siteId: string,

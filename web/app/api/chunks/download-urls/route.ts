@@ -4,26 +4,27 @@
  *
  * output: { urls: { [hash]: string }, expiresAt: string }
  *
- * roost wave 2a.5. issues short-lived signed GET URLs for the agent to
- * download chunks from R2. GET form is convenience for small batches
- * (watch for URL length cap ~2 KB); POST for large batches.
- *
- * - per-tenant siteId scope enforced via auth claims + assertUserHasSiteAccess
+ * roost wave 2a.5, scope-check wired in wave 2.4. Agent-token callers
+ * bypass the scope gate (internal traffic); operator/API-key callers go
+ * through the full site-access + scope check.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { problemFromError, problemValidation } from '@/lib/apiErrors';
 import { GET_URL_TTL_SECONDS, presignGetChunk } from '@/lib/r2Client.server';
+import type { ScopeCheckResult } from '@/lib/apiAuth.server';
 import {
+  applyAuthDeprecations,
   parseJsonBody,
+  requireAgentOrSiteAuthAndScope,
   validateHashList,
   validateSiteIdBody,
-  requireAgentOrSiteScope,
 } from '../../_shared';
 
 async function mintDownloadUrls(
   siteId: string,
   hashes: readonly string[],
+  scopeCheck: ScopeCheckResult,
 ): Promise<NextResponse> {
   const entries = await Promise.all(
     hashes.map(async (hash) => {
@@ -34,7 +35,7 @@ async function mintDownloadUrls(
   const urls: Record<string, string> = {};
   for (const [hash, url] of entries) urls[hash] = url;
   const expiresAt = new Date(Date.now() + GET_URL_TTL_SECONDS * 1000).toISOString();
-  return NextResponse.json({ urls, expiresAt });
+  return applyAuthDeprecations(NextResponse.json({ urls, expiresAt }), scopeCheck);
 }
 
 export async function GET(request: NextRequest) {
@@ -48,14 +49,14 @@ export async function GET(request: NextRequest) {
     const site = validateSiteIdBody(siteIdParam, 'query.siteId');
     if (!site.ok) return site.response;
 
-    const auth = await requireAgentOrSiteScope(request, site.siteId);
+    const auth = await requireAgentOrSiteAuthAndScope(request, site.siteId, 'read');
     if (!auth.ok) return auth.response;
 
     const params = request.nextUrl.searchParams.getAll('hash');
     const validated = validateHashList(params, 'hash');
     if (!validated.ok) return validated.response;
 
-    return await mintDownloadUrls(site.siteId, validated.hashes);
+    return await mintDownloadUrls(site.siteId, validated.hashes, auth.scopeCheck);
   } catch (err) {
     return problemFromError(err, 'v2/chunks/download-urls (GET)');
   }
@@ -70,13 +71,13 @@ export async function POST(request: NextRequest) {
     const site = validateSiteIdBody(body.siteId);
     if (!site.ok) return site.response;
 
-    const auth = await requireAgentOrSiteScope(request, site.siteId);
+    const auth = await requireAgentOrSiteAuthAndScope(request, site.siteId, 'read');
     if (!auth.ok) return auth.response;
 
     const validated = validateHashList(body.hashes, 'hashes');
     if (!validated.ok) return validated.response;
 
-    return await mintDownloadUrls(site.siteId, validated.hashes);
+    return await mintDownloadUrls(site.siteId, validated.hashes, auth.scopeCheck);
   } catch (err) {
     return problemFromError(err, 'v2/chunks/download-urls (POST)');
   }
