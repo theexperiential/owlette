@@ -184,16 +184,28 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         state.set_distribution_state(dist_id, 'downloading')
         _report_target_state(
             service, site_id, folder_id, manifest_id, 'downloading',
-            chunks_total=len(diff.chunks_to_fetch),
+            chunks_total=len(manifest.chunks),
         )
 
-        # download chunks. url_provider talks to the web api per-chunk.
+        # Pass the FULL chunk set to download_all, not just diff.chunks_to_fetch.
+        # Post-commit cleanup (sync_assembler._cleanup_content_store) deletes
+        # chunks after successful assembly, so chunks from a prior manifest
+        # we'd normally consider "unchanged" may not actually be on disk
+        # anymore. download_all does its own has_chunk() presence check per
+        # chunk and skips ones already present — so passing the full set
+        # is correct + covers the dedup case without trusting the diff to
+        # predict content-store state.
+        #
+        # The diff's `chunks_to_fetch` is kept for reporting/metrics only —
+        # it tells the operator "what's NEW vs the prior manifest". That's
+        # different from "what the agent actually needs to download", which
+        # is a function of the local content store, not manifest deltas.
         url_provider = _make_chunk_url_provider(service, site_id)
         try:
             dl_result = download_all(
                 distribution_id=dist_id,
                 chunks=[{'hash': h, 'size': manifest.chunk_size_index[h]}
-                        for h in diff.chunks_to_fetch],
+                        for h in sorted(manifest.chunks)],
                 url_provider=url_provider,
                 state=state,
                 cancel_event=cancel_event,
