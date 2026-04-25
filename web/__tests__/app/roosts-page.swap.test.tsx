@@ -245,7 +245,11 @@ jest.mock('sonner', () => ({
   toast: { success: jest.fn(), error: jest.fn() },
 }));
 
-import RoostsPage from '@/app/roosts/page';
+// Import the client subtree directly. The route's `page.tsx` default
+// export is now a server component that calls `connection()` to opt
+// into dynamic rendering — that's incompatible with jsdom and irrelevant
+// to the wiring under test.
+import RoostsPage from '@/app/roosts/RoostsPageClient';
 
 function makeRoost(id: string, name: string, targets: string[] = []): RoostFixture {
   return {
