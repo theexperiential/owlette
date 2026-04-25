@@ -25,7 +25,7 @@ import {
   Clock,
   XCircle,
 } from 'lucide-react';
-import type { ManifestFileEntry } from '@/lib/chunking';
+import type { VersionFileEntry } from '@/lib/chunking';
 import {
   canStartUpload,
   checkQuota,
@@ -40,7 +40,7 @@ import {
 } from '@/lib/preUploadCheck';
 
 interface PreUploadSummaryProps {
-  entries: ManifestFileEntry[];
+  entries: VersionFileEntry[];
   targets: PreUploadTarget[];
   /** Optional — omit for unlimited plans. */
   quota?: QuotaSnapshot;

@@ -1,6 +1,6 @@
 # ci/cd with github actions
 
-a complete github actions workflow that builds a touchdesigner (or generic) artifact on every `v*.*.*` tag, chunks it, dedup-checks against the site's cas, uploads only the missing chunks, publishes a new manifest, deploys to the fleet, and waits for rollout completion — failing the ci job loudly if any machine fails. status is reported back as a github check run so the tag page shows green/red at a glance.
+a complete github actions workflow that builds a touchdesigner (or generic) artifact on every `v*.*.*` tag, chunks it, dedup-checks against the site's cas, uploads only the missing chunks, publishes a new version, deploys to the fleet, and waits for rollout completion — failing the ci job loudly if any machine fails. status is reported back as a github check run so the tag page shows green/red at a glance.
 
 ## secrets and variables
 
@@ -99,18 +99,23 @@ jobs:
               --data-binary "@$ABS"
           done
 
-      - name: publish manifest
+      - name: publish version
         id: publish
         run: |
           IDEM="${{ github.run_id }}-publish"
-          MANIFEST_BODY=$(node scripts/manifest.mjs chunks.json "$ROOST_SITE_ID" "$VERSION")
-          MANIFEST_ID=$(curl -fsS "$ROOST_BASE/api/roosts/$ROOST_ID/manifests" \
+          # scripts/version.mjs builds the oci-shaped body and attaches
+          # { description: "<git tag>" } so the release shows up in the history ui.
+          VERSION_BODY=$(node scripts/version.mjs chunks.json "$ROOST_SITE_ID" "$VERSION")
+          PUBLISH_RESP=$(curl -fsS "$ROOST_BASE/api/roosts/$ROOST_ID/versions" \
             -H "Authorization: Bearer $ROOST_TOKEN" \
             -H "Roost-Version: $ROOST_VERSION" \
             -H "Idempotency-Key: $IDEM" \
             -H "Content-Type: application/json" \
-            -d "$MANIFEST_BODY" | jq -r '.manifestId')
-          echo "manifest_id=$MANIFEST_ID" >> "$GITHUB_OUTPUT"
+            -d "$VERSION_BODY")
+          VERSION_ID=$(echo "$PUBLISH_RESP" | jq -r '.versionId')
+          VERSION_NUMBER=$(echo "$PUBLISH_RESP" | jq -r '.versionNumber')
+          echo "version_id=$VERSION_ID" >> "$GITHUB_OUTPUT"
+          echo "version_number=$VERSION_NUMBER" >> "$GITHUB_OUTPUT"
 
       - name: trigger deploy
         id: deploy
@@ -122,8 +127,8 @@ jobs:
             -H "Idempotency-Key: $IDEM" \
             -H "Content-Type: application/json" \
             -d "$(jq -nc --arg s "$ROOST_SITE_ID" \
-                          --arg m "${{ steps.publish.outputs.manifest_id }}" \
-              '{siteId:$s, manifestId:$m, strategy:"canary-then-fleet"}')" \
+                          --arg v "${{ steps.publish.outputs.version_id }}" \
+              '{siteId:$s, versionId:$v, strategy:"canary-then-fleet"}')" \
             | jq -r '.rolloutId')
           echo "rollout_id=$ROLLOUT_ID" >> "$GITHUB_OUTPUT"
 
@@ -178,11 +183,11 @@ jobs:
 - **open check run** — posts an in-progress github check to the tag's commit so `v*` release pages show rollout state inline.
 - **dedup check** — calls `POST /api/chunks/check` with every hash. the server returns only the ones not already in r2 for this site. stable builds that don't touch binaries typically see `missing = []`.
 - **upload missing chunks** — mints signed r2 put urls with `POST /api/chunks/upload-urls`, then pipes each file straight to r2 with `curl -X PUT`. data plane bypasses our servers entirely.
-- **publish manifest** — `POST /api/roosts/{roostId}/manifests` with the oci-shaped manifest body. idempotency key is `<run_id>-publish` so re-running the job replays the same publish instead of creating a duplicate manifest row.
+- **publish version** — `POST /api/roosts/{roostId}/versions` with the oci-shaped version body and a `description` set to the git tag. idempotency key is `<run_id>-publish` so re-running the job replays the same publish instead of creating a duplicate version row. the response returns `versionId` + `versionNumber`; the server mints the integer atomically.
 - **trigger deploy** — `POST /api/roosts/{roostId}/deploy` with `strategy: "canary-then-fleet"`. returns a `rolloutId` we poll in the next step.
 - **wait for rollout** — polls `GET /api/roosts/{roostId}/deployments/{rolloutId}` every 10s for up to 30 minutes. exits 0 on terminal state, 1 on timeout.
 - **close check run** — patches the github check to `completed`/`success` or `completed`/`failure` based on whether the rollout finished cleanly. the last `exit 1` ensures the job itself also fails on rollout failure so downstream workflows (release-please, slack notifier, etc.) see red.
 
 ## rerun safety
 
-every mutating call carries an `Idempotency-Key` derived from `${{ github.run_id }}`. re-running a failed job (e.g. transient 5xx during upload) replays the exact same requests against the 24h idempotency cache — no duplicate manifests, no second rollout. publishing is also cas-protected: if someone else published between your chunk step and your publish step, you'll get a `412 precondition_failed` and should fail the ci run to let the operator investigate.
+every mutating call carries an `Idempotency-Key` derived from `${{ github.run_id }}`. re-running a failed job (e.g. transient 5xx during upload) replays the exact same requests against the 24h idempotency cache — no duplicate versions, no second rollout. publishing is also cas-protected: if someone else published between your chunk step and your publish step, you'll get a `412 precondition_failed` (code `version_stale`) and should fail the ci run to let the operator investigate.

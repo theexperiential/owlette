@@ -198,3 +198,131 @@ class TestErrorHandling:
 
         # Should not raise
         firebase_client._update_presence(True)
+
+
+# ---------------------------------------------------------------------------
+# TestEnsureDisplayModesCatalogue — A3.2 cache-by-signature guard
+# ---------------------------------------------------------------------------
+class TestEnsureDisplayModesCatalogue:
+    """`_ensure_display_modes_catalogue` uploads on first call and skips
+    subsequent calls with the same signatureHash. The dashboard dispatches an
+    `enumerate_display_modes` command every time an operator opens the editor;
+    the cache-by-hash guard keeps that cheap when the topology is stable.
+    """
+
+    def _canned_result(self, signature_hash: str = 'hash-abc-123'):
+        return {
+            'ok': True,
+            'schemaVersion': 1,
+            'signatureHash': signature_hash,
+            'capturedAt': 1_700_000_000,
+            'byEdidHash': {
+                'edid-1': {
+                    'modes': [
+                        {'w': 3840, 'h': 2160, 'hz': 60},
+                        {'w': 1920, 'h': 1080, 'hz': 60},
+                    ],
+                    'dpiScales': [100, 125, 150, 175, 200],
+                },
+            },
+            'enumerationFailed': False,
+        }
+
+    def _patch_enumerate(self, monkeypatch, result):
+        import firebase_client as fc
+        monkeypatch.setattr(
+            fc.display_manager,
+            'enumerate_modes_via_user_session',
+            lambda: result,
+        )
+
+    def test_uploads_on_first_call(self, firebase_client, mock_rest_client, monkeypatch):
+        firebase_client.connection_manager._state = ConnectionState.CONNECTED
+        self._patch_enumerate(monkeypatch, self._canned_result())
+        result = firebase_client._ensure_display_modes_catalogue()
+        assert result['ok'] is True
+        assert result['uploaded'] is True
+        assert result['monitorCount'] == 1
+        assert result['modeCount'] == 2
+        # Cache is now populated.
+        assert firebase_client._cached_display_modes_hash == 'hash-abc-123'
+
+    def test_second_call_with_unchanged_hardware_is_noop(
+        self, firebase_client, mock_rest_client, monkeypatch,
+    ):
+        firebase_client.connection_manager._state = ConnectionState.CONNECTED
+        self._patch_enumerate(monkeypatch, self._canned_result())
+        # First call — uploads.
+        firebase_client._ensure_display_modes_catalogue()
+        # Reset the mock so we can assert `set()` is NOT called on the second call.
+        mock_rest_client.reset_mock()
+        second = firebase_client._ensure_display_modes_catalogue()
+        assert second['ok'] is True
+        assert second['uploaded'] is False
+        assert second['reason'] == 'unchanged'
+        # No Firestore writes went out for the redundant dispatch.
+        mock_rest_client.collection.assert_not_called()
+
+    def test_force_bypasses_cache(self, firebase_client, mock_rest_client, monkeypatch):
+        firebase_client.connection_manager._state = ConnectionState.CONNECTED
+        self._patch_enumerate(monkeypatch, self._canned_result())
+        firebase_client._ensure_display_modes_catalogue()
+        mock_rest_client.reset_mock()
+        forced = firebase_client._ensure_display_modes_catalogue(force=True)
+        assert forced['uploaded'] is True
+        # set() was invoked on the second call despite the hash being unchanged.
+        mock_rest_client.collection.assert_called()
+
+    def test_changed_hash_uploads_again(
+        self, firebase_client, mock_rest_client, monkeypatch,
+    ):
+        firebase_client.connection_manager._state = ConnectionState.CONNECTED
+        # First call with hash A.
+        self._patch_enumerate(monkeypatch, self._canned_result('hash-A'))
+        firebase_client._ensure_display_modes_catalogue()
+        mock_rest_client.reset_mock()
+        # Topology changes — hash B.
+        self._patch_enumerate(monkeypatch, self._canned_result('hash-B'))
+        second = firebase_client._ensure_display_modes_catalogue()
+        assert second['uploaded'] is True
+        assert firebase_client._cached_display_modes_hash == 'hash-B'
+        mock_rest_client.collection.assert_called()
+
+    def test_enumeration_failed_skips_upload(
+        self, firebase_client, mock_rest_client, monkeypatch,
+    ):
+        firebase_client.connection_manager._state = ConnectionState.CONNECTED
+        result = self._canned_result()
+        result['enumerationFailed'] = True
+        result['byEdidHash'] = {}
+        self._patch_enumerate(monkeypatch, result)
+        out = firebase_client._ensure_display_modes_catalogue()
+        assert out['ok'] is True
+        assert out['uploaded'] is False
+        assert out['reason'] == 'enumeration_failed'
+        mock_rest_client.collection.assert_not_called()
+
+    def test_helper_failure_passes_through(
+        self, firebase_client, mock_rest_client, monkeypatch,
+    ):
+        firebase_client.connection_manager._state = ConnectionState.CONNECTED
+        self._patch_enumerate(monkeypatch, {
+            'ok': False,
+            'error': 'helper spawn failed',
+            'code': 'helper_failed',
+        })
+        out = firebase_client._ensure_display_modes_catalogue()
+        assert out['ok'] is False
+        assert out['code'] == 'helper_failed'
+        mock_rest_client.collection.assert_not_called()
+
+    def test_skipped_when_disconnected(
+        self, firebase_client, mock_rest_client, monkeypatch,
+    ):
+        firebase_client.connection_manager._state = ConnectionState.DISCONNECTED
+        self._patch_enumerate(monkeypatch, self._canned_result())
+        out = firebase_client._ensure_display_modes_catalogue()
+        assert out['ok'] is True
+        assert out['uploaded'] is False
+        assert out['reason'] == 'offline'
+        mock_rest_client.collection.assert_not_called()

@@ -65,6 +65,9 @@ class DisplayErrorCode(str, enum.Enum):
     # Input / protocol
     BAD_REQUEST = 'bad_request'
     INVALID_INPUT = 'invalid_input'
+    ZERO_PRIMARY = 'zero_primary'
+    MULTIPLE_PRIMARY = 'multiple_primary'
+    INVALID_ROTATION = 'invalid_rotation'
 
     # CCD query / validate / apply
     QUERY_FAILED = 'query_failed'
@@ -76,6 +79,7 @@ class DisplayErrorCode(str, enum.Enum):
     APPLY_FAILED = 'apply_failed'
     APPLY_TIMEOUT = 'apply_timeout'
     POST_VERIFY_QUERY_FAILED = 'post_verify_query_failed'
+    UNSUPPORTED_MODE = 'unsupported_mode'
 
     # Sentinel I/O
     SENTINEL_WRITE_FAILED = 'sentinel_write_failed'
@@ -154,6 +158,35 @@ _CONNECTION_TYPE_MAP = {
 ERROR_SUCCESS = 0
 ERROR_INSUFFICIENT_BUFFER = 122
 ERROR_GEN_FAILURE = 31  # SetDisplayConfig may return this during GPU TDR
+ERROR_BAD_CONFIGURATION = 1610  # SetDisplayConfig returns this when the driver
+                                 # rejects the proposed config — typically a
+                                 # resolution / refresh combo the panel can't
+                                 # do. Combined with ERROR_GEN_FAILURE (after
+                                 # TDR retry) it's the strongest signal the
+                                 # operator picked an unsupported mode.
+
+# Heuristic: CCD return codes that map to "unsupported display mode" rather
+# than a generic config rejection. Keyed on what Windows actually returns
+# from SDC_VALIDATE / SDC_APPLY when the panel can't do the requested mode.
+# Other rcs (e.g. ERROR_INVALID_PARAMETER=87) stay under VALIDATE_REJECTED /
+# APPLY_FAILED because they're ambiguous — 87 can mean bad struct as easily
+# as bad mode.
+_UNSUPPORTED_MODE_RCS = frozenset({ERROR_GEN_FAILURE, ERROR_BAD_CONFIGURATION})
+
+
+def _ccd_failure_code(rc: int, stage: str):
+    """Translate a SetDisplayConfig rc into a DisplayErrorCode.
+
+    ``stage`` is ``'validate'`` or ``'apply'`` — determines the fallback
+    (generic) code when the rc isn't in `_UNSUPPORTED_MODE_RCS`. Extracted as
+    a pure helper so the mapping is testable in isolation without having to
+    construct real `DISPLAYCONFIG_PATH_INFO` ctypes arrays.
+    """
+    if rc in _UNSUPPORTED_MODE_RCS:
+        return DisplayErrorCode.UNSUPPORTED_MODE
+    if stage == 'validate':
+        return DisplayErrorCode.VALIDATE_REJECTED
+    return DisplayErrorCode.APPLY_FAILED
 
 # SetDisplayConfig flags
 SDC_TOPOLOGY_INTERNAL = 0x00000001
@@ -187,6 +220,16 @@ _current_apply_id = None  # UUID of the in-flight apply; ack must match it.
                           # Prevents stale acks for a prior apply from cancelling
                           # the watchdog of a newer apply.
 _last_apply_time = 0.0
+_last_apply_finished_at = 0.0  # [B2.1] wall-clock seconds at the moment an
+                                # apply success path completed. Read by
+                                # owlette_service._emit_display_change_events
+                                # (B2.2): events fired within 90s of this
+                                # timestamp get stamped `suppressAlert: True`
+                                # + `correlatedApplyId`, which the routing
+                                # endpoint then uses to skip email delivery
+                                # while still firing the webhook for audit.
+                                # 0.0 = no apply has succeeded since service
+                                # startup (suppression window inactive).
 _APPLY_COOLDOWN_SECONDS = 10  # min gap between applies to prevent rapid-fire
 _SENTINEL_PATH = None  # lazy-init via shared_utils.get_data_path('.display_revert_pending')
 # `_sentinel_lock` is an IN-PROCESS lock; it serialises sentinel I/O between
@@ -433,6 +476,109 @@ class _DISPLAYCONFIG_GET_DPI_SCALE(ctypes.Structure):
     ]
 
 
+class DISPLAYCONFIG_SOURCE_DEVICE_NAME(ctypes.Structure):
+    """Return shape of DisplayConfigGetDeviceInfo(GET_SOURCE_NAME).
+
+    ``viewGdiDeviceName`` is the ``\\\\.\\DISPLAYn`` device-name string that
+    ``EnumDisplaySettingsExW`` accepts as ``lpszDeviceName``. Mirrors
+    ``DISPLAYCONFIG_TARGET_DEVICE_NAME`` in structure — both are (header +
+    fixed-width WCHAR payload). Win32 size: 20 + 32*2 = 84 bytes.
+    """
+    _fields_ = [
+        ('header', DISPLAYCONFIG_DEVICE_INFO_HEADER),
+        ('viewGdiDeviceName', wt.WCHAR * 32),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# DEVMODEW — required by EnumDisplaySettingsExW / ChangeDisplaySettingsEx.
+#
+# The full Windows DEVMODEW struct is a tagged union whose layout depends on
+# whether the caller is a printer or display driver; in the display path the
+# second form (POINTL + two DWORDs) is active. We mirror the printer union
+# exclusively for ABI padding — the display fields are the only ones we read.
+#
+# Canonical x64 size is 220 bytes; the `_EXPECTED_SIZES` block below asserts
+# this at import time so an ABI drift (e.g. new Windows SDK ships a longer
+# DEVMODEW) fails loudly rather than silently corrupting calls.
+
+
+class _DEVMODEW_DISPLAY(ctypes.Structure):
+    """Display-context arm of the first DEVMODEW union."""
+    _fields_ = [
+        ('dmPosition', POINTL),
+        ('dmDisplayOrientation', wt.DWORD),
+        ('dmDisplayFixedOutput', wt.DWORD),
+    ]
+
+
+class _DEVMODEW_PRINTER(ctypes.Structure):
+    """Printer-context arm — present only so the union width matches the ABI."""
+    _fields_ = [
+        ('dmOrientation', ctypes.c_short),
+        ('dmPaperSize', ctypes.c_short),
+        ('dmPaperLength', ctypes.c_short),
+        ('dmPaperWidth', ctypes.c_short),
+        ('dmScale', ctypes.c_short),
+        ('dmCopies', ctypes.c_short),
+        ('dmDefaultSource', ctypes.c_short),
+        ('dmPrintQuality', ctypes.c_short),
+    ]
+
+
+class _DEVMODEW_UNION1(ctypes.Union):
+    _fields_ = [
+        ('printer', _DEVMODEW_PRINTER),
+        ('display', _DEVMODEW_DISPLAY),
+    ]
+
+
+class _DEVMODEW_UNION2(ctypes.Union):
+    _fields_ = [
+        ('dmDisplayFlags', wt.DWORD),
+        ('dmNup', wt.DWORD),
+    ]
+
+
+# dmDisplayFlags bit indicating an interlaced mode. Used by
+# `_enum_modes_for_monitor` to drop legacy interlaced entries from the
+# supported-modes catalogue — operators never want to apply these on a
+# modern panel.
+DM_INTERLACED = 0x00000002
+
+
+class DEVMODEW(ctypes.Structure):
+    _fields_ = [
+        ('dmDeviceName', wt.WCHAR * 32),
+        ('dmSpecVersion', wt.WORD),
+        ('dmDriverVersion', wt.WORD),
+        ('dmSize', wt.WORD),
+        ('dmDriverExtra', wt.WORD),
+        ('dmFields', wt.DWORD),
+        ('_u1', _DEVMODEW_UNION1),
+        ('dmColor', ctypes.c_short),
+        ('dmDuplex', ctypes.c_short),
+        ('dmYResolution', ctypes.c_short),
+        ('dmTTOption', ctypes.c_short),
+        ('dmCollate', ctypes.c_short),
+        ('dmFormName', wt.WCHAR * 32),
+        ('dmLogPixels', wt.WORD),
+        ('dmBitsPerPel', wt.DWORD),
+        ('dmPelsWidth', wt.DWORD),
+        ('dmPelsHeight', wt.DWORD),
+        ('_u2', _DEVMODEW_UNION2),
+        ('dmDisplayFrequency', wt.DWORD),
+        ('dmICMMethod', wt.DWORD),
+        ('dmICMIntent', wt.DWORD),
+        ('dmMediaType', wt.DWORD),
+        ('dmDitherType', wt.DWORD),
+        ('dmReserved1', wt.DWORD),
+        ('dmReserved2', wt.DWORD),
+        ('dmPanningWidth', wt.DWORD),
+        ('dmPanningHeight', wt.DWORD),
+    ]
+
+
 # DPI scale percentages exposed by Windows settings (maps relative index → %).
 _DPI_SCALE_TABLE = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500]
 
@@ -455,6 +601,8 @@ _EXPECTED_SIZES = {
     'DISPLAYCONFIG_MODE_INFO': (DISPLAYCONFIG_MODE_INFO, 64),
     'DISPLAYCONFIG_DEVICE_INFO_HEADER': (DISPLAYCONFIG_DEVICE_INFO_HEADER, 20),
     'DISPLAYCONFIG_TARGET_DEVICE_NAME': (DISPLAYCONFIG_TARGET_DEVICE_NAME, 420),
+    'DISPLAYCONFIG_SOURCE_DEVICE_NAME': (DISPLAYCONFIG_SOURCE_DEVICE_NAME, 84),
+    'DEVMODEW': (DEVMODEW, 220),
 }
 
 for _name, (_cls, _expected) in _EXPECTED_SIZES.items():
@@ -497,6 +645,19 @@ _SetDisplayConfig.argtypes = [
     wt.UINT,
 ]
 _SetDisplayConfig.restype = wt.LONG
+
+# EnumDisplaySettingsExW lets us walk every supported display mode for a given
+# ``\\\\.\\DISPLAYn`` device name. The display name comes from a SOURCE-name
+# lookup (see _get_source_device_name below), not from a hard-coded enum — CCD
+# is the authoritative source of which sources are currently live.
+_EnumDisplaySettingsExW = _user32.EnumDisplaySettingsExW
+_EnumDisplaySettingsExW.argtypes = [
+    wt.LPCWSTR,
+    wt.DWORD,
+    ctypes.POINTER(DEVMODEW),
+    wt.DWORD,
+]
+_EnumDisplaySettingsExW.restype = wt.BOOL
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +708,105 @@ def _get_target_device_name(adapter_id: LUID, target_id: int):
     if rc != ERROR_SUCCESS:
         return None
     return info
+
+
+def _get_source_device_name(adapter_id: LUID, source_id: int):
+    """Resolve ``\\\\.\\DISPLAYn`` for a CCD source via DisplayConfigGetDeviceInfo.
+
+    Returns the device-name string on success, ``None`` if the query fails or
+    the driver returns an empty name. Mirrors ``_get_target_device_name`` —
+    same header boilerplate, different info-type + output struct. The returned
+    string is the exact ``lpszDeviceName`` argument EnumDisplaySettingsExW
+    expects for walking that source's supported display modes.
+    """
+    info = DISPLAYCONFIG_SOURCE_DEVICE_NAME()
+    info.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME
+    info.header.size = ctypes.sizeof(DISPLAYCONFIG_SOURCE_DEVICE_NAME)
+    info.header.adapterId = adapter_id
+    info.header.id = source_id
+    rc = _DisplayConfigGetDeviceInfo(
+        ctypes.cast(ctypes.byref(info), ctypes.POINTER(DISPLAYCONFIG_DEVICE_INFO_HEADER))
+    )
+    if rc != ERROR_SUCCESS:
+        return None
+    name = info.viewGdiDeviceName
+    return name if name else None
+
+
+# Filter thresholds for `_enum_modes_for_monitor`. See wave-a3.1 Decision 2.
+# Enum loops frequently return 50+ modes on high-refresh panels; dropping
+# interlaced / non-32bpp / sub-24Hz entries keeps the dashboard dropdown
+# focused on the options an operator actually wants to apply.
+_MODE_MIN_REFRESH_HZ = 24
+_MODE_REQUIRED_BPP = 32
+
+
+def _enum_modes_for_monitor(device_name: str) -> list:
+    """Walk every supported display mode for a CCD source via EnumDisplaySettingsExW.
+
+    ``device_name`` is a ``\\\\.\\DISPLAYn`` string from ``_get_source_device_name``.
+    Iterates ``iModeNum`` from 0 until the Win32 call returns FALSE (end of
+    enumeration). Each returned DEVMODEW is filtered against Decision 2:
+
+      * drop interlaced modes (``dmDisplayFlags & DM_INTERLACED``)
+      * drop non-32-bits-per-pixel
+      * drop refresh rates below 24 Hz
+
+    Surviving entries are deduped on the ``(w, h, hz)`` tuple and sorted
+    descending by width, then height, then refresh. The whole enumeration
+    runs inside ``_with_timeout`` so a stuck driver can't hang the helper
+    process — on timeout we return an empty list and let the catalogue
+    builder emit ``modes: []`` for this edidHash (Risk 2 in the plan).
+
+    Returns a list of ``{'w': int, 'h': int, 'hz': int}`` dicts.
+    """
+    if not device_name:
+        return []
+
+    def _walk():
+        seen = set()
+        out = []
+        mode_num = 0
+        # Guard against a hypothetical driver that returns TRUE forever —
+        # modern GPUs expose at most a few hundred unique modes, so a hard
+        # ceiling of 4096 iterations is well outside any legitimate case
+        # while still bounding the loop if the watchdog ever misses.
+        while mode_num < 4096:
+            dev = DEVMODEW()
+            dev.dmSize = ctypes.sizeof(DEVMODEW)
+            ok = _EnumDisplaySettingsExW(device_name, mode_num, ctypes.byref(dev), 0)
+            if not ok:
+                break
+            mode_num += 1
+            if dev._u2.dmDisplayFlags & DM_INTERLACED:
+                continue
+            if int(dev.dmBitsPerPel) != _MODE_REQUIRED_BPP:
+                continue
+            hz = int(dev.dmDisplayFrequency)
+            if hz < _MODE_MIN_REFRESH_HZ:
+                continue
+            w = int(dev.dmPelsWidth)
+            h = int(dev.dmPelsHeight)
+            key = (w, h, hz)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({'w': w, 'h': h, 'hz': hz})
+        out.sort(key=lambda m: (m['w'], m['h'], m['hz']), reverse=True)
+        return out
+
+    try:
+        return _with_timeout(_walk, _CCD_ENUMERATE_TIMEOUT)
+    except FuturesTimeoutError:
+        logger.warning(
+            'EnumDisplaySettingsExW enumeration timed out for %s', device_name
+        )
+        return []
+    except Exception as e:  # pragma: no cover — defensive
+        logger.warning(
+            'EnumDisplaySettingsExW enumeration failed for %s: %s', device_name, e
+        )
+        return []
 
 
 def _get_dpi_scale_percent(adapter_id: LUID, source_id: int) -> int:
@@ -654,6 +914,12 @@ _ENUM_HELPER_TIMEOUT = 4.0  # seconds; real round-trip is ~1-2s but CreateProces
                             # watchdog in owlette_service._check_display_topology so
                             # we surface a specific error rather than letting the
                             # outer ThreadPool cancel silently.
+
+_ENUM_MODES_HELPER_TIMEOUT = 6.0  # seconds; modes enumeration does N monitors × K
+                                   # modes each, so ~50% more headroom than the
+                                   # single-walk enumerate helper. EnumDisplaySettings
+                                   # is cheap per call but adds up on fleets with 4+
+                                   # monitors.
 
 _APPLY_HELPER_TIMEOUT = 20.0  # seconds; covers spawn + query + validate + SDC_APPLY
                               # (with possible TDR retry) + post-verify. Must exceed
@@ -918,6 +1184,71 @@ def _enumerate_monitors_via_user_session() -> list:
             pass
 
 
+def enumerate_modes_via_user_session() -> dict:
+    """Spawn a helper in the active console user's session to build the
+    supported-display-modes catalogue. Never raises — returns a plain dict so
+    the caller (service command dispatch, wave A3.2 Firestore writer) can
+    surface the result directly to the dashboard without additional try/except.
+
+    Shape on success::
+
+        {'ok': True, 'schemaVersion', 'signatureHash', 'capturedAt',
+         'byEdidHash', 'enumerationFailed'}
+
+    Shape on failure::
+
+        {'ok': False, 'error': '...', 'code': DisplayErrorCode.HELPER_FAILED}
+
+    ``HELPER_FAILED`` covers spawn failure, timeout, and any ``ok: False``
+    payload emitted by the helper itself. An ``enumerationFailed: True`` flag
+    inside a successful response signals a transient CCD stall inside the
+    helper (A3.2 will treat that as "skip upload, try next cycle") — distinct
+    from a hard helper failure.
+    """
+    tmp_dir = tempfile.gettempdir()
+    out_path = os.path.join(tmp_dir, f'owlette_display_modes_{uuid.uuid4().hex}.json')
+    try:
+        try:
+            payload = _spawn_user_session_helper(
+                helper_args=['--enumerate-modes-json', out_path],
+                out_path=out_path,
+                timeout=_ENUM_MODES_HELPER_TIMEOUT,
+            )
+        except Exception as e:
+            logger.warning(
+                'enumerate_modes_via_user_session: helper spawn failed: %s', e
+            )
+            return {
+                'ok': False,
+                'error': f'{type(e).__name__}: {e}',
+                'code': DisplayErrorCode.HELPER_FAILED,
+            }
+        if payload.get('ok') is not True:
+            err = payload.get('error', 'unknown error')
+            logger.warning(
+                'enumerate_modes_via_user_session: helper reported failure: %s', err
+            )
+            return {
+                'ok': False,
+                'error': str(err),
+                'code': DisplayErrorCode.HELPER_FAILED,
+            }
+        return {
+            'ok': True,
+            'schemaVersion': payload.get('schemaVersion'),
+            'signatureHash': payload.get('signatureHash'),
+            'capturedAt': payload.get('capturedAt'),
+            'byEdidHash': payload.get('byEdidHash', {}),
+            'enumerationFailed': bool(payload.get('enumerationFailed', False)),
+        }
+    finally:
+        try:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+        except OSError:
+            pass
+
+
 def _clone_user_token_from_explorer(session_id: int):
     """Fallback when WTSQueryUserToken fails. Duplicates explorer.exe's primary
     token and builds an environment block. Returns ``(token, env)`` or
@@ -1137,6 +1468,91 @@ def build_display_profile() -> dict:
     }
     profile['signatureHash'] = display_signature(profile)
     return profile
+
+
+def _build_display_modes_catalogue() -> dict:
+    """Build a per-edidHash catalogue of supported display modes for every
+    currently-active monitor, suitable for the dashboard editor's resolution
+    + refresh dropdowns.
+
+    The catalogue is signature-hashed against the current display profile so
+    A3.2's Firestore writer can skip-upload when the topology hasn't changed
+    since the last catalogue was written.
+
+    Payload shape::
+
+        {
+          'schemaVersion': 1,
+          'signatureHash': '<32-char md5>',
+          'capturedAt': <unix seconds>,
+          'byEdidHash': {
+            '<edid>': {'modes': [{'w', 'h', 'hz'}, ...], 'dpiScales': [...]},
+            ...
+          },
+          'enumerationFailed': <optional: bool>,
+        }
+
+    On enumeration failure the catalogue is emitted with empty ``byEdidHash``
+    and ``enumerationFailed: True`` — matches ``build_display_profile``'s
+    never-raise contract so the A3.2 writer can distinguish "no topology"
+    from "upload failed".
+    """
+    profile = build_display_profile()
+    captured_at = int(time.time())
+    base = {
+        'schemaVersion': SCHEMA_VERSION,
+        'signatureHash': profile['signatureHash'],
+        'capturedAt': captured_at,
+        'byEdidHash': {},
+    }
+    if profile.get('enumerationFailed'):
+        base['enumerationFailed'] = True
+        return base
+
+    # Walk CCD paths to capture (sourceAdapter, sourceId) per active target so
+    # we can resolve `\\.\DISPLAYn` strings to feed EnumDisplaySettingsExW.
+    # The edidHash is re-derived from the same target-device-name lookup
+    # `_enumerate_monitors_ccd` uses so the two mappings match exactly.
+    paths_result = _query_active_paths_safe()
+    if paths_result is None:
+        base['enumerationFailed'] = True
+        return base
+    paths, _unused_modes = paths_result
+
+    by_edid = base['byEdidHash']
+    for path in paths:
+        if not (path.flags & DISPLAYCONFIG_PATH_ACTIVE):
+            continue
+        source = path.sourceInfo
+        target = path.targetInfo
+        device_info = _get_target_device_name(target.adapterId, target.id)
+        if device_info is None:
+            continue
+
+        friendly_name = (device_info.monitorFriendlyDeviceName or '').strip()
+        if device_info.flags.bits.edidIdsValid:
+            manufacturer = _decode_edid_manufacturer(device_info.edidManufactureId)
+            product_code = int(device_info.edidProductCodeId)
+        else:
+            manufacturer = ''
+            product_code = 0
+        serial = _serial_from_device_path(device_info.monitorDevicePath or '')
+        edid_hash = _edid_hash(manufacturer, product_code, serial, friendly_name)
+
+        # Clone / mirror topologies can point two active paths at the same
+        # physical panel — first-entry-wins avoids re-enumerating the same
+        # modes twice and emitting a surprising duplicate key.
+        if edid_hash in by_edid:
+            continue
+
+        gdi_name = _get_source_device_name(source.adapterId, source.id)
+        modes = _enum_modes_for_monitor(gdi_name) if gdi_name else []
+        by_edid[edid_hash] = {
+            'modes': modes,
+            'dpiScales': list(_DPI_SCALE_TABLE),
+        }
+
+    return base
 
 
 # Fields compared between a live monitor and its assigned counterpart for
@@ -1452,24 +1868,71 @@ def _count_active_paths(paths) -> int:
     return sum(1 for p in paths if p.flags & DISPLAYCONFIG_PATH_ACTIVE)
 
 
+_CANONICAL_ROTATIONS = (0, 90, 180, 270)
+
+
 def _validate_desired_layout(desired_layout):
-    """Return (ok, error_message). ``desired_layout`` must be a dict with a
-    non-empty ``monitors`` list; each monitor needs ``edidHash`` and ``position``.
+    """Return ``(ok, error_message, code)``. ``desired_layout`` must be a dict
+    with a non-empty ``monitors`` list; each monitor needs ``edidHash`` and
+    ``position``, the set must contain exactly one ``primary``, and every
+    ``rotation`` (if present) must be canonical (0 / 90 / 180 / 270).
+
+    The specific ``code`` lets the dashboard surface a targeted error
+    message — e.g. "no primary display selected" vs. the generic "invalid
+    input" — without re-parsing the error string.
     """
     if not isinstance(desired_layout, dict):
-        return False, 'desired_layout must be a dict'
+        return False, 'desired_layout must be a dict', DisplayErrorCode.INVALID_INPUT
     monitors = desired_layout.get('monitors')
     if not isinstance(monitors, list) or not monitors:
-        return False, 'desired_layout.monitors must be a non-empty list'
+        return (
+            False,
+            'desired_layout.monitors must be a non-empty list',
+            DisplayErrorCode.INVALID_INPUT,
+        )
+    primary_count = 0
     for i, m in enumerate(monitors):
         if not isinstance(m, dict):
-            return False, f'monitors[{i}] must be a dict'
+            return False, f'monitors[{i}] must be a dict', DisplayErrorCode.INVALID_INPUT
         if not m.get('edidHash'):
-            return False, f'monitors[{i}] missing edidHash'
+            return (
+                False,
+                f'monitors[{i}] missing edidHash',
+                DisplayErrorCode.INVALID_INPUT,
+            )
         pos = m.get('position')
         if not isinstance(pos, dict) or 'x' not in pos or 'y' not in pos:
-            return False, f'monitors[{i}] missing position.x/y'
-    return True, None
+            return (
+                False,
+                f'monitors[{i}] missing position.x/y',
+                DisplayErrorCode.INVALID_INPUT,
+            )
+        # Rotation is optional (legacy captures may omit it), but when
+        # present it must land on a 90° tick — Windows CCD rejects anything
+        # else at SDC_VALIDATE time with a generic rc, so catch it earlier
+        # with a specific code.
+        rot = m.get('rotation')
+        if rot is not None and rot not in _CANONICAL_ROTATIONS:
+            return (
+                False,
+                f'monitors[{i}] rotation {rot!r} not in {_CANONICAL_ROTATIONS}',
+                DisplayErrorCode.INVALID_ROTATION,
+            )
+        if m.get('primary') is True:
+            primary_count += 1
+    if primary_count == 0:
+        return (
+            False,
+            'no primary monitor — exactly one must be marked primary',
+            DisplayErrorCode.ZERO_PRIMARY,
+        )
+    if primary_count > 1:
+        return (
+            False,
+            f'{primary_count} monitors marked primary — only one may be',
+            DisplayErrorCode.MULTIPLE_PRIMARY,
+        )
+    return True, None, None
 
 
 def _apply_desired_to_paths(paths, modes, desired_by_hash, hash_by_path_idx):
@@ -1702,6 +2165,13 @@ def _emit_success_and_build_response(
     docs aren't subscribed to; the server-authoritative deadline is only
     consumed via audit-event correlation. Still returned for future-proofing.
     """
+    # [B2.1] Stamp the wall-clock completion time so the operator-caused
+    # drift events that always follow a successful apply (the OS settles +
+    # the next topology check observes the new state) get correctly
+    # correlated to the apply that produced them. Window read by
+    # owlette_service in B2.2.
+    global _last_apply_finished_at
+    _last_apply_finished_at = time.time()
     revert_deadline_ms = int((time.time() + ack_timeout) * 1000)
     _emit_audit(
         firebase_client,
@@ -1909,7 +2379,7 @@ def _apply_core(
             return {
                 'ok': False,
                 'error': f'SDC_VALIDATE rejected config (rc={rc})',
-                'code': DisplayErrorCode.VALIDATE_REJECTED,
+                'code': _ccd_failure_code(rc, 'validate'),
                 'rc': rc,
             }
 
@@ -1976,7 +2446,7 @@ def _apply_core(
             return {
                 'ok': False,
                 'error': f'SDC_APPLY failed (rc={rc})',
-                'code': DisplayErrorCode.APPLY_FAILED,
+                'code': _ccd_failure_code(rc, 'apply'),
                 'rc': rc,
                 'sentinel_written': sentinel_written,
             }
@@ -2047,18 +2517,25 @@ def apply_topology(
 
     monitor_count = len(desired_layout.get('monitors', [])) if isinstance(desired_layout, dict) else 0
 
-    def _emit_failure(error_str: str) -> None:
+    def _emit_failure(error_str: str, code: Optional[str] = None) -> None:
+        payload = {
+            'eventType': 'display_apply_failed',
+            'severity': 'warning',
+            'error': error_str,
+            'monitorCount': monitor_count,
+        }
+        # Surface the specific failure class (e.g. unsupported_mode,
+        # validate_rejected, helper_failed) into the audit payload so the
+        # dashboard + downstream alert routing can distinguish modes
+        # without parsing error strings.
+        if code:
+            payload['code'] = str(code)
         _emit_audit(
             firebase_client,
             'display_apply_failed',
             'warning',
             error_str,
-            {
-                'eventType': 'display_apply_failed',
-                'severity': 'warning',
-                'error': error_str,
-                'monitorCount': monitor_count,
-            },
+            payload,
         )
 
     # Kill switch: when the displays feature is explicitly disabled, reject
@@ -2124,11 +2601,16 @@ def apply_topology(
         # Validate input shape only. Topology-dependent validation (EDID
         # coverage, zero-active-paths) runs inside the helper where the live
         # query actually succeeds — the service in Session 0 can't query CCD.
-        ok, err = _validate_desired_layout(desired_layout)
+        ok, err, validation_code = _validate_desired_layout(desired_layout)
         if not ok:
             error_str = f'invalid input: {err}'
-            _emit_failure(error_str)
-            return {'success': False, 'error': error_str}
+            resolved_code = validation_code or DisplayErrorCode.INVALID_INPUT
+            _emit_failure(error_str, resolved_code)
+            return {
+                'success': False,
+                'error': error_str,
+                'code': resolved_code,
+            }
 
         sentinel_path = _get_sentinel_path()
 
@@ -2165,8 +2647,13 @@ def apply_topology(
                             'defensive revert failed (%s); sentinel preserved for startup recovery',
                             rev_result.get('error', 'unknown'),
                         )
-                _emit_failure(error_str)
-                return {'success': False, 'error': error_str}
+                helper_code = helper_result.get('code')
+                _emit_failure(error_str, helper_code)
+                return {
+                    'success': False,
+                    'error': error_str,
+                    'code': helper_code,
+                }
 
             # Success — arm the watchdog. Revert goes through a fresh helper
             # reading from the sentinel file (S0 service can't call CCD itself).
@@ -2214,7 +2701,7 @@ def apply_topology(
                             )
                 except Exception as rev_err:
                     logger.error('apply_topology S1: defensive revert raised: %s', rev_err)
-            _emit_failure(error_str)
+            _emit_failure(error_str, core_result.get('code'))
             return {'success': False, 'error': error_str, 'code': core_result.get('code')}
 
         changes = core_result.get('changes', [])
@@ -2391,6 +2878,11 @@ def apply_revert_from_sentinel() -> dict:
 #       → helper mode: enumerate monitors, write JSON to <out_path>, exit.
 #         Invoked by the service (Session 0) via CreateProcessAsUser.
 #
+#   python display_manager.py --enumerate-modes-json <out_path>
+#       → helper mode: build the supported-modes catalogue for every active
+#         monitor (EnumDisplaySettingsExW per source), write JSON to <out_path>.
+#         Feeds the dashboard's resolution + refresh dropdowns (Wave A3).
+#
 #   --stderr-log <path> may be appended to any helper-mode invocation; when
 #   present the helper redirects sys.stderr to that path so the spawner can
 #   surface tracebacks in the service log.
@@ -2422,6 +2914,34 @@ def _helper_enumerate_to_json(out_path: str) -> int:
     try:
         monitors = _enumerate_monitors_ccd()
         payload = {'ok': True, 'monitors': monitors}
+        exit_code = 0
+    except Exception as e:
+        payload = {'ok': False, 'error': '{0}: {1}'.format(type(e).__name__, e)}
+        exit_code = 1
+    try:
+        _atomic_write_json(out_path, payload)
+    except OSError as e:
+        sys.stderr.write('helper: failed to write {0}: {1}\n'.format(out_path, e))
+        return 2
+    return exit_code
+
+
+def _helper_enumerate_modes_to_json(out_path: str) -> int:
+    """Build the per-edidHash display modes catalogue and serialise to JSON.
+    Returns a shell exit code (0 on success, 1 on failure, 2 on write failure)
+    — same contract as ``_helper_enumerate_to_json``.
+
+    Success shape: ``{'ok': True, 'schemaVersion', 'signatureHash',
+    'capturedAt', 'byEdidHash', ...}`` (spread from
+    ``_build_display_modes_catalogue``). Failure shape:
+    ``{'ok': False, 'error': '...'}``. An ``enumerationFailed: True`` flag in
+    the success payload (with empty ``byEdidHash``) signals a transient CCD
+    stall — distinct from a hard helper failure that returns ``ok: False``.
+    """
+    try:
+        catalogue = _build_display_modes_catalogue()
+        payload = {'ok': True}
+        payload.update(catalogue)
         exit_code = 0
     except Exception as e:
         payload = {'ok': False, 'error': '{0}: {1}'.format(type(e).__name__, e)}
@@ -2556,6 +3076,8 @@ def _main():
     # Helper modes — invoked by the service from Session 0 via CreateProcessAsUser.
     if len(argv) >= 3 and argv[1] == '--enumerate-json':
         sys.exit(_helper_enumerate_to_json(argv[2]))
+    if len(argv) >= 3 and argv[1] == '--enumerate-modes-json':
+        sys.exit(_helper_enumerate_modes_to_json(argv[2]))
     if len(argv) >= 4 and argv[1] == '--apply-json':
         sys.exit(_helper_apply_to_json(argv[2], argv[3]))
     if len(argv) >= 4 and argv[1] == '--revert-json':

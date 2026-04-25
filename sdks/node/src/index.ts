@@ -13,7 +13,7 @@
 import { RoostClient, type RoostClientOpts, RoostApiError, DEFAULT_API_URL, DEFAULT_ROOST_VERSION } from './lib/client';
 import { Roosts } from './resources/roosts';
 import { Chunks } from './resources/chunks';
-import { Manifests } from './resources/manifests';
+import { Versions } from './resources/versions';
 import { Deployments } from './resources/deployments';
 import { Webhooks } from './resources/webhooks';
 import { Keys } from './resources/keys';
@@ -35,7 +35,7 @@ export class Roost {
 
   #roosts?: Roosts;
   #chunks?: Chunks;
-  #manifests?: Manifests;
+  #versions?: Versions;
   #deployments?: Deployments;
   #webhooks?: Webhooks;
   #keys?: Keys;
@@ -55,8 +55,8 @@ export class Roost {
     return (this.#chunks ??= new Chunks(this.client));
   }
 
-  get manifests(): Manifests {
-    return (this.#manifests ??= new Manifests(this.client));
+  get versions(): Versions {
+    return (this.#versions ??= new Versions(this.client));
   }
 
   get deployments(): Deployments {
@@ -125,7 +125,7 @@ export type { VerifySignatureOptions, VerifySignatureResult } from './lib/signat
 export type {
   RoostSummary,
   RoostDetail,
-  ManifestSummary,
+  VersionSummary,
   ListRoostsOptions,
   ListRoostsResult,
   CreateRoostOptions,
@@ -143,7 +143,7 @@ export type { Site } from './resources/sites';
 export type { MachineSummary, MachineDetail, MachineDeployment } from './resources/machines';
 export type { QuotaSnapshot, QuotaHistoryDay } from './resources/quotas';
 export type { WebhookSubscription } from './resources/webhooks';
-export type { ManifestDetail, ManifestFilesPage, ManifestDiff } from './resources/manifests';
+export type { VersionDetail, VersionFilesPage, VersionDiff } from './resources/versions';
 export type { ChunkedFileEntry, ChunkProgressEvent } from './lib/chunker';
 
 export const VERSION = SDK_VERSION;

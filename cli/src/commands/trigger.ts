@@ -26,9 +26,10 @@ import { readFileSync } from 'fs';
 import { loadConfig } from '../config';
 
 const CANNED_PAYLOADS: Record<string, Record<string, unknown>> = {
-  'manifest.published': {
+  'version.published': {
     roostId: 'rst_synthetic_01',
-    manifestId: 'manifest_synthetic_01',
+    versionId: 'vrs_synthetic_01',
+    versionNumber: 1,
     siteId: null, // filled in per-run
     totalSize: 123456,
     totalFiles: 3,
@@ -36,7 +37,7 @@ const CANNED_PAYLOADS: Record<string, Record<string, unknown>> = {
   },
   'deploy.completed': {
     roostId: 'rst_synthetic_01',
-    rolloutId: 'manifest_synthetic_01',
+    rolloutId: 'vrs_synthetic_01',
     siteId: null,
     stage: 'complete',
     succeeded: 10,
@@ -44,7 +45,7 @@ const CANNED_PAYLOADS: Record<string, Record<string, unknown>> = {
   },
   'deploy.failed': {
     roostId: 'rst_synthetic_01',
-    rolloutId: 'manifest_synthetic_01',
+    rolloutId: 'vrs_synthetic_01',
     siteId: null,
     stage: 'aborted',
     abortReason: 'canary_failure_rate_exceeded',
@@ -54,8 +55,8 @@ const CANNED_PAYLOADS: Record<string, Record<string, unknown>> = {
   'rollback.triggered': {
     roostId: 'rst_synthetic_01',
     siteId: null,
-    fromManifestId: 'manifest_synthetic_02',
-    toManifestId: 'manifest_synthetic_01',
+    fromVersion: 'vrs_synthetic_02',
+    toVersion: 'vrs_synthetic_01',
     triggeredBy: 'roost-cli-trigger',
   },
   'chunk.uploaded': {

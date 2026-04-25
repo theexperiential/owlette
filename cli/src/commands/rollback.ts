@@ -3,17 +3,21 @@
  *
  * Flow:
  *   1. load the roost (GET /api/roosts/{id}) → pick `current` as the
- *      "from" manifest.
- *   2. resolve the "to" manifest: `--to <manifestId>` if given, else the
- *      roost's `previousManifestId`.
- *   3. fetch the diff: GET /api/roosts/{id}/manifests/{to}/diff?against={current}
+ *      "from" version.
+ *   2. resolve the "to" version: `--to <versionRef>` if given, else the
+ *      roost's `previousVersionId`. `<versionRef>` accepts a numeric id
+ *      (`3`), `#3`/`v3`, a `vrs_*` opaque id, or alias
+ *      `current`/`previous`/`first`.
+ *   3. fetch the diff: GET /api/roosts/{id}/versions/{to}/diff?against={current}
  *      → print a human-readable summary. Uses the same pretty-print
  *      helpers as `roost roost diff`.
  *   4. confirm (interactive) unless `--yes`. stdin must be a tty for the
  *      prompt; otherwise `--yes` is required (no silent rollbacks from
  *      pipes).
- *   5. POST /api/roosts/{id}/rollback with { siteId, targetManifestId }
- *      and print the resulting pointer flip.
+ *   5. POST /api/roosts/{id}/rollback with { siteId, targetVersion }.
+ *      `targetVersion` is the raw operator input — the server resolves
+ *      number-or-id-or-alias into a concrete versionId inside the
+ *      rollback handler, so the client stays dumb about the grammar.
  *
  * Exit codes:
  *   0 — rollback succeeded (or user said 'no' to the prompt)
@@ -30,14 +34,16 @@ interface RoostDetail {
   roostId: string;
   siteId: string;
   name: string;
-  currentManifestId: string | null;
-  previousManifestId: string | null;
+  currentVersionId: string | null;
+  previousVersionId: string | null;
   deletedAt: string | null;
   detail?: string;
 }
 
 interface DiffResponse {
-  manifestId: string;
+  versionId: string;
+  fromVersion?: string;
+  toVersion?: string;
   against: string;
   roostId: string;
   siteId: string;
@@ -62,8 +68,8 @@ interface DiffResponse {
 }
 
 interface RollbackResponse {
-  currentManifestId: string;
-  previousManifestId: string | null;
+  currentVersionId: string;
+  previousVersionId: string | null;
   detail?: string;
 }
 
@@ -78,9 +84,12 @@ export function registerRollbackCommand(program: Command): void {
 
   program
     .command('rollback <roostId>')
-    .description('roll a roost back to a previous manifest (prints diff, confirms)')
+    .description('roll a roost back to a previous version (prints diff, confirms)')
     .requiredOption('--site <siteId>', 'site id that owns the roost')
-    .option('--to <manifestId>', 'explicit target manifest; default: previousManifestId')
+    .option(
+      '--to <versionRef>',
+      'explicit target version (id, #N, vN, "current", "previous", "first"); default: previousVersionId',
+    )
     .option('--yes', 'skip the confirmation prompt (required when stdin is not a tty)')
     .action(async (roostId: string, opts, cmd) => {
       const globals = cmd.optsWithGlobals();
@@ -106,46 +115,55 @@ export function registerRollbackCommand(program: Command): void {
         fatal(`roost ${roostId} is tombstoned — cannot roll back`);
         return;
       }
-      if (!roost.currentManifestId) {
-        fatal(`roost ${roostId} has no currentManifestId — nothing to roll back from`);
+      if (!roost.currentVersionId) {
+        fatal(`roost ${roostId} has no currentVersionId — nothing to roll back from`);
         return;
       }
 
-      // 2. Resolve target.
-      const target: string | null =
+      // 2. Resolve the rollback target. When `--to` is omitted, fall
+      // back to the roost's previous version. The flag is forwarded to
+      // the server verbatim so it can accept any of the alias / number
+      // / id forms the resolver supports.
+      const targetRef: string | null =
         (typeof opts.to === 'string' && opts.to.length > 0 ? opts.to : null) ??
-        roost.previousManifestId;
-      if (!target) {
+        roost.previousVersionId;
+      if (!targetRef) {
         fatal(
-          'no rollback target: the roost has no previousManifestId. pass --to <manifestId> explicitly.',
-        );
-        return;
-      }
-      if (target === roost.currentManifestId) {
-        fatal(
-          `roost is already pointed at ${target}. pass --to <manifestId> to a different manifest.`,
+          'no rollback target: the roost has no previousVersionId. pass --to <versionRef> explicitly.',
         );
         return;
       }
 
-      // 3. Fetch + print the diff.
+      // 3. Fetch + print the diff. We preview the change against the
+      // current version using the operator's raw target ref — the diff
+      // endpoint runs the same resolver, so whatever `--to` accepts is
+      // safe to pipe straight through.
       const diff = await fetchDiff(
         apiUrl,
         token,
         roostId,
         siteId,
-        /* to   = */ target,
-        /* from = */ roost.currentManifestId,
+        /* to   = */ targetRef,
+        /* from = */ roost.currentVersionId,
       );
       if (!diff) {
         process.exitCode = 1;
         return;
       }
 
+      // Refuse a no-op rollback — the diff endpoint resolved both refs
+      // and reported identical versions, so there's nothing to flip.
+      if (diff.toVersion && diff.fromVersion && diff.toVersion === diff.fromVersion) {
+        fatal(
+          `target version resolves to ${diff.toVersion}, which is already the current version. pass --to <versionRef> to a different version.`,
+        );
+        return;
+      }
+
       if (json) {
         process.stdout.write(
           JSON.stringify(
-            { action: 'plan', roost, target, diff },
+            { action: 'plan', roost, target: targetRef, diff },
             null,
             2,
           ) + '\n',
@@ -153,8 +171,8 @@ export function registerRollbackCommand(program: Command): void {
       } else {
         process.stdout.write(
           `about to roll back roost '${roost.name}' (${roostId})\n` +
-            `  current  ${roost.currentManifestId}\n` +
-            `  target   ${target}\n\n`,
+            `  current  ${roost.currentVersionId}\n` +
+            `  target   ${targetRef}\n\n`,
         );
         process.stdout.write(roostInternals.formatDiff(diff));
       }
@@ -175,7 +193,7 @@ export function registerRollbackCommand(program: Command): void {
       }
 
       // 5. Fire.
-      const result = await performRollback(apiUrl, token, roostId, siteId, target);
+      const result = await performRollback(apiUrl, token, roostId, siteId, targetRef);
       if (!result) {
         process.exitCode = 1;
         return;
@@ -188,8 +206,8 @@ export function registerRollbackCommand(program: Command): void {
       } else {
         process.stdout.write(
           `roost: rolled back\n` +
-            `  current   ${result.currentManifestId}\n` +
-            `  previous  ${result.previousManifestId ?? '(none)'}\n`,
+            `  current   ${result.currentVersionId}\n` +
+            `  previous  ${result.previousVersionId ?? '(none)'}\n`,
         );
       }
     });
@@ -229,7 +247,7 @@ async function fetchDiff(
 ): Promise<DiffResponse | null> {
   const qs = new URLSearchParams({ siteId, against: from });
   const res = await fetch(
-    `${apiUrl}/api/roosts/${encodeURIComponent(roostId)}/manifests/${encodeURIComponent(to)}/diff?${qs}`,
+    `${apiUrl}/api/roosts/${encodeURIComponent(roostId)}/versions/${encodeURIComponent(to)}/diff?${qs}`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
   const data = (await res.json().catch(() => ({}))) as DiffResponse & { detail?: string };
@@ -245,7 +263,7 @@ async function performRollback(
   token: string,
   roostId: string,
   siteId: string,
-  target: string,
+  targetVersion: string,
 ): Promise<RollbackResponse | null> {
   const res = await fetch(`${apiUrl}/api/roosts/${encodeURIComponent(roostId)}/rollback`, {
     method: 'POST',
@@ -253,7 +271,7 @@ async function performRollback(
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ siteId, targetManifestId: target }),
+    body: JSON.stringify({ siteId, targetVersion }),
   });
   const data = (await res.json().catch(() => ({}))) as RollbackResponse & { detail?: string };
   if (!res.ok) {

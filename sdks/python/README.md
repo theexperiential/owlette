@@ -24,10 +24,11 @@ async def main() -> None:
             "rst_abc",
             PushOptions(
                 site_id="site-1",
+                description="fixed broken video",
                 on_progress=lambda evt: print(evt),
             ),
         )
-        print("published", result.manifest_id)
+        print("published v" + str(result.version_number), result.version_id)
 
 asyncio.run(main())
 ```
@@ -52,7 +53,7 @@ Roost(
 |-------------------|-------------------------------------------------------------------------|
 | `roost.roosts`    | `list`, `list_page`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy` |
 | `roost.chunks`    | `check`, `upload_urls`, `download_urls`, `mount`, `referrers`           |
-| `roost.manifests` | `list`, `get`, `files`, `diff`                                          |
+| `roost.versions`  | `list`, `get`, `files`, `diff`                                          |
 | `roost.deployments` | `list`, `get`                                                         |
 | `roost.keys`      | `create`, `list`, `rotate`, `revoke`                                    |
 | `roost.webhooks`  | `subscribe`, `list`, `get`, `update`, `remove`, `rotate_secret`, `probe` |

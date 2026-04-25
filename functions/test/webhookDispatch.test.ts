@@ -38,7 +38,7 @@ function samplePayload(overrides: Partial<WebhookPayload> = {}): WebhookPayload 
     event: 'distribution.succeeded',
     siteId: 'site-a',
     occurredAt: NOW.toISOString(),
-    data: { manifestId: 'abc123', roostId: 'lobby' },
+    data: { versionId: 'vrs_abc123', roostId: 'lobby' },
     ...overrides,
   };
 }
@@ -65,7 +65,7 @@ describe('event taxonomy', () => {
       'distribution.succeeded',
       'distribution.failed',
       'chunk.uploaded',
-      'manifest.published',
+      'version.published',
       'rollback.executed',
     ];
     for (const r of required) assert.ok(ROOST_EVENT_TYPES.includes(r));

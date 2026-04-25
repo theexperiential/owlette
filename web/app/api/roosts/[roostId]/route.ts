@@ -1,6 +1,6 @@
 /**
  * GET    /api/roosts/{roostId}?siteId=...
- *        → detail: roost metadata + currentManifest + previousManifest summaries.
+ *        → detail: roost metadata + currentVersion + previousVersion summaries.
  *
  * PATCH  /api/roosts/{roostId}
  *        input:  { siteId, name?, targets?, extractPath? }
@@ -76,15 +76,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     const data = roostSnap.data() ?? {};
-    const currentManifestId = data.currentManifestId ?? null;
-    const previousManifestId = data.previousManifestId ?? null;
+    const currentVersionId = data.currentVersionId ?? null;
+    const previousVersionId = data.previousVersionId ?? null;
 
     const [currentSnap, previousSnap] = await Promise.all([
-      currentManifestId
-        ? roostRef.collection('manifests').doc(currentManifestId).get()
+      currentVersionId
+        ? roostRef.collection('versions').doc(currentVersionId).get()
         : Promise.resolve(null),
-      previousManifestId
-        ? roostRef.collection('manifests').doc(previousManifestId).get()
+      previousVersionId
+        ? roostRef.collection('versions').doc(previousVersionId).get()
         : Promise.resolve(null),
     ]);
 
@@ -96,16 +96,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         targets: Array.isArray(data.targets) ? data.targets : [],
         extractPath: typeof data.extractPath === 'string' ? data.extractPath : null,
         schemaVersion: data.schemaVersion ?? 2,
-        currentManifestId,
-        previousManifestId,
-        manifestUrl: data.manifestUrl ?? null,
+        currentVersionId,
+        previousVersionId,
+        versionCounter:
+          typeof data.versionCounter === 'number' ? data.versionCounter : 0,
+        versionUrl: data.versionUrl ?? null,
         createdAt: timestampToIso(data.createdAt),
         updatedAt: timestampToIso(data.updatedAt),
         createdBy: data.createdBy ?? null,
         deletedAt: timestampToIso(data.deletedAt),
         tombstoneExpiresAt: timestampToIso(data.tombstoneExpiresAt),
-        currentManifest: summariseManifestSnap(currentSnap),
-        previousManifest: summariseManifestSnap(previousSnap),
+        currentVersion: summariseVersionSnap(currentSnap),
+        previousVersion: summariseVersionSnap(previousSnap),
       }),
       auth.scopeCheck,
     );
@@ -273,26 +275,31 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-function summariseManifestSnap(
+function summariseVersionSnap(
   snap: FirebaseFirestore.DocumentSnapshot | null,
 ): {
-  manifestId: string;
-  manifestUrl: string | null;
+  versionId: string;
+  versionNumber: number | null;
+  description: string | null;
+  versionUrl: string | null;
   createdAt: string | null;
   createdBy: string | null;
   totalSize: number;
   totalFiles: number;
-  parentManifestId: string | null;
+  parentVersionId: string | null;
 } | null {
   if (!snap || !snap.exists) return null;
   const data = snap.data() ?? {};
   return {
-    manifestId: snap.id,
-    manifestUrl: data.manifestUrl ?? null,
+    versionId: snap.id,
+    versionNumber:
+      typeof data.versionNumber === 'number' ? data.versionNumber : null,
+    description: typeof data.description === 'string' ? data.description : null,
+    versionUrl: data.versionUrl ?? null,
     createdAt: timestampToIso(data.createdAt),
     createdBy: data.createdBy ?? null,
     totalSize: typeof data.totalSize === 'number' ? data.totalSize : 0,
     totalFiles: typeof data.totalFiles === 'number' ? data.totalFiles : 0,
-    parentManifestId: data.parentManifestId ?? null,
+    parentVersionId: data.parentVersionId ?? null,
   };
 }

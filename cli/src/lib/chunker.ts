@@ -4,11 +4,11 @@
  * The web counterpart lives in `web/lib/chunking.ts` and operates on Blobs
  * via Web Crypto. This is the fs-streaming equivalent used by the cli:
  * walk a directory, slice each file into fixed 4 MiB chunks, compute
- * sha-256 over each chunk's bytes, yield ManifestFileEntry values
- * compatible with the server's schema (matches
- * `web/lib/chunking.ts:ManifestFileEntry` byte-for-byte).
+ * sha-256 over each chunk's bytes, yield ChunkedFileEntry values
+ * compatible with the server's schema (matches the web's per-file entry
+ * shape byte-for-byte).
  *
- * Zero-byte files are skipped — the manifest schema requires at least
+ * Zero-byte files are skipped — the version schema requires at least
  * one positive-size chunk per file. Walk respects symlinks only when
  * they point inside the supplied root (refuses to escape).
  */
@@ -79,7 +79,7 @@ export async function chunkOneFile(
   const size = stat.size;
   if (size === 0) {
     throw new Error(
-      `chunker: ${relPath} is zero bytes; zero-byte files cannot be manifested`,
+      `chunker: ${relPath} is zero bytes; zero-byte files cannot be versioned`,
     );
   }
 

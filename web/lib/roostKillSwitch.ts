@@ -3,7 +3,7 @@
  *
  * Per-site v2 kill switch. An admin sets `sites/{siteId}.roostEnabled = false`
  * in firestore to halt all new roost work for that site — the API routes
- * refuse to issue signed URLs or finalise manifests until it flips back.
+ * refuse to issue signed URLs or finalise versions until it flips back.
  *
  * Constants MUST stay in sync with the python side; a `test_field_name_is_stable`
  * test locks it in on the agent, and this file is load-bearing for the gate

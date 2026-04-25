@@ -131,7 +131,7 @@ export function FolderDropzone({
       setEnumerating(true);
       try {
         // Loose-file picker → no folder structure. Use each file's name
-        // as its manifest path (enumerateInputFiles already handles the
+        // as its version path (enumerateInputFiles already handles the
         // webkitRelativePath-absent case).
         const files = enumerateInputFiles(fileList);
         if (files.length === 0) return;
@@ -164,7 +164,7 @@ export function FolderDropzone({
       for (const h of handles) {
         const file = await h.getFile();
         if (file.size === 0) continue;
-        const cleaned = toManifestPath(file.name);
+        const cleaned = toVersionPath(file.name);
         if (cleaned === null) continue;
         out.push({ path: cleaned, blob: file });
       }
@@ -501,9 +501,9 @@ export function enumerateInputFiles(files: FileList): NamedBlob[] {
     const relPath =
       (f as File & { webkitRelativePath?: string }).webkitRelativePath ||
       f.name;
-    const cleaned = toManifestPath(relPath);
+    const cleaned = toVersionPath(relPath);
     if (cleaned === null) continue;
-    if (f.size === 0) continue; // manifest requires non-zero chunks
+    if (f.size === 0) continue; // version requires non-zero chunks
     out.push({ path: cleaned, blob: f });
   }
   return out;
@@ -511,7 +511,7 @@ export function enumerateInputFiles(files: FileList): NamedBlob[] {
 
 /**
  * Recursively walk a FileSystemDirectoryHandle (from `showDirectoryPicker`),
- * yielding NamedBlob entries with forward-slash manifest-relative paths.
+ * yielding NamedBlob entries with forward-slash version-relative paths.
  * Generator shape matches `walkEntry` but uses the newer FSA API which
  * integrates with per-origin permission grants.
  */
@@ -532,7 +532,7 @@ async function* walkDirectoryHandle(
     if (child.kind === 'file') {
       const file = await (child as FileSystemFileHandle).getFile();
       if (file.size === 0) continue;
-      const cleaned = toManifestPath(nextPath);
+      const cleaned = toVersionPath(nextPath);
       if (cleaned === null) continue;
       yield { path: cleaned, blob: file };
     } else if (child.kind === 'directory') {
@@ -556,7 +556,7 @@ async function walkEntry(
     });
     if (file.size === 0) return;
     const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-    const cleaned = toManifestPath(path);
+    const cleaned = toVersionPath(path);
     if (cleaned === null) return;
     out.push({ path: cleaned, blob: file });
     return;
@@ -582,8 +582,8 @@ async function walkEntry(
  * is unsalvageable, drop the whole file — we'd rather omit a hostile
  * name than rename it silently.
  */
-function toManifestPath(input: string): string | null {
-  // Manifest paths are POSIX-style with forward slashes; inputs may
+function toVersionPath(input: string): string | null {
+  // Version paths are POSIX-style with forward slashes; inputs may
   // arrive with either separator depending on OS.
   const segments = input.replace(/\\/g, '/').split('/').filter(Boolean);
   const cleaned: string[] = [];

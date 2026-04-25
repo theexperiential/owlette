@@ -80,8 +80,8 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 ### `chunk_not_found`
 
 - **http status**: 400 Bad Request
-- **meaning**: a manifest publish or mount referenced a chunk digest that is not present in the site's content-addressed store.
-- **triggers**: calling `POST /api/roosts/{roostId}/manifests` or `POST /api/chunks/{digest}/mount` with a digest the server has never seen (or has garbage-collected).
+- **meaning**: a version publish or mount referenced a chunk digest that is not present in the site's content-addressed store.
+- **triggers**: calling `POST /api/roosts/{roostId}/versions` or `POST /api/chunks/{digest}/mount` with a digest the server has never seen (or has garbage-collected).
 - **remediate**: re-run `POST /api/chunks/check` to identify the missing digests, upload them via `POST /api/chunks/upload-urls`, then retry the publish. this is almost always a client bug where `/check` was skipped or its result was ignored.
 
 ```json
@@ -89,9 +89,9 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
   "type": "https://roost.dev/errors/chunk-not-found",
   "title": "Chunk not found",
   "status": 400,
-  "detail": "manifest references chunk sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce which is not in storage for site kiosk-fleet-01",
+  "detail": "version references chunk sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce which is not in storage for site kiosk-fleet-01",
   "code": "chunk_not_found",
-  "param": "manifest.layers[2].digest",
+  "param": "version.layers[2].digest",
   "doc_url": "https://owlette.app/docs/api/errors#chunk_not_found",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
@@ -103,7 +103,7 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 - **http status**: 409 Conflict
 - **meaning**: the request is logically inconsistent with the current state of the resource in a way that no retry can fix without changing the payload.
-- **triggers**: calling `POST /api/roosts/{roostId}/rollback` with no `targetManifestId` when the roost has no `previousManifestId`; creating a resource whose unique constraints collide with an existing one (distinct from `idempotency_key_mismatch`).
+- **triggers**: calling `POST /api/roosts/{roostId}/rollback` with no `targetVersion` when the roost has no `previousVersionId`; creating a resource whose unique constraints collide with an existing one (distinct from `idempotency_key_mismatch`).
 - **remediate**: fetch the current state (`GET /api/roosts/{roostId}`) and adjust the request. do not blind-retry — conflicts are not transient.
 
 ```json
@@ -111,7 +111,7 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
   "type": "https://roost.dev/errors/conflict",
   "title": "Conflict",
   "status": 409,
-  "detail": "roost roost_lobby_td has no previous manifest to roll back to; specify targetManifestId explicitly",
+  "detail": "roost roost_lobby_td has no previous version to roll back to; specify targetVersion explicitly",
   "code": "conflict",
   "doc_url": "https://owlette.app/docs/api/errors#conflict",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
@@ -167,7 +167,7 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 - **http status**: 404 Not Found
 - **meaning**: the resource does not exist, or the caller has no scope that grants it visibility. the two cases are deliberately indistinguishable — we do not confirm existence to an unauthorized caller.
-- **triggers**: unknown `siteId`, `roostId`, `manifestId`, `machineId`, `keyId`, `webhookId`, `deliveryId`, chunk digest, or audit record hash.
+- **triggers**: unknown `siteId`, `roostId`, `versionId`, `machineId`, `keyId`, `webhookId`, `deliveryId`, chunk digest, or audit record hash.
 - **remediate**: double-check the id. if the id is correct, verify the key's scope includes read on the resource (`GET /api/whoami`). if both look right, the resource may have been deleted — check the audit log or the dashboard.
 
 ```json
@@ -210,15 +210,15 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 - **http status**: 413 Payload Too Large
 - **meaning**: the request body exceeded an endpoint-specific size cap.
-- **triggers**: submitting a manifest document larger than 8 mib; sending more than 1000 hashes in a single `POST /api/chunks/check` or `POST /api/chunks/upload-urls` batch (those cases also surface as `validation_failed`); audit log queries with unreasonably wide filters.
-- **remediate**: split the work. for manifests: reduce layer count or contact support about enterprise limits. for chunk batches: page through in batches of ≤ 1000.
+- **triggers**: submitting a version document larger than 8 mib; sending more than 1000 hashes in a single `POST /api/chunks/check` or `POST /api/chunks/upload-urls` batch (those cases also surface as `validation_failed`); audit log queries with unreasonably wide filters.
+- **remediate**: split the work. for versions: reduce layer count or contact support about enterprise limits. for chunk batches: page through in batches of ≤ 1000.
 
 ```json
 {
   "type": "https://roost.dev/errors/payload-too-large",
   "title": "Payload too large",
   "status": 413,
-  "detail": "manifest body of 12.4 mib exceeds the 8 mib cap",
+  "detail": "version body of 12.4 mib exceeds the 8 mib cap",
   "code": "payload_too_large",
   "doc_url": "https://owlette.app/docs/api/errors#payload_too_large",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
@@ -230,20 +230,20 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 ### `precondition_failed`
 
 - **http status**: 412 Precondition Failed
-- **meaning**: a conditional header (`If-Match`) or body field (`expectedCurrentManifestId`) disagreed with the current server state. classic compare-and-swap miss.
+- **meaning**: a conditional header (`If-Match`) or body field (`expectedCurrentVersionId`) disagreed with the current server state. classic compare-and-swap miss.
 - **triggers**: racing two operators against the same roost (rollback + deploy); patching/rotating a key that is already revoked; retrying a webhook delivery on a paused or deleted subscription; audit chain verification failure; sse token already consumed.
-- **remediate**: fetch the latest state (`GET /api/roosts/{roostId}`, etc.), refresh your `If-Match` value to the current digest, and retry. the response body includes `expected` and `actual` digests where applicable.
+- **remediate**: fetch the latest state (`GET /api/roosts/{roostId}`, etc.), refresh your `If-Match` value to the current version id, and retry. the response body includes `expected` and `actual` ids where applicable.
 
 ```json
 {
   "type": "https://roost.dev/errors/precondition-failed",
   "title": "Precondition failed",
   "status": 412,
-  "detail": "current manifest digest is sha256:cc33...dd44, not sha256:aa11...bb22",
+  "detail": "current version id is vrs_cc33dd44, not vrs_aa11bb22",
   "code": "precondition_failed",
   "param": "If-Match",
-  "expected": "sha256:aa11...bb22",
-  "actual": "sha256:cc33...dd44",
+  "expected": "vrs_aa11bb22",
+  "actual": "vrs_cc33dd44",
   "doc_url": "https://owlette.app/docs/api/errors#precondition_failed",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
@@ -255,7 +255,7 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 - **http status**: 402 Payment Required
 - **meaning**: a plan limit was hit. the request was refused and no state changed.
-- **triggers**: site storage exceeds tier cap on chunk upload or manifest publish; exceeded max roosts per site; exceeded max 50 active api keys per user; exceeded max 25 webhooks per site; exceeded concurrent-rollouts cap.
+- **triggers**: site storage exceeds tier cap on chunk upload or version publish; exceeded max roosts per site; exceeded max 50 active api keys per user; exceeded max 25 webhooks per site; exceeded concurrent-rollouts cap.
 - **remediate**: free space (delete unused roosts, wait for gc), upgrade the plan at `owlette.app/billing`, or narrow the request. `GET /api/sites/{siteId}/quota` shows current usage vs limits.
 
 ```json
@@ -331,7 +331,7 @@ Roost-Rate-Limited-Reason: per_key
 
 - **http status**: 403 Forbidden
 - **meaning**: the request attempted to cross a site boundary in a way the platform prohibits regardless of scope.
-- **triggers**: minting a download url for a chunk in a site the caller's key does not belong to; publishing a manifest whose `siteId` does not match the resource path's implicit site; mounting a chunk from a source roost in a different site than the target roost.
+- **triggers**: minting a download url for a chunk in a site the caller's key does not belong to; publishing a version whose `siteId` does not match the resource path's implicit site; mounting a chunk from a source roost in a different site than the target roost.
 - **remediate**: verify the `siteId` in the request body matches the resource you are addressing. cross-tenant chunk reuse is intentional — cross-site chunk reuse within the same tenant is allowed via `POST /api/chunks/{digest}/mount`, but cross-tenant reuse is not supported and never will be.
 
 ```json
@@ -386,6 +386,52 @@ Roost-Rate-Limited-Reason: per_key
   "code": "unsupported_version",
   "param": "Roost-Version",
   "doc_url": "https://owlette.app/docs/api/errors#unsupported_version",
+  "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
+}
+```
+
+---
+
+### `version_not_found`
+
+- **http status**: 404 Not Found
+- **meaning**: a version reference (in a url path, `targetVersion`, `If-Match`, `expectedCurrentVersionId`, or `against` query param) did not resolve to a version that exists under the addressed roost.
+- **triggers**: typo in a `vrs_*` id; a version number the roost has never issued; an alias (`current` / `previous` / `first`) that the roost has no version for (e.g. `previous` on a roost that has only ever had one publish); operating on a soft-deleted roost whose versions are hidden.
+- **remediate**: list the roost's versions via `GET /api/roosts/{roostId}/versions` to see valid ids and numbers. if the caller meant to address the current head, use `"current"` as `versionRef` or pass the `versionId` read from `GET /api/roosts/{roostId}`.
+
+```json
+{
+  "type": "https://roost.dev/errors/version-not-found",
+  "title": "Version not found",
+  "status": 404,
+  "detail": "roost roost_lobby_td has no version with ref 'v9'; highest versionNumber is 7",
+  "code": "version_not_found",
+  "param": "targetVersion",
+  "doc_url": "https://owlette.app/docs/api/errors#version_not_found",
+  "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
+}
+```
+
+---
+
+### `version_stale`
+
+- **http status**: 412 Precondition Failed
+- **meaning**: a publish or rollback was submitted with an `expectedCurrentVersionId` / `If-Match` that is no longer the roost's current head. another writer won the race.
+- **triggers**: a second publisher flipped the roost's pointer between your `GET /api/roosts/{roostId}` and your `POST /api/roosts/{roostId}/versions` or `/rollback`. common in ci/cd when two tags land in quick succession.
+- **remediate**: re-read the current head via `GET /api/roosts/{roostId}`, rebuild the request body against the fresh `currentVersionId`, then retry. if the new head already contains your change, the retry is a no-op from your caller's perspective — use idempotency keys so the client handles that cleanly.
+
+```json
+{
+  "type": "https://roost.dev/errors/version-stale",
+  "title": "Version stale",
+  "status": 412,
+  "detail": "current version is vrs_cc33dd44 (versionNumber 8); expected vrs_aa11bb22 (versionNumber 7)",
+  "code": "version_stale",
+  "param": "expectedCurrentVersionId",
+  "expected": "vrs_aa11bb22",
+  "actual": "vrs_cc33dd44",
+  "doc_url": "https://owlette.app/docs/api/errors#version_stale",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```

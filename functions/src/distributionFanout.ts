@@ -2,14 +2,14 @@
  * Distribution fan-out cloud function (roost wave 2b.3).
  *
  * Two firestore triggers implement a staged → canary → fleet rollout
- * when an operator publishes a new manifest:
+ * when an operator publishes a new version:
  *
- *   onRoostWritten          — fires when `currentManifestId` changes on
+ *   onRoostWritten          — fires when `currentVersionId` changes on
  *                             a roost. Issues canary sync commands
  *                             and creates a rollout state doc.
  *
  *   onTargetStateWritten    — fires when an agent reports a target_state
- *                             for a manifest under rollout. Advances the
+ *                             for a version under rollout. Advances the
  *                             state machine: canary → fleet, or aborts.
  *
  * The pure decision logic (who is in the canary, did it pass, did it
@@ -40,8 +40,8 @@ const db = admin.firestore();
 /* --------------------------------------------------------------------- */
 
 interface Roost {
-  currentManifestId?: string;
-  manifestUrl?: string;
+  currentVersionId?: string;
+  versionUrl?: string;
   targets?: string[];
   extractPath?: string;
 }
@@ -53,8 +53,8 @@ const DEFAULT_EXTRACT_ROOT = '~/Documents/Owlette';
 
 interface RolloutDoc {
   stage: RolloutStage;
-  manifestId: string;
-  manifestUrl: string;
+  versionId: string;
+  versionUrl: string;
   extractRoot: string;
   canary: string[];
   fleet: string[];
@@ -78,11 +78,11 @@ export const onRoostWritten = onDocumentWritten(
 
     // deletion or no-op writes — nothing to do.
     if (!after) return;
-    if (!after.currentManifestId || !after.manifestUrl) return;
-    if (before?.currentManifestId === after.currentManifestId) return;
+    if (!after.currentVersionId || !after.versionUrl) return;
+    if (before?.currentVersionId === after.currentVersionId) return;
 
-    const manifestId = after.currentManifestId;
-    const manifestUrl = after.manifestUrl;
+    const versionId = after.currentVersionId;
+    const versionUrl = after.versionUrl;
     const targets = Array.isArray(after.targets) ? after.targets : [];
     const extractRoot =
       typeof after.extractPath === 'string' && after.extractPath.trim()
@@ -92,12 +92,12 @@ export const onRoostWritten = onDocumentWritten(
     if (targets.length === 0) {
       console.warn(
         `[fanout] roost ${siteId}/${roostId} has no targets; ` +
-          `manifest ${manifestId} will not be fanned out.`,
+          `version ${versionId} will not be fanned out.`,
       );
       return;
     }
 
-    const { canary, fleet } = selectCanary(targets, manifestId);
+    const { canary, fleet } = selectCanary(targets, versionId);
 
     const rolloutRef = db
       .collection('sites')
@@ -105,22 +105,22 @@ export const onRoostWritten = onDocumentWritten(
       .collection('roosts')
       .doc(roostId)
       .collection('rollouts')
-      .doc(manifestId);
+      .doc(versionId);
 
     // idempotent initialisation: if the rollout doc already exists for
-    // this manifestId, bail. trigger retries don't re-issue commands.
+    // this versionId, bail. trigger retries don't re-issue commands.
     const existing = await rolloutRef.get();
     if (existing.exists) {
       console.log(
-        `[fanout] rollout already initialised for ${siteId}/${roostId}/${manifestId}; skipping.`,
+        `[fanout] rollout already initialised for ${siteId}/${roostId}/${versionId}; skipping.`,
       );
       return;
     }
 
     const rolloutDoc: RolloutDoc = {
       stage: 'canary',
-      manifestId,
-      manifestUrl,
+      versionId,
+      versionUrl,
       extractRoot,
       canary,
       fleet,
@@ -130,12 +130,12 @@ export const onRoostWritten = onDocumentWritten(
     const batch = db.batch();
     batch.set(rolloutRef, rolloutDoc);
     for (const machineId of canary) {
-      queueSyncCommand(batch, siteId, machineId, roostId, manifestId, manifestUrl, extractRoot);
+      queueSyncCommand(batch, siteId, machineId, roostId, versionId, versionUrl, extractRoot);
     }
     await batch.commit();
 
     console.log(
-      `[fanout] ${siteId}/${roostId}/${manifestId}: canary started with ` +
+      `[fanout] ${siteId}/${roostId}/${versionId}: canary started with ` +
         `${canary.length}/${targets.length} machine(s); ${fleet.length} queued for fleet wave`,
     );
   },
@@ -150,11 +150,11 @@ export const onTargetStateWritten = onDocumentWritten(
   async (event) => {
     const { siteId, roostId, machineId } = event.params;
     const after = event.data?.after?.data() as
-      | { reportedManifestId?: string; status?: string }
+      | { reportedVersionId?: string; status?: string }
       | undefined;
 
-    if (!after?.reportedManifestId || !after.status) return;
-    const reportedManifestId = after.reportedManifestId;
+    if (!after?.reportedVersionId || !after.status) return;
+    const reportedVersionId = after.reportedVersionId;
 
     const rolloutRef = db
       .collection('sites')
@@ -162,14 +162,14 @@ export const onTargetStateWritten = onDocumentWritten(
       .collection('roosts')
       .doc(roostId)
       .collection('rollouts')
-      .doc(reportedManifestId);
+      .doc(reportedVersionId);
 
     // transaction: read rollout, evaluate wave, write transition atomically.
     // prevents two concurrent target_state writes from both trying to
     // promote canary → fleet.
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(rolloutRef);
-      if (!snap.exists) return; // no rollout for this manifest — ignore
+      if (!snap.exists) return; // no rollout for this version — ignore
 
       const rollout = snap.data() as RolloutDoc;
       if (rollout.stage === 'complete' || rollout.stage === 'aborted') return;
@@ -183,7 +183,7 @@ export const onTargetStateWritten = onDocumentWritten(
         tx,
         siteId,
         roostId,
-        reportedManifestId,
+        reportedVersionId,
         waveIds,
       );
 
@@ -202,8 +202,8 @@ export const onTargetStateWritten = onDocumentWritten(
             siteId,
             mid,
             roostId,
-            reportedManifestId,
-            rollout.manifestUrl,
+            reportedVersionId,
+            rollout.versionUrl,
             extractRoot,
           );
         }
@@ -212,7 +212,7 @@ export const onTargetStateWritten = onDocumentWritten(
           fleetStartedAt: FieldValue.serverTimestamp(),
         });
         console.log(
-          `[fanout] ${siteId}/${roostId}/${reportedManifestId}: ${transition.reason}; fleet wave dispatched`,
+          `[fanout] ${siteId}/${roostId}/${reportedVersionId}: ${transition.reason}; fleet wave dispatched`,
         );
         return;
       }
@@ -224,7 +224,7 @@ export const onTargetStateWritten = onDocumentWritten(
           abortReason: transition.reason,
         });
         console.error(
-          `[fanout] ${siteId}/${roostId}/${reportedManifestId}: ABORTED — ${transition.reason}`,
+          `[fanout] ${siteId}/${roostId}/${reportedVersionId}: ABORTED — ${transition.reason}`,
         );
         return;
       }
@@ -235,7 +235,7 @@ export const onTargetStateWritten = onDocumentWritten(
           completedAt: FieldValue.serverTimestamp(),
         });
         console.log(
-          `[fanout] ${siteId}/${roostId}/${reportedManifestId}: ${transition.reason}`,
+          `[fanout] ${siteId}/${roostId}/${reportedVersionId}: ${transition.reason}`,
         );
         return;
       }
@@ -280,8 +280,8 @@ function queueSyncCommand(
   siteId: string,
   machineId: string,
   roostId: string,
-  manifestId: string,
-  manifestUrl: string,
+  versionId: string,
+  versionUrl: string,
   extractRoot: string,
 ): void {
   const pendingRef = db
@@ -293,9 +293,9 @@ function queueSyncCommand(
     .doc('pending');
 
   // one-doc-per-machine pending commands (matches existing pattern used
-  // by deploymentStatus.ts). command id is deterministic per manifest+roost
+  // by deploymentStatus.ts). command id is deterministic per version+roost
   // so retries of this function don't duplicate.
-  const cmdId = `roost_sync_${roostId}_${manifestId}`;
+  const cmdId = `roost_sync_${roostId}_${versionId}`;
   writable.set(
     pendingRef,
     {
@@ -303,8 +303,8 @@ function queueSyncCommand(
         type: 'sync_pull',
         site_id: siteId,
         folder_id: roostId,
-        manifest_id: manifestId,
-        manifest_url: manifestUrl,
+        version_id: versionId,
+        version_url: versionUrl,
         extract_root: extractRoot,
         queued_at: FieldValue.serverTimestamp(),
       },
@@ -317,7 +317,7 @@ async function readWaveStates(
   tx: FirebaseFirestore.Transaction,
   siteId: string,
   roostId: string,
-  manifestId: string,
+  versionId: string,
   machineIds: string[],
 ): Promise<TargetState[]> {
   const col = db
@@ -333,12 +333,12 @@ async function readWaveStates(
   const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
   return snaps.map((snap, i) => {
     const data = snap.exists ? (snap.data() as any) : null;
-    const reportedManifest = data?.reportedManifestId as string | undefined;
+    const reportedVersion = data?.reportedVersionId as string | undefined;
     const rawStatus = data?.status as string | undefined;
-    // only count status if the agent's report is for THIS manifest.
-    // a stale status from a prior manifest shouldn't inform this wave.
+    // only count status if the agent's report is for THIS version.
+    // a stale status from a prior version shouldn't inform this wave.
     const status: TargetStatus =
-      reportedManifest === manifestId && rawStatus
+      reportedVersion === versionId && rawStatus
         ? coerceStatus(rawStatus)
         : 'pending';
     return { machineId: machineIds[i], status };

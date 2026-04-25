@@ -73,7 +73,7 @@ export async function chunkOneFile(
   const size = stat.size;
   if (size === 0) {
     throw new Error(
-      `chunker: ${relPath} is zero bytes; zero-byte files cannot be manifested`,
+      `chunker: ${relPath} is zero bytes; zero-byte files cannot be versioned`,
     );
   }
 

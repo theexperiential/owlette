@@ -1,0 +1,126 @@
+/**
+ * GET /api/roosts/{roostId}/versions/{versionRef}/files?siteId=...&limit=100&cursor=...
+ *     → Paginated file list within a version.
+ *       cursor is an opaque integer offset (AIP-158 style — callers treat
+ *       it as an opaque string). Each page includes path, size, and the
+ *       chunk hash list.
+ *
+ * roost public api wave 3.2.
+ */
+import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
+import {
+  problem,
+  problemFromError,
+  problemValidation,
+  ProblemType,
+} from '@/lib/apiErrors';
+import { getVersionBody } from '@/lib/r2Client.server';
+import { resolveVersion, ResolveVersionError } from '@/lib/resolveVersion';
+import {
+  applyAuthDeprecations,
+  requireRoostAuthAndScope,
+  validateResourceId,
+  validateSiteIdBody,
+} from '../../../../../_shared';
+
+interface RouteParams {
+  params: Promise<{ roostId: string; versionRef: string }>;
+}
+
+interface VersionFile {
+  path: string;
+  size: number;
+  chunks: Array<{ hash: string; size: number }>;
+}
+
+const DEFAULT_LIMIT = 100;
+const MAX_LIMIT = 500;
+
+export async function GET(request: NextRequest, { params }: RouteParams) {
+  try {
+    const { roostId, versionRef } = await params;
+
+    const roostError = validateResourceId(roostId, 'roostId');
+    if (roostError) return roostError;
+
+    const siteIdParam = request.nextUrl.searchParams.get('siteId');
+    if (!siteIdParam) {
+      return problemValidation('query param `siteId` is required', {
+        'query.siteId': ['required'],
+      });
+    }
+    const site = validateSiteIdBody(siteIdParam, 'query.siteId');
+    if (!site.ok) return site.response;
+
+    const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'read');
+    if (!auth.ok) return auth.response;
+
+    const limitRaw = Number(request.nextUrl.searchParams.get('limit') ?? DEFAULT_LIMIT);
+    const limit = Math.min(
+      Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_LIMIT),
+      MAX_LIMIT,
+    );
+    const cursorRaw = request.nextUrl.searchParams.get('cursor');
+    const cursor = cursorRaw ? parseInt(cursorRaw, 10) : 0;
+    if (cursorRaw && (!Number.isFinite(cursor) || cursor < 0)) {
+      return problemValidation('cursor must be a non-negative integer', {
+        'query.cursor': ['invalid cursor'],
+      });
+    }
+
+    // Resolve the ref to a concrete versionId.
+    let versionId: string;
+    try {
+      const resolved = await resolveVersion({
+        roostId,
+        siteId: site.siteId,
+        ref: versionRef,
+      });
+      versionId = resolved.versionId;
+    } catch (err) {
+      if (err instanceof ResolveVersionError) {
+        return problem({
+          type: err.status === 404 ? ProblemType.NotFound : ProblemType.ValidationFailed,
+          title: err.status === 404 ? 'version not found' : 'versionRef malformed',
+          status: err.status,
+          detail: err.message,
+          instance: `/api/roosts/${roostId}/versions/${versionRef}/files`,
+          code: err.code,
+        });
+      }
+      throw err;
+    }
+
+    const body = await getVersionBody(site.siteId, roostId, versionId);
+    if (!body) {
+      return problem({
+        type: ProblemType.NotFound,
+        title: 'version body gone',
+        status: 410,
+        detail: `version ${versionId} metadata exists but the body has been reclaimed`,
+        instance: `/api/roosts/${roostId}/versions/${versionRef}/files`,
+      });
+    }
+
+    const versionBody = body as { files?: VersionFile[] };
+    const allFiles = Array.isArray(versionBody.files) ? versionBody.files : [];
+    const page = allFiles.slice(cursor, cursor + limit);
+    const nextOffset = cursor + page.length;
+    const nextPageToken = nextOffset < allFiles.length ? String(nextOffset) : '';
+
+    return applyAuthDeprecations(
+      NextResponse.json({
+        versionId,
+        roostId,
+        siteId: site.siteId,
+        total: allFiles.length,
+        files: page,
+        nextPageToken,
+      }),
+      auth.scopeCheck,
+    );
+  } catch (err) {
+    return problemFromError(err, 'v2/roosts/[roostId]/versions/[versionRef]/files:GET');
+  }
+}

@@ -3,7 +3,7 @@
  *
  * List recorded referrers of a chunk. Today this surfaces entries written
  * by `POST /mount`; a future wave will also write entries on every
- * manifest publish so this becomes the complete referrer index.
+ * version publish so this becomes the complete referrer index.
  *
  * roost public api wave 3.4.
  */
@@ -82,7 +82,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         source: typeof data.source === 'string' ? data.source : 'mount',
         fromRoostId: data.fromRoostId ?? null,
         toRoostId: data.toRoostId ?? null,
-        manifestId: data.manifestId ?? null,
+        versionId: data.versionId ?? null,
         mountedAt: timestampToIso(data.mountedAt),
         mountedBy: data.mountedBy ?? null,
       };

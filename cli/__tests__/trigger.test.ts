@@ -5,7 +5,7 @@ const { CANNED_PAYLOADS, KNOWN_EVENTS } = _internals;
 describe('trigger canned payloads', () => {
   it('covers the documented event taxonomy from docs/api/webhooks.md', () => {
     const expected = [
-      'manifest.published',
+      'version.published',
       'deploy.completed',
       'deploy.failed',
       'rollback.triggered',
@@ -18,15 +18,16 @@ describe('trigger canned payloads', () => {
   });
 
   it('leaves siteId as null in the template so the trigger fills it at runtime', () => {
-    for (const kind of ['manifest.published', 'deploy.completed', 'quota.warning']) {
+    for (const kind of ['version.published', 'deploy.completed', 'quota.warning']) {
       expect(CANNED_PAYLOADS[kind]?.siteId).toBeNull();
     }
   });
 
-  it('manifest.published carries ids + sizes + createdBy', () => {
-    const p = CANNED_PAYLOADS['manifest.published']!;
+  it('version.published carries ids + sizes + createdBy', () => {
+    const p = CANNED_PAYLOADS['version.published']!;
     expect(p.roostId).toBeDefined();
-    expect(p.manifestId).toBeDefined();
+    expect(p.versionId).toBeDefined();
+    expect(typeof p.versionNumber).toBe('number');
     expect(typeof p.totalSize).toBe('number');
     expect(typeof p.totalFiles).toBe('number');
   });
@@ -35,10 +36,10 @@ describe('trigger canned payloads', () => {
     expect(CANNED_PAYLOADS['deploy.failed']?.abortReason).toBeDefined();
   });
 
-  it('rollback.triggered carries from/to manifest ids', () => {
+  it('rollback.triggered carries from/to version ids', () => {
     const p = CANNED_PAYLOADS['rollback.triggered']!;
-    expect(p.fromManifestId).toBeDefined();
-    expect(p.toManifestId).toBeDefined();
+    expect(p.fromVersion).toBeDefined();
+    expect(p.toVersion).toBeDefined();
   });
 
   it('chunk.uploaded carries a 64-char hex hash', () => {

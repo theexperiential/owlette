@@ -63,7 +63,7 @@ describe('roost trigger (server-probe mode)', () => {
       [
         '--json',
         'trigger',
-        'manifest.published',
+        'version.published',
         '--site',
         'site-1',
         '--id',
@@ -74,7 +74,7 @@ describe('roost trigger (server-probe mode)', () => {
     expect(calls[0]!.url).toBe('https://dev.test/api/webhooks/probe');
     expect(calls[0]!.init.method).toBe('POST');
     const body = JSON.parse(String(calls[0]!.init.body));
-    expect(body.kind).toBe('manifest.published');
+    expect(body.kind).toBe('version.published');
     expect(body.siteId).toBe('site-1');
     expect(body.deliveryId).toBe('delivery-abc');
     expect(body.payload.roostId).toBeDefined();
@@ -90,7 +90,7 @@ describe('roost trigger (direct mode)', () => {
       [
         '--json',
         'trigger',
-        'manifest.published',
+        'version.published',
         '--site',
         'site-1',
         '--to',
@@ -104,7 +104,7 @@ describe('roost trigger (direct mode)', () => {
     );
     expect(calls[0]!.url).toBe('http://localhost:9999/hooks');
     const headers = calls[0]!.init.headers as Record<string, string>;
-    expect(headers['Roost-Event']).toBe('manifest.published');
+    expect(headers['Roost-Event']).toBe('version.published');
     expect(headers['Roost-Delivery']).toBe('delivery-xyz');
     expect(headers['Roost-Signature']).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
 
@@ -126,7 +126,7 @@ describe('roost trigger (direct mode)', () => {
       [
         '--json',
         'trigger',
-        'manifest.published',
+        'version.published',
         '--site',
         'site-1',
         '--to',
@@ -145,7 +145,7 @@ describe('roost trigger (direct mode)', () => {
       [
         '--json',
         'trigger',
-        'manifest.published',
+        'version.published',
         '--site',
         'site-1',
         '--to',

@@ -13,6 +13,45 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [Unreleased]
 
+## [2.10.0] - 2026-04-24
+
+### breaking — roost: `manifest` → `version` rename + per-roost version numbering
+
+The release-engineering noun renamed end-to-end. What was a `manifest` (OCI/Docker borrow that confused TD-artist + signage operators) is now a `version` everywhere: API routes, SDK types, CLI commands, dashboard labels, Firestore sub-collection name, mediaType string, webhook events, error codes. Clean break — no backcompat shim, no redirect layer. **v2.10.0 is the cutover release.** Pre-2.10 agents cannot speak to a 2.10 web/api (wire protocol changed: `manifest_id`/`manifest_url`/`folder_id` in `sync_pull` payloads → `version_id`/`version_url`/`roost_id`); upgrade agents in lockstep with web.
+
+**rename surface (mechanical)**
+- API routes: `/api/roosts/{id}/manifests/*` → `/api/roosts/{id}/versions/*`. `/manifest-url` → `/version-url`. Old paths 404.
+- Path param grammar: `{manifestId}` → `{versionRef}`. The `versionRef` resolver accepts six forms — see *new capabilities* below.
+- Field names (camelCase): `manifestId` → `versionId`, `currentManifestId` → `currentVersionId`, `previousManifestId` → `previousVersionId`, `targetManifestId` → `targetVersion` (now `string | number`), `manifestUrl` → `versionUrl`, `manifestMetadata` → `versionMetadata`. Same renames in snake_case across Python SDK + agent (`manifest_id` → `version_id`, etc.).
+- TypeScript types: `Manifest*` → `Version*` (`ManifestSummary` → `VersionSummary`, `ManifestDetail` → `VersionDetail`, etc.).
+- SDK accessor: `client.manifests` → `client.versions` (Node + Python).
+- CLI flags: `--manifest <id>` → `--version <ref>`; `--against <manifestId>` → `--against <versionRef>`; `--to <manifestId>` → `--to <versionRef>`.
+- Webhook events: `manifest.published` → `version.published`. `Roost-Event` header values follow.
+- Error codes: `manifest_stale` → `version_stale`, `manifest_not_found` → `version_not_found`, plus new `version_ref_malformed` (400) + `version_content_immutable` (400).
+- mediaType: `application/vnd.owlette.manifest.v1+json` → `application/vnd.owlette.version.v1+json`.
+- Firestore sub-collection: `sites/{s}/roosts/{r}/manifests/{id}` → `sites/{s}/roosts/{r}/versions/{id}`. Migration script at `scripts/migrate-manifest-to-version.mjs` (idempotent, supports `--dry-run` + `--rollback`, handles roost-doc field rename + `versionNumber` backfill).
+- Agent wire protocol: `sync_pull` command payloads now use `version_id`/`version_url`/`roost_id` (was `manifest_id`/`manifest_url`/`folder_id`). Agent code at `agent/src/sync_version.py` (was `sync_manifest.py`).
+- Firestore security rule: `match /manifests/{manifestId}` → `match /versions/{versionId}` under the roost sub-collection.
+
+**new capabilities introduced alongside the rename**
+- **Auto-incrementing per-roost `versionNumber`**: every push to a roost gets a 1-indexed integer (#1, #2, #3...) minted inside a Firestore transaction. Monotonic + gap-free even under concurrent publishes. Surfaced in API responses, dashboard list rows (`v3` badge), and CLI output.
+- **Optional `description` field per version** (≤500 chars, plaintext): commit-message-style "what changed?" annotation. Set on push via SDK options or CLI `-m / --description <text>`. Editable after publish via `PATCH /api/roosts/{id}/versions/{ref}` — version *content* (files, chunks) stays immutable; only description can change. Denormalized to roost doc as `currentVersionDescription` so the dashboard list renders without N+1 reads.
+- **Version-addressing resolver** (`web/lib/resolveVersion.ts`): every `{versionRef}` path param + CLI `--to`/`--against` accepts six forms — plain integer (`3`), `#3`, `v3`/`V3`, stable id (`vrs_*`), or alias (`current` / `previous` / `first`). Server resolves; SDKs/CLIs forward raw input verbatim.
+- **New `roost roost versions <roostId>` CLI subcommand**: lists all versions for a roost with `#`, id, description, createdAt columns. Cursor-paginated, honors `--json`.
+- **Dashboard UI**: roost rows show current `v{N}` badge + description preview + relative timestamp. Expanding a row reveals chronological version history with per-row three-dot menu (rollback to this version, copy version id, view files, diff against current). New "+ new version" button inside each expanded panel opens the push modal with name/extract-path/targets locked + pre-populated, so adding a version to an existing roost is one flow distinct from creating a new project. New-roost modal now requires a non-empty name.
+
+**migration tooling**
+- Firestore migration: `node scripts/migrate-manifest-to-version.mjs --project dev --dry-run` first, then run for real. Idempotent — skips already-migrated roosts. Backfills `versionNumber` (1, 2, 3...) sorted by `createdAt`. Renames roost-doc pointer fields. `--rollback` reverses via the per-run log file.
+- Local agent state: SQLite columns renamed in `sync-state.db` schema. `SCHEMA_VERSION` was not bumped — existing dev installs need the file deleted before the new agent boots, or upgrade will throw `OperationalError` on first INSERT. Acceptable per the 2.10.0 clean-cutover semantics; flagged for installer-side cleanup follow-up.
+
+**deferred follow-ups (post-rename)**
+- R2 physical bucket migration: object keys still live under `project-manifests/{roostId}/{versionId}` in R2. Code references the prefix string with a marker comment (`web/lib/r2Client.server.ts`) until a dedicated migration script copies+deletes from `project-manifests/` → `project-versions/`. No wire impact — just a storage-layer rename.
+- Browser-app `manifest.json` (PWA) is intentionally untouched — that's a Next.js metadata convention, not a roost concept.
+
+**verification**
+- 200 functions tests + 1,017 web tests + 28 node SDK tests + 101 CLI tests + 376 agent unit tests all green. Final repo-wide grep returns 17 hits, all in `dev/active/roost-version-rename/reference/rename-sweep-allowlist.txt` (R2 deferral, PWA reference, verb forms, intentional compat note, defensive test fixtures).
+- Migration guide for any dev tester or early SDK user: `dev/active/roost-version-rename/MIGRATION.md`.
+
 ### added — roost (project distribution v2)
 
 A content-addressed sync layer replacing v1's single-URL ZIP model. Turns roost into the release-engineering layer: deploy via drag-drop or URL, atomic rollback via pointer flip, dedup at chunk granularity, real retry + resume across tab close.
@@ -75,7 +114,7 @@ Infrastructure highlights: `roleState()` helper for pre-authenticated specs, `st
 ### decisions locked (roost)
 
 - **No `/api/v2/` URL prefix** — the new routes ARE the API.
-- **No backwards compatibility with v1 agents** — clean cutover, v3.0.0 agent is a hard requirement. No dual-write window, no shadow-read, no `project_url` fallback. Operators re-roost on v2; existing v1 distributions end at cutover.
+- **No backwards compatibility with v1 agents** — clean cutover, the v2.10.0 agent is a hard requirement. No dual-write window, no shadow-read, no `project_url` fallback. Operators re-roost on v2; existing v1 distributions end at cutover.
 - **No header-based versioning** (no `Accept: application/vnd.owlette.v2+json`).
 - **v3-deferred** (do NOT rebuild in v2): bidirectional sync, LAN swarm, Ed25519 manifest signing, public CLI + GitHub Action, FastCDC, chaos rack.
 

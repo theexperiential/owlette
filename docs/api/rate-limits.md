@@ -27,14 +27,14 @@ quota headroom is engineered by **choosing the right tier**. rate-limit headroom
 
 tier limits are architecturally enforced — the server refuses traffic at the boundary, not just displays a warning. billing is monthly; all limits reset on the 1st utc.
 
-| tier | $/machine/mo | storage (gb) | daily manifest publishes | api requests / minute | webhook deliveries / day |
+| tier | $/machine/mo | storage (gb) | daily version publishes | api requests / minute | webhook deliveries / day |
 |---|---|---|---|---|---|
 | free | $0 | 5 (hard cap) | 10 | 60 | 500 |
 | starter | $8 | 25 (pooled) | 100 | 300 | 5,000 |
 | pro | $15 | 100 (pooled) | 1,000 | 1,000 | 50,000 |
 | enterprise | $25–40 | 250 or byo bucket | 10,000 | 5,000 | unlimited |
 
-**per-file max** (enforced on manifest publish): free 100 mb, starter 5 gb, pro 10 gb, enterprise 50 gb.
+**per-file max** (enforced on version publish): free 100 mb, starter 5 gb, pro 10 gb, enterprise 50 gb.
 
 **overage** (applies to starter/pro only; free refuses, enterprise negotiated): storage overage billed at $0.05/gb/mo (starter) and $0.04/gb/mo (pro).
 
@@ -66,7 +66,7 @@ every response (success or failure) carries the ietf draft-standard headers. the
 | value | meaning | remediation |
 |---|---|---|
 | `global-rate` | tenant-wide burst ceiling hit | narrow concurrency, backoff |
-| `endpoint-rate` | one endpoint class (e.g. manifests) exhausted | spread calls, parallelize across endpoints |
+| `endpoint-rate` | one endpoint class (e.g. versions) exhausted | spread calls, parallelize across endpoints |
 | `key-rate` | this api key's per-key budget hit | shard traffic across multiple keys |
 | `site-concurrency` | too many concurrent rollouts on one site | serialize deploys, wait for in-flight to finish |
 
@@ -95,13 +95,13 @@ Roost-Rate-Limited-Reason: key-rate
 
 ## 4. per-resource limits
 
-not every endpoint shares the same budget. chunks are the data plane and need headroom for bulk parallel uploads; manifests and deployments are low-frequency control-plane operations.
+not every endpoint shares the same budget. chunks are the data plane and need headroom for bulk parallel uploads; versions and deployments are low-frequency control-plane operations.
 
 | endpoint class | example paths | pro tier budget | rationale |
 |---|---|---|---|
 | chunk control plane | `/api/chunks/check`, `/api/chunks/upload-urls`, `/api/chunks/download-urls` | 5,000 req/min | bulk upload staging — clients batch up to 1000 hashes per call |
 | chunk data plane (r2) | signed-url `PUT`/`GET` to r2 | bounded by r2 (thousands of req/s) | off our servers; not subject to roost rate-limits |
-| manifests | `POST /api/roosts/{id}/manifests`, `GET .../manifests/*` | 60 req/min + daily publish cap | publishes are expensive — fan-out, cas check, audit entry |
+| versions | `POST /api/roosts/{id}/versions`, `GET .../versions/*` | 60 req/min + daily publish cap | publishes are expensive — fan-out, cas check, audit entry |
 | deployments | `POST /api/roosts/{id}/deploy`, `POST .../rollback` | 30 req/min + site-concurrency cap | one in-flight rollout per site recommended |
 | reads (lists/details) | `GET /api/roosts`, `GET /api/sites/{id}/machines`, etc. | 1,000 req/min (default) | cheap and cacheable — highest budget |
 | webhook deliveries (outbound) | deliveries to subscriber urls | tier-bound (see above) | pacing prevents subscriber brownouts |
@@ -187,8 +187,8 @@ rate-limits are enforced via a **token bucket** per key/endpoint class. each buc
 
 this means a client at rest can **burst up to 2x its per-minute budget in a single second** before being throttled back to the sustained rate. the rationale:
 
-1. **human-scale workloads are bursty.** a ci pipeline publishes 12 manifests in 30 seconds, then nothing for an hour. a flat rps ceiling would force artificial pacing for no technical reason.
-2. **chunk uploads parallelize.** pushing a 2 gb manifest means 512 chunk uploads that all want to go at once. a burst window lets them go.
+1. **human-scale workloads are bursty.** a ci pipeline publishes 12 versions in 30 seconds, then nothing for an hour. a flat rps ceiling would force artificial pacing for no technical reason.
+2. **chunk uploads parallelize.** pushing a 2 gb version means 512 chunk uploads that all want to go at once. a burst window lets them go.
 3. **the ietf `RateLimit-*` draft does not distinguish sustained vs burst.** `RateLimit-Limit` reflects the sustained per-window budget; the burst ceiling is a server-internal affordance, not surfaced as a header.
 
 if you exceed the burst ceiling you get throttled to the sustained rate — not banned. `Retry-After` will be short (under 1 second) in this regime. if you keep pushing past the sustained rate for a full minute you will hit the per-minute window limit, at which point `Retry-After` reflects the time to window reset.
@@ -222,7 +222,7 @@ Authorization: Bearer owk_live_...
 
 **fields:**
 - `tier` — one of `free`, `starter`, `pro`, `enterprise`.
-- `usedBytes` — bytes committed to storage (manifests published).
+- `usedBytes` — bytes committed to storage (versions published).
 - `pendingBytes` — bytes reserved by in-flight uploads (see §9).
 - `limitBytes` — total bytes allowed on the tier.
 - `alarms[]` — thresholds that have already fired this period (useful for resuming after a restart without re-firing).
@@ -278,10 +278,10 @@ events are delivered with the standard `Roost-Signature` hmac header; see `docs/
 ## 9. what counts
 
 **storage (`usedBytes` + `pendingBytes`):**
-- **uploads add to `usedBytes` immediately** once the manifest is successfully published. counted at the tenant (site) level — a chunk mounted into a second roost via `POST /api/chunks/{digest}/mount` is **not** double-counted.
-- **deletions free bytes via nightly gc, not immediately.** when a roost is deleted (or a manifest is no longer referenced), the chunks enter a **30-day tombstone** window. during that window the bytes still count toward quota. after 30 days, the chunk gc sweep reclaims them.
+- **uploads add to `usedBytes` immediately** once the version is successfully published. counted at the tenant (site) level — a chunk mounted into a second roost via `POST /api/chunks/{digest}/mount` is **not** double-counted.
+- **deletions free bytes via nightly gc, not immediately.** when a roost is deleted (or a version is no longer referenced), the chunks enter a **30-day tombstone** window. during that window the bytes still count toward quota. after 30 days, the chunk gc sweep reclaims them.
 - **pending reservations count toward quota.** when a client calls `POST /api/chunks/upload-urls`, the server increments `pendingBytes` for the requested hashes. this prevents a racing bulk-upload from bypassing the quota cap. pending reservations **ttl after 24 hours** — if the client never `PUT`s the bytes, the reservation is released automatically.
-- **manifest json itself counts** toward storage (stored in r2, sized in the kb–mb range for normal roosts).
+- **version json itself counts** toward storage (stored in r2, sized in the kb–mb range for normal roosts).
 - the sum `usedBytes + pendingBytes` is what the server compares against `limitBytes` for the 402 gate.
 
 **bandwidth:**
@@ -290,7 +290,7 @@ events are delivered with the standard `Roost-Signature` hmac header; see `docs/
 - webhook delivery bandwidth is not metered (counted in delivery-count instead).
 
 **operations:**
-- daily manifest publishes counts `POST /api/roosts/{id}/manifests` calls (not deploy/rollback pointer flips).
+- daily version publishes counts `POST /api/roosts/{id}/versions` calls (not deploy/rollback pointer flips).
 - api requests/minute counts every successful + 4xx response (health checks and 429 retries excluded).
 - webhook deliveries/day counts successful + terminally-failed deliveries (in-flight retries count once).
 

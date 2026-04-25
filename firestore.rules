@@ -50,13 +50,6 @@ service cloud.firestore {
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin';
     }
 
-    // DEPRECATED: Use isSuperadmin() (platform-wide) or isSiteAdmin(siteId) (site-scoped).
-    // Kept as an alias during the permission-model-split migration to soften blast radius.
-    // Remove in Wave 0.7.3 after every call site has been re-pointed.
-    function isAdmin() {
-      return isSuperadmin();
-    }
-
     // Check if request is from service account (Python agent)
     // Service accounts have the 'admin' claim set to true
     // DEPRECATED: Use isAgent() for OAuth-authenticated agents
@@ -317,7 +310,7 @@ service cloud.firestore {
         // CREATE: site-scoped users can create the roost shell, but the
         // pointer fields (currentManifestId, previousManifestId,
         // manifestUrl) MUST be null/unset at create time. The first real
-        // manifest is published via /api/roosts/.../manifests using
+        // manifest is published via /api/roosts/.../versions using
         // the admin SDK (which bypasses these rules). This prevents a
         // direct-Firestore client from publishing a fake "v0" pointing
         // at attacker-controlled storage.
@@ -331,7 +324,7 @@ service cloud.firestore {
                          (!('manifestUrl' in request.resource.data) ||
                           request.resource.data.manifestUrl == null);
         // UPDATE: pointer fields cannot be flipped client-side. They go
-        // through the /api/roosts/.../manifests + /rollback routes,
+        // through the /api/roosts/.../versions + /rollback routes,
         // which use Firestore transactions (CAS) under admin SDK creds.
         allow update: if canAccessSite(siteId) &&
                          !request.resource.data.diff(resource.data).affectedKeys()
@@ -370,19 +363,19 @@ service cloud.firestore {
         // metadata + the R2 url + timestamps + author for the version
         // history dropdown.
 
-        match /manifests/{manifestId} {
-          // READ: any site member can list manifest history (for rollback ui).
+        match /versions/{versionId} {
+          // READ: any site member can list version history (for rollback ui).
           allow read: if canAccessSite(siteId);
-          // CREATE: forbidden client-side. Manifests are written ONLY by
-          // /api/roosts/.../manifests using the admin SDK, after the
-          // chunk-presence check + r2 manifest body upload + transactional
+          // CREATE: forbidden client-side. Versions are written ONLY by
+          // /api/roosts/.../versions using the admin SDK, after the
+          // chunk-presence check + r2 version body upload + transactional
           // pointer flip on the parent. Allowing client-side create would
           // let a site member publish a fake history entry pointing at
-          // attacker-controlled storage (manifestUrl is unvalidated).
+          // attacker-controlled storage (versionUrl is unvalidated).
           allow create: if false;
           // UPDATE/DELETE: history is immutable. Rollback works by
-          // repointing currentManifestId on the parent roosts
-          // doc, NOT by editing or deleting manifests here. GC is admin
+          // repointing currentVersionId on the parent roosts
+          // doc, NOT by editing or deleting versions here. GC is admin
           // SDK only (bypasses these rules) and tombstone-protected.
           allow update: if false;
           allow delete: if false;

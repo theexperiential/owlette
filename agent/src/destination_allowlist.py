@@ -235,7 +235,7 @@ _FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 
 # windows reserved device names — writing to ANY of these names (with or
 # without an extension) redirects the i/o to the named device, NOT the
-# file system. an attacker-controlled manifest path of `<allowed>/NUL`
+# file system. an attacker-controlled version path of `<allowed>/NUL`
 # or `<allowed>/sub/CON.toe` silently corrupts data or attaches to console.
 # https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file
 _WINDOWS_RESERVED_NAMES = frozenset({

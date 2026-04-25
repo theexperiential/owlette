@@ -91,7 +91,7 @@ describe('checkIdempotency', () => {
         bodyHash,
         status: 201,
         headers: { 'content-type': 'application/json' },
-        body: '{"manifestId":"m1"}',
+        body: '{"versionId":"v1"}',
         expiresAt: Date.now() + 60_000,
       }),
     });
@@ -101,7 +101,7 @@ describe('checkIdempotency', () => {
       expect(result.response.status).toBe(201);
       expect(result.response.headers.get('Idempotent-Replayed')).toBe('true');
       const body = await result.response.json();
-      expect(body.manifestId).toBe('m1');
+      expect(body.versionId).toBe('v1');
     }
   });
 

@@ -4,6 +4,7 @@
  * when a test needs to tweak the baseline.
  */
 
+import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from './emulator';
 
 export type TestRole = 'member' | 'admin' | 'superadmin';
@@ -303,4 +304,213 @@ export async function seedMachine(
         mosaicActive: false,
       });
   }
+}
+
+export interface SeedRoostOptions {
+  /** Display name. Defaults to the roostId. */
+  name?: string;
+  /** Machine ids this roost deploys to. Defaults to []. */
+  targets?: string[];
+  /** Optional extract path on the agent side. */
+  extractPath?: string;
+  /** Starting version counter. Defaults to 0 (no versions yet). */
+  versionCounter?: number;
+}
+
+/**
+ * Seed a roost doc at `sites/{siteId}/roosts/{roostId}`. Writes only the
+ * roost-level fields — version pointers stay null until `seedVersion` /
+ * `seedRoostWithVersionHistory` populate them. Idempotent via merge.
+ */
+export async function seedRoost(
+  siteId: string,
+  roostId: string,
+  opts: SeedRoostOptions = {},
+): Promise<void> {
+  const db = getAdminDb();
+  const extractPathField =
+    typeof opts.extractPath === 'string' ? { extractPath: opts.extractPath } : {};
+
+  await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('roosts')
+    .doc(roostId)
+    .set(
+      {
+        schemaVersion: 2,
+        name: opts.name ?? roostId,
+        targets: opts.targets ?? [],
+        versionCounter: opts.versionCounter ?? 0,
+        currentVersionId: null,
+        previousVersionId: null,
+        deletedAt: null,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+        createdBy: 'e2e-seed',
+        ...extractPathField,
+      },
+      { merge: true },
+    );
+}
+
+export interface SeedVersionFile {
+  path: string;
+  size: number;
+  chunks: Array<{ hash: string; size: number }>;
+}
+
+export interface SeedVersionOptions {
+  versionId: string;
+  versionNumber: number;
+  description?: string | null;
+  files?: SeedVersionFile[];
+  /** Override createdAt (ms since epoch). Defaults to now. */
+  createdAt?: number;
+  /** Optional parent version id (for history chains). */
+  parentVersionId?: string | null;
+}
+
+/**
+ * Seed a version doc at `sites/{siteId}/roosts/{roostId}/versions/{versionId}`.
+ * Does NOT update the roost doc's currentVersionId — use
+ * `seedRoostWithVersionHistory` for the full happy-path setup. Idempotent.
+ */
+export async function seedVersion(
+  siteId: string,
+  roostId: string,
+  opts: SeedVersionOptions,
+): Promise<void> {
+  const db = getAdminDb();
+  const files = opts.files ?? [];
+  const totalSize =
+    files.length > 0 ? files.reduce((n, f) => n + f.size, 0) : 1024;
+  const totalFiles = files.length > 0 ? files.length : 1;
+
+  await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('roosts')
+    .doc(roostId)
+    .collection('versions')
+    .doc(opts.versionId)
+    .set(
+      {
+        versionId: opts.versionId,
+        versionNumber: opts.versionNumber,
+        description: opts.description ?? null,
+        versionUrl: `https://e2e-seed.test/version-${opts.versionId}.json`,
+        createdAt: new Date(opts.createdAt ?? Date.now()),
+        createdBy: 'e2e-seed',
+        totalSize,
+        totalFiles,
+        parentVersionId: opts.parentVersionId ?? null,
+      },
+      { merge: true },
+    );
+}
+
+export interface SeedRoostWithVersionHistoryOptions {
+  /** Display name. Defaults to the roostId. */
+  name?: string;
+  /** Machine ids this roost deploys to. Defaults to []. */
+  targets?: string[];
+  /** Optional extract path on the agent side. */
+  extractPath?: string;
+  /** How many versions to create. Versions number 1..N. */
+  versionCount: number;
+  /**
+   * Per-version descriptions; index N-1 is the description for version #N.
+   * Missing entries default to null.
+   */
+  descriptions?: Array<string | null>;
+}
+
+/**
+ * Convenience factory: seed a roost plus N versions, then point the roost's
+ * currentVersionId / previousVersionId / versionCounter at the head. Mirrors
+ * the post-publish state of a roost that has been pushed `versionCount` times.
+ */
+export async function seedRoostWithVersionHistory(
+  siteId: string,
+  roostId: string,
+  opts: SeedRoostWithVersionHistoryOptions,
+): Promise<void> {
+  if (!Number.isInteger(opts.versionCount) || opts.versionCount < 1) {
+    throw new Error(
+      `seedRoostWithVersionHistory: versionCount must be a positive integer (got ${opts.versionCount})`,
+    );
+  }
+
+  await seedRoost(siteId, roostId, {
+    name: opts.name,
+    targets: opts.targets,
+    extractPath: opts.extractPath,
+    versionCounter: 0,
+  });
+
+  const versionIdFor = (n: number) => `vrs_${roostId}_v${n}`;
+
+  // Ascending order so parentVersionId chains are stable + createdAt
+  // timestamps reflect publish order (head = newest).
+  const baseTime = Date.now() - opts.versionCount * 1000;
+  for (let n = 1; n <= opts.versionCount; n++) {
+    await seedVersion(siteId, roostId, {
+      versionId: versionIdFor(n),
+      versionNumber: n,
+      description: opts.descriptions?.[n - 1] ?? null,
+      createdAt: baseTime + n * 1000,
+      parentVersionId: n > 1 ? versionIdFor(n - 1) : null,
+    });
+  }
+
+  const headNumber = opts.versionCount;
+  const headId = versionIdFor(headNumber);
+  const previousId = headNumber > 1 ? versionIdFor(headNumber - 1) : null;
+  const headDescription = opts.descriptions?.[headNumber - 1] ?? null;
+
+  const db = getAdminDb();
+  await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('roosts')
+    .doc(roostId)
+    .set(
+      {
+        versionCounter: headNumber,
+        currentVersionId: headId,
+        previousVersionId: previousId,
+        currentVersionNumber: headNumber,
+        currentVersionDescription: headDescription,
+        versionUrl: `https://e2e-seed.test/version-${headId}.json`,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+}
+
+/**
+ * Seed `siteChunks/{digest}` docs so server-side chunk-presence checks during
+ * version finalisation see the referenced hashes as already-uploaded. Each
+ * doc carries the minimum surface a `hasChunk()` lookup needs.
+ */
+export async function seedChunks(siteId: string, digests: string[]): Promise<void> {
+  if (digests.length === 0) return;
+  const db = getAdminDb();
+  await Promise.all(
+    digests.map((digest) =>
+      db
+        .collection('siteChunks')
+        .doc(digest)
+        .set(
+          {
+            siteId,
+            hash: digest,
+            size: 4096,
+            createdAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        ),
+    ),
+  );
 }

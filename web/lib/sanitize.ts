@@ -5,12 +5,12 @@
  * React JSX escapes text by default, so simply rendering a filename as
  * `{file.name}` is already XSS-safe. This module exists because:
  *
- *   1. Manifests are stored + echoed back. Normalising at upload time
+ *   1. Versions are stored + echoed back. Normalising at upload time
  *      prevents malicious zero-width / RTL-override payloads from ever
  *      being persisted — so a later feature that renders the name in a
  *      non-JSX context (toast, `document.title`, `aria-label`, CSS content)
  *      inherits the cleanliness.
- *   2. The agent-side `_invalid_manifest_path` guard (sync_manifest.py)
+ *   2. The agent-side `_invalid_version_path` guard (sync_version.py)
  *      will reject hostile paths at ingest, but sanitising client-side
  *      lets us show the operator a friendly error BEFORE the upload
  *      starts — instead of a late server rejection.
@@ -22,8 +22,8 @@
  *   - Filesystem legality. Windows rejects `< > : " | ? *` on write; the
  *     agent surfaces that error. Different platforms have different
  *     rules — we don't pre-bake any single OS's rules here.
- *   - Path traversal. Manifests are the path-bearing surface; that's
- *     `sync_manifest.py._invalid_manifest_path`'s job.
+ *   - Path traversal. Versions are the path-bearing surface; that's
+ *     `sync_version.py._invalid_version_path`'s job.
  *
  * Never wrap the output in `dangerouslySetInnerHTML`. If you need HTML,
  * you're doing the wrong thing — render as text via JSX.

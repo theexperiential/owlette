@@ -1,5 +1,5 @@
 /**
- * HTTP-shape tests for `roost roost list | get | diff`.
+ * HTTP-shape tests for `roost roost list | get | diff | versions`.
  *
  * Intercepts global.fetch, builds an in-process commander program, and
  * asserts the request URL/method/headers/body match the contract.
@@ -94,14 +94,14 @@ describe('roost roost get', () => {
       targets: [],
       extractPath: null,
       schemaVersion: 2,
-      currentManifestId: null,
-      previousManifestId: null,
-      manifestUrl: null,
+      currentVersionId: null,
+      previousVersionId: null,
+      versionUrl: null,
       createdAt: null,
       updatedAt: null,
       deletedAt: null,
-      currentManifest: null,
-      previousManifest: null,
+      currentVersion: null,
+      previousVersion: null,
     });
     jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const program = buildProgram();
@@ -117,7 +117,7 @@ describe('roost roost get', () => {
 });
 
 describe('roost roost diff', () => {
-  it('resolves currentManifestId then calls /diff?against=...', async () => {
+  it('resolves currentVersionId then calls /diff?against=...', async () => {
     const roostDetail = {
       roostId: 'rst_testrs01234',
       siteId: 'site-1',
@@ -125,18 +125,20 @@ describe('roost roost diff', () => {
       targets: [],
       extractPath: null,
       schemaVersion: 2,
-      currentManifestId: 'manifest-current',
-      previousManifestId: 'manifest-previous',
-      manifestUrl: null,
+      currentVersionId: 'vrs_current',
+      previousVersionId: 'vrs_previous',
+      versionUrl: null,
       createdAt: null,
       updatedAt: null,
       deletedAt: null,
-      currentManifest: null,
-      previousManifest: null,
+      currentVersion: null,
+      previousVersion: null,
     };
     const diffResponse = {
-      manifestId: 'manifest-current',
-      against: 'manifest-previous',
+      versionId: 'vrs_current',
+      toVersion: 'vrs_current',
+      fromVersion: 'vrs_previous',
+      against: 'vrs_previous',
       roostId: 'rst_testrs01234',
       siteId: 'site-1',
       summary: { added: 0, removed: 0, changed: 0, unchanged: 0, hasChanges: false, netBytesDelta: 0 },
@@ -145,7 +147,7 @@ describe('roost roost diff', () => {
       modified: [],
     };
     let call = 0;
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(async (url: string) => {
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(async (_url: string) => {
       call += 1;
       return {
         ok: true,
@@ -167,7 +169,7 @@ describe('roost roost diff', () => {
         '--site',
         'site-1',
         '--against',
-        'manifest-previous',
+        'vrs_previous',
       ],
       { from: 'user' },
     );
@@ -175,9 +177,140 @@ describe('roost roost diff', () => {
     expect((global.fetch as jest.Mock).mock.calls).toHaveLength(2);
     const diffUrl = (global.fetch as jest.Mock).mock.calls[1]![0] as string;
     expect(diffUrl).toContain(
-      '/api/roosts/rst_testrs01234/manifests/manifest-current/diff',
+      '/api/roosts/rst_testrs01234/versions/vrs_current/diff',
     );
-    expect(diffUrl).toContain('against=manifest-previous');
+    expect(diffUrl).toContain('against=vrs_previous');
     expect(diffUrl).toContain('siteId=site-1');
+  });
+
+  it('honours --version as the "to" ref when explicitly provided', async () => {
+    const diffResponse = {
+      versionId: 'vrs_target',
+      toVersion: 'vrs_target',
+      fromVersion: 'vrs_prev',
+      against: 'vrs_prev',
+      roostId: 'rst_testrs01234',
+      siteId: 'site-1',
+      summary: { added: 0, removed: 0, changed: 0, unchanged: 0, hasChanges: false, netBytesDelta: 0 },
+      added: [],
+      removed: [],
+      modified: [],
+    };
+    const calls = installFetchStub(diffResponse);
+    jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const program = buildProgram();
+
+    await program.parseAsync(
+      [
+        '--json',
+        'roost',
+        'diff',
+        'rst_testrs01234',
+        '--site',
+        'site-1',
+        '--against',
+        'vrs_prev',
+        '--version',
+        'vrs_target',
+      ],
+      { from: 'user' },
+    );
+
+    // With --version explicitly provided the CLI skips the roost-detail
+    // fetch and goes straight to the diff endpoint.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain(
+      '/api/roosts/rst_testrs01234/versions/vrs_target/diff',
+    );
+    expect(calls[0]!.url).toContain('against=vrs_prev');
+  });
+});
+
+describe('roost roost versions', () => {
+  it('GETs /api/roosts/:id/versions with siteId + page-size + Bearer auth', async () => {
+    const calls = installFetchStub({ versions: [], nextCursor: null });
+    jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const program = buildProgram();
+
+    await program.parseAsync(
+      [
+        '--json',
+        'roost',
+        'versions',
+        'rst_testrs01234',
+        '--site',
+        'site-1',
+        '--page-size',
+        '5',
+      ],
+      { from: 'user' },
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain(
+      'https://dev.test/api/roosts/rst_testrs01234/versions?',
+    );
+    expect(calls[0]!.url).toContain('siteId=site-1');
+    expect(calls[0]!.url).toContain('limit=5');
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer owk_live_testtoken');
+  });
+
+  it('auto-paginates via nextCursor until the server returns empty', async () => {
+    const pages = [
+      {
+        versions: [
+          {
+            versionId: 'vrs_02',
+            versionNumber: 2,
+            description: 'second',
+            versionUrl: null,
+            createdAt: '2026-04-22T00:02:00Z',
+            createdBy: 'u',
+            totalSize: 10,
+            totalFiles: 1,
+            parentVersionId: 'vrs_01',
+          },
+        ],
+        nextCursor: 'vrs_02',
+      },
+      {
+        versions: [
+          {
+            versionId: 'vrs_01',
+            versionNumber: 1,
+            description: null,
+            versionUrl: null,
+            createdAt: '2026-04-22T00:01:00Z',
+            createdBy: 'u',
+            totalSize: 5,
+            totalFiles: 1,
+            parentVersionId: null,
+          },
+        ],
+        nextCursor: null,
+      },
+    ];
+    let page = 0;
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(async () => {
+      const body = pages[page++]!;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      } as Response;
+    });
+    jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const program = buildProgram();
+
+    await program.parseAsync(
+      ['--json', 'roost', 'versions', 'rst_testrs01234', '--site', 'site-1'],
+      { from: 'user' },
+    );
+
+    expect((global.fetch as jest.Mock).mock.calls).toHaveLength(2);
+    const secondUrl = (global.fetch as jest.Mock).mock.calls[1]![0] as string;
+    expect(secondUrl).toContain('cursor=vrs_02');
   });
 });

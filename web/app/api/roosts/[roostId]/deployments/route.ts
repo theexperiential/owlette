@@ -1,7 +1,7 @@
 /**
  * GET /api/roosts/{roostId}/deployments?siteId=...&limit=20&cursor=...
  *     → List rollouts for a roost, newest first. Cursor is the rollout
- *       doc id (= manifestId) of the last item on the previous page.
+ *       doc id (= versionId) of the last item on the previous page.
  *
  * roost public api wave 3.3.
  */
@@ -74,12 +74,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       const data = d.data();
       return {
         rolloutId: d.id,
-        manifestId: typeof data.manifestId === 'string' ? data.manifestId : d.id,
+        versionId: typeof data.versionId === 'string' ? data.versionId : d.id,
         stage: typeof data.stage === 'string' ? data.stage : 'unknown',
         canaryCount: Array.isArray(data.canary) ? data.canary.length : 0,
         fleetCount: Array.isArray(data.fleet) ? data.fleet.length : 0,
         extractRoot: typeof data.extractRoot === 'string' ? data.extractRoot : null,
-        manifestUrl: typeof data.manifestUrl === 'string' ? data.manifestUrl : null,
+        versionUrl: typeof data.versionUrl === 'string' ? data.versionUrl : null,
         triggeredBy: data.triggeredBy ?? null,
         startedAt: timestampToIso(data.startedAt),
         completedAt: timestampToIso(data.completedAt),

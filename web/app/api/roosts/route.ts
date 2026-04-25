@@ -5,8 +5,8 @@
  * POST /api/roosts
  *      input:  { siteId, name, targets[]?, roostId?, extractPath? }
  *      output: { roostId, siteId, name, targets, createdAt }
- *      → create a roost shell. No manifest is published; currentManifestId
- *        stays null until the first POST /api/roosts/{id}/manifests.
+ *      → create a roost shell. No version is published; currentVersionId
+ *        stays null until the first POST /api/roosts/{id}/versions.
  *
  * roost public api wave 3.1.
  */
@@ -92,8 +92,10 @@ export async function GET(request: NextRequest) {
           name: typeof data.name === 'string' ? data.name : d.id,
           targets: Array.isArray(data.targets) ? data.targets : [],
           extractPath: typeof data.extractPath === 'string' ? data.extractPath : null,
-          currentManifestId: data.currentManifestId ?? null,
-          previousManifestId: data.previousManifestId ?? null,
+          currentVersionId: data.currentVersionId ?? null,
+          previousVersionId: data.previousVersionId ?? null,
+          versionCounter:
+            typeof data.versionCounter === 'number' ? data.versionCounter : 0,
           createdAt: timestampToIso(data.createdAt),
           updatedAt: timestampToIso(data.updatedAt),
           deletedAt: timestampToIso(data.deletedAt),
@@ -136,8 +138,13 @@ export async function POST(request: NextRequest) {
     if (!auth.ok) return auth.response;
 
     if (typeof body.name !== 'string' || body.name.trim().length === 0) {
-      return problemValidation('name is required and must be a non-empty string', {
-        'body.name': ['required non-empty string'],
+      return problem({
+        type: ProblemType.ValidationFailed,
+        title: 'validation failed',
+        status: 400,
+        detail: 'roost `name` is required and cannot be empty or whitespace-only',
+        code: 'roost_name_required',
+        errors: { 'body.name': ['required non-empty string'] },
       });
     }
     const name = body.name.trim().slice(0, MAX_NAME_LENGTH);

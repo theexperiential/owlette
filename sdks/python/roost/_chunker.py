@@ -85,7 +85,7 @@ async def chunk_one_file(abs_path: Path, rel_path: str) -> ChunkedFileEntry:
     """Hash one file into a ChunkedFileEntry. Streaming, bounded memory."""
     size = abs_path.stat().st_size
     if size == 0:
-        msg = f"chunker: {rel_path} is zero bytes; zero-byte files cannot be manifested"
+        msg = f"chunker: {rel_path} is zero bytes; zero-byte files cannot be published"
         raise ValueError(msg)
 
     chunks: list[ChunkDescriptor] = []

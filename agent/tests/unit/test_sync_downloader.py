@@ -117,7 +117,7 @@ def test_dedup_skips_already_present(tmp_path):
         data = b'already-there'
         h = _put_chunk(store, data)
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=[{'hash': h, 'size': len(data)}],
         )
         url_provider = MagicMock(side_effect=AssertionError("should not be called"))
@@ -144,7 +144,7 @@ def test_downloads_missing_chunk(tmp_path):
         data = b'fresh download data'
         h = _hash(data)
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=[{'hash': h, 'size': len(data)}],
         )
         # mock the http GET to return our data
@@ -176,7 +176,7 @@ def test_hash_mismatch_triggers_retry_then_fails(tmp_path):
         # claim hash is 'a'*64 but server returns 'wrong content'
         wrong_data = b'wrong content'
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=[{'hash': 'a' * 64, 'size': len(wrong_data)}],
         )
 
@@ -212,7 +212,7 @@ def test_cancel_event_short_circuits(tmp_path):
         store = tmp_path / 'content'
         chunks = [{'hash': f'{i:064x}', 'size': 5} for i in range(20)]
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=chunks,
         )
         cancel_event = threading.Event()
@@ -241,7 +241,7 @@ def test_signed_url_403_triggers_url_refresh(tmp_path):
         data = b'real data'
         h = _hash(data)
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=[{'hash': h, 'size': len(data)}],
         )
 
@@ -297,7 +297,7 @@ def test_range_resume_from_partial_file(tmp_path):
         partial_target.write_bytes(first_half)
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=[{'hash': h, 'size': len(full_data)}],
         )
 
@@ -347,7 +347,7 @@ def test_bulk_prefetch_batches_above_threshold(tmp_path):
             h = _put_chunk(store, data)
             chunks.append({'hash': h, 'size': len(data)})
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=chunks,
         )
 

@@ -10,7 +10,7 @@ import pytest
 from destination_allowlist import DestinationAllowlist, DestinationNotAllowedError
 from sync_assembler import AssembleError, AssembleResult, assemble_all
 from sync_downloader import chunk_path
-from sync_manifest import ManifestChunk, ManifestFile
+from sync_version import VersionChunk, VersionFile
 from sync_state import SyncState
 
 
@@ -22,15 +22,15 @@ def _put_chunk(store: Path, data: bytes) -> str:
     return h
 
 
-def _mk_manifest_file(path: str, chunk_data_list):
-    """build a ManifestFile from a list of chunk byte payloads."""
+def _mk_version_file(path: str, chunk_data_list):
+    """build a VersionFile from a list of chunk byte payloads."""
     chunks = []
     total = 0
     for data in chunk_data_list:
         h = hashlib.sha256(data).hexdigest()
-        chunks.append(ManifestChunk(hash=h, size=len(data)))
+        chunks.append(VersionChunk(hash=h, size=len(data)))
         total += len(data)
-    return ManifestFile(path=path, size=total, chunks=chunks)
+    return VersionFile(path=path, size=total, chunks=chunks)
 
 
 # ─── happy path ──────────────────────────────────────────────────────
@@ -46,10 +46,10 @@ def test_single_file_single_chunk(tmp_path):
 
         data = b'hello world'
         _put_chunk(content, data)
-        f = _mk_manifest_file('a.toe', [data])
+        f = _mk_version_file('a.toe', [data])
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         result = assemble_all(
@@ -78,10 +78,10 @@ def test_single_file_multiple_chunks(tmp_path):
         chunks_data = [b'part 1 ', b'part 2 ', b'part 3']
         for d in chunks_data:
             _put_chunk(content, d)
-        f = _mk_manifest_file('a.toe', chunks_data)
+        f = _mk_version_file('a.toe', chunks_data)
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         assemble_all(
@@ -103,10 +103,10 @@ def test_creates_subdirectories(tmp_path):
 
         data = b'nested file content'
         _put_chunk(content, data)
-        f = _mk_manifest_file('sub/dir/deep/file.toe', [data])
+        f = _mk_version_file('sub/dir/deep/file.toe', [data])
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         assemble_all(
@@ -128,12 +128,12 @@ def test_idempotent_skip_when_target_already_present(tmp_path):
 
         data = b'pre-existing content'
         _put_chunk(content, data)
-        f = _mk_manifest_file('a.toe', [data])
+        f = _mk_version_file('a.toe', [data])
         # pre-create the target with the right size
         (extract / 'a.toe').write_bytes(data)
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         result = assemble_all(
@@ -160,9 +160,9 @@ def test_extract_root_outside_allowlist_raises(tmp_path):
         not_allowed.mkdir()
         allowlist = DestinationAllowlist([str(allowed)])
 
-        f = _mk_manifest_file('a.toe', [b'data'])
+        f = _mk_version_file('a.toe', [b'data'])
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         with pytest.raises(AssembleError, match="not allowed"):
@@ -178,9 +178,9 @@ def test_empty_allowlist_rejects_everything(tmp_path):
     state = SyncState(str(tmp_path / 'state.db'))
     try:
         allowlist = DestinationAllowlist([])  # fail-closed
-        f = _mk_manifest_file('a.toe', [b'data'])
+        f = _mk_version_file('a.toe', [b'data'])
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         with pytest.raises(AssembleError, match="not allowed"):
@@ -204,10 +204,10 @@ def test_missing_chunk_in_store_fails_assembly(tmp_path):
         extract.mkdir()
         allowlist = DestinationAllowlist([str(extract)])
         # claim a chunk exists but never put it in the store
-        f = _mk_manifest_file('a.toe', [b'never-downloaded'])
+        f = _mk_version_file('a.toe', [b'never-downloaded'])
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         with pytest.raises(AssembleError, match="failed to assemble"):
@@ -236,10 +236,10 @@ def test_partial_file_left_on_failure_for_resume(tmp_path):
         # 2 chunks: first present, second missing
         first_data = b'first chunk data'
         _put_chunk(content, first_data)
-        f = _mk_manifest_file('a.toe', [first_data, b'never-there'])
+        f = _mk_version_file('a.toe', [first_data, b'never-there'])
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         with pytest.raises(AssembleError):
@@ -302,10 +302,10 @@ def test_assembles_file_at_long_path(tmp_path):
 
         data = b'long-path content'
         _put_chunk(content, data)
-        f = _mk_manifest_file(deep_relative, [data])
+        f = _mk_version_file(deep_relative, [data])
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         result = assemble_all(
@@ -361,10 +361,10 @@ def test_assemble_calls_harden_acl_on_target(tmp_path):
 
         data = b'acl test'
         _put_chunk(content, data)
-        f = _mk_manifest_file('a.toe', [data])
+        f = _mk_version_file('a.toe', [data])
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         with patch('sync_assembler._harden_acl') as mock_harden:
@@ -390,10 +390,10 @@ def test_cancel_event_stops_after_current_file(tmp_path):
 
         data = b'data'
         _put_chunk(content, data)
-        files = [_mk_manifest_file(f'f{i}.toe', [data]) for i in range(3)]
+        files = [_mk_version_file(f'f{i}.toe', [data]) for i in range(3)]
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size} for f in files], chunks=[],
         )
         cancel_event = threading.Event()
@@ -431,7 +431,7 @@ def test_post_rename_realpath_catches_escape(tmp_path, monkeypatch):
 
         data = b'payload'
         _put_chunk(content, data)
-        f = _mk_manifest_file('a.toe', [data])
+        f = _mk_version_file('a.toe', [data])
 
         # monkeypatch os.path.realpath so the post-rename check sees the
         # target as resolving to `outside` even though validate() saw
@@ -453,7 +453,7 @@ def test_post_rename_realpath_catches_escape(tmp_path, monkeypatch):
         monkeypatch.setattr('sync_assembler.os.path.realpath', fake_realpath)
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         with pytest.raises(AssembleError, match="failed to assemble"):
@@ -475,7 +475,7 @@ def test_post_rename_realpath_catches_escape(tmp_path, monkeypatch):
 
 def test_chunks_are_deleted_after_successful_assembly(tmp_path):
     """
-    post-assembly cleanup: on success, chunks referenced by the manifest
+    post-assembly cleanup: on success, chunks referenced by the version
     are deleted from the content store. R2 retains canonical copies — keeping
     them locally would double disk usage for every sync.
     """
@@ -488,14 +488,14 @@ def test_chunks_are_deleted_after_successful_assembly(tmp_path):
 
         chunks_data = [b'alpha chunk bytes', b'bravo chunk bytes']
         chunk_hashes = [_put_chunk(content, d) for d in chunks_data]
-        f = _mk_manifest_file('a.toe', chunks_data)
+        f = _mk_version_file('a.toe', chunks_data)
 
         # precondition: both chunks on disk before assembly
         for h in chunk_hashes:
             assert chunk_path(content, h).exists()
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         assemble_all(
@@ -530,10 +530,10 @@ def test_chunks_kept_when_assembly_fails(tmp_path):
         first_data = b'first chunk kept on failure'
         first_hash = _put_chunk(content, first_data)
         # second chunk missing from store → assembly fails
-        f = _mk_manifest_file('a.toe', [first_data, b'never-downloaded-chunk'])
+        f = _mk_version_file('a.toe', [first_data, b'never-downloaded-chunk'])
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         with pytest.raises(AssembleError):
@@ -563,12 +563,12 @@ def test_chunks_kept_when_only_skips(tmp_path):
 
         data = b'pre-existing + matching'
         chunk_hash = _put_chunk(content, data)
-        f = _mk_manifest_file('a.toe', [data])
+        f = _mk_version_file('a.toe', [data])
         # target already present with correct size → skip path
         (extract / 'a.toe').write_bytes(data)
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         result = assemble_all(
@@ -603,11 +603,11 @@ def test_post_rename_allows_sibling_root_substring(tmp_path):
 
         data = b'content'
         _put_chunk(content, data)
-        f = _mk_manifest_file('file.toe', [data])
+        f = _mk_version_file('file.toe', [data])
 
         # normal happy path — file lands under extract_bar, realpath stays there.
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         result = assemble_all(

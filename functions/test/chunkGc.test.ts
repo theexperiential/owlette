@@ -86,7 +86,7 @@ describe('planGc', () => {
 
   it('resurrection safety: drops tombstones for chunks that came back to life', () => {
     // regression: the whole point of a TTL is that if a chunk gets
-    // re-referenced by a new manifest mid-TTL, we must NOT delete it.
+    // re-referenced by a new version mid-TTL, we must NOT delete it.
     const tomb: TombstoneRecord = {
       hash: 'resurrected',
       tombstonedAt: NOW - TOMBSTONE_TTL_MS - 1, // ripe, would otherwise delete

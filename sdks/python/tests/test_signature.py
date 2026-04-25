@@ -15,7 +15,7 @@ def test_sign_body_produces_canonical_shape() -> None:
 
 def test_verify_round_trip() -> None:
     now = int(time.time())
-    body = '{"event":"manifest.published"}'
+    body = '{"event":"version.published"}'
     header = sign_body(body, "secret", timestamp_seconds=now)
     result = verify_signature(header, body, "secret", now=now)
     assert result.ok is True

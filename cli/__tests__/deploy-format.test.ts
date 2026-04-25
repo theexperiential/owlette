@@ -4,12 +4,12 @@ const { formatDeployResult } = _internals;
 
 describe('formatDeployResult', () => {
   const base = {
-    rolloutId: 'manifest-1',
-    manifestId: 'manifest-1',
+    rolloutId: 'vrs_01',
+    versionId: 'vrs_01',
     siteId: 'site-1',
     roostId: 'rst_abc',
     extractRoot: '~/Documents/roosts',
-    manifestUrl: 'https://r2/.../manifest-1.json',
+    versionUrl: 'https://r2/.../vrs_01.json',
   };
 
   it('labels real rollouts as "rollout started" and lists canary/fleet', () => {
@@ -23,6 +23,7 @@ describe('formatDeployResult', () => {
       'rst_abc',
     );
     expect(out).toContain('rollout started');
+    expect(out).toContain('version       vrs_01');
     expect(out).toContain('canary (1)');
     expect(out).toContain('- m-1');
     expect(out).toContain('fleet (2)');

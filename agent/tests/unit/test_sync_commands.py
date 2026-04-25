@@ -12,7 +12,7 @@ def test_register_handlers_registers_all_three():
     types = router.registered_types()
     assert 'sync_pull' in types
     assert 'cancel_sync' in types
-    assert 'rollback_to_manifest' in types
+    assert 'rollback_to_version' in types
 
 
 def test_handlers_registered_only_once_via_decorator():
@@ -28,10 +28,10 @@ def test_sync_pull_validates_required_fields():
     from sync_commands import _handle_sync_pull
     with pytest.raises(ValueError, match="site_id"):
         _handle_sync_pull({}, 'cmd-1', service=object())
-    with pytest.raises(ValueError, match="folder_id"):
+    with pytest.raises(ValueError, match="roost_id"):
         _handle_sync_pull({'site_id': 's'}, 'cmd-1', service=object())
-    with pytest.raises(ValueError, match="manifest_id"):
-        _handle_sync_pull({'site_id': 's', 'folder_id': 'f'}, 'cmd-1', service=object())
+    with pytest.raises(ValueError, match="version_id"):
+        _handle_sync_pull({'site_id': 's', 'roost_id': 'f'}, 'cmd-1', service=object())
 
 
 def test_cancel_sync_returns_message_when_no_inflight():
@@ -46,7 +46,7 @@ def test_cancel_sync_returns_message_when_no_inflight():
     fake._sync_state = SyncState(':memory:')
     try:
         result = _handle_cancel_sync(
-            {'site_id': 's', 'folder_id': 'f', 'manifest_id': 'm'},
+            {'site_id': 's', 'roost_id': 'f', 'version_id': 'm'},
             'cmd-1', fake,
         )
         assert 'no distribution' in result.lower()

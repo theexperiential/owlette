@@ -39,7 +39,7 @@ export type RoostEventType =
   | 'distribution.succeeded'
   | 'distribution.failed'
   | 'chunk.uploaded'
-  | 'manifest.published'
+  | 'version.published'
   | 'rollback.executed';
 
 export const ROOST_EVENT_TYPES: readonly RoostEventType[] = [
@@ -48,7 +48,7 @@ export const ROOST_EVENT_TYPES: readonly RoostEventType[] = [
   'distribution.succeeded',
   'distribution.failed',
   'chunk.uploaded',
-  'manifest.published',
+  'version.published',
   'rollback.executed',
 ] as const;
 

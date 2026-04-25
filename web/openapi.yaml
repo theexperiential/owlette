@@ -118,10 +118,10 @@ tags:
     description: |
       Roosts — named, versioned, content-addressed bundles of files
       deployed to a set of machines. Renamed from `folders`.
-  - name: manifests
+  - name: versions
     description: |
-      Immutable oci-style manifests. Every publish creates a new
-      manifest; rollback is a pointer flip. See [manifests.md](../docs/api/manifests.md).
+      Immutable oci-style versions. Every publish creates a new
+      version; rollback is a pointer flip. See [versions.md](../docs/api/versions.md).
   - name: chunks
     description: |
       Content-addressed blob layer. Dedup lookup, signed upload/download
@@ -129,7 +129,7 @@ tags:
   - name: deployments
     description: |
       Targeted rollouts — canary, scheduled, dry-run. Publishing a
-      manifest auto-fans-out to targets; the deploy endpoint adds
+      version auto-fans-out to targets; the deploy endpoint adds
       explicit control.
   - name: sites
     description: Read-only site metadata for the authenticated caller.
@@ -1480,13 +1480,13 @@ paths:
         '501':
           $ref: '#/components/responses/Problem501'
 
-  /api/roosts/{roostId}/manifests:
+  /api/roosts/{roostId}/versions:
     get:
-      operationId: listRoostManifests
+      operationId: listRoostVersions
       tags: [Roost]
-      summary: List manifest versions for rollback UI
+      summary: List versions for rollback UI
       description: |
-        Returns the immutable manifest history for a roost, newest
+        Returns the immutable version history for a roost, newest
         first. Used by the rollback UI to let operators pick a previous
         known-good version.
       security:
@@ -1513,16 +1513,16 @@ paths:
             type: string
       responses:
         '200':
-          description: Paginated manifest history.
+          description: Paginated version history.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  manifests:
+                  versions:
                     type: array
                     items:
-                      $ref: '#/components/schemas/ManifestSummary'
+                      $ref: '#/components/schemas/VersionSummary'
                   nextCursor:
                     type: string
                     nullable: true
@@ -1533,16 +1533,16 @@ paths:
         '501':
           $ref: '#/components/responses/Problem501'
     post:
-      operationId: finalizeManifest
+      operationId: finalizeVersion
       tags: [Roost]
-      summary: Finalize a new manifest version (atomic CAS)
+      summary: Finalize a new version (atomic CAS)
       description: |
-        Validates the manifest, confirms every referenced chunk exists in
-        R2, and atomically swaps `currentManifestId` on the roost doc
+        Validates the version, confirms every referenced chunk exists in
+        R2, and atomically swaps `currentVersionId` on the roost doc
         via a Firestore transaction. On success the roost's previous
-        `currentManifestId` becomes `previousManifestId` (one-click rollback).
+        `currentVersionId` becomes `previousVersionId` (one-click rollback).
 
-        If a concurrent finalize has changed `currentManifestId` between
+        If a concurrent finalize has changed `currentVersionId` between
         the client's fetch and this write, responds 412 so the client can
         re-read and retry.
 
@@ -1559,31 +1559,46 @@ paths:
           application/json:
             schema:
               type: object
-              required: [siteId, manifest]
+              required: [siteId, version]
               properties:
                 siteId:
                   type: string
-                manifest:
-                  $ref: '#/components/schemas/OciManifest'
-                expectedCurrentManifestId:
+                version:
+                  $ref: '#/components/schemas/OciVersion'
+                description:
+                  type: string
+                  nullable: true
+                  maxLength: 500
+                  description: |
+                    Optional plaintext "what changed?" note stored on the
+                    version doc. ≤ 500 chars; longer payloads are rejected
+                    with 400. Empty / whitespace-only strings are stored as
+                    null.
+                expectedCurrentVersionId:
                   type: string
                   nullable: true
                   description: |
-                    For optimistic concurrency. If provided and the folder's
-                    current pointer has changed, the server returns 412.
+                    For optimistic concurrency. If provided and the roost's
+                    current pointer has changed, the server returns 412
+                    with code `version_stale`.
       responses:
         '201':
-          description: Manifest finalized; distribution fan-out triggered.
+          description: Version finalized; distribution fan-out triggered.
           content:
             application/json:
               schema:
                 type: object
+                required: [versionId, versionNumber]
                 properties:
-                  manifestId:
+                  versionId:
                     type: string
-                  currentManifestId:
+                    description: Stable content-addressed id (`vrs_*`).
+                  versionNumber:
+                    type: integer
+                    description: Monotonic 1-indexed version number, per-roost.
+                  currentVersionId:
                     type: string
-                  previousManifestId:
+                  previousVersionId:
                     type: string
                     nullable: true
         '400': { $ref: '#/components/responses/Problem400' }
@@ -1594,14 +1609,14 @@ paths:
         '501':
           $ref: '#/components/responses/Problem501'
 
-  /api/roosts/{roostId}/manifest-url:
+  /api/roosts/{roostId}/version-url:
     post:
-      operationId: mintRoostManifestUrl
+      operationId: mintRoostVersionUrl
       tags: [Roost]
-      summary: Mint a fresh signed GET URL for a manifest body
+      summary: Mint a fresh signed GET URL for a version body
       description: |
         Issues a short-lived (≤15 min) signed R2 URL for fetching a
-        manifest JSON body. Agents call this at sync time — URLs baked
+        version JSON body. Agents call this at sync time — URLs baked
         into the roost doc at publish time would already be expired by
         the time a canary wave ran, so each attempt mints fresh.
         Mirrors `/api/chunks/download-urls` for chunks.
@@ -1619,13 +1634,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [siteId, manifestId]
+              required: [siteId, versionId]
               properties:
                 siteId:
                   type: string
-                manifestId:
+                versionId:
                   type: string
-                  description: 64-char hex sha-256 of the manifest's canonical JSON body.
+                  description: 64-char hex sha-256 of the version's canonical JSON body.
       responses:
         '200':
           description: Fresh signed URL.
@@ -1650,7 +1665,7 @@ paths:
     post:
       operationId: resyncRoost
       tags: [Roost]
-      summary: Force all current targets to re-pull the current manifest
+      summary: Force all current targets to re-pull the current version
       description: |
         Operator-initiated retry after a failed rollout (or to force
         drift reset on targets where a kiosk tech touched files by
@@ -1658,7 +1673,7 @@ paths:
         nonce in the cmdId (deduped by the agent's `_seen_commands`
         otherwise), clears `target_state` docs so the UI snaps from
         "failed" back to "queued", and drops the stale
-        `rollouts/{manifestId}` doc so the fanout state machine
+        `rollouts/{versionRef}` doc so the fanout state machine
         doesn't treat new reports as belated arrivals for an aborted
         wave.
 
@@ -1701,7 +1716,7 @@ paths:
         '404': { $ref: '#/components/responses/Problem404' }
         '409':
           description: |
-            Conflict — either the roost has no currentManifestId (nothing
+            Conflict — either the roost has no currentVersionId (nothing
             to resync) or no targets assigned.
           content:
             application/problem+json:
@@ -1917,7 +1932,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   # ──────────────────────────────────────────────────────────────────────
-  # 2. roosts (deploy units) — /api/roosts/{roostId}/{manifests,rollback}
+  # 2. roosts (deploy units) — /api/roosts/{roostId}/{versions,rollback}
   # are already documented above. this block adds the collection endpoints
   # plus the roost-scalar GET/PATCH (the existing DELETE is live and moved
   # here so the spec matches the route file).
@@ -1969,7 +1984,7 @@ paths:
       tags: [roosts]
       summary: create roost
       description: |
-        Creates a new empty roost. Publish a manifest to populate it.
+        Creates a new empty roost. Publish a version to populate it.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -2006,8 +2021,8 @@ paths:
       tags: [roosts]
       summary: fetch roost detail
       description: |
-        Returns the roost's current state including `currentManifestId`
-        and `previousManifestId`.
+        Returns the roost's current state including `currentVersionId`
+        and `previousVersionId`.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -2036,7 +2051,7 @@ paths:
       summary: rename roost or change target machines
       description: |
         Updates the roost's name and/or target machine list. Does not
-        affect manifest history.
+        affect version history.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -2069,7 +2084,7 @@ paths:
       tags: [roosts]
       summary: soft-delete roost
       description: |
-        Deletes the roost doc + manifest subcollection. Content chunks
+        Deletes the roost doc + versions subcollection. Content chunks
         in R2 are reclaimed by the chunk gc mark-and-sweep (not
         immediate). 30-day tombstone; chunks referenced only by this
         roost become eligible for gc at that point.
@@ -2086,16 +2101,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [deleted, roostId, manifestsDeleted]
+                required: [deleted, roostId, versionsDeleted]
                 properties:
                   deleted:
                     type: boolean
                     example: true
                   roostId:
                     type: string
-                  manifestsDeleted:
+                  versionsDeleted:
                     type: integer
-                    description: Count of manifest docs purged.
+                    description: Count of version docs purged.
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
@@ -2105,21 +2120,21 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   # ──────────────────────────────────────────────────────────────────────
-  # 3. manifests — list + publish (POST) are live above. detail, files,
+  # 3. versions — list + publish (POST) are live above. detail, files,
   # diff endpoints are proposed.
   # ──────────────────────────────────────────────────────────────────────
-  /api/roosts/{roostId}/manifests/{manifestId}:
+  /api/roosts/{roostId}/versions/{versionRef}:
     x-stub: true
     parameters:
       - $ref: '#/components/parameters/RoostIdPath'
-      - $ref: '#/components/parameters/ManifestIdPath'
+      - $ref: '#/components/parameters/VersionRefPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
-      operationId: getManifest
-      tags: [manifests]
-      summary: fetch full manifest body
+      operationId: getVersion
+      tags: [versions]
+      summary: fetch full version body
       description: |
-        Returns the full oci manifest body for a specific version.
+        Returns the full oci version body.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -2128,28 +2143,81 @@ paths:
         - $ref: '#/components/parameters/SiteIdQuery'
       responses:
         '200':
-          description: Manifest detail with full layer list.
+          description: Version detail with full layer list.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ManifestDetail' }
+              schema: { $ref: '#/components/schemas/VersionDetail' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    patch:
+      operationId: updateVersionDescription
+      tags: [versions]
+      summary: edit a published version's description
+      description: |
+        Edits the `description` field on an already-published version.
+        The version's content (files, chunks) is immutable once
+        published — any other body field is rejected with
+        `version_content_immutable`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId, description]
+              properties:
+                siteId:
+                  type: string
+                description:
+                  type: string
+                  nullable: true
+                  maxLength: 500
+                  description: |
+                    New description. ≤ 500 chars; longer payloads are
+                    rejected with 400. Empty / whitespace-only strings
+                    are stored as null.
+      responses:
+        '200':
+          description: Updated version metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VersionSummary' }
+        '400':
+          description: |
+            Validation failed. Returns 400 with code
+            `version_content_immutable` if the body contains any field
+            other than `siteId` / `description`, or `version_ref_malformed`
+            if the path `versionRef` has an invalid grammar.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
-  /api/roosts/{roostId}/manifests/{manifestId}/files:
+  /api/roosts/{roostId}/versions/{versionRef}/files:
     x-stub: true
     parameters:
       - $ref: '#/components/parameters/RoostIdPath'
-      - $ref: '#/components/parameters/ManifestIdPath'
+      - $ref: '#/components/parameters/VersionRefPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
-      operationId: listManifestFiles
-      tags: [manifests]
-      summary: paginated flat file list for a manifest
+      operationId: listVersionFiles
+      tags: [versions]
+      summary: paginated flat file list for a version
       description: |
-        Flat, cursor-paginated list of files in a manifest. Avoids
+        Flat, cursor-paginated list of files in a version. Avoids
         downloading the full oci layer array for large roosts.
       security:
         - apiKey: []
@@ -2176,7 +2244,7 @@ paths:
                 properties:
                   items:
                     type: array
-                    items: { $ref: '#/components/schemas/ManifestFile' }
+                    items: { $ref: '#/components/schemas/VersionFile' }
                   next_page_token:
                     type: string
         '400': { $ref: '#/components/responses/Problem400' }
@@ -2186,19 +2254,19 @@ paths:
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
-  /api/roosts/{roostId}/manifests/{manifestId}/diff:
+  /api/roosts/{roostId}/versions/{versionRef}/diff:
     x-stub: true
     parameters:
       - $ref: '#/components/parameters/RoostIdPath'
-      - $ref: '#/components/parameters/ManifestIdPath'
+      - $ref: '#/components/parameters/VersionRefPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
-      operationId: diffManifests
-      tags: [manifests]
-      summary: file-level diff between two manifests
+      operationId: diffVersions
+      tags: [versions]
+      summary: file-level diff between two versions
       description: |
         Returns the `added`, `removed`, and `modified` file sets
-        between the path's manifest (`to`) and the `against` query
+        between the path's version (`to`) and the `against` query
         parameter (`from`).
       security:
         - apiKey: []
@@ -2212,7 +2280,7 @@ paths:
           schema:
             type: string
             pattern: '^sha256:[0-9a-f]{64}$'
-          description: The "from" manifest id to diff against.
+          description: The "from" versionRef to diff against.
       responses:
         '200':
           description: Diff result.
@@ -2297,9 +2365,9 @@ paths:
     get:
       operationId: listChunkReferrers
       tags: [chunks]
-      summary: list manifests referencing a chunk
+      summary: list versions referencing a chunk
       description: |
-        Lists manifests currently referencing a chunk. Used by ops
+        Lists versions currently referencing a chunk. Used by ops
         tooling and the gc mark-and-sweep.
       security:
         - apiKey: []
@@ -2344,7 +2412,7 @@ paths:
       tags: [deployments]
       summary: trigger targeted rollout
       description: |
-        Triggers fan-out of a specific manifest to a subset of the
+        Triggers fan-out of a specific version to a subset of the
         roost's target machines. Supports scheduling, dry-run, and
         canary-then-fleet strategy. 202 Accepted — see the response
         `rolloutId` and poll `/api/roosts/{roostId}/deployments/{rolloutId}`.
@@ -2610,7 +2678,7 @@ paths:
       tags: [machines]
       summary: per-machine deployment history
       description: |
-        Lists which roosts + manifests have been installed on a
+        Lists which roosts + versions have been installed on a
         machine, including pending rollouts.
       security:
         - apiKey: []
@@ -2733,7 +2801,7 @@ paths:
       description: |
         Paginated hash-chained audit log. Requires `site:X:admin`
         scope. Record kinds: `signed_url_issued`,
-        `distribution_started`, `manifest_pointer_changed`,
+        `distribution_started`, `version_pointer_changed`,
         `api_key_used`, `gc_run`, `chunk_verify_failed`,
         `webhook_delivered`.
       security:
@@ -3363,7 +3431,7 @@ components:
         type: string
       description: |
         Optimistic concurrency token. Pass the prior resource version
-        (e.g. a `currentManifestId` or opaque etag) to have the server
+        (e.g. a `currentVersionId` or opaque etag) to have the server
         reject the mutation with 412 if the resource has changed.
 
     PageSizeQuery:
@@ -3439,14 +3507,19 @@ components:
         type: string
       description: Machine id (path param on `/api/sites/{siteId}/machines/{machineId}`).
 
-    ManifestIdPath:
-      name: manifestId
+    VersionRefPath:
+      name: versionRef
       in: path
       required: true
       schema:
         type: string
-        pattern: '^sha256:[0-9a-f]{64}$'
-      description: Manifest digest (`sha256:` prefixed lowercase hex).
+      description: |
+        Addresses a version on the roost. Accepts any of:
+          - a stable content-addressed id: `vrs_<hex>`
+          - a version number: `3`, `#3`, `v3`, or `V3`
+          - a roost-relative alias: `current`, `previous`, `first`
+        Malformed refs return 400 `version_ref_malformed`;
+        unmatched refs return 404 `version_not_found`.
 
     DigestPath:
       name: digest
@@ -3518,7 +3591,7 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
     Problem409:
-      description: Conflict (e.g. no previous manifest to roll back to).
+      description: Conflict (e.g. no previous version to roll back to).
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -3791,17 +3864,28 @@ components:
             Field-level errors keyed by dotted JSON path (400/422 responses).
             Example: `{ "body.hashes": ["must be a non-empty array"] }`
 
-    ManifestSummary:
+    VersionSummary:
       type: object
-      description: Entry in a folder's immutable manifest history.
-      required: [manifestId, createdAt, totalSize, totalFiles]
+      description: Entry in a roost's immutable version history.
+      required: [versionId, versionNumber, createdAt, totalSize, totalFiles]
       properties:
-        manifestId:
+        versionId:
           type: string
-        manifestUrl:
+          description: Stable content-addressed id (`vrs_*`).
+        versionNumber:
+          type: integer
+          description: Monotonic 1-indexed version number, per-roost.
+        description:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: |
+            Optional plaintext "what changed?" note supplied at publish
+            time or edited later via PATCH. Null when missing.
+        versionUrl:
           type: string
           format: uri
-          description: R2 URL of the manifest body (short-TTL signed).
+          description: R2 URL of the version body (short-TTL signed).
         createdAt:
           type: string
           format: date-time
@@ -3814,15 +3898,15 @@ components:
           description: Sum of all file sizes in bytes.
         totalFiles:
           type: integer
-        parentManifestId:
+        parentVersionId:
           type: string
           nullable: true
 
-    OciManifest:
+    OciVersion:
       type: object
       description: |
-        OCI Image Manifest v1.1 derivation. See
-        [manifest-format.md](../docs/internal/manifest-format.md) for the
+        OCI Image v1.1 derivation — owlette surfaces this as "version". See
+        [version-format.md](../docs/internal/version-format.md) for the
         full schema. This OpenAPI description captures the shape required
         by the finalize endpoint; the authoritative JSON schema lives in
         the internal docs.
@@ -3833,7 +3917,7 @@ components:
           enum: [2]
         mediaType:
           type: string
-          enum: [application/vnd.owlette.manifest.v1+json]
+          enum: [application/vnd.owlette.version.v1+json]
         config:
           type: object
           required: [name, createdAt, createdBy, siteId]
@@ -4016,11 +4100,11 @@ components:
         targets:
           type: array
           items: { type: string }
-        currentManifestId:
+        currentVersionId:
           type: string
           nullable: true
           pattern: '^sha256:[0-9a-f]{64}$'
-        previousManifestId:
+        previousVersionId:
           type: string
           nullable: true
           pattern: '^sha256:[0-9a-f]{64}$'
@@ -4067,8 +4151,8 @@ components:
           type: array
           items: { type: string }
 
-    # manifests
-    ManifestFile:
+    # versions
+    VersionFile:
       type: object
       required: [path, digest, size]
       properties:
@@ -4080,11 +4164,11 @@ components:
           type: integer
           format: int64
           minimum: 0
-    Manifest:
+    Version:
       description: |
-        Full oci-style manifest body. Roost emits schemaVersion 2,
-        mediaType `application/vnd.owlette.manifest.v1+json`. See
-        [manifests.md](../docs/api/manifests.md).
+        Full oci-style version body. Roost emits schemaVersion 2,
+        mediaType `application/vnd.owlette.version.v1+json`. See
+        [versions.md](../docs/api/versions.md).
       type: object
       required: [schemaVersion, mediaType, config, layers]
       properties:
@@ -4093,7 +4177,7 @@ components:
           enum: [2]
         mediaType:
           type: string
-          enum: [application/vnd.owlette.manifest.v1+json]
+          enum: [application/vnd.owlette.version.v1+json]
         config:
           type: object
           required: [mediaType, digest, size]
@@ -4121,20 +4205,29 @@ components:
                 type: integer
                 format: int64
                 minimum: 0
-    ManifestDetail:
-      description: Manifest metadata wrapper returned on GET.
+    VersionDetail:
+      description: Version metadata wrapper returned on GET.
       type: object
-      required: [id, publishedAt, totalSize, totalFiles, isCurrent, manifest]
+      required: [id, versionNumber, publishedAt, totalSize, totalFiles, isCurrent, version]
       properties:
         id:
           type: string
-          pattern: '^sha256:[0-9a-f]{64}$'
+          description: Stable content-addressed id (`vrs_*`).
+        versionNumber:
+          type: integer
+          description: Monotonic 1-indexed version number, per-roost.
+        description:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: |
+            Optional plaintext "what changed?" note. Editable via PATCH.
         publishedAt:
           type: string
           format: date-time
         publishedBy:
           type: string
-          description: User or api key id that published this manifest.
+          description: User or api key id that published this version.
         totalSize:
           type: integer
           format: int64
@@ -4142,7 +4235,7 @@ components:
           type: integer
         isCurrent:
           type: boolean
-        manifest: { $ref: '#/components/schemas/Manifest' }
+        version: { $ref: '#/components/schemas/Version' }
     DiffResult:
       type: object
       required: [from, to, added, removed, modified]
@@ -4155,10 +4248,10 @@ components:
           pattern: '^sha256:[0-9a-f]{64}$'
         added:
           type: array
-          items: { $ref: '#/components/schemas/ManifestFile' }
+          items: { $ref: '#/components/schemas/VersionFile' }
         removed:
           type: array
-          items: { $ref: '#/components/schemas/ManifestFile' }
+          items: { $ref: '#/components/schemas/VersionFile' }
         modified:
           type: array
           items:
@@ -4182,16 +4275,16 @@ components:
     # chunks
     ChunkReferrer:
       type: object
-      required: [roostId, manifestId, fileCount]
+      required: [roostId, versionId, fileCount]
       properties:
         roostId: { type: string }
-        manifestId:
+        versionId:
           type: string
           pattern: '^sha256:[0-9a-f]{64}$'
         fileCount:
           type: integer
           minimum: 1
-          description: How many files in that manifest reference this chunk.
+          description: How many files in that version reference this chunk.
     MountChunkRequest:
       type: object
       required: [siteId, toRoostId]
@@ -4228,10 +4321,10 @@ components:
           nullable: true
     DeployRequest:
       type: object
-      required: [siteId, manifestId]
+      required: [siteId, versionId]
       properties:
         siteId: { type: string }
-        manifestId:
+        versionId:
           type: string
           pattern: '^sha256:[0-9a-f]{64}$'
         machines:
@@ -4255,11 +4348,11 @@ components:
         Initial rollout response (202 Accepted). For ongoing status
         polling, call `GET /api/roosts/{roostId}/deployments/{rolloutId}`.
       type: object
-      required: [rolloutId, roostId, manifestId, strategy, dryRun, createdAt, machines]
+      required: [rolloutId, roostId, versionId, strategy, dryRun, createdAt, machines]
       properties:
         rolloutId: { type: string }
         roostId:   { type: string }
-        manifestId:
+        versionId:
           type: string
           pattern: '^sha256:[0-9a-f]{64}$'
         strategy:
@@ -4282,11 +4375,11 @@ components:
         endpoint and the detail endpoint (detail populates
         `machines[]`; list omits them to keep payloads small).
       type: object
-      required: [rolloutId, roostId, manifestId, strategy, state, startedAt]
+      required: [rolloutId, roostId, versionId, strategy, state, startedAt]
       properties:
         rolloutId: { type: string }
         roostId:   { type: string }
-        manifestId:
+        versionId:
           type: string
           pattern: '^sha256:[0-9a-f]{64}$'
         strategy:
@@ -4374,10 +4467,10 @@ components:
           type: array
           items:
             type: object
-            required: [roostId, manifestId]
+            required: [roostId, versionId]
             properties:
               roostId: { type: string }
-              manifestId:
+              versionId:
                 type: string
                 pattern: '^sha256:[0-9a-f]{64}$'
     MachineDetail:
@@ -4413,11 +4506,11 @@ components:
     MachineDeployment:
       description: One entry in a machine's deployment history.
       type: object
-      required: [rolloutId, roostId, manifestId, state]
+      required: [rolloutId, roostId, versionId, state]
       properties:
         rolloutId: { type: string }
         roostId:   { type: string }
-        manifestId:
+        versionId:
           type: string
           pattern: '^sha256:[0-9a-f]{64}$'
         state:
@@ -4518,7 +4611,7 @@ components:
           enum:
             - signed_url_issued
             - distribution_started
-            - manifest_pointer_changed
+            - version_pointer_changed
             - api_key_used
             - gc_run
             - chunk_verify_failed
@@ -4540,7 +4633,7 @@ components:
           properties:
             type:
               type: string
-              enum: [site, roost, manifest, chunk, machine, rollout, webhook, api_key]
+              enum: [site, roost, version, chunk, machine, rollout, webhook, api_key]
             id: { type: string }
         payload:
           type: object

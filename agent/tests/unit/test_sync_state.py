@@ -77,7 +77,7 @@ def test_context_manager_closes_on_exit(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
         # use it
         state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=[],
         )
     # after exit, connection closed — calling op should fail
@@ -110,28 +110,28 @@ def test_wal_mode_enabled(tmp_path):
 def test_start_distribution_creates_row(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
         dist_id = state.start_distribution(
-            site_id='site_a', folder_id='folder_b', manifest_id='m1',
-            manifest_url='https://r2/m1.json',
+            site_id='site_a', roost_id='roost_b', version_id='m1',
+            version_url='https://r2/m1.json',
             files=[{'path': 'a.toe', 'size': 100}],
             chunks=[{'hash': 'a' * 64, 'size': 100}],
         )
         row = state.get_distribution(dist_id)
         assert row is not None
         assert row['site_id'] == 'site_a'
-        assert row['folder_id'] == 'folder_b'
-        assert row['manifest_id'] == 'm1'
+        assert row['roost_id'] == 'roost_b'
+        assert row['version_id'] == 'm1'
         assert row['state'] == 'pending'
 
 
 def test_start_distribution_duplicate_raises(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
         state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=[],
         )
         with pytest.raises(SyncStateError, match="already exists"):
             state.start_distribution(
-                site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+                site_id='s', roost_id='f', version_id='m', version_url='u',
                 files=[], chunks=[],
             )
 
@@ -139,7 +139,7 @@ def test_start_distribution_duplicate_raises(tmp_path):
 def test_set_distribution_state_updates(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=[],
         )
         state.set_distribution_state(dist_id, 'downloading')
@@ -154,7 +154,7 @@ def test_set_distribution_state_updates(tmp_path):
 def test_invalid_state_value_rejected(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=[],
         )
         with pytest.raises(sqlite3.IntegrityError):
@@ -164,7 +164,7 @@ def test_invalid_state_value_rejected(tmp_path):
 def test_find_distribution_by_natural_key(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
         state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m1', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m1', version_url='u',
             files=[], chunks=[],
         )
         row = state.find_distribution('s', 'f', 'm1')
@@ -174,8 +174,8 @@ def test_find_distribution_by_natural_key(tmp_path):
 
 def test_list_pending_distributions(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
-        d1 = state.start_distribution(site_id='s', folder_id='f1', manifest_id='m', manifest_url='u', files=[], chunks=[])
-        d2 = state.start_distribution(site_id='s', folder_id='f2', manifest_id='m', manifest_url='u', files=[], chunks=[])
+        d1 = state.start_distribution(site_id='s', roost_id='f1', version_id='m', version_url='u', files=[], chunks=[])
+        d2 = state.start_distribution(site_id='s', roost_id='f2', version_id='m', version_url='u', files=[], chunks=[])
         state.set_distribution_state(d2, 'committed')
         pending = state.list_pending_distributions()
         ids = [p['id'] for p in pending]
@@ -189,7 +189,7 @@ def test_list_pending_distributions(tmp_path):
 def test_chunk_state_transitions(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[],
             chunks=[{'hash': 'a' * 64, 'size': 100}, {'hash': 'b' * 64, 'size': 200}],
         )
@@ -206,7 +206,7 @@ def test_chunk_state_transitions(tmp_path):
 def test_chunk_attempts_counter_increments(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=[{'hash': 'a' * 64, 'size': 100}],
         )
         for _ in range(3):
@@ -221,7 +221,7 @@ def test_chunk_attempts_counter_increments(tmp_path):
 def test_file_state_transitions(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': 'a.toe', 'size': 100}, {'path': 'b.toe', 'size': 200}],
             chunks=[],
         )
@@ -238,7 +238,7 @@ def test_file_state_transitions(tmp_path):
 def test_progress_summary_counts_by_state(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': 'a.toe', 'size': 100}],
             chunks=[
                 {'hash': 'a' * 64, 'size': 100},
@@ -262,7 +262,7 @@ def test_concurrent_writes_are_serialized(tmp_path):
         # set up 50 chunks
         chunks = [{'hash': f'{i:064x}', 'size': 100} for i in range(50)]
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=chunks,
         )
 
@@ -287,7 +287,7 @@ def test_crash_safe_state_survives_close_reopen(tmp_path):
     db_path = tmp_path / 'state.db'
     with SyncState(str(db_path)) as state:
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': 'a.toe', 'size': 100}],
             chunks=[{'hash': 'a' * 64, 'size': 100}],
         )

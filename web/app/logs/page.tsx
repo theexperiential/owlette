@@ -283,8 +283,8 @@ const LogRow = React.memo(function LogRow({
 
 export default function LogsPage() {
   const router = useRouter();
-  const { user, loading, isAdmin, userSites, lastSiteId, updateLastSite, userPreferences } = useAuth();
-  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
+  const { user, loading, isSuperadmin, userSites, lastSiteId, updateLastSite, userPreferences } = useAuth();
+  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
   const currentSite = sites.find(s => s.id === currentSiteId);

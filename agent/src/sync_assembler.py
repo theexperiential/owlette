@@ -2,7 +2,7 @@
 sync_assembler — atomic file reassembly for roost (project distribution v2).
 
 reads chunks from the local content store, concatenates them into a
-target file at `<extract_root>/<manifest_path>`, and atomically renames
+target file at `<extract_root>/<version_path>`, and atomically renames
 into place. NEVER overwrites a live file partially: writes go to a
 `<path>.partial` sidecar, get fsynced, then replace the target via
 `os.replace` (atomic on POSIX; uses ReplaceFileW on Windows under the
@@ -25,7 +25,7 @@ design:
 
 NOT this module's job:
 - chunk download (sync_downloader)
-- manifest fetch (sync_manifest)
+- version fetch (sync_version)
 - HTTP / network anything
 - ACL hardening of extracted files (wave 4b.3 — extends this)
 """
@@ -44,7 +44,7 @@ from destination_allowlist import (
     DestinationNotAllowedError,
 )
 from sync_downloader import chunk_path, _default_content_store
-from sync_manifest import ManifestFile
+from sync_version import VersionFile
 from sync_state import SyncState
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ class AssembleResult:
 
 def assemble_all(
     distribution_id: int,
-    files: Iterable[ManifestFile],
+    files: Iterable[VersionFile],
     extract_root: str,
     state: SyncState,
     allowlist: DestinationAllowlist,
@@ -133,7 +133,7 @@ def assemble_all(
         try:
             did_write = _assemble_one(
                 distribution_id=distribution_id,
-                manifest_file=f,
+                version_file=f,
                 extract_root=resolved_root,
                 allowlist=allowlist,
                 state=state,
@@ -171,13 +171,13 @@ def assemble_all(
             f"distribution {distribution_id}: {failed} file(s) failed to assemble"
         )
 
-    # post-assembly cleanup: delete chunks referenced by this manifest from the
+    # post-assembly cleanup: delete chunks referenced by this version from the
     # content store. once a file has been atomically renamed into the extract
     # location AND committed in the state DB, the chunks are pure duplication —
     # R2 retains the authoritative copies, and a future re-sync or rollback
     # re-downloads. for a 100GB roost this avoids 100GB of redundant disk usage.
     #
-    # we only scope the delete to chunks referenced by THIS manifest so that
+    # we only scope the delete to chunks referenced by THIS version so that
     # if another distribution is mid-download against the same content store,
     # its chunks stay untouched. slow commands are serialized in the agent
     # command loop, so concurrent distributions are rare — this is
@@ -199,7 +199,7 @@ def assemble_all(
 
 def _assemble_one(
     distribution_id: int,
-    manifest_file: ManifestFile,
+    version_file: VersionFile,
     extract_root: Path,
     allowlist: DestinationAllowlist,
     state: SyncState,
@@ -209,10 +209,10 @@ def _assemble_one(
     assemble ONE file. returns True if a write occurred, False if the file
     was already present + matching (idempotent skip).
     """
-    # build the target path. POSIX-style manifest path is normalized to
+    # build the target path. POSIX-style version path is normalized to
     # the local OS separator; allowlist.validate() handles the security
     # checks (path traversal, ADS, reserved names, etc).
-    target_relative = Path(*manifest_file.path.split('/'))
+    target_relative = Path(*version_file.path.split('/'))
     target_str = str(extract_root / target_relative)
     resolved_target = allowlist.validate(target_str)
 
@@ -222,19 +222,19 @@ def _assemble_one(
     # assembler — wave 4b.7 handles periodic re-verification.)
     if resolved_target.exists():
         try:
-            if resolved_target.stat().st_size == manifest_file.size:
+            if resolved_target.stat().st_size == version_file.size:
                 # Re-harden ACL even on skip — an operator re-sync after
                 # an agent upgrade is how stale DACLs (e.g. pre-operator-ACE
                 # hardening from earlier builds) get fixed. _harden_acl is
                 # a single syscall; cheap enough to run unconditionally.
                 _harden_acl(_long_path(str(resolved_target)))
-                state.set_file_state(distribution_id, manifest_file.path, 'committed')
-                logger.debug(f"sync_assembler: {manifest_file.path!r} already present + matches size")
+                state.set_file_state(distribution_id, version_file.path, 'committed')
+                logger.debug(f"sync_assembler: {version_file.path!r} already present + matches size")
                 return False
         except OSError:
             pass  # fall through to reassemble
 
-    state.set_file_state(distribution_id, manifest_file.path, 'assembling')
+    state.set_file_state(distribution_id, version_file.path, 'assembling')
 
     # write to a `.partial` sidecar so a crash mid-write leaves the live
     # file (if any) untouched.
@@ -251,7 +251,7 @@ def _assemble_one(
     bytes_written = 0
     try:
         with open(partial_str, 'wb') as out:
-            for chunk in manifest_file.chunks:
+            for chunk in version_file.chunks:
                 src = chunk_path(content_store, chunk.hash)
                 if not src.exists():
                     raise AssembleError(
@@ -276,9 +276,9 @@ def _assemble_one(
                     f"sync_assembler: fsync failed for {partial}: {e}"
                 )
 
-        if bytes_written != manifest_file.size:
+        if bytes_written != version_file.size:
             raise AssembleError(
-                f"size mismatch: wrote {bytes_written} bytes, manifest says {manifest_file.size}"
+                f"size mismatch: wrote {bytes_written} bytes, version says {version_file.size}"
             )
 
         # atomic rename. on windows, os.replace uses MoveFileExW with
@@ -309,10 +309,10 @@ def _assemble_one(
         # (the file is on disk and the show needs to play).
         _harden_acl(target_str)
 
-        state.set_file_state(distribution_id, manifest_file.path, 'committed')
+        state.set_file_state(distribution_id, version_file.path, 'committed')
         logger.debug(
-            f"sync_assembler: {manifest_file.path!r} assembled "
-            f"({bytes_written} bytes, {len(manifest_file.chunks)} chunks)"
+            f"sync_assembler: {version_file.path!r} assembled "
+            f"({bytes_written} bytes, {len(version_file.chunks)} chunks)"
         )
         return True
 

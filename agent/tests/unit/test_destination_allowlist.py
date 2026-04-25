@@ -409,7 +409,7 @@ def test_windows_reserved_device_names_rejected(tmp_path):
     """
     Windows reserved device names (NUL, CON, PRN, AUX, COM1-9, LPT1-9)
     redirect i/o to the named device regardless of extension. an attacker
-    manifest with `<allowed>/NUL` or `<allowed>/sub/CON.toe` would silently
+    version with `<allowed>/NUL` or `<allowed>/sub/CON.toe` would silently
     corrupt data or attach to console/printer streams. round-3 catch.
     """
     allowlist = DestinationAllowlist([str(tmp_path)])

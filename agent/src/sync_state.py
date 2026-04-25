@@ -1,9 +1,9 @@
 """
 sync_state — crash-safe local state for roost (project distribution v2).
 
-tracks per-folder sync progress in a SQLite database with WAL journaling
+tracks per-roost sync progress in a SQLite database with WAL journaling
 so that an agent crash, power loss, or service restart NEVER loses state.
-the manifest cache + chunk-download progress + reassembly intent live
+the version cache + chunk-download progress + reassembly intent live
 here; on startup, the agent walks pending sync ops and resumes them.
 
 design principles:
@@ -15,16 +15,16 @@ design principles:
   sync state without blocking the worker thread)
 - every long-running op writes a row BEFORE starting and updates rows
   rather than deleting+inserting (audit trail for postmortems)
-- foreign keys enabled; cascade deletes when a folder is removed
+- foreign keys enabled; cascade deletes when a roost is removed
 - schema migration via PRAGMA user_version + numbered migration steps
 
 NOT this module's job:
 - chunk download (sync_downloader.py)
 - file reassembly (sync_assembler.py)
-- manifest fetch + diff (sync_manifest.py)
+- version fetch + diff (sync_version.py)
 - HTTP, network, or filesystem I/O (only SQLite)
 
-reference: roost plan, wave 4a.4. consumed by sync_manifest, sync_downloader,
+reference: roost plan, wave 4a.4. consumed by sync_version, sync_downloader,
 sync_assembler, sync_commands.
 """
 
@@ -131,7 +131,7 @@ class SyncState:
         # WAL: writers don't block readers; survives crash + power loss.
         # synchronous=NORMAL: durable across power loss (fsync on commit) but
         # ~3x faster than FULL — appropriate for an event log we can replay
-        # against the manifest if a few entries are missing.
+        # against the version if a few entries are missing.
         # foreign_keys=ON: cascade deletes work + integrity enforcement.
         self._conn.execute('PRAGMA journal_mode = WAL')
         self._conn.execute('PRAGMA synchronous = NORMAL')
@@ -175,17 +175,17 @@ class SyncState:
     def _create_schema(self) -> None:
         """create the full schema from scratch. single source of truth."""
         assert self._conn is not None
-        # distribution = one in-flight or completed sync op for a folder.
-        # site_id + folder_id is the natural key; a new manifest creates a
+        # distribution = one in-flight or completed sync op for a roost.
+        # site_id + roost_id is the natural key; a new version creates a
         # new distribution row (immutable history).
         # extract_root + last_scrub_at support the periodic scrub.
         self._conn.execute('''
             CREATE TABLE distributions (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 site_id         TEXT NOT NULL,
-                folder_id       TEXT NOT NULL,
-                manifest_id     TEXT NOT NULL,
-                manifest_url    TEXT NOT NULL,
+                roost_id        TEXT NOT NULL,
+                version_id      TEXT NOT NULL,
+                version_url     TEXT NOT NULL,
                 state           TEXT NOT NULL CHECK (state IN (
                     'pending', 'downloading', 'verifying',
                     'assembling', 'committed', 'failed', 'cancelled'
@@ -195,7 +195,7 @@ class SyncState:
                 error           TEXT,
                 extract_root    TEXT,
                 last_scrub_at   INTEGER,
-                UNIQUE (site_id, folder_id, manifest_id)
+                UNIQUE (site_id, roost_id, version_id)
             )
         ''')
         # file = a target file the agent will reassemble from chunks.
@@ -259,9 +259,9 @@ class SyncState:
     def start_distribution(
         self,
         site_id: str,
-        folder_id: str,
-        manifest_id: str,
-        manifest_url: str,
+        roost_id: str,
+        version_id: str,
+        version_url: str,
         files: List[dict],
         chunks: List[dict],
         extract_root: Optional[str] = None,
@@ -276,17 +276,17 @@ class SyncState:
             with v1 callers (those distributions are silently skipped by scrub).
 
         returns the distribution row id. raises SyncStateError if a row
-        already exists for (site_id, folder_id, manifest_id).
+        already exists for (site_id, roost_id, version_id).
         """
         now = _now()
         try:
             with self._txn() as conn:
                 cur = conn.execute(
                     '''INSERT INTO distributions
-                       (site_id, folder_id, manifest_id, manifest_url,
+                       (site_id, roost_id, version_id, version_url,
                         state, created_at, updated_at, extract_root)
                        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)''',
-                    (site_id, folder_id, manifest_id, manifest_url, now, now, extract_root),
+                    (site_id, roost_id, version_id, version_url, now, now, extract_root),
                 )
                 dist_id = cur.lastrowid
                 if files:
@@ -305,7 +305,7 @@ class SyncState:
         except sqlite3.IntegrityError as e:
             raise SyncStateError(
                 f"distribution already exists for "
-                f"site={site_id!r} folder={folder_id!r} manifest={manifest_id!r}: {e}"
+                f"site={site_id!r} roost={roost_id!r} version={version_id!r}: {e}"
             ) from e
 
     def set_distribution_state(
@@ -330,15 +330,15 @@ class SyncState:
             return cur.fetchone()
 
     def find_distribution(
-        self, site_id: str, folder_id: str, manifest_id: str
+        self, site_id: str, roost_id: str, version_id: str
     ) -> Optional[sqlite3.Row]:
         """fetch a distribution by natural key."""
         with self._lock:
             assert self._conn is not None
             cur = self._conn.execute(
                 '''SELECT * FROM distributions
-                   WHERE site_id = ? AND folder_id = ? AND manifest_id = ?''',
-                (site_id, folder_id, manifest_id),
+                   WHERE site_id = ? AND roost_id = ? AND version_id = ?''',
+                (site_id, roost_id, version_id),
             )
             return cur.fetchone()
 

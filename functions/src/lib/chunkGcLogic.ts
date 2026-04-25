@@ -1,16 +1,16 @@
 /**
  * Pure logic for roost chunk garbage collection (wave 2b.4).
  *
- * A chunk is garbage when NO current manifest AND NO recent-history
- * manifest references it. GC uses a **two-phase** model to survive races
- * between a newly-uploaded-but-not-yet-finalised manifest and the sweep:
+ * A chunk is garbage when NO current version AND NO recent-history
+ * version references it. GC uses a **two-phase** model to survive races
+ * between a newly-uploaded-but-not-yet-finalised version and the sweep:
  *
  *   1. Mark phase: any stored-but-not-referenced chunk is tombstoned.
  *      Tombstones live in firestore with a creation timestamp.
  *   2. Sweep phase: tombstones older than the TTL (30 days) are eligible
  *      for deletion — BUT only if the chunk is STILL not referenced.
  *      The re-check on the second phase is the resurrection guard: if
- *      a new manifest brought the chunk back to life between marking
+ *      a new version brought the chunk back to life between marking
  *      and sweeping, we drop the tombstone and keep the chunk.
  *
  * Operational mode is split into planning (this module) and execution
@@ -34,7 +34,7 @@ export interface TombstoneRecord {
 }
 
 export interface GcPlanInput {
-  /** hashes referenced by any live manifest (current or previous). */
+  /** hashes referenced by any live version (current or previous). */
   referenced: ReadonlySet<string>;
   /** hashes currently present in object storage under this tenant. */
   stored: ReadonlySet<string>;
@@ -96,7 +96,7 @@ export function planGc(input: GcPlanInput): GcPlan {
   // Phase 1: consider each stored chunk for marking.
   // Iterate `stored` (not `referenced`) because we only tombstone things
   // that EXIST; referenced chunks that aren't stored yet are a different
-  // problem (upload raced with manifest finalize).
+  // problem (upload raced with version finalize).
   // Sort for deterministic output ordering — tests rely on it.
   const storedSorted = [...input.stored].sort();
   for (const hash of storedSorted) {

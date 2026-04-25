@@ -71,14 +71,14 @@ describe('roost.roosts', () => {
           targets: [],
           extractPath: null,
           schemaVersion: 2,
-          currentManifestId: null,
-          previousManifestId: null,
-          manifestUrl: null,
+          currentVersionId: null,
+          previousVersionId: null,
+          versionUrl: null,
           createdAt: null,
           updatedAt: null,
           deletedAt: null,
-          currentManifest: null,
-          previousManifest: null,
+          currentVersion: null,
+          previousVersion: null,
         },
       },
     ]);
@@ -86,16 +86,27 @@ describe('roost.roosts', () => {
     expect(calls[0]!.url).toBe('https://dev.test/api/roosts/rst_abc?siteId=s1');
   });
 
-  it('rollback → POST /api/roosts/{id}/rollback with targetManifestId', async () => {
+  it('rollback → POST /api/roosts/{id}/rollback with targetVersion', async () => {
     const { roost, calls } = makeRoost([
-      { status: 200, body: { currentManifestId: 'to', previousManifestId: 'from' } },
+      { status: 200, body: { currentVersionId: 'to', previousVersionId: 'from' } },
     ]);
-    await roost.roosts.rollback('rst_abc', { siteId: 's', targetManifestId: 'to' });
+    await roost.roosts.rollback('rst_abc', { siteId: 's', targetVersion: 3 });
     expect(calls[0]!.url).toBe('https://dev.test/api/roosts/rst_abc/rollback');
     expect(calls[0]!.init.method).toBe('POST');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
       siteId: 's',
-      targetManifestId: 'to',
+      targetVersion: 3,
+    });
+  });
+
+  it('rollback → accepts string aliases as targetVersion', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { currentVersionId: 'to', previousVersionId: 'from' } },
+    ]);
+    await roost.roosts.rollback('rst_abc', { siteId: 's', targetVersion: 'previous' });
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      siteId: 's',
+      targetVersion: 'previous',
     });
   });
 
@@ -105,29 +116,97 @@ describe('roost.roosts', () => {
         status: 200,
         body: {
           rolloutId: 'm1',
-          manifestId: 'm1',
+          versionId: 'm1',
           siteId: 's',
           roostId: 'rst',
           stage: 'canary',
           canary: ['m-1'],
           fleet: [],
           extractRoot: '~/x',
-          manifestUrl: 'https://r2/x',
+          versionUrl: 'https://r2/x',
         },
       },
     ]);
     const when = new Date('2026-05-01T00:00:00Z');
     await roost.roosts.deploy('rst_abc', {
       siteId: 's',
-      manifestId: 'm-new',
+      versionId: 'm-new',
       machines: ['m-1'],
       scheduleAt: when,
       dryRun: false,
     });
     const body = JSON.parse(String(calls[0]!.init.body));
-    expect(body.manifestId).toBe('m-new');
+    expect(body.versionId).toBe('m-new');
     expect(body.machines).toEqual(['m-1']);
     expect(body.scheduleAt).toBe('2026-05-01T00:00:00.000Z');
+  });
+});
+
+describe('roost.versions', () => {
+  it('list → GET /api/roosts/{id}/versions', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { versions: [], nextCursor: null } },
+    ]);
+    await roost.versions.list('rst_abc', { siteId: 's1' });
+    expect(calls[0]!.url).toBe('https://dev.test/api/roosts/rst_abc/versions?siteId=s1');
+  });
+
+  it('get → GET /api/roosts/{id}/versions/{ref}', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          versionId: 'vrs_abc',
+          versionNumber: 3,
+          description: 'fixed video',
+          roostId: 'rst_abc',
+          siteId: 's1',
+          version: {},
+          metadata: {
+            versionUrl: null,
+            createdAt: null,
+            createdBy: null,
+            totalSize: 0,
+            totalFiles: 0,
+            parentVersionId: null,
+          },
+        },
+      },
+    ]);
+    const res = await roost.versions.get('rst_abc', 3, { siteId: 's1' });
+    expect(calls[0]!.url).toBe('https://dev.test/api/roosts/rst_abc/versions/3?siteId=s1');
+    expect(res.versionNumber).toBe(3);
+    expect(res.description).toBe('fixed video');
+  });
+
+  it('diff → GET /api/roosts/{id}/versions/{ref}/diff', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          versionId: 'vrs_abc',
+          versionNumber: 3,
+          against: 'current',
+          roostId: 'rst_abc',
+          siteId: 's1',
+          summary: {
+            added: 0,
+            removed: 0,
+            changed: 0,
+            unchanged: 0,
+            hasChanges: false,
+            netBytesDelta: 0,
+          },
+          added: [],
+          removed: [],
+          modified: [],
+        },
+      },
+    ]);
+    await roost.versions.diff('rst_abc', 'v3', { siteId: 's1', against: 'current' });
+    expect(calls[0]!.url).toBe(
+      'https://dev.test/api/roosts/rst_abc/versions/v3/diff?siteId=s1&against=current',
+    );
   });
 });
 

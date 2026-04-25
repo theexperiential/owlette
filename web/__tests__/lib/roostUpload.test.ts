@@ -3,7 +3,7 @@
  *
  * tests for web/lib/roostUpload.ts — the client-side upload orchestrator
  * (roost wave 3.1). Mocks the roost routes (chunks/check, chunks/upload-urls,
- * roosts/{id}/manifests) via an injected `fetchFn`, and mocks the
+ * roosts/{id}/versions) via an injected `fetchFn`, and mocks the
  * IndexedDB-backed queue via an in-memory `QueueStore`.
  */
 
@@ -14,7 +14,7 @@ import {
   type UploadProgress,
 } from '@/lib/roostUpload';
 import type { QueueStore, UploadTask } from '@/lib/uploadQueue';
-import type { NamedBlob, ManifestFileEntry } from '@/lib/chunking';
+import type { NamedBlob, VersionFileEntry } from '@/lib/chunking';
 
 // -------- blob fake -------------------------------------------------
 
@@ -112,14 +112,15 @@ describe('uploadFolder — happy path', () => {
       },
       {
         match: (u, i) =>
-          /\/api\/roosts\/[^/]+\/manifests$/.test(u) && i?.method === 'POST',
+          /\/api\/roosts\/[^/]+\/versions$/.test(u) && i?.method === 'POST',
         respond: async (_u, i) => {
           finalizeBody = JSON.parse(i!.body as string);
           return new Response(
             JSON.stringify({
-              manifestId: 'mfest-abc',
-              currentManifestId: 'mfest-abc',
-              previousManifestId: null,
+              versionId: 'vrs_abc',
+              versionNumber: 1,
+              currentVersionId: 'vrs_abc',
+              previousVersionId: null,
             }),
             { status: 201, headers: { 'Content-Type': 'application/json' } },
           );
@@ -147,7 +148,8 @@ describe('uploadFolder — happy path', () => {
       onProgress: (p) => phases.push(p.phase),
     });
 
-    expect(result.manifestId).toBe('mfest-abc');
+    expect(result.versionId).toBe('vrs_abc');
+    expect(result.versionNumber).toBe(1);
     // every distinct chunk hashed must have been PUT exactly once.
     const uniqueHashes = new Set(puts.map((u) => u.split('/').pop()));
     expect(uniqueHashes.size).toBe(puts.length); // no duplicate PUTs
@@ -156,10 +158,10 @@ describe('uploadFolder — happy path', () => {
     expect(phases).toEqual(
       expect.arrayContaining(['hashing', 'checking', 'uploading', 'finalizing', 'done']),
     );
-    // finalize was called with the manifest body shape the spec requires
+    // finalize was called with the version body shape the spec requires
     expect(finalizeBody).toMatchObject({
       siteId: 'site-a',
-      manifest: { schemaVersion: 2, mediaType: 'application/vnd.owlette.manifest.v1+json' },
+      version: { schemaVersion: 2, mediaType: 'application/vnd.owlette.version.v1+json' },
     });
   });
 });
@@ -184,13 +186,14 @@ describe('uploadFolder — server-side dedup', () => {
       },
       {
         match: (u, i) =>
-          /\/api\/roosts\/[^/]+\/manifests$/.test(u) && i?.method === 'POST',
+          /\/api\/roosts\/[^/]+\/versions$/.test(u) && i?.method === 'POST',
         respond: () =>
           new Response(
             JSON.stringify({
-              manifestId: 'mfest-dedup',
-              currentManifestId: 'mfest-dedup',
-              previousManifestId: null,
+              versionId: 'vrs_dedup',
+              versionNumber: 5,
+              currentVersionId: 'vrs_dedup',
+              previousVersionId: null,
             }),
             { status: 201, headers: { 'Content-Type': 'application/json' } },
           ),
@@ -214,7 +217,8 @@ describe('uploadFolder — server-side dedup', () => {
       fetchFn,
     });
 
-    expect(result.manifestId).toBe('mfest-dedup');
+    expect(result.versionId).toBe('vrs_dedup');
+    expect(result.versionNumber).toBe(5);
     expect(uploadUrlsCalled).toBe(false); // no URL request needed
     expect(putCount).toBe(0); // no PUTs
     expect(result.uploadedBytes).toBe(0);
@@ -280,7 +284,7 @@ describe('locateChunkBytes', () => {
     const data = Buffer.alloc(1000);
     for (let i = 0; i < 1000; i++) data[i] = i & 0xff;
     const files: NamedBlob[] = [named('f.bin', data)];
-    const entries: ManifestFileEntry[] = [
+    const entries: VersionFileEntry[] = [
       {
         path: 'f.bin',
         size: 1000,
@@ -295,9 +299,9 @@ describe('locateChunkBytes', () => {
     expect(second!.size).toBe(600);
   });
 
-  it('returns null when the hash is not in the manifest', () => {
+  it('returns null when the hash is not in the version', () => {
     const files: NamedBlob[] = [named('f.bin', Buffer.from('x'))];
-    const entries: ManifestFileEntry[] = [
+    const entries: VersionFileEntry[] = [
       { path: 'f.bin', size: 1, chunks: [{ hash: 'real', size: 1 }] },
     ];
     expect(locateChunkBytes(files, entries, 'ghost')).toBeNull();

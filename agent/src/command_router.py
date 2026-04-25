@@ -2,7 +2,7 @@
 command_router — registry-based dispatch for Firebase commands.
 
 introduced for roost (project distribution v2). new v2 command handlers
-(sync_pull, cancel_sync, rollback_to_manifest) register here. existing v1
+(sync_pull, cancel_sync, rollback_to_version) register here. existing v1
 handlers in owlette_service._execute_command's if/elif chain remain in place
 and migrate incrementally as each is touched.
 

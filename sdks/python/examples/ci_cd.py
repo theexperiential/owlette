@@ -53,7 +53,7 @@ async def main() -> int:
                 build_dir, roost_id,
                 PushOptions(site_id=site_id, on_progress=on_progress),
             )
-            print(f"[ci-cd] published manifest {result.manifest_id}")
+            print(f"[ci-cd] published version v{result.version_number} ({result.version_id})")
             print(f"[ci-cd] stats: {json.dumps(dataclasses.asdict(result.stats), default=str)}")
 
             deploy = await client.roosts.deploy(roost_id, DeployOptions(site_id=site_id))

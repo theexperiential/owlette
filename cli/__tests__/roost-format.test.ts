@@ -42,7 +42,7 @@ describe('truncate', () => {
 });
 
 describe('formatRoostDetail', () => {
-  it('renders the core fields + current manifest block', () => {
+  it('renders the core fields + current version block', () => {
     const out = formatRoostDetail({
       roostId: 'rst_abc',
       siteId: 'site-1',
@@ -50,28 +50,32 @@ describe('formatRoostDetail', () => {
       targets: ['m-1', 'm-2'],
       extractPath: '~/Documents/roosts/alpha',
       schemaVersion: 2,
-      currentManifestId: 'manifest-1',
-      previousManifestId: null,
-      manifestUrl: 'https://r2/.../manifest-1.json',
+      currentVersionId: 'vrs_01',
+      previousVersionId: null,
+      versionUrl: 'https://r2/.../vrs_01.json',
       createdAt: '2026-04-22T00:00:00Z',
       updatedAt: '2026-04-22T00:01:00Z',
       deletedAt: null,
-      currentManifest: {
-        manifestId: 'manifest-1',
-        manifestUrl: 'https://r2/.../manifest-1.json',
+      currentVersion: {
+        versionId: 'vrs_01',
+        versionNumber: 1,
+        description: 'initial import',
+        versionUrl: 'https://r2/.../vrs_01.json',
         createdAt: '2026-04-22T00:00:00Z',
         createdBy: 'user-1',
         totalSize: 2048,
         totalFiles: 3,
-        parentManifestId: null,
+        parentVersionId: null,
       },
-      previousManifest: null,
+      previousVersion: null,
     });
     expect(out).toContain('id         rst_abc');
     expect(out).toContain('name       alpha');
     expect(out).toContain('targets    m-1, m-2');
-    expect(out).toContain('current    manifest-1');
-    expect(out).toContain('current manifest:');
+    expect(out).toContain('current    vrs_01');
+    expect(out).toContain('current version:');
+    expect(out).toContain('number     #1');
+    expect(out).toContain('summary    initial import');
     expect(out).toContain('files      3');
     expect(out).toContain('bytes      2.00 KiB');
   });
@@ -84,26 +88,28 @@ describe('formatRoostDetail', () => {
       targets: [],
       extractPath: null,
       schemaVersion: 2,
-      currentManifestId: null,
-      previousManifestId: null,
-      manifestUrl: null,
+      currentVersionId: null,
+      previousVersionId: null,
+      versionUrl: null,
       createdAt: null,
       updatedAt: null,
       deletedAt: '2026-04-22T00:00:00Z',
-      currentManifest: null,
-      previousManifest: null,
+      currentVersion: null,
+      previousVersion: null,
     });
     expect(out).toContain('targets    (none)');
     expect(out).toContain('deletedAt  2026-04-22T00:00:00Z (tombstoned)');
-    expect(out).not.toContain('current manifest:');
+    expect(out).not.toContain('current version:');
   });
 });
 
 describe('formatDiff', () => {
   it('renders added / removed / modified sections', () => {
     const out = formatDiff({
-      manifestId: 'manifest-new',
-      against: 'manifest-old',
+      versionId: 'vrs_new',
+      toVersion: 'vrs_new',
+      fromVersion: 'vrs_old',
+      against: 'vrs_old',
       roostId: 'rst_abc',
       siteId: 'site-1',
       summary: {
@@ -120,7 +126,7 @@ describe('formatDiff', () => {
         { path: 'edit.bin', fromSize: 2048, toSize: 4096, reason: 'modified', fromChunks: 1, toChunks: 1 },
       ],
     });
-    expect(out).toMatch(/diff manifest-old → manifest-new/);
+    expect(out).toMatch(/diff vrs_old → vrs_new/);
     expect(out).toContain('+ new.bin');
     expect(out).toContain('- gone.bin');
     expect(out).toContain('~ edit.bin');
@@ -129,7 +135,9 @@ describe('formatDiff', () => {
 
   it('notes no-changes when summary is empty', () => {
     const out = formatDiff({
-      manifestId: 'a',
+      versionId: 'a',
+      toVersion: 'a',
+      fromVersion: 'b',
       against: 'b',
       roostId: 'rst',
       siteId: 'site',

@@ -2,8 +2,8 @@
  * GET /api/sites/{siteId}/machines/{machineId}/deployments
  *      → Per-roost current state for a specific machine.
  *        For every roost in the site whose targets[] include this
- *        machine, returns the intended currentManifestId (from the
- *        roost doc) and the reportedManifestId + status (from the
+ *        machine, returns the intended currentVersionId (from the
+ *        roost doc) and the reportedVersionId + status (from the
  *        per-roost target_state/{machineId} subcollection doc).
  *
  * roost public api wave 3.6.
@@ -51,10 +51,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         return {
           roostId: roostDoc.id,
           name: typeof data.name === 'string' ? data.name : roostDoc.id,
-          currentManifestId: typeof data.currentManifestId === 'string' ? data.currentManifestId : null,
-          previousManifestId: typeof data.previousManifestId === 'string' ? data.previousManifestId : null,
+          currentVersionId: typeof data.currentVersionId === 'string' ? data.currentVersionId : null,
+          previousVersionId: typeof data.previousVersionId === 'string' ? data.previousVersionId : null,
+          versionCounter: typeof data.versionCounter === 'number' ? data.versionCounter : 0,
           extractPath: typeof data.extractPath === 'string' ? data.extractPath : null,
-          reportedManifestId: typeof ts.reportedManifestId === 'string' ? ts.reportedManifestId : null,
+          reportedVersionId: typeof ts.reportedVersionId === 'string' ? ts.reportedVersionId : null,
           reportedStatus: typeof ts.status === 'string' ? ts.status : null,
           reportedAt: timestampToIso(ts.reportedAt),
         };

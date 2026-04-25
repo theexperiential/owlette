@@ -20,13 +20,14 @@ const roost = new Roost({
   apiUrl: 'https://owlette.app',
 });
 
-// publish a directory as a new manifest
+// publish a directory as a new version
 const result = await roost.roosts.push('./dist', 'rst_abc', {
   siteId: 'site-1',
+  description: 'fixed broken video',
   onProgress: (evt) => console.log(evt),
 });
 
-console.log('published', result.manifestId);
+console.log('published', result.versionId, `#${result.versionNumber}`);
 console.log('uploaded', result.stats.uploadedChunks, 'chunks');
 ```
 
@@ -53,7 +54,7 @@ or api keys.
 |-----------------|--------------------------------------------------------------------|
 | `roost.roosts`  | `list`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy` |
 | `roost.chunks`  | `check`, `uploadUrls`, `downloadUrls`, `mount`, `referrers`        |
-| `roost.manifests` | `list`, `get`, `files`, `diff`                                   |
+| `roost.versions` | `list`, `get`, `files`, `diff`                                    |
 | `roost.deployments` | `list`, `get`                                                  |
 | `roost.keys`    | `create`, `list`, `rotate`, `revoke`                               |
 | `roost.webhooks` | `subscribe`, `list`, `get`, `update`, `remove`, `rotateSecret`, `probe` |

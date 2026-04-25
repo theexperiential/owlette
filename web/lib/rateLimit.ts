@@ -144,6 +144,50 @@ export const processAlertRateLimit = redis
   : null;
 
 /**
+ * Display alert rate limiter — 1 per hour per (machineId, eventType).
+ * Mirrors the process-alert convention so the agent's alert dispatch path
+ * has a uniform back-pressure model regardless of category. The drift event
+ * gets a tighter window via `displayDriftRateLimit` below; everything else
+ * uses this default.
+ */
+export const displayAlertRateLimit = redis
+  ? new Ratelimit({
+      redis,
+      limiter: Ratelimit.fixedWindow(1, '1 h'),
+      prefix: 'display-alert',
+      analytics: true,
+    })
+  : null;
+
+/**
+ * Drift-specific limiter at 1 per 4h. Drift events flap the most under
+ * real-world conditions (rack vibration, EDID handshake retries, intermittent
+ * cable issues) — a 1h window would still let an unstable cable email the
+ * operator six times a day. The 4h window keeps drift signal alive without
+ * burying the operator's inbox in noise from a single bad piece of hardware.
+ */
+export const displayDriftRateLimit = redis
+  ? new Ratelimit({
+      redis,
+      limiter: Ratelimit.fixedWindow(1, '4 h'),
+      prefix: 'display-drift',
+      analytics: true,
+    })
+  : null;
+
+/**
+ * Pick the right display-event rate limiter for a given event type. Drift
+ * gets the tighter 4h window; every other display event uses the default
+ * 1h limiter. Returns `null` when Redis isn't configured (mirrors the
+ * existing limiters' nullability so callers can short-circuit).
+ */
+export function getDisplayAlertRateLimit(eventType: string) {
+  return eventType === 'display_drift'
+    ? displayDriftRateLimit
+    : displayAlertRateLimit;
+}
+
+/**
  * Extract client IP from NextRequest
  * Handles proxies (Railway, Cloudflare, etc.)
  */

@@ -1,0 +1,428 @@
+/** @jest-environment node */
+
+import { createMockRequest } from './helpers/utils';
+import {
+  mocks,
+  mockDbFactory,
+  docSnapshot,
+} from './helpers/firestore-mock';
+
+jest.mock('@sentry/nextjs', () => ({
+  captureException: jest.fn(),
+  captureMessage: jest.fn(),
+}));
+jest.mock('@/lib/auditLogClient', () => ({
+  emitApiKeyUsed: jest.fn(),
+  scopeFingerprint: jest.fn(() => 'fp'),
+}));
+
+/* -------------------------------------------------------------------------- */
+/*  Shared tx state — emulates a single roost across the runTransaction       */
+/*  callback so we can assert what the route writes.                          */
+/* -------------------------------------------------------------------------- */
+
+const txState = {
+  exists: true as boolean,
+  currentVersionId: null as string | null,
+  previousVersionId: null as string | null,
+  versionCounter: 0,
+  deletedAt: null as unknown,
+  /** Captured `tx.update(roostRef, ...)` payloads, in call order. */
+  roostUpdates: [] as Array<Record<string, unknown>>,
+};
+
+const mockRunTransaction = jest.fn(
+  async (cb: (tx: unknown) => Promise<unknown>): Promise<unknown> => {
+    const tx = {
+      get: async () => {
+        if (!txState.exists) {
+          return docSnapshot('rst_test', null);
+        }
+        return docSnapshot('rst_test', {
+          currentVersionId: txState.currentVersionId,
+          previousVersionId: txState.previousVersionId,
+          versionCounter: txState.versionCounter,
+          deletedAt: txState.deletedAt,
+          name: 'lobby roost',
+          targets: [],
+        });
+      },
+      set: jest.fn(),
+      update: jest.fn((_ref: unknown, payload: Record<string, unknown>) => {
+        txState.roostUpdates.push(payload);
+      }),
+    };
+    const result = await cb(tx);
+    return result;
+  },
+);
+
+jest.mock('@/lib/firebase-admin', () => ({
+  getAdminDb: () => {
+    const base = mockDbFactory() as Record<string, unknown>;
+    return { ...base, runTransaction: mockRunTransaction };
+  },
+  getAdminAuth: () => ({ verifyIdToken: jest.fn().mockRejectedValue(new Error('n/a')) }),
+}));
+
+/* -------------------------------------------------------------------------- */
+/*  Resolver mock — controllable per test                                     */
+/* -------------------------------------------------------------------------- */
+
+const mockResolveVersion = jest.fn();
+jest.mock('@/lib/resolveVersion', () => {
+  const actual = jest.requireActual('@/lib/resolveVersion');
+  return {
+    ...actual,
+    resolveVersion: (...a: unknown[]) => mockResolveVersion(...a),
+  };
+});
+
+/* -------------------------------------------------------------------------- */
+/*  Auth mock — control whether scope check passes                            */
+/* -------------------------------------------------------------------------- */
+
+const mockResolveAuth = jest.fn();
+const mockAssertSite = jest.fn();
+jest.mock('@/lib/apiAuth.server', () => {
+  const actual = jest.requireActual('@/lib/apiAuth.server');
+  return {
+    ...actual,
+    resolveAuth: (...a: unknown[]) => mockResolveAuth(...a),
+    assertUserHasSiteAccess: (...a: unknown[]) => mockAssertSite(...a),
+  };
+});
+
+import {
+  ResolveVersionError,
+  VersionNotFoundError,
+  VersionRefMalformedError,
+} from '@/lib/resolveVersion';
+import { POST as rollbackPOST } from '@/app/api/roosts/[roostId]/rollback/route';
+
+const SITE = 'site-alpha';
+const ROOST = 'rst_test_0000000001';
+
+/* -------------------------------------------------------------------------- */
+/*  Helpers                                                                   */
+/* -------------------------------------------------------------------------- */
+
+function fakeVersionDoc(
+  id: string,
+  data: Record<string, unknown>,
+): {
+  exists: boolean;
+  id: string;
+  data: () => Record<string, unknown>;
+} {
+  return {
+    exists: true,
+    id,
+    data: () => data,
+  };
+}
+
+function authedAsOperator() {
+  // operator preset: ['read','write','deploy','rollback'] on roost:*
+  mockResolveAuth.mockResolvedValue({
+    userId: 'user-operator',
+    keyContext: {
+      environment: 'live',
+      isLegacy: false,
+      scopes: [
+        { resource: 'roost', id: '*', permissions: ['read', 'write', 'deploy', 'rollback'] },
+      ],
+    },
+  });
+  mockAssertSite.mockResolvedValue({ siteId: SITE, siteData: {} });
+}
+
+function authedAsReadOnly() {
+  // readonly preset: ['read'] on roost:*
+  mockResolveAuth.mockResolvedValue({
+    userId: 'user-readonly',
+    keyContext: {
+      environment: 'live',
+      isLegacy: false,
+      scopes: [{ resource: 'roost', id: '*', permissions: ['read'] }],
+    },
+  });
+  mockAssertSite.mockResolvedValue({ siteId: SITE, siteData: {} });
+}
+
+async function rollback(body: Record<string, unknown>): Promise<{
+  status: number;
+  body: Record<string, unknown>;
+}> {
+  const req = createMockRequest(`http://localhost/api/roosts/${ROOST}/rollback`, {
+    method: 'POST',
+    body,
+  });
+  const res = await rollbackPOST(req, { params: Promise.resolve({ roostId: ROOST }) });
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  authedAsOperator();
+  txState.exists = true;
+  txState.currentVersionId = null;
+  txState.previousVersionId = null;
+  txState.versionCounter = 0;
+  txState.deletedAt = null;
+  txState.roostUpdates.length = 0;
+  mocks.set.mockResolvedValue(undefined);
+  mocks.update.mockResolvedValue(undefined);
+  mocks.get.mockResolvedValue(docSnapshot('idem', null)); // idempotency cache miss
+});
+
+/* ========================================================================== */
+/*  Happy paths                                                               */
+/* ========================================================================== */
+
+describe('POST /rollback — happy paths', () => {
+  it('default target = "previous": flips currentVersionId to v4, previousVersionId to v5', async () => {
+    txState.versionCounter = 5;
+    txState.currentVersionId = 'vrs_v5_id';
+    txState.previousVersionId = 'vrs_v4_id';
+
+    mockResolveVersion.mockResolvedValue({
+      versionId: 'vrs_v4_id',
+      versionNumber: 4,
+      doc: fakeVersionDoc('vrs_v4_id', {
+        versionUrl: 'https://r2.test/v4.json',
+        description: 'pre-prod build',
+        totalFiles: 3,
+        totalSize: 4096,
+      }),
+    });
+
+    const res = await rollback({ siteId: SITE });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      ok: true,
+      roostId: ROOST,
+      siteId: SITE,
+      currentVersionId: 'vrs_v4_id',
+      currentVersionNumber: 4,
+      previousVersionId: 'vrs_v5_id',
+    });
+
+    // Resolver was called with the default 'previous' alias.
+    expect(mockResolveVersion).toHaveBeenCalledWith({
+      roostId: ROOST,
+      siteId: SITE,
+      ref: 'previous',
+    });
+
+    // Roost doc payload denormalises summary fields from the resolved
+    // version (versionUrl, description, totalFiles, totalSize) so the
+    // dispatcher + list view don't need a sub-collection read.
+    expect(txState.roostUpdates).toHaveLength(1);
+    const update = txState.roostUpdates[0]!;
+    expect(update).toMatchObject({
+      currentVersionId: 'vrs_v4_id',
+      currentVersionNumber: 4,
+      currentVersionDescription: 'pre-prod build',
+      previousVersionId: 'vrs_v5_id',
+      versionUrl: 'https://r2.test/v4.json',
+      totalFiles: 3,
+      totalSize: 4096,
+    });
+  });
+
+  it('explicit number target: targetVersion=3 flips to v3', async () => {
+    txState.versionCounter = 5;
+    txState.currentVersionId = 'vrs_v5_id';
+
+    mockResolveVersion.mockResolvedValue({
+      versionId: 'vrs_v3_id',
+      versionNumber: 3,
+      doc: fakeVersionDoc('vrs_v3_id', {
+        versionUrl: 'https://r2.test/v3.json',
+        description: null,
+        totalFiles: 2,
+        totalSize: 1024,
+      }),
+    });
+
+    const res = await rollback({ siteId: SITE, targetVersion: 3 });
+    expect(res.status).toBe(200);
+    expect(res.body.currentVersionId).toBe('vrs_v3_id');
+    expect(res.body.currentVersionNumber).toBe(3);
+    expect(res.body.previousVersionId).toBe('vrs_v5_id');
+
+    // Resolver receives the raw input as a string — server is the single
+    // source of truth for ref grammar (numbers, '#3', 'v3', etc).
+    expect(mockResolveVersion).toHaveBeenCalledWith({
+      roostId: ROOST,
+      siteId: SITE,
+      ref: '3',
+    });
+  });
+
+  it('explicit alias "first": resolves to v1', async () => {
+    txState.versionCounter = 5;
+    txState.currentVersionId = 'vrs_v5_id';
+
+    mockResolveVersion.mockResolvedValue({
+      versionId: 'vrs_v1_id',
+      versionNumber: 1,
+      doc: fakeVersionDoc('vrs_v1_id', {
+        versionUrl: 'https://r2.test/v1.json',
+        description: 'initial publish',
+        totalFiles: 1,
+        totalSize: 512,
+      }),
+    });
+
+    const res = await rollback({ siteId: SITE, targetVersion: 'first' });
+    expect(res.status).toBe(200);
+    expect(res.body.currentVersionId).toBe('vrs_v1_id');
+    expect(res.body.currentVersionNumber).toBe(1);
+    expect(mockResolveVersion).toHaveBeenCalledWith({
+      roostId: ROOST,
+      siteId: SITE,
+      ref: 'first',
+    });
+  });
+
+  it('writes happen inside ONE transaction (atomic pointer flip)', async () => {
+    txState.versionCounter = 2;
+    txState.currentVersionId = 'vrs_v2_id';
+    mockResolveVersion.mockResolvedValue({
+      versionId: 'vrs_v1_id',
+      versionNumber: 1,
+      doc: fakeVersionDoc('vrs_v1_id', { versionUrl: 'u', totalFiles: 1, totalSize: 1 }),
+    });
+    await rollback({ siteId: SITE });
+    expect(mockRunTransaction).toHaveBeenCalledTimes(1);
+    expect(txState.roostUpdates).toHaveLength(1);
+  });
+});
+
+/* ========================================================================== */
+/*  Error cases                                                               */
+/* ========================================================================== */
+
+describe('POST /rollback — error cases', () => {
+  it('targetVersion="current" against the actual current version → 400 rollback_no_op', async () => {
+    txState.versionCounter = 5;
+    txState.currentVersionId = 'vrs_v5_id';
+    mockResolveVersion.mockResolvedValue({
+      versionId: 'vrs_v5_id',
+      versionNumber: 5,
+      doc: fakeVersionDoc('vrs_v5_id', { versionUrl: 'u', totalFiles: 1, totalSize: 1 }),
+    });
+
+    const res = await rollback({ siteId: SITE, targetVersion: 'current' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('rollback_no_op');
+    // No firestore update should have landed even though tx ran.
+    expect(txState.roostUpdates).toHaveLength(0);
+  });
+
+  it('targetVersion=non-existent vrs_* id → 404 version_not_found', async () => {
+    txState.currentVersionId = 'vrs_v5_id';
+    mockResolveVersion.mockRejectedValue(
+      new VersionNotFoundError('version vrs_does_not_exist not found on roost rst_test'),
+    );
+
+    const res = await rollback({
+      siteId: SITE,
+      targetVersion: 'vrs_does_not_exist',
+    });
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('version_not_found');
+    expect(mockRunTransaction).not.toHaveBeenCalled();
+  });
+
+  it('targetVersion=malformed string → 400 version_ref_malformed', async () => {
+    mockResolveVersion.mockRejectedValue(
+      new VersionRefMalformedError("versionRef 'not-a-thing' is malformed"),
+    );
+
+    const res = await rollback({ siteId: SITE, targetVersion: 'not-a-thing' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('version_ref_malformed');
+    expect(mockRunTransaction).not.toHaveBeenCalled();
+  });
+
+  it('targetVersion=object → 400 validation, resolver never called', async () => {
+    const res = await rollback({
+      siteId: SITE,
+      targetVersion: { not: 'a string or number' },
+    });
+    expect(res.status).toBe(400);
+    expect(mockResolveVersion).not.toHaveBeenCalled();
+    expect(mockRunTransaction).not.toHaveBeenCalled();
+  });
+
+  it('roost soft-deleted (deletedAt set) → 404', async () => {
+    txState.exists = true;
+    txState.deletedAt = new Date('2026-04-01T00:00:00Z');
+    txState.currentVersionId = 'vrs_v5_id';
+    mockResolveVersion.mockResolvedValue({
+      versionId: 'vrs_v3_id',
+      versionNumber: 3,
+      doc: fakeVersionDoc('vrs_v3_id', { versionUrl: 'u', totalFiles: 1, totalSize: 1 }),
+    });
+
+    const res = await rollback({ siteId: SITE, targetVersion: 3 });
+    expect(res.status).toBe(404);
+    expect(txState.roostUpdates).toHaveLength(0);
+  });
+
+  it('roost not found → 404', async () => {
+    txState.exists = false;
+    mockResolveVersion.mockResolvedValue({
+      versionId: 'vrs_v3_id',
+      versionNumber: 3,
+      doc: fakeVersionDoc('vrs_v3_id', { versionUrl: 'u', totalFiles: 1, totalSize: 1 }),
+    });
+
+    const res = await rollback({ siteId: SITE, targetVersion: 3 });
+    expect(res.status).toBe(404);
+    expect(txState.roostUpdates).toHaveLength(0);
+  });
+
+  it('read-only api key (no rollback scope) → 403 scope_insufficient', async () => {
+    authedAsReadOnly();
+    txState.currentVersionId = 'vrs_v5_id';
+
+    const res = await rollback({ siteId: SITE, targetVersion: 3 });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('scope_insufficient');
+    // Auth is checked before the resolver runs — bail-fast prevents leaking
+    // version existence to a caller that can't roll back anyway.
+    expect(mockResolveVersion).not.toHaveBeenCalled();
+    expect(mockRunTransaction).not.toHaveBeenCalled();
+  });
+
+  it('missing siteId in body → 400 validation', async () => {
+    const res = await rollback({ targetVersion: 3 });
+    expect(res.status).toBe(400);
+    expect(mockResolveVersion).not.toHaveBeenCalled();
+  });
+});
+
+/* ========================================================================== */
+/*  Sanity: ResolveVersionError subclasses round-trip via instanceof          */
+/* ========================================================================== */
+
+describe('POST /rollback — error narrowing', () => {
+  it('treats every ResolveVersionError as a 4xx with its own code (not a 500)', async () => {
+    // A subclass that's not VersionNotFoundError / VersionRefMalformedError
+    // should still map cleanly via the base-class check.
+    class WeirdError extends ResolveVersionError {
+      constructor() {
+        super('something weird', 'version_weird', 400);
+      }
+    }
+    mockResolveVersion.mockRejectedValue(new WeirdError());
+
+    const res = await rollback({ siteId: SITE, targetVersion: 7 });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('version_weird');
+  });
+});

@@ -23,7 +23,7 @@
  * ~15s as a liveness signal (wave 3.9). Real-event plumbing is
  * deferred to a follow-up server wave; the cli is already ready to
  * relay whatever events arrive — no further cli changes needed when
- * the server starts emitting `roost.manifest.published` / etc.
+ * the server starts emitting `roost.version.published` / etc.
  *
  * Exit codes:
  *   0 — clean shutdown via SIGINT

@@ -52,10 +52,10 @@ http.createServer(async (req, res) => {
     res.statusCode = 401; res.end(verdict.reason ?? 'bad_signature'); return;
   }
 
-  const evt = JSON.parse(raw) as { type: string; data?: { siteId?: string; roostId?: string; failedManifestId?: string } };
+  const evt = JSON.parse(raw) as { type: string; data?: { siteId?: string; roostId?: string; failedVersionId?: string } };
   if (evt.type !== 'deployment.failed') { res.statusCode = 204; res.end(); return; }
 
-  const { siteId, roostId, failedManifestId } = evt.data ?? {};
+  const { siteId, roostId, failedVersionId } = evt.data ?? {};
   if (!siteId || !roostId || !allowedSites.has(siteId)) {
     console.warn(`[auto-rollback] skipped site=${siteId} roost=${roostId} (not in allowlist)`);
     res.statusCode = 204; res.end(); return;
@@ -63,8 +63,8 @@ http.createServer(async (req, res) => {
 
   try {
     const result = await roost.roosts.rollback(roostId, { siteId });
-    console.log(`[auto-rollback] ok roost=${roostId} reverted ${failedManifestId} → ${result.currentManifestId}`);
-    await slack(`:rewind: auto-rollback fired for *${roostId}* on *${siteId}* — reverted \`${failedManifestId}\` → \`${result.currentManifestId}\``);
+    console.log(`[auto-rollback] ok roost=${roostId} reverted ${failedVersionId} → ${result.currentVersionId}`);
+    await slack(`:rewind: auto-rollback fired for *${roostId}* on *${siteId}* — reverted \`${failedVersionId}\` → \`${result.currentVersionId}\``);
     res.statusCode = 200; res.end('{"ok":true}');
   } catch (err) {
     const detail = err instanceof RoostApiError ? `${err.status} ${err.code}` : String(err);

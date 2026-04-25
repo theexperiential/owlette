@@ -18,7 +18,7 @@ function validNotice(): DmcaNoticeInput {
   return {
     signature: 'Jane Complainant',
     copyrightedWork: 'Summer Show 2026 — "Neon Dreams" video installation',
-    identifiedMaterial: 'sites/foo-gallery/roosts/lobby-01/manifests/abc123',
+    identifiedMaterial: 'sites/foo-gallery/roosts/lobby-01/versions/abc123',
     complainant: {
       name: 'Jane Complainant',
       email: 'jane@studio.example',

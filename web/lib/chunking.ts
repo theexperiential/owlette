@@ -1,8 +1,8 @@
 /**
- * Pure chunking + SHA-256 digestion for roost manifest building (wave 3.2).
+ * Pure chunking + SHA-256 digestion for roost version building (wave 3.2).
  *
  * Browser uploads slice each File into fixed 4 MiB chunks, hash every
- * chunk with Web Crypto, and build a manifest entry listing the chunk
+ * chunk with Web Crypto, and build a version entry listing the chunk
  * hashes + per-file total size. That's this module.
  *
  * **Why split from the worker**: the worker body is a thin message-loop
@@ -17,11 +17,14 @@
  * APIs in this module.
  */
 
-/** Fixed chunk size for roost CAS. 4 MiB is the OCI manifest v1.1 default. */
+/** Fixed chunk size for roost CAS. 4 MiB is the OCI version v1.1 default. */
 export const CHUNK_SIZE_BYTES = 4 * 1024 * 1024;
 
-/** Output entry for one input File — matches the manifest schema's `files[i]`. */
-export interface ManifestFileEntry {
+/** MediaType string stored inside the version envelope. */
+export const VERSION_MEDIA_TYPE = 'application/vnd.owlette.version.v1+json';
+
+/** Output entry for one input File — matches the version schema's `files[i]`. */
+export interface VersionFileEntry {
   /** Relative path within the dropped folder (forward-slash separators). */
   path: string;
   /** Total file size in bytes (sum of chunk sizes — tautology, but stated). */
@@ -30,8 +33,8 @@ export interface ManifestFileEntry {
   chunks: Array<{ hash: string; size: number }>;
 }
 
-/** Progress events emitted while building a manifest. */
-export interface ManifestProgress {
+/** Progress events emitted while building a version. */
+export interface VersionProgress {
   /** Bytes hashed so far across all files. */
   bytesHashed: number;
   /** Total bytes the caller handed us up front. */
@@ -76,31 +79,31 @@ export interface HashOneFileOptions {
 }
 
 /**
- * Hash one file into a ManifestFileEntry. Chunks are read and hashed
+ * Hash one file into a VersionFileEntry. Chunks are read and hashed
  * sequentially — parallelism within a single file would increase peak
  * memory for a very small wall-clock win (crypto.subtle is already
  * async, so the UI thread is free either way).
  *
- * Parallelism across multiple files is the caller's job (`buildManifest`
+ * Parallelism across multiple files is the caller's job (`buildVersion`
  * below processes files sequentially; the web-worker wrapper posts
  * progress after each chunk so the UI stays responsive).
  */
 export async function hashOneFile(
   named: NamedBlob,
   opts: HashOneFileOptions = {},
-): Promise<ManifestFileEntry> {
+): Promise<VersionFileEntry> {
   const subtle = opts.subtle ?? resolveSubtle();
   const size = named.blob.size;
-  const chunks: ManifestFileEntry['chunks'] = [];
+  const chunks: VersionFileEntry['chunks'] = [];
 
   if (size === 0) {
-    // Zero-byte file. The manifest schema requires `chunks[i].size > 0`,
+    // Zero-byte file. The version schema requires `chunks[i].size > 0`,
     // so a zero-byte file cannot be represented. Callers must filter
     // these out before calling us; we fail loud so silent omission
     // never happens at this layer.
     throw new Error(
       `chunking: file ${JSON.stringify(named.path)} is zero bytes; ` +
-        `zero-byte files cannot be manifested — filter them out upstream`,
+        `zero-byte files cannot be represented in a version — filter them out upstream`,
     );
   }
 
@@ -146,28 +149,28 @@ export async function hashOneFile(
 }
 
 /* --------------------------------------------------------------------- */
-/*  Bulk: build a manifest-entry list for a folder                       */
+/*  Bulk: build a version-entry list for a folder                        */
 /* --------------------------------------------------------------------- */
 
-export interface BuildManifestOptions {
-  onProgress?: (p: ManifestProgress) => void;
+export interface BuildVersionOptions {
+  onProgress?: (p: VersionProgress) => void;
   subtle?: SubtleCryptoLike;
   signal?: AbortSignal;
 }
 
 /**
  * Hash an entire folder of NamedBlobs into the `files[]` array of a
- * roost manifest. Files are processed sequentially; per-chunk progress
+ * roost version. Files are processed sequentially; per-chunk progress
  * events fire so the UI can show a smooth bar.
  *
- * Zero-byte files are skipped (the manifest schema requires at least
+ * Zero-byte files are skipped (the version schema requires at least
  * one positive-size chunk per file). Empty folders are valid input —
  * returns `[]`.
  */
-export async function buildManifestEntries(
+export async function buildVersionEntries(
   files: readonly NamedBlob[],
-  opts: BuildManifestOptions = {},
-): Promise<ManifestFileEntry[]> {
+  opts: BuildVersionOptions = {},
+): Promise<VersionFileEntry[]> {
   const usableFiles = files.filter((f) => f.blob.size > 0);
   const bytesTotal = usableFiles.reduce((n, f) => n + f.blob.size, 0);
   const filesTotal = usableFiles.length;
@@ -175,7 +178,7 @@ export async function buildManifestEntries(
   let bytesHashed = 0;
   let filesCompleted = 0;
 
-  const entries: ManifestFileEntry[] = [];
+  const entries: VersionFileEntry[] = [];
   for (const f of usableFiles) {
     if (opts.signal?.aborted) throw makeAbortError();
 
@@ -219,7 +222,7 @@ export async function buildManifestEntries(
 /*  Utilities                                                            */
 /* --------------------------------------------------------------------- */
 
-/** Lowercase hex encoding of an ArrayBuffer — format the manifest expects. */
+/** Lowercase hex encoding of an ArrayBuffer — format the version expects. */
 export function bufferToHex(buf: ArrayBuffer): string {
   const u8 = new Uint8Array(buf);
   let hex = '';
@@ -256,10 +259,10 @@ function makeAbortError(): Error {
 /* --------------------------------------------------------------------- */
 
 /**
- * Summarise a manifest for display: total bytes, total chunks, dedup
+ * Summarise a version for display: total bytes, total chunks, dedup
  * estimate (unique chunk hashes / total chunk slots). Pure — derive-only.
  */
-export function summariseManifest(entries: readonly ManifestFileEntry[]): {
+export function summariseVersion(entries: readonly VersionFileEntry[]): {
   fileCount: number;
   totalBytes: number;
   totalChunks: number;

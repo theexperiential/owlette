@@ -38,10 +38,10 @@ class MachineDetail:
 class MachineDeployment:
     roost_id: str
     name: str
-    current_manifest_id: str | None
-    previous_manifest_id: str | None
+    current_version_id: str | None
+    previous_version_id: str | None
     extract_path: str | None
-    reported_manifest_id: str | None
+    reported_version_id: str | None
     reported_status: str | None
     reported_at: str | None
 
@@ -94,10 +94,10 @@ class Machines:
             MachineDeployment(
                 roost_id=str(d.get("roostId", "")),
                 name=str(d.get("name", "")),
-                current_manifest_id=d.get("currentManifestId"),
-                previous_manifest_id=d.get("previousManifestId"),
+                current_version_id=d.get("currentVersionId"),
+                previous_version_id=d.get("previousVersionId"),
                 extract_path=d.get("extractPath"),
-                reported_manifest_id=d.get("reportedManifestId"),
+                reported_version_id=d.get("reportedVersionId"),
                 reported_status=d.get("reportedStatus"),
                 reported_at=d.get("reportedAt"),
             )

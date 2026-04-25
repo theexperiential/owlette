@@ -67,7 +67,7 @@ describe('canarySizeFor', () => {
 
 describe('selectCanary', () => {
   it('returns empty cohorts for an empty fleet', () => {
-    const r = selectCanary([], 'manifest-a');
+    const r = selectCanary([], 'version-a');
     assert.deepEqual(r, { canary: [], fleet: [] });
   });
 
@@ -79,24 +79,24 @@ describe('selectCanary', () => {
 
   it('picks the expected canary size for the fleet', () => {
     const ids = Array.from({ length: 100 }, (_, i) => `m${i}`);
-    const r = selectCanary(ids, 'manifest-x');
+    const r = selectCanary(ids, 'version-x');
     assert.equal(r.canary.length, canarySizeFor(100));
   });
 
   it('is deterministic across calls with the same inputs', () => {
     const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'];
-    const r1 = selectCanary(ids, 'manifest-1');
-    const r2 = selectCanary(ids, 'manifest-1');
+    const r1 = selectCanary(ids, 'version-1');
+    const r2 = selectCanary(ids, 'version-1');
     assert.deepEqual(r1.canary, r2.canary);
     assert.deepEqual(r1.fleet, r2.fleet);
   });
 
-  it('produces different cohorts for different manifests', () => {
+  it('produces different cohorts for different versions', () => {
     // with 100 machines (canary size 10) the odds of two different
     // hashes producing the exact same 10-machine cohort are negligible.
     const ids = Array.from({ length: 100 }, (_, i) => `m${i}`);
-    const a = selectCanary(ids, 'manifest-a').canary;
-    const b = selectCanary(ids, 'manifest-b').canary;
+    const a = selectCanary(ids, 'version-a').canary;
+    const b = selectCanary(ids, 'version-b').canary;
     assert.notDeepEqual(a, b);
   });
 

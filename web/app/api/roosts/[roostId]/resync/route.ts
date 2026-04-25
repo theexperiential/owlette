@@ -3,14 +3,14 @@
  *      input:  { siteId: string }
  *      output: { resynced: number, targets: string[] }
  *
- * Force every current target to re-pull the current manifest. Intended
+ * Force every current target to re-pull the current version. Intended
  * for operator-initiated retry after a sync failure, or to re-verify
  * drift (kiosk tech changed files by hand — operator wants them reset).
  *
  * Design notes (why not go through `onRoostWritten`):
- * - The fan-out trigger is idempotent per `rollouts/{manifestId}` and
- *   only fires on `currentManifestId` changes, so "re-fire with the same
- *   manifest" can't reuse the trigger without extra signalling.
+ * - The fan-out trigger is idempotent per `rollouts/{versionId}` and
+ *   only fires on `currentVersionId` changes, so "re-fire with the same
+ *   version" can't reuse the trigger without extra signalling.
  * - A resync is an explicit operator action ("try again, now"), so
  *   skipping canary→fleet staging is desirable — the canary wave already
  *   ran (or failed); this is the retry-all lane.
@@ -18,12 +18,12 @@
  * Effects (all applied atomically in one BulkWriter commit):
  * - Delete `target_state/{machineId}` for every current target so the UI
  *   snaps back to "queued" instead of keeping the stale "failed" pill.
- * - Delete `rollouts/{currentManifestId}` so any stored canary state
+ * - Delete `rollouts/{currentVersionId}` so any stored canary state
  *   from the original attempt doesn't shadow the resync.
  * - Queue a fresh `sync_pull` pending command at
  *   `sites/{siteId}/machines/{machineId}/commands/pending` with a
  *   unique cmdId (the agent dedupes by cmdId, so reusing the original
- *   `roost_sync_{roostId}_{manifestId}` would be skipped on replay).
+ *   `roost_sync_{roostId}_{versionId}` would be skipped on replay).
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -88,21 +88,21 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
     const data = snap.data() ?? {};
-    const manifestId = (data.currentManifestId as string | undefined) ?? null;
-    const manifestUrl = (data.manifestUrl as string | undefined) ?? null;
+    const versionId = (data.currentVersionId as string | undefined) ?? null;
+    const versionUrl = (data.versionUrl as string | undefined) ?? null;
     const targets = Array.isArray(data.targets) ? (data.targets as string[]) : [];
     const extractRoot =
       typeof data.extractPath === 'string' && data.extractPath.trim()
         ? data.extractPath.trim()
         : DEFAULT_EXTRACT_ROOT;
 
-    if (!manifestId || !manifestUrl) {
+    if (!versionId || !versionUrl) {
       return problem({
         type: ProblemType.Conflict,
         title: 'nothing to resync',
         status: 409,
         detail:
-          'roost has no current manifest to re-pull. upload a new distribution first.',
+          'roost has no current version to re-pull. upload a new distribution first.',
         instance: `/api/roosts/${roostId}/resync`,
       });
     }
@@ -131,16 +131,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         .doc(machineId)
         .collection('commands')
         .doc('pending');
-      const cmdId = `roost_resync_${roostId}_${manifestId}_${nonce}`;
+      const cmdId = `roost_resync_${roostId}_${versionId}_${nonce}`;
       batch.set(
         pendingRef,
         {
           [cmdId]: {
             type: 'sync_pull',
             site_id: site.siteId,
-            folder_id: roostId,
-            manifest_id: manifestId,
-            manifest_url: manifestUrl,
+            roost_id: roostId,
+            version_id: versionId,
+            version_url: versionUrl,
             extract_root: extractRoot,
             queued_at: FieldValue.serverTimestamp(),
             resync: true,
@@ -158,11 +158,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // Drop the prior rollout doc so the fanout state machine doesn't
     // treat the resync reports as belated arrivals for an aborted wave.
-    const rolloutRef = roostRef.collection('rollouts').doc(manifestId);
+    const rolloutRef = roostRef.collection('rollouts').doc(versionId);
     batch.delete(rolloutRef);
 
     // Stamp the roost doc for audit + so the UI's `updatedAt` reflects
-    // the resync. This update does NOT change currentManifestId so it
+    // the resync. This update does NOT change currentVersionId so it
     // won't re-trigger `onRoostWritten`.
     batch.set(
       roostRef,

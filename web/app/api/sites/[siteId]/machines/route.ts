@@ -3,7 +3,7 @@
  *      → List all machines in a site with online status + current roost summary.
  *
  * Each row includes `currentRoosts`: the roosts whose `targets[]` include this
- * machine, with their currentManifestId so operators can see "what's this
+ * machine, with their currentVersionId so operators can see "what's this
  * machine running right now" at a glance.
  *
  * roost public api wave 3.6.
@@ -25,7 +25,8 @@ interface RouteParams {
 interface RoostSummary {
   roostId: string;
   name: string;
-  currentManifestId: string | null;
+  currentVersionId: string | null;
+  versionCounter: number;
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -53,7 +54,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       const summary: RoostSummary = {
         roostId: roostDoc.id,
         name: typeof data.name === 'string' ? data.name : roostDoc.id,
-        currentManifestId: typeof data.currentManifestId === 'string' ? data.currentManifestId : null,
+        currentVersionId: typeof data.currentVersionId === 'string' ? data.currentVersionId : null,
+        versionCounter: typeof data.versionCounter === 'number' ? data.versionCounter : 0,
       };
       for (const machineId of targets) {
         const existing = roostsByMachine.get(machineId);

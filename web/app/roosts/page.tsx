@@ -1,18 +1,16 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
 import { useProjectDistributionManager } from '@/hooks/useProjectDistributions';
 import { useRoosts } from '@/hooks/useRoosts';
-import { RoostTargetsList, RoostStatusPill } from '@/components/RoostTargetRow';
-import { RoostContentsRow } from '@/components/RoostContentsRow';
+import { useSelectedRoost } from '@/hooks/useSelectedRoost';
+import { RoostStatusPill } from '@/components/RoostTargetRow';
 import { EmptyStateUpload } from '@/components/EmptyStateUpload';
 import { Button } from '@/components/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Plus, Loader2, FolderSync, Archive, ChevronDown, ChevronRight, ChevronsUpDown, ChevronsDownUp, MoreVertical, Trash2, RefreshCw, Copy } from 'lucide-react';
+import { Plus, Loader2, FolderSync, Archive, MoreVertical, Trash2, RefreshCw, Copy } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,7 +19,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
-import ProjectDistributionDialog from '@/components/ProjectDistributionDialog';
+import ProjectDistributionDialog, {
+  type NewVersionContext,
+} from '@/components/ProjectDistributionDialog';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { MinimizedUploadCard } from '@/components/MinimizedUploadCard';
 import { useRoostUpload } from '@/hooks/useRoostUpload';
@@ -32,6 +32,8 @@ import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
 import { LoadingWord } from '@/components/LoadingWord';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
+import { RoostDetailPanel } from '@/components/roost/RoostDetailPanel';
+import { RoostMobileSheet } from '@/components/roost/RoostMobileSheet';
 
 export default function ProjectsPage() {
   const { user, loading: authLoading, userSites, isSuperadmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
@@ -58,9 +60,9 @@ export default function ProjectsPage() {
   const currentSite = sites.find(s => s.id === currentSiteId);
   const siteTimezone = currentSite?.timezone;
   const [distributionDialogOpen, setDistributionDialogOpen] = useState(false);
-  // Multi-expand — mirrors dashboard + logs. Ephemeral (no Firestore persistence):
-  // roost expansion is transient inspection, not a user preference.
-  const [expandedRoostIds, setExpandedRoostIds] = useState<Set<string>>(new Set());
+  // When set, the dialog opens in "+ new version" mode for an existing roost.
+  // null = normal "new roost" mode.
+  const [newVersionContext, setNewVersionContext] = useState<NewVersionContext | null>(null);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
@@ -68,6 +70,9 @@ export default function ProjectsPage() {
   // the roost + whatever the action handler needs to fire off after confirm.
   const [pendingDelete, setPendingDelete] = useState<{ roostId: string; name: string } | null>(null);
   const [pendingResync, setPendingResync] = useState<{ roostId: string; name: string; targetCount: number } | null>(null);
+  // Bumped after a successful upload terminal — propagates to VersionHistory
+  // so the expanded panel re-fetches and shows the freshly-published row.
+  const [versionRefreshKey, setVersionRefreshKey] = useState(0);
   const router = useRouter();
 
   const {
@@ -78,23 +83,99 @@ export default function ProjectsPage() {
   // Main page IS the history. Source of truth is roosts (v2).
   const { roosts, loading: roostsLoading, error: roostsError } = useRoosts(currentSiteId);
 
-  const toggleRoostExpanded = useCallback((roostId: string) => {
-    setExpandedRoostIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(roostId)) {
-        next.delete(roostId);
-      } else {
-        next.add(roostId);
-      }
-      return next;
-    });
+  // URL-backed selection (?roost=<id>). Surviving across reload + browser
+  // back/forward so the panel state is shareable and bookmarkable.
+  const { selectedRoostId, setSelectedRoostId } = useSelectedRoost();
+
+  // Viewport-aware branching between the desktop aside and the mobile sheet.
+  // `lg:hidden` on the sheet wrapper is NOT sufficient — Radix Portal renders
+  // the overlay + content in document.body, escaping the wrapper. Only JS
+  // gating keeps the mobile overlay off the desktop viewport.
+  const [isDesktop, setIsDesktop] = useState(true);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const sync = () => setIsDesktop(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
   }, []);
+  const selectedRoost = useMemo(
+    () => roosts.find((r) => r.id === selectedRoostId) ?? null,
+    [roosts, selectedRoostId]
+  );
 
-  const allExpanded = roosts.length > 0 && expandedRoostIds.size === roosts.length;
+  // Held copy of the selected roost so the aside can play its
+  // `slide-out-to-right` animation before unmounting. When `selectedRoost`
+  // goes from null → roost we update immediately (so the enter animation
+  // runs); when it goes roost → null we delay clearing for the duration of
+  // the exit animation (200ms — matches `tw-animate-css` defaults).
+  const [displayRoost, setDisplayRoost] = useState(selectedRoost);
+  useEffect(() => {
+    if (selectedRoost) {
+      setDisplayRoost(selectedRoost);
+      return;
+    }
+    const t = setTimeout(() => setDisplayRoost(null), 200);
+    return () => clearTimeout(t);
+  }, [selectedRoost]);
+  // Tracked across renders so the mobile sheet (and aside) close path can
+  // restore focus to the originating row button.
+  const prevSelectedIdRef = useRef<string | null>(null);
 
-  const toggleAllExpanded = useCallback(() => {
-    setExpandedRoostIds((prev) => (prev.size === roosts.length ? new Set() : new Set(roosts.map((r) => r.id))));
-  }, [roosts]);
+  // Disappearance: if the selected roost is no longer in the list (deleted
+  // by another tab, site changed, direct nav with bogus id), clear the URL.
+  // Gating on `!roostsLoading` is non-negotiable — clearing while loading
+  // would race with hydration on direct nav and lose a valid selection.
+  useEffect(() => {
+    if (!roostsLoading && selectedRoostId && !roosts.some((r) => r.id === selectedRoostId)) {
+      setSelectedRoostId(null);
+    }
+  }, [roostsLoading, roosts, selectedRoostId, setSelectedRoostId]);
+
+  // Focus restoration: when the panel transitions to "no selection", move
+  // focus back to the originating row button. Critical on mobile (Radix
+  // Portal pulls focus when the sheet opens) and good practice on desktop.
+  useEffect(() => {
+    const prev = prevSelectedIdRef.current;
+    if (prev && !selectedRoostId) {
+      requestAnimationFrame(() => {
+        const el = document.querySelector<HTMLButtonElement>(
+          `[data-roost-row="${prev}"]`,
+        );
+        el?.focus();
+      });
+    }
+    prevSelectedIdRef.current = selectedRoostId;
+  }, [selectedRoostId]);
+
+  // Keyboard: Esc closes, ↓/↑ move selection within the current list with
+  // edge-wrap. Skipped while focus is in an input/textarea/contenteditable
+  // so the dialog and inline edits keep their native behaviour.
+  useEffect(() => {
+    if (!selectedRoostId) return;
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const editable =
+        target?.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA';
+      if (editable) return;
+      if (e.key === 'Escape') {
+        setSelectedRoostId(null);
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (roosts.length === 0) return;
+        const idx = roosts.findIndex((r) => r.id === selectedRoostId);
+        if (idx === -1) return;
+        const delta = e.key === 'ArrowDown' ? 1 : -1;
+        const next = roosts[(idx + delta + roosts.length) % roosts.length];
+        setSelectedRoostId(next.id);
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedRoostId, roosts, setSelectedRoostId]);
 
   // wave 3.9: used by EmptyStateUpload to branch between "install agent first"
   // onboarding and "create your first roost" CTA.
@@ -108,13 +189,22 @@ export default function ProjectsPage() {
   const showMinimizedCard =
     upload.state.status !== 'idle' && !distributionDialogOpen;
 
+  // When an upload terminates successfully, refresh the version-history
+  // panel for whichever roost the user expanded. Cheap to invalidate
+  // unconditionally; collapsed panels don't fetch on key bumps.
+  useEffect(() => {
+    if (upload.state.status === 'success') {
+      setVersionRefreshKey((k) => k + 1);
+    }
+  }, [upload.state.status]);
+
   const handleSiteChange = (siteId: string) => {
     setUserPickedSiteId(siteId);
     updateLastSite(siteId);
   };
 
   // Discreet copy-to-clipboard helper used by the "copy roost id" /
-  // "copy manifest id" dropdown items. Most operators never touch these
+  // "copy version id" dropdown items. Most operators never touch these
   // — they exist for the rare debugging / support-ticket moment. Falls
   // back to a "couldn't copy" toast when the Clipboard API isn't
   // available (older browser, insecure context), which also reveals the
@@ -167,6 +257,11 @@ export default function ProjectsPage() {
       toast.error('re-sync failed', { description: (err as Error).message });
     }
   };
+
+  const openNewVersionDialog = useCallback((ctx: NewVersionContext) => {
+    setNewVersionContext(ctx);
+    setDistributionDialogOpen(true);
+  }, []);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -230,10 +325,17 @@ export default function ProjectsPage() {
         {/* Distribution Dialog */}
         <ProjectDistributionDialog
           open={distributionDialogOpen}
-          onOpenChange={setDistributionDialogOpen}
+          onOpenChange={(open) => {
+            setDistributionDialogOpen(open);
+            // Drop the new-version pre-fill once the dialog actually closes;
+            // otherwise the next "new roost" click would reopen in version mode.
+            if (!open) setNewVersionContext(null);
+          }}
           siteId={currentSiteId}
           onCreateDistribution={createDistribution}
           upload={upload}
+          newVersion={newVersionContext ?? undefined}
+          existingRoostIds={roosts.map((r) => r.id)}
         />
 
         {/* Section header with inline stats */}
@@ -271,25 +373,11 @@ export default function ProjectsPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            {roosts.length > 0 && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    onClick={toggleAllExpanded}
-                    className="hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
-                    size="icon"
-                  >
-                    {allExpanded ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{allExpanded ? 'collapse all' : 'expand all'}</p>
-                </TooltipContent>
-              </Tooltip>
-            )}
             <Button
-              onClick={() => setDistributionDialogOpen(true)}
+              onClick={() => {
+                setNewVersionContext(null);
+                setDistributionDialogOpen(true);
+              }}
               className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
             >
               <Plus className="h-4 w-4 mr-2" />
@@ -298,63 +386,90 @@ export default function ProjectsPage() {
           </div>
         </div>
 
-        {/* Roosts list — main page IS the history. Each row is a roost
-            whose currentManifestId points at the live deploy. Expand for per-target
-            deploy state + manifest history. */}
-        <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
-          {/*
-            Render a spinner whenever ANY upstream source isn't yet resolved:
-              - sites still loading (user's site list)
-              - currentSiteId not yet derived (empty while sites arrive)
-              - roosts onSnapshot hasn't fired its first batch yet
-            Skipping any of these flashes the welcome/empty-state for a tick
-            on real users who already have roosts.
-          */}
-          {sitesLoading || !currentSiteId || roostsLoading ? (
-            <div className="p-8 text-center">
-              <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
-              <p className="mt-2 text-muted-foreground">loading...</p>
-            </div>
-          ) : roostsError ? (
-            <div className="p-8 text-center text-sm">
-              <p className="text-muted-foreground">failed to load roosts — try refreshing the page.</p>
-            </div>
-          ) : roosts.length === 0 ? (
-            <EmptyStateUpload
-              machineCount={machines.length}
-              onNewRoost={() => setDistributionDialogOpen(true)}
-              onAddMachine={() => router.push('/dashboard')}
-            />
-          ) : (
-            <div className="divide-y divide-border">
-              {roosts.map((roost) => {
-                const isExpanded = expandedRoostIds.has(roost.id);
-                return (
-                  <Collapsible
-                    key={roost.id}
-                    open={isExpanded}
-                    onOpenChange={() => toggleRoostExpanded(roost.id)}
-                  >
-                    <CollapsibleTrigger asChild>
-                      <div
-                        className="relative flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer"
+        {/* Roosts list + detail panel. Above lg, the panel renders as a
+            sticky aside next to the list; below lg, the same panel renders
+            inside a right-slide sheet. Both branches are always mounted so
+            CSS controls visibility — no flicker on resize. */}
+        <div
+          className={`flex items-start transition-[gap] duration-200 ease-out ${
+            selectedRoost ? 'gap-4' : 'gap-0'
+          }`}
+        >
+          <div className="flex-1 min-w-0 rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
+            {/*
+              Render a spinner whenever ANY upstream source isn't yet resolved:
+                - sites still loading (user's site list)
+                - currentSiteId not yet derived (empty while sites arrive)
+                - roosts onSnapshot hasn't fired its first batch yet
+              Skipping any of these flashes the welcome/empty-state for a tick
+              on real users who already have roosts.
+            */}
+            {sitesLoading || !currentSiteId || roostsLoading ? (
+              <div className="p-8 text-center">
+                <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
+                <p className="mt-2 text-muted-foreground">loading...</p>
+              </div>
+            ) : roostsError ? (
+              <div className="p-8 text-center text-sm">
+                <p className="text-muted-foreground">failed to load roosts — try refreshing the page.</p>
+              </div>
+            ) : roosts.length === 0 ? (
+              <EmptyStateUpload
+                machineCount={machines.length}
+                onNewRoost={() => {
+                  setNewVersionContext(null);
+                  setDistributionDialogOpen(true);
+                }}
+                onAddMachine={() => router.push('/dashboard')}
+              />
+            ) : (
+              <div className="divide-y divide-border">
+                {roosts.map((roost) => {
+                  const isSelected = selectedRoostId === roost.id;
+                  const versionLabel =
+                    roost.currentVersionNumber !== null
+                      ? `v${roost.currentVersionNumber}`
+                      : null;
+                  return (
+                    <div
+                      key={roost.id}
+                      className={`relative flex items-center justify-between transition-colors ${
+                        isSelected
+                          ? 'bg-accent-cyan/10 hover:bg-accent-cyan/15'
+                          : 'hover:bg-muted/50'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        aria-expanded={isSelected}
+                        aria-controls="roost-detail-panel"
+                        data-roost-row={roost.id}
+                        onClick={() => setSelectedRoostId(isSelected ? null : roost.id)}
+                        className="flex items-center justify-between flex-1 min-w-0 px-4 py-3 text-left cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/40"
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
-                          {isExpanded ? (
-                            <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
-                          )}
                           <FolderSync className="h-4 w-4 text-accent-cyan flex-shrink-0" aria-hidden="true" />
                           <div className="min-w-0 flex-1">
-                            <span className="text-foreground font-medium select-text">{roost.name}</span>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-foreground font-medium select-text truncate">
+                                {roost.name}
+                              </span>
+                              {versionLabel && (
+                                <span
+                                  className="flex-shrink-0 rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground tabular-nums"
+                                  aria-label={`current version ${versionLabel}`}
+                                >
+                                  {versionLabel}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <div className="flex items-center gap-4 flex-shrink-0">
                           <RoostStatusPill
                             siteId={currentSiteId}
                             roostId={roost.id}
-                            currentManifestId={roost.currentManifestId}
+                            currentVersionId={roost.currentVersionId}
                             targets={roost.targets}
                           />
                           <span
@@ -373,108 +488,198 @@ export default function ProjectsPage() {
                               userPreferences.timeFormat || '12h',
                             )}
                           </span>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={(e) => e.stopPropagation()}
-                                aria-label="row actions"
-                                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
-                              >
-                                <MoreVertical className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                              <DropdownMenuItem
-                                disabled={!roost.currentManifestId || roost.targets.length === 0}
-                                onClick={() => {
-                                  if (roost.currentManifestId && roost.targets.length > 0) {
-                                    setPendingResync({
-                                      roostId: roost.id,
-                                      name: roost.name,
-                                      targetCount: roost.targets.length,
-                                    });
-                                  }
-                                }}
-                                className="cursor-pointer"
-                              >
-                                <RefreshCw className="h-3.5 w-3.5 mr-2" />
-                                re-sync targets
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={() => copyToClipboard(roost.id, 'roost id')}
-                                className="cursor-pointer"
-                              >
-                                <Copy className="h-3.5 w-3.5 mr-2" />
-                                copy roost id
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={!roost.currentManifestId}
-                                onClick={() => {
-                                  if (roost.currentManifestId) {
-                                    copyToClipboard(roost.currentManifestId, 'manifest id');
-                                  }
-                                }}
-                                className="cursor-pointer"
-                              >
-                                <Copy className="h-3.5 w-3.5 mr-2" />
-                                copy manifest id
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={() => setPendingDelete({ roostId: roost.id, name: roost.name })}
-                                className="cursor-pointer text-red-400 focus:text-red-300 focus:bg-red-950/30"
-                              >
-                                <Trash2 className="h-3.5 w-3.5 mr-2" />
-                                delete roost
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
                         </div>
+                      </button>
+                      <div className="pr-4">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label="row actions"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                            <DropdownMenuItem
+                              disabled={!roost.currentVersionId || roost.targets.length === 0}
+                              onClick={() => {
+                                if (roost.currentVersionId && roost.targets.length > 0) {
+                                  setPendingResync({
+                                    roostId: roost.id,
+                                    name: roost.name,
+                                    targetCount: roost.targets.length,
+                                  });
+                                }
+                              }}
+                              className="cursor-pointer"
+                            >
+                              <RefreshCw className="h-3.5 w-3.5 mr-2" />
+                              re-sync targets
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => copyToClipboard(roost.id, 'roost id')}
+                              className="cursor-pointer"
+                            >
+                              <Copy className="h-3.5 w-3.5 mr-2" />
+                              copy roost id
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={!roost.currentVersionId}
+                              onClick={() => {
+                                if (roost.currentVersionId) {
+                                  copyToClipboard(roost.currentVersionId, 'version id');
+                                }
+                              }}
+                              className="cursor-pointer"
+                            >
+                              <Copy className="h-3.5 w-3.5 mr-2" />
+                              copy version id
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => setPendingDelete({ roostId: roost.id, name: roost.name })}
+                              className="cursor-pointer text-red-400 focus:text-red-300 focus:bg-red-950/30"
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-2" />
+                              delete roost
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
-                    </CollapsibleTrigger>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
-                    <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-                      <div className="border-t border-border">
-                        <div className="mx-4 my-3 rounded-lg border border-border bg-background p-4 space-y-4">
-                          <div className="grid gap-2 text-sm">
-                            <div className="flex gap-2">
-                              <span className="text-muted-foreground flex-shrink-0 w-28">extract path</span>
-                              <span className="text-foreground select-text break-all">
-                                {roost.extractPath || <span className="text-muted-foreground italic">~/Documents/Owlette/ (default)</span>}
-                              </span>
-                            </div>
-                            <RoostContentsRow
-                              siteId={currentSiteId}
-                              roostId={roost.id}
-                              manifestId={roost.currentManifestId}
-                              totalFiles={roost.totalFiles}
-                              totalSize={roost.totalSize}
-                            />
-                          </div>
-
-                          <div>
-                            <h4 className="text-sm font-medium text-muted-foreground mb-2">
-                              targets ({roost.targets.length})
-                            </h4>
-                            <RoostTargetsList
-                              siteId={currentSiteId}
-                              roostId={roost.id}
-                              currentManifestId={roost.currentManifestId}
-                              targets={roost.targets}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
-                );
-              })}
+          {/* Desktop detail panel — slot transitions width so the list
+              (flex-1) responsively grows/shrinks to fill the freed space,
+              and the panel inside (right-anchored, w-[480px], parent has
+              overflow-hidden) appears to slide in/out from the right edge
+              as the slot resizes. The slot is always rendered on desktop
+              so width transitions both directions; the panel itself uses
+              `displayRoost` (held copy that lingers ~200ms after close)
+              so its content stays visible during the slide-out. The
+              `key={displayRoost.id}` is non-negotiable: RoostContentsRow
+              and VersionHistory carry internal state, and remounting on
+              selection swap is the only way to guarantee no stale data
+              flashes between roosts. */}
+          {isDesktop && (
+            <div
+              className={`flex justify-end flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${
+                selectedRoost ? 'w-[480px]' : 'w-0'
+              }`}
+              aria-hidden={!selectedRoost}
+            >
+              {displayRoost && (
+                <aside
+                  aria-labelledby="roost-detail-heading"
+                  className="w-[480px] flex-shrink-0 overflow-hidden rounded-lg border border-border bg-card"
+                >
+                  <RoostDetailPanel
+                    key={displayRoost.id}
+                    roost={displayRoost}
+                    siteId={currentSiteId}
+                    siteTimezone={siteTimezone}
+                    timeDisplayMode={userPreferences.timeDisplayMode || 'machine'}
+                    timezone={userPreferences.timezone}
+                    timeFormat={userPreferences.timeFormat || '12h'}
+                    refreshKey={versionRefreshKey}
+                    machines={machines}
+                    headingId="roost-detail-heading"
+                    onClose={() => setSelectedRoostId(null)}
+                    onNewVersion={openNewVersionDialog}
+                    onResync={() => {
+                      if (
+                        displayRoost.currentVersionId &&
+                        displayRoost.targets.length > 0
+                      ) {
+                        setPendingResync({
+                          roostId: displayRoost.id,
+                          name: displayRoost.name,
+                          targetCount: displayRoost.targets.length,
+                        });
+                      }
+                    }}
+                    onDelete={() =>
+                      setPendingDelete({
+                        roostId: displayRoost.id,
+                        name: displayRoost.name,
+                      })
+                    }
+                    onCopyRoostId={() => copyToClipboard(displayRoost.id, 'roost id')}
+                    onCopyVersionId={() => {
+                      if (displayRoost.currentVersionId) {
+                        copyToClipboard(displayRoost.currentVersionId, 'version id');
+                      }
+                    }}
+                  />
+                </aside>
+              )}
             </div>
           )}
         </div>
+
+        {/* Mobile detail sheet — same panel, different shell. Rendered only
+            when the viewport is below the lg breakpoint. CSS gating is not
+            sufficient because Radix Portal relocates the overlay + content
+            into document.body, which escapes any className on the wrapper. */}
+        {!isDesktop && (
+          <RoostMobileSheet
+            open={selectedRoost !== null}
+            onOpenChange={(o) => {
+              if (!o) setSelectedRoostId(null);
+            }}
+            title={selectedRoost?.name ?? 'roost detail'}
+          >
+            {selectedRoost && (
+              <RoostDetailPanel
+                key={selectedRoost.id}
+                roost={selectedRoost}
+                siteId={currentSiteId}
+                siteTimezone={siteTimezone}
+                timeDisplayMode={userPreferences.timeDisplayMode || 'machine'}
+                timezone={userPreferences.timezone}
+                timeFormat={userPreferences.timeFormat || '12h'}
+                refreshKey={versionRefreshKey}
+                machines={machines}
+                headingId="roost-detail-heading"
+                onClose={() => setSelectedRoostId(null)}
+                onNewVersion={openNewVersionDialog}
+                onResync={() => {
+                  if (
+                    selectedRoost.currentVersionId &&
+                    selectedRoost.targets.length > 0
+                  ) {
+                    setPendingResync({
+                      roostId: selectedRoost.id,
+                      name: selectedRoost.name,
+                      targetCount: selectedRoost.targets.length,
+                    });
+                  }
+                }}
+                onDelete={() =>
+                  setPendingDelete({
+                    roostId: selectedRoost.id,
+                    name: selectedRoost.name,
+                  })
+                }
+                onCopyRoostId={() => copyToClipboard(selectedRoost.id, 'roost id')}
+                onCopyVersionId={() => {
+                  if (selectedRoost.currentVersionId) {
+                    copyToClipboard(selectedRoost.currentVersionId, 'version id');
+                  }
+                }}
+              />
+            )}
+          </RoostMobileSheet>
+        )}
       </main>
 
       {/* Floating minimized-upload card. Only rendered when an upload is
@@ -504,7 +709,7 @@ export default function ProjectsPage() {
         title="delete roost"
         description={
           pendingDelete
-            ? `delete "${pendingDelete.name}"? this removes the manifest history + pointer. chunk gc will reclaim storage on its next run.`
+            ? `delete "${pendingDelete.name}"? this removes the version history + pointer. chunk gc will reclaim storage on its next run.`
             : ''
         }
         confirmText="delete"
@@ -523,7 +728,7 @@ export default function ProjectsPage() {
         title="re-sync roost"
         description={
           pendingResync
-            ? `re-pull the current manifest on all ${pendingResync.targetCount} target${pendingResync.targetCount === 1 ? '' : 's'} for "${pendingResync.name}"? use this after a failed sync or to force targets back to the recorded state.`
+            ? `re-pull the current version on all ${pendingResync.targetCount} target${pendingResync.targetCount === 1 ? '' : 's'} for "${pendingResync.name}"? use this after a failed sync or to force targets back to the recorded state.`
             : ''
         }
         confirmText="re-sync"

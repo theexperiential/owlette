@@ -4,7 +4,7 @@
  * Mirrors docs/api/examples/nightly-sync.md. The SDK's push() is already
  * content-addressed end-to-end: when nothing has changed every chunk hash
  * already exists in r2, `stats.uploadedChunks === 0`, and the server
- * short-circuits to return the existing manifest id without writing a new
+ * short-circuits to return the existing version id without writing a new
  * one. This script just reports that cleanly and skips the deploy.
  *
  * Run from cron / systemd:
@@ -41,20 +41,21 @@ async function alert(text: string): Promise<void> {
 
 try {
   const before = await roost.roosts.get(ROOST_ID!, { siteId: ROOST_SITE_ID! });
-  const previousManifestId = before.currentManifest?.manifestId ?? null;
+  const previousVersionId = before.currentVersion?.versionId ?? null;
 
   const result = await roost.roosts.push(WATCH_DIR!, ROOST_ID!, { siteId: ROOST_SITE_ID! });
 
-  if (result.manifestId === previousManifestId) {
-    console.log(JSON.stringify({ level: 'info', msg: 'no-op — nothing changed', manifestId: result.manifestId }));
+  if (result.versionId === previousVersionId) {
+    console.log(JSON.stringify({ level: 'info', msg: 'no-op — nothing changed', versionId: result.versionId }));
     process.exit(0);
   }
 
   console.log(JSON.stringify({
     level: 'info',
-    msg: 'published new manifest',
-    manifestId: result.manifestId,
-    previousManifestId,
+    msg: 'published new version',
+    versionId: result.versionId,
+    versionNumber: result.versionNumber,
+    previousVersionId,
     uploadedChunks: result.stats.uploadedChunks,
     totalBytes: result.stats.totalBytes,
   }));

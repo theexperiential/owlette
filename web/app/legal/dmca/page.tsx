@@ -155,7 +155,7 @@ export default function DmcaFormPage() {
                 name="identifiedMaterial"
                 required
                 rows={3}
-                placeholder="e.g., https://owlette.app/roosts/{roostId}, or the specific manifest id"
+                placeholder="e.g., https://owlette.app/roosts/{roostId}, or the specific version id"
               />
               <p className="text-xs text-muted-foreground">
                 be as specific as possible so our designated agent can locate

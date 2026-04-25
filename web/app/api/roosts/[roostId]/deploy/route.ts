@@ -3,26 +3,26 @@
  *
  * input:  {
  *   siteId: string,
- *   manifestId?: string,        // default: current manifest
+ *   versionId?: string,          // default: current version
  *   machines?: string[],         // default: roost.targets
  *   scheduleAt?: string,         // iso8601 — stub (2026-04-23: not yet wired to a scheduler)
  *   dryRun?: boolean,
  * }
  * output: {
- *   rolloutId: string,           // = manifestId (keyed by manifest per existing arch)
- *   manifestId, siteId, roostId,
+ *   rolloutId: string,           // = versionId (keyed by version per existing arch)
+ *   versionId, siteId, roostId,
  *   stage: 'canary' | 'scheduled',
  *   canary: string[], fleet: string[],
  *   extractRoot: string,
- *   manifestUrl: string,
+ *   versionUrl: string,
  *   alreadyRunning?: boolean,    // idempotent re-trigger hit
  *   dryRun?: boolean,
  *   scheduled?: { at: string, warning: string },
  * }
  *
  * Honors the optional `Idempotency-Key` header by returning a cached
- * response shape if the same manifestId rollout already exists (per-
- * manifest idempotency is natively provided by the rollout doc key).
+ * response shape if the same versionId rollout already exists (per-
+ * version idempotency is natively provided by the rollout doc key).
  *
  * roost public api wave 3.3.
  */
@@ -51,7 +51,7 @@ interface RouteParams {
 
 interface DeployBody {
   siteId?: unknown;
-  manifestId?: unknown;
+  versionId?: unknown;
   machines?: unknown;
   scheduleAt?: unknown;
   dryRun?: unknown;
@@ -92,16 +92,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const dryRun = body.dryRun === true;
 
-    let explicitManifestId: string | undefined;
-    if (body.manifestId !== undefined) {
-      if (typeof body.manifestId !== 'string') {
-        return problemValidation('manifestId must be a string when provided', {
-          'body.manifestId': ['must be a string'],
+    let explicitVersionId: string | undefined;
+    if (body.versionId !== undefined) {
+      if (typeof body.versionId !== 'string') {
+        return problemValidation('versionId must be a string when provided', {
+          'body.versionId': ['must be a string'],
         });
       }
-      const mErr = validateResourceId(body.manifestId, 'manifestId');
+      const mErr = validateResourceId(body.versionId, 'versionId');
       if (mErr) return mErr;
-      explicitManifestId = body.manifestId;
+      explicitVersionId = body.versionId;
     }
 
     let explicitMachines: string[] | undefined;
@@ -162,38 +162,39 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    const manifestId = explicitManifestId ?? (typeof roost.currentManifestId === 'string' ? roost.currentManifestId : null);
-    if (!manifestId) {
+    const versionId = explicitVersionId ?? (typeof roost.currentVersionId === 'string' ? roost.currentVersionId : null);
+    if (!versionId) {
       return problemValidation(
-        'manifestId is required — roost has no currentManifestId to fall back on',
-        { 'body.manifestId': ['no current manifest; specify manifestId explicitly'] },
+        'versionId is required — roost has no currentVersionId to fall back on',
+        { 'body.versionId': ['no current version; specify versionId explicitly'] },
       );
     }
 
-    // Resolve manifestUrl for the target manifest. If it's the current one,
-    // roost.manifestUrl is authoritative; otherwise read the manifests/{id} doc.
-    let manifestUrl: string | null = null;
-    if (manifestId === roost.currentManifestId && typeof roost.manifestUrl === 'string') {
-      manifestUrl = roost.manifestUrl;
+    // Resolve versionUrl for the target version. If it's the current one,
+    // roost.versionUrl is authoritative; otherwise read the versions/{id} doc.
+    let versionUrl: string | null = null;
+    if (versionId === roost.currentVersionId && typeof roost.versionUrl === 'string') {
+      versionUrl = roost.versionUrl;
     } else {
-      const manifestSnap = await roostRef.collection('manifests').doc(manifestId).get();
-      if (!manifestSnap.exists) {
+      const versionSnap = await roostRef.collection('versions').doc(versionId).get();
+      if (!versionSnap.exists) {
         return problem({
           type: ProblemType.NotFound,
-          title: 'manifest not found',
+          title: 'version not found',
           status: 404,
-          detail: `manifest ${manifestId} is not in this roost's history`,
+          detail: `version ${versionId} is not in this roost's history`,
           instance: `/api/roosts/${roostId}/deploy`,
+          code: 'version_not_found',
         });
       }
-      manifestUrl = (manifestSnap.data()?.manifestUrl as string | undefined) ?? null;
+      versionUrl = (versionSnap.data()?.versionUrl as string | undefined) ?? null;
     }
-    if (!manifestUrl) {
+    if (!versionUrl) {
       return problem({
         type: ProblemType.Conflict,
-        title: 'manifest has no url',
+        title: 'version has no url',
         status: 409,
-        detail: 'the manifest pointer exists but its R2 url is missing; cannot fan out without it',
+        detail: 'the version pointer exists but its R2 url is missing; cannot fan out without it',
         instance: `/api/roosts/${roostId}/deploy`,
       });
     }
@@ -212,30 +213,30 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         ? roost.extractPath.trim()
         : DEFAULT_EXTRACT_ROOT;
 
-    const { canary, fleet } = splitCanary(machines, manifestId);
+    const { canary, fleet } = splitCanary(machines, versionId);
 
-    const rolloutRef = roostRef.collection('rollouts').doc(manifestId);
+    const rolloutRef = roostRef.collection('rollouts').doc(versionId);
 
     // Dry-run short-circuits BEFORE any writes.
     if (dryRun) {
       return applyAuthDeprecations(
         NextResponse.json({
-          rolloutId: manifestId,
-          manifestId,
+          rolloutId: versionId,
+          versionId,
           siteId: site.siteId,
           roostId,
           stage: scheduleAtMs ? 'scheduled' : 'canary',
           canary,
           fleet,
           extractRoot,
-          manifestUrl,
+          versionUrl,
           dryRun: true,
         }),
         auth.scopeCheck,
       );
     }
 
-    // Idempotent re-trigger: if a rollout for this manifest already exists
+    // Idempotent re-trigger: if a rollout for this version already exists
     // and isn't terminal, return it with alreadyRunning=true. Don't
     // re-queue commands (the existing canary still owns that wave).
     const existingRollout = await rolloutRef.get();
@@ -245,15 +246,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       if (stage !== 'complete' && stage !== 'aborted') {
         return applyAuthDeprecations(
           NextResponse.json({
-            rolloutId: manifestId,
-            manifestId,
+            rolloutId: versionId,
+            versionId,
             siteId: site.siteId,
             roostId,
             stage,
             canary: Array.isArray(existing.canary) ? existing.canary : canary,
             fleet: Array.isArray(existing.fleet) ? existing.fleet : fleet,
             extractRoot: typeof existing.extractRoot === 'string' ? existing.extractRoot : extractRoot,
-            manifestUrl: typeof existing.manifestUrl === 'string' ? existing.manifestUrl : manifestUrl,
+            versionUrl: typeof existing.versionUrl === 'string' ? existing.versionUrl : versionUrl,
             alreadyRunning: true,
           }),
           auth.scopeCheck,
@@ -267,8 +268,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     batch.set(rolloutRef, {
       stage: scheduled ? 'scheduled' : 'canary',
-      manifestId,
-      manifestUrl,
+      versionId,
+      versionUrl,
       extractRoot,
       canary,
       fleet,
@@ -292,16 +293,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           .doc(machineId)
           .collection('commands')
           .doc('pending');
-        const cmdId = `roost_sync_${roostId}_${manifestId}`;
+        const cmdId = `roost_sync_${roostId}_${versionId}`;
         batch.set(
           pendingRef,
           {
             [cmdId]: {
               type: 'sync_pull',
               site_id: site.siteId,
-              folder_id: roostId,
-              manifest_id: manifestId,
-              manifest_url: manifestUrl,
+              roost_id: roostId,
+              version_id: versionId,
+              version_url: versionUrl,
               extract_root: extractRoot,
               queued_at: FieldValue.serverTimestamp(),
             },
@@ -316,15 +317,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const response = applyAuthDeprecations(
       NextResponse.json(
         {
-          rolloutId: manifestId,
-          manifestId,
+          rolloutId: versionId,
+          versionId,
           siteId: site.siteId,
           roostId,
           stage: scheduled ? 'scheduled' : 'canary',
           canary,
           fleet,
           extractRoot,
-          manifestUrl,
+          versionUrl,
           ...(scheduled && typeof scheduleAtMs === 'number'
             ? {
                 scheduled: {
@@ -347,11 +348,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 }
 
 /** Inline canary split — 10% of machines, floor 1, cap 50, lexicographic for determinism. */
-function splitCanary(machineIds: readonly string[], manifestId: string): {
+function splitCanary(machineIds: readonly string[], versionId: string): {
   canary: string[];
   fleet: string[];
 } {
-  void manifestId;
+  void versionId;
   if (machineIds.length === 0) return { canary: [], fleet: [] };
   const canarySize = Math.max(
     CANARY_MIN,

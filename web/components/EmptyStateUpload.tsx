@@ -107,7 +107,7 @@ export function EmptyStateUpload({
         <StepTile
           step={3}
           title="deploy"
-          body="roost uploads only new chunks, then each machine pulls the manifest and extracts atomically. rollback is one click."
+          body="roost uploads only new chunks, then each machine pulls the version and extracts atomically. rollback is one click."
           icon={<Rocket className="h-4 w-4 text-accent-cyan" />}
         />
       </ol>

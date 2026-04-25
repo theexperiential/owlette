@@ -1,7 +1,7 @@
 /**
  * Pure pre-upload checks for roost (wave 3.4).
  *
- * The operator has dropped a folder, the manifest builder has hashed
+ * The operator has dropped a folder, the version builder has hashed
  * it, and the dashboard needs to answer four questions BEFORE issuing
  * signed URLs and spending bandwidth + quota:
  *
@@ -17,8 +17,8 @@
  * is set.
  */
 
-import type { ManifestFileEntry } from './chunking';
-import { summariseManifest } from './chunking';
+import type { VersionFileEntry } from './chunking';
+import { summariseVersion } from './chunking';
 
 /* --------------------------------------------------------------------- */
 /*  Shared types                                                         */
@@ -62,7 +62,7 @@ export interface SizeSummary {
 
 /**
  * Compute what will actually be uploaded after content-addressed dedup
- * inside this manifest. `uploadBytes` is the byte-weighted sum of
+ * inside this version. `uploadBytes` is the byte-weighted sum of
  * distinct chunk hashes — if 100 × 4 MiB chunks all hash the same, we
  * upload one 4 MiB copy, not 400 MiB.
  *
@@ -72,10 +72,10 @@ export interface SizeSummary {
  * from `uploadBytes`.
  */
 export function summariseSize(
-  entries: readonly ManifestFileEntry[],
+  entries: readonly VersionFileEntry[],
   alreadyPresent: ReadonlySet<string> = new Set(),
 ): SizeSummary {
-  const summary = summariseManifest(entries);
+  const summary = summariseVersion(entries);
   // uploadBytes: sum of sizes per distinct chunk hash, minus any already-present.
   const seen = new Map<string, number>();
   for (const entry of entries) {

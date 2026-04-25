@@ -57,15 +57,15 @@ afterEach(() => {
 describe('roost deploy (dry-run)', () => {
   it('POSTs /api/roosts/:id/deploy with dryRun:true and no idempotency key', async () => {
     const calls = installFetchStub({
-      rolloutId: 'manifest-1',
-      manifestId: 'manifest-1',
+      rolloutId: 'vrs_01',
+      versionId: 'vrs_01',
       siteId: 'site-1',
       roostId: 'rst_testrs01234',
       stage: 'canary',
       canary: ['m-1'],
       fleet: ['m-2'],
       extractRoot: '~/x',
-      manifestUrl: 'https://r2/.../manifest-1.json',
+      versionUrl: 'https://r2/.../vrs_01.json',
       dryRun: true,
     });
     const program = buildProgram();
@@ -92,15 +92,15 @@ describe('roost deploy (dry-run)', () => {
 
   it('adds an auto Idempotency-Key for real deploys', async () => {
     const calls = installFetchStub({
-      rolloutId: 'manifest-1',
-      manifestId: 'manifest-1',
+      rolloutId: 'vrs_01',
+      versionId: 'vrs_01',
       siteId: 'site-1',
       roostId: 'rst_testrs01234',
       stage: 'canary',
       canary: ['m-1'],
       fleet: [],
       extractRoot: '~/x',
-      manifestUrl: 'https://r2/.../manifest-1.json',
+      versionUrl: 'https://r2/.../vrs_01.json',
     });
     const program = buildProgram();
     await program.parseAsync(
@@ -111,17 +111,17 @@ describe('roost deploy (dry-run)', () => {
     expect(headers['Idempotency-Key']).toMatch(/^cli-deploy-/);
   });
 
-  it('respects --machines and --at overrides', async () => {
+  it('respects --version, --machines and --at overrides', async () => {
     const calls = installFetchStub({
-      rolloutId: 'manifest-1',
-      manifestId: 'manifest-1',
+      rolloutId: 'vrs_01',
+      versionId: 'vrs_01',
       siteId: 'site-1',
       roostId: 'rst_testrs01234',
       stage: 'scheduled',
       canary: [],
       fleet: [],
       extractRoot: '~/x',
-      manifestUrl: 'https://r2/.../manifest-1.json',
+      versionUrl: 'https://r2/.../vrs_01.json',
     });
     const program = buildProgram();
     await program.parseAsync(
@@ -131,6 +131,8 @@ describe('roost deploy (dry-run)', () => {
         'rst_testrs01234',
         '--site',
         'site-1',
+        '--version',
+        'vrs_01',
         '--machines',
         'm-1,m-2',
         '--at',
@@ -139,6 +141,7 @@ describe('roost deploy (dry-run)', () => {
       { from: 'user' },
     );
     const body = JSON.parse(String(calls[0]!.init.body));
+    expect(body.versionId).toBe('vrs_01');
     expect(body.machines).toEqual(['m-1', 'm-2']);
     expect(body.scheduleAt).toBe('2026-05-01T00:00:00.000Z');
   });

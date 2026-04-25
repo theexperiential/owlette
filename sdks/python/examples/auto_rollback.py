@@ -72,7 +72,7 @@ async def handle_webhook(request: web.Request) -> web.Response:
     data = payload.get("data") or {}
     site_id = data.get("siteId")
     roost_id = data.get("roostId")
-    failed = data.get("failedManifestId")
+    failed = data.get("failedVersionId")
 
     if not site_id or not roost_id or site_id not in ALLOWED_SITES:
         print(f"[auto-rollback] skipped site={site_id} roost={roost_id} (not in allowlist)")
@@ -81,8 +81,8 @@ async def handle_webhook(request: web.Request) -> web.Response:
     async with Roost(token=TOKEN, api_url=API_URL) as client:
         try:
             result = await client.roosts.rollback(roost_id, RollbackOptions(site_id=site_id))
-            print(f"[auto-rollback] ok roost={roost_id} reverted {failed} → {result.current_manifest_id}")
-            await slack(f":rewind: auto-rollback fired for *{roost_id}* on *{site_id}* — reverted `{failed}` → `{result.current_manifest_id}`")
+            print(f"[auto-rollback] ok roost={roost_id} reverted {failed} → {result.current_version_id}")
+            await slack(f":rewind: auto-rollback fired for *{roost_id}* on *{site_id}* — reverted `{failed}` → `{result.current_version_id}`")
             return web.json_response({"ok": True})
         except RoostApiError as err:
             detail = f"{err.status} {err.code}"

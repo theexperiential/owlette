@@ -3,10 +3,10 @@
 **Last updated**: 2026-04-22
 **Status**: normative for all roost v2 uploads, downloads, gc, and rollback paths.
 
-chunks are the atomic unit of storage in roost. every file in a manifest is a list of chunk digests; every chunk is an immutable blob of bytes keyed by its sha-256 hash. this doc is the end-to-end contract: chunking algorithm, hash format, storage layout, dedup flow, download flow, cross-roost mount, referrer graph, idempotency, and error taxonomy. a developer with this document should be able to implement a conformant chunker and uploader from scratch.
+chunks are the atomic unit of storage in roost. every file in a version is a list of chunk digests; every chunk is an immutable blob of bytes keyed by its sha-256 hash. this doc is the end-to-end contract: chunking algorithm, hash format, storage layout, dedup flow, download flow, cross-roost mount, referrer graph, idempotency, and error taxonomy. a developer with this document should be able to implement a conformant chunker and uploader from scratch.
 
 related:
-- [`/docs/internal/manifest-format.md`](../internal/manifest-format.md) — manifest schema (chunks embed into `files[].chunks[]`).
+- [`/docs/internal/version-format.md`](../internal/version-format.md) — version schema (chunks embed into `files[].chunks[]`).
 - [`dev/active/roost-public-api/reference/api-surface.md`](../../dev/active/roost-public-api/reference/api-surface.md) — full endpoint reference.
 - [`dev/active/roost-public-api/reference/design-principles.md`](../../dev/active/roost-public-api/reference/design-principles.md) — principles 1 (content-addressed), 2 (cross-resource mount), 3 (signed puts, not tus).
 
@@ -17,7 +17,7 @@ related:
 - **fixed size**: every chunk is exactly **4 mib (4 194 304 bytes)** except the last chunk of each file, which may be **1..4 194 304 bytes**.
 - **algorithm**: sha-256 only in v1. content-defined chunking (fastcdc / rabin) is explicitly deferred to v3.
 - **hash encoding**: lowercase hex, exactly 64 chars, matching `^[0-9a-f]{64}$`.
-- **wire format**: the public api serialises every digest as `sha256:<64-hex>`. inside the manifest itself the `hash` field is the bare 64-hex string (no prefix) — the `sha256:` prefix only appears on the http wire (request/response bodies, url path params) where cross-algorithm support is planned for v2 of the schema. never mix the two representations inside a single request body.
+- **wire format**: the public api serialises every digest as `sha256:<64-hex>`. inside the version itself the `hash` field is the bare 64-hex string (no prefix) — the `sha256:` prefix only appears on the http wire (request/response bodies, url path params) where cross-algorithm support is planned for v2 of the schema. never mix the two representations inside a single request body.
 - **zero-byte files** have `chunks: []` and `size: 0`. the empty chunk is never stored in r2.
 - **ordering**: chunks within a file are ordered by file offset. concatenation in order reproduces the file exactly — no gaps, no overlaps.
 
@@ -39,7 +39,7 @@ project-content/{siteId}/{hash[0:2]}/{hash}
 
 | segment | source | purpose |
 |---|---|---|
-| `project-content` | fixed bucket prefix | separates chunks from `project-manifests/…` |
+| `project-content` | fixed bucket prefix | separates chunks from `project-versions/…` |
 | `{siteId}` | owlette site that owns the chunk | **tenant isolation** — see §3 |
 | `{hash[0:2]}` | first two hex chars of the chunk hash | avoids hot prefixes in r2's keyspace |
 | `{hash}` | full 64-hex sha-256 | the content address |
@@ -50,7 +50,7 @@ example:
 project-content/kiosk-fleet-01/4e/4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce
 ```
 
-chunk paths never appear inside the manifest. the agent reconstructs them from `siteId` (known from the firestore folder document) and `hash` (from the manifest). third-party clients never construct them at all — they receive signed urls that embed the full path.
+chunk paths never appear inside the version. the agent reconstructs them from `siteId` (known from the firestore folder document) and `hash` (from the version). third-party clients never construct them at all — they receive signed urls that embed the full path.
 
 ## 3. per-site isolation — a security property, not a performance tweak
 
@@ -151,7 +151,7 @@ content-type: application/octet-stream
 
 ### server-side verification
 
-after the upload window closes (tracked by the finalize manifest publish), the `chunkVerify` cloud function recomputes sha-256 on each newly uploaded object and compares against the expected hash embedded in the r2 key. a mismatch quarantines the blob and blocks the manifest from becoming `current`. clients cannot tamper with content after upload — the verification is server-authoritative.
+after the upload window closes (tracked by the finalize version publish), the `chunkVerify` cloud function recomputes sha-256 on each newly uploaded object and compares against the expected hash embedded in the r2 key. a mismatch quarantines the blob and blocks the version from becoming `current`. clients cannot tamper with content after upload — the verification is server-authoritative.
 
 ## 5. download flow
 
@@ -217,7 +217,7 @@ idempotency-key: 01HW8Z3VKQXG7M0F5T2EJ1RA9P
 
 ## 7. referrer query
 
-`GET /api/chunks/{digest}/referrers` returns the manifests currently using a chunk. used for ops/debug, gc eligibility, and the dashboard's "where is this file?" view.
+`GET /api/chunks/{digest}/referrers` returns the versions currently using a chunk. used for ops/debug, gc eligibility, and the dashboard's "where is this file?" view.
 
 ```
 GET /api/chunks/sha256:2e7d2c03…/referrers?siteId=kiosk-fleet-01&page_size=25
@@ -226,8 +226,8 @@ GET /api/chunks/sha256:2e7d2c03…/referrers?siteId=kiosk-fleet-01&page_size=25
 ```json
 {
   "items": [
-    { "roostId": "roost_lobby_td",    "manifestId": "sha256:8d969eef…", "fileCount": 2 },
-    { "roostId": "roost_lobby_td_v2", "manifestId": "sha256:8d969eef…", "fileCount": 2 }
+    { "roostId": "roost_lobby_td",    "versionId": "vrs_8d969eef…", "fileCount": 2 },
+    { "roostId": "roost_lobby_td_v2", "versionId": "vrs_8d969eef…", "fileCount": 2 }
   ],
   "next_page_token": ""
 }
@@ -278,7 +278,7 @@ def chunk_file(path: Path) -> Iterator[dict]:
             offset += len(block)
 
 
-def file_to_manifest_entry(path: Path, rel_path: str) -> dict:
+def file_to_version_entry(path: Path, rel_path: str) -> dict:
     chunks = list(chunk_file(path))
     return {
         "path": rel_path,                           # posix, relative to folder root
@@ -287,7 +287,7 @@ def file_to_manifest_entry(path: Path, rel_path: str) -> dict:
     }
 ```
 
-wire-format note: when the hash is sent over the api (e.g. in `/api/chunks/check`) it must be prefixed with `sha256:` — `f"sha256:{digest}"`. when it is embedded in the manifest's `files[].chunks[].hash` field it is the bare 64-hex string.
+wire-format note: when the hash is sent over the api (e.g. in `/api/chunks/check`) it must be prefixed with `sha256:` — `f"sha256:{digest}"`. when it is embedded in the version's `files[].chunks[].hash` field it is the bare 64-hex string.
 
 ### node (20+)
 
@@ -323,7 +323,7 @@ export async function* chunkFile(path) {
   }
 }
 
-export async function fileToManifestEntry(path, relPath) {
+export async function fileToVersionEntry(path, relPath) {
   const chunks = [];
   for await (const c of chunkFile(path)) {
     chunks.push({ hash: c.hash, size: c.size });
@@ -341,7 +341,7 @@ notes applicable to both implementations:
 - read buffer must be **at least** 4 mib — readers that emit smaller blocks (e.g. tcp socket chunks) must buffer up to 4 mib before hashing. the node version above does this explicitly via `pending`; the python version relies on `io.BufferedReader.read(n)` which returns up to `n` bytes (enough for regular files, but network-backed readers need a wrapper).
 - the final chunk is whatever's left in the buffer at eof; zero bytes left means the previous block was the final chunk.
 - hashing and i/o must not be interleaved with other writers on the same file — take a read lock or copy the file first.
-- the manifest's `files[].size` must equal `sum(chunks[].size)`. the finalize validator rejects mismatches with `validation_failed`.
+- the version's `files[].size` must equal `sum(chunks[].size)`. the finalize validator rejects mismatches with `validation_failed`.
 
 ## 10. error taxonomy
 
@@ -380,6 +380,6 @@ example `validation_failed` for a malformed digest:
 - **signed-url expiry** is enforced by r2, not roost. if a client clock skews enough to serve an "expired" url as live, r2 still refuses it — the client must trust `expiresAt` from the api response, not local time.
 - **retries during the upload session** should respect `Retry-After` on 429 and exponential backoff (base 500 ms, cap 30 s) on 5xx from r2.
 - **partial uploads** are not representable. r2 `PUT` is atomic per-object: either the full chunk lands or nothing does. there is no "resume chunk 7 from byte 3 of 4 mib" — retry the whole chunk. this is principle 3 applied to the wire.
-- **gc interaction**: a chunk with zero referrers across all roosts in a site becomes eligible for deletion after a 30-day grace period (principle 15). during that window a mount will resurrect it — the grace exists precisely to cover "roost just rolled back to a manifest whose chunks were about to be gc'd".
+- **gc interaction**: a chunk with zero referrers across all roosts in a site becomes eligible for deletion after a 30-day grace period (principle 15). during that window a mount will resurrect it — the grace exists precisely to cover "roost just rolled back to a version whose chunks were about to be gc'd".
 
 ---

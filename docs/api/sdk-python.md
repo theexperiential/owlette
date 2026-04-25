@@ -27,13 +27,16 @@ from roost import Roost, PushOptions
 
 async def main():
     async with Roost(token=os.environ["ROOST_TOKEN"]) as client:
-        result = await client.roosts.push("./dist", "rst_abc", PushOptions(site_id="kiosk-fleet-01"))
-        print("published", result.manifest_id, "—", result.stats.uploaded_chunks, "chunks uploaded")
+        result = await client.roosts.push(
+            "./dist", "rst_abc",
+            PushOptions(site_id="kiosk-fleet-01", description="initial publish"),
+        )
+        print(f"published v{result.version_number}", result.version_id, "—", result.stats.uploaded_chunks, "chunks uploaded")
 
 asyncio.run(main())
 ```
 
-that's the whole flow: walk `./dist`, sha-256 chunk it, dedup-check against r2, upload what's missing, publish a manifest, return the new id.
+that's the whole flow: walk `./dist`, sha-256 chunk it, dedup-check against r2, upload what's missing, publish a version, return the new id + `version_number`.
 
 ---
 
@@ -71,7 +74,7 @@ every top-level noun is a resource class hung off the client. all methods are `a
 |----------------------|----------------------------------------------------------------------------------------------------|
 | `client.roosts`      | `list`, `list_page`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy`              |
 | `client.chunks`      | `check`, `upload_urls`, `download_urls`, `mount`, `referrers`                                      |
-| `client.manifests`   | `list`, `list_page`, `get`, `files`, `diff`                                                        |
+| `client.versions`    | `list`, `list_page`, `get`, `patch`, `files`, `diff`                                               |
 | `client.deployments` | `list`, `list_page`, `get`                                                                         |
 | `client.keys`        | `create`, `list`, `rotate`, `revoke`                                                               |
 | `client.webhooks`    | `subscribe`, `list`, `get`, `update`, `remove`, `rotate_secret`, `probe`                           |
@@ -87,16 +90,16 @@ every top-level noun is a resource class hung off the client. all methods are `a
 ```python
 # list — async generator, transparent paging
 async for r in client.roosts.list(site_id="site-1"):
-    print(r.roost_id, r.name, r.current_manifest_id)
+    print(r.roost_id, r.name, r.current_version_id)
 
 # single page explicitly (for resumable batch jobs)
 rows, cursor = await client.roosts.list_page(site_id="site-1", page_size=20)
 if cursor:
     rows2, _ = await client.roosts.list_page(site_id="site-1", cursor=cursor)
 
-# fetch one — returns RoostDetail with current_manifest (object, not id)
+# fetch one — returns RoostDetail with current_version (object, not id)
 r = await client.roosts.get("rst_abc", site_id="site-1")
-print(r.current_manifest.manifest_id if r.current_manifest else None)
+print(r.current_version.version_id if r.current_version else None)
 
 # create
 created = await client.roosts.create(
@@ -117,14 +120,22 @@ await client.roosts.remove("rst_lobby_td", site_id="site-1")
 from roost import PushOptions
 result = await client.roosts.push(
     "./dist", "rst_abc",
-    PushOptions(site_id="site-1", on_progress=print),
+    PushOptions(
+        site_id="site-1",
+        description="fixed broken lobby video",   # optional ≤500 chars
+        on_progress=print,
+    ),
 )
 
-# rollback (omit target_manifest_id to revert one step)
+# rollback — `target_version` accepts str | int:
+#   int / "#3" / "v3"        → the third publish for this roost
+#   "vrs_..."                → a stable version id
+#   "current" / "previous" / "first" → aliases resolved server-side
+# omit it entirely to revert one step (equivalent to "previous").
 from roost import RollbackOptions
 await client.roosts.rollback(
     "rst_abc",
-    RollbackOptions(site_id="site-1", target_manifest_id="mf_prev"),
+    RollbackOptions(site_id="site-1", target_version=3),
 )
 
 # trigger a deployment (targeted / scheduled / dry-run)
@@ -164,27 +175,34 @@ await client.chunks.mount(
 
 # which roosts reference this chunk?
 async for ref in client.chunks.referrers("sha256:ab12...", site_id="site-1"):
-    print(ref["roostId"], ref["manifestId"])
+    print(ref["roostId"], ref["versionId"])
 ```
 
-### manifests
+### versions
 
 ```python
-# list (async gen, transparent paging)
-async for mf in client.manifests.list("rst_abc", site_id="site-1"):
-    print(mf["id"], mf["createdAt"])
+# list (async gen, transparent paging, newest first)
+async for v in client.versions.list("rst_abc", site_id="site-1"):
+    print(f'v{v["versionNumber"]}', v["versionId"], v.get("description"), v["createdAt"])
 
-# full manifest doc
-mf = await client.manifests.get("rst_abc", "mf_xyz", site_id="site-1")
+# full version doc — `version_ref` accepts the same forms as rollback's target_version:
+#   an int (3), "#3" / "v3", a "vrs_*" id, or "current" / "previous" / "first"
+v = await client.versions.get("rst_abc", "current", site_id="site-1")
+
+# edit the description only (everything else on a published version is immutable)
+await client.versions.patch(
+    "rst_abc", v["versionId"],
+    site_id="site-1", description="updated release notes",
+)
 
 # file listing (async gen)
-async for f in client.manifests.files("rst_abc", "mf_xyz", site_id="site-1"):
+async for f in client.versions.files("rst_abc", 3, site_id="site-1"):
     print(f["path"], f["digest"], f["size"])
 
-# diff two manifests — `against` is the baseline being compared to
-diff = await client.manifests.diff(
-    "rst_abc", "mf_new",
-    site_id="site-1", against="mf_old",
+# diff two versions — `against` is the baseline; both sides accept any versionRef form
+diff = await client.versions.diff(
+    "rst_abc", "current",
+    site_id="site-1", against="previous",
 )
 ```
 
@@ -242,7 +260,7 @@ history = await client.quotas.history("site-1", days=30)
 hook = await client.webhooks.subscribe(
     site_id="site-1",
     url="https://example.com/hooks/roost",
-    events=["manifest.published", "deploy.failed"],
+    events=["version.published", "deploy.failed"],
 )
 print(hook["signingSecret"])
 
@@ -250,15 +268,15 @@ print(hook["signingSecret"])
 for h in await client.webhooks.list(site_id="site-1"):
     print(h.id, h.url, h.events)
 
-await client.webhooks.update(hook["id"], site_id="site-1", events=["manifest.published"])
+await client.webhooks.update(hook["id"], site_id="site-1", events=["version.published"])
 await client.webhooks.rotate_secret(hook["id"], site_id="site-1")
 await client.webhooks.remove(hook["id"], site_id="site-1")
 
 # probe fires a signed test delivery — `kind` must be a known event name
 await client.webhooks.probe(
     site_id="site-1",
-    kind="manifest.published",
-    payload={"roostId": "rst_abc", "manifestId": "mf_xyz"},
+    kind="version.published",
+    payload={"roostId": "rst_abc", "versionId": "vrs_xyz", "versionNumber": 7},
 )
 ```
 
@@ -281,7 +299,7 @@ async def handle(evt: PushProgressEvent) -> None:
     elif evt.phase == "upload":
         print(f"{evt.uploaded}/{evt.total} chunks uploaded")
     elif evt.phase == "publish":
-        print(f"publishing manifest (attempt {evt.attempt})")
+        print(f"publishing version (attempt {evt.attempt})")
 
 await client.roosts.push(
     "./dist", "rst_abc",
@@ -300,13 +318,14 @@ class PushOptions:
     name: str | None = None                  # optional — overrides the roost's current name
     targets: list[str] | None = None         # optional — machine ids to retarget to on publish
     extract_path: str | None = None          # optional — on-disk extract root for the roost
+    description: str | None = None           # optional — plaintext ≤500 chars, stored on the version doc
     on_progress: Callable[[PushProgressEvent], None] | Callable[[...], Awaitable[None]] | None = None
     ignore: Sequence[str] = ()               # extra glob patterns to skip during the file walk
 ```
 
 pass either a sync or async `on_progress`; the sdk auto-detects and awaits the latter.
 
-**retry on concurrent publish (412).** if another writer publishes between your `push()` starting and the manifest post, the sdk re-reads the current manifest, re-diffs, and retries up to 3 times before raising `RoostApiError`. chunk uploads never re-run — they're content-addressed.
+**retry on concurrent publish (412).** if another writer publishes between your `push()` starting and the version post, the sdk re-reads the current version, re-diffs, and retries up to 3 times before raising `RoostApiError`. chunk uploads never re-run — they're content-addressed.
 
 ---
 
@@ -340,7 +359,7 @@ if not is_signature_valid(sig, raw, secret):
 ```python
 from roost import sign_body
 
-sig = sign_body(b'{"event":"manifest.published"}', secret="whsec_...")
+sig = sign_body(b'{"event":"version.published"}', secret="whsec_...")
 # → 't=1735689600,v1=ab12...'
 ```
 
@@ -385,7 +404,8 @@ the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring
 | `scope_insufficient`       | 403    | api key doesn't carry the resource+permission for this call            |
 | `token_expired`            | 401    | key hit its `expires_at` — rotate or mint a new one                    |
 | `idempotency_key_mismatch` | 409    | same key replayed with a different body                                |
-| `manifest_stale`           | 412    | someone else published between your read and write — re-push           |
+| `version_stale`            | 412    | someone else published between your read and write — re-push           |
+| `version_not_found`        | 404    | `target_version` / `version_ref` didn't resolve against the roost      |
 | `rate_limited`             | 429    | see `retry_after` — the sdk already honors it                          |
 | `unsupported_version`      | 400    | `roost_version` older than the minimum — update this package           |
 
@@ -410,9 +430,9 @@ the package ships a `py.typed` marker; mypy strict mode + pyright both resolve e
 
 ```python
 from roost import (
-    RoostSummary, RoostDetail, ManifestSummary,
+    RoostSummary, RoostDetail, VersionSummary, VersionDetail,
     PushOptions, PushProgressEvent, PushResult,
-    ApiKeyScope, WebhookSubscription,
+    ApiKeyScope, WebhookSubscription, VersionRef,
 )
 ```
 

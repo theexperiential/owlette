@@ -1,32 +1,38 @@
 'use client';
 
 /**
- * RoostTargetsList — renders per-target sync status for an expanded
- * roost row on the /roosts page. Owns ONE `useTargetStates` listener
- * per expanded roost (parent RoostTargetRow is a pure render component)
- * so expanding N roosts mounts N listeners, not N×M.
+ * RoostTargetsList — checkbox list of every machine in the site for the
+ * selected roost. Checked rows are active targets (recorded in
+ * roost.targets). Toggling fires a debounced PATCH on the roost doc;
+ * the snapshot listener in `useRoosts` reconciles state on confirmation.
+ *
+ * Owns ONE `useTargetStates` listener per expanded roost so per-target
+ * sync state can be rendered inline only on currently-targeted rows.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { CheckCircle2, CircleDashed, Download, FileCog, Loader2, XCircle, Ban, AlertTriangle } from 'lucide-react';
+import { toast } from 'sonner';
 import { useTargetStates, type TargetState, type TargetStatus } from '@/hooks/useTargetStates';
+import type { Machine } from '@/hooks/useFirestore';
 
 interface RoostTargetsListProps {
   siteId: string;
   roostId: string;
-  currentManifestId: string | null;
+  currentVersionId: string | null;
   targets: string[];
+  machines: Machine[];
 }
 
 interface RoostStatusPillProps {
   siteId: string;
   roostId: string;
-  currentManifestId: string | null;
+  currentVersionId: string | null;
   targets: string[];
 }
 
 type RollupStatus =
-  | 'synced'      // all targets committed for the current manifest
+  | 'synced'      // all targets committed for the current version
   | 'syncing'     // at least one target in-flight, none failed
   | 'partial'     // some targets synced, some still pending / in-flight
   | 'pending'     // no target has started yet
@@ -41,18 +47,18 @@ interface StatusPresentation {
 }
 
 /**
- * When the agent's last report is for an OLD manifest, the machine is
+ * When the agent's last report is for an OLD version, the machine is
  * really "pending" on the current rollout — surfacing a stale
- * `committed` for the prior manifest would mislead the operator into
+ * `committed` for the prior version would mislead the operator into
  * thinking this deploy has landed.
  */
 function effectiveStatus(
   state: TargetState | undefined,
-  currentManifestId: string | null,
+  currentVersionId: string | null,
 ): TargetStatus | 'stale' | 'unreported' {
   if (!state || !state.status) return 'unreported';
   const isForCurrent =
-    !!currentManifestId && state.reportedManifestId === currentManifestId;
+    !!currentVersionId && state.reportedVersionId === currentVersionId;
   if (!isForCurrent) return 'stale';
   return state.status;
 }
@@ -139,50 +145,15 @@ function metricLine(
   return null;
 }
 
-function TargetRow({
-  machineId,
-  currentManifestId,
-  state,
-}: {
-  machineId: string;
-  currentManifestId: string | null;
-  state: TargetState | undefined;
-}) {
-  const status = effectiveStatus(state, currentManifestId);
-  const pres = presentation(status);
-  const metrics = metricLine(state, status);
-  const Icon = pres.icon;
-
-  return (
-    <div className="flex items-center justify-between gap-3 py-1.5 px-3 rounded border border-border/40 bg-background/50">
-      <span className="text-foreground text-sm select-text truncate min-w-0">{machineId}</span>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {metrics && (
-          <span className="text-[11px] text-muted-foreground tabular-nums select-none">
-            {metrics}
-          </span>
-        )}
-        <span
-          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${pres.className}`}
-          title={state?.error ?? undefined}
-        >
-          <Icon className={`h-3 w-3 ${pres.spin ? 'animate-spin' : ''}`} />
-          {pres.label}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 /**
  * Aggregate per-machine states into a single rollup for the collapsed row.
  *
- * A report only counts for the current manifest — a prior `committed` for
- * an older manifest shouldn't make the new rollout look done.
+ * A report only counts for the current version — a prior `committed` for
+ * an older version shouldn't make the new rollout look done.
  */
 function rollup(
   targets: string[],
-  currentManifestId: string | null,
+  currentVersionId: string | null,
   byMachine: Map<string, TargetState>,
 ): { status: RollupStatus; synced: number; total: number; failed: number; inFlight: number } {
   const total = targets.length;
@@ -196,7 +167,7 @@ function rollup(
   for (const mid of targets) {
     const s = byMachine.get(mid);
     if (!s || !s.status) continue;
-    if (currentManifestId && s.reportedManifestId !== currentManifestId) continue;
+    if (currentVersionId && s.reportedVersionId !== currentVersionId) continue;
     reported++;
     switch (s.status) {
       case 'committed':
@@ -274,7 +245,7 @@ function rollupPresentation(status: RollupStatus): StatusPresentation {
 export function RoostStatusPill({
   siteId,
   roostId,
-  currentManifestId,
+  currentVersionId,
   targets,
 }: RoostStatusPillProps) {
   const { states, loading } = useTargetStates(siteId, roostId);
@@ -284,8 +255,8 @@ export function RoostStatusPill({
     return m;
   }, [states]);
   const r = React.useMemo(
-    () => rollup(targets, currentManifestId, byMachine),
-    [targets, currentManifestId, byMachine],
+    () => rollup(targets, currentVersionId, byMachine),
+    [targets, currentVersionId, byMachine],
   );
 
   // While the first snapshot is still in flight, render a neutral
@@ -324,8 +295,9 @@ export function RoostStatusPill({
 export function RoostTargetsList({
   siteId,
   roostId,
-  currentManifestId,
+  currentVersionId,
   targets,
+  machines,
 }: RoostTargetsListProps) {
   const { states } = useTargetStates(siteId, roostId);
   // Index by machineId so each row lookup is O(1). Rebuild only when
@@ -336,20 +308,209 @@ export function RoostTargetsList({
     return m;
   }, [states]);
 
-  if (targets.length === 0) {
-    return <p className="text-xs text-muted-foreground italic">no targets assigned</p>;
+  // Local mirror of the targets array so the checkbox flips immediately
+  // on click. The Firestore snapshot reconciles within ~1s; we keep the
+  // optimistic state in sync via the `targets` prop dependency below.
+  const [localTargets, setLocalTargets] = useState<Set<string>>(
+    () => new Set(targets),
+  );
+  React.useEffect(() => {
+    setLocalTargets(new Set(targets));
+  }, [targets]);
+
+  // Track in-flight PATCH dispatches so we can ignore stale responses
+  // from earlier clicks when the user toggles a row twice quickly.
+  const seqRef = React.useRef(0);
+  const [busy, setBusy] = React.useState(false);
+
+  const persist = React.useCallback(
+    async (nextTargets: string[], previousTargets: Set<string>) => {
+      const seq = ++seqRef.current;
+      setBusy(true);
+      // Newly-added machines auto-trigger a deploy so the user doesn't
+      // have to chase a separate "re-sync" action after checking a box —
+      // the obvious intent of "make this machine a target" is "send the
+      // current version to it now". Removed machines need no follow-up.
+      const added = nextTargets.filter((m) => !previousTargets.has(m));
+      try {
+        const res = await fetch(
+          `/api/roosts/${encodeURIComponent(roostId)}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ siteId, targets: nextTargets }),
+          },
+        );
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail ?? body.title ?? `HTTP ${res.status}`);
+        }
+        if (added.length > 0 && currentVersionId) {
+          const deployRes = await fetch(
+            `/api/roosts/${encodeURIComponent(roostId)}/deploy`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ siteId, machines: added }),
+            },
+          );
+          if (!deployRes.ok) {
+            const body = await deployRes.json().catch(() => ({}));
+            // Don't revert the checkbox — the target IS in the list now;
+            // the user can hit "re-sync targets" to retry the dispatch.
+            toast.error('queued, but failed to dispatch sync', {
+              description: body.detail ?? body.title ?? `HTTP ${deployRes.status}`,
+            });
+          } else {
+            toast.success(
+              `syncing ${added.length} new target${added.length === 1 ? '' : 's'}`,
+            );
+          }
+        }
+      } catch (err) {
+        if (seq === seqRef.current) {
+          // Latest dispatch failed — revert. (Older failed dispatches
+          // would have already been superseded by a newer one and don't
+          // matter, since the latest one is what the user expects.)
+          setLocalTargets(previousTargets);
+          toast.error('failed to update targets', {
+            description: err instanceof Error ? err.message : 'network error',
+          });
+        }
+      } finally {
+        if (seq === seqRef.current) setBusy(false);
+      }
+    },
+    [roostId, siteId, currentVersionId],
+  );
+
+  const toggle = React.useCallback(
+    (machineId: string) => {
+      const previous = localTargets;
+      const next = new Set(previous);
+      if (next.has(machineId)) {
+        next.delete(machineId);
+      } else {
+        next.add(machineId);
+      }
+      setLocalTargets(next);
+      void persist(Array.from(next), previous);
+    },
+    [localTargets, persist],
+  );
+
+  if (machines.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground italic">
+        no machines on this site yet — install the agent on one to add it as a target.
+      </p>
+    );
   }
+
+  // Sort: targeted+online → targeted+offline → !targeted+online → !targeted+offline → machineId asc.
+  // Keeps the user's active fleet at the top while leaving "add a new
+  // target" reachable just below.
+  const sorted = [...machines].sort((a, b) => {
+    const aTarget = localTargets.has(a.machineId) ? 0 : 1;
+    const bTarget = localTargets.has(b.machineId) ? 0 : 1;
+    if (aTarget !== bTarget) return aTarget - bTarget;
+    const aOnline = a.online ? 0 : 1;
+    const bOnline = b.online ? 0 : 1;
+    if (aOnline !== bOnline) return aOnline - bOnline;
+    return a.machineId.localeCompare(b.machineId);
+  });
 
   return (
     <div className="space-y-1.5">
-      {targets.map((machineId) => (
-        <TargetRow
-          key={machineId}
-          machineId={machineId}
-          currentManifestId={currentManifestId}
-          state={byMachine.get(machineId)}
-        />
-      ))}
+      {sorted.map((m) => {
+        const isTarget = localTargets.has(m.machineId);
+        return (
+          <TargetCheckboxRow
+            key={m.machineId}
+            machine={m}
+            isTarget={isTarget}
+            currentVersionId={currentVersionId}
+            state={byMachine.get(m.machineId)}
+            disabled={busy}
+            onToggle={() => toggle(m.machineId)}
+          />
+        );
+      })}
     </div>
+  );
+}
+
+function TargetCheckboxRow({
+  machine,
+  isTarget,
+  currentVersionId,
+  state,
+  disabled,
+  onToggle,
+}: {
+  machine: Machine;
+  isTarget: boolean;
+  currentVersionId: string | null;
+  state: TargetState | undefined;
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  const status = effectiveStatus(state, currentVersionId);
+  const pres = presentation(status);
+  const Icon = pres.icon;
+  const metrics = metricLine(state, status);
+
+  return (
+    <label
+      className={`flex items-center justify-between gap-3 py-1.5 px-3 rounded border transition-colors cursor-pointer ${
+        isTarget
+          ? 'border-border bg-background/50 hover:bg-muted/40'
+          : 'border-border/40 bg-transparent hover:bg-muted/20'
+      } ${disabled ? 'opacity-60 pointer-events-none' : ''}`}
+    >
+      <div className="flex items-center gap-2.5 min-w-0">
+        <input
+          type="checkbox"
+          checked={isTarget}
+          onChange={onToggle}
+          disabled={disabled}
+          className="h-4 w-4 rounded border-border bg-background accent-accent-cyan cursor-pointer flex-shrink-0"
+          aria-label={isTarget ? `remove ${machine.machineId} as target` : `add ${machine.machineId} as target`}
+        />
+        <span className="text-foreground text-sm select-text truncate min-w-0">
+          {machine.machineId}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {isTarget && metrics && (
+          <span className="text-[11px] text-muted-foreground tabular-nums select-none">
+            {metrics}
+          </span>
+        )}
+        {isTarget && (
+          <span
+            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${pres.className}`}
+            title={state?.error ?? undefined}
+          >
+            <Icon className={`h-3 w-3 ${pres.spin ? 'animate-spin' : ''}`} />
+            {pres.label}
+          </span>
+        )}
+        <span
+          className={`inline-flex items-center gap-1 text-[11px] ${
+            machine.online ? 'text-emerald-400' : 'text-muted-foreground'
+          }`}
+          title={machine.online ? 'online' : 'offline'}
+        >
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full ${
+              machine.online ? 'bg-emerald-500' : 'bg-muted-foreground/60'
+            }`}
+            aria-hidden="true"
+          />
+          {machine.online ? 'online' : 'offline'}
+        </span>
+      </div>
+    </label>
   );
 }

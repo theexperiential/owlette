@@ -35,7 +35,7 @@ export const CANARY_SUCCESS_THRESHOLD = 0.9;
 
 /**
  * Canary abort threshold. If >25% of canary failed, abort rollout —
- * something is structurally wrong (bad manifest, missing chunks, etc.).
+ * something is structurally wrong (bad version, missing chunks, etc.).
  */
 export const CANARY_ABORT_FAILURE_RATE = 0.25;
 
@@ -81,8 +81,8 @@ export interface RolloutEvaluation {
 /**
  * Deterministically pick the canary cohort for a rollout.
  *
- * Selection is a stable hash of `machineId + manifestId`. The same
- * machine wakes up in the canary for the same manifest deterministically,
+ * Selection is a stable hash of `machineId + versionId`. The same
+ * machine wakes up in the canary for the same version deterministically,
  * so re-runs of the trigger (e.g. retries) don't flap between canary
  * cohorts mid-rollout.
  *
@@ -91,7 +91,7 @@ export interface RolloutEvaluation {
  */
 export function selectCanary(
   machineIds: readonly string[],
-  manifestId: string,
+  versionId: string,
 ): { canary: string[]; fleet: string[] } {
   if (machineIds.length === 0) {
     return { canary: [], fleet: [] };
@@ -100,12 +100,12 @@ export function selectCanary(
   const canarySize = canarySizeFor(machineIds.length);
 
   // stable-score each machine, then slice off the N lowest scores.
-  // using a commutative hash (`+`) of machineId and manifestId gives us
+  // using a commutative hash (`+`) of machineId and versionId gives us
   // the same score regardless of which side is hashed first, and ties
   // are broken by machineId lexicographic order.
   const scored = machineIds.map((id) => ({
     id,
-    score: stableHash(`${id}::${manifestId}`),
+    score: stableHash(`${id}::${versionId}`),
   }));
 
   scored.sort((a, b) => {

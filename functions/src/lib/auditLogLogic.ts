@@ -26,7 +26,7 @@ import { createHash } from 'crypto';
 export type AuditEventKind =
   | 'signed_url_issued'
   | 'distribution_started'
-  | 'manifest_pointer_changed'
+  | 'version_pointer_changed'
   | 'api_key_used'
   | 'gc_run';
 
@@ -100,7 +100,7 @@ function isAuditEventKind(x: unknown): x is AuditEventKind {
   return (
     x === 'signed_url_issued' ||
     x === 'distribution_started' ||
-    x === 'manifest_pointer_changed' ||
+    x === 'version_pointer_changed' ||
     x === 'api_key_used' ||
     x === 'gc_run'
   );

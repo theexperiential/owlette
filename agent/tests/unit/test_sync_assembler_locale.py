@@ -1,7 +1,7 @@
 """locale / unicode / emoji / cjk / rtl filename tests for sync_assembler.
 
 ntfs stores filenames as utf-16; python on windows uses wide-char apis. the
-risk is that manifest paths containing accents, cjk, emoji, or rtl scripts
+risk is that version paths containing accents, cjk, emoji, or rtl scripts
 fail somewhere in the chunk → assembled-file pipeline (path joining, mkdir,
 fsync, atomic rename, allowlist validation, sqlite state writes).
 
@@ -22,7 +22,7 @@ import pytest
 from destination_allowlist import DestinationAllowlist
 from sync_assembler import assemble_all
 from sync_downloader import chunk_path
-from sync_manifest import ManifestChunk, ManifestFile
+from sync_version import VersionChunk, VersionFile
 from sync_state import SyncState
 
 
@@ -34,10 +34,10 @@ def _put_chunk(store: Path, data: bytes) -> str:
     return h
 
 
-def _mk_manifest_file(path: str, data: bytes) -> ManifestFile:
+def _mk_version_file(path: str, data: bytes) -> VersionFile:
     h = hashlib.sha256(data).hexdigest()
-    return ManifestFile(
-        path=path, size=len(data), chunks=[ManifestChunk(hash=h, size=len(data))]
+    return VersionFile(
+        path=path, size=len(data), chunks=[VersionChunk(hash=h, size=len(data))]
     )
 
 
@@ -50,10 +50,10 @@ def _assemble(tmp_path: Path, rel_path: str, data: bytes = b'unicode payload'):
         extract.mkdir()
         allowlist = DestinationAllowlist([str(extract)])
         _put_chunk(content, data)
-        f = _mk_manifest_file(rel_path, data)
+        f = _mk_version_file(rel_path, data)
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         result = assemble_all(
@@ -158,10 +158,10 @@ def test_nfd_normalized_path(tmp_path):
         allowlist = DestinationAllowlist([str(extract)])
         data = b'nfd test'
         _put_chunk(content, data)
-        f = _mk_manifest_file(nfd, data)
+        f = _mk_version_file(nfd, data)
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         result = assemble_all(
@@ -211,10 +211,10 @@ def test_state_row_queryable_by_unicode_path(tmp_path):
         data = b'sqlite roundtrip'
         _put_chunk(content, data)
         path = '中文/résumé_🎵.toe'
-        f = _mk_manifest_file(path, data)
+        f = _mk_version_file(path, data)
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         assemble_all(
@@ -255,10 +255,10 @@ def test_windows_reserved_chars_are_rejected(tmp_path):
         data = b'reserved char test'
         _put_chunk(content, data)
         # asterisk is one of windows' reserved chars
-        f = _mk_manifest_file('bad*name.toe', data)
+        f = _mk_version_file('bad*name.toe', data)
 
         dist_id = state.start_distribution(
-            site_id='s', folder_id='f', manifest_id='m', manifest_url='u',
+            site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[{'path': f.path, 'size': f.size}], chunks=[],
         )
         # default behavior raises AssembleError on first failure.

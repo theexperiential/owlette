@@ -3,7 +3,7 @@
  *
  * Runs nightly (off-peak UTC). For each site:
  *   1. Skip sites with an in-flight rollout (pause-during-publish).
- *   2. Gather the referenced-hash set (live manifests) and the stored-
+ *   2. Gather the referenced-hash set (live versions) and the stored-
  *      hash set (R2 listing under the per-tenant prefix).
  *   3. Load existing tombstones.
  *   4. Produce a plan (pure function — lib/chunkGcLogic.ts).
@@ -19,8 +19,8 @@
  * production scanner; everything else is testable today.
  *
  * Not in scope (follow-up):
- *   - Denormalised chunk refcount doc to avoid scanning every manifest.
- *     Without it, sites with thousands of manifests will be slow. The
+ *   - Denormalised chunk refcount doc to avoid scanning every version.
+ *     Without it, sites with thousands of versions will be slow. The
  *     current implementation assumes the scanner is smart about that.
  */
 
@@ -52,17 +52,17 @@ export interface SiteScanner {
    */
   listSiteIds(): Promise<string[]>;
   /**
-   * Return the hash set referenced by any live manifest for this site.
-   * "Live" = currentManifestId + previousManifestId + any still in
+   * Return the hash set referenced by any live version for this site.
+   * "Live" = currentVersionId + previousVersionId + any still in
    * rollout history within the retention window. Production: reads
    * every doc under `sites/{siteId}/roosts` and each roost's
-   * `rollouts` subcollection, plus the manifests.
+   * `rollouts` subcollection, plus the versions.
    */
   getReferencedHashes(siteId: string): Promise<Set<string>>;
   /**
    * True if there is a non-terminal rollout active on this site.
    * Pause GC while publishing to avoid racing with an in-flight upload
-   * whose manifest has not yet been finalised.
+   * whose version has not yet been finalised.
    */
   hasActiveRollout(siteId: string): Promise<boolean>;
 }
@@ -258,9 +258,9 @@ export const chunkGcNightly = onSchedule(
 
 function getDefaultScanner(): SiteScanner {
   // firestore-backed implementation will go here post wave 0.6.
-  // reading every manifest every night is the lazy approach and is
+  // reading every version every night is the lazy approach and is
   // adequate at Owlette's expected fleet size (≤ low thousands of
-  // manifests per site). a denormalised refcount doc is the long-term
+  // versions per site). a denormalised refcount doc is the long-term
   // fix; tracked as a follow-up.
   const db = admin.firestore();
   return {
@@ -276,11 +276,11 @@ function getDefaultScanner(): SiteScanner {
         .collection('roosts')
         .get();
       for (const roostDoc of roostsSnap.docs) {
-        const manifestsSnap = await roostDoc.ref
-          .collection('manifests')
+        const versionsSnap = await roostDoc.ref
+          .collection('versions')
           .get();
-        for (const mDoc of manifestsSnap.docs) {
-          const chunks = (mDoc.data() as { chunks?: string[] }).chunks;
+        for (const vDoc of versionsSnap.docs) {
+          const chunks = (vDoc.data() as { chunks?: string[] }).chunks;
           if (Array.isArray(chunks)) for (const h of chunks) referenced.add(h);
         }
       }

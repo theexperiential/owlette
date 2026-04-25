@@ -1,6 +1,6 @@
 # roost api — webhooks
 
-webhooks are how roost tells your systems that something happened — a new manifest published, a deploy failed, a machine dropped offline, a quota alarm tripped. instead of polling the api on a timer, you subscribe a url once and roost posts a signed json event to it every time a matching event occurs.
+webhooks are how roost tells your systems that something happened — a new version published, a deploy failed, a machine dropped offline, a quota alarm tripped. instead of polling the api on a timer, you subscribe a url once and roost posts a signed json event to it every time a matching event occurs.
 
 ---
 
@@ -19,7 +19,7 @@ every delivery envelope has the shape:
 ```json
 {
   "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y0",
-  "event": "manifest.published",
+  "event": "version.published",
   "occurredAt": "2026-04-22T15:30:00Z",
   "data": { }
 }
@@ -74,36 +74,38 @@ every delivery envelope has the shape:
   }
   ```
 
-### manifests
+### versions
 
-- **`manifest.published`** — a new manifest was published via `POST /api/roosts/{id}/manifests` and the roost's current pointer moved to it.
+- **`version.published`** — a new version was published via `POST /api/roosts/{id}/versions` and the roost's current pointer moved to it.
   ```json
   {
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y3",
-    "event": "manifest.published",
+    "event": "version.published",
     "occurredAt": "2026-04-22T15:30:00Z",
     "data": {
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
-      "manifestId": "sha256:8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
-      "previousManifestId": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "versionId": "vrs_8d969eef6ecad3c29a3a629280e686cf",
+      "versionNumber": 7,
+      "previousVersionId": "vrs_2c26b46b68ffc68ff99b453c1d304134",
+      "description": "fixed broken lobby video",
       "totalFiles": 342,
       "totalSize": 2147483648
     }
   }
   ```
 
-- **`manifest.rolled_back`** — a rollback flipped the roost's current manifest pointer to a prior version.
+- **`version.rolled_back`** — a rollback flipped the roost's current version pointer to a prior version.
   ```json
   {
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y4",
-    "event": "manifest.rolled_back",
+    "event": "version.rolled_back",
     "occurredAt": "2026-04-22T15:35:00Z",
     "data": {
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
-      "fromManifestId": "sha256:8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
-      "toManifestId": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "fromVersion": "vrs_8d969eef6ecad3c29a3a629280e686cf",
+      "toVersion": "vrs_2c26b46b68ffc68ff99b453c1d304134",
       "rolloutId": "rollout_01HYA8K3R2N7P9Q1S5T6U8V0W3"
     }
   }
@@ -121,7 +123,8 @@ every delivery envelope has the shape:
       "rolloutId": "rollout_01HYA8K3R2N7P9Q1S5T6U8V0W2",
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
-      "manifestId": "sha256:8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+      "versionId": "vrs_8d969eef6ecad3c29a3a629280e686cf",
+      "versionNumber": 7,
       "strategy": "canary-then-fleet",
       "machineCount": 2
     }
@@ -138,7 +141,8 @@ every delivery envelope has the shape:
       "rolloutId": "rollout_01HYA8K3R2N7P9Q1S5T6U8V0W2",
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
-      "manifestId": "sha256:8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+      "versionId": "vrs_8d969eef6ecad3c29a3a629280e686cf",
+      "versionNumber": 7,
       "machineCount": 2,
       "successCount": 2,
       "failureCount": 0,
@@ -157,7 +161,8 @@ every delivery envelope has the shape:
       "rolloutId": "rollout_01HYA8K3R2N7P9Q1S5T6U8V0W2",
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
-      "manifestId": "sha256:8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+      "versionId": "vrs_8d969eef6ecad3c29a3a629280e686cf",
+      "versionNumber": 7,
       "failedMachines": [
         { "machineId": "machine-b2c1", "error": "chunk_verify_failed", "digest": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce" }
       ]
@@ -226,7 +231,7 @@ every delivery envelope has the shape:
       "siteId": "kiosk-fleet-01",
       "expectedDigest": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
       "actualDigest": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
-      "affectedManifests": ["sha256:8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92"]
+      "affectedVersions": ["vrs_8d969eef6ecad3c29a3a629280e686cf"]
     }
   }
   ```
@@ -504,7 +509,7 @@ roost listen \
   --site kiosk-fleet-01 \
   --forward-to http://localhost:8080/webhooks/roost \
   --signing-secret "$ROOST_WEBHOOK_SECRET" \
-  --events manifest.published,deployment.failed
+  --events version.published,deployment.failed
 
 # → every matching event is re-signed with your local secret and POSTed
 #   to localhost. Ctrl-C to stop. the tunnel leaves no trace on the server.
@@ -513,12 +518,12 @@ roost listen \
 a matching event looks like:
 
 ```
-event manifest.published → http://localhost:8080/webhooks/roost  200 OK  (34 ms)
-event deployment.failed  → http://localhost:8080/webhooks/roost  200 OK  (28 ms)
+event version.published → http://localhost:8080/webhooks/roost  200 OK  (34 ms)
+event deployment.failed → http://localhost:8080/webhooks/roost  200 OK  (28 ms)
 ```
 
 common local-dev patterns:
 
-- **verifying a new integration without touching prod.** `roost trigger manifest.published --to http://localhost:8080/webhooks/roost --signing-secret "$ROOST_WEBHOOK_SECRET"` fires a single canned event locally. no tunnel, no subscription, no network.
+- **verifying a new integration without touching prod.** `roost trigger version.published --to http://localhost:8080/webhooks/roost --signing-secret "$ROOST_WEBHOOK_SECRET"` fires a single canned event locally. no tunnel, no subscription, no network.
 - **smoke-testing a public receiver before subscribing.** `POST /api/webhooks/probe` (or `roost trigger <event> --site <id>`) fires a one-shot signed payload at any https url + returns the request body + signature so you can confirm your receiver accepts the signature before you create a real subscription.
 - **debugging a stuck delivery.** `GET /api/webhooks/{id}/deliveries` lists the last 30 days of attempts with full request/response transcripts; `POST /api/webhooks/{id}/deliveries/{deliveryId}/retry` queues the same payload for redelivery with a fresh `Roost-Signature` timestamp so it slides back inside the 5-minute tolerance window.

@@ -106,7 +106,7 @@ export default function WebhooksSettingsPage() {
               webhooks
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              subscribe to roost events — manifest publishes, deploy rollouts, quota warnings — with
+              subscribe to roost events — version publishes, deploy rollouts, quota warnings — with
               hmac-signed http callbacks.
             </p>
           </div>

@@ -79,7 +79,7 @@ describe('POST /api/webhooks', () => {
   it('400 when siteId missing', async () => {
     const req = createMockRequest('http://localhost/api/webhooks', {
       method: 'POST',
-      body: { url: 'https://example.com', events: ['manifest.published'] },
+      body: { url: 'https://example.com', events: ['version.published'] },
     });
     const res = await createPOST(req);
     expect(res.status).toBe(400);
@@ -88,7 +88,7 @@ describe('POST /api/webhooks', () => {
   it('400 when url is not https', async () => {
     const req = createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`, {
       method: 'POST',
-      body: { url: 'http://insecure.example.com', events: ['manifest.published'] },
+      body: { url: 'http://insecure.example.com', events: ['version.published'] },
     });
     const res = await createPOST(req);
     expect(res.status).toBe(400);
@@ -120,7 +120,7 @@ describe('POST /api/webhooks', () => {
       method: 'POST',
       body: {
         url: 'https://example.com/hook',
-        events: ['manifest.published', 'deployment.failed'],
+        events: ['version.published', 'deployment.failed'],
         description: 'ci pager',
       },
     });
@@ -136,7 +136,7 @@ describe('POST /api/webhooks', () => {
     };
     expect(body.id).toMatch(/^wh_[0-9a-f]{18}$/);
     expect(body.signingSecret).toMatch(/^whsec_[0-9a-f]{64}$/);
-    expect(body.events.sort()).toEqual(['deployment.failed', 'manifest.published']);
+    expect(body.events.sort()).toEqual(['deployment.failed', 'version.published']);
     expect(body.paused).toBe(false);
     expect(body.description).toBe('ci pager');
     expect(mocks.set).toHaveBeenCalledTimes(1);
@@ -157,7 +157,7 @@ describe('GET /api/webhooks', () => {
           id: 'wh_alive_0000000001',
           data: {
             url: 'https://example.com/a',
-            events: ['manifest.published'],
+            events: ['version.published'],
             signingSecret: 'whsec_LEAK_THIS_WOULD_BE_BAD',
             paused: false,
           },
@@ -166,7 +166,7 @@ describe('GET /api/webhooks', () => {
           id: 'wh_dead_00000000001',
           data: {
             url: 'https://example.com/b',
-            events: ['manifest.published'],
+            events: ['version.published'],
             deletedAt: 1_700_000_000_000,
           },
         },
@@ -205,7 +205,7 @@ describe('GET /api/webhooks/{webhookId}', () => {
     mocks.get.mockResolvedValueOnce(
       docSnapshot(WEBHOOK, {
         url: 'https://ex.com',
-        events: ['manifest.published'],
+        events: ['version.published'],
         deletedAt: 1_700_000_000_000,
       }),
     );
@@ -220,7 +220,7 @@ describe('GET /api/webhooks/{webhookId}', () => {
     mocks.get.mockResolvedValueOnce(
       docSnapshot(WEBHOOK, {
         url: 'https://ex.com/a',
-        events: ['manifest.published'],
+        events: ['version.published'],
         signingSecret: 'whsec_LEAK',
         paused: false,
       }),
@@ -243,7 +243,7 @@ describe('GET /api/webhooks/{webhookId}', () => {
 describe('PATCH /api/webhooks/{webhookId}', () => {
   it('400 when no updatable fields supplied', async () => {
     mocks.get.mockResolvedValueOnce(
-      docSnapshot(WEBHOOK, { url: 'https://ex.com', events: ['manifest.published'] }),
+      docSnapshot(WEBHOOK, { url: 'https://ex.com', events: ['version.published'] }),
     );
     const req = createMockRequest(
       `http://localhost/api/webhooks/${WEBHOOK}?siteId=${SITE}`,
@@ -270,7 +270,7 @@ describe('PATCH /api/webhooks/{webhookId}', () => {
     mocks.get.mockResolvedValue(
       docSnapshot(WEBHOOK, {
         url: 'https://ex.com/orig',
-        events: ['manifest.published'],
+        events: ['version.published'],
         paused: false,
         signingSecret: 'whsec_x',
       }),
@@ -293,7 +293,7 @@ describe('PATCH /api/webhooks/{webhookId}', () => {
     mocks.get.mockResolvedValue(
       docSnapshot(WEBHOOK, {
         url: 'https://ex.com',
-        events: ['manifest.published'],
+        events: ['version.published'],
         deletedAt: 1_700_000_000_000,
       }),
     );
@@ -317,7 +317,7 @@ describe('DELETE /api/webhooks/{webhookId}', () => {
     mocks.get.mockResolvedValueOnce(
       docSnapshot(WEBHOOK, {
         url: 'https://ex.com',
-        events: ['manifest.published'],
+        events: ['version.published'],
         paused: false,
       }),
     );
@@ -343,7 +343,7 @@ describe('DELETE /api/webhooks/{webhookId}', () => {
     mocks.get.mockResolvedValueOnce(
       docSnapshot(WEBHOOK, {
         url: 'https://ex.com',
-        events: ['manifest.published'],
+        events: ['version.published'],
         deletedAt: 1_700_000_000_000,
         tombstoneExpiresAt: originalTombstone,
       }),
@@ -383,7 +383,7 @@ describe('POST /api/webhooks/{webhookId}/rotate-secret', () => {
     mocks.get.mockResolvedValueOnce(
       docSnapshot(WEBHOOK, {
         url: 'https://ex.com',
-        events: ['manifest.published'],
+        events: ['version.published'],
         signingSecret: 'whsec_OLD',
       }),
     );
@@ -444,14 +444,14 @@ describe('GET /api/webhooks/{webhookId}/deliveries', () => {
 
   it('returns delivery summaries (state, attempt, lastStatus, nextAttemptAt only when pending)', async () => {
     mocks.get.mockResolvedValueOnce(
-      docSnapshot(WEBHOOK, { url: 'https://ex.com', events: ['manifest.published'] }),
+      docSnapshot(WEBHOOK, { url: 'https://ex.com', events: ['version.published'] }),
     );
     mocks.collectionGet.mockResolvedValueOnce(
       querySnapshot([
         {
           id: `aa__${WEBHOOK}`,
           data: {
-            event: 'manifest.published',
+            event: 'version.published',
             state: 'succeeded',
             attempt: 1,
             lastStatus: 200,
@@ -505,14 +505,14 @@ describe('GET /api/webhooks/{webhookId}/deliveries/{deliveryId}', () => {
   it('404 when delivery belongs to a different subscription', async () => {
     mocks.get
       .mockResolvedValueOnce(
-        docSnapshot(WEBHOOK, { url: 'https://ex.com', events: ['manifest.published'] }),
+        docSnapshot(WEBHOOK, { url: 'https://ex.com', events: ['version.published'] }),
       )
       .mockResolvedValueOnce(
         docSnapshot(DELIVERY, {
           subscriptionId: 'wh_OTHER_0000000001',
           siteId: SITE,
           canonicalBody: '{}',
-          event: 'manifest.published',
+          event: 'version.published',
         }),
       );
     const req = createMockRequest(
@@ -527,16 +527,16 @@ describe('GET /api/webhooks/{webhookId}/deliveries/{deliveryId}', () => {
   it('returns request + response + attempt + nextAttemptAt', async () => {
     mocks.get
       .mockResolvedValueOnce(
-        docSnapshot(WEBHOOK, { url: 'https://ex.com', events: ['manifest.published'] }),
+        docSnapshot(WEBHOOK, { url: 'https://ex.com', events: ['version.published'] }),
       )
       .mockResolvedValueOnce(
         docSnapshot(DELIVERY, {
           subscriptionId: WEBHOOK,
           siteId: SITE,
           url: 'https://ex.com/hook',
-          headers: { 'Roost-Event': 'manifest.published' },
-          canonicalBody: '{"event":"manifest.published"}',
-          event: 'manifest.published',
+          headers: { 'Roost-Event': 'version.published' },
+          canonicalBody: '{"event":"version.published"}',
+          event: 'version.published',
           state: 'succeeded',
           attempt: 2,
           lastStatus: 200,
@@ -578,7 +578,7 @@ describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
       .mockResolvedValueOnce(
         docSnapshot(WEBHOOK, {
           url: 'https://ex.com/hook',
-          events: ['manifest.published'],
+          events: ['version.published'],
           signingSecret: 'whsec_CURRENT',
         }),
       )
@@ -587,8 +587,8 @@ describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
           subscriptionId: WEBHOOK,
           siteId: SITE,
           url: 'https://ex.com/hook',
-          event: 'manifest.published',
-          canonicalBody: '{"event":"manifest.published","data":{}}',
+          event: 'version.published',
+          canonicalBody: '{"event":"version.published","data":{}}',
           headers: { 'Roost-Delivery': 'public_delivery_id_here' },
         }),
       );
@@ -633,7 +633,7 @@ describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
       .mockResolvedValueOnce(
         docSnapshot(WEBHOOK, {
           url: 'https://ex.com',
-          events: ['manifest.published'],
+          events: ['version.published'],
           signingSecret: 'whsec_x',
         }),
       )
@@ -642,7 +642,7 @@ describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
           subscriptionId: 'wh_OTHER_0000000001',
           siteId: SITE,
           canonicalBody: '{}',
-          event: 'manifest.published',
+          event: 'version.published',
         }),
       );
     const req = createMockRequest(

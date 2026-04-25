@@ -19,10 +19,26 @@ import { Badge } from '@/components/ui/badge';
 import { sanitizeError } from '@/lib/errorHandler';
 import { FolderDropzone } from '@/components/FolderDropzone';
 import type { NamedBlob } from '@/lib/chunking';
-import { summariseManifest } from '@/lib/chunking';
+import { summariseVersion } from '@/lib/chunking';
 import { resolveExtractPath, isLikelyAllowed } from '@/lib/extractPath';
 import { formatBytes } from '@/lib/preUploadCheck';
 import { useRoostUpload, type UseRoostUploadApi } from '@/hooks/useRoostUpload';
+
+/**
+ * "+ new version" pre-fill — opens the dialog targeting an EXISTING roost.
+ * When supplied, name/extractPath/targets are LOCKED + pre-populated; the
+ * user only edits the file picker + description. Submit calls the same
+ * upload pipeline (`uploadFolder`) but skips the "create distribution"
+ * Firestore write since the roost already exists.
+ */
+export interface NewVersionContext {
+  roostId: string;
+  name: string;
+  extractPath?: string;
+  targets: string[];
+  /** Auto-incrementing number of the current version, for the title copy. */
+  currentVersionNumber: number | null;
+}
 
 interface ProjectDistributionDialogProps {
   open: boolean;
@@ -39,6 +55,19 @@ interface ProjectDistributionDialogProps {
    * avoid wiring a full hook into every render call.
    */
   upload?: UseRoostUploadApi;
+  /**
+   * When set, the dialog opens in "+ new version" mode — name, extract
+   * path, and targets are locked to the existing roost; only the file
+   * picker + description are editable. Omitted = "new roost" mode.
+   */
+  newVersion?: NewVersionContext;
+  /**
+   * Roost ids that already exist on this site. Used in "new roost" mode
+   * to detect slug collisions — a name that resolves to an existing
+   * roost id would silently land as a new version of that roost,
+   * which is almost never the user's intent here.
+   */
+  existingRoostIds?: string[];
 }
 
 /**
@@ -46,7 +75,7 @@ interface ProjectDistributionDialogProps {
  * The server-side validator requires 8-64 chars (see api/_shared.ts
  * RESOURCE_ID_RE); pad short slugs deterministically so repeat deploys
  * of the same short name ("assets", "prod", etc.) keep hitting the same
- * roostId and build up a shared manifest history.
+ * roostId and build up a shared version history.
  */
 function slugify(s: string): string {
   const core = s
@@ -96,7 +125,10 @@ export default function ProjectDistributionDialog({
   siteId,
   onCreateDistribution,
   upload: externalUpload,
+  newVersion,
+  existingRoostIds,
 }: ProjectDistributionDialogProps) {
+  const isNewVersion = !!newVersion;
   const { machines } = useMachines(siteId);
   const { presets, createPreset, updatePreset, deletePreset } = useProjectDistributionPresets(siteId);
 
@@ -109,6 +141,8 @@ export default function ProjectDistributionDialog({
   const upload: UseRoostUploadApi = externalUpload ?? localUpload;
 
   const [distributionName, setDistributionName] = useState('');
+  const [description, setDescription] = useState('');
+  const MAX_DESCRIPTION_LENGTH = 500;
   const namePlaceholder = React.useMemo(() => {
     const examples = [
       'e.g., summer vibes (final final v3)',
@@ -181,13 +215,22 @@ export default function ProjectDistributionDialog({
     setConfirmDeletePresetId(null);
     setPendingReplacePreset(null);
     setSourceMode('upload');
+    setDescription('');
+    // Pre-populate locked fields when opening in "+ new version" mode.
+    // Upload mode is forced (new versions are bytes-driven; there's no
+    // url-source equivalent for an existing roost).
+    if (newVersion) {
+      setDistributionName(newVersion.name);
+      setExtractPath(newVersion.extractPath ?? '');
+      setSelectedMachines(new Set(newVersion.targets));
+    }
     // Preserve droppedFiles + name if the upload is live so reopening
     // mid-run shows the same summary chip the user dropped.
     if (upload.state.status !== 'uploading') {
       setDroppedFiles(null);
       setDroppedRootName('');
     }
-  }, [open, upload.state.status]);
+  }, [open, upload.state.status, newVersion]);
 
   // Autosave field edits back to the active non-builtin preset, debounced.
   // Built-ins are excluded so editing one doesn't silently create an override.
@@ -400,7 +443,7 @@ export default function ProjectDistributionDialog({
       const projectName = urlPath.substring(urlPath.lastIndexOf('/') + 1) || 'project.zip';
 
       // Create distribution. verify_files is dropped as of the v2 clean-cutover
-      // (manifest is authoritative; spot-check is dead weight).
+      // (version is authoritative; spot-check is dead weight).
       await onCreateDistribution(
         {
           name: distributionName,
@@ -436,10 +479,15 @@ export default function ProjectDistributionDialog({
   // Execution state lives on the hook, not the dialog, so a dismissal
   // while uploading doesn't kill the run — the minimized card picks up.
   //
-  // The dialog's target-machines selector still applies: once the manifest
+  // The dialog's target-machines selector still applies: once the version
   // is finalised, the fan-out cloud function (wave 2b.3) dispatches
   // sync_pull commands to targets stored on the roost doc.
-  const handleUploadDistribute = async () => {
+  // Shared kickoff for both "upload" and "upload + distribute". When
+  // `withTargets` is false we skip the target-machines validation and pass
+  // an empty array — the roost is published but no target_state docs are
+  // written, so no agent picks it up until the user manually distributes
+  // later.
+  const startUpload = (withTargets: boolean) => {
     if (!droppedFiles || droppedFiles.length === 0) {
       toast.error('drop a folder first');
       return;
@@ -448,12 +496,29 @@ export default function ProjectDistributionDialog({
       toast.error('please provide a roost name');
       return;
     }
-    if (selectedMachines.size === 0) {
+    if (withTargets && selectedMachines.size === 0) {
       toast.error('select at least one target machine');
       return;
     }
 
-    const roostId = slugify(distributionName) || droppedRootName || 'roost-folder';
+    // In "new roost" mode, auto-disambiguate the roostId if a roost
+    // already exists with the same slug — otherwise the upload would
+    // silently land as a new VERSION of the existing roost (slugify is
+    // intentionally deterministic for CI/CD reuse, but the UI's
+    // "+ new roost" path always means a new doc).
+    const baseRoostId = slugify(distributionName) || droppedRootName || 'roost-folder';
+    const taken = new Set(existingRoostIds ?? []);
+    let resolvedRoostId = baseRoostId;
+    if (!isNewVersion && taken.has(baseRoostId)) {
+      let n = 2;
+      while (taken.has(`${baseRoostId}-${n}`)) n++;
+      resolvedRoostId = `${baseRoostId}-${n}`;
+      toast.info(
+        `a roost named "${distributionName.trim()}" already exists — creating "${resolvedRoostId}" as a separate roost. cancel and use "+ new version" on the existing roost if you wanted to add to it.`,
+        { duration: 8000 },
+      );
+    }
+
     const totalBytes = droppedFiles.reduce((n, f) => n + f.blob.size, 0);
 
     // Fire and forget — the hook tracks progress + result. We close the
@@ -462,15 +527,19 @@ export default function ProjectDistributionDialog({
     // the effect below that watches `upload.state.status`).
     upload.start({
       siteId,
-      roostId,
+      roostId: isNewVersion ? newVersion!.roostId : resolvedRoostId,
       files: droppedFiles,
       name: distributionName.trim(),
-      targets: Array.from(selectedMachines),
+      targets: withTargets ? Array.from(selectedMachines) : [],
       extractPath: extractPath.trim() ? resolveExtractPath(extractPath) : undefined,
+      description: description.trim() || undefined,
       totalBytes,
       fileCount: droppedFiles.length,
     });
   };
+
+  const handleUploadOnly = () => startUpload(false);
+  const handleUploadDistribute = async () => startUpload(true);
 
   // React to upload hook terminal states. We fire the user-facing toast
   // here rather than inside handleUploadDistribute because the dialog may
@@ -484,8 +553,12 @@ export default function ProjectDistributionDialog({
     lastReportedStatusRef.current = status;
     if (status === 'success' && upload.state.result) {
       const result = upload.state.result;
+      const versionLabel =
+        result.versionNumber > 0
+          ? `v${result.versionNumber}`
+          : result.versionId.slice(0, 12);
       toast.success(
-        `roost published — manifest ${result.manifestId.slice(0, 12)}…` +
+        `roost published — ${versionLabel}` +
           ` (uploaded ${formatBytesShort(result.uploadedBytes)} of ${formatBytesShort(result.totalBytes)})`,
       );
       // Clear the per-deploy inputs so a follow-up roost starts clean.
@@ -514,9 +587,21 @@ export default function ProjectDistributionDialog({
             short mobile viewports so the footer buttons stay reachable. */}
       <DialogContent className="border-border bg-secondary text-white w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] sm:max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
-          <DialogTitle className="text-white">roost a project</DialogTitle>
+          <DialogTitle className="text-white">
+            {isNewVersion
+              ? `publish new version of "${newVersion!.name}"`
+              : 'new roost'}
+          </DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            push a folder or set of files to one or more machines. drag in files directly, or point at a <code className="font-mono text-xs">.zip</code> URL the agents should fetch.
+            {isNewVersion ? (
+              <>
+                push new files to this roost. name, extract path, and target machines stay the same as the current version{newVersion!.currentVersionNumber ? ` (v${newVersion!.currentVersionNumber})` : ''}; drop your folder + add a description.
+              </>
+            ) : (
+              <>
+                a roost is a deploy target — files go to specific machines and updates ship as new versions. to add a version to one you already have, open it and click <span className="font-medium">+ new version</span>.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -740,13 +825,78 @@ export default function ProjectDistributionDialog({
               placeholder={namePlaceholder}
               value={distributionName}
               onChange={(e) => setDistributionName(e.target.value)}
-              className="border-border bg-background text-white"
+              disabled={isNewVersion}
+              aria-invalid={
+                !isNewVersion &&
+                distributionName.length > 0 &&
+                !distributionName.trim()
+              }
+              aria-describedby={
+                !isNewVersion &&
+                distributionName.length > 0 &&
+                !distributionName.trim()
+                  ? 'distribution-name-error'
+                  : undefined
+              }
+              className={`bg-muted/30 text-white ${
+                !isNewVersion &&
+                distributionName.length > 0 &&
+                !distributionName.trim()
+                  ? 'border-red-500 focus-visible:ring-red-500'
+                  : 'border-border'
+              } ${isNewVersion ? 'opacity-70 cursor-not-allowed' : ''}`}
             />
+            {!isNewVersion &&
+              distributionName.length > 0 &&
+              !distributionName.trim() && (
+                <p
+                  id="distribution-name-error"
+                  className="text-xs text-red-400"
+                >
+                  roost name is required
+                </p>
+              )}
+            {!isNewVersion &&
+              distributionName.trim().length > 0 &&
+              (existingRoostIds ?? []).includes(slugify(distributionName)) && (
+                <p className="text-xs text-amber-400">
+                  a roost with this name already exists. publishing here will
+                  create a new, separate roost (auto-renamed) — open the
+                  existing one and click <span className="font-medium">+ new version</span> if
+                  you meant to add to it.
+                </p>
+              )}
+          </div>
+
+          {/* Description (optional, ≤500 chars). Plaintext, no markdown.
+              In "+ new version" mode this is the commit-message style
+              "what changed?" textarea. In new-roost mode it doubles as
+              the first version's description. */}
+          <div className="space-y-2">
+            <Label htmlFor="distribution-description" className="text-white">
+              description <span className="text-muted-foreground text-xs">(optional)</span>
+            </Label>
+            <textarea
+              id="distribution-description"
+              value={description}
+              onChange={(e) =>
+                setDescription(e.target.value.slice(0, MAX_DESCRIPTION_LENGTH))
+              }
+              placeholder="what changed? (e.g. 'fixed broken video')"
+              rows={2}
+              className="w-full rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-white placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent-cyan resize-y"
+            />
+            <p className="text-[11px] text-muted-foreground tabular-nums text-right">
+              {description.length}/{MAX_DESCRIPTION_LENGTH}
+            </p>
           </div>
 
           {/* Source picker — inline segmented control. Wave 3.5 (revised):
               choosing the bytes-source (url download vs drag-drop upload)
-              is a sub-choice WITHIN a deployment, not a top-level mode. */}
+              is a sub-choice WITHIN a deployment, not a top-level mode.
+              Hidden in "+ new version" mode — new versions always come
+              from a fresh file drop. */}
+          {!isNewVersion && (
           <div className="space-y-2">
             <Label className="text-white">source</Label>
             <div
@@ -781,8 +931,9 @@ export default function ProjectDistributionDialog({
               })}
             </div>
           </div>
+          )}
 
-          {sourceMode === 'url' && (
+          {!isNewVersion && sourceMode === 'url' && (
             <div className="space-y-2">
               <Label htmlFor="project-url" className="text-white">project URL</Label>
               <Input
@@ -790,7 +941,7 @@ export default function ProjectDistributionDialog({
                 placeholder="https://example.com/project.zip"
                 value={projectUrl}
                 onChange={(e) => setProjectUrl(e.target.value)}
-                className="border-border bg-background text-white font-mono text-sm"
+                className="border-border bg-muted/30 text-white font-mono text-sm"
               />
               <p className="text-xs text-muted-foreground">direct download link to your project ZIP (Dropbox, Google Drive, etc.)</p>
             </div>
@@ -807,7 +958,7 @@ export default function ProjectDistributionDialog({
                   if (!distributionName) setDistributionName(rootName);
                 }}
                 onFilesAppend={(newFiles) => {
-                  // Merge by manifest path — later entries win so a user
+                  // Merge by relative path — later entries win so a user
                   // can re-pick a folder to refresh its contents. Keeps
                   // the existing rootName + distribution name.
                   setDroppedFiles((prev) => {
@@ -824,9 +975,9 @@ export default function ProjectDistributionDialog({
                 summary={
                   droppedFiles
                     ? (() => {
-                        const s = summariseManifest([]);
+                        const s = summariseVersion([]);
                         // light-weight summary from the raw blobs; the full
-                        // manifest summary (with dedup) only exists after hashing.
+                        // version summary (with dedup) only exists after hashing.
                         s.fileCount = droppedFiles.length;
                         s.totalBytes = droppedFiles.reduce((n, f) => n + f.blob.size, 0);
                         return { fileCount: s.fileCount, totalBytes: s.totalBytes };
@@ -840,7 +991,7 @@ export default function ProjectDistributionDialog({
                   user knows upfront that the run will take time and what the
                   minimize-to-corner indicator is for. Thresholds match what
                   we've seen hit the pain points in practice:
-                    - >5k files → manifest size + hashing time get noticeable
+                    - >5k files → version size + hashing time get noticeable
                     - >20 GB   → expect minutes, warn about keeping the tab
                   Both can trigger together; we only show whichever apply. */}
               {droppedFiles && droppedFiles.length > 0 && (() => {
@@ -862,7 +1013,7 @@ export default function ProjectDistributionDialog({
                     </div>
                     {warnCount && (
                       <p className="text-amber-400/75">
-                        large file count ({fileCount.toLocaleString()}) — manifest will be big;
+                        large file count ({fileCount.toLocaleString()}) — version will be big;
                         hashing may take several minutes. consider archiving into fewer files
                         if this is a one-off.
                       </p>
@@ -960,7 +1111,10 @@ export default function ProjectDistributionDialog({
               placeholder='Leave empty for default location'
               value={extractPath}
               onChange={(e) => setExtractPath(e.target.value)}
-              className="border-border bg-background text-white"
+              disabled={isNewVersion}
+              className={`border-border bg-muted/30 text-white ${
+                isNewVersion ? 'opacity-70 cursor-not-allowed' : ''
+              }`}
             />
             <p className="text-xs text-muted-foreground">
               {extractPath.trim() ? 'resolves to' : 'default'}:{' '}
@@ -1001,44 +1155,59 @@ export default function ProjectDistributionDialog({
             {/* Wave 3.10 — wraps at 375px: label stacks above the two
                 action buttons when the row can't fit on one line. */}
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <Label className="text-white">target machines ({selectedMachines.size} selected)</Label>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={selectOnlyOnlineMachines}
-                  className="border-border bg-background/50 text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
-                >
-                  online only ({onlineMachines.length})
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={toggleAllMachines}
-                  className="border-border bg-background/50 text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
-                >
-                  {allMachinesSelected ? 'deselect all' : 'select all'}
-                </Button>
-              </div>
+              <Label className="text-white">target machines ({selectedMachines.size} selected){isNewVersion && ' — locked'}</Label>
+              {!isNewVersion && (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={selectOnlyOnlineMachines}
+                    className="border-border bg-background/50 text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
+                  >
+                    online only ({onlineMachines.length})
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={toggleAllMachines}
+                    className="border-border bg-background/50 text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
+                  >
+                    {allMachinesSelected ? 'deselect all' : 'select all'}
+                  </Button>
+                </div>
+              )}
             </div>
 
-            <div className="border border-border rounded-lg p-3 bg-background/50 max-h-48 overflow-y-auto space-y-2">
+            <div
+              className={`border border-border rounded-lg p-3 bg-background/50 max-h-48 overflow-y-auto space-y-2 ${
+                isNewVersion ? 'opacity-70' : ''
+              }`}
+            >
               {machines.length === 0 ? (
                 <p className="text-muted-foreground text-sm text-center py-2">no machines available</p>
               ) : (
                 machines.map((machine) => (
                   <div
                     key={machine.machineId}
-                    className="flex items-center justify-between p-2 rounded hover:bg-secondary cursor-pointer"
-                    onClick={() => toggleMachine(machine.machineId)}
+                    className={`flex items-center justify-between p-2 rounded ${
+                      isNewVersion
+                        ? 'cursor-not-allowed'
+                        : 'hover:bg-secondary cursor-pointer'
+                    }`}
+                    onClick={
+                      isNewVersion ? undefined : () => toggleMachine(machine.machineId)
+                    }
                   >
                     <div className="flex items-center gap-3">
                       <Checkbox
                         checked={selectedMachines.has(machine.machineId)}
-                        onCheckedChange={() => toggleMachine(machine.machineId)}
-                        className="cursor-pointer"
+                        onCheckedChange={
+                          isNewVersion ? undefined : () => toggleMachine(machine.machineId)
+                        }
+                        disabled={isNewVersion}
+                        className={isNewVersion ? '' : 'cursor-pointer'}
                       />
                       <span className="text-white">{machine.machineId}</span>
                     </div>
@@ -1090,50 +1259,80 @@ export default function ProjectDistributionDialog({
             </Button>
           )}
           {/*
-            Gating: disable until the user has provided enough to submit.
-            Required: name, a target machine, and source-specific bytes
-            (a URL for `url`, a dropped folder for `upload`). `title`
-            surfaces the first missing requirement so the user knows
-            what to fill in next.
+            Two-button kickoff so the user can publish without picking
+            targets. "upload" is always available once the bare minimum
+            (name + source bytes) is met; "upload and distribute" is the
+            primary action and additionally requires at least one target.
+            The URL-source path keeps a single distribute button — its
+            handleDistribute doesn't have an upload-only counterpart yet.
 
-            `uploading` also disables re-submit — a second start() would
-            abort the first one, which is almost never what the user wants.
+            `uploading` disables both — a second start() would abort the
+            first one, which is almost never what the user wants.
           */}
           {(() => {
-            const missing: string[] = [];
-            if (!distributionName.trim()) missing.push('name');
-            if (sourceMode === 'url' && !projectUrl.trim()) missing.push('project URL');
+            const baseMissing: string[] = [];
+            if (!distributionName.trim()) baseMissing.push('name');
+            if (sourceMode === 'url' && !projectUrl.trim()) baseMissing.push('project URL');
             if (sourceMode === 'upload' && (!droppedFiles || droppedFiles.length === 0)) {
-              missing.push('folder');
+              baseMissing.push('folder');
             }
-            if (selectedMachines.size === 0) missing.push('target machine');
-            const reason =
-              missing.length === 0
+            const distributeMissing = [...baseMissing];
+            if (selectedMachines.size === 0) distributeMissing.push('target machine');
+            const distributeReason =
+              distributeMissing.length === 0
                 ? undefined
-                : `needs: ${missing.join(', ')}`;
+                : `needs: ${distributeMissing.join(', ')}`;
+            const uploadOnlyReason =
+              baseMissing.length === 0
+                ? undefined
+                : `needs: ${baseMissing.join(', ')}`;
             const busy = distributing || (sourceMode === 'upload' && uploading);
-            const isDisabled = busy || missing.length > 0;
+            const distributeDisabled = busy || distributeMissing.length > 0;
+            const uploadOnlyDisabled = busy || baseMissing.length > 0;
             return (
-          <Button
-            onClick={
-              sourceMode === 'upload' ? handleUploadDistribute : handleDistribute
-            }
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
-            disabled={isDisabled}
-            title={reason}
-          >
-            {busy ? (
               <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                {uploading && sourceMode === 'upload' ? 'uploading...' : 'distributing...'}
+                {sourceMode === 'upload' && (
+                  <Button
+                    variant="ghost"
+                    onClick={handleUploadOnly}
+                    className="bg-secondary border border-border cursor-pointer"
+                    disabled={uploadOnlyDisabled}
+                    title={uploadOnlyReason}
+                  >
+                    {busy ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        uploading...
+                      </>
+                    ) : (
+                      <>
+                        <FolderArchive className="h-4 w-4 mr-2" />
+                        upload
+                      </>
+                    )}
+                  </Button>
+                )}
+                <Button
+                  onClick={
+                    sourceMode === 'upload' ? handleUploadDistribute : handleDistribute
+                  }
+                  className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                  disabled={distributeDisabled}
+                  title={distributeReason}
+                >
+                  {busy ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      {uploading && sourceMode === 'upload' ? 'uploading...' : 'distributing...'}
+                    </>
+                  ) : (
+                    <>
+                      <FolderArchive className="h-4 w-4 mr-2" />
+                      upload and distribute to {selectedMachines.size} machine{selectedMachines.size !== 1 ? 's' : ''}
+                    </>
+                  )}
+                </Button>
               </>
-            ) : (
-              <>
-                <FolderArchive className="h-4 w-4 mr-2" />
-                distribute to {selectedMachines.size} machine{selectedMachines.size !== 1 ? 's' : ''}
-              </>
-            )}
-          </Button>
             );
           })()}
         </DialogFooter>

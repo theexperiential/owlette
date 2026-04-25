@@ -170,8 +170,6 @@ interface AuthContextType {
   isSuperadmin: boolean;
   /** True when the user is an admin or superadmin of the given site. Superadmins pass for every siteId; admins pass only for sites in their userSites[]. Use for site-level elevated operations (delete machines, edit stored layouts, site webhooks/settings). */
   isSiteAdmin: (siteId: string) => boolean;
-  /** @deprecated Use `isSuperadmin` for platform-wide checks or `isSiteAdmin(siteId)` for site-scoped checks. Kept as an alias for `isSuperadmin` during the permission-model-split migration; remove in wave 0.7.3. */
-  isAdmin: boolean;
   userSites: string[]; // Sites the user has access to
   lastSiteId: string | null; // Last active site (synced to Firestore)
   lastMachineIds: Record<string, string>; // Last active machine per site (synced to Firestore)
@@ -197,7 +195,6 @@ const AuthContext = createContext<AuthContextType>({
   role: null,
   isSuperadmin: false,
   isSiteAdmin: () => false,
-  isAdmin: false,
   userSites: [],
   lastSiteId: null,
   lastMachineIds: {},
@@ -930,9 +927,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const isSuperadmin = computeIsSuperadmin(role);
-  // `isAdmin` is deprecated and aliases `isSuperadmin` — platform-wide god-mode.
-  // The new site-scoped middle tier (role === 'admin') is exposed via `isSiteAdmin(siteId)`.
-  const isAdmin = isSuperadmin;
   const isSiteAdmin = useCallback(
     (siteId: string) => computeIsSiteAdmin(role, userSites, siteId),
     [role, userSites]
@@ -944,7 +938,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     role,
     isSuperadmin,
     isSiteAdmin,
-    isAdmin,
     userSites,
     lastSiteId,
     lastMachineIds,
@@ -962,7 +955,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     updateLastSite,
     updateLastMachine,
     deleteAccount,
-  }), [user, loading, role, isSuperadmin, isSiteAdmin, isAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, passkeyEnrolled, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
+  }), [user, loading, role, isSuperadmin, isSiteAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, passkeyEnrolled, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

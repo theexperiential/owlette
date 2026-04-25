@@ -4,7 +4,7 @@
  * tests for web/lib/preUploadCheck.ts (roost wave 3.4).
  */
 
-import type { ManifestFileEntry } from '@/lib/chunking';
+import type { VersionFileEntry } from '@/lib/chunking';
 import {
   canStartUpload,
   checkQuota,
@@ -20,7 +20,7 @@ import {
 const MB = 1024 * 1024;
 const GB = 1024 ** 3;
 
-function entry(path: string, chunks: Array<{ hash: string; size: number }>): ManifestFileEntry {
+function entry(path: string, chunks: Array<{ hash: string; size: number }>): VersionFileEntry {
   const size = chunks.reduce((n, c) => n + c.size, 0);
   return { path, size, chunks };
 }

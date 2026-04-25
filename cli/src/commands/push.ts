@@ -7,10 +7,10 @@
  *   2. POST /api/chunks/check         { siteId, hashes } → { missing }
  *   3. POST /api/chunks/upload-urls   { siteId, missing } → { urls }
  *   4. PUT each signed url (parallel, bounded)
- *   5. POST /api/roosts/{id}/manifests with optimistic concurrency — on
+ *   5. POST /api/roosts/{id}/versions with optimistic concurrency — on
  *      412 precondition-failed, re-fetch the current head and retry
  *      (the server's transaction enforces compare-and-swap on
- *      `currentManifestId`).
+ *      `currentVersionId`).
  *
  * Reads + writes chunks over HTTPS via the signed R2 URLs the server
  * mints — no direct R2 creds on the cli side.
@@ -27,22 +27,23 @@ import {
   type ChunkedFileEntry,
 } from '../lib/chunker';
 import {
-  buildManifest,
-  summariseManifest,
+  buildVersion,
+  summariseVersion,
   uniqueHashes,
-} from '../lib/manifestBuilder';
+} from '../lib/versionBuilder';
 
 const UPLOAD_CONCURRENCY = 8;
 const CHECK_BATCH_SIZE = 900; // server cap is 1000 — stay under.
 const PUSH_MAX_RETRIES = 5;
 const CLI_VERSION = '0.1.0';
+const MAX_DESCRIPTION_LENGTH = 500;
 
 export function registerPushCommand(program: Command): void {
   const roost = (program.commands.find((c) => c.name() === 'roost') as Command) ?? program.command('roost');
   if (!program.commands.includes(roost)) {
     // Only create if not already registered (future-proof against
     // ordering between registerPushCommand + registerRoostInspect...).
-    roost.description('manage roosts + manifests');
+    roost.description('manage roosts + versions');
   }
 
   // Replace any stub `push` subcommand already registered so the real
@@ -58,10 +59,14 @@ export function registerPushCommand(program: Command): void {
 
   roost
     .command('push <dir>')
-    .description('chunk + upload + publish a directory as a new manifest')
+    .description('chunk + upload + publish a directory as a new version')
     .requiredOption('--to <roostId>', 'target roost id')
     .requiredOption('--site <siteId>', 'site id that owns the roost')
     .option('--name <name>', 'human-readable display name for the roost')
+    .option(
+      '-m, --description <text>',
+      `commit-message-style summary for this version (≤${MAX_DESCRIPTION_LENGTH} chars)`,
+    )
     .option(
       '--targets <machineIds>',
       'comma-separated list of target machine ids (overrides roost.targets)',
@@ -95,6 +100,20 @@ export function registerPushCommand(program: Command): void {
           .map((t: string) => t.trim())
           .filter(Boolean);
       }
+      if (opts.description !== undefined) {
+        const desc = String(opts.description);
+        // Cap client-side so operators who paste long strings get an
+        // early, local failure instead of a server 400 after a full
+        // chunk-upload cycle. The server re-validates the same limit.
+        if (desc.length > MAX_DESCRIPTION_LENGTH) {
+          process.stderr.write(
+            `roost: --description is ${desc.length} chars; max is ${MAX_DESCRIPTION_LENGTH}.\n`,
+          );
+          process.exitCode = 2;
+          return;
+        }
+        input.description = desc;
+      }
       await runPush(input);
     });
 }
@@ -113,6 +132,7 @@ interface PushInputs {
   name?: string;
   targets?: string[];
   extractPath?: string;
+  description?: string;
   json: boolean;
 }
 
@@ -148,7 +168,7 @@ async function runPush(input: PushInputs): Promise<void> {
     return;
   }
 
-  const summary = summariseManifest(files);
+  const summary = summariseVersion(files);
   log(
     json,
     `roost: ${summary.fileCount} files / ${summary.totalChunks} chunks ` +
@@ -179,8 +199,8 @@ async function runPush(input: PushInputs): Promise<void> {
     });
   }
 
-  log(json, 'roost: publishing manifest (with optimistic retry on 412)…');
-  const manifest = buildManifest({
+  log(json, 'roost: publishing version (with optimistic retry on 412)…');
+  const version = buildVersion({
     files,
     cliVersion: CLI_VERSION,
     hostname: hostname(),
@@ -192,19 +212,22 @@ async function runPush(input: PushInputs): Promise<void> {
     token,
     siteId,
     roostId,
-    manifest,
+    version,
   };
   if (input.name) publishInput.name = input.name;
   if (input.targets) publishInput.targets = input.targets;
   if (input.extractPath) publishInput.extractPath = input.extractPath;
+  if (input.description !== undefined) publishInput.description = input.description;
   const result = await publishWithRetry(publishInput);
 
   if (json) {
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   } else {
+    const numberLabel =
+      typeof result.versionNumber === 'number' ? ` (#${result.versionNumber})` : '';
     process.stdout.write(
-      `roost: published ${result.manifestId}\n` +
-        `       previous: ${result.previousManifestId ?? '(none)'}\n`,
+      `roost: published ${result.versionId}${numberLabel}\n` +
+        `       previous: ${result.previousVersionId ?? '(none)'}\n`,
     );
   }
 }
@@ -398,16 +421,18 @@ interface PublishInput {
   token: string;
   siteId: string;
   roostId: string;
-  manifest: ReturnType<typeof buildManifest>;
+  version: ReturnType<typeof buildVersion>;
   name?: string;
   targets?: string[];
   extractPath?: string;
+  description?: string;
 }
 
 interface PublishResult {
-  manifestId: string;
-  currentManifestId: string;
-  previousManifestId: string | null;
+  versionId: string;
+  versionNumber?: number;
+  currentVersionId: string;
+  previousVersionId: string | null;
 }
 
 async function publishWithRetry(input: PublishInput): Promise<PublishResult> {
@@ -418,26 +443,33 @@ async function publishWithRetry(input: PublishInput): Promise<PublishResult> {
   for (let attempt = 0; attempt < PUSH_MAX_RETRIES; attempt++) {
     const payload: Record<string, unknown> = {
       siteId: input.siteId,
-      manifest: input.manifest,
+      version: input.version,
     };
-    if (expectedCurrent !== null) payload.expectedCurrentManifestId = expectedCurrent;
+    if (expectedCurrent !== null) payload.expectedCurrentVersionId = expectedCurrent;
     if (input.name) payload.name = input.name;
     if (input.targets && input.targets.length > 0) payload.targets = input.targets;
     if (input.extractPath) payload.extractPath = input.extractPath;
+    if (input.description !== undefined) payload.description = input.description;
 
-    const res = await apiPost<PublishResult & { currentId?: string | null; detail?: string }>(
+    const res = await apiPost<
+      PublishResult & { currentId?: string | null; detail?: string }
+    >(
       input.apiUrl,
-      `/api/roosts/${input.roostId}/manifests`,
+      `/api/roosts/${input.roostId}/versions`,
       input.token,
       payload,
     );
 
     if (res.status === 201 || res.status === 200) {
-      return {
-        manifestId: res.data.manifestId,
-        currentManifestId: res.data.currentManifestId,
-        previousManifestId: res.data.previousManifestId ?? null,
+      const result: PublishResult = {
+        versionId: res.data.versionId,
+        currentVersionId: res.data.currentVersionId,
+        previousVersionId: res.data.previousVersionId ?? null,
       };
+      if (typeof res.data.versionNumber === 'number') {
+        result.versionNumber = res.data.versionNumber;
+      }
+      return result;
     }
 
     lastStatus = res.status;
@@ -457,7 +489,7 @@ async function publishWithRetry(input: PublishInput): Promise<PublishResult> {
   }
 
   throw new Error(
-    `manifest publish failed after ${PUSH_MAX_RETRIES} attempts (last ${lastStatus}): ${JSON.stringify(lastBody)}`,
+    `version publish failed after ${PUSH_MAX_RETRIES} attempts (last ${lastStatus}): ${JSON.stringify(lastBody)}`,
   );
 }
 

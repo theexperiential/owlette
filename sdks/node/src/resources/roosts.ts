@@ -41,29 +41,31 @@ export interface RoostSummary {
   siteId: string;
   name: string;
   targets: string[];
-  currentManifestId: string | null;
-  previousManifestId: string | null;
+  currentVersionId: string | null;
+  previousVersionId: string | null;
   createdAt: string | null;
   updatedAt: string | null;
   deletedAt: string | null;
 }
 
-export interface ManifestSummary {
-  manifestId: string;
-  manifestUrl: string | null;
+export interface VersionSummary {
+  versionId: string;
+  versionNumber: number;
+  description: string | null;
+  versionUrl: string | null;
   createdAt: string | null;
   createdBy: string | null;
   totalSize: number;
   totalFiles: number;
-  parentManifestId: string | null;
+  parentVersionId: string | null;
 }
 
 export interface RoostDetail extends RoostSummary {
   extractPath: string | null;
   schemaVersion: number;
-  manifestUrl: string | null;
-  currentManifest: ManifestSummary | null;
-  previousManifest: ManifestSummary | null;
+  versionUrl: string | null;
+  currentVersion: VersionSummary | null;
+  previousVersion: VersionSummary | null;
 }
 
 export interface ListRoostsOptions {
@@ -95,13 +97,19 @@ export interface PatchRoostOptions {
 
 export interface RollbackOptions {
   siteId: string;
-  targetManifestId?: string;
+  /**
+   * Target version to roll back to. Accepts a version number (`3`), a
+   * stringified number (`'3'`), a stable `vrs_*` id, or an alias
+   * (`'current'` / `'previous'` / `'first'`). Server-side resolver
+   * interprets the raw value — don't pre-parse on the client.
+   */
+  targetVersion?: string | number;
   idempotencyKey?: string;
 }
 
 export interface DeployOptions {
   siteId: string;
-  manifestId?: string;
+  versionId?: string;
   machines?: string[];
   scheduleAt?: string | Date;
   dryRun?: boolean;
@@ -110,22 +118,22 @@ export interface DeployOptions {
 
 export interface DeployResult {
   rolloutId: string;
-  manifestId: string;
+  versionId: string;
   siteId: string;
   roostId: string;
   stage: string;
   canary: string[];
   fleet: string[];
   extractRoot: string;
-  manifestUrl: string;
+  versionUrl: string;
   dryRun?: boolean;
   alreadyRunning?: boolean;
   scheduled?: { at: string; warning: string };
 }
 
 export interface RollbackResult {
-  currentManifestId: string;
-  previousManifestId: string | null;
+  currentVersionId: string;
+  previousVersionId: string | null;
 }
 
 export interface PushOptions {
@@ -140,6 +148,11 @@ export interface PushOptions {
   targets?: string[];
   /** Override the agent's extract root for this deploy. */
   extractPath?: string;
+  /**
+   * Optional plaintext description for the new version (≤500 chars).
+   * Persisted on the version doc and surfaced in the ui version history.
+   */
+  description?: string;
   /** Progress emitter for UI. Listen for 'progress' events. */
   onProgress?: (evt: PushProgressEvent) => void;
   /** Ignore these directory / file names in addition to the defaults. */
@@ -164,9 +177,10 @@ export type PushProgressEvent =
     };
 
 export interface PushResult {
-  manifestId: string;
-  currentManifestId: string;
-  previousManifestId: string | null;
+  versionId: string;
+  versionNumber: number;
+  currentVersionId: string;
+  previousVersionId: string | null;
   stats: {
     fileCount: number;
     totalBytes: number;
@@ -238,7 +252,7 @@ export class Roosts {
 
   async rollback(roostId: string, opts: RollbackOptions): Promise<RollbackResult> {
     const body: Record<string, unknown> = { siteId: opts.siteId };
-    if (opts.targetManifestId) body.targetManifestId = opts.targetManifestId;
+    if (opts.targetVersion !== undefined) body.targetVersion = opts.targetVersion;
     const requestOpts: Parameters<RoostClient['request']>[1] = {
       method: 'POST',
       body,
@@ -253,7 +267,7 @@ export class Roosts {
 
   async deploy(roostId: string, opts: DeployOptions): Promise<DeployResult> {
     const body: Record<string, unknown> = { siteId: opts.siteId };
-    if (opts.manifestId) body.manifestId = opts.manifestId;
+    if (opts.versionId) body.versionId = opts.versionId;
     if (opts.machines) body.machines = opts.machines;
     if (opts.scheduleAt) {
       body.scheduleAt =
@@ -275,7 +289,7 @@ export class Roosts {
   }
 
   /**
-   * Publish a directory as a new manifest on an existing roost. This is
+   * Publish a directory as a new version on an existing roost. This is
    * the end-to-end pipeline — the most common sdk entry point.
    *
    * Returns the publish result AND mirrors the progress callback onto
@@ -314,21 +328,23 @@ export class Roosts {
       });
     }
 
-    const manifest = buildManifestObject(files, this.cliVersion);
+    const version = buildVersionObject(files, this.cliVersion);
     const publishResult = await this.#publishWithRetry({
       roostId,
       siteId: opts.siteId,
-      manifest,
+      version,
       ...(opts.name ? { name: opts.name } : {}),
       ...(opts.targets ? { targets: opts.targets } : {}),
       ...(opts.extractPath ? { extractPath: opts.extractPath } : {}),
+      ...(opts.description ? { description: opts.description } : {}),
       onRetry: (attempt) => onProgress({ phase: 'publish', attempt }),
     });
 
     return {
-      manifestId: publishResult.manifestId,
-      currentManifestId: publishResult.currentManifestId,
-      previousManifestId: publishResult.previousManifestId,
+      versionId: publishResult.versionId,
+      versionNumber: publishResult.versionNumber,
+      currentVersionId: publishResult.currentVersionId,
+      previousVersionId: publishResult.previousVersionId,
       stats: { ...stats, uploadedChunks },
       events: emitter,
     };
@@ -454,15 +470,17 @@ export class Roosts {
   async #publishWithRetry(input: {
     roostId: string;
     siteId: string;
-    manifest: unknown;
+    version: unknown;
     name?: string;
     targets?: string[];
     extractPath?: string;
+    description?: string;
     onRetry?: (attempt: number) => void;
   }): Promise<{
-    manifestId: string;
-    currentManifestId: string;
-    previousManifestId: string | null;
+    versionId: string;
+    versionNumber: number;
+    currentVersionId: string;
+    previousVersionId: string | null;
   }> {
     let expectedCurrent: string | null = null;
     let lastErr: unknown = null;
@@ -471,27 +489,30 @@ export class Roosts {
       if (attempt > 0) input.onRetry?.(attempt);
       const body: Record<string, unknown> = {
         siteId: input.siteId,
-        manifest: input.manifest,
+        version: input.version,
       };
-      if (expectedCurrent !== null) body.expectedCurrentManifestId = expectedCurrent;
+      if (expectedCurrent !== null) body.expectedCurrentVersionId = expectedCurrent;
       if (input.name) body.name = input.name;
       if (input.targets) body.targets = input.targets;
       if (input.extractPath) body.extractPath = input.extractPath;
+      if (input.description) body.description = input.description;
 
       try {
         const res = await this.client.request<{
-          manifestId: string;
-          currentManifestId: string;
-          previousManifestId: string | null;
-        }>(`/api/roosts/${encodeURIComponent(input.roostId)}/manifests`, {
+          versionId: string;
+          versionNumber: number;
+          currentVersionId: string;
+          previousVersionId: string | null;
+        }>(`/api/roosts/${encodeURIComponent(input.roostId)}/versions`, {
           method: 'POST',
           body,
           noRetry: true, // we drive the retry ourselves for 412 handling
         });
         return {
-          manifestId: res.data.manifestId,
-          currentManifestId: res.data.currentManifestId,
-          previousManifestId: res.data.previousManifestId ?? null,
+          versionId: res.data.versionId,
+          versionNumber: res.data.versionNumber,
+          currentVersionId: res.data.currentVersionId,
+          previousVersionId: res.data.previousVersionId ?? null,
         };
       } catch (err) {
         lastErr = err;
@@ -508,7 +529,7 @@ export class Roosts {
       }
     }
 
-    throw lastErr ?? new Error('manifest publish failed after retries');
+    throw lastErr ?? new Error('version publish failed after retries');
   }
 }
 
@@ -533,13 +554,13 @@ function summarise(files: readonly ChunkedFileEntry[]): {
   return { fileCount: files.length, totalBytes, totalChunks, uniqueChunks: unique.size };
 }
 
-function buildManifestObject(
+function buildVersionObject(
   files: readonly ChunkedFileEntry[],
   cliVersion: string,
 ): Record<string, unknown> {
   return {
     schemaVersion: 2,
-    mediaType: 'application/vnd.owlette.manifest.v1+json',
+    mediaType: 'application/vnd.owlette.version.v1+json',
     config: {
       producer: '@owlette/roost node-sdk',
       cliVersion,

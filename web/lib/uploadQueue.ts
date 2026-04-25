@@ -1,7 +1,7 @@
 /**
  * Persistent, resumable upload queue (roost wave 3.3).
  *
- * Drag-drop a folder → the manifest builder (wave 3.2) enqueues one
+ * Drag-drop a folder → the version builder (wave 3.2) enqueues one
  * upload task per chunk. The queue:
  *
  *   - persists pending + in-flight tasks to IndexedDB so closing the

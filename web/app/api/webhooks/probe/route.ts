@@ -65,19 +65,21 @@ const PROBE_TIMEOUT_MS = 10_000;
 const SIGNING_SECRET_BYTES = 32;
 
 const CANNED_PAYLOADS: Record<string, (siteId: string) => Record<string, unknown>> = {
-  'manifest.published': (siteId) => ({
+  'version.published': (siteId) => ({
     roostId: 'rst_synthetic_01',
-    manifestId: 'manifest_synthetic_01',
+    versionId: 'vrs_synthetic_01',
+    versionNumber: 1,
+    description: null,
     siteId,
     totalSize: 123456,
     totalFiles: 3,
     createdBy: 'roost-probe',
   }),
-  'manifest.rolled_back': (siteId) => ({
+  'version.rolled_back': (siteId) => ({
     roostId: 'rst_synthetic_01',
     siteId,
-    fromManifestId: 'manifest_synthetic_02',
-    toManifestId: 'manifest_synthetic_01',
+    fromVersion: 'vrs_synthetic_02',
+    toVersion: 'vrs_synthetic_01',
     triggeredBy: 'roost-probe',
   }),
   'deployment.started': (siteId) => ({

@@ -39,6 +39,16 @@ interface UseDisplayActionsResult {
   clearLayout: () => Promise<void>;
   applyLayout: (monitors: MonitorInfo[]) => Promise<ApplyDispatchResult>;
   ackLayout: (applyId: string) => Promise<string>;
+  /**
+   * Dispatch an `enumerate_display_modes` command. The agent walks
+   * EnumDisplaySettingsExW per monitor and (re-)uploads the per-edidHash
+   * catalogue to `sites/{siteId}/machines/{machineId}/hardware/displayModes`,
+   * skipping the upload when the topology's signatureHash matches the
+   * last-uploaded one. Fire-and-forget from the caller's perspective — the
+   * result flows back via the `useDisplayModes` subscription, not the command
+   * doc's return string.
+   */
+  enumerateDisplayModes: () => Promise<string>;
   applying: boolean;
 }
 
@@ -186,11 +196,43 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
     return commandId;
   };
 
+  /**
+   * Ask the agent to (re-)enumerate the supported display modes for every
+   * active monitor. The agent handles cache-by-signatureHash internally, so
+   * repeated calls on stable hardware are cheap no-ops at the Firestore level.
+   *
+   * Consumer pattern: call this when the operator enters edit mode if the
+   * cached `hardware/displayModes` doc is missing or its `signatureHash` is
+   * stale compared to the current live profile. `useDisplayModes` wraps this
+   * with a per-session dedup so the command never fires more than once per
+   * (site, machine, hash) tuple in a given tab lifetime.
+   */
+  const enumerateDisplayModes = async (): Promise<string> => {
+    if (!db) throw new Error('Firebase not configured');
+    if (!siteId || !machineId) throw new Error('Site and machine required');
+
+    const commandId = `enumerate_display_modes_${Date.now()}`;
+    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
+    await setDoc(
+      commandRef,
+      {
+        [commandId]: {
+          type: 'enumerate_display_modes',
+          timestamp: serverTimestamp(),
+          status: 'pending',
+        },
+      },
+      { merge: true },
+    );
+    return commandId;
+  };
+
   return {
     captureLayout,
     clearLayout,
     applyLayout,
     ackLayout,
+    enumerateDisplayModes,
     applying,
   };
 }

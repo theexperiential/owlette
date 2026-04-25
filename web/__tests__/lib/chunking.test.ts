@@ -6,17 +6,17 @@
  * Pure-logic coverage — no DOM Worker. Node 20's built-in Web Crypto
  * (`globalThis.crypto.subtle`) satisfies the SubtleCryptoLike surface
  * and `File` from `node:buffer` satisfies BlobLike. The worker wrapper
- * in manifestBuilder.ts is thin glue — left for integration tests when
+ * in versionBuilder.ts is thin glue — left for integration tests when
  * wave 1.6 infrastructure lands.
  */
 
 import { createHash } from 'crypto';
 import {
   bufferToHex,
-  buildManifestEntries,
+  buildVersionEntries,
   CHUNK_SIZE_BYTES,
   hashOneFile,
-  summariseManifest,
+  summariseVersion,
   type NamedBlob,
 } from '@/lib/chunking';
 
@@ -113,7 +113,7 @@ describe('hashOneFile', () => {
     );
   });
 
-  it('throws on zero-byte input (manifest schema forbids zero-size chunks)', async () => {
+  it('throws on zero-byte input (version schema forbids zero-size chunks)', async () => {
     await expect(
       hashOneFile(named('empty.bin', Buffer.alloc(0))),
     ).rejects.toThrow(/zero bytes/);
@@ -145,17 +145,17 @@ describe('hashOneFile', () => {
 });
 
 /* --------------------------------------------------------------------- */
-/*  buildManifestEntries                                                 */
+/*  buildVersionEntries                                                 */
 /* --------------------------------------------------------------------- */
 
-describe('buildManifestEntries', () => {
+describe('buildVersionEntries', () => {
   it('returns empty array for empty input', async () => {
-    const entries = await buildManifestEntries([]);
+    const entries = await buildVersionEntries([]);
     expect(entries).toEqual([]);
   });
 
   it('filters zero-byte files silently (upstream caller concern)', async () => {
-    const entries = await buildManifestEntries([
+    const entries = await buildVersionEntries([
       named('good.toe', Buffer.from('abc')),
       named('empty.toe', Buffer.alloc(0)),
     ]);
@@ -164,7 +164,7 @@ describe('buildManifestEntries', () => {
   });
 
   it('preserves input order', async () => {
-    const entries = await buildManifestEntries([
+    const entries = await buildVersionEntries([
       named('a.toe', Buffer.from('a')),
       named('b.toe', Buffer.from('b')),
       named('c.toe', Buffer.from('c')),
@@ -179,7 +179,7 @@ describe('buildManifestEntries', () => {
       named('f3', Buffer.alloc(300, 3)),
     ];
     const progress: number[] = [];
-    const result = await buildManifestEntries(files, {
+    const result = await buildVersionEntries(files, {
       onProgress: (p) => {
         // monotonic
         expect(p.bytesHashed).toBeGreaterThanOrEqual(progress[progress.length - 1] ?? 0);
@@ -196,9 +196,9 @@ describe('buildManifestEntries', () => {
     for (let i = 0; i < 1_000; i++) {
       files.push(named(`f-${i}.bin`, Buffer.from(String(i))));
     }
-    const entries = await buildManifestEntries(files);
+    const entries = await buildVersionEntries(files);
     expect(entries.length).toBe(1_000);
-    const summary = summariseManifest(entries);
+    const summary = summariseVersion(entries);
     expect(summary.fileCount).toBe(1_000);
     expect(summary.totalChunks).toBeGreaterThanOrEqual(1_000);
   }, 30_000);
@@ -208,32 +208,32 @@ describe('buildManifestEntries', () => {
     for (let i = 0; i < 10_000; i++) {
       files.push(named(`f-${i}.bin`, Buffer.from(String(i))));
     }
-    const entries = await buildManifestEntries(files);
+    const entries = await buildVersionEntries(files);
     expect(entries.length).toBe(10_000);
   }, 60_000);
 });
 
 /* --------------------------------------------------------------------- */
-/*  summariseManifest                                                    */
+/*  summariseVersion                                                    */
 /* --------------------------------------------------------------------- */
 
-describe('summariseManifest', () => {
+describe('summariseVersion', () => {
   it('counts files, bytes, chunks, and unique chunks', async () => {
     // two files that share content → dedup shows as uniqueChunks < totalChunks
-    const entries = await buildManifestEntries([
+    const entries = await buildVersionEntries([
       named('a', Buffer.from('same bytes')),
       named('b', Buffer.from('same bytes')),
       named('c', Buffer.from('other bytes')),
     ]);
-    const s = summariseManifest(entries);
+    const s = summariseVersion(entries);
     expect(s.fileCount).toBe(3);
     expect(s.totalChunks).toBe(3);
     // a and b share a hash → unique count is 2.
     expect(s.uniqueChunks).toBe(2);
   });
 
-  it('empty manifest → zeroed summary', () => {
-    const s = summariseManifest([]);
+  it('empty version → zeroed summary', () => {
+    const s = summariseVersion([]);
     expect(s).toEqual({
       fileCount: 0,
       totalBytes: 0,

@@ -2,44 +2,48 @@
 
 /**
  * useRoostManifestFiles — lazy-fetch the file list for a roost's current
- * manifest. Only fires the network request when `enabled=true`, and
- * caches results in a module-level map keyed by manifestId so
+ * version. Only fires the network request when `enabled=true`, and
+ * caches results in a module-level map keyed by versionId so
  * collapse/expand cycles don't refetch.
  *
- * Calls GET /api/roosts/{roostId}/manifests/{manifestId}/files — a
- * server-side proxy that fetches the manifest from R2 and returns just
- * the file list. Proxying through our API avoids the CORS issue the
- * browser hits when fetching R2 signed URLs directly (R2 doesn't send
- * Access-Control-Allow-Origin on private-bucket signed GETs).
+ * Calls GET /api/roosts/{roostId}/versions/{versionId}/files — a
+ * server-side proxy that fetches the version body from R2 and returns
+ * just the file list. Proxying through our API avoids the CORS issue
+ * the browser hits when fetching R2 signed URLs directly (R2 doesn't
+ * send Access-Control-Allow-Origin on private-bucket signed GETs).
+ *
+ * The file is named `useRoostManifestFiles` for stability across the
+ * rename — the internals all use `version` terminology, matching the
+ * routes + the rest of the codebase.
  */
 
 import { useEffect, useRef, useState } from 'react';
 
-export interface ManifestFile {
+export interface VersionFile {
   path: string;
   size: number;
 }
 
-interface ManifestFilesResult {
-  files: readonly ManifestFile[];
+interface VersionFilesResult {
+  files: readonly VersionFile[];
   loading: boolean;
   error: string | null;
 }
 
-// Cache keyed by manifestId (content-addressed — sha256 of the manifest
-// body, so immutable forever). A given manifest never changes, so cache
+// Cache keyed by versionId (content-addressed — sha256 of the version
+// body, so immutable forever). A given version never changes, so cache
 // entries are safe to reuse across the whole app session.
-const cache = new Map<string, readonly ManifestFile[]>();
-const inflight = new Map<string, Promise<readonly ManifestFile[]>>();
+const cache = new Map<string, readonly VersionFile[]>();
+const inflight = new Map<string, Promise<readonly VersionFile[]>>();
 
-async function fetchManifestFiles(
+async function fetchVersionFiles(
   siteId: string,
   roostId: string,
-  manifestId: string,
-): Promise<readonly ManifestFile[]> {
-  const cached = cache.get(manifestId);
+  versionId: string,
+): Promise<readonly VersionFile[]> {
+  const cached = cache.get(versionId);
   if (cached) return cached;
-  const existing = inflight.get(manifestId);
+  const existing = inflight.get(versionId);
   if (existing) return existing;
 
   const p = (async () => {
@@ -47,7 +51,7 @@ async function fetchManifestFiles(
     // The endpoint supports pagination via limit + cursor; we page through
     // until nextPageToken is empty so the caller gets the full list.
     // max limit is 500 per request.
-    const collected: ManifestFile[] = [];
+    const collected: VersionFile[] = [];
     let cursor = '';
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -57,7 +61,7 @@ async function fetchManifestFiles(
       });
       if (cursor) qs.set('cursor', cursor);
       const res = await fetch(
-        `/api/roosts/${encodeURIComponent(roostId)}/manifests/${encodeURIComponent(manifestId)}/files?${qs}`,
+        `/api/roosts/${encodeURIComponent(roostId)}/versions/${encodeURIComponent(versionId)}/files?${qs}`,
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -79,30 +83,30 @@ async function fetchManifestFiles(
     // regardless of upload order. Mirrors how file explorers default.
     collected.sort((a, b) => a.path.localeCompare(b.path));
     Object.freeze(collected);
-    cache.set(manifestId, collected);
-    return collected as readonly ManifestFile[];
+    cache.set(versionId, collected);
+    return collected as readonly VersionFile[];
   })();
-  inflight.set(manifestId, p);
+  inflight.set(versionId, p);
   try {
     return await p;
   } finally {
-    inflight.delete(manifestId);
+    inflight.delete(versionId);
   }
 }
 
 export function useRoostManifestFiles(
   siteId: string,
   roostId: string,
-  manifestId: string | null,
+  versionId: string | null,
   enabled: boolean,
-): ManifestFilesResult {
-  const [result, setResult] = useState<ManifestFilesResult>(() => {
-    // Sync-seed from cache on mount if the manifest was already fetched
+): VersionFilesResult {
+  const [result, setResult] = useState<VersionFilesResult>(() => {
+    // Sync-seed from cache on mount if the version was already fetched
     // in a prior expand — avoids a loading flicker on re-expand.
-    const seeded = manifestId ? cache.get(manifestId) : null;
+    const seeded = versionId ? cache.get(versionId) : null;
     return {
       files: seeded ?? [],
-      loading: enabled && !seeded && !!manifestId,
+      loading: enabled && !seeded && !!versionId,
       error: null,
     };
   });
@@ -115,14 +119,14 @@ export function useRoostManifestFiles(
   }, []);
 
   useEffect(() => {
-    if (!enabled || !manifestId || !siteId || !roostId) return;
-    const cached = cache.get(manifestId);
+    if (!enabled || !versionId || !siteId || !roostId) return;
+    const cached = cache.get(versionId);
     if (cached) {
       setResult({ files: cached, loading: false, error: null });
       return;
     }
     setResult((prev) => ({ ...prev, loading: true, error: null }));
-    fetchManifestFiles(siteId, roostId, manifestId)
+    fetchVersionFiles(siteId, roostId, versionId)
       .then((files) => {
         if (!aliveRef.current) return;
         setResult({ files, loading: false, error: null });
@@ -131,7 +135,7 @@ export function useRoostManifestFiles(
         if (!aliveRef.current) return;
         setResult({ files: [], loading: false, error: err.message });
       });
-  }, [enabled, siteId, roostId, manifestId]);
+  }, [enabled, siteId, roostId, versionId]);
 
   return result;
 }

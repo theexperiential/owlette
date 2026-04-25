@@ -1,6 +1,6 @@
 # nightly directory sync
 
-a node script that runs nightly on a build box, walks a local directory, diffs against the roost's currently published manifest, and publishes a new manifest only if something actually changed. most nights nothing has changed — the script must not publish empty manifests or burn quota. on `quota_exceeded` it emails an alert; structured logs go to stdout for systemd journald / windows event log capture.
+a node script that runs nightly on a build box, walks a local directory, diffs against the roost's currently published version, and publishes a new version only if something actually changed. most nights nothing has changed — the script must not publish empty versions or burn quota. on `quota_exceeded` it emails an alert; structured logs go to stdout for systemd journald / windows event log capture.
 
 ## required env vars
 
@@ -107,12 +107,12 @@ async function emailAlert(subject, body) {
   }
 }
 
-function buildOciManifest(files) {
+function buildOciVersion(files) {
   const configBody = JSON.stringify({ syncedAt: new Date().toISOString(), source: WATCH_DIR });
   const configDigest = 'sha256:' + createHash('sha256').update(configBody).digest('hex');
   return {
     schemaVersion: 2,
-    mediaType: 'application/vnd.owlette.manifest.v1+json',
+    mediaType: 'application/vnd.owlette.version.v1+json',
     config: {
       mediaType: 'application/vnd.owlette.roost.config.v1+json',
       digest: configDigest,
@@ -132,14 +132,15 @@ async function main() {
 
   // 1. fetch current roost head
   const roost = await api(`/api/roosts/${ROOST_ID}`);
-  const currentManifestId = roost.currentManifestId;
+  const currentVersionId = roost.currentVersionId;
 
-  // 2. fetch current manifest file list (paginated)
+  // 2. fetch current version file list (paginated) — use the "current" alias
+  //    so the resolver picks up the head we just read.
   const currentMap = new Map();
-  if (currentManifestId) {
+  if (currentVersionId) {
     let pageToken = '';
     do {
-      const url = `/api/roosts/${ROOST_ID}/manifests/${currentManifestId}/files?page_size=1000${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''}`;
+      const url = `/api/roosts/${ROOST_ID}/versions/current/files?page_size=1000${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''}`;
       const page = await api(url);
       for (const f of page.items) currentMap.set(f.path, f.digest);
       pageToken = page.next_page_token;
@@ -199,22 +200,25 @@ async function main() {
     }
   }
 
-  // 6. publish new manifest (cas-guarded via expectedCurrentManifestId)
-  const manifest = buildOciManifest(local);
-  const publish = await api(`/api/roosts/${ROOST_ID}/manifests`, {
+  // 6. publish new version (cas-guarded via expectedCurrentVersionId)
+  const version = buildOciVersion(local);
+  const description = `nightly sync: +${changed.length} changed, -${removed.length} removed`;
+  const publish = await api(`/api/roosts/${ROOST_ID}/versions`, {
     method: 'POST',
     headers: {
       'idempotency-key': randomUUID(),
-      ...(currentManifestId ? { 'if-match': currentManifestId } : {}),
+      ...(currentVersionId ? { 'if-match': currentVersionId } : {}),
     },
     body: JSON.stringify({
       siteId: ROOST_SITE_ID,
-      manifest,
-      ...(currentManifestId ? { expectedCurrentManifestId: currentManifestId } : {}),
+      version,
+      description,
+      ...(currentVersionId ? { expectedCurrentVersionId: currentVersionId } : {}),
     }),
   });
-  log('info', 'manifest published', {
-    manifestId: publish.manifestId,
+  log('info', 'version published', {
+    versionId: publish.versionId,
+    versionNumber: publish.versionNumber,
     totalFiles: local.length,
     changed: changed.length,
     removed: removed.length,
@@ -234,7 +238,7 @@ try {
     );
     process.exit(2);
   }
-  if (e.code === 'precondition_failed') {
+  if (e.code === 'precondition_failed' || e.code === 'version_stale') {
     log('warn', 'cas miss — another publish happened concurrently, will retry tomorrow', { detail: e.detail });
     process.exit(1);
   }
@@ -243,7 +247,7 @@ try {
 }
 ```
 
-the script is structured as six sequential api interactions: read roost head, enumerate current manifest, walk local, dedup-check, upload missing, publish. every step emits a structured json log line with `ts`, `level`, `msg`, and relevant metadata, so journald's default json detector indexes each field for `journalctl -o json -u roost-nightly-sync.service`-style queries. a no-op night logs two lines (`started`, `no changes`) and exits 0 — cheap enough to run without rate-limit worries.
+the script is structured as six sequential api interactions: read roost head, enumerate current version, walk local, dedup-check, upload missing, publish. every step emits a structured json log line with `ts`, `level`, `msg`, and relevant metadata, so journald's default json detector indexes each field for `journalctl -o json -u roost-nightly-sync.service`-style queries. a no-op night logs two lines (`started`, `no changes`) and exits 0 — cheap enough to run without rate-limit worries.
 
 ## systemd timer (linux)
 
@@ -333,7 +337,7 @@ set the env vars machine-wide via `setx /M` or inject them through a small wrapp
 
 ## error handling summary
 
-- `precondition_failed` (412) on publish — someone else published between the `GET /api/roosts/{id}` and the `POST .../manifests`. script exits 1, the operator's alerting picks up the failed unit, next night's run tries again against the new head.
+- `precondition_failed` / `version_stale` (412) on publish — someone else published between the `GET /api/roosts/{id}` and the `POST .../versions`. script exits 1, the operator's alerting picks up the failed unit, next night's run tries again against the new head.
 - `quota_exceeded` (402) — script emails ops with a direct link to the quota dashboard. exit code 2 is distinct from 1 so an operator's `OnFailure=` unit can escalate differently.
 - `rate_limited` (429) — not explicitly handled; at this endpoint volume (1 roost/night) it won't trigger. for fleets syncing hundreds of roosts from one host, add a `Retry-After`-aware retry loop around `api()`.
 - `chunk_not_found` during a later download (not this script's concern) — gc ran on an orphan; safe because the next nightly run re-uploads missing chunks.

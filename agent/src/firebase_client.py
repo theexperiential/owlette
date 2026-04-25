@@ -212,6 +212,15 @@ class FirebaseClient:
         self._cached_display_hash: Optional[str] = None
         self._display_hash_path: str = shared_utils.get_data_path('.display_profile_hash')
 
+        # Display-modes catalogue state (A3.2). On-demand (not heartbeat-driven)
+        # — the dashboard fires an `enumerate_display_modes` command when the
+        # editor opens. The `signatureHash` matches the display profile's hash,
+        # so an unchanged topology produces a no-op upload. Separate on-disk
+        # cache file from the profile hash so either can be invalidated
+        # independently.
+        self._cached_display_modes_hash: Optional[str] = None
+        self._display_modes_hash_path: str = shared_utils.get_data_path('.display_modes_hash')
+
         # =================================================================
         # Initialize Firebase connection
         # =================================================================
@@ -951,6 +960,163 @@ class FirebaseClient:
             self._cached_display_hash = signature_hash
         except Exception as e:
             self.logger.warning(f"Failed to persist display profile hash: {e}")
+
+    def _load_cached_display_modes_hash(self) -> Optional[str]:
+        """Load the cached display-modes catalogue signature hash from disk
+        (once per process). Mirrors ``_load_cached_display_hash``.
+        """
+        if self._cached_display_modes_hash is not None:
+            return self._cached_display_modes_hash
+        try:
+            data = shared_utils.read_json_from_file(self._display_modes_hash_path)
+            if isinstance(data, dict):
+                hash_val = data.get('signatureHash')
+                if isinstance(hash_val, str) and hash_val:
+                    self._cached_display_modes_hash = hash_val
+        except Exception as e:
+            self.logger.debug(f"No cached display-modes hash available: {e}")
+        return self._cached_display_modes_hash
+
+    def _write_cached_display_modes_hash(self, signature_hash: str):
+        """Persist the display-modes catalogue signature hash to disk."""
+        try:
+            os.makedirs(os.path.dirname(self._display_modes_hash_path), exist_ok=True)
+            shared_utils.write_json_to_file(
+                {'signatureHash': signature_hash}, self._display_modes_hash_path,
+            )
+            self._cached_display_modes_hash = signature_hash
+        except Exception as e:
+            self.logger.warning(f"Failed to persist display-modes hash: {e}")
+
+    def _ensure_display_modes_catalogue(self, force: bool = False) -> Dict[str, Any]:
+        """Enumerate supported display modes for every active monitor and
+        upload the result to Firestore, skipping the upload when the
+        ``signatureHash`` matches the last upload (hardware unchanged).
+
+        Triggered on-demand by the ``enumerate_display_modes`` command — the
+        dashboard fires it when an operator opens the layout editor. Not part
+        of the heartbeat loop because the catalogue changes rarely (same
+        cadence as ``hardware/display``) and only active editors need it.
+
+        Returns a summary dict shaped for the service command handler::
+
+            {
+              'ok': True,
+              'uploaded': bool,
+              'monitorCount': int,
+              'modeCount': int,
+              'signatureHash': str | None,
+              'reason': str | None,  # set when uploaded=False explains why
+            }
+
+            or on failure:
+
+            {'ok': False, 'error': str, 'code': DisplayErrorCode}
+        """
+        # Kill switch — operators can disable all display work at config time
+        # without stopping the service. Same check as `_ensure_display_profile`
+        # so both paths honour the flag consistently.
+        try:
+            if shared_utils.read_config(['displays', 'enabled']) is False:
+                return {
+                    'ok': True,
+                    'uploaded': False,
+                    'monitorCount': 0,
+                    'modeCount': 0,
+                    'signatureHash': None,
+                    'reason': 'displays_disabled',
+                }
+        except Exception:
+            pass
+
+        result = display_manager.enumerate_modes_via_user_session()
+        if not result.get('ok'):
+            # Helper spawn / timeout / hard failure — pass through error + code.
+            return result
+
+        by_edid = result.get('byEdidHash') or {}
+        monitor_count = len(by_edid)
+        mode_count = sum(
+            len((info or {}).get('modes') or [])
+            for info in by_edid.values()
+        )
+        signature = result.get('signatureHash')
+
+        # Transient CCD stall inside the helper — skip upload + preserve cached
+        # hash so the next dispatch tries again. Distinct from a hard failure
+        # (which would have returned ok:False above).
+        if result.get('enumerationFailed'):
+            return {
+                'ok': True,
+                'uploaded': False,
+                'monitorCount': monitor_count,
+                'modeCount': mode_count,
+                'signatureHash': signature,
+                'reason': 'enumeration_failed',
+            }
+
+        if not signature:
+            return {
+                'ok': True,
+                'uploaded': False,
+                'monitorCount': monitor_count,
+                'modeCount': mode_count,
+                'signatureHash': None,
+                'reason': 'no_signature',
+            }
+
+        # Cache-by-hash skip — the whole point of A3.2.
+        cached_hash = self._load_cached_display_modes_hash()
+        if not force and signature == cached_hash:
+            return {
+                'ok': True,
+                'uploaded': False,
+                'monitorCount': monitor_count,
+                'modeCount': mode_count,
+                'signatureHash': signature,
+                'reason': 'unchanged',
+            }
+
+        if not self.connected or not self.db:
+            return {
+                'ok': True,
+                'uploaded': False,
+                'monitorCount': monitor_count,
+                'modeCount': mode_count,
+                'signatureHash': signature,
+                'reason': 'offline',
+            }
+
+        doc = {
+            'schemaVersion': result.get('schemaVersion'),
+            'signatureHash': signature,
+            'capturedAt': result.get('capturedAt'),
+            'byEdidHash': by_edid,
+        }
+        try:
+            modes_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('hardware').document('displayModes')
+            modes_ref.set(doc, merge=False)
+            self._write_cached_display_modes_hash(signature)
+            self.logger.info(
+                f"Display modes catalogue uploaded "
+                f"(hash={signature[:12]}, monitors={monitor_count}, modes={mode_count})"
+            )
+            return {
+                'ok': True,
+                'uploaded': True,
+                'monitorCount': monitor_count,
+                'modeCount': mode_count,
+                'signatureHash': signature,
+            }
+        except Exception as e:
+            self.logger.warning(f"Failed to upload display modes catalogue: {e}")
+            return {
+                'ok': False,
+                'error': str(e),
+                'code': 'upload_failed',
+            }
 
     def _ensure_display_profile(self, force: bool = False) -> Optional[Dict[str, Any]]:
         """
@@ -1952,18 +2118,18 @@ class FirebaseClient:
             merged.update(urls)
         return merged
 
-    def get_manifest_download_url(self, roost_id: str, manifest_id: str) -> str:
+    def get_version_download_url(self, roost_id: str, version_id: str) -> str:
         """
-        Mint a fresh short-lived signed GET URL for a manifest JSON body.
+        Mint a fresh short-lived signed GET URL for a version JSON body.
 
-        Manifest URLs are only valid for 15 min, so a URL baked into the
+        Version URLs are only valid for 15 min, so a URL baked into the
         roost doc at publish time is usually already expired by the time
         a canary wave starts. Each sync_pull attempt calls this to get a
         fresh URL just before the fetch — matches the per-chunk pattern.
 
         Args:
-            roost_id: the roost this manifest belongs to.
-            manifest_id: the 64-char SHA-256 hex id of the manifest.
+            roost_id: the roost this version belongs to.
+            version_id: the 64-char SHA-256 hex id of the version.
 
         Returns:
             A signed GET URL the agent can fetch directly.
@@ -1976,10 +2142,10 @@ class FirebaseClient:
         api_base = shared_utils.get_api_base_url()
         import requests
         resp = requests.post(
-            f"{api_base}/roosts/{roost_id}/manifest-url",
+            f"{api_base}/roosts/{roost_id}/version-url",
             json={
                 'siteId': self.site_id,
-                'manifestId': manifest_id,
+                'versionId': version_id,
             },
             headers={'Authorization': f'Bearer {token}'},
             timeout=30,
@@ -1989,7 +2155,7 @@ class FirebaseClient:
         url = body.get('url')
         if not isinstance(url, str) or not url:
             raise ValueError(
-                f"manifest-url returned malformed body "
+                f"version-url returned malformed body "
                 f"(missing 'url' string): {body!r}"
             )
         return url

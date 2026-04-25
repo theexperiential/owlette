@@ -1,7 +1,7 @@
 """
 sync_scrub — periodic on-disk integrity verification for roost (wave 4b.7).
 
-walks the most recent committed manifest for each synced folder, re-hashes
+walks the most recent committed version for each roost, re-hashes
 every assembled file's CONTENTS (not just size + mtime — that's syncthing's
 mistake; silent bit-rot on never-modified files goes undetected with mtime
 alone), and reports drift to firestore so the dashboard surfaces "machine
@@ -13,8 +13,8 @@ design:
 - one ScrubReport per scrub run, written to firestore + local json file
   for debugging. report contains the (file_path, expected_hash, actual_hash,
   size, error?) for every drift.
-- per-distribution; only scrubs the CURRENT manifest. older immutable
-  manifests aren't scrubbed (their files may have been overwritten by
+- per-distribution; only scrubs the CURRENT version. older immutable
+  versions aren't scrubbed (their files may have been overwritten by
   later distributions, which is expected).
 - chunked SHA-256 (no whole-file load) so a 50GB file doesn't OOM the agent.
 - skips files in 'failed' state (already known broken — no need to re-confirm).
@@ -22,7 +22,7 @@ design:
 NOT this module's job:
 - triggering the scrub (separate cron / scheduled task)
 - repairing detected drift (operator decides; could trigger a re-pull)
-- garbage collecting old manifests (chunk GC is wave 2b.4, server-side)
+- garbage collecting old versions (chunk GC is wave 2b.4, server-side)
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from sync_manifest import Manifest, ManifestFile, fetch_manifest, ManifestError
+from sync_version import Version, VersionFile, fetch_version, VersionError
 from sync_state import SyncState
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ _SCRUB_BUFFER_BYTES = 1024 * 1024  # 1 MiB read buffer
 
 @dataclass
 class FileDrift:
-    """one drift entry: a file that doesn't match its manifest entry."""
+    """one drift entry: a file that doesn't match its version entry."""
     path: str
     expected_size: int
     actual_size: Optional[int]  # None if file missing entirely
@@ -79,8 +79,8 @@ class ScrubReport:
     """summary of one scrub run for one distribution."""
     distribution_id: int
     site_id: str
-    folder_id: str
-    manifest_id: str
+    roost_id: str
+    version_id: str
     extract_root: str
     started_at: float
     finished_at: float
@@ -101,9 +101,9 @@ def scrub_distribution(
 ) -> ScrubReport:
     """
     re-verify the on-disk contents of every file from the given distribution
-    against its manifest. returns a ScrubReport. caller persists/uploads it.
+    against its version. returns a ScrubReport. caller persists/uploads it.
 
-    extract_root is required because the manifest doesn't store the customer's
+    extract_root is required because the version doesn't store the customer's
     extraction destination — that lives in the operator's config + the original
     sync_pull command payload. caller (the cron entry point) reads it from
     the same source.
@@ -121,15 +121,15 @@ def scrub_distribution(
             f"only 'committed' distributions are scrub-eligible"
         )
 
-    # fetch manifest from cache (same one sync_assembler used to write the files)
+    # fetch version from cache (same one sync_assembler used to write the files)
     try:
-        manifest = fetch_manifest(
-            dist_row['manifest_url'],
-            expected_manifest_id=dist_row['manifest_id'],
+        version = fetch_version(
+            dist_row['version_url'],
+            expected_version_id=dist_row['version_id'],
         )
-    except ManifestError as e:
+    except VersionError as e:
         raise ValueError(
-            f"could not load manifest {dist_row['manifest_id']!r} for scrub: {e}"
+            f"could not load version {dist_row['version_id']!r} for scrub: {e}"
         ) from e
 
     # which files to skip (already known failed)?
@@ -139,7 +139,7 @@ def scrub_distribution(
     files_checked = 0
     files_skipped = 0
     extract_path = Path(os.path.expanduser(extract_root))
-    for f in manifest.files:
+    for f in version.files:
         if f.path in failed_paths:
             files_skipped += 1
             continue
@@ -152,8 +152,8 @@ def scrub_distribution(
     report = ScrubReport(
         distribution_id=distribution_id,
         site_id=dist_row['site_id'],
-        folder_id=dist_row['folder_id'],
-        manifest_id=dist_row['manifest_id'],
+        roost_id=dist_row['roost_id'],
+        version_id=dist_row['version_id'],
         extract_root=str(extract_path),
         started_at=started,
         finished_at=finished,
@@ -180,9 +180,9 @@ def scrub_distribution(
     return report
 
 
-def _check_file(extract_root: Path, manifest_file: ManifestFile) -> Optional[FileDrift]:
+def _check_file(extract_root: Path, version_file: VersionFile) -> Optional[FileDrift]:
     """
-    verify one file's on-disk contents match the manifest. returns None
+    verify one file's on-disk contents match the version. returns None
     on match, a FileDrift entry on mismatch.
 
     re-hashes the file CONTENTS (not size+mtime). catches:
@@ -191,13 +191,13 @@ def _check_file(extract_root: Path, manifest_file: ManifestFile) -> Optional[Fil
     - hash mismatches (silent bit-rot, av interference, manual edit)
     - permission errors / read failures
     """
-    target_relative = Path(*manifest_file.path.split('/'))
+    target_relative = Path(*version_file.path.split('/'))
     target = extract_root / target_relative
 
     if not target.exists():
         return FileDrift(
-            path=manifest_file.path,
-            expected_size=manifest_file.size,
+            path=version_file.path,
+            expected_size=version_file.size,
             actual_size=None,
             reason='missing',
         )
@@ -206,45 +206,45 @@ def _check_file(extract_root: Path, manifest_file: ManifestFile) -> Optional[Fil
         actual_size = target.stat().st_size
     except OSError as e:
         return FileDrift(
-            path=manifest_file.path, expected_size=manifest_file.size,
+            path=version_file.path, expected_size=version_file.size,
             actual_size=None, reason='read_error', error=f"stat: {e}",
         )
 
-    if actual_size != manifest_file.size:
+    if actual_size != version_file.size:
         return FileDrift(
-            path=manifest_file.path, expected_size=manifest_file.size,
+            path=version_file.path, expected_size=version_file.size,
             actual_size=actual_size, reason='size_mismatch',
         )
 
     # hash the file contents in chunks. compute the FILE-level SHA-256 by
     # concatenating each chunk's hash? no — that's not how we computed the
-    # manifest. the manifest stores PER-CHUNK hashes; we need to slice
+    # version. the version stores PER-CHUNK hashes; we need to slice
     # the file the same way and verify each chunk independently.
     try:
-        if not _verify_chunks(target, manifest_file):
+        if not _verify_chunks(target, version_file):
             return FileDrift(
-                path=manifest_file.path, expected_size=manifest_file.size,
+                path=version_file.path, expected_size=version_file.size,
                 actual_size=actual_size, reason='hash_mismatch',
             )
     except OSError as e:
         return FileDrift(
-            path=manifest_file.path, expected_size=manifest_file.size,
+            path=version_file.path, expected_size=version_file.size,
             actual_size=actual_size, reason='read_error', error=f"read: {e}",
         )
 
     return None
 
 
-def _verify_chunks(target: Path, manifest_file: ManifestFile) -> bool:
+def _verify_chunks(target: Path, version_file: VersionFile) -> bool:
     """
-    open the file, slice it into chunks of the SAME sizes as the manifest
-    declares, and verify each chunk's SHA-256 matches the manifest entry.
+    open the file, slice it into chunks of the SAME sizes as the version
+    declares, and verify each chunk's SHA-256 matches the version entry.
 
     returns True if every chunk matches; False on first mismatch (early exit
     saves time on large corrupted files).
     """
     with open(target, 'rb') as f:
-        for i, chunk in enumerate(manifest_file.chunks):
+        for i, chunk in enumerate(version_file.chunks):
             remaining = chunk.size
             h = hashlib.sha256()
             while remaining > 0:

@@ -3,14 +3,14 @@
 /**
  * RoostContentsRow — expandable "contents" row inside an expanded roost
  * panel. Collapsed: "N files · X MB" with a disclosure chevron. Expanded:
- * lazy-fetches the manifest JSON from R2 and shows path + size for every
+ * lazy-fetches the version JSON from R2 and shows path + size for every
  * file, scrollable.
  *
  * Why separate component:
  *   - Keeps the network/hook lifecycle scoped to the row. Collapsed rows
  *     never mount the hook, so listing 20 roosts doesn't fan out into 20
- *     manifest fetches until the user explicitly expands.
- *   - `useRoostManifestFiles` has a module-level cache keyed by manifestId,
+ *     version fetches until the user explicitly expands.
+ *   - `useRoostManifestFiles` has a module-level cache keyed by versionId,
  *     so an expand → collapse → expand cycle hits the cache with no
  *     loading flicker or re-fetch.
  */
@@ -23,7 +23,7 @@ import { useRoostManifestFiles } from '@/hooks/useRoostManifestFiles';
 interface RoostContentsRowProps {
   siteId: string;
   roostId: string;
-  manifestId: string | null;
+  versionId: string | null;
   totalFiles?: number;
   totalSize?: number;
 }
@@ -33,16 +33,16 @@ const PREVIEW_CAP = 500;
 export function RoostContentsRow({
   siteId,
   roostId,
-  manifestId,
+  versionId,
   totalFiles,
   totalSize,
 }: RoostContentsRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const canExpand = !!manifestId && (totalFiles ?? 0) > 0;
+  const canExpand = !!versionId && (totalFiles ?? 0) > 0;
   const { files, loading, error } = useRoostManifestFiles(
     siteId,
     roostId,
-    manifestId,
+    versionId,
     expanded && canExpand,
   );
 
@@ -50,31 +50,27 @@ export function RoostContentsRow({
 
   return (
     <div>
-      <div className="flex gap-2">
+      <div className="flex items-center justify-between gap-2 mb-2">
         <button
           type="button"
           onClick={canExpand ? () => setExpanded((v) => !v) : undefined}
           disabled={!canExpand}
           aria-expanded={expanded}
           aria-label={expanded ? 'hide file list' : 'show file list'}
-          className={`flex items-center gap-1.5 flex-shrink-0 w-28 text-muted-foreground ${
+          className={`flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors ${
             canExpand
               ? 'hover:text-foreground cursor-pointer'
               : 'cursor-default'
           }`}
         >
-          {canExpand && (
-            <>
-              {expanded ? (
-                <ChevronDown className="h-3 w-3" aria-hidden="true" />
-              ) : (
-                <ChevronRight className="h-3 w-3" aria-hidden="true" />
-              )}
-            </>
+          {expanded ? (
+            <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
           )}
           <span>contents</span>
         </button>
-        <span className="text-foreground select-text tabular-nums">
+        <span className="text-xs text-muted-foreground tabular-nums">
           {totalFiles !== undefined && (
             <>
               {totalFiles.toLocaleString()} file{totalFiles === 1 ? '' : 's'}
@@ -86,7 +82,7 @@ export function RoostContentsRow({
       </div>
 
       {expanded && canExpand && (
-        <div className="mt-2 ml-[7.5rem] rounded border border-border/40 bg-background/50">
+        <div className="rounded border border-border/40 bg-background/50">
           {loading && files.length === 0 ? (
             <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -98,7 +94,7 @@ export function RoostContentsRow({
             </div>
           ) : files.length === 0 ? (
             <div className="px-3 py-2 text-xs text-muted-foreground italic">
-              manifest has no files
+              version has no files
             </div>
           ) : (
             <div className="max-h-60 overflow-y-auto px-3 py-2 font-mono text-[11px] text-muted-foreground">

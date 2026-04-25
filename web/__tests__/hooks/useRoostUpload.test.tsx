@@ -50,9 +50,10 @@ describe('useRoostUpload — lifecycle', () => {
 
   it('transitions idle → uploading → success when uploadFolder resolves', async () => {
     mockUploadFolder.mockImplementation(async () => ({
-      manifestId: 'mfst-1234567890ab',
-      currentManifestId: 'mfst-1234567890ab',
-      previousManifestId: null,
+      versionId: 'vrs_1234567890ab',
+      versionNumber: 1,
+      currentVersionId: 'vrs_1234567890ab',
+      previousVersionId: null,
       uploadedBytes: 500_000,
       totalBytes: 1_000_000,
     }));
@@ -62,7 +63,7 @@ describe('useRoostUpload — lifecycle', () => {
       await result.current.start(baseInputs());
     });
     expect(result.current.state.status).toBe('success');
-    expect(result.current.state.result?.manifestId).toBe('mfst-1234567890ab');
+    expect(result.current.state.result?.versionId).toBe('vrs_1234567890ab');
     expect(result.current.state.inputs?.name).toBe('test-roost');
   });
 
@@ -95,9 +96,10 @@ describe('useRoostUpload — lifecycle', () => {
 
   it('reset() returns to idle and clears inputs', async () => {
     mockUploadFolder.mockImplementation(async () => ({
-      manifestId: 'mfst-z',
-      currentManifestId: 'mfst-z',
-      previousManifestId: null,
+      versionId: 'vrs_z',
+      versionNumber: 2,
+      currentVersionId: 'vrs_z',
+      previousVersionId: null,
       uploadedBytes: 0,
       totalBytes: 0,
     }));
@@ -121,9 +123,10 @@ describe('useRoostUpload — lifecycle', () => {
     mockUploadFolder.mockImplementation(async (opts) => {
       opts.onProgress?.({ phase: 'hashing', hashFraction: 0.5, message: 'half' });
       return {
-        manifestId: 'mfst-p',
-        currentManifestId: 'mfst-p',
-        previousManifestId: null,
+        versionId: 'vrs_p',
+        versionNumber: 3,
+        currentVersionId: 'vrs_p',
+        previousVersionId: null,
         uploadedBytes: 0,
         totalBytes: 1_000_000,
       };
@@ -138,6 +141,6 @@ describe('useRoostUpload — lifecycle', () => {
     // assert on is the final state transitionally reached — just check
     // the final state shape matches our expectations.
     await waitFor(() => expect(result.current.state.status).toBe('success'));
-    expect(result.current.state.result?.manifestId).toBe('mfst-p');
+    expect(result.current.state.result?.versionId).toBe('vrs_p');
   });
 });

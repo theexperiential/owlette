@@ -102,6 +102,13 @@ export default defineConfig({
       // etc.) and produces flaky 429s unrelated to the contract under test.
       // Only honored when explicitly set; production ignores this var.
       E2E_DISABLE_RATE_LIMIT: 'true',
+      // Tells web/lib/r2Client.server.ts:hasChunk() to consult the
+      // Firestore `siteChunks/{digest}` presence rows seeded by
+      // web/e2e/helpers/seed.ts:seedChunks instead of doing a real R2
+      // HeadObject. Production code path is unchanged when this var is
+      // unset. Required for any spec that lets POST /versions go through
+      // the real finalize handler.
+      OWLETTE_E2E: '1',
     },
   },
 });

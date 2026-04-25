@@ -38,7 +38,7 @@ import { GET as deploymentsGET } from '@/app/api/roosts/[roostId]/deployments/ro
 
 const SITE = 'site-dep';
 const ROOST = 'rst_deployroot1';
-const MANIFEST = 'manifest_deploy1';
+const VERSION = 'vrs_deploy00001';
 
 function authed() {
   mockResolveAuth.mockResolvedValue({
@@ -71,7 +71,7 @@ describe('POST /api/roosts/{id}/deploy', () => {
     mocks.get.mockResolvedValueOnce(
       docSnapshot(ROOST, {
         deletedAt: 1_700_000_000_000,
-        currentManifestId: MANIFEST,
+        currentVersionId: VERSION,
       }),
     );
     const req = createMockRequest(
@@ -82,9 +82,9 @@ describe('POST /api/roosts/{id}/deploy', () => {
     expect(res.status).toBe(409);
   });
 
-  it('400 when no current manifest and none provided', async () => {
+  it('400 when no current version and none provided', async () => {
     mocks.get.mockResolvedValueOnce(
-      docSnapshot(ROOST, { targets: ['m-1'] }), // no currentManifestId
+      docSnapshot(ROOST, { targets: ['m-1'] }), // no currentVersionId
     );
     const req = createMockRequest(
       `http://localhost/api/roosts/${ROOST}/deploy`,
@@ -97,8 +97,8 @@ describe('POST /api/roosts/{id}/deploy', () => {
   it('400 when no machines (roost targets empty and no override)', async () => {
     mocks.get.mockResolvedValueOnce(
       docSnapshot(ROOST, {
-        currentManifestId: MANIFEST,
-        manifestUrl: 'https://r2/.../manifest.json',
+        currentVersionId: VERSION,
+        versionUrl: 'https://r2/.../version.json',
         targets: [],
       }),
     );
@@ -113,8 +113,8 @@ describe('POST /api/roosts/{id}/deploy', () => {
   it('dryRun returns plan without side effects', async () => {
     mocks.get.mockResolvedValueOnce(
       docSnapshot(ROOST, {
-        currentManifestId: MANIFEST,
-        manifestUrl: 'https://r2/.../manifest.json',
+        currentVersionId: VERSION,
+        versionUrl: 'https://r2/.../version.json',
         targets: ['m-1', 'm-2', 'm-3'],
       }),
     );
@@ -126,7 +126,7 @@ describe('POST /api/roosts/{id}/deploy', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.dryRun).toBe(true);
-    expect(body.manifestId).toBe(MANIFEST);
+    expect(body.versionId).toBe(VERSION);
     expect(body.canary.length).toBeGreaterThan(0);
     expect(mocks.set).not.toHaveBeenCalled();
   });
@@ -140,13 +140,13 @@ describe('POST /api/roosts/{id}/deploy', () => {
   it('returns alreadyRunning=true on idempotent re-trigger for active rollout', async () => {
     mocks.get.mockResolvedValueOnce(
       docSnapshot(ROOST, {
-        currentManifestId: MANIFEST,
-        manifestUrl: 'https://r2/.../manifest.json',
+        currentVersionId: VERSION,
+        versionUrl: 'https://r2/.../version.json',
         targets: ['m-1'],
       }),
     );
     mocks.get.mockResolvedValueOnce(
-      docSnapshot(MANIFEST, {
+      docSnapshot(VERSION, {
         stage: 'canary',
         canary: ['m-1'],
         fleet: [],
@@ -175,13 +175,13 @@ describe('GET /api/roosts/{id}/deployments', () => {
     mocks.collectionGet.mockResolvedValueOnce(
       querySnapshot([
         {
-          id: MANIFEST,
+          id: VERSION,
           data: {
-            manifestId: MANIFEST,
+            versionId: VERSION,
             stage: 'canary',
             canary: ['m-1'],
             fleet: [],
-            manifestUrl: 'https://r2/.../x.json',
+            versionUrl: 'https://r2/.../x.json',
             extractRoot: '~',
             triggeredBy: 'user-1',
           },
@@ -195,7 +195,8 @@ describe('GET /api/roosts/{id}/deployments', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.rollouts).toHaveLength(1);
-    expect(body.rollouts[0].rolloutId).toBe(MANIFEST);
+    expect(body.rollouts[0].rolloutId).toBe(VERSION);
+    expect(body.rollouts[0].versionId).toBe(VERSION);
     expect(body.rollouts[0].stage).toBe('canary');
   });
 });

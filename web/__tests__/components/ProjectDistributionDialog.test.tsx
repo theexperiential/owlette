@@ -57,9 +57,9 @@ function renderDialog() {
 }
 
 describe('ProjectDistributionDialog — shell', () => {
-  it('renders the "roost a project" title', () => {
+  it('renders the "new roost" title', () => {
     renderDialog();
-    expect(screen.getByText(/roost a project/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /new roost/i })).toBeInTheDocument();
   });
 
   it('has no history tab — the main /roosts page is the history', () => {
@@ -105,7 +105,7 @@ describe('ProjectDistributionDialog — source picker (inside deploy)', () => {
     const user = userEvent.setup();
     renderDialog();
     // shared fields visible under the default upload source.
-    // `verify_files` was dropped in the v2 clean-cutover — manifest is
+    // `verify_files` was dropped in the v2 clean-cutover — version is
     // authoritative, spot-check is dead weight.
     expect(screen.getByLabelText(/roost name/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/extract to/i)).toBeInTheDocument();

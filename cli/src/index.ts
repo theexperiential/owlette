@@ -36,7 +36,7 @@ export function buildProgram(): Command {
   registerAuthCommands(program);
 
   // noun: roost — wave 4.3 / 4.4 / 4.5
-  program.command('roost').description('manage roosts + manifests');
+  program.command('roost').description('manage roosts + versions');
 
   registerPushCommand(program); // wave 4.3
   registerRoostInspectCommands(program); // wave 4.4 — list / get / diff

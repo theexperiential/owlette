@@ -58,6 +58,15 @@ interface DisplayCanvasProps {
    */
   driftedMonitorIds?: Set<string>;
   /**
+   * Set of monitor `edidHash` values that exist in the rendered layout
+   * (typically the assigned tab) but are NOT in the current live topology
+   * — i.e., stored monitors that aren't physically connected right now.
+   * These rects render with a dimmed fill + an amber "⚠ not connected"
+   * badge so the operator immediately sees that part of the layout is
+   * referencing absent hardware (apply will fail for those rects).
+   */
+  staleEdidHashes?: Set<string>;
+  /**
    * Label rendering mode. `auto` (default) picks the label tier based on
    * rendered rect area: full info for big rects, abbreviated for medium,
    * just the index number for small. `indexOnly` forces every rect to show
@@ -73,6 +82,13 @@ interface DisplayCanvasProps {
    */
   editable?: boolean;
   onMonitorMove?: (id: string, position: { x: number; y: number }) => void;
+  /**
+   * Fires when the user double-clicks a monitor rect. The panel wires this
+   * to the `DisplayEditorDialog` so double-click opens the full monitor
+   * editor (access to resolution, refresh, and other fields not exposed in
+   * the inline table cells).
+   */
+  onMonitorDoubleClick?: (id: string) => void;
   /**
    * Optional callback fired while the user drags the primary monitor. The
    * primary is pinned at (0, 0) by Windows, so we can't move it directly —
@@ -239,9 +255,11 @@ function DisplayCanvasImpl({
   ghostMonitors: ghostMonitorsProp,
   accentColor = 'var(--primary)',
   driftedMonitorIds,
+  staleEdidHashes,
   labelMode = 'auto',
   editable = false,
   onMonitorMove,
+  onMonitorDoubleClick,
   onLayoutShift,
   className,
 }: DisplayCanvasProps) {
@@ -542,6 +560,15 @@ function DisplayCanvasImpl({
     // alert signal), and ghosts still paint in --chart-4 to flag "assigned".
     const isDrifted =
       !opts.ghost && driftedMonitorIds?.has(monitor.id) === true;
+    // [A4.4] Stale-edidHash check. The monitor is in the rendered layout but
+    // not in the current live topology — operator stored it once, but right
+    // now it's not connected. Only meaningful for non-ghost rects (ghosts
+    // ARE the assigned-on-live overlay; staleness for them is conceptually
+    // the same signal already encoded in their dashed style).
+    const isStale =
+      !opts.ghost &&
+      !!monitor.edidHash &&
+      staleEdidHashes?.has(monitor.edidHash) === true;
     let fill: string;
     let strokeDash: string | undefined;
     if (opts.ghost) {
@@ -579,7 +606,11 @@ function DisplayCanvasImpl({
     // Ghosts split fill vs stroke opacity: keep the fill nearly invisible so
     // live monitors read as primary, but the dashed border needs to be
     // visible enough to actually communicate the assigned layout.
-    const fillOpacity = opts.ghost ? 0.4 : 1;
+    // Stale rects (assigned but not connected) drop fill opacity to ~0.5 so
+    // they read as muted — the badge below is the explicit signal; the dim
+    // fill reinforces "this position is reserved for hardware that's not
+    // here right now".
+    const fillOpacity = opts.ghost ? 0.4 : isStale ? 0.5 : 1;
     const strokeOpacity = opts.ghost ? 0.85 : 1;
     // Cross-panel hover lights up both canvas rect and table row for the same
     // monitor via a subtle brightness bump — state-driven (not :hover) so it
@@ -735,26 +766,92 @@ function DisplayCanvasImpl({
         </text>
       ) : null;
 
+    // [A4.4] "Not connected" badge — top-right corner so it never collides
+    // with the top-left primary star. Suppressed in indexOnly mode where
+    // any in-rect text would crowd the index number.
+    const staleBadge =
+      isStale && labelMode !== 'indexOnly' ? (
+        <text
+          x={x + rectW - 6}
+          y={y + 12}
+          textAnchor="end"
+          fontSize={9}
+          fontWeight={600}
+          fill="var(--accent-warm)"
+          style={{ fontFamily: 'inherit', textTransform: 'lowercase' }}
+          pointerEvents="none"
+        >
+          ⚠ not connected
+        </text>
+      ) : null;
+
     const handleGroupClick = clickable
-      ? () => {
+      ? (e: React.MouseEvent<SVGGElement>) => {
           if (suppressClickRef.current) {
             suppressClickRef.current = false;
             return;
           }
+          // Give the rect explicit keyboard focus on click. Without this,
+          // SVG `<g>` elements don't receive focus on mouse activation in
+          // Chrome / Edge even with tabIndex=0, so arrow-key nudging
+          // (handleKeyDown below) would silently never fire — the key
+          // events would land on `document.body` and we'd miss them.
+          e.currentTarget.focus();
           handleRectClick(monitor.id);
         }
       : undefined;
 
+    // Double-click opens the full monitor editor dialog when the panel is
+    // in edit mode. Only wire the handler when the caller opts in —
+    // otherwise a double-click degrades to two back-to-back selection
+    // clicks, which is the read-only default.
+    const handleGroupDoubleClick =
+      clickable && onMonitorDoubleClick
+        ? () => onMonitorDoubleClick(monitor.id)
+        : undefined;
+
     // Clickable groups get button semantics + keyboard activation so
     // screen readers announce them as selectable and keyboard-only users
-    // can cycle through and select monitors with Tab + Enter/Space. Drag
-    // remains pointer-only — the stored tab's editable table is the
-    // keyboard-reachable way to adjust positions numerically.
+    // can cycle through and select monitors with Tab + Enter/Space. In
+    // edit mode arrow keys nudge the focused rect by 1 virtual px (shift
+    // for 10) — essential for precision on dense topologies where the
+    // virtual↔CSS scale lets 1 CSS px represent 50+ virtual px. Nudging
+    // the primary rotates through `onLayoutShift` (inverse delta) so the
+    // data model keeps the primary pinned at (0, 0) — same contract as
+    // drag.
     const handleKeyDown = clickable
       ? (e: React.KeyboardEvent<SVGGElement>) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             handleRectClick(monitor.id);
+            return;
+          }
+          if (!draggable) return;
+          if (
+            e.key !== 'ArrowLeft' &&
+            e.key !== 'ArrowRight' &&
+            e.key !== 'ArrowUp' &&
+            e.key !== 'ArrowDown'
+          ) {
+            return;
+          }
+          const step = e.shiftKey ? 10 : 1;
+          let dx = 0;
+          let dy = 0;
+          if (e.key === 'ArrowLeft') dx = -step;
+          else if (e.key === 'ArrowRight') dx = step;
+          else if (e.key === 'ArrowUp') dy = -step;
+          else dy = step;
+          e.preventDefault();
+          if (isPrimary) {
+            // Primary is pinned at (0, 0); visually "moving" it means
+            // shifting every secondary by the inverse delta.
+            onLayoutShift?.(-dx, -dy);
+          } else {
+            onMonitorMove?.(monitor.id, {
+              x: monitor.position.x + dx,
+              y: monitor.position.y + dy,
+            });
           }
         }
       : undefined;
@@ -764,11 +861,19 @@ function DisplayCanvasImpl({
         key={`${opts.ghost ? 'ghost-' : ''}${monitor.id}`}
         role={clickable ? 'button' : undefined}
         tabIndex={clickable ? 0 : undefined}
+        // Suppress the browser's default focus outline on the <g>. The
+        // rect's own cyan selection stroke is our focus affordance — the
+        // UA ring on top of it reads as a second, mismatched border on
+        // click. `tabIndex={0}` is still needed so keyboard users can
+        // Tab through monitors and so arrow-key nudging receives the
+        // focused rect's keydown events.
+        style={clickable ? { outline: 'none' } : undefined}
         aria-label={
           clickable ? (monitor.friendlyName || monitor.id) : undefined
         }
         aria-pressed={clickable ? isSelected : undefined}
         onClick={handleGroupClick}
+        onDoubleClick={handleGroupDoubleClick}
         onKeyDown={handleKeyDown}
         onMouseEnter={hoverable ? () => handleRectEnter(monitor.id) : undefined}
         onMouseLeave={hoverable ? handleRectLeave : undefined}
@@ -795,6 +900,7 @@ function DisplayCanvasImpl({
           style={rectStyle}
         />
         {primaryBadge}
+        {staleBadge}
         {labelContent}
       </g>
     );
@@ -880,7 +986,7 @@ function DisplayCanvasImpl({
   const ghostElements = useMemo(
     () => (ghostMonitors ?? []).map((m) => renderMonitor(m, { ghost: true })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ghostMonitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode, editable, onMonitorMove, onLayoutShift, handleRectPointerDown, handleRectPointerMove, handleRectPointerUp],
+    [ghostMonitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode, editable, onMonitorMove, onMonitorDoubleClick, onLayoutShift, handleRectPointerDown, handleRectPointerMove, handleRectPointerUp, staleEdidHashes],
   );
   // SVG paint order is document order, not z-index — there's no z-index for
   // SVG elements. So we render non-selected monitors first, then the selected
@@ -899,7 +1005,7 @@ function DisplayCanvasImpl({
       ...selected.map((m) => renderMonitor(m, { ghost: false })),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode, editable, onMonitorMove, onLayoutShift, handleRectPointerDown, handleRectPointerMove, handleRectPointerUp]);
+  }, [monitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode, editable, onMonitorMove, onMonitorDoubleClick, onLayoutShift, handleRectPointerDown, handleRectPointerMove, handleRectPointerUp, staleEdidHashes]);
   const gridElements = useMemo(
     () => (mosaicGrids ?? []).map((g, i) => renderGrid(g, i)),
     // eslint-disable-next-line react-hooks/exhaustive-deps

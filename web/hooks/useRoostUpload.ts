@@ -16,11 +16,13 @@ import type { NamedBlob } from '@/lib/chunking';
 export interface UploadInputs {
   siteId: string;
   roostId: string;
-  /** Human-readable name shown on the /roosts page. */
+  /** Human-readable name shown on the /roost page. */
   name: string;
   files: NamedBlob[];
   targets: string[];
   extractPath?: string;
+  /** Optional commit-message style description (≤500 chars, plaintext). */
+  description?: string;
   /** Pre-computed total bytes (sum of file sizes). Used for display only. */
   totalBytes: number;
   /** Pre-computed file count. Used for display only. */
@@ -171,6 +173,7 @@ export function useRoostUpload(): UseRoostUploadApi {
         name: inputs.name,
         targets: inputs.targets,
         extractPath: inputs.extractPath,
+        description: inputs.description,
         signal: controller.signal,
         onProgress: (p) => {
           // Pick the fraction for the active phase. The lib sometimes

@@ -3,8 +3,8 @@
  *
  * Captured events:
  *   signed_url_issued        — chunks/upload-urls + chunks/download-urls
- *   distribution_started     — manifest finalised, fan-out kicked
- *   manifest_pointer_changed — currentManifestId flipped (fwd + rollback)
+ *   distribution_started     — version finalised, fan-out kicked
+ *   version_pointer_changed  — currentVersionId flipped (fwd + rollback)
  *   api_key_used             — any owk_* authentication
  *   gc_run                   — chunkGcNightly completion
  *
@@ -17,8 +17,8 @@
  * and needs the operator to add (copied into wave 0.6 deploy notes):
  *
  *     match /sites/{siteId}/audit_log/{recordId} {
- *       allow read:   if isAdminOf(siteId);
- *       allow create: if isAdminOf(siteId) || isServiceAccount();
+ *       allow read:   if isSiteAdmin(siteId);
+ *       allow create: if isSiteAdmin(siteId) || isServiceAccount();
  *       allow update, delete: if false;   // append-only
  *     }
  */

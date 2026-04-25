@@ -7,7 +7,7 @@ export interface MachineSummary {
   lastHeartbeat: string | null;
   agentVersion: string | null;
   os: string | null;
-  currentRoosts: Array<{ roostId: string; name: string; currentManifestId: string | null }>;
+  currentRoosts: Array<{ roostId: string; name: string; currentVersionId: string | null }>;
 }
 
 export interface MachineDetail extends Omit<MachineSummary, 'currentRoosts'> {
@@ -20,10 +20,10 @@ export interface MachineDetail extends Omit<MachineSummary, 'currentRoosts'> {
 export interface MachineDeployment {
   roostId: string;
   name: string;
-  currentManifestId: string | null;
-  previousManifestId: string | null;
+  currentVersionId: string | null;
+  previousVersionId: string | null;
   extractPath: string | null;
-  reportedManifestId: string | null;
+  reportedVersionId: string | null;
   reportedStatus: string | null;
   reportedAt: string | null;
 }

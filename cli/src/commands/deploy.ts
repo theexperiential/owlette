@@ -4,14 +4,14 @@
  * Drives POST /api/roosts/{id}/deploy with body:
  *   {
  *     siteId,
- *     manifestId?,      // defaults to the roost's currentManifestId server-side
- *     machines?,        // comma-separated list; overrides the roost's targets[]
- *     scheduleAt?,      // iso8601
+ *     versionId?,      // defaults to the roost's currentVersionId server-side
+ *     machines?,       // comma-separated list; overrides the roost's targets[]
+ *     scheduleAt?,     // iso8601
  *     dryRun?,
  *   }
  *
  * dry-run returns the server-computed plan (canary / fleet split +
- * resolved extractRoot + manifestUrl) without writing anything. A real
+ * resolved extractRoot + versionUrl) without writing anything. A real
  * deploy creates the rollout doc + queues `sync_pull` commands for the
  * canary wave. scheduleAt with a future time stores a `scheduled`
  * rollout that the wave-4 sweeper will kick off later.
@@ -28,14 +28,14 @@ import { loadConfig } from '../config';
 
 interface DeployResponse {
   rolloutId: string;
-  manifestId: string;
+  versionId: string;
   siteId: string;
   roostId: string;
   stage: 'canary' | 'scheduled' | string;
   canary: string[];
   fleet: string[];
   extractRoot: string;
-  manifestUrl: string;
+  versionUrl: string;
   dryRun?: boolean;
   alreadyRunning?: boolean;
   scheduled?: { at: string; warning: string };
@@ -56,8 +56,8 @@ export function registerDeployCommand(program: Command): void {
     .description('trigger a targeted fan-out (canary → fleet)')
     .requiredOption('--site <siteId>', 'site id that owns the roost')
     .option(
-      '--manifest <manifestId>',
-      'manifest to deploy (default: the roost\'s currentManifestId)',
+      '--version <versionId>',
+      "version to deploy (default: the roost's currentVersionId)",
     )
     .option('--machines <ids>', 'comma-separated machine ids (overrides roost.targets)')
     .option('--dry-run', 'compute + print the rollout plan without writing')
@@ -80,7 +80,7 @@ export function registerDeployCommand(program: Command): void {
       const json = globals.json === true;
       const body: Record<string, unknown> = { siteId: opts.site };
 
-      if (opts.manifest) body.manifestId = opts.manifest;
+      if (opts.version) body.versionId = opts.version;
 
       if (opts.machines) {
         const machines = String(opts.machines)
@@ -159,10 +159,10 @@ function formatDeployResult(r: DeployResponse, roostId: string): string {
         : 'rollout started';
 
   lines.push(`roost: ${label} for ${roostId}`);
-  lines.push(`  manifest      ${r.manifestId}`);
+  lines.push(`  version       ${r.versionId}`);
   lines.push(`  stage         ${r.stage}`);
   lines.push(`  extract root  ${r.extractRoot}`);
-  lines.push(`  manifest url  ${r.manifestUrl}`);
+  lines.push(`  version url   ${r.versionUrl}`);
   if (r.scheduled) {
     lines.push(`  scheduled at  ${r.scheduled.at}`);
     lines.push(`  warning       ${r.scheduled.warning}`);

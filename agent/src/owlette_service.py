@@ -287,7 +287,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # command type isn't registered. New handlers should register here
         # via @self._command_router.register('cmd_type'). See command_router.py.
         self._command_router = CommandRouter()
-        # Register roost v2 handlers (sync_pull, cancel_sync, rollback_to_manifest).
+        # Register roost v2 handlers (sync_pull, cancel_sync, rollback_to_version).
         # Handlers execute on whatever thread invokes handle_firebase_command;
         # long-running sync work inside them spawns its own daemon threads via
         # sync_downloader / sync_assembler so the dispatch path stays quick.
@@ -2824,7 +2824,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # CommandRouter dispatch (new-style handlers, roost v2 onwards).
             # Falls through to legacy if/elif chain if no handler is registered
             # for this cmd_type. Existing v1 handlers stay in place; new v2
-            # handlers (sync_pull, cancel_sync, rollback_to_manifest) register
+            # handlers (sync_pull, cancel_sync, rollback_to_version) register
             # via self._command_router and are dispatched here.
             if self._command_router.has_handler(cmd_type):
                 return self._command_router.dispatch(cmd_type, cmd_data, cmd_id, self)
@@ -3710,7 +3710,52 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         result.get('error', 'unknown')
                         if isinstance(result, dict) else str(result)
                     )
+                    # Prefix the response with the specific failure code when
+                    # available so the dashboard can pattern-match (e.g.
+                    # `unsupported_mode`) and show a targeted toast instead of
+                    # a generic "recall failed".
+                    code = (
+                        result.get('code') if isinstance(result, dict) else None
+                    )
+                    if code:
+                        return f"Error: {code}: {err}"
                     return f"Error: {err}"
+                except Exception as e:
+                    return f"Error: {e}"
+
+            elif cmd_type == 'enumerate_display_modes':
+                # Build the supported-display-modes catalogue for every active
+                # monitor and upload it to
+                # sites/{siteId}/machines/{machineId}/hardware/displayModes.
+                # Upload is skipped when the topology's signatureHash matches
+                # the last successful upload (hardware unchanged) — the
+                # dashboard's editor-open dispatch is then a cheap no-op on
+                # repeat visits. `force` defaults to False; a future command
+                # param could expose it for operator-driven cache busts.
+                try:
+                    result = self.firebase_client._ensure_display_modes_catalogue()
+                    if isinstance(result, dict) and result.get('ok'):
+                        mc = result.get('monitorCount', 0)
+                        mk = result.get('modeCount', 0)
+                        if result.get('uploaded'):
+                            return (
+                                f"Uploaded catalogue — {mk} modes "
+                                f"across {mc} monitors"
+                            )
+                        reason = result.get('reason') or 'unknown'
+                        return (
+                            f"Enumerated {mk} modes across {mc} monitors "
+                            f"(skipped upload: {reason})"
+                        )
+                    code = (
+                        result.get('code', 'unknown')
+                        if isinstance(result, dict) else 'unknown'
+                    )
+                    err = (
+                        result.get('error', 'unknown')
+                        if isinstance(result, dict) else str(result)
+                    )
+                    return f"Error: {code} {err}"
                 except Exception as e:
                     return f"Error: {e}"
 
@@ -3876,6 +3921,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
             details=details,
         )
 
+    # [B2.2] Suppression window: drift-class events fired within this many
+    # seconds of a successful apply are stamped `suppressAlert: True` so the
+    # routing endpoint can skip email delivery (still fires the webhook —
+    # webhook receivers handle their own dedupe). 90s gives the OS enough
+    # time to settle the new config + the next topology check tick to
+    # observe and emit, with a small margin for slow rigs.
+    _DISPLAY_APPLY_SUPPRESS_WINDOW_S = 90.0
+
     def _emit_display_change_events(self, prev_profile: dict, new_profile: dict):
         """Diff two display profiles and emit one log event per distinct
         change category. Called only when the topology signature actually
@@ -3884,6 +3937,38 @@ class OwletteService(win32serviceutil.ServiceFramework):
         """
         prev_monitors = prev_profile.get('monitors') or []
         new_monitors = new_profile.get('monitors') or []
+
+        # [B2.2] Base enrichment merged into every per-event payload below.
+        # `signatureHash` lets receivers dedupe across the same topology
+        # change. `monitorCount` gives the dashboard a quick "how many
+        # monitors does this machine have right now" surface without
+        # walking the profile. `assignedLayoutId` is reserved for a future
+        # iteration where the agent receives the layout id alongside
+        # apply_topology — empty-string for now keeps the field present and
+        # JSON-stable.
+        base_payload = {
+            'signatureHash': new_profile.get('signatureHash') or '',
+            'monitorCount': len(new_monitors),
+            'assignedLayoutId': '',
+        }
+
+        # If we're inside the post-apply suppression window, stamp the
+        # `suppressAlert` flag + the apply that caused the suppression so
+        # the routing endpoint can correlate. Reads display_manager module
+        # state directly — that's where the apply path stamps the
+        # `_last_apply_finished_at` timestamp (B2.1).
+        try:
+            elapsed = time.time() - display_manager._last_apply_finished_at
+            if (
+                display_manager._last_apply_finished_at > 0
+                and elapsed < self._DISPLAY_APPLY_SUPPRESS_WINDOW_S
+            ):
+                base_payload['suppressAlert'] = True
+                base_payload['correlatedApplyId'] = (
+                    display_manager._current_apply_id or ''
+                )
+        except Exception as e:  # pragma: no cover — defensive
+            logging.debug(f"display suppression check raised: {e}")
 
         # Index by edidHash for identity-based diffing. Monitors without an
         # edidHash (rare — broken EDID, generic driver) are skipped here; they
@@ -3896,6 +3981,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         for edid_hash, monitor in new_by_hash.items():
             if edid_hash not in prev_by_hash:
                 self._emit_display_event('display_monitor_added', 'info', {
+                    **base_payload,
                     'monitor': self._display_monitor_summary(monitor),
                 })
 
@@ -3903,6 +3989,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         for edid_hash, monitor in prev_by_hash.items():
             if edid_hash not in new_by_hash:
                 self._emit_display_event('display_monitor_removed', 'critical', {
+                    **base_payload,
                     'monitor': self._display_monitor_summary(monitor),
                 })
 
@@ -3921,6 +4008,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             prev_monitor = prev_by_target.get(target_id)
             if prev_monitor and prev_monitor.get('edidHash') != new_hash:
                 self._emit_display_event('display_monitor_swapped', 'warning', {
+                    **base_payload,
                     'monitor': self._display_monitor_summary(new_monitor),
                     'previousEdidHash': prev_monitor.get('edidHash') or '',
                 })
@@ -3937,6 +4025,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             ]
             if changes:
                 self._emit_display_event('display_drift', 'warning', {
+                    **base_payload,
                     'monitor': self._display_monitor_summary(new_monitor),
                     'changes': changes,
                 })
@@ -3945,7 +4034,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         prev_mosaic = bool(prev_profile.get('mosaicActive'))
         new_mosaic = bool(new_profile.get('mosaicActive'))
         if prev_mosaic and not new_mosaic:
-            self._emit_display_event('display_mosaic_disabled', 'warning', {})
+            self._emit_display_event('display_mosaic_disabled', 'warning', {
+                **base_payload,
+            })
 
         # 6. Sync lost — any device that was locked is no longer locked.
         # Match devices by deviceId when available so reordering inside the
@@ -3966,6 +4057,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 new_device = None
             if new_device is None or not new_device.get('locked'):
                 self._emit_display_event('display_sync_lost', 'warning', {
+                    **base_payload,
                     'deviceId': device_id or '',
                 })
 
@@ -5325,7 +5417,7 @@ with open(out_path, 'wb') as f:
 
         the cache is REBUILDABLE from R2 — chunks re-download on the next
         sync, state.db is recreated on first SyncState() construction,
-        manifests re-fetch. we intentionally DELETE rather than move: the
+        versions re-fetch. we intentionally DELETE rather than move: the
         user's explicit ask is that only actual files live under the extract
         location, and the new cache lives on a different drive anyway
         (ProgramData vs user profile in System32).

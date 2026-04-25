@@ -8,7 +8,7 @@ import {
   verifySignature,
 } from '@/lib/webhookSignature';
 
-const BODY = JSON.stringify({ event: 'manifest.published', data: { roostId: 'rst_abc' } });
+const BODY = JSON.stringify({ event: 'version.published', data: { roostId: 'rst_abc' } });
 const SECRET = 'whsec_test_abcdefabcdefabcdefabcdefabcdefab';
 const NOW_MS = Date.parse('2026-04-22T15:30:00Z');
 

@@ -936,7 +936,7 @@ describe('auditApiKeyUse', () => {
         isLegacy: false,
       }),
     };
-    const req = makeRequest('http://localhost/api/roosts/rst_x/manifests', {
+    const req = makeRequest('http://localhost/api/roosts/rst_x/versions', {
       method: 'POST',
     });
     auditApiKeyUse(auth, 'site-1', req);
@@ -949,7 +949,7 @@ describe('auditApiKeyUse', () => {
       keyId: 'k-abc',
       scopeFingerprint: 'test-fingerprint',
       environment: 'live',
-      endpoint: '/api/roosts/rst_x/manifests',
+      endpoint: '/api/roosts/rst_x/versions',
       method: 'POST',
       isLegacy: false,
     });

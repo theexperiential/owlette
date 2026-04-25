@@ -1,14 +1,14 @@
 """
 sync_commands — roost (project distribution v2) command handlers.
 
-registers `sync_pull`, `cancel_sync`, `rollback_to_manifest` with the
+registers `sync_pull`, `cancel_sync`, `rollback_to_version` with the
 CommandRouter so they're dispatched by `OwletteService.handle_firebase_command`.
 each handler runs on the `_slow_command_worker` thread (NOT the main
 10-second loop) so blocking sync ops don't stall monitoring.
 
 handler responsibilities:
 - parse + validate the command payload
-- fetch the manifest (sync_manifest)
+- fetch the version (sync_version)
 - diff against local cache to compute chunk + file delta
 - download missing chunks (sync_downloader)
 - assemble files atomically (sync_assembler)
@@ -23,7 +23,7 @@ design:
   fires the event by id.
 
 NOT this module's job:
-- the actual sync engine logic (downloader / assembler / manifest)
+- the actual sync engine logic (downloader / assembler / version)
 - security floor (destination_allowlist)
 - HTTP signed-URL issuance (web/api routes)
 """
@@ -39,7 +39,7 @@ from destination_allowlist import DestinationAllowlist, DestinationNotAllowedErr
 from roost_kill_switch import check_enabled as _roost_is_enabled
 from sync_assembler import AssembleError, assemble_all
 from sync_downloader import ChunkDownloadError, download_all
-from sync_manifest import Manifest, ManifestError, diff_manifests, fetch_manifest
+from sync_version import Version, VersionError, diff_versions, fetch_version
 from sync_state import SyncState, SyncStateError
 
 try:
@@ -63,7 +63,7 @@ def register_handlers(router: CommandRouter) -> None:
     """
     router.register('sync_pull')(_handle_sync_pull)
     router.register('cancel_sync')(_handle_cancel_sync)
-    router.register('rollback_to_manifest')(_handle_rollback_to_manifest)
+    router.register('rollback_to_version')(_handle_rollback_to_version)
     logger.info(
         f"sync_commands: registered handlers — {sorted(router.registered_types())}"
     )
@@ -74,13 +74,13 @@ def register_handlers(router: CommandRouter) -> None:
 
 def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
     """
-    pull a manifest + download missing chunks + atomically assemble files.
+    pull a version + download missing chunks + atomically assemble files.
 
     cmd_data:
       site_id:        str (the agent's site; redundant with token claim but explicit)
-      folder_id:      str (which synced_folder)
-      manifest_id:    str (which immutable manifest version to pull)
-      manifest_url:   str (signed R2 url to fetch the manifest body)
+      roost_id:       str (which roost)
+      version_id:     str (which immutable version to pull)
+      version_url:    str (signed R2 url to fetch the version body)
       extract_root:   str (target directory for assembled files)
 
     NOTE: signed download urls for individual chunks are obtained on-demand
@@ -88,9 +88,9 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
     (POST /api/chunks/download-urls) using the agent's existing OAuth token.
     """
     site_id = _require_str(cmd_data, 'site_id')
-    folder_id = _require_str(cmd_data, 'folder_id')
-    manifest_id = _require_str(cmd_data, 'manifest_id')
-    manifest_url = _require_str(cmd_data, 'manifest_url')
+    roost_id = _require_str(cmd_data, 'roost_id')
+    version_id = _require_str(cmd_data, 'version_id')
+    version_url = _require_str(cmd_data, 'version_url')
     extract_root = _require_str(cmd_data, 'extract_root')
 
     # Wave 5.4 — kill-switch check. Admin sets sites/{siteId}.roostEnabled=false
@@ -102,7 +102,7 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         if not _roost_is_enabled(site_id, _firestore_reader_for(service)):
             logger.warning(
                 f"sync_pull: refusing to start — roost is disabled on site {site_id!r} "
-                f"(manifest {manifest_id})"
+                f"(version {version_id})"
             )
             return f"sync_pull skipped: roost kill-switch engaged for site {site_id}"
     except Exception as e:
@@ -119,59 +119,59 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
     cancel_event = threading.Event()
 
     # Report 'pending' the instant we accept the command so the web UI can
-    # surface "target queued" before manifest fetch even starts.
-    _report_target_state(service, site_id, folder_id, manifest_id, 'pending')
+    # surface "target queued" before version fetch even starts.
+    _report_target_state(service, site_id, roost_id, version_id, 'pending')
 
-    # Mint a fresh signed GET URL. `manifest_url` in the command payload
+    # Mint a fresh signed GET URL. `version_url` in the command payload
     # is either unsigned (the stored object URL — not fetchable from a
     # private bucket) or expired (15-min TTL), so ignore it and request
     # a fresh URL right before the fetch. If minting fails, fall back to
     # the payload URL on the thin chance it was still valid — no reason
     # to turn a transient API blip into a hard failure.
-    fetch_url = manifest_url
+    fetch_url = version_url
     fb = getattr(service, 'firebase_client', None)
-    if fb is not None and hasattr(fb, 'get_manifest_download_url'):
+    if fb is not None and hasattr(fb, 'get_version_download_url'):
         try:
-            fetch_url = fb.get_manifest_download_url(folder_id, manifest_id)
+            fetch_url = fb.get_version_download_url(roost_id, version_id)
         except Exception as e:
             logger.warning(
-                f"sync_pull: failed to mint fresh manifest URL "
+                f"sync_pull: failed to mint fresh version URL "
                 f"({type(e).__name__}: {e}); falling back to payload URL"
             )
 
-    # fetch + validate manifest
+    # fetch + validate version
     try:
-        manifest = fetch_manifest(fetch_url, expected_manifest_id=manifest_id)
-    except ManifestError as e:
+        version = fetch_version(fetch_url, expected_version_id=version_id)
+    except VersionError as e:
         _report_target_state(
-            service, site_id, folder_id, manifest_id, 'failed',
-            error=f"manifest fetch/validate: {e}",
+            service, site_id, roost_id, version_id, 'failed',
+            error=f"version fetch/validate: {e}",
         )
-        return f"sync_pull failed: manifest fetch/validate: {e}"
+        return f"sync_pull failed: version fetch/validate: {e}"
 
-    # diff against the most-recent committed manifest for this folder, if any
-    prior = _load_prior_manifest(service, site_id, folder_id, exclude_manifest_id=manifest_id)
-    diff = diff_manifests(manifest, prior)
+    # diff against the most-recent committed version for this roost, if any
+    prior = _load_prior_version(service, site_id, roost_id, exclude_version_id=version_id)
+    diff = diff_versions(version, prior)
 
     # register the distribution + planned files/chunks
-    files_planned = [{'path': f.path, 'size': f.size} for f in manifest.files]
+    files_planned = [{'path': f.path, 'size': f.size} for f in version.files]
     chunks_planned = [
-        {'hash': h, 'size': manifest.chunk_size_index[h]}
-        for h in sorted(manifest.chunks)
+        {'hash': h, 'size': version.chunk_size_index[h]}
+        for h in sorted(version.chunks)
     ]
     try:
         dist_id = state.start_distribution(
             site_id=site_id,
-            folder_id=folder_id,
-            manifest_id=manifest_id,
-            manifest_url=manifest_url,
+            roost_id=roost_id,
+            version_id=version_id,
+            version_url=version_url,
             files=files_planned,
             chunks=chunks_planned,
             extract_root=extract_root,
         )
     except SyncStateError as e:
         # already exists — find it and resume
-        existing = state.find_distribution(site_id, folder_id, manifest_id)
+        existing = state.find_distribution(site_id, roost_id, version_id)
         if existing is None:
             return f"sync_pull failed: state error and no existing row: {e}"
         dist_id = existing['id']
@@ -183,13 +183,13 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
     try:
         state.set_distribution_state(dist_id, 'downloading')
         _report_target_state(
-            service, site_id, folder_id, manifest_id, 'downloading',
-            chunks_total=len(manifest.chunks),
+            service, site_id, roost_id, version_id, 'downloading',
+            chunks_total=len(version.chunks),
         )
 
         # Pass the FULL chunk set to download_all, not just diff.chunks_to_fetch.
         # Post-commit cleanup (sync_assembler._cleanup_content_store) deletes
-        # chunks after successful assembly, so chunks from a prior manifest
+        # chunks after successful assembly, so chunks from a prior version
         # we'd normally consider "unchanged" may not actually be on disk
         # anymore. download_all does its own has_chunk() presence check per
         # chunk and skips ones already present — so passing the full set
@@ -197,9 +197,9 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         # predict content-store state.
         #
         # The diff's `chunks_to_fetch` is kept for reporting/metrics only —
-        # it tells the operator "what's NEW vs the prior manifest". That's
+        # it tells the operator "what's NEW vs the prior version". That's
         # different from "what the agent actually needs to download", which
-        # is a function of the local content store, not manifest deltas.
+        # is a function of the local content store, not version deltas.
         url_provider = _make_chunk_url_provider(service, site_id)
         # Throttled progress reporter for the download phase. Firing a
         # firestore write per-chunk on a 3739-chunk upload would be a
@@ -228,7 +228,7 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
                 _last_emit['ts'] = now
                 _last_emit['fetched'] = done
                 _report_target_state(
-                    service, site_id, folder_id, manifest_id, 'downloading',
+                    service, site_id, roost_id, version_id, 'downloading',
                     chunks_fetched=done,
                     chunks_total=total,
                 )
@@ -236,8 +236,8 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         try:
             dl_result = download_all(
                 distribution_id=dist_id,
-                chunks=[{'hash': h, 'size': manifest.chunk_size_index[h]}
-                        for h in sorted(manifest.chunks)],
+                chunks=[{'hash': h, 'size': version.chunk_size_index[h]}
+                        for h in sorted(version.chunks)],
                 url_provider=url_provider,
                 state=state,
                 cancel_event=cancel_event,
@@ -246,7 +246,7 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         except ChunkDownloadError as e:
             state.set_distribution_state(dist_id, 'failed', error=str(e))
             _report_target_state(
-                service, site_id, folder_id, manifest_id, 'failed',
+                service, site_id, roost_id, version_id, 'failed',
                 error=f"chunk download: {e}",
             )
             return f"sync_pull failed: chunk download: {e}"
@@ -254,22 +254,22 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         if cancel_event.is_set() and dl_result.failed == 0:
             state.set_distribution_state(dist_id, 'cancelled')
             _report_target_state(
-                service, site_id, folder_id, manifest_id, 'cancelled',
+                service, site_id, roost_id, version_id, 'cancelled',
             )
             return f"sync_pull cancelled during download (distribution {dist_id})"
 
         # assemble files atomically.
         state.set_distribution_state(dist_id, 'assembling')
         _report_target_state(
-            service, site_id, folder_id, manifest_id, 'assembling',
+            service, site_id, roost_id, version_id, 'assembling',
             chunks_fetched=dl_result.fetched,
             chunks_dedup=dl_result.already_present,
-            files_total=len(manifest.files),
+            files_total=len(version.files),
         )
         try:
             asm_result = assemble_all(
                 distribution_id=dist_id,
-                files=manifest.files,
+                files=version.files,
                 extract_root=extract_root,
                 state=state,
                 allowlist=allowlist,
@@ -278,7 +278,7 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         except (AssembleError, DestinationNotAllowedError) as e:
             state.set_distribution_state(dist_id, 'failed', error=str(e))
             _report_target_state(
-                service, site_id, folder_id, manifest_id, 'failed',
+                service, site_id, roost_id, version_id, 'failed',
                 error=f"file assembly: {e}",
             )
             return f"sync_pull failed: file assembly: {e}"
@@ -286,13 +286,13 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         if cancel_event.is_set() and asm_result.failed == 0:
             state.set_distribution_state(dist_id, 'cancelled')
             _report_target_state(
-                service, site_id, folder_id, manifest_id, 'cancelled',
+                service, site_id, roost_id, version_id, 'cancelled',
             )
             return f"sync_pull cancelled during assembly (distribution {dist_id})"
 
         state.set_distribution_state(dist_id, 'committed')
         _report_target_state(
-            service, site_id, folder_id, manifest_id, 'committed',
+            service, site_id, roost_id, version_id, 'committed',
             chunks_fetched=dl_result.fetched,
             chunks_dedup=dl_result.already_present,
             files_assembled=asm_result.assembled,
@@ -318,13 +318,13 @@ def _handle_cancel_sync(cmd_data: dict, cmd_id: str, service: Any) -> str:
     is graceful — current operation completes, no corrupted state.
     """
     site_id = _require_str(cmd_data, 'site_id')
-    folder_id = _require_str(cmd_data, 'folder_id')
-    manifest_id = _require_str(cmd_data, 'manifest_id')
+    roost_id = _require_str(cmd_data, 'roost_id')
+    version_id = _require_str(cmd_data, 'version_id')
 
     state = _state_for(service)
-    row = state.find_distribution(site_id, folder_id, manifest_id)
+    row = state.find_distribution(site_id, roost_id, version_id)
     if row is None:
-        return f"cancel_sync: no distribution found for ({site_id}, {folder_id}, {manifest_id})"
+        return f"cancel_sync: no distribution found for ({site_id}, {roost_id}, {version_id})"
     dist_id = row['id']
 
     with _inflight_lock:
@@ -335,12 +335,12 @@ def _handle_cancel_sync(cmd_data: dict, cmd_id: str, service: Any) -> str:
     return f"cancel_sync: cancellation signalled for distribution {dist_id}"
 
 
-def _handle_rollback_to_manifest(cmd_data: dict, cmd_id: str, service: Any) -> str:
+def _handle_rollback_to_version(cmd_data: dict, cmd_id: str, service: Any) -> str:
     """
-    treat rollback as a sync_pull of an older manifest. agent doesn't need
-    special "rollback" logic — the manifest pointer flip happens server-side
+    treat rollback as a sync_pull of an older version. agent doesn't need
+    special "rollback" logic — the version pointer flip happens server-side
     (web /api/roosts/.../rollback), and the agent simply sees a new
-    distribute_to_manifest event for the older manifest id.
+    sync_pull command for the older version id.
     """
     return _handle_sync_pull(cmd_data, cmd_id, service)
 
@@ -418,7 +418,7 @@ def _allowlist_for(service: Any) -> DestinationAllowlist:
     allowlist = getattr(service, '_destination_allowlist', None)
     if allowlist is None:
         # defer the import to avoid pulling shared_utils at module load
-        # (test isolation — sync_state + sync_manifest don't need it).
+        # (test isolation — sync_state + sync_version don't need it).
         import shared_utils
         config = shared_utils.read_config() or {}
         allowlist = DestinationAllowlist.from_config(config)
@@ -426,54 +426,54 @@ def _allowlist_for(service: Any) -> DestinationAllowlist:
     return allowlist
 
 
-def _load_prior_manifest(
-    service: Any, site_id: str, folder_id: str, exclude_manifest_id: str
-) -> Optional[Manifest]:
+def _load_prior_version(
+    service: Any, site_id: str, roost_id: str, exclude_version_id: str
+) -> Optional[Version]:
     """
-    find the most recent COMMITTED manifest for this folder (excluding
-    the manifest we're about to install) and load it from cache. used
+    find the most recent COMMITTED version for this roost (excluding
+    the version we're about to install) and load it from cache. used
     for diffing.
     """
     state = _state_for(service)
-    # we don't currently store manifest_url separately — only the cached
-    # file matters for diff. caller's cache lookup keyed by manifest_id.
+    # we don't currently store version_url separately — only the cached
+    # file matters for diff. caller's cache lookup keyed by version_id.
     # simplification: only look at the immediately prior committed dist.
     # (more sophisticated lineage walk is a v3 concern.)
     with state._lock:  # type: ignore[attr-defined]
         assert state._conn is not None
         cur = state._conn.execute(
-            '''SELECT manifest_id, manifest_url FROM distributions
-               WHERE site_id = ? AND folder_id = ? AND manifest_id != ?
+            '''SELECT version_id, version_url FROM distributions
+               WHERE site_id = ? AND roost_id = ? AND version_id != ?
                  AND state = 'committed'
                ORDER BY updated_at DESC LIMIT 1''',
-            (site_id, folder_id, exclude_manifest_id),
+            (site_id, roost_id, exclude_version_id),
         )
         row = cur.fetchone()
     if row is None:
         return None
-    prior_id = row['manifest_id']
-    # Prefer a fresh signed URL. The stored `manifest_url` in the local
+    prior_id = row['version_id']
+    # Prefer a fresh signed URL. The stored `version_url` in the local
     # sqlite row is the one handed over in the original sync_pull command
     # (unsigned or long-expired), so relying on it would only work when
-    # the local manifest cache still has the file. Requesting a fresh
+    # the local version cache still has the file. Requesting a fresh
     # URL lets us recover even after cache eviction.
-    prior_url = row['manifest_url']
+    prior_url = row['version_url']
     fb = getattr(service, 'firebase_client', None)
-    if fb is not None and hasattr(fb, 'get_manifest_download_url'):
+    if fb is not None and hasattr(fb, 'get_version_download_url'):
         try:
-            prior_url = fb.get_manifest_download_url(folder_id, prior_id)
+            prior_url = fb.get_version_download_url(roost_id, prior_id)
         except Exception as e:
             logger.warning(
-                f"sync_commands: failed to mint fresh url for prior manifest "
+                f"sync_commands: failed to mint fresh url for prior version "
                 f"{prior_id}: {type(e).__name__}: {e}; falling back to stored url"
             )
     try:
-        return fetch_manifest(prior_url, expected_manifest_id=prior_id)
-    except ManifestError as e:
-        # prior manifest unfetchable (cache evicted + url expired);
+        return fetch_version(prior_url, expected_version_id=prior_id)
+    except VersionError as e:
+        # prior version unfetchable (cache evicted + url expired);
         # treat as "no prior" so the diff includes everything.
         logger.warning(
-            f"sync_commands: prior manifest {prior_id} unfetchable: {e}; "
+            f"sync_commands: prior version {prior_id} unfetchable: {e}; "
             f"diffing against nothing"
         )
         return None
@@ -482,8 +482,8 @@ def _load_prior_manifest(
 def _report_target_state(
     service: Any,
     site_id: str,
-    folder_id: str,
-    manifest_id: str,
+    roost_id: str,
+    version_id: str,
     status: str,
     *,
     error: Optional[str] = None,
@@ -491,7 +491,7 @@ def _report_target_state(
 ) -> None:
     """
     Write this machine's per-target sync status to:
-        sites/{site_id}/roosts/{folder_id}/target_state/{machine_id}
+        sites/{site_id}/roosts/{roost_id}/target_state/{machine_id}
 
     The `onTargetStateWritten` cloud function reads this to advance the
     canary→fleet rollout state machine, and the web UI reads it to show
@@ -515,7 +515,7 @@ def _report_target_state(
         return
 
     payload: Dict[str, Any] = {
-        'reportedManifestId': manifest_id,
+        'reportedVersionId': version_id,
         'status': status,
         'updatedAt': SERVER_TIMESTAMP,
     }
@@ -527,13 +527,13 @@ def _report_target_state(
         if v is not None:
             payload[k] = v
 
-    path = f'sites/{site_id}/roosts/{folder_id}/target_state/{machine_id}'
+    path = f'sites/{site_id}/roosts/{roost_id}/target_state/{machine_id}'
     try:
         fb.db.set_document(path, payload, merge=True)
     except Exception as e:
         logger.warning(
             f"sync_commands: failed to report target_state "
-            f"({status}) for {folder_id}/{manifest_id}: {type(e).__name__}: {e}"
+            f"({status}) for {roost_id}/{version_id}: {type(e).__name__}: {e}"
         )
 
 

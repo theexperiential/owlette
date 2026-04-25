@@ -2,15 +2,15 @@
  * roost upload orchestrator (wave 3.1).
  *
  * Chain: hash → /api/chunks/check → /api/chunks/upload-urls → parallel
- * PUTs via uploadQueue → /api/roosts/{id}/manifests.
+ * PUTs via uploadQueue → /api/roosts/{id}/versions.
  *
  * Uses the wave-3 primitives we've already built — no Uppy, no tus.
  * The IndexedDB-backed upload queue gives us tab-close recovery; the
  * chunker is off-main-thread; pre-upload + dedup happen at the check step.
  */
 
-import { type ManifestFileEntry, type NamedBlob } from './chunking';
-import { buildManifest } from './manifestBuilder';
+import { type VersionFileEntry, type NamedBlob, VERSION_MEDIA_TYPE } from './chunking';
+import { buildVersion } from './versionBuilder';
 import { openIndexedDBStore } from './uploadQueue.idb';
 import { runUploadQueue, type QueueStore } from './uploadQueue';
 
@@ -37,12 +37,14 @@ export interface UploadFolderOptions {
   siteId: string;
   roostId: string;
   files: NamedBlob[];
-  /** Human-readable name — shown on the /roosts page. */
+  /** Human-readable name — shown on the /roost page. */
   name: string;
-  /** Machine IDs to dispatch sync_pull to once the manifest finalises. */
+  /** Machine IDs to dispatch sync_pull to once the version finalises. */
   targets: string[];
   /** Optional per-machine extract path override (falls back to ~/Documents/Owlette/). */
   extractPath?: string;
+  /** Optional commit-message style description (≤500 chars, plaintext). */
+  description?: string;
   onProgress?: (p: UploadProgress) => void;
   signal?: AbortSignal;
   /** Override stores for tests — prod uses openIndexedDBStore per-session. */
@@ -51,12 +53,13 @@ export interface UploadFolderOptions {
 }
 
 export interface UploadResult {
-  manifestId: string;
-  currentManifestId: string;
-  previousManifestId: string | null;
+  versionId: string;
+  versionNumber: number;
+  currentVersionId: string;
+  previousVersionId: string | null;
   /** Bytes that actually transferred after dedup. */
   uploadedBytes: number;
-  /** Total manifest bytes (upload + already-present). */
+  /** Total version bytes (upload + already-present). */
   totalBytes: number;
 }
 
@@ -73,7 +76,7 @@ export class RoostUploadError extends Error {
 }
 
 /**
- * Run the full upload pipeline. Resolves with the persisted manifest
+ * Run the full upload pipeline. Resolves with the persisted version
  * pointer on success; rejects with `RoostUploadError` on any phase failure.
  */
 export async function uploadFolder(
@@ -83,14 +86,14 @@ export async function uploadFolder(
   const report = (p: UploadProgress) => opts.onProgress?.(p);
 
   // ── 1. hash ─────────────────────────────────────────────────────
-  // Runs in a Web Worker (see manifestBuilder.ts) so a 100 GB folder's
+  // Runs in a Web Worker (see versionBuilder.ts) so a 100 GB folder's
   // hashing doesn't freeze the dashboard. Main thread only handles
   // progress ticks. Pre-worker-wiring the UI would visibly jank during
   // any meaningful upload.
   report({ phase: 'hashing', message: 'reading + hashing your roost' });
-  let entries: ManifestFileEntry[];
+  let entries: VersionFileEntry[];
   try {
-    entries = await buildManifest(opts.files, {
+    entries = await buildVersion(opts.files, {
       signal: opts.signal,
       onProgress: (p) =>
         report({
@@ -264,15 +267,16 @@ export async function uploadFolder(
   }
 
   // ── 4. finalize ─────────────────────────────────────────────────
-  report({ phase: 'finalizing', message: 'publishing manifest' });
-  const manifest = buildOciManifest(entries);
+  report({ phase: 'finalizing', message: 'publishing version' });
+  const versionBody = buildOciVersion(entries);
   let body: {
-    manifestId?: string;
-    currentManifestId?: string;
-    previousManifestId?: string | null;
+    versionId?: string;
+    versionNumber?: number;
+    currentVersionId?: string;
+    previousVersionId?: string | null;
   };
   try {
-    const res = await fetchFn(`/api/roosts/${encodeURIComponent(opts.roostId)}/manifests`, {
+    const res = await fetchFn(`/api/roosts/${encodeURIComponent(opts.roostId)}/versions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -280,10 +284,11 @@ export async function uploadFolder(
       },
       body: JSON.stringify({
         siteId: opts.siteId,
-        manifest,
+        version: versionBody,
         name: opts.name,
         targets: opts.targets,
         ...(opts.extractPath ? { extractPath: opts.extractPath } : {}),
+        ...(opts.description ? { description: opts.description } : {}),
       }),
       signal: opts.signal,
     });
@@ -298,18 +303,19 @@ export async function uploadFolder(
     );
   }
 
-  if (!body.manifestId) {
+  if (!body.versionId) {
     throw new RoostUploadError(
-      'finalize returned no manifestId',
+      'finalize returned no versionId',
       'finalizing',
     );
   }
 
   report({ phase: 'done', message: 'done' });
   return {
-    manifestId: body.manifestId,
-    currentManifestId: body.currentManifestId ?? body.manifestId,
-    previousManifestId: body.previousManifestId ?? null,
+    versionId: body.versionId,
+    versionNumber: typeof body.versionNumber === 'number' ? body.versionNumber : 0,
+    currentVersionId: body.currentVersionId ?? body.versionId,
+    previousVersionId: body.previousVersionId ?? null,
     uploadedBytes,
     totalBytes,
   };
@@ -320,14 +326,14 @@ export async function uploadFolder(
 /* --------------------------------------------------------------------- */
 
 /**
- * Given the input files + the computed manifest entries, slice the exact
+ * Given the input files + the computed version entries, slice the exact
  * bytes for `hash` out of the original blob without re-hashing. Walks
  * the entry list in order — the first entry+chunk with a matching hash
  * wins (dedup means the same bytes may appear in multiple entries).
  */
 export function locateChunkBytes(
   files: readonly NamedBlob[],
-  entries: readonly ManifestFileEntry[],
+  entries: readonly VersionFileEntry[],
   hash: string,
 ): Blob | null {
   const byPath = new Map<string, Blob>();
@@ -346,22 +352,22 @@ export function locateChunkBytes(
   return null;
 }
 
-function buildOciManifest(entries: ManifestFileEntry[]) {
-  // Content-addressed: manifest body contains ONLY content-identifying
+function buildOciVersion(entries: VersionFileEntry[]) {
+  // Content-addressed: version body contains ONLY content-identifying
   // fields. `createdAt` / `createdBy` / `siteId` / `name` previously
   // lived in `config` but they're metadata, not content — and embedding
   // a wall-clock timestamp in the hashed body meant byte-identical
-  // uploads produced different manifest IDs, defeating dedup at the
-  // manifest level. Those fields are already stored on the Firestore
-  // manifest subdoc (see web/app/api/roosts/[roostId]/manifests/route.ts),
+  // uploads produced different version IDs, defeating dedup at the
+  // version level. Those fields are already stored on the Firestore
+  // version subdoc (see web/app/api/roosts/[roostId]/versions/route.ts),
   // so removing them here is a pure de-duplication without any loss
   // of metadata.
   //
-  // `config: {}` satisfies agent-side sync_manifest validation, which
+  // `config: {}` satisfies agent-side sync_version validation, which
   // requires `config` to be a dict but doesn't inspect its contents.
   return {
     schemaVersion: 2,
-    mediaType: 'application/vnd.owlette.manifest.v1+json',
+    mediaType: VERSION_MEDIA_TYPE,
     config: {},
     files: entries,
   };

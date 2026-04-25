@@ -12,7 +12,7 @@ Typical usage::
                 "rst_abc",
                 PushOptions(site_id="site-1", on_progress=print),
             )
-            print(result.manifest_id)
+            print(result.version_id, "v" + str(result.version_number))
 
     asyncio.run(main())
 """
@@ -52,7 +52,6 @@ from roost.resources import (
     MachineDetail,
     MachineSummary,
     Machines,
-    Manifests,
     PushOptions,
     PushResult,
     QuotaHistoryDay,
@@ -65,6 +64,8 @@ from roost.resources import (
     RoostSummary,
     Site,
     Sites,
+    VersionSummary,
+    Versions,
     WebhookSubscription,
     Webhooks,
 )
@@ -114,7 +115,7 @@ class Roost:
 
         self._roosts: Roosts | None = None
         self._chunks: Chunks | None = None
-        self._manifests: Manifests | None = None
+        self._versions: Versions | None = None
         self._deployments: Deployments | None = None
         self._webhooks: Webhooks | None = None
         self._keys: Keys | None = None
@@ -158,10 +159,10 @@ class Roost:
         return self._chunks
 
     @property
-    def manifests(self) -> Manifests:
-        if self._manifests is None:
-            self._manifests = Manifests(self._client)
-        return self._manifests
+    def versions(self) -> Versions:
+        if self._versions is None:
+            self._versions = Versions(self._client)
+        return self._versions
 
     @property
     def deployments(self) -> Deployments:
@@ -226,7 +227,6 @@ __all__ = [
     "MachineDetail",
     "MachineSummary",
     "Machines",
-    "Manifests",
     "PushOptions",
     "PushResult",
     "QuotaHistoryDay",
@@ -245,6 +245,8 @@ __all__ = [
     "Sites",
     "VerifyReason",
     "VerifySignatureResult",
+    "VersionSummary",
+    "Versions",
     "WebhookSubscription",
     "Webhooks",
     "__version__",

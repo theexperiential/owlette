@@ -42,7 +42,7 @@ try {
     },
   });
 
-  console.log('[ci-cd] published manifest', result.manifestId);
+  console.log('[ci-cd] published version', result.versionId, `#${result.versionNumber}`);
   console.log('[ci-cd] stats:', JSON.stringify(result.stats, null, 2));
 
   // trigger fleet deploy immediately — skip for staged rollouts

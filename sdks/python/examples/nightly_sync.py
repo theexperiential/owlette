@@ -3,7 +3,7 @@
 Mirrors docs/api/examples/nightly-sync.md. ``push()`` is content-addressed
 end-to-end, so when nothing has changed every chunk hash already exists in
 r2, ``stats.uploaded_chunks == 0``, and the server returns the existing
-manifest id without writing a new one. This script reports that cleanly.
+version id without writing a new one. This script reports that cleanly.
 
 Run from cron / systemd::
 
@@ -61,21 +61,22 @@ async def main() -> int:
     async with Roost(token=token, api_url=api_url) as client:
         try:
             before = await client.roosts.get(roost_id, site_id=site_id)
-            previous = before.current_manifest.manifest_id if before.current_manifest else None
+            previous = before.current_version.version_id if before.current_version else None
 
             result = await client.roosts.push(
                 watch_dir, roost_id, PushOptions(site_id=site_id),
             )
 
-            if result.manifest_id == previous:
-                print(json.dumps({"level": "info", "msg": "no-op — nothing changed", "manifestId": result.manifest_id}))
+            if result.version_id == previous:
+                print(json.dumps({"level": "info", "msg": "no-op — nothing changed", "versionId": result.version_id}))
                 return 0
 
             print(json.dumps({
                 "level": "info",
-                "msg": "published new manifest",
-                "manifestId": result.manifest_id,
-                "previousManifestId": previous,
+                "msg": "published new version",
+                "versionId": result.version_id,
+                "versionNumber": result.version_number,
+                "previousVersionId": previous,
                 "uploadedChunks": result.stats.uploaded_chunks,
                 "totalBytes": result.stats.total_bytes,
             }))

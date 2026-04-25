@@ -14,7 +14,7 @@
  * dashboard usage works with plain session auth.
  *
  * roost public api wave 3.9 — transport only. Firestore-driven event
- * sourcing (manifest pointer flips, deploy progress, etc.) plugs in via
+ * sourcing (version pointer flips, deploy progress, etc.) plugs in via
  * the onSubscribe hook marked below; wave 4.8 wires the actual sources.
  */
 import type { NextRequest } from 'next/server';

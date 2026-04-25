@@ -10,9 +10,9 @@
  */
 
 export const ROOST_WEBHOOK_EVENTS = [
-  // manifests
-  'manifest.published',
-  'manifest.rolled_back',
+  // versions
+  'version.published',
+  'version.rolled_back',
   // deployments
   'deployment.started',
   'deployment.completed',

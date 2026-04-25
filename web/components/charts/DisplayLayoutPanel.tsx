@@ -23,7 +23,13 @@
  * entirely for non-admins (read-only view).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -38,8 +44,10 @@ import {
 } from '@/hooks/useDisplayState';
 import { useDisplayActions } from '@/hooks/useDisplayActions';
 import { useDisplayDraft } from '@/hooks/useDisplayDraft';
+import { useDisplayModes } from '@/hooks/useDisplayModes';
 import { DisplayCanvas } from './DisplayCanvas';
 import { DisplayMonitorTable } from './DisplayMonitorTable';
+import { DisplayEditorDialog } from './DisplayEditorDialog';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import {
   Tooltip,
@@ -117,14 +125,70 @@ export function DisplayLayoutPanel({
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false);
   const [applyDialogOpen, setApplyDialogOpen] = useState(false);
   const [closeUnsavedDialogOpen, setCloseUnsavedDialogOpen] = useState(false);
+  // [A2.6] Id of the monitor currently being edited via DisplayEditorDialog.
+  // Double-click a rect in the canvas or a row in the table (in edit mode on
+  // the assigned tab) to open. Dialog saves flow through the draft via
+  // `updateMonitor`, not directly to Firestore.
+  const [editingMonitorId, setEditingMonitorId] = useState<string | null>(null);
+  // [A4.2] Start-from-live handoff. The "start from live" button in the
+  // empty-assigned state flips this + mode='edit' together; the effect below
+  // reads the flag post-commit and replaces useDisplayDraft's default
+  // "seed from assigned" (empty here) with a clone of the live topology,
+  // then clears it. Also read by the render-phase guard so an edit session
+  // mid-seed doesn't get snapped back to view before the draft lands.
+  // State (not ref) so render reads are lint-clean.
+  const [pendingSeedFromLive, setPendingSeedFromLive] = useState(false);
 
-  const { draft, isDirty, updateMonitor, shiftSecondariesBy, clearDraft } =
-    useDisplayDraft({
-      siteId,
-      machineId,
-      assigned,
-      mode,
-    });
+  // [A4.3] Topology signatureHash at the moment edit mode was entered. Used
+  // to detect "hardware changed during edit" — if the live profile's hash
+  // diverges from this baseline, the prompt below asks the operator whether
+  // to reload the draft from the new live topology or keep editing the
+  // potentially-stale draft. Captured during render on view -> edit
+  // transition (mirrors `useDisplayDraft`'s prevMode pattern) rather than
+  // in a useEffect to avoid a one-render window where the baseline is still
+  // `null` and the change would be spuriously reported.
+  const [editEntryHash, setEditEntryHash] = useState<string | null>(null);
+  const [prevModeForHash, setPrevModeForHash] = useState<'view' | 'edit'>(
+    mode,
+  );
+  if (mode !== prevModeForHash) {
+    setPrevModeForHash(mode);
+    setEditEntryHash(mode === 'edit' ? profile?.signatureHash ?? null : null);
+  } else if (
+    mode === 'edit' &&
+    editEntryHash === null &&
+    profile?.signatureHash
+  ) {
+    // Profile snapshot arrived after edit-mode entry (panel opened before
+    // first Firestore read). Backfill the baseline so the very-first hash
+    // doesn't get mis-reported as a change.
+    setEditEntryHash(profile.signatureHash);
+  }
+
+  // [A3.3 / A3.4] Supported-display-modes catalogue, feeding the resolution +
+  // refresh dropdowns in the table. Subscription is gated on edit mode so we
+  // don't keep a live listener open on every panel — the dashboard card view
+  // opens the panel frequently. `triggerForHash` fires the agent-side
+  // enumerate command exactly once per (site, machine, topology-hash) per
+  // tab lifetime; the hook dedups internally.
+  const { catalogue: displayModes } = useDisplayModes(siteId, machineId, {
+    enabled: mode === 'edit',
+    triggerForHash: profile?.signatureHash,
+  });
+
+  const {
+    draft,
+    isDirty,
+    updateMonitor,
+    shiftSecondariesBy,
+    resetToLive,
+    clearDraft,
+  } = useDisplayDraft({
+    siteId,
+    machineId,
+    assigned,
+    mode,
+  });
 
   // Drag-to-reposition callback — only the assigned canvas in edit mode wires
   // this in, so a no-op outside edit mode keeps the existing read-only flow.
@@ -275,18 +339,59 @@ export function DisplayLayoutPanel({
   const hasLiveProfile = !!profile && liveMonitors.length > 0;
   const hasAssignedLayout = !!assigned && assignedMonitors.length > 0;
 
-  // [RECONSTRUCTED — Wave A1.2] Defensive render-phase guard: if the admin
-  // flag disappears or the assigned layout gets cleared mid-edit, drop back
-  // to view. Uses the same pattern as useDisplayDraft's prevMode tracker.
+  // [A4.3] Hardware-changed detection: edit mode + baseline captured +
+  // current live hash diverges from the baseline. Drives the prompt below.
+  // Non-null baseline guard prevents a spurious fire on first profile
+  // arrival when edit opened before any snapshot landed.
+  const hardwareChangedDuringEdit =
+    mode === 'edit' &&
+    editEntryHash !== null &&
+    !!profile?.signatureHash &&
+    profile.signatureHash !== editEntryHash;
+
+  // [A4.4] Stale-edidHash set: edidHashes referenced by the assigned-tab
+  // monitors that aren't in the current live topology. Drives the
+  // "⚠ not connected" badge on canvas rects. Only computed for the
+  // assigned tab; the live tab's monitors are by definition connected.
+  // Includes the draft when in edit mode so a live-seeded draft that
+  // already references a now-disconnected hash gets flagged immediately.
+  const staleEdidHashes = useMemo<Set<string> | undefined>(() => {
+    if (activeTab !== 'assigned') return undefined;
+    const liveHashes = new Set<string>();
+    for (const m of liveMonitors) {
+      if (m.edidHash) liveHashes.add(m.edidHash);
+    }
+    const stale = new Set<string>();
+    for (const m of effectiveAssignedMonitors) {
+      if (m.edidHash && !liveHashes.has(m.edidHash)) stale.add(m.edidHash);
+    }
+    return stale;
+  }, [activeTab, liveMonitors, effectiveAssignedMonitors]);
+
+  // [RECONSTRUCTED — Wave A1.2 / relaxed A4.2] Defensive render-phase guard.
+  // If the admin flag disappears mid-edit, snap back to view. If the assigned
+  // layout gets cleared AND we have no draft to fall back on AND we're not
+  // in the middle of a start-from-live handoff, snap back as well. The
+  // relaxed condition lets the live-seed flow linger in edit mode even
+  // before an `assigned` layout exists: the draft itself is the authority,
+  // and save writes it as the first-ever assigned.
   //
   // Also discards the sessionStorage draft. If we only flip the mode, the
   // stale draft survives in storage; next time an assigned layout exists
   // and the operator enters edit, useDisplayDraft's own staleness check
   // catches most cases by edidHash — but the admin-flag case can't be
   // detected there, so we handle both reasons the same way here.
-  if (mode === 'edit' && (!canSiteAdmin || !hasAssignedLayout)) {
+  const draftHasMonitors = !!draft && draft.length > 0;
+  if (
+    mode === 'edit' &&
+    (!canSiteAdmin ||
+      (!hasAssignedLayout &&
+        !draftHasMonitors &&
+        !pendingSeedFromLive))
+  ) {
     setMode('view');
     clearDraft();
+    setPendingSeedFromLive(false);
   }
 
   // Button disabled-state logic:
@@ -353,6 +458,30 @@ export function DisplayLayoutPanel({
     return String(e);
   };
 
+  /**
+   * Pick a specific apply-failure toast message based on the agent's error
+   * code when the error string carries one. The service handler serializes
+   * failures as `"Error: {code}: {message}"` (see owlette_service.py
+   * `enumerate_display_modes` / `apply_display_topology` branches) so a
+   * simple substring check is all we need here — no JSON parsing, no
+   * command-result subscription.
+   *
+   * Today `applyLayout` only throws for Firestore-write failures; agent
+   * apply-result parsing is deferred to a follow-up. The specific-toast
+   * hook is wired here so that flow has somewhere to land when it ships.
+   */
+  const applyErrorToast = (e: unknown): string => {
+    const msg = formatError(e);
+    if (msg.includes('unsupported_mode')) {
+      return (
+        "recall failed: one or more monitors can't do the requested " +
+        'resolution or refresh rate — pick a supported mode from the ' +
+        'dropdowns and try again'
+      );
+    }
+    return `recall failed: ${msg}`;
+  };
+
   // Capture writes the current live arrangement as the assigned layout. We
   // snapshot `liveMonitors` at confirm-time (not at dialog-open-time) so any
   // updates that arrive while the dialog is open are persisted. ConfirmDialog
@@ -381,7 +510,7 @@ export function DisplayLayoutPanel({
       setNowMs(Date.now());
     } catch (e) {
       console.error('Failed to recall display layout', e);
-      toast.error(`recall failed: ${formatError(e)}`);
+      toast.error(applyErrorToast(e));
       setApplyDialogOpen(true);
     }
   };
@@ -467,7 +596,54 @@ export function DisplayLayoutPanel({
   const handleDiscardEdit = () => {
     clearDraft();
     setMode('view');
+    setPendingSeedFromLive(false);
   };
+
+  // [A4.2] Empty-assigned seed-from-live. When the assigned tab is empty and
+  // the operator clicks "start from live", skip the store-then-edit dance:
+  // set the handoff ref, flip into edit mode, and let the effect below
+  // clone live into the draft AFTER useDisplayDraft's mode-transition seed
+  // (which would otherwise stomp our call with a null from empty assigned).
+  const handleSeedFromLive = () => {
+    if (liveMonitors.length === 0) return;
+    setPendingSeedFromLive(true);
+    setMode('edit');
+  };
+
+  // Runs post-commit; the mode transition has landed and useDisplayDraft has
+  // already seeded draft=null (because assigned is empty). Overwrite with a
+  // clone of the current live topology and clear the handoff flag. Guarded
+  // on !draft so a re-entry where the draft already exists doesn't clobber
+  // the operator's in-progress edits.
+  //
+  // Note on `set-state-in-effect`: the setPendingSeedFromLive(false) calls
+  // below are intentional — the flag is a one-shot coordination token
+  // between the click handler and this post-commit seed. React's rule
+  // guards against derivable state + state-update loops, neither of which
+  // apply here (the flag's semantics are genuinely imperative: "do this
+  // one thing after mode flips, then stop").
+  useEffect(() => {
+    if (!pendingSeedFromLive) return;
+    if (mode !== 'edit') return;
+    if (draft && draft.length > 0) {
+      // Draft already populated by a prior reset — no-op. The flag stays
+      // set until save/discard clears it; re-renders with the same deps
+      // won't re-invoke the effect, so there's no loop.
+      return;
+    }
+    if (liveMonitors.length === 0) {
+      // Live topology hasn't arrived yet — retry on the next render that
+      // brings monitors in. The guard above keeps edit mode alive until
+      // the draft fills or the user cancels.
+      return;
+    }
+    resetToLive(liveMonitors);
+    // Flag clear is the one-shot completion signal — lint's
+    // set-state-in-effect rule warns against derivable-state patterns, but
+    // this is a genuine imperative handoff (click handler → effect).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPendingSeedFromLive(false);
+  }, [pendingSeedFromLive, mode, draft, liveMonitors, resetToLive]);
 
   // Save commits the draft as the new assigned layout. Uses the same
   // captureLayout path as store — the only difference is which monitors we
@@ -528,28 +704,51 @@ export function DisplayLayoutPanel({
       );
     }
 
-    if (activeTab === 'assigned' && !hasAssignedLayout) {
+    // Empty-assigned surface only when there's genuinely nothing to show.
+    // Suppressed in edit mode with a populated draft so a live-seeded edit
+    // session renders the canvas against the draft instead of the empty state.
+    const emptyAssignedVisible =
+      activeTab === 'assigned' &&
+      !hasAssignedLayout &&
+      !(mode === 'edit' && draftHasMonitors);
+    if (emptyAssignedVisible) {
       return (
         <div className="h-[320px] flex flex-col items-center justify-center px-6 text-center gap-3">
           <p className="text-sm text-muted-foreground max-w-md">
-            nothing stored yet. store the current live arrangement to make it
-            the one owlette keeps in place.
+            nothing stored yet. store the current live arrangement as-is, or
+            start from live to tweak before saving.
           </p>
           {canSiteAdmin && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={captureDisabled}
-              onClick={() => setCaptureDialogOpen(true)}
-              data-testid="display-store-current-button"
-              className="h-7 px-2 text-xs"
-            >
-              {actions.applying ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                'store current'
-              )}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={captureDisabled}
+                onClick={() => setCaptureDialogOpen(true)}
+                data-testid="display-store-current-button"
+                className="h-7 px-2 text-xs"
+              >
+                {actions.applying ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  'store current'
+                )}
+              </Button>
+              {/* [A4.2] Start-from-live: enter edit mode with the draft
+                  pre-seeded from the live topology. Equivalent to capture-
+                  then-edit, but the operator gets a chance to tweak before
+                  anything hits Firestore. */}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={liveMonitors.length === 0 || actions.applying}
+                onClick={handleSeedFromLive}
+                data-testid="display-start-from-live-button"
+                className="h-7 px-2 text-xs"
+              >
+                start from live
+              </Button>
+            </div>
           )}
         </div>
       );
@@ -572,10 +771,16 @@ export function DisplayLayoutPanel({
                   ? driftedMonitorIds
                   : undefined
             }
+            staleEdidHashes={staleEdidHashes}
             editable={mode === 'edit' && activeTab === 'assigned'}
             onMonitorMove={
               mode === 'edit' && activeTab === 'assigned'
                 ? handleMonitorMove
+                : undefined
+            }
+            onMonitorDoubleClick={
+              mode === 'edit' && activeTab === 'assigned'
+                ? setEditingMonitorId
                 : undefined
             }
             onLayoutShift={
@@ -591,11 +796,21 @@ export function DisplayLayoutPanel({
           monitors={cardsMonitors}
           selectedMonitorId={selectedMonitorId}
           onSelect={handleMonitorClick}
+          onRowDoubleClick={
+            mode === 'edit' && activeTab === 'assigned'
+              ? setEditingMonitorId
+              : undefined
+          }
           accentColor={tabAccentColor}
           editable={mode === 'edit' && activeTab === 'assigned'}
           onUpdateMonitor={
             mode === 'edit' && activeTab === 'assigned'
               ? updateMonitor
+              : undefined
+          }
+          modesByEdidHash={
+            mode === 'edit' && activeTab === 'assigned'
+              ? displayModes?.byEdidHash
               : undefined
           }
           driftMap={
@@ -897,6 +1112,50 @@ export function DisplayLayoutPanel({
         cancelText="keep editing"
         confirmText="discard and close"
         onConfirm={handleDiscardAndClose}
+      />
+
+      {/* [A4.3] Hardware-changed prompt. Fires when the live profile's
+          signatureHash diverges from the one captured at edit-mode entry —
+          a monitor got plugged / unplugged / reconfigured while the
+          operator was editing the stored layout. "reload from live" nukes
+          the draft and clones the new live topology; "keep editing"
+          suppresses the prompt (by advancing the baseline to the current
+          hash) so it doesn't re-fire on every render, but leaves the
+          draft intact. Escape / overlay close also advance the baseline
+          so the operator can explicitly acknowledge and keep going. */}
+      <ConfirmDialog
+        open={hardwareChangedDuringEdit}
+        onOpenChange={(next) => {
+          if (!next) {
+            // Close of any kind — advance the baseline to suppress
+            // re-fire until the next genuine hardware change.
+            setEditEntryHash(profile?.signatureHash ?? null);
+          }
+        }}
+        title="hardware changed"
+        description="the machine's display configuration changed since you started editing. reload your draft from the new live layout?"
+        cancelText="keep editing"
+        confirmText="reload from live"
+        onConfirm={() => {
+          resetToLive(liveMonitors);
+          setEditEntryHash(profile?.signatureHash ?? null);
+        }}
+      />
+
+      {/* [A2.6] Per-monitor editor. Opens from double-click on a canvas rect
+          or a table row when the panel is in edit mode on the assigned tab.
+          Saves flow through the draft via `updateMonitor`, not Firestore. */}
+      <DisplayEditorDialog
+        monitor={
+          editingMonitorId
+            ? cardsMonitors.find((m) => m.id === editingMonitorId) ?? null
+            : null
+        }
+        open={editingMonitorId !== null}
+        onClose={() => setEditingMonitorId(null)}
+        onSave={(changes) => {
+          if (editingMonitorId) updateMonitor(editingMonitorId, changes);
+        }}
       />
     </Card>
   );

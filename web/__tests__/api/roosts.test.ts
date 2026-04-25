@@ -75,7 +75,7 @@ describe('GET /api/roosts', () => {
       querySnapshot([
         {
           id: 'rst_active00001',
-          data: { name: 'active', targets: ['m1'], currentManifestId: 'm-1' },
+          data: { name: 'active', targets: ['m1'], currentVersionId: 'v-1' },
         },
         {
           id: 'rst_deleted0001',
@@ -189,23 +189,26 @@ describe('GET /api/roosts/{id}', () => {
     expect(res.status).toBe(404);
   });
 
-  it('returns detail + manifest summaries', async () => {
+  it('returns detail + version summaries', async () => {
     mocks.get.mockImplementationOnce(() =>
       Promise.resolve(
         docSnapshot(ROOST, {
           name: 'alpha',
           targets: ['m1'],
-          currentManifestId: 'manifest01',
-          previousManifestId: null,
+          currentVersionId: 'vrs_version01',
+          previousVersionId: null,
+          versionCounter: 1,
           schemaVersion: 2,
         }),
       ),
     );
-    // current manifest lookup
+    // current version lookup
     mocks.get.mockImplementationOnce(() =>
       Promise.resolve(
-        docSnapshot('manifest01', {
-          manifestUrl: 'https://r2/.../manifest01.json',
+        docSnapshot('vrs_version01', {
+          versionUrl: 'https://r2/.../vrs_version01.json',
+          versionNumber: 1,
+          description: 'initial release',
           totalSize: 1234,
           totalFiles: 3,
         }),
@@ -219,8 +222,11 @@ describe('GET /api/roosts/{id}', () => {
     const body = await res.json();
     expect(body.roostId).toBe(ROOST);
     expect(body.name).toBe('alpha');
-    expect(body.currentManifest.manifestId).toBe('manifest01');
-    expect(body.previousManifest).toBeNull();
+    expect(body.currentVersion.versionId).toBe('vrs_version01');
+    expect(body.currentVersion.versionNumber).toBe(1);
+    expect(body.currentVersion.description).toBe('initial release');
+    expect(body.versionCounter).toBe(1);
+    expect(body.previousVersion).toBeNull();
   });
 });
 

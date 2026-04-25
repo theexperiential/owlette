@@ -10,7 +10,7 @@ end-to-end walkthrough for publishing a new roost from scratch using nothing but
 3. chunk a local directory
 4. dedup-check hashes against r2
 5. upload only what's missing
-6. publish an oci manifest
+6. publish an oci version
 7. watch the fleet roll out
 8. (optionally) roll back in one call
 
@@ -114,8 +114,8 @@ curl -fsS -X POST "$ROOST_BASE/api/roosts" \
   "siteId": "kiosk-fleet-01",
   "name": "lobby-touchdesigner",
   "targets": ["machine-a7f3"],
-  "currentManifestId": null,
-  "previousManifestId": null,
+  "currentVersionId": null,
+  "previousVersionId": null,
   "totalSize": 0,
   "totalFiles": 0,
   "createdAt": "2026-04-22T15:30:00Z",
@@ -260,9 +260,9 @@ each `PUT` returns `200 OK` with an empty body and an `ETag` header. if any uplo
 
 ---
 
-## step 7: build the manifest
+## step 7: build the version
 
-a roost manifest is an oci-shaped json document: `config` (arbitrary roost metadata) + `layers` (one per file). it's the immutable snapshot the fleet downloads.
+a roost version is an oci-shaped json document: `config` (arbitrary roost metadata) + `layers` (one per file). it's the immutable snapshot the fleet downloads.
 
 ```bash
 # config blob — describes the roost itself
@@ -275,52 +275,56 @@ CONFIG_DIGEST="sha256:$(printf '%s' "$CONFIG_JSON" | sha256sum | awk '{print $1}
 LAYERS=$(jq '[.[] | {mediaType: "application/vnd.owlette.file.v1", path: .path, digest: .hash, size: .size}] | sort_by(.path)' chunks.json)
 
 # assemble
-cat > manifest-body.json <<EOF
+cat > version-body.json <<EOF
 {
   "siteId": "$SITE_ID",
-  "manifest": {
+  "version": {
     "schemaVersion": 2,
-    "mediaType": "application/vnd.owlette.manifest.v1+json",
+    "mediaType": "application/vnd.owlette.version.v1+json",
     "config": {
       "mediaType": "application/vnd.owlette.roost.config.v1+json",
       "digest": "$CONFIG_DIGEST",
       "size": $CONFIG_BYTES
     },
     "layers": $LAYERS
-  }
+  },
+  "description": "initial publish from quickstart"
 }
 EOF
 
-jq '.manifest.layers | length' manifest-body.json   # sanity check
+jq '.version.layers | length' version-body.json   # sanity check
 ```
 
 notes:
-- **first publish** — omit `expectedCurrentManifestId` (no prior manifest). for subsequent publishes, include `"expectedCurrentManifestId": "<previous digest>"` or send `If-Match` as a header (cas).
-- **path order matters** for a deterministic digest — always sort by `path`. two identical file sets must produce the same manifest digest.
-- the config blob is authoritative metadata — put anything you want the agent to know there (e.g. `renderJob`, `buildCommit`). its bytes aren't uploaded separately in v2; the manifest embeds everything it references.
+- **first publish** — omit `expectedCurrentVersionId` (no prior version). for subsequent publishes, include `"expectedCurrentVersionId": "<previous id>"` or send `If-Match` as a header (cas).
+- **path order matters** for a deterministic digest — always sort by `path`. two identical file sets must produce the same version digest.
+- the config blob is authoritative metadata — put anything you want the agent to know there (e.g. `renderJob`, `buildCommit`). its bytes aren't uploaded separately in v2; the version embeds everything it references.
+- `description` is optional plaintext (≤500 chars) shown in the version-history ui.
 
 ---
 
-## step 8: publish the manifest
+## step 8: publish the version
 
-`POST /api/roosts/{id}/manifests` validates every referenced chunk digest against r2 (so unreferenced chunks aren't allowed), assigns the manifest its own digest, flips `currentManifestId`, and triggers fan-out to all targets.
+`POST /api/roosts/{id}/versions` validates every referenced chunk digest against r2 (so unreferenced chunks aren't allowed), assigns the version its own id, flips `currentVersionId`, and triggers fan-out to all targets. the server atomically mints a `versionNumber` (auto-incrementing integer, 1-indexed per roost) in the same transaction.
 
 ```bash
-MANIFEST_RESP=$(curl -fsS -X POST "$ROOST_BASE/api/roosts/$ROOST_ID/manifests" \
+VERSION_RESP=$(curl -fsS -X POST "$ROOST_BASE/api/roosts/$ROOST_ID/versions" \
   "${AUTH[@]}" \
   -H "Idempotency-Key: $(uuidgen)" \
-  -d @manifest-body.json)
-echo "$MANIFEST_RESP" | jq '.'
-export MANIFEST_ID=$(echo "$MANIFEST_RESP" | jq -r '.manifestId')
+  -d @version-body.json)
+echo "$VERSION_RESP" | jq '.'
+export VERSION_ID=$(echo "$VERSION_RESP" | jq -r '.versionId')
+export VERSION_NUMBER=$(echo "$VERSION_RESP" | jq -r '.versionNumber')
 ```
 
 **response** (`201 Created`):
 
 ```json
 {
-  "manifestId": "sha256:8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
-  "currentManifestId": "sha256:8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
-  "previousManifestId": null,
+  "versionId": "vrs_8d969eef6ecad3c29a3a629280e686cf",
+  "versionNumber": 1,
+  "currentVersionId": "vrs_8d969eef6ecad3c29a3a629280e686cf",
+  "previousVersionId": null,
   "publishedAt": "2026-04-22T15:30:00Z"
 }
 ```
@@ -341,7 +345,7 @@ echo "rollout: $ROLLOUT_ID"
 
 ## step 9: verify deployment
 
-poll the rollout until every machine reports the new manifest. the endpoint returns per-machine state; we loop until the aggregate `state` is terminal.
+poll the rollout until every machine reports the new version. the endpoint returns per-machine state; we loop until the aggregate `state` is terminal.
 
 ```bash
 DEADLINE=$(( $(date +%s) + 600 ))   # 10-minute timeout
@@ -367,9 +371,9 @@ rollout complete
 ```
 
 **interpreting per-machine state**:
-- `queued` — agent hasn't picked up the manifest yet (next heartbeat, up to 30s)
+- `queued` — agent hasn't picked up the version yet (next heartbeat, up to 30s)
 - `in_progress` — agent is downloading missing chunks
-- `succeeded` — manifest applied; new files are live on disk
+- `succeeded` — version applied; new files are live on disk
 - `failed` — check `.machines[].error` for details (usually disk full, offline mid-sync, or a chunk verification mismatch)
 
 in a healthy fleet, a 50 mb publish to an already-warm machine completes in under a minute. a 2 gb cold publish to a fresh machine takes 2–10 minutes depending on link speed.
@@ -378,13 +382,13 @@ in a healthy fleet, a 50 mb publish to an already-warm machine completes in unde
 
 ## step 10: rollback (optional)
 
-every manifest flip is atomic. to revert to the prior manifest — e.g. qa spots a regression thirty seconds after step 9 — one call does it.
+every version flip is atomic. to revert to the prior version — e.g. qa spots a regression thirty seconds after step 9 — one call does it.
 
 ```bash
 curl -fsS -X POST "$ROOST_BASE/api/roosts/$ROOST_ID/rollback" \
   "${AUTH[@]}" \
   -H "Idempotency-Key: $(uuidgen)" \
-  -H "If-Match: \"$MANIFEST_ID\"" \
+  -H "If-Match: \"$VERSION_ID\"" \
   -d "{\"siteId\": \"$SITE_ID\"}"
 ```
 
@@ -392,18 +396,18 @@ curl -fsS -X POST "$ROOST_BASE/api/roosts/$ROOST_ID/rollback" \
 
 ```json
 {
-  "currentManifestId": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-  "previousManifestId": "sha256:8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+  "currentVersionId": "vrs_2c26b46b68ffc68ff99b453c1d304134",
+  "previousVersionId": "vrs_8d969eef6ecad3c29a3a629280e686cf",
   "rolledBackAt": "2026-04-22T15:35:00Z",
   "rolloutId": "rollout_01HYA8K3R2N7P9Q1S5T6U8V0W3"
 }
 ```
 
-omitting `targetManifestId` flips to `previousManifestId`. to roll back further, pass `targetManifestId` explicitly — it must exist in the roost's manifest history (verify with `GET /api/roosts/$ROOST_ID/manifests`).
+omitting `targetVersion` flips to `previousVersionId`. to roll back further, pass `targetVersion` explicitly — it accepts `string | number` (a positive integer like `3`, `"#3"` / `"v3"` shorthand, a `vrs_*` id, or the aliases `"current"` / `"previous"` / `"first"`). the server resolves the ref and verifies it exists in the roost's version history (browse with `GET /api/roosts/$ROOST_ID/versions`).
 
-the `If-Match` header guards against a second publisher flipping the pointer between your verify and your rollback — if it doesn't match the current head, you get `412 precondition_failed` and a body containing the real `currentManifestId` to reconcile.
+the `If-Match` header guards against a second publisher flipping the pointer between your verify and your rollback — if it doesn't match the current head, you get `412 precondition_failed` and a body containing the real `currentVersionId` to reconcile.
 
-since there's no rollback-from-rollback concept, rolling back when `previousManifestId` is `null` returns `409 conflict` with code `no_previous_manifest`. publish a fresh corrected manifest instead.
+since there's no rollback-from-rollback concept, rolling back when `previousVersionId` is `null` returns `409 conflict` with code `no_previous_version`. publish a fresh corrected version instead.
 
 the rollback itself fans out on the same machinery as step 9; poll the returned `rolloutId` the same way.
 
@@ -429,12 +433,12 @@ common errors you'll hit during the walkthrough, with resolution.
 
 ### `412 precondition_failed` (publish or rollback)
 
-- **cause** — `expectedCurrentManifestId` / `If-Match` doesn't match the roost's actual head. someone else published between your `GET` and your `POST`.
+- **cause** — `expectedCurrentVersionId` / `If-Match` doesn't match the roost's actual head. someone else published between your `GET` and your `POST`.
 - **response body**:
   ```json
-  { "code": "precondition_failed", "currentManifestId": "sha256:<actual>" }
+  { "code": "precondition_failed", "currentVersionId": "vrs_<actual>" }
   ```
-- **fix** — refetch `GET /api/roosts/$ROOST_ID`, rebuild your manifest against the new head (in case files changed on the other side), retry with the correct `expectedCurrentManifestId`.
+- **fix** — refetch `GET /api/roosts/$ROOST_ID`, rebuild your version against the new head (in case files changed on the other side), retry with the correct `expectedCurrentVersionId`.
 
 ### `402 quota_exceeded`
 
@@ -452,7 +456,7 @@ common errors you'll hit during the walkthrough, with resolution.
 
 ### `404 not_found` on publish
 
-- **cause** — a file digest in your manifest has no corresponding chunk in r2. usually means a missed step 5/6 upload, or an orphaned hash that got gc'd before publish.
+- **cause** — a file digest in your version has no corresponding chunk in r2. usually means a missed step 5/6 upload, or an orphaned hash that got gc'd before publish.
 - **fix** — rerun step 4 (dedup check) — the problem chunks will show up in `missing`. upload them (step 5/6) and republish.
 
 ### `429 rate_limited`
@@ -476,7 +480,7 @@ common errors you'll hit during the walkthrough, with resolution.
 ## next steps
 
 - **automate the flow** — [workflows.md §1 ci/cd publish on git tag](../../dev/active/roost-public-api/reference/workflows.md) adapts this walkthrough to a github actions job.
-- **diff two manifests** — before rolling out a big change, call `GET /api/roosts/{id}/manifests/{id}/diff?against=<prior>` to see exactly which files change.
-- **subscribe to events** — `POST /api/webhooks` delivers `manifest.published`, `deployment.failed`, `quota.warning`. see [api-surface.md §10](../../dev/active/roost-public-api/reference/api-surface.md#10-webhooks).
+- **diff two versions** — before rolling out a big change, call `GET /api/roosts/{id}/versions/{versionRef}/diff?against=<prior>` to see exactly which files change.
+- **subscribe to events** — `POST /api/webhooks` delivers `version.published`, `deployment.failed`, `quota.warning`. see [api-surface.md §10](../../dev/active/roost-public-api/reference/api-surface.md#10-webhooks).
 - **targeted rollouts** — `POST /api/roosts/{id}/deploy` supports canary strategy, scheduled rollouts, and dry-run. see [api-surface.md §5](../../dev/active/roost-public-api/reference/api-surface.md#5-deployments-targeted-rollout).
 - **audit compliance** — `GET /api/sites/{id}/audit-log` gives you a tamper-evident chain of every sensitive action. [api-surface.md §9](../../dev/active/roost-public-api/reference/api-surface.md#9-audit-log).

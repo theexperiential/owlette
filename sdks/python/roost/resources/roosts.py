@@ -36,22 +36,24 @@ class RoostSummary:
     site_id: str
     name: str
     targets: list[str]
-    current_manifest_id: str | None
-    previous_manifest_id: str | None
+    current_version_id: str | None
+    previous_version_id: str | None
     created_at: str | None
     updated_at: str | None
     deleted_at: str | None
 
 
 @dataclass(slots=True)
-class ManifestSummary:
-    manifest_id: str
-    manifest_url: str | None
+class VersionSummary:
+    version_id: str
+    version_number: int
+    description: str | None
+    version_url: str | None
     created_at: str | None
     created_by: str | None
     total_size: int
     total_files: int
-    parent_manifest_id: str | None
+    parent_version_id: str | None
 
 
 @dataclass(slots=True)
@@ -62,33 +64,36 @@ class RoostDetail:
     targets: list[str]
     extract_path: str | None
     schema_version: int
-    current_manifest_id: str | None
-    previous_manifest_id: str | None
-    manifest_url: str | None
+    version_counter: int
+    current_version_id: str | None
+    previous_version_id: str | None
+    version_url: str | None
     created_at: str | None
     updated_at: str | None
     deleted_at: str | None
-    current_manifest: ManifestSummary | None
-    previous_manifest: ManifestSummary | None
+    current_version: VersionSummary | None
+    previous_version: VersionSummary | None
 
 
 @dataclass(slots=True)
 class RollbackOptions:
     site_id: str
-    target_manifest_id: str | None = None
+    # Accepts any `version_ref` form: a positive integer (version number),
+    # `#3` / `v3`, a `vrs_*` id, or alias `current` / `previous` / `first`.
+    target_version: str | int | None = None
     idempotency_key: str | None = None
 
 
 @dataclass(slots=True)
 class RollbackResult:
-    current_manifest_id: str
-    previous_manifest_id: str | None
+    current_version_id: str
+    previous_version_id: str | None
 
 
 @dataclass(slots=True)
 class DeployOptions:
     site_id: str
-    manifest_id: str | None = None
+    version_id: str | None = None
     machines: list[str] | None = None
     schedule_at: str | None = None
     dry_run: bool = False
@@ -98,14 +103,14 @@ class DeployOptions:
 @dataclass(slots=True)
 class DeployResult:
     rollout_id: str
-    manifest_id: str
+    version_id: str
     site_id: str
     roost_id: str
     stage: str
     canary: list[str]
     fleet: list[str]
     extract_root: str
-    manifest_url: str
+    version_url: str
     dry_run: bool = False
     already_running: bool = False
     scheduled: dict[str, Any] | None = None
@@ -142,6 +147,7 @@ class PushOptions:
     name: str | None = None
     targets: list[str] | None = None
     extract_path: str | None = None
+    description: str | None = None
     on_progress: "Callable[[PushProgressEvent], None] | Callable[[PushProgressEvent], Awaitable[None]] | None" = None
     ignore: Sequence[str] = field(default_factory=tuple)
 
@@ -157,9 +163,10 @@ class PushStats:
 
 @dataclass(slots=True)
 class PushResult:
-    manifest_id: str
-    current_manifest_id: str
-    previous_manifest_id: str | None
+    version_id: str
+    version_number: int
+    current_version_id: str
+    previous_version_id: str | None
     stats: PushStats
 
 
@@ -276,8 +283,8 @@ class Roosts:
 
     async def rollback(self, roost_id: str, opts: RollbackOptions) -> RollbackResult:
         body: dict[str, Any] = {"siteId": opts.site_id}
-        if opts.target_manifest_id is not None:
-            body["targetManifestId"] = opts.target_manifest_id
+        if opts.target_version is not None:
+            body["targetVersion"] = opts.target_version
         headers: dict[str, str] = {}
         if opts.idempotency_key is not None:
             headers["Idempotency-Key"] = opts.idempotency_key
@@ -289,14 +296,14 @@ class Roosts:
         )
         data = resp.data if isinstance(resp.data, dict) else {}
         return RollbackResult(
-            current_manifest_id=str(data.get("currentManifestId", "")),
-            previous_manifest_id=data.get("previousManifestId"),
+            current_version_id=str(data.get("currentVersionId", "")),
+            previous_version_id=data.get("previousVersionId"),
         )
 
     async def deploy(self, roost_id: str, opts: DeployOptions) -> DeployResult:
         body: dict[str, Any] = {"siteId": opts.site_id}
-        if opts.manifest_id is not None:
-            body["manifestId"] = opts.manifest_id
+        if opts.version_id is not None:
+            body["versionId"] = opts.version_id
         if opts.machines is not None:
             body["machines"] = list(opts.machines)
         if opts.schedule_at is not None:
@@ -360,23 +367,25 @@ class Roosts:
                 root, files, missing, urls, report_upload
             )
 
-        manifest = _build_manifest_body(files)
+        version_body = _build_version_body(files)
         result = await self._publish_with_retry(
             roost_id=roost_id,
             site_id=opts.site_id,
-            manifest=manifest,
+            version=version_body,
             name=opts.name,
             targets=list(opts.targets) if opts.targets is not None else None,
             extract_path=opts.extract_path,
+            description=opts.description,
             on_retry=lambda attempt: asyncio.create_task(
                 emit(PushProgressPublish(phase="publish", attempt=attempt))
             ),
         )
 
         return PushResult(
-            manifest_id=result["manifestId"],
-            current_manifest_id=result["currentManifestId"],
-            previous_manifest_id=result.get("previousManifestId"),
+            version_id=result["versionId"],
+            version_number=int(result.get("versionNumber") or 0),
+            current_version_id=result["currentVersionId"],
+            previous_version_id=result.get("previousVersionId"),
             stats=PushStats(**{**stats, "uploaded_chunks": uploaded_chunks}),
         )
 
@@ -490,10 +499,11 @@ class Roosts:
         *,
         roost_id: str,
         site_id: str,
-        manifest: dict[str, Any],
+        version: dict[str, Any],
         name: str | None,
         targets: list[str] | None,
         extract_path: str | None,
+        description: str | None,
         on_retry: "Callable[[int], Any] | None",
     ) -> dict[str, Any]:
         from roost.client import RoostApiError  # local to avoid circular import
@@ -504,18 +514,20 @@ class Roosts:
         for attempt in range(PUSH_MAX_RETRIES):
             if attempt > 0 and on_retry is not None:
                 on_retry(attempt)
-            body: dict[str, Any] = {"siteId": site_id, "manifest": manifest}
+            body: dict[str, Any] = {"siteId": site_id, "version": version}
             if expected_current is not None:
-                body["expectedCurrentManifestId"] = expected_current
+                body["expectedCurrentVersionId"] = expected_current
             if name is not None:
                 body["name"] = name
             if targets is not None:
                 body["targets"] = targets
             if extract_path is not None:
                 body["extractPath"] = extract_path
+            if description is not None:
+                body["description"] = description
             try:
                 resp = await self._client.request(
-                    f"/api/roosts/{roost_id}/manifests",
+                    f"/api/roosts/{roost_id}/versions",
                     method="POST",
                     body=body,
                     no_retry=True,  # we drive the 412-retry ourselves
@@ -538,7 +550,7 @@ class Roosts:
 
         if last_err is not None:
             raise last_err
-        msg = "manifest publish failed after retries"
+        msg = "version publish failed after retries"
         raise RuntimeError(msg)
 
 
@@ -552,25 +564,27 @@ def _roost_summary(data: dict[str, Any]) -> RoostSummary:
         site_id=str(data.get("siteId", "")),
         name=str(data.get("name", "")),
         targets=list(data.get("targets") or []),
-        current_manifest_id=data.get("currentManifestId"),
-        previous_manifest_id=data.get("previousManifestId"),
+        current_version_id=data.get("currentVersionId"),
+        previous_version_id=data.get("previousVersionId"),
         created_at=data.get("createdAt"),
         updated_at=data.get("updatedAt"),
         deleted_at=data.get("deletedAt"),
     )
 
 
-def _manifest_summary(data: dict[str, Any] | None) -> ManifestSummary | None:
+def _version_summary(data: dict[str, Any] | None) -> VersionSummary | None:
     if data is None:
         return None
-    return ManifestSummary(
-        manifest_id=str(data.get("manifestId", "")),
-        manifest_url=data.get("manifestUrl"),
+    return VersionSummary(
+        version_id=str(data.get("versionId", "")),
+        version_number=int(data.get("versionNumber") or 0),
+        description=data.get("description"),
+        version_url=data.get("versionUrl"),
         created_at=data.get("createdAt"),
         created_by=data.get("createdBy"),
         total_size=int(data.get("totalSize") or 0),
         total_files=int(data.get("totalFiles") or 0),
-        parent_manifest_id=data.get("parentManifestId"),
+        parent_version_id=data.get("parentVersionId"),
     )
 
 
@@ -582,28 +596,29 @@ def _roost_detail(data: dict[str, Any]) -> RoostDetail:
         targets=list(data.get("targets") or []),
         extract_path=data.get("extractPath"),
         schema_version=int(data.get("schemaVersion") or 2),
-        current_manifest_id=data.get("currentManifestId"),
-        previous_manifest_id=data.get("previousManifestId"),
-        manifest_url=data.get("manifestUrl"),
+        version_counter=int(data.get("versionCounter") or 0),
+        current_version_id=data.get("currentVersionId"),
+        previous_version_id=data.get("previousVersionId"),
+        version_url=data.get("versionUrl"),
         created_at=data.get("createdAt"),
         updated_at=data.get("updatedAt"),
         deleted_at=data.get("deletedAt"),
-        current_manifest=_manifest_summary(data.get("currentManifest")),
-        previous_manifest=_manifest_summary(data.get("previousManifest")),
+        current_version=_version_summary(data.get("currentVersion")),
+        previous_version=_version_summary(data.get("previousVersion")),
     )
 
 
 def _deploy_result(data: dict[str, Any]) -> DeployResult:
     return DeployResult(
         rollout_id=str(data.get("rolloutId", "")),
-        manifest_id=str(data.get("manifestId", "")),
+        version_id=str(data.get("versionId", "")),
         site_id=str(data.get("siteId", "")),
         roost_id=str(data.get("roostId", "")),
         stage=str(data.get("stage", "")),
         canary=list(data.get("canary") or []),
         fleet=list(data.get("fleet") or []),
         extract_root=str(data.get("extractRoot", "")),
-        manifest_url=str(data.get("manifestUrl", "")),
+        version_url=str(data.get("versionUrl", "")),
         dry_run=bool(data.get("dryRun", False)),
         already_running=bool(data.get("alreadyRunning", False)),
         scheduled=data.get("scheduled") if isinstance(data.get("scheduled"), dict) else None,
@@ -627,12 +642,12 @@ def _summarise(files: Sequence[ChunkedFileEntry]) -> dict[str, int]:
     }
 
 
-def _build_manifest_body(files: Sequence[ChunkedFileEntry]) -> dict[str, Any]:
+def _build_version_body(files: Sequence[ChunkedFileEntry]) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     sorted_files = sorted(files, key=lambda f: f.path)
     return {
         "schemaVersion": 2,
-        "mediaType": "application/vnd.owlette.manifest.v1+json",
+        "mediaType": "application/vnd.owlette.version.v1+json",
         "config": {
             "producer": "owlette-roost python-sdk",
             "cliVersion": SDK_VERSION,
@@ -654,7 +669,6 @@ def _build_manifest_body(files: Sequence[ChunkedFileEntry]) -> dict[str, Any]:
 __all__ = [
     "DeployOptions",
     "DeployResult",
-    "ManifestSummary",
     "PushOptions",
     "PushProgressCheckMissing",
     "PushProgressEvent",
@@ -667,4 +681,5 @@ __all__ = [
     "RoostDetail",
     "RoostSummary",
     "Roosts",
+    "VersionSummary",
 ]

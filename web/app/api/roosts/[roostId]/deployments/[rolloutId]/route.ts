@@ -30,7 +30,7 @@ interface RouteParams {
 interface MachineStatus {
   machineId: string;
   status: string;
-  reportedManifestId: string | null;
+  reportedVersionId: string | null;
   reportedAt: string | null;
 }
 
@@ -72,14 +72,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       });
     }
     const rollout = rolloutSnap.data() ?? {};
-    const manifestId =
-      typeof rollout.manifestId === 'string' ? rollout.manifestId : rolloutId;
+    const versionId =
+      typeof rollout.versionId === 'string' ? rollout.versionId : rolloutId;
     const canary = Array.isArray(rollout.canary) ? (rollout.canary as string[]) : [];
     const fleet = Array.isArray(rollout.fleet) ? (rollout.fleet as string[]) : [];
 
     // Fetch target_state for every machine in the wave. target_state is
-    // per-machine, per-roost (not per-manifest), so filter by reported
-    // manifestId to scope reports to this specific rollout.
+    // per-machine, per-roost (not per-version), so filter by reported
+    // versionId to scope reports to this specific rollout.
     const allMachines = [...new Set([...canary, ...fleet])];
     const targetStateCol = roostRef.collection('target_state');
     const stateSnaps = await Promise.all(
@@ -93,18 +93,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         stateByMachine.set(machineId, {
           machineId,
           status: 'pending',
-          reportedManifestId: null,
+          reportedVersionId: null,
           reportedAt: null,
         });
         continue;
       }
       const data = snap.data() ?? {};
-      const reportedManifestId =
-        typeof data.reportedManifestId === 'string' ? data.reportedManifestId : null;
-      // If the machine's most-recent report is for a different manifest,
+      const reportedVersionId =
+        typeof data.reportedVersionId === 'string' ? data.reportedVersionId : null;
+      // If the machine's most-recent report is for a different version,
       // treat this rollout's wave slot as still pending (the machine might
-      // have already moved on to a newer manifest since).
-      const onThisRollout = reportedManifestId === manifestId;
+      // have already moved on to a newer version since).
+      const onThisRollout = reportedVersionId === versionId;
       stateByMachine.set(machineId, {
         machineId,
         status: onThisRollout
@@ -112,7 +112,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             ? data.status
             : 'pending'
           : 'pending',
-        reportedManifestId,
+        reportedVersionId,
         reportedAt: timestampToIso(data.reportedAt),
       });
     }
@@ -122,8 +122,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         rolloutId,
         roostId,
         siteId: site.siteId,
-        manifestId,
-        manifestUrl: typeof rollout.manifestUrl === 'string' ? rollout.manifestUrl : null,
+        versionId,
+        versionUrl: typeof rollout.versionUrl === 'string' ? rollout.versionUrl : null,
         extractRoot: typeof rollout.extractRoot === 'string' ? rollout.extractRoot : null,
         stage: typeof rollout.stage === 'string' ? rollout.stage : 'unknown',
         triggeredBy: rollout.triggeredBy ?? null,

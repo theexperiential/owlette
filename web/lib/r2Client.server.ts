@@ -4,9 +4,9 @@
  * R2 speaks the S3 API, so this module is a thin wrapper around
  * @aws-sdk/client-s3 pointed at the Cloudflare R2 S3 endpoint. Every
  * call enforces the per-tenant path prefix (`project-content/{siteId}/…`
- * or `project-manifests/{siteId}/…`) — callers provide `siteId`, never
- * raw keys, so a caller authorised for site A can't trick this module
- * into signing a URL for site B.
+ * or the version body prefix /{siteId}/…) — callers provide `siteId`,
+ * never raw keys, so a caller authorised for site A can't trick this
+ * module into signing a URL for site B.
  *
  * Env requirements (see `.claude/.env.local`):
  *   R2_S3_ACCESS_KEY_ID      — R2 API token access key id
@@ -34,6 +34,10 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 /** Environment — 'dev' for dev.owlette.app + localhost, 'prod' for owlette.app. */
 export type RoostEnv = 'dev' | 'prod';
 
+/** R2 bucket-kind tag. The `'manifests'` literal is retained as the bucket-name
+ *  suffix until the physical R2 migration ships in wave 4 — see `bucketFor`. */
+export type R2BucketKind = 'content' | 'manifests';
+
 export function currentEnv(): RoostEnv {
   // Authoritative override — set `ROOST_ENV=prod` or `ROOST_ENV=dev`
   // explicitly in Railway if the heuristics below don't fit your setup.
@@ -56,7 +60,7 @@ export function currentEnv(): RoostEnv {
   return 'dev';
 }
 
-export function bucketFor(env: RoostEnv, kind: 'content' | 'manifests'): string {
+export function bucketFor(env: RoostEnv, kind: R2BucketKind): string {
   return `owlette-${env}-${kind}`;
 }
 
@@ -71,15 +75,16 @@ export function chunkKey(siteId: string, hash: string): string {
   return `project-content/${siteId}/${hash.slice(0, 2)}/${hash}`;
 }
 
-export function manifestKey(
+export function versionKey(
   siteId: string,
   roostId: string,
-  manifestId: string,
+  versionId: string,
 ): string {
   if (!isValidSiteId(siteId)) throw new Error(`invalid siteId: ${siteId}`);
   if (!isValidSiteId(roostId)) throw new Error(`invalid roostId: ${roostId}`);
-  if (!isValidSiteId(manifestId)) throw new Error(`invalid manifestId: ${manifestId}`);
-  return `project-manifests/${siteId}/${roostId}/${manifestId}.json`;
+  if (!isValidSiteId(versionId)) throw new Error(`invalid versionId: ${versionId}`);
+  // kept as 'project-manifests/' until R2 migration ships in wave 4
+  return `project-manifests/${siteId}/${roostId}/${versionId}.json`;
 }
 
 function isValidHash(h: unknown): h is string {
@@ -138,6 +143,17 @@ function required(name: string): string {
  * distinguish "missing" from "broken" by the boolean vs. thrown Error.
  */
 export async function hasChunk(siteId: string, hash: string): Promise<boolean> {
+  // E2E branch: in playwright runs the next-server is launched with
+  // OWLETTE_E2E=1 and points at the Firebase emulators (no real R2). A
+  // chunk is considered "present" iff a presence row exists at
+  // `siteChunks/{hash}` — seeded by `web/e2e/helpers/seed.ts:seedChunks`
+  // before any test that lets POST /versions go through.
+  if (process.env.OWLETTE_E2E === '1') {
+    const { getAdminDb } = await import('@/lib/firebase-admin');
+    const snap = await getAdminDb().collection('siteChunks').doc(hash).get();
+    return snap.exists;
+  }
+
   const client = getR2Client();
   const bucket = bucketFor(currentEnv(), 'content');
   try {
@@ -214,14 +230,14 @@ export async function presignGetChunk(
 }
 
 /* --------------------------------------------------------------------- */
-/*  Manifest body operations                                             */
+/*  Version body operations                                              */
 /* --------------------------------------------------------------------- */
 
-/** Write a manifest JSON body. Idempotent — overwrite if same key exists. */
-export async function putManifestBody(
+/** Write a version JSON body. Idempotent — overwrite if same key exists. */
+export async function putVersionBody(
   siteId: string,
   roostId: string,
-  manifestId: string,
+  versionId: string,
   body: unknown,
 ): Promise<void> {
   const client = getR2Client();
@@ -229,17 +245,17 @@ export async function putManifestBody(
   await client.send(
     new PutObjectCommand({
       Bucket: bucket,
-      Key: manifestKey(siteId, roostId, manifestId),
+      Key: versionKey(siteId, roostId, versionId),
       Body: JSON.stringify(body),
-      ContentType: 'application/vnd.owlette.manifest.v1+json',
+      ContentType: 'application/vnd.owlette.version.v1+json',
     }),
   );
 }
 
-export async function presignGetManifest(
+export async function presignGetVersion(
   siteId: string,
   roostId: string,
-  manifestId: string,
+  versionId: string,
   ttlSeconds: number = GET_URL_TTL_SECONDS,
 ): Promise<string> {
   const client = getR2Client();
@@ -248,20 +264,20 @@ export async function presignGetManifest(
     client,
     new GetObjectCommand({
       Bucket: bucket,
-      Key: manifestKey(siteId, roostId, manifestId),
+      Key: versionKey(siteId, roostId, versionId),
     }),
     { expiresIn: ttlSeconds },
   );
 }
 
 /**
- * Read + parse a manifest body from R2. Returns null if the key does not
+ * Read + parse a version body from R2. Returns null if the key does not
  * exist. Throws on transport / parse errors.
  */
-export async function getManifestBody(
+export async function getVersionBody(
   siteId: string,
   roostId: string,
-  manifestId: string,
+  versionId: string,
 ): Promise<unknown | null> {
   const client = getR2Client();
   const bucket = bucketFor(currentEnv(), 'manifests');
@@ -269,7 +285,7 @@ export async function getManifestBody(
     const resp = await client.send(
       new GetObjectCommand({
         Bucket: bucket,
-        Key: manifestKey(siteId, roostId, manifestId),
+        Key: versionKey(siteId, roostId, versionId),
       }),
     );
     if (!resp.Body) return null;

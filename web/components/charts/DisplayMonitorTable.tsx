@@ -10,21 +10,92 @@
  * Columns: # | name | resolution @ refresh | scale (+ rotation) | position | port
  * Selection: row highlight in the active tab's accent color.
  * Drift: amber cell tinting per-field (resolution / scale / position).
- * Edit mode: orientation / scale / position / primary become editable; the
- * resolution column is still read-only until the mode-catalogue feature lands.
+ * Edit mode: when an operator opens the editor on the assigned tab, position /
+ * orientation / scale / primary become editable as native widgets. Resolution
+ * + refresh dropdowns are bound to the per-monitor supported lists from
+ * `useDisplayModes` (wave A3.4) and only render when the catalogue has arrived.
  */
 
 import { memo, useState } from 'react';
-import { Star } from 'lucide-react';
+import { Star, TriangleAlert } from 'lucide-react';
 import { MonitorInfo } from '@/hooks/useDisplayState';
+import type { DisplayModeEntry } from '@/hooks/useDisplayModes';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
 type MonitorUpdate = Partial<MonitorInfo>;
+
+/**
+ * Unique `(w, h)` pairs across the monitor's supported modes, in descending
+ * order. The catalogue arrives already sorted (descending w, then h, then hz)
+ * so the first time each `(w, h)` is seen is the order we want to emit.
+ *
+ * The monitor's current `{width, height}` is always appended if not already
+ * present so an off-catalogue value (custom overclock, legacy config) stays
+ * selectable — without this the Select would show no selection on entry and
+ * look broken. A warning affordance for off-list picks ships in A3.5.
+ */
+function uniqueResolutionsForMonitor(
+  modes: readonly DisplayModeEntry[],
+  currentW: number,
+  currentH: number,
+): Array<{ w: number; h: number }> {
+  const seen = new Set<string>();
+  const out: Array<{ w: number; h: number }> = [];
+  const add = (w: number, h: number) => {
+    const key = `${w}x${h}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ w, h });
+  };
+  for (const m of modes) add(m.w, m.h);
+  add(currentW, currentH);
+  // Re-sort in case the current (w, h) was appended out of order.
+  out.sort((a, b) => b.w - a.w || b.h - a.h);
+  return out;
+}
+
+/**
+ * Refresh rates valid for a specific `(w, h)` — descending. Mirrors the
+ * resolution helper: always include the monitor's current `refreshHz` even
+ * if the catalogue doesn't list it, so the Select never shows blank.
+ */
+function refreshesForResolution(
+  modes: readonly DisplayModeEntry[],
+  w: number,
+  h: number,
+  currentHz: number,
+): number[] {
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const m of modes) {
+    if (m.w !== w || m.h !== h) continue;
+    if (seen.has(m.hz)) continue;
+    seen.add(m.hz);
+    out.push(m.hz);
+  }
+  if (!seen.has(currentHz)) {
+    out.push(currentHz);
+    out.sort((a, b) => b - a);
+  }
+  return out;
+}
 
 interface DisplayMonitorTableProps {
   monitors: MonitorInfo[];
   selectedMonitorId?: string;
   onSelect?: (id: string) => void;
+  /**
+   * Fires when the user double-clicks a row. The panel wires this to the
+   * `DisplayEditorDialog` so double-click opens the full monitor editor.
+   * Only attached to non-editable cells so double-clicks inside editable
+   * Selects (rotation / scale) are absorbed by the widget.
+   */
+  onRowDoubleClick?: (id: string) => void;
   /**
    * Id of the monitor currently hovered in either this table or a linked
    * sibling view (e.g. DisplayCanvas). Drives a shared row highlight so
@@ -38,6 +109,14 @@ interface DisplayMonitorTableProps {
   /** When true, renders editable cells and fires onUpdateMonitor on changes. */
   editable?: boolean;
   onUpdateMonitor?: (id: string, partial: MonitorUpdate) => void;
+  /**
+   * Per-monitor catalogue of supported display modes, keyed by edidHash —
+   * feed from `useDisplayModes(...).catalogue?.byEdidHash`. When present in
+   * edit mode, the resolution + refresh cells become bound Selects. When
+   * absent (catalogue still loading, or monitor not in the catalogue), the
+   * cell falls back to the read-only "WxH @Hz" text.
+   */
+  modesByEdidHash?: Record<string, { modes: DisplayModeEntry[]; dpiScales: number[] }>;
 }
 
 /**
@@ -181,12 +260,14 @@ function DisplayMonitorTableImpl({
   monitors,
   selectedMonitorId,
   onSelect,
+  onRowDoubleClick,
   hoveredMonitorId,
   onHover,
   accentColor,
   driftMap,
   editable = false,
   onUpdateMonitor,
+  modesByEdidHash,
 }: DisplayMonitorTableProps) {
   const canEdit = editable && !!onUpdateMonitor;
 
@@ -222,6 +303,9 @@ function DisplayMonitorTableImpl({
             const effRes = effectiveResolution(monitor);
 
             const rowClick = onSelect ? () => onSelect(monitor.id) : undefined;
+            const rowDblClick = onRowDoubleClick
+              ? () => onRowDoubleClick(monitor.id)
+              : undefined;
             // Keyboard activation for row selection. Guarded by
             // `e.target === e.currentTarget` so pressing Enter inside a
             // child input (orientation/scale/position) doesn't re-fire
@@ -264,10 +348,15 @@ function DisplayMonitorTableImpl({
                 <td
                   className="py-1.5 pl-2 pr-1 font-mono text-muted-foreground tabular-nums"
                   onClick={rowClick}
+                  onDoubleClick={rowDblClick}
                 >
                   {idx + 1}
                 </td>
-                <td className="py-1.5 px-1" onClick={rowClick}>
+                <td
+                  className="py-1.5 px-1"
+                  onClick={rowClick}
+                  onDoubleClick={rowDblClick}
+                >
                   <div className="flex items-center gap-1.5 min-w-0">
                     <span
                       className="font-medium text-foreground truncate"
@@ -320,10 +409,148 @@ function DisplayMonitorTableImpl({
                     'py-1.5 px-1 tabular-nums',
                     resolutionDrifted ? 'text-accent-coral' : 'text-foreground',
                   )}
-                  onClick={rowClick}
+                  onClick={canEdit ? undefined : rowClick}
+                  onDoubleClick={canEdit ? undefined : rowDblClick}
                 >
-                  {effRes.w}×{effRes.h}
-                  <span className="text-muted-foreground"> @{monitor.refreshHz}</span>
+                  {(() => {
+                    // Per-monitor modes from the catalogue. May be missing when
+                    // the subscription hasn't landed yet, when the catalogue
+                    // hasn't been built for this machine, or when this monitor
+                    // is a mirror target that got deduped out of `byEdidHash`.
+                    const monitorModes = modesByEdidHash?.[monitor.edidHash]?.modes;
+                    const haveModes = !!monitorModes && monitorModes.length > 0;
+                    if (!canEdit || !haveModes) {
+                      // Read-only fallback — view mode OR modes catalogue not
+                      // available yet. `effRes` shows the rotated dimensions
+                      // (what the desktop sees); the underlying stored
+                      // resolution is always the native panel orientation.
+                      return (
+                        <>
+                          {effRes.w}×{effRes.h}
+                          <span className="text-muted-foreground"> @{monitor.refreshHz}</span>
+                        </>
+                      );
+                    }
+                    const currentW = monitor.resolution.width;
+                    const currentH = monitor.resolution.height;
+                    const resolutions = uniqueResolutionsForMonitor(
+                      monitorModes,
+                      currentW,
+                      currentH,
+                    );
+                    const refreshes = refreshesForResolution(
+                      monitorModes,
+                      currentW,
+                      currentH,
+                      monitor.refreshHz,
+                    );
+                    // [A3.5] Off-catalogue detection — signal to the operator
+                    // when the current pick isn't something the driver
+                    // advertises so the apply-at-your-own-risk implication is
+                    // surfaced before they hit recall. Two independent flags
+                    // so a matching resolution + non-matching refresh (valid
+                    // at a different rate) shows only on the refresh widget.
+                    const resolutionOffList = !monitorModes.some(
+                      (m) => m.w === currentW && m.h === currentH,
+                    );
+                    const refreshOffList = !monitorModes.some(
+                      (m) =>
+                        m.w === currentW &&
+                        m.h === currentH &&
+                        m.hz === monitor.refreshHz,
+                    );
+                    return (
+                      <div className="flex items-center gap-1">
+                        <select
+                          value={`${currentW}x${currentH}`}
+                          onChange={(e) => {
+                            const [wRaw, hRaw] = e.target.value.split('x');
+                            const w = Number(wRaw);
+                            const h = Number(hRaw);
+                            // Snap the refresh rate to the highest that the
+                            // newly-selected resolution supports — dropping
+                            // to 60Hz on a res switch feels worse than
+                            // preserving the operator's intent where valid.
+                            const candidateRefreshes = refreshesForResolution(
+                              monitorModes,
+                              w,
+                              h,
+                              monitor.refreshHz,
+                            );
+                            const keepHz =
+                              candidateRefreshes.includes(monitor.refreshHz)
+                                ? monitor.refreshHz
+                                : candidateRefreshes[0] ?? monitor.refreshHz;
+                            onUpdateMonitor?.(monitor.id, {
+                              resolution: { width: w, height: h },
+                              refreshHz: keepHz,
+                            });
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className={cn(EDITABLE_CELL_BASE, 'tabular-nums')}
+                          aria-label="resolution"
+                        >
+                          {resolutions.map(({ w, h }) => (
+                            <option key={`${w}x${h}`} value={`${w}x${h}`}>
+                              {w}×{h}
+                            </option>
+                          ))}
+                        </select>
+                        {resolutionOffList && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <TriangleAlert
+                                className="h-3 w-3 text-accent-warm shrink-0 cursor-help"
+                                aria-label="resolution not in the supported list"
+                              />
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>
+                                {currentW}×{currentH} isn&apos;t in this monitor&apos;s supported list — apply at your own risk
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                        <span className="text-muted-foreground text-[10px] select-none">@</span>
+                        <select
+                          value={monitor.refreshHz}
+                          onChange={(e) =>
+                            onUpdateMonitor?.(monitor.id, {
+                              refreshHz: Number(e.target.value),
+                            })
+                          }
+                          onClick={(e) => e.stopPropagation()}
+                          className={cn(EDITABLE_CELL_BASE, 'tabular-nums')}
+                          aria-label="refresh rate"
+                        >
+                          {refreshes.map((hz) => (
+                            <option key={hz} value={hz}>
+                              {hz}
+                            </option>
+                          ))}
+                        </select>
+                        {refreshOffList && !resolutionOffList && (
+                          // Suppressed when the resolution itself is off-list —
+                          // a single warning at the resolution already
+                          // implicates everything downstream, showing two is
+                          // redundant noise.
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <TriangleAlert
+                                className="h-3 w-3 text-accent-warm shrink-0 cursor-help"
+                                aria-label="refresh rate not in the supported list"
+                              />
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>
+                                {monitor.refreshHz}Hz isn&apos;t supported at {currentW}×{currentH} — apply at your own risk
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </td>
                 <td
                   className={cn(
@@ -424,6 +651,7 @@ function DisplayMonitorTableImpl({
                 <td
                   className="py-1.5 px-1 pr-2 text-muted-foreground"
                   onClick={rowClick}
+                  onDoubleClick={rowDblClick}
                 >
                   {monitor.connectionType}
                 </td>

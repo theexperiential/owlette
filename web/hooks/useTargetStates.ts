@@ -30,7 +30,7 @@ export type TargetStatus =
 export interface TargetState {
   /** Firestore doc id — the machineId this report is from. */
   machineId: string;
-  reportedManifestId: string | null;
+  reportedVersionId: string | null;
   status: TargetStatus | null;
   error?: string;
   chunksTotal?: number;
@@ -78,8 +78,8 @@ export function useTargetStates(siteId: string, roostId: string | null) {
           const x = d.data() as Record<string, unknown>;
           return {
             machineId: d.id,
-            reportedManifestId:
-              typeof x.reportedManifestId === 'string' ? x.reportedManifestId : null,
+            reportedVersionId:
+              typeof x.reportedVersionId === 'string' ? x.reportedVersionId : null,
             status: coerceStatus(x.status),
             error: typeof x.error === 'string' ? x.error : undefined,
             chunksTotal: typeof x.chunks_total === 'number' ? x.chunks_total : undefined,

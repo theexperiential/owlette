@@ -25,7 +25,7 @@ design:
 - updates SyncState rows so progress survives crash/restart
 
 NOT this module's job:
-- chunk-set planning (sync_manifest provides the diff)
+- chunk-set planning (sync_version provides the diff)
 - file reassembly (sync_assembler reads from content store)
 - signed-url issuance (web/api/chunks/download-urls; passed via url_provider)
 """
@@ -87,7 +87,7 @@ DEFAULT_RETRY_BACKOFF_MAX_S = 60.0
 # request's payload small enough to fit in a typical TLS write window.
 URL_PREFETCH_BATCH_SIZE = 500
 
-# HTTP timing — same shape as installer_utils + sync_manifest.
+# HTTP timing — same shape as installer_utils + sync_version.
 _CONNECT_TIMEOUT_S = 30
 _READ_TIMEOUT_S = 600
 _STREAM_CHUNK_BYTES = 64 * 1024

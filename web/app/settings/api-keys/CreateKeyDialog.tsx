@@ -39,7 +39,7 @@ const PRESETS: ApiKeyScopePreset[] = ['readonly', 'publisher', 'operator', 'admi
 
 const PRESET_DESCRIPTIONS: Record<ApiKeyScopePreset, string> = {
   readonly: 'read access to roosts, sites, and machines — no mutations',
-  publisher: 'read + write — can upload chunks and publish manifests',
+  publisher: 'read + write — can upload chunks and publish versions',
   operator: 'read, write, deploy, rollback — full day-to-day operations',
   admin: 'full access including admin permissions',
 };

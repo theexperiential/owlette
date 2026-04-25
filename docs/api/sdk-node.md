@@ -3,7 +3,7 @@
 **Last updated**: 2026-04-24
 **Package**: [`@owlette/roost`](https://www.npmjs.com/package/@owlette/roost) · node ≥ 20 · zero runtime deps
 
-the official typescript sdk for the [roost api](./overview.md). wraps the rest surface with a typed resource tree, auto-retry, automatic `Idempotency-Key`, chunk-aware `push()`, stripe-style webhook verification, and progress events. if you can use `fetch` directly you can use this — it just adds the tedious bits.
+the official typescript sdk for the [roost api](./overview.md). wraps the rest surface with a typed resource tree, auto-retry, automatic `Idempotency-Key`, chunk-aware `push()`, stripe-style webhook verification, version-ref resolution, and progress events. if you can use `fetch` directly you can use this — it just adds the tedious bits.
 
 ---
 
@@ -25,11 +25,14 @@ the package ships `.js` + `.d.ts` for both esm and cjs. no native modules; no wa
 import { Roost } from '@owlette/roost';
 
 const roost = new Roost({ token: process.env.ROOST_TOKEN! });
-const result = await roost.roosts.push('./dist', 'rst_abc', { siteId: 'kiosk-fleet-01' });
-console.log('published', result.manifestId, '—', result.stats.uploadedChunks, 'chunks uploaded');
+const result = await roost.roosts.push('./dist', 'rst_abc', {
+  siteId: 'kiosk-fleet-01',
+  description: 'initial publish',  // optional ≤500 chars, surfaced in the version-history ui
+});
+console.log('published', `v${result.versionNumber}`, result.versionId, '—', result.stats.uploadedChunks, 'chunks uploaded');
 ```
 
-that's the whole flow: walk `./dist`, sha-256 chunk it, dedup-check against r2, upload what's missing, publish a manifest, return the new id.
+that's the whole flow: walk `./dist`, sha-256 chunk it, dedup-check against r2, upload what's missing, publish a version, return the new id + `versionNumber`.
 
 ---
 
@@ -62,7 +65,7 @@ every top-level noun is a resource class hung off the client.
 |----------------------|-------------------------------------------------------------------------------------------------|
 | `roost.roosts`       | `list`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy`                        |
 | `roost.chunks`       | `check`, `uploadUrls`, `downloadUrls`, `mount`, `referrers`                                     |
-| `roost.manifests`    | `list`, `get`, `files`, `diff`                                                                  |
+| `roost.versions`     | `list`, `get`, `patch`, `files`, `diff`                                                         |
 | `roost.deployments`  | `list`, `get`                                                                                   |
 | `roost.keys`         | `create`, `list`, `rotate`, `revoke`                                                            |
 | `roost.webhooks`     | `subscribe`, `list`, `get`, `update`, `remove`, `rotateSecret`, `probe`                         |
@@ -77,7 +80,7 @@ every top-level noun is a resource class hung off the client.
 ```ts
 // list roosts in a site (cursor-paged)
 const page = await roost.roosts.list({ siteId: 'site-1', pageSize: 20 });
-for (const r of page.roosts) console.log(r.roostId, r.name, r.currentManifestId);
+for (const r of page.roosts) console.log(r.roostId, r.name, r.currentVersionId);
 if (page.nextPageToken) {
   const page2 = await roost.roosts.list({
     siteId: 'site-1',
@@ -104,15 +107,20 @@ await roost.roosts.patch('rst_lobby_td', { siteId: 'site-1', name: 'lobby (v2)' 
 await roost.roosts.remove('rst_lobby_td', { siteId: 'site-1' });
 
 // publish from a directory — the flagship call
-const { manifestId, stats, events } = await roost.roosts.push('./dist', 'rst_abc', {
+const { versionId, versionNumber, stats, events } = await roost.roosts.push('./dist', 'rst_abc', {
   siteId: 'site-1',
+  description: 'fixed broken lobby video',   // optional ≤500 chars
   onProgress: (evt) => console.log(evt),
 });
 
-// rollback (omit targetManifestId to revert one step)
+// rollback — `targetVersion` accepts string | number:
+//   number / "#3" / "v3"  → the third publish for this roost
+//   "vrs_..."             → a stable version id
+//   "current" / "previous" / "first" → aliases resolved server-side
+// omit it entirely to revert one step (equivalent to "previous").
 await roost.roosts.rollback('rst_abc', {
   siteId: 'site-1',
-  targetManifestId: 'mf_prev',
+  targetVersion: 3,
 });
 
 // trigger a deployment (targeted / scheduled / dry-run)
@@ -148,26 +156,33 @@ await roost.chunks.mount('sha256:ab12...', 'site-1', 'rst_source', 'rst_target')
 const refs = await roost.chunks.referrers('sha256:ab12...', 'site-1');
 ```
 
-### manifests
+### versions
 
 ```ts
-// list manifests for a roost (paged — cursor-based)
-const page = await roost.manifests.list('rst_abc', { siteId: 'site-1', limit: 20 });
-for (const mf of page.manifests) console.log(mf.id, mf.createdAt);
+// list versions for a roost (paged — cursor-based, newest first)
+const page = await roost.versions.list('rst_abc', { siteId: 'site-1', limit: 20 });
+for (const v of page.versions) console.log(`v${v.versionNumber}`, v.versionId, v.description, v.createdAt);
 
-// fetch one — full oci manifest doc
-const mf = await roost.manifests.get('rst_abc', 'mf_xyz', { siteId: 'site-1' });
+// fetch one — `versionRef` accepts the same forms as rollback's targetVersion:
+//   a number (3), "#3" / "v3", a "vrs_*" id, or "current" / "previous" / "first"
+const v = await roost.versions.get('rst_abc', 'current', { siteId: 'site-1' });
+
+// edit the description only (everything else on a published version is immutable)
+await roost.versions.patch('rst_abc', v.versionId, {
+  siteId: 'site-1',
+  description: 'updated release notes',
+});
 
 // file listing (paths + per-file digests, paged)
-const files = await roost.manifests.files('rst_abc', 'mf_xyz', {
+const files = await roost.versions.files('rst_abc', 3, {
   siteId: 'site-1',
   limit: 500,
 });
 
-// diff two manifests — `against` is the baseline being compared to
-const diff = await roost.manifests.diff('rst_abc', 'mf_new', {
+// diff two versions — `against` is the baseline; both sides accept any versionRef form
+const diff = await roost.versions.diff('rst_abc', 'current', {
   siteId: 'site-1',
-  against: 'mf_old',
+  against: 'previous',
 });
 ```
 
@@ -212,21 +227,22 @@ const history = await roost.quotas.history('site-1', '30d');  // '7d' | '14d' | 
 const hook = await roost.webhooks.subscribe(
   'site-1',
   'https://example.com/hooks/roost',
-  ['manifest.published', 'deploy.failed'],
+  ['version.published', 'deploy.failed'],
 );
 console.log(hook.signingSecret);
 
 // crud + send a test event
 await roost.webhooks.list('site-1');
 await roost.webhooks.get(hook.id, 'site-1');
-await roost.webhooks.update(hook.id, 'site-1', { events: ['manifest.published'] });
+await roost.webhooks.update(hook.id, 'site-1', { events: ['version.published'] });
 await roost.webhooks.rotateSecret(hook.id, 'site-1');
 await roost.webhooks.remove(hook.id, 'site-1');
 
 // probe fires a signed test delivery — `kind` must be a known event name
-await roost.webhooks.probe('site-1', 'manifest.published', {
+await roost.webhooks.probe('site-1', 'version.published', {
   roostId: 'rst_abc',
-  manifestId: 'mf_xyz',
+  versionId: 'vrs_xyz',
+  versionNumber: 7,
 });
 ```
 
@@ -247,7 +263,7 @@ await roost.roosts.push('./dist', 'rst_abc', {
       case 'hash':          console.log(`hashing ${evt.file} (${evt.filesDone}/${evt.filesTotal})`); break;
       case 'check-missing': console.log(`${evt.missing} of ${evt.total} chunks need upload`); break;
       case 'upload':        console.log(`${evt.uploaded}/${evt.total} chunks uploaded`); break;
-      case 'publish':       console.log(`publishing manifest (attempt ${evt.attempt})`); break;
+      case 'publish':       console.log(`publishing version (attempt ${evt.attempt})`); break;
     }
   },
 });
@@ -272,12 +288,13 @@ interface PushOptions {
   name?: string;                       // optional — overrides the roost's name on publish
   targets?: string[];                  // optional — machine ids to retarget to on publish
   extractPath?: string;                // optional — on-disk extract root for the agent
+  description?: string;                // optional — plaintext ≤500 chars, stored on the version doc
   onProgress?: (evt: PushProgressEvent) => void;
   ignore?: readonly string[];          // extra names to skip during the file walk
 }
 ```
 
-**retry on concurrent publish.** if another writer publishes between your `push()` starting and the manifest post, the sdk re-reads the current manifest, re-diffs, and retries before surfacing `RoostApiError`. your chunk uploads never re-run — they're already addressed by hash.
+**retry on concurrent publish.** if another writer publishes between your `push()` starting and the version post, the sdk re-reads the current version, re-diffs, and retries before surfacing `RoostApiError`. your chunk uploads never re-run — they're already addressed by hash.
 
 ---
 
@@ -298,7 +315,7 @@ if (!result.ok) {
   console.log('rejected:', result.reason);  // 'missing_header' | 'malformed' | 'outside_tolerance' | 'bad_signature'
   return res.status(401).json({ error: result.reason });
 }
-// safe to process — result.event is the parsed payload
+// safe to process — result.event is the parsed payload (e.g. event === 'version.published')
 handleEvent(result.event);
 
 // boolean shortcut for quick paths
@@ -312,7 +329,7 @@ if (!isSignatureValid(sig, raw, secret)) return res.status(401).end();
 ```ts
 import { signBody } from '@owlette/roost';
 
-const sig = signBody(JSON.stringify({ event: 'manifest.published' }), 'whsec_...');
+const sig = signBody(JSON.stringify({ event: 'version.published' }), 'whsec_...');
 // → 't=1735689600,v1=ab12...'
 ```
 
@@ -348,7 +365,8 @@ the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring
 | `scope_insufficient`       | 403    | api key doesn't carry the resource+permission for this call            |
 | `token_expired`            | 401    | key hit its `expiresAt` — rotate or mint a new one                     |
 | `idempotency_key_mismatch` | 409    | same key replayed with a different body                                |
-| `manifest_stale`           | 412    | someone else published between your read and write — re-push           |
+| `version_stale`            | 412    | someone else published between your read and write — re-push           |
+| `version_not_found`        | 404    | `targetVersion` / `versionRef` didn't resolve against the roost        |
 | `rate_limited`             | 429    | see `retry_after` — the sdk already honors it                          |
 | `unsupported_version`      | 400    | `roostVersion` older than the minimum — update this package            |
 
@@ -374,9 +392,9 @@ the package is written in typescript and ships `.d.ts` for every public export. 
 
 ```ts
 import type {
-  RoostSummary, RoostDetail, ManifestSummary,
+  RoostSummary, RoostDetail, VersionSummary, VersionDetail,
   PushOptions, PushProgressEvent, PushResult,
-  ApiKeyScope, WebhookEvent,
+  ApiKeyScope, WebhookEvent, VersionRef,
 } from '@owlette/roost';
 ```
 

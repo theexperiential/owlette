@@ -1,19 +1,19 @@
 'use client';
 
 /**
- * RollbackConfirmDialog — confirm flipping the manifest pointer to a
+ * RollbackConfirmDialog — confirm flipping the version pointer to a
  * prior version, showing exactly what changes (roost wave 3.7).
  *
- * Rolling back a roost distribution is an atomic compare-and-swap on the
- * folder doc's `currentManifestId`. From the operator's perspective, the
- * dangerous part isn't the API call — it's not knowing what they're
- * about to push to the fleet. This dialog answers three questions:
+ * Rolling back a roost is an atomic compare-and-swap on the roost doc's
+ * `currentVersionId`. From the operator's perspective, the dangerous
+ * part isn't the API call — it's not knowing what they're about to push
+ * to the fleet. This dialog answers three questions:
  *
  *   1. What files differ between now and the target?
  *   2. How much data is being moved (net delta)?
  *   3. Do we ease it in via canary, or flip everything at once?
  *
- * Decision logic lives in `web/lib/manifestDiff.ts`. This component is
+ * Decision logic lives in `web/lib/versionDiff.ts`. This component is
  * presentation + the HTTP POST to `/api/roosts/{roostId}/rollback`.
  * Until wave 2a.6 wires the route, the endpoint returns 501 and the
  * dialog surfaces that to the operator verbatim — better than a
@@ -33,13 +33,13 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FilePlus2, FileMinus2, FilePen, History, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ManifestFileEntry } from '@/lib/chunking';
+import type { VersionFileEntry } from '@/lib/chunking';
 import {
   DEFAULT_ROLLOUT_STRATEGY,
-  diffManifests,
+  diffVersions,
   summariseDiff,
   type RolloutStrategy,
-} from '@/lib/manifestDiff';
+} from '@/lib/versionDiff';
 import { formatBytes } from '@/lib/preUploadCheck';
 
 interface RollbackConfirmDialogProps {
@@ -47,15 +47,17 @@ interface RollbackConfirmDialogProps {
   onOpenChange: (open: boolean) => void;
   siteId: string;
   roostId: string;
-  /** Current live manifest — what's on the fleet right now. */
-  currentManifest: {
-    manifestId: string;
-    files: ManifestFileEntry[];
+  /** Current live version — what's on the fleet right now. */
+  currentVersion: {
+    versionId: string;
+    versionNumber: number | null;
+    files: VersionFileEntry[];
   };
   /** Rollback target — which prior version we're flipping to. */
-  targetManifest: {
-    manifestId: string;
-    files: ManifestFileEntry[];
+  targetVersion: {
+    versionId: string;
+    versionNumber: number | null;
+    files: VersionFileEntry[];
     createdAt?: string; // ISO, for display copy
   };
   /** Called on successful rollback so the parent can refresh its view. */
@@ -67,8 +69,8 @@ export function RollbackConfirmDialog({
   onOpenChange,
   siteId,
   roostId,
-  currentManifest,
-  targetManifest,
+  currentVersion,
+  targetVersion,
   onRollbackSuccess,
 }: RollbackConfirmDialogProps) {
   const [strategy, setStrategy] = useState<RolloutStrategy>(
@@ -77,12 +79,12 @@ export function RollbackConfirmDialog({
   const [rolling, setRolling] = useState(false);
 
   const diff = useMemo(
-    () => diffManifests(currentManifest.files, targetManifest.files),
-    [currentManifest.files, targetManifest.files],
+    () => diffVersions(currentVersion.files, targetVersion.files),
+    [currentVersion.files, targetVersion.files],
   );
   const summary = useMemo(
-    () => summariseDiff(currentManifest.files, targetManifest.files, diff),
-    [currentManifest.files, targetManifest.files, diff],
+    () => summariseDiff(currentVersion.files, targetVersion.files, diff),
+    [currentVersion.files, targetVersion.files, diff],
   );
 
   const handleConfirm = async () => {
@@ -93,7 +95,11 @@ export function RollbackConfirmDialog({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           siteId,
-          targetManifestId: targetManifest.manifestId,
+          // targetVersion accepts either a versionNumber or a versionId/alias
+          // — server-side resolver handles both. Prefer the number when we
+          // have it (more user-readable in audit logs).
+          targetVersion:
+            targetVersion.versionNumber ?? targetVersion.versionId,
           strategy,
         }),
       });
@@ -126,14 +132,19 @@ export function RollbackConfirmDialog({
 
   const confirmDisabled = rolling || !summary.hasChanges;
 
+  const targetLabel =
+    targetVersion.versionNumber !== null
+      ? `v${targetVersion.versionNumber}`
+      : targetVersion.versionId.slice(0, 12);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <History className="h-4 w-4" /> roll back to manifest{' '}
+            <History className="h-4 w-4" /> roll back to version{' '}
             <code className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">
-              {targetManifest.manifestId.slice(0, 12)}
+              {targetLabel}
             </code>
           </DialogTitle>
           <DialogDescription>
@@ -147,7 +158,7 @@ export function RollbackConfirmDialog({
           {!summary.hasChanges && (
             <Alert>
               <AlertDescription>
-                the target manifest is identical to the current one.
+                the target version is identical to the current one.
                 rollback would be a no-op.
               </AlertDescription>
             </Alert>
@@ -243,7 +254,7 @@ export function RollbackConfirmDialog({
                 <div className="font-medium">all at once</div>
                 <div className="text-xs text-muted-foreground">
                   roll back every machine simultaneously. use only for
-                  critical fixes where the current manifest is actively
+                  critical fixes where the current version is actively
                   breaking the show.
                 </div>
               </div>

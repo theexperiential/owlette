@@ -148,20 +148,20 @@ async def test_roost_resource_shapes() -> None:
         captured.append(request)
         if request.url.path.endswith("/rollback"):
             return httpx.Response(200, json={
-                "currentManifestId": "to",
-                "previousManifestId": "from",
+                "currentVersionId": "to",
+                "previousVersionId": "from",
             })
         if request.url.path.endswith("/deploy"):
             return httpx.Response(200, json={
                 "rolloutId": "m",
-                "manifestId": "m",
+                "versionId": "m",
                 "siteId": "s",
                 "roostId": "rst",
                 "stage": "canary",
                 "canary": ["m-1"],
                 "fleet": [],
                 "extractRoot": "~/x",
-                "manifestUrl": "https://r2/x",
+                "versionUrl": "https://r2/x",
             })
         return httpx.Response(200, json={
             "roostId": "rst",
@@ -170,14 +170,15 @@ async def test_roost_resource_shapes() -> None:
             "targets": [],
             "extractPath": None,
             "schemaVersion": 2,
-            "currentManifestId": None,
-            "previousManifestId": None,
-            "manifestUrl": None,
+            "versionCounter": 0,
+            "currentVersionId": None,
+            "previousVersionId": None,
+            "versionUrl": None,
             "createdAt": None,
             "updatedAt": None,
             "deletedAt": None,
-            "currentManifest": None,
-            "previousManifest": None,
+            "currentVersion": None,
+            "previousVersion": None,
         })
 
     async with Roost(
@@ -188,7 +189,7 @@ async def test_roost_resource_shapes() -> None:
         from roost import DeployOptions, RollbackOptions
 
         await client.roosts.get("rst_abc", site_id="s1")
-        await client.roosts.rollback("rst_abc", RollbackOptions(site_id="s1", target_manifest_id="to"))
+        await client.roosts.rollback("rst_abc", RollbackOptions(site_id="s1", target_version="to"))
         await client.roosts.deploy("rst_abc", DeployOptions(site_id="s1", dry_run=True))
 
     assert captured[0].url.path == "/api/roosts/rst_abc"
@@ -196,7 +197,7 @@ async def test_roost_resource_shapes() -> None:
 
     assert captured[1].url.path == "/api/roosts/rst_abc/rollback"
     rollback_body = json.loads(captured[1].content)
-    assert rollback_body == {"siteId": "s1", "targetManifestId": "to"}
+    assert rollback_body == {"siteId": "s1", "targetVersion": "to"}
 
     assert captured[2].url.path == "/api/roosts/rst_abc/deploy"
     deploy_body = json.loads(captured[2].content)

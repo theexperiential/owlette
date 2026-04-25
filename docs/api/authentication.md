@@ -158,7 +158,7 @@ a request passes authorization iff there is at least one scope entry whose resou
 
 | resource | what it covers | notes |
 |---|---|---|
-| `roost` | a named versioned bundle (manifests, chunks referenced by those manifests, deploys/rollbacks targeting it) | scopes with `resource: "roost", id: "*"` grant access to every roost across every site the user owns. |
+| `roost` | a named versioned bundle (versions, chunks referenced by those versions, deploys/rollbacks targeting it) | scopes with `resource: "roost", id: "*"` grant access to every roost across every site the user owns. |
 | `site` | a tenant boundary (machines, quotas, audit log, webhooks, sites list entry) | scopes at the site level do **not** implicitly grant access to roosts inside that site — add an explicit `roost` scope if needed. |
 | `machine` | machine detail + deployment history for a single agent | used for read-only observability keys (e.g. a monitoring sidecar). |
 
@@ -166,8 +166,8 @@ a request passes authorization iff there is at least one scope entry whose resou
 
 | permission | grants |
 |---|---|
-| `read` | list + detail `GET`s on the resource, manifest download urls, deployment history |
-| `write` | create/rename/delete roosts, publish manifests, upload chunks |
+| `read` | list + detail `GET`s on the resource, version download urls, deployment history |
+| `write` | create/rename/delete roosts, publish versions, upload chunks |
 | `deploy` | trigger `POST /api/roosts/{id}/deploy` (targeted fan-out, canary, scheduled rollout) |
 | `rollback` | trigger `POST /api/roosts/{id}/rollback` (pointer flip) |
 | `admin` | webhook management, audit-log access, key-level settings on the resource |
@@ -183,7 +183,7 @@ the dashboard offers four presets to cover the common cases. each expands to a c
 | preset | scopes | use case |
 |---|---|---|
 | **`readonly`** | `[{ resource: "site", id: "<siteId>", permissions: ["read"] }, { resource: "roost", id: "*", permissions: ["read"] }]` | dashboards, observability, read-only monitoring; cannot publish, deploy, or rollback. |
-| **`publisher`** | `[{ resource: "roost", id: "*", permissions: ["read", "write"] }]` | ci/cd that builds + uploads manifests but does not trigger rollout (paired with a human-approved `operator` key for the deploy step). |
+| **`publisher`** | `[{ resource: "roost", id: "*", permissions: ["read", "write"] }]` | ci/cd that builds + uploads versions but does not trigger rollout (paired with a human-approved `operator` key for the deploy step). |
 | **`operator`** | `[{ resource: "roost", id: "*", permissions: ["read", "deploy", "rollback"] }]` | on-call rollout + rollback tooling; cannot modify roost contents. |
 | **`admin`** | `[{ resource: "site", id: "<siteId>", permissions: ["read", "admin"] }, { resource: "roost", id: "*", permissions: ["read", "write", "deploy", "rollback", "admin"] }]` | site-wide automation: webhook management, audit log access, full lifecycle. treat as root-equivalent. |
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { PageHeader } from '@/components/PageHeader';
@@ -27,7 +27,7 @@ import {
 
 const PRESETS: ApiKeyScopePreset[] = ['readonly', 'publisher', 'operator', 'admin'];
 
-export default function CliAuthorizePage() {
+function CliAuthorizeInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
@@ -218,5 +218,19 @@ export default function CliAuthorizePage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function CliAuthorizePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-background flex items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      }
+    >
+      <CliAuthorizeInner />
+    </Suspense>
   );
 }
