@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { collection, limit, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useDemoContext } from '@/contexts/DemoContext';
 
@@ -100,17 +100,13 @@ export function useDisplayEventFeed(
       return;
     }
 
-    // The composite (machineId ==, action prefix, timestamp desc) requires a
-    // double orderBy on Firestore which forces a heavy composite index. We
-    // instead query by (machineId ==) + (timestamp desc) and filter the
-    // `display_*` prefix client-side. Logs per machine are bounded, and we
-    // over-fetch by OVERFETCH_FACTOR so the filtered set still fills the
-    // requested limit even when non-display events are interleaved.
+    // Keep this query composite-index-free. Firestore can satisfy the machine
+    // equality from the single-field index; we sort/filter locally so a missing
+    // deployed composite index cannot break the panel's events tab.
     const logsRef = collection(db, 'sites', siteId, 'logs');
     const q = query(
       logsRef,
       where('machineId', '==', machineId),
-      orderBy('timestamp', 'desc'),
       limit(requestedLimit * OVERFETCH_FACTOR),
     );
 
@@ -118,8 +114,14 @@ export function useDisplayEventFeed(
       q,
       (snap) => {
         const next: DisplayEventEntry[] = [];
-        for (const docSnap of snap.docs) {
-          const data = docSnap.data() as Record<string, unknown>;
+        const candidates = snap.docs
+          .map((docSnap) => {
+            const data = docSnap.data() as Record<string, unknown>;
+            return { docSnap, data, timestamp: normalizeTimestamp(data.timestamp) };
+          })
+          .sort((a, b) => b.timestamp - a.timestamp);
+
+        for (const { docSnap, data, timestamp } of candidates) {
           const action = typeof data.action === 'string' ? data.action : '';
           if (!action.startsWith('display_')) continue;
           next.push({
@@ -129,7 +131,7 @@ export function useDisplayEventFeed(
             details: typeof data.details === 'string' ? data.details : '',
             machineId: typeof data.machineId === 'string' ? data.machineId : machineId,
             machineName: typeof data.machineName === 'string' ? data.machineName : '',
-            timestamp: normalizeTimestamp(data.timestamp),
+            timestamp,
           });
           if (next.length >= requestedLimit) break;
         }
@@ -148,7 +150,7 @@ export function useDisplayEventFeed(
           machineId,
           events: EMPTY_EVENTS,
           loaded: true,
-          error: err.message,
+          error: 'events unavailable',
         });
       },
     );
