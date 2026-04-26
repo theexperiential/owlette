@@ -13,6 +13,52 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [Unreleased]
 
+### added — api-sprint: 30+ scoped REST endpoints across 6 capability tracks
+
+Promotes the internal admin-gated capabilities (machine commands, processes, classic-installer deploys, agent-installer mgmt, cortex chat, user/member admin) to public, scoped, api-key-friendly REST endpoints. Closes 35 cli stubs in `owlette-cli`. New: full Node + Python SDK coverage. The roost data-plane (chunks/versions/deployments/keys/webhooks) was already public from the prior cycle; this release fills out the rest of the platform surface.
+
+**Versioning**: this is **additive** — no breaking changes to existing callers, no removals. Sits in `[Unreleased]` until cut. The 3.0.0 major-bump moment is deferred to `roost-public-api` W8 (public launch) which will combine this surface + the v1-agent compat cutover noted in `project_roost.md`.
+
+**new public endpoints (~30)** — every endpoint accepts `Authorization: Bearer owk_*` (api key) or session/ID-token; mutations require `Idempotency-Key` (24h replay window, body-hash mismatch → 422 `idempotency_key_mismatch`); errors are RFC 7807 problem+json with stable `code` strings; collections are cursor-paginated per AIP-158; every mutation emits a fire-and-forget audit-log event under one of seven `MutationKind` taxonomies.
+
+- **`/api/sites/{siteId}/deployments/*`** — classic installer deploy CRUD + retry/cancel/uninstall (6 verbs). Quota-enforced (max-targets-per-deploy=100, configurable via `sites/{id}.deployQuota`; 413 `over_quota`). Cancel actively purges queued commands so a stale entry can't be picked up. Uninstall requires `site=<id>:admin`.
+- **`/api/installer/*`** — agent-installer binary management (4 verbs: list, 3-step upload, set-latest, delete). Superadmin-only (gated by new `requirePlatformAuthAndScope` helper that composes Wave-0 primitives + a defense-in-depth role check). Soft-delete with min-active-versions ≥ 2 enforced inside a Firestore transaction (409 `min_versions_violated`).
+- **`/api/sites/{siteId}/machines/{machineId}/commands/*`** — dispatch + status-poll for `reboot_machine` / `shutdown_machine` / `capture_screenshot`. Live-view streaming explicitly out of scope (deferred Wave-4 spike). Offline machine returns 409 `machine_offline` (not queued). Screenshot uses a 3-step CLI flow: dispatch → poll → download from 1-hour signed URL.
+- **`/api/sites/{siteId}/machines/{machineId}/processes/*`** — full process CRUD + control verbs (kill / start / stop / schedule). 9 verbs total. Race-safe via the new `withProcessLock()` helper — Firestore transaction enforces duplicate-name rejection (409 `duplicate_process_name`) inside the txn boundary; lazy backfill of `processId` UUIDs on legacy rows. Schedule verb writes through the lock (no command queue); the other three control verbs queue commands.
+- **`/api/chat/*`** — cortex AI chat noun (5 verbs: new, list, send+stream, soft-delete, rename). Reuses cortex's dual-path streaming engine (local agent vs server-side LLM) via the extracted `cortexStream.server.ts` helper. Existing `/api/cortex/*` route is unchanged for dashboard callers. Conversations stored at `chat_conversations/{id}` with embedded messages capped at 200; overflow splits into `chat_messages/{conversationId}/{messageId}` subcollection.
+- **`/api/users/*`** — platform user administration (7 verbs: list/get/promote/demote/assign-sites/remove-sites/delete). Superadmin-gated. Last-superadmin guard runs inside the demote transaction (409 `last_superadmin`). DELETE cascade with explicit failure modes: orphan-sites guard (409 `orphan_sites` if user owns sites and `successorUid` not provided); successor validation; api-key revocation across both subcollection + top-level lookup; background `setImmediate` command-cancel sweep.
+- **`/api/sites/{siteId}/members/*`** — site membership (3 verbs: list/add/remove). Site-admin-gated. Add with `role: 'admin'` against a member-tier user returns `roleHonored: false` rather than silently promoting globally — explicit promotion goes through `/api/users/{uid}/promote`.
+
+**owlette CLI** — promoted from `@owlette/roost-cli` (binary `roost`) → `@owlette/cli` (binary `owlette`) in a previous step, now bumped to v0.3.0 with 6 promoted command groups: `chat` (5 verbs), `user` (7), `deploy` (classic installer; 6), `installer` (4), `process` (9), `machine` mutations (3 — reboot/shutdown/screenshot; live-view stays as the only C-tier stub). Plus `whoami`, `version`, `site`, `quota`, `audit-log`, `machine` reads from owlette-cli W2. Every mutation auto-generates `Idempotency-Key: cli-<noun>-<verb>-<uuid>`; stable error codes (`machine_offline`, `duplicate_process_name`, `over_quota`, `min_versions_violated`, `last_superadmin`, `orphan_sites`, `scope_insufficient`) get human-readable hints; destructive verbs honor `--yes`. Legacy `roost` binary + `ROOST_*` env vars + `~/.config/roost/` config path remain as deprecation wrappers through 2026-10-01 (one-time-per-process warnings).
+
+**Node + Python SDKs** — extended to 1.0.0-rc-equivalent feature parity. Both add 6 new resource modules (`installerDeployments`/`installer_deployments`, `installer`, `processes`, `chat`, `users`, `members`) plus extension of `machines` with command-dispatch + screenshot orchestration (queue → poll → download). Both auto-generate `Idempotency-Key: sdk-<resource>-<verb>-<uuid>` if not supplied. Streaming `chat.send()` parses the AI-SDK v3 line protocol (`0:` deltas, `d:` end markers, `3:` errors) — Node exposes `{ deltas: AsyncIterable, complete: Promise }`; Python yields `async for delta in chat.send(...)`.
+
+**scope grammar extended** — `ApiKeyResource` enum extended from 3 → 8 types: added `chat`, `deploy`, `process`, `user`, `installer`. New constants `ALL_RESOURCES` + `SUPERADMIN_ONLY_RESOURCES` exported from `web/lib/apiKeyTypes.ts` so route validators + the dashboard scope picker can't drift.
+
+**shared infrastructure** — three new helpers landed in Wave 0 of the sprint and are now used everywhere:
+- `withIdempotency(request, ctx, rawBody, handler)` in [`web/lib/idempotency.ts`](../web/lib/idempotency.ts) — collapses the 12-line check→handler→save pattern into 4 lines for every mutating route. The existing `web/lib/idempotency.ts` was extended in-place; no parallel helper file was created.
+- `emitMutation({kind, siteId, actor, targetId, attributes})` in [`web/lib/auditLogClient.ts`](../web/lib/auditLogClient.ts) — single parameterized helper covering all 7 mutation kinds (`deployment_mutated`, `process_mutated`, `machine_command_dispatched`, `user_mutated`, `site_member_mutated`, `installer_mutated`, `chat_mutated`). Fire-and-forget; never awaited.
+- `requireMachineAuthAndScope` + `requirePlatformAuthAndScope` in [`web/app/api/_shared.ts`](../web/app/api/_shared.ts) — joined the existing `requireSiteAuthAndScope` / `requireRoostAuthAndScope` family. Single-line scope check at every route; no per-route boilerplate.
+
+**cortex auth** — `web/app/api/cortex/route.ts` swapped from session-only `requireSession()` to `resolveAuth()` + `requireScope('chat', siteId, 'write')`. Dashboard callers (session/ID-token) bypass scope and continue to work unchanged; CLI / 3rd-party api-key callers must hold `chat=<siteId>:write`. SSE streaming context preserved.
+
+**site membership canonical** — audited and locked: site membership lives **only** at `users/{uid}.sites[]`. The hypothesized inverse `sites/{siteId}.members[]` does not exist anywhere in the codebase; firestore.rules pins to the canonical model. New `getUserSiteIds(uid)` helper in [`web/lib/apiHelpers.server.ts`](../web/lib/apiHelpers.server.ts) so future callers don't reinvent the read pattern. Decision memo at `dev/completed/api-sprint/reference/membership-decision.md`.
+
+**OpenAPI spec** — every new endpoint shipped with its spec entry alongside the route. Total: ~50 public scoped endpoints documented in `web/openapi.yaml`. Interactive reference at `/docs/api` (Scalar) and raw JSON at `/api/openapi`. Three pre-existing `Problem` → `ProblemDetails` ref typos fixed during the sprint-close verify.
+
+**testing** — 1447/1447 web tests passing across 75 jest suites (was 1142 before the sprint, +305 new). 237/237 CLI tests passing across 29 suites (was 108, +129 new). 55 Node SDK tests + 57 Python SDK tests. 47 new Playwright e2e specs across 7 files in `web/e2e/specs/api-sprint/`. 6 new k6 scripts in `load-tests/k6/` covering the highest-traffic new endpoints with smoke/sustained/spike scenarios and per-VU per-iteration unique idempotency keys.
+
+### deprecated
+
+- Legacy `roost` binary in the CLI package (use `owlette` instead — wrapper removed 2026-10-01).
+- `ROOST_*` env vars (use `OWLETTE_*` — fallback removed 2026-10-01).
+- `~/.config/roost/config.toml` (auto-migrates to `~/.config/owlette/config.toml` on first read).
+- `/api/admin/*` routes remain alive but the public scoped equivalents (`/api/sites/{s}/deployments/*`, `/api/installer/*`, etc.) are now the recommended surface for non-dashboard callers. Admin routes will sunset one major release after the public-PaaS launch.
+
+### removed
+
+Nothing. The api-sprint is purely additive — internal callers and existing public roost endpoints are unaffected.
+
 ## [2.11.0] - 2026-04-25
 
 ### added — display alert routing (Feature B)
