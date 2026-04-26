@@ -8,6 +8,7 @@
  *   GET    /api/sites/{siteId}/deployments
  *   POST   /api/sites/{siteId}/deployments
  *   GET    /api/sites/{siteId}/deployments/{deploymentId}
+ *   DELETE /api/sites/{siteId}/deployments/{deploymentId}
  *   POST   /api/sites/{siteId}/deployments/{deploymentId}/retry
  *   POST   /api/sites/{siteId}/deployments/{deploymentId}/cancel
  *   POST   /api/sites/{siteId}/deployments/{deploymentId}/uninstall
@@ -44,6 +45,30 @@ jest.mock('@/lib/auditLogClient', () => ({
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
 
+jest.mock('@/lib/authorizedHandler.server', () => ({
+  authorizedSiteHandler: () => (handler: (...args: unknown[]) => unknown) =>
+    async (
+      request: unknown,
+      routeContext: { params: Promise<{ siteId: string }> },
+    ) => {
+      const params = await routeContext.params;
+      return handler(
+        request,
+        {
+          actor: {
+            type: 'user',
+            userId: 'user-1',
+            role: 'admin',
+            sites: [params.siteId],
+          },
+          siteId: params.siteId,
+          correlationId: 'corr-test',
+        },
+        routeContext,
+      );
+    },
+}));
+
 const mockResolveAuth = jest.fn();
 const mockAssertSite = jest.fn();
 
@@ -61,7 +86,10 @@ import type { ApiKeyScope } from '@/lib/apiKeyTypes';
 import type { ResolvedAuth } from '@/lib/apiAuth.server';
 
 import { GET as listGET, POST as createPOST } from '@/app/api/sites/[siteId]/deployments/route';
-import { GET as detailGET } from '@/app/api/sites/[siteId]/deployments/[deploymentId]/route';
+import {
+  DELETE as detailDELETE,
+  GET as detailGET,
+} from '@/app/api/sites/[siteId]/deployments/[deploymentId]/route';
 import { POST as retryPOST } from '@/app/api/sites/[siteId]/deployments/[deploymentId]/retry/route';
 import { POST as cancelPOST } from '@/app/api/sites/[siteId]/deployments/[deploymentId]/cancel/route';
 import { POST as uninstallPOST } from '@/app/api/sites/[siteId]/deployments/[deploymentId]/uninstall/route';
@@ -431,6 +459,82 @@ describe('GET /api/sites/{siteId}/deployments/{deploymentId}', () => {
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}`,
     );
     const res = await detailGET(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.code).toBe('scope_insufficient');
+  });
+});
+
+/* ========================================================================== */
+/*  DELETE /api/sites/{siteId}/deployments/{deploymentId}                     */
+/* ========================================================================== */
+describe('DELETE /api/sites/{siteId}/deployments/{deploymentId}', () => {
+  it('200 - deletes terminal deployment', async () => {
+    mocks.get.mockResolvedValueOnce(
+      docSnapshot(DEPLOYMENT, {
+        status: 'completed',
+        targets: [{ machineId: 'm1', status: 'completed' }],
+      }),
+    );
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}`,
+      { method: 'DELETE', body: {} },
+    );
+    const res = await detailDELETE(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({
+      deploymentId: DEPLOYMENT,
+      siteId: SITE,
+      deleted: true,
+    });
+    expect(mocks.del).toHaveBeenCalledTimes(1);
+  });
+
+  it('404 when deployment not found', async () => {
+    mocks.get.mockResolvedValueOnce(docSnapshot(DEPLOYMENT, null));
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}`,
+      { method: 'DELETE', body: {} },
+    );
+    const res = await detailDELETE(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('409 when deployment status is not terminal', async () => {
+    mocks.get.mockResolvedValueOnce(
+      docSnapshot(DEPLOYMENT, {
+        status: 'in_progress',
+        targets: [{ machineId: 'm1', status: 'installing' }],
+      }),
+    );
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}`,
+      { method: 'DELETE', body: {} },
+    );
+    const res = await detailDELETE(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe('deployment_in_flight');
+  });
+
+  it('403 scope_insufficient when key lacks site:write', async () => {
+    mockResolveAuth.mockResolvedValue(
+      authedKey([{ resource: 'site', id: SITE, permissions: ['read'] }]),
+    );
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}`,
+      { method: 'DELETE', body: {} },
+    );
+    const res = await detailDELETE(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
     });
     expect(res.status).toBe(403);

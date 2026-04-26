@@ -39,6 +39,68 @@ jest.mock('@/app/api/_shared', () => ({
   requireMachineAuthAndScope: (...args: unknown[]) => mockRequireMachineAuthAndScope(...args),
 }));
 
+const mockResolveAuth = jest.fn().mockResolvedValue({
+  userId: 'test-user',
+  keyContext: null,
+});
+jest.mock('@/lib/apiAuth.server', () => {
+  class FakeApiAuthError extends Error {
+    status: number;
+    code?: string;
+    details?: Record<string, unknown>;
+    constructor(
+      status: number,
+      message: string,
+      opts?: { code?: string; details?: Record<string, unknown> },
+    ) {
+      super(message);
+      this.status = status;
+      this.code = opts?.code;
+      this.details = opts?.details;
+    }
+  }
+  return {
+    ApiAuthError: FakeApiAuthError,
+    resolveAuth: (...args: unknown[]) => mockResolveAuth(...args),
+  };
+});
+
+function mockAuthorizedSiteHandler(options: { targetKind?: string }) {
+  return (
+  handler: (
+    request: NextRequest,
+    ctx: {
+      actor: { type: 'user'; userId: string; role: 'admin'; sites: string[] };
+      siteId: string;
+      correlationId: string;
+    },
+    routeContext: { params: Promise<Record<string, string>> },
+  ) => Promise<Response>,
+) => async (request: NextRequest, routeContext: { params: Promise<Record<string, string>> }) => {
+  const params = await routeContext.params;
+  const auth = await mockRequireMachineAuthAndScope(
+    request,
+    params.siteId,
+    params.machineId,
+    'write',
+  );
+  if (!auth.ok) return auth.response;
+  return handler(
+    request,
+    {
+      actor: { type: 'user', userId: auth.userId, role: 'admin', sites: [params.siteId] },
+      siteId: params.siteId,
+      correlationId: `corr-${options.targetKind ?? 'site'}`,
+    },
+    { params: Promise.resolve(params) },
+  );
+};
+}
+jest.mock('@/lib/authorizedHandler.server', () => ({
+  authorizedSiteHandler: (options: { targetKind?: string }) =>
+    mockAuthorizedSiteHandler(options),
+}));
+
 // Idempotency: pass-through unless we explicitly override.
 type IdemHandler = () => Promise<unknown>;
 const mockWithIdempotency = jest.fn(

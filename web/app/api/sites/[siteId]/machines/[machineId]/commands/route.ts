@@ -1,58 +1,36 @@
 /**
  * POST /api/sites/{siteId}/machines/{machineId}/commands
  *
- * Queue a remote command on a machine. Public counterpart of
- * `/api/admin/commands/send`; restricted to a small allowlist of operator-
- * safe types (`reboot_machine`, `shutdown_machine`, `capture_screenshot`)
- * so api-key callers can't spawn arbitrary commands. Live-view is
- * intentionally absent — that surface is a wave-4 spike.
+ * Queue a remote command on a machine. The public contract from the
+ * api-sprint route is preserved: request shape, idempotency behavior,
+ * machine-scoped API-key scope, RFC 7807 errors, and 202 response envelope.
  *
- * Auth: `machine=<id>:write` (api-key) OR site membership (session/id-token).
- * Idempotency: required via `Idempotency-Key`. Replays return the cached
- * 202 envelope with `Idempotent-Replayed: true`.
- *
- * Errors:
- *   - 400 `unsupported_command_type` — type not in the allowlist
- *   - 400 validation failures (missing type, bad params)
- *   - 403 `scope_insufficient` — api key lacks the right scope
- *   - 409 `machine_offline` — `machines/{id}.online === false`
- *
- * api-sprint wave 2 — track 2A (machine-api MVP).
+ * security-boundary-migration wave 3.1: route is now a thin authorized shim
+ * around `executeMachineCommand`.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { FieldValue } from 'firebase-admin/firestore';
 import {
   problem,
   problemFromError,
   problemValidation,
   ProblemType,
 } from '@/lib/apiErrors';
-import { getAdminDb } from '@/lib/firebase-admin';
-import {
-  applyAuthDeprecations,
-  readAndParseJsonBody,
-  requireMachineAuthAndScope,
-} from '../../../../../_shared';
+import { applyAuthDeprecations, readAndParseJsonBody } from '../../../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
-import { emitMutation } from '@/lib/auditLogClient';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
+import {
+  ALLOWED_COMMAND_TYPES,
+  executeMachineCommand,
+  ExecuteMachineCommandError,
+} from '@/lib/actions/executeMachineCommand.server';
 
 interface RouteParams {
-  params: Promise<{ siteId: string; machineId: string }>;
+  [key: string]: string | undefined;
+  siteId: string;
+  machineId: string;
 }
-
-/**
- * Allowlist of command types this public endpoint will queue. Mirrors the
- * api-surface spec for track 2A. Any other type → 400 `unsupported_command_type`.
- */
-const ALLOWED_COMMAND_TYPES = new Set<string>([
-  'reboot_machine',
-  'shutdown_machine',
-  'capture_screenshot',
-]);
-
-const DEFAULT_TIMEOUT_S = 60;
-const MAX_TIMEOUT_S = 600;
 
 interface CommandBody {
   type?: unknown;
@@ -60,198 +38,275 @@ interface CommandBody {
   timeout_seconds?: unknown;
 }
 
-export async function POST(request: NextRequest, { params }: RouteParams) {
+const DEFAULT_TIMEOUT_S = 60;
+const MAX_TIMEOUT_S = 600;
+
+type NormalizedCommand =
+  | { ok: true; type: string; payload: Record<string, unknown> }
+  | { ok: false; response: NextResponse };
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function unsupportedCommandType(cmdType: string): NextResponse {
+  return problem({
+    type: ProblemType.ValidationFailed,
+    title: 'unsupported command type',
+    status: 400,
+    detail:
+      `command type '${cmdType}' is not accepted on this endpoint. ` +
+      `allowed types: ${[...ALLOWED_COMMAND_TYPES].sort().join(', ')}`,
+    code: 'unsupported_command_type',
+  });
+}
+
+function copyOptionalString(
+  input: Record<string, unknown>,
+  output: Record<string, unknown>,
+  key: string,
+): NextResponse | null {
+  const value = input[key];
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || value.length === 0) {
+    return problemValidation(`params.${key} must be a non-empty string when provided`, {
+      [`body.params.${key}`]: ['must be a non-empty string'],
+    });
+  }
+  output[key] = value;
+  return null;
+}
+
+function copyOptionalPositiveInteger(
+  input: Record<string, unknown>,
+  output: Record<string, unknown>,
+  key: string,
+  min = 0,
+): NextResponse | null {
+  const value = input[key];
+  if (value === undefined) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < min) {
+    return problemValidation(`params.${key} must be >= ${min} when provided`, {
+      [`body.params.${key}`]: [`must be >= ${min}`],
+    });
+  }
+  output[key] = Math.floor(n);
+  return null;
+}
+
+function normalizeCommandBody(body: CommandBody): NormalizedCommand {
+  if (typeof body.type !== 'string' || body.type.trim().length === 0) {
+    return {
+      ok: false,
+      response: problemValidation('field `type` is required and must be a non-empty string', {
+        'body.type': ['required non-empty string'],
+      }),
+    };
+  }
+
+  const cmdType = body.type.trim();
+  if (!ALLOWED_COMMAND_TYPES.has(cmdType)) {
+    return { ok: false, response: unsupportedCommandType(cmdType) };
+  }
+
+  const rawParams = body.params;
+  if (rawParams !== undefined && rawParams !== null && !isPlainObject(rawParams)) {
+    return {
+      ok: false,
+      response: problemValidation('field `params` must be an object when provided', {
+        'body.params': ['must be an object'],
+      }),
+    };
+  }
+  const inputParams = (rawParams ?? {}) as Record<string, unknown>;
+
+  let timeoutSeconds = DEFAULT_TIMEOUT_S;
+  if (body.timeout_seconds !== undefined && body.timeout_seconds !== null) {
+    const n = Number(body.timeout_seconds);
+    if (!Number.isFinite(n) || n <= 0) {
+      return {
+        ok: false,
+        response: problemValidation('timeout_seconds must be a positive number when provided', {
+          'body.timeout_seconds': ['must be > 0'],
+        }),
+      };
+    }
+    timeoutSeconds = Math.min(Math.floor(n), MAX_TIMEOUT_S);
+  }
+
+  const payload: Record<string, unknown> = { timeout_seconds: timeoutSeconds };
+
+  if (cmdType === 'reboot_machine' || cmdType === 'shutdown_machine') {
+    const error = copyOptionalPositiveInteger(inputParams, payload, 'delay_seconds', 0);
+    if (error) return { ok: false, response: error };
+  } else if (cmdType === 'capture_screenshot') {
+    const monitor = inputParams.monitor;
+    if (monitor !== undefined) {
+      if (typeof monitor === 'string') {
+        if (monitor !== 'all' && monitor !== 'primary') {
+          return {
+            ok: false,
+            response: problemValidation(
+              'params.monitor must be "all", "primary", or a non-negative integer',
+              { 'body.params.monitor': ['invalid value'] },
+            ),
+          };
+        }
+        payload.monitor = monitor;
+      } else if (typeof monitor === 'number') {
+        if (!Number.isFinite(monitor) || monitor < 0 || !Number.isInteger(monitor)) {
+          return {
+            ok: false,
+            response: problemValidation(
+              'params.monitor must be a non-negative integer when numeric',
+              { 'body.params.monitor': ['invalid value'] },
+            ),
+          };
+        }
+        payload.monitor = monitor;
+      } else {
+        return {
+          ok: false,
+          response: problemValidation(
+            'params.monitor must be "all", "primary", or a non-negative integer',
+            { 'body.params.monitor': ['invalid value'] },
+          ),
+        };
+      }
+    }
+  } else if (cmdType === 'dismiss_reboot_pending') {
+    const error = copyOptionalString(inputParams, payload, 'process_name');
+    if (error) return { ok: false, response: error };
+  } else if (cmdType === 'start_live_view') {
+    for (const key of ['interval', 'duration']) {
+      const error = copyOptionalPositiveInteger(inputParams, payload, key, 1);
+      if (error) return { ok: false, response: error };
+    }
+  } else if (cmdType === 'apply_display_topology') {
+    if (inputParams.layout !== undefined) {
+      if (!isPlainObject(inputParams.layout)) {
+        return {
+          ok: false,
+          response: problemValidation('params.layout must be an object when provided', {
+            'body.params.layout': ['must be an object'],
+          }),
+        };
+      }
+      payload.layout = inputParams.layout;
+    }
+    const error = copyOptionalString(inputParams, payload, 'applyId');
+    if (error) return { ok: false, response: error };
+  } else if (cmdType === 'ack_display_topology') {
+    const error = copyOptionalString(inputParams, payload, 'applyId');
+    if (error) return { ok: false, response: error };
+  } else if (cmdType === 'kill_process') {
+    for (const key of ['process_name', 'process_id']) {
+      const error = copyOptionalString(inputParams, payload, key);
+      if (error) return { ok: false, response: error };
+    }
+  } else if (cmdType === 'update_owlette') {
+    for (const key of ['installer_url', 'deployment_id', 'target_version', 'checksum_sha256']) {
+      const error = copyOptionalString(inputParams, payload, key);
+      if (error) return { ok: false, response: error };
+    }
+  }
+
+  return { ok: true, type: cmdType, payload };
+}
+
+function commandErrorToProblem(err: ExecuteMachineCommandError): NextResponse {
+  if (err.code === 'unsupported_command_type') {
+    return unsupportedCommandType(err.detail.match(/'([^']+)'/)?.[1] ?? 'unknown');
+  }
+  if (err.code === 'machine_offline') {
+    return problem({
+      type: ProblemType.Conflict,
+      title: 'machine offline',
+      status: 409,
+      detail: err.detail,
+      code: 'machine_offline',
+    });
+  }
+  if (err.status === 404) {
+    return problem({
+      type: ProblemType.NotFound,
+      title: 'machine not found',
+      status: 404,
+      detail: err.detail,
+    });
+  }
+  return problem({
+    type: ProblemType.ValidationFailed,
+    title: 'validation failed',
+    status: err.status,
+    detail: err.detail,
+    code: err.code,
+  });
+}
+
+export const POST = authorizedSiteHandler<RouteParams>({
+  capability: Capability.MACHINE_EXEC_COMMAND,
+  siteIdParam: 'path',
+  targetKind: 'machine',
+  targetIdParam: 'machineId',
+  apiKeyScope: { resource: 'machine', idParam: 'machineId', permission: 'write' },
+})(async (request: NextRequest, ctx, { params }) => {
   try {
-    const { siteId, machineId } = await params;
+    const { machineId } = await params;
+    const siteId = ctx.siteId;
 
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
     const body = (parsed.body ?? {}) as CommandBody;
 
-    const auth = await requireMachineAuthAndScope(request, siteId, machineId, 'write');
-    if (!auth.ok) return auth.response;
-
     return withIdempotency(
       request,
       {
-        userId: auth.userId,
-        environment: auth.auth.keyContext?.environment ?? 'unknown',
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
-        // ── body validation ────────────────────────────────────────────
-        if (typeof body.type !== 'string' || body.type.trim().length === 0) {
-          return problemValidation('field `type` is required and must be a non-empty string', {
-            'body.type': ['required non-empty string'],
-          });
-        }
-        const cmdType = body.type.trim();
-        if (!ALLOWED_COMMAND_TYPES.has(cmdType)) {
-          return problem({
-            type: ProblemType.ValidationFailed,
-            title: 'unsupported command type',
-            status: 400,
-            detail:
-              `command type '${cmdType}' is not accepted on this endpoint. ` +
-              `allowed types: ${[...ALLOWED_COMMAND_TYPES].sort().join(', ')}`,
-            code: 'unsupported_command_type',
-          });
-        }
+        const normalized = normalizeCommandBody(body);
+        if (!normalized.ok) return normalized.response;
 
-        const rawParams = body.params;
-        if (rawParams !== undefined && rawParams !== null) {
-          if (typeof rawParams !== 'object' || Array.isArray(rawParams)) {
-            return problemValidation('field `params` must be an object when provided', {
-              'body.params': ['must be an object'],
-            });
-          }
-        }
-        const inputParams = (rawParams ?? {}) as Record<string, unknown>;
-
-        // Timeout (optional). Clamp to [1, MAX_TIMEOUT_S].
-        let timeoutSeconds: number = DEFAULT_TIMEOUT_S;
-        if (body.timeout_seconds !== undefined && body.timeout_seconds !== null) {
-          const n = Number(body.timeout_seconds);
-          if (!Number.isFinite(n) || n <= 0) {
-            return problemValidation(
-              'timeout_seconds must be a positive number when provided',
-              { 'body.timeout_seconds': ['must be > 0'] },
-            );
-          }
-          timeoutSeconds = Math.min(Math.floor(n), MAX_TIMEOUT_S);
-        }
-
-        // Per-type param normalization. Anything outside the allowlist is
-        // dropped to prevent field injection on the agent side.
-        const safeParams: Record<string, unknown> = {};
-        if (cmdType === 'reboot_machine' || cmdType === 'shutdown_machine') {
-          if (inputParams.delay_seconds !== undefined) {
-            const d = Number(inputParams.delay_seconds);
-            if (!Number.isFinite(d) || d < 0) {
-              return problemValidation(
-                'params.delay_seconds must be ≥ 0 when provided',
-                { 'body.params.delay_seconds': ['must be ≥ 0'] },
-              );
-            }
-            safeParams.delay_seconds = Math.floor(d);
-          }
-        } else if (cmdType === 'capture_screenshot') {
-          // monitor: 'all' | 'primary' | non-negative integer.
-          if (inputParams.monitor !== undefined) {
-            const m = inputParams.monitor;
-            if (typeof m === 'string') {
-              if (m !== 'all' && m !== 'primary') {
-                return problemValidation(
-                  'params.monitor must be "all", "primary", or a non-negative integer',
-                  { 'body.params.monitor': ['invalid value'] },
-                );
-              }
-              safeParams.monitor = m;
-            } else if (typeof m === 'number') {
-              if (!Number.isFinite(m) || m < 0 || !Number.isInteger(m)) {
-                return problemValidation(
-                  'params.monitor must be a non-negative integer when numeric',
-                  { 'body.params.monitor': ['invalid value'] },
-                );
-              }
-              safeParams.monitor = m;
-            } else {
-              return problemValidation(
-                'params.monitor must be "all", "primary", or a non-negative integer',
-                { 'body.params.monitor': ['invalid value'] },
-              );
-            }
-          }
-        }
-
-        // ── machine offline check ──────────────────────────────────────
-        const db = getAdminDb();
-        const machineRef = db
-          .collection('sites')
-          .doc(siteId)
-          .collection('machines')
-          .doc(machineId);
-        const machineSnap = await machineRef.get();
-        if (!machineSnap.exists) {
-          return problem({
-            type: ProblemType.NotFound,
-            title: 'machine not found',
-            status: 404,
-            detail: `machine ${machineId} not found on site ${siteId}`,
-          });
-        }
-        const machineData = machineSnap.data() ?? {};
-        if (machineData.online === false) {
-          return problem({
-            type: ProblemType.Conflict,
-            title: 'machine offline',
-            status: 409,
-            detail:
-              `machine ${machineId} is currently offline; commands cannot be queued ` +
-              `until it reconnects`,
-            code: 'machine_offline',
-          });
-        }
-
-        // ── write command to pending queue ─────────────────────────────
-        const commandId = `cmd_${Date.now().toString(36)}_${Math.random()
-          .toString(36)
-          .slice(2, 10)}`;
-
-        const pendingRef = db
-          .collection('sites')
-          .doc(siteId)
-          .collection('machines')
-          .doc(machineId)
-          .collection('commands')
-          .doc('pending');
-
-        const commandPayload: Record<string, unknown> = {
-          type: cmdType,
-          ...safeParams,
-          timeout_seconds: timeoutSeconds,
-          siteId,
-          machineId,
-          timestamp: FieldValue.serverTimestamp(),
-          status: 'pending',
-          queuedBy: auth.auth.keyContext
-            ? `apiKey:${auth.auth.keyContext.keyId}`
-            : `user:${auth.userId}`,
-        };
-
-        await pendingRef.set({ [commandId]: commandPayload }, { merge: true });
-
-        emitMutation({
-          kind: 'machine_command_dispatched',
-          siteId,
-          actor: auth.auth.keyContext
-            ? `apiKey:${auth.auth.keyContext.keyId}`
-            : `user:${auth.userId}`,
-          targetId: commandId,
-          attributes: {
-            commandType: cmdType,
-            endpoint: `/api/sites/${siteId}/machines/${machineId}/commands`,
-            method: 'POST',
-            machineId,
-          },
-        });
-
-        return applyAuthDeprecations(
-          NextResponse.json(
+        try {
+          const result = await executeMachineCommand(
             {
-              ok: true,
-              data: {
-                commandId,
-                status: 'pending',
-              },
+              siteId,
+              machineId,
+              actor: ctx.actor,
+              auditActor: ctx.auth.keyContext
+                ? `apiKey:${ctx.auth.keyContext.keyId}`
+                : `user:${ctx.actor.userId}`,
+              correlationId: ctx.correlationId,
             },
-            { status: 202 },
-          ),
-          auth.scopeCheck,
-        );
+            { type: normalized.type, payload: normalized.payload },
+          );
+
+          return applyAuthDeprecations(
+            NextResponse.json(
+              {
+                ok: true,
+                data: {
+                  commandId: result.commandId,
+                  status: 'pending',
+                },
+              },
+              { status: 202 },
+            ),
+            ctx.scopeCheck,
+          );
+        } catch (err) {
+          if (err instanceof ExecuteMachineCommandError) {
+            return commandErrorToProblem(err);
+          }
+          throw err;
+        }
       },
     );
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/machines/[machineId]/commands:POST');
   }
-}
+});

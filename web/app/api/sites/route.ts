@@ -16,6 +16,7 @@ import {
   problemFromError,
   problemForbidden,
   problemNotFound,
+  problemValidation,
   problemUnauthorized,
   ProblemType,
 } from '@/lib/apiErrors';
@@ -27,6 +28,26 @@ import {
 } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import type { ApiKeyScope } from '@/lib/apiKeyTypes';
+import { withIdempotency } from '@/lib/idempotency';
+import { authorizedPlatformHandler, type PlatformHandlerContext } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
+import { createSite } from '@/lib/actions/createSite.server';
+import {
+  applyAuthDeprecations as applyScopedAuthDeprecations,
+  readAndParseJsonBody,
+} from '../_shared';
+
+interface CreateSiteBody {
+  siteId?: unknown;
+  name?: unknown;
+  timezone?: unknown;
+}
+
+function auditActor(ctx: PlatformHandlerContext): string {
+  return ctx.auth.keyContext
+    ? `apiKey:${ctx.auth.keyContext.keyId}`
+    : `user:${ctx.actor.userId}`;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -108,6 +129,79 @@ export async function GET(request: NextRequest) {
     return problemFromError(err, 'v2/sites:GET');
   }
 }
+
+export const POST = authorizedPlatformHandler({
+  capability: Capability.SITE_MEMBER_MANAGE,
+  targetKind: 'site',
+  apiKeyScope: { resource: 'site', permission: 'admin' },
+})(async (request: NextRequest, ctx: PlatformHandlerContext) => {
+  try {
+    const parsed = await readAndParseJsonBody(request);
+    if (!parsed.ok) return parsed.response;
+
+    return await withIdempotency(
+      request,
+      {
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
+      },
+      parsed.raw,
+      async () => {
+        const body = parsed.body as CreateSiteBody;
+        const result = await createSite(
+          {
+            auditActor: auditActor(ctx),
+            endpoint: '/api/sites',
+            method: 'POST',
+          },
+          {
+            siteId: typeof body.siteId === 'string' ? body.siteId : '',
+            name: typeof body.name === 'string' ? body.name : '',
+            ownerUid: ctx.actor.userId,
+            timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
+          },
+        );
+
+        if (result.kind === 'invalid_site_id') {
+          return problemValidation(result.reason, {
+            'body.siteId': [result.reason],
+          });
+        }
+        if (result.kind === 'invalid_name') {
+          return problemValidation(result.reason, {
+            'body.name': [result.reason],
+          });
+        }
+        if (result.kind === 'already_exists') {
+          return problem({
+            type: ProblemType.Conflict,
+            title: 'site already exists',
+            status: 409,
+            detail: `site ${String(body.siteId)} already exists`,
+            instance: '/api/sites',
+            code: 'site_already_exists',
+          });
+        }
+
+        return applyScopedAuthDeprecations(
+          NextResponse.json(
+            {
+              siteId: result.siteId,
+              name: result.name,
+              timezone: result.timezone,
+              owner: result.owner,
+              createdAt: result.createdAt,
+            },
+            { status: 201 },
+          ),
+          ctx.scopeCheck,
+        );
+      },
+    );
+  } catch (err) {
+    return problemFromError(err, 'v2/sites:POST');
+  }
+});
 
 /**
  * Null = unrestricted (wildcard or non-site scope); Set = restricted to these site ids.

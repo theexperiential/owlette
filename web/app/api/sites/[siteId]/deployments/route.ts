@@ -1,23 +1,16 @@
 /**
  * GET  /api/sites/{siteId}/deployments
- *      → cursor-paginated list of installer-deployments for a site,
- *        newest first. Requires `site=<id>:read`.
+ *      -> cursor-paginated list of installer deployments for a site.
  *
  * POST /api/sites/{siteId}/deployments
- *      → create a deployment + fan out `install_software` commands to
- *        each target machine. Requires `site=<id>:write` and an
- *        `Idempotency-Key` header. Enforces a per-site max-targets quota
- *        (default 100, override via `sites/{siteId}.deployQuota`); over
- *        quota returns 413 `over_quota`.
+ *      -> create a deployment and fan out install_software commands.
  *
- * api-sprint wave 1 — track 1A (installer-deploys-api). Public
- * counterpart of `/api/admin/deployments` (which keeps backing the
- * dashboard); shape changes follow the AIP-158 cursor-pagination + RFC
- * 7807 problem+json conventions used across the roost public api.
+ * security-boundary-migration wave 3.3: mutation logic lives in
+ * `web/lib/actions/createDeployment.server.ts`; this file is a thin HTTP
+ * shim that preserves the api-sprint public contract.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { FieldValue } from 'firebase-admin/firestore';
 import {
   problem,
   problemFromError,
@@ -32,24 +25,30 @@ import {
   requireSiteAuthAndScope,
 } from '../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
-import { emitMutation } from '@/lib/auditLogClient';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
+import {
+  createDeployment,
+  type CreateDeploymentInput,
+  type CreateDeploymentResult,
+} from '@/lib/actions/createDeployment.server';
 
-interface RouteParams {
-  params: Promise<{ siteId: string }>;
-}
+type RouteParams = { siteId: string };
 
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
-const DEFAULT_MAX_TARGETS = 100;
-const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 
 /* --------------------------------------------------------------------- */
-/*  GET — list deployments                                               */
+/*  GET - list deployments                                                */
 /* --------------------------------------------------------------------- */
 
-export async function GET(request: NextRequest, { params }: RouteParams) {
+export const GET = authorizedSiteHandler<RouteParams>({
+  capability: 'DEPLOYMENT_MANAGE',
+  siteIdParam: 'path',
+  targetKind: 'deployment',
+  apiKeyPermission: 'read',
+})(async (request: NextRequest, _ctx, routeContext) => {
   try {
-    const { siteId } = await params;
+    const { siteId } = await routeContext.params;
     const auth = await requireSiteAuthAndScope(request, siteId, 'read');
     if (!auth.ok) return auth.response;
 
@@ -87,30 +86,23 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/deployments:GET');
   }
-}
+});
 
 /* --------------------------------------------------------------------- */
-/*  POST — create deployment                                             */
+/*  POST - create deployment                                              */
 /* --------------------------------------------------------------------- */
 
-interface CreateDeploymentBody {
-  name?: unknown;
-  installer_url?: unknown;
-  installer_name?: unknown;
-  silent_flags?: unknown;
-  verify_path?: unknown;
-  machines?: unknown;
-  sha256_checksum?: unknown;
-  parallel_install?: unknown;
-}
-
-export async function POST(request: NextRequest, { params }: RouteParams) {
+export const POST = authorizedSiteHandler<RouteParams>({
+  capability: 'DEPLOYMENT_MANAGE',
+  siteIdParam: 'path',
+  targetKind: 'deployment',
+})(async (request: NextRequest, ctx, routeContext) => {
   try {
-    const { siteId } = await params;
+    const { siteId } = await routeContext.params;
 
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
-    const body = (parsed.body ?? {}) as CreateDeploymentBody;
+    const body = (parsed.body ?? {}) as CreateDeploymentInput;
 
     const auth = await requireSiteAuthAndScope(request, siteId, 'write');
     if (!auth.ok) return auth.response;
@@ -123,185 +115,24 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       },
       parsed.raw,
       async () => {
-        // ── body validation ─────────────────────────────────────────────
-        if (typeof body.name !== 'string' || body.name.trim().length === 0) {
-          return problemValidation('field `name` is required and must be a non-empty string', {
-            'body.name': ['required non-empty string'],
-          });
-        }
-        if (typeof body.installer_name !== 'string' || body.installer_name.trim().length === 0) {
-          return problemValidation('field `installer_name` is required and must be a non-empty string', {
-            'body.installer_name': ['required non-empty string'],
-          });
-        }
-        if (typeof body.installer_url !== 'string' || body.installer_url.trim().length === 0) {
-          return problemValidation('field `installer_url` is required and must be a non-empty string', {
-            'body.installer_url': ['required non-empty string'],
-          });
-        }
-        if (typeof body.silent_flags !== 'string') {
-          return problemValidation('field `silent_flags` is required and must be a string', {
-            'body.silent_flags': ['required string'],
-          });
-        }
-        try {
-          const parsedUrl = new URL(body.installer_url);
-          if (parsedUrl.protocol !== 'https:') {
-            return problemValidation('installer_url must use HTTPS protocol', {
-              'body.installer_url': ['must be https://'],
-            });
-          }
-        } catch {
-          return problemValidation('installer_url must be a valid URL', {
-            'body.installer_url': ['invalid url'],
-          });
-        }
-
-        let verifyPath: string | undefined;
-        if (body.verify_path !== undefined && body.verify_path !== null) {
-          if (typeof body.verify_path !== 'string') {
-            return problemValidation('verify_path must be a string when provided', {
-              'body.verify_path': ['must be a string'],
-            });
-          }
-          verifyPath = body.verify_path;
-        }
-
-        let sha256: string | undefined;
-        if (body.sha256_checksum !== undefined && body.sha256_checksum !== null) {
-          if (typeof body.sha256_checksum !== 'string' || !SHA256_HEX_RE.test(body.sha256_checksum)) {
-            return problemValidation(
-              'sha256_checksum must be a 64-character hex SHA-256 hash',
-              { 'body.sha256_checksum': ['must be 64-char hex'] },
-            );
-          }
-          sha256 = body.sha256_checksum;
-        }
-
-        const parallelInstall = body.parallel_install === true;
-
-        if (
-          !Array.isArray(body.machines) ||
-          body.machines.some((m) => typeof m !== 'string' || m.length === 0)
-        ) {
-          return problemValidation('field `machines` must be a non-empty array of machineId strings', {
-            'body.machines': ['must be string[]'],
-          });
-        }
-        const machines = [...new Set(body.machines as string[])];
-        if (machines.length === 0) {
-          return problemValidation('machines must not be empty', {
-            'body.machines': ['must be non-empty'],
-          });
-        }
-
-        // ── per-site max-targets quota ─────────────────────────────────
-        const db = getAdminDb();
-        const siteSnap = await db.collection('sites').doc(siteId).get();
-        const siteData = siteSnap.exists ? (siteSnap.data() ?? {}) : {};
-        const quotaRaw = siteData.deployQuota;
-        const maxTargets =
-          typeof quotaRaw === 'number' && Number.isFinite(quotaRaw) && quotaRaw > 0
-            ? Math.floor(quotaRaw)
-            : DEFAULT_MAX_TARGETS;
-
-        if (machines.length > maxTargets) {
-          return problem({
-            type: ProblemType.PayloadTooLarge,
-            title: 'over quota',
-            status: 413,
-            detail: `requested ${machines.length} target machines but max-targets-per-deploy on this site is ${maxTargets}`,
-            code: 'over_quota',
-            quota: { max_targets: maxTargets, requested: machines.length },
-          });
-        }
-
-        // ── write deployment doc + fan out commands ────────────────────
-        const deploymentId = `deploy-${Date.now()}`;
-        const deploymentRef = db
-          .collection('sites')
-          .doc(siteId)
-          .collection('deployments')
-          .doc(deploymentId);
-
-        const targets = machines.map((machineId) => ({
-          machineId,
-          status: 'pending' as const,
-        }));
-
-        const deploymentData: Record<string, unknown> = {
-          name: body.name.trim(),
-          installer_name: body.installer_name.trim(),
-          installer_url: body.installer_url,
-          silent_flags: body.silent_flags,
-          targets,
-          createdAt: FieldValue.serverTimestamp(),
-          status: 'pending',
-          createdBy: auth.userId,
-        };
-        if (sha256) deploymentData.sha256_checksum = sha256;
-        if (verifyPath) deploymentData.verify_path = verifyPath;
-        if (parallelInstall) deploymentData.parallel_install = true;
-
-        await deploymentRef.set(deploymentData);
-
-        // Fan out install_software commands to each target machine.
-        await Promise.all(
-          machines.map(async (machineId) => {
-            const sanitizedDeploymentId = deploymentId.replace(/-/g, '_');
-            const sanitizedMachineId = machineId.replace(/-/g, '_');
-            const commandId = `install_${sanitizedDeploymentId}_${sanitizedMachineId}_${Date.now()}`;
-
-            const pendingRef = db
-              .collection('sites')
-              .doc(siteId)
-              .collection('machines')
-              .doc(machineId)
-              .collection('commands')
-              .doc('pending');
-
-            const commandData: Record<string, unknown> = {
-              type: 'install_software',
-              installer_url: body.installer_url,
-              installer_name: (body.installer_name as string).trim(),
-              silent_flags: body.silent_flags,
-              deployment_id: deploymentId,
-              timestamp: FieldValue.serverTimestamp(),
-              status: 'pending',
-            };
-            if (sha256) commandData.sha256_checksum = sha256;
-            if (verifyPath) commandData.verify_path = verifyPath;
-            if (parallelInstall) commandData.parallel_install = true;
-
-            await pendingRef.set({ [commandId]: commandData }, { merge: true });
-          }),
-        );
-
-        await deploymentRef.update({ status: 'in_progress' });
-
-        emitMutation({
-          kind: 'deployment_mutated',
+        const result = await createDeployment(body, {
           siteId,
-          actor: auth.auth.keyContext
-            ? `apiKey:${auth.auth.keyContext.keyId}`
-            : `user:${auth.userId}`,
-          targetId: deploymentId,
-          attributes: {
-            endpoint: `/api/sites/${siteId}/deployments`,
-            method: 'POST',
-            verb: 'create',
-            target_count: machines.length,
-            installer_name: (body.installer_name as string).trim(),
-          },
+          createdBy: auth.userId,
+          actorIdentifier: actorIdentifier(auth),
+          correlationId: ctx.correlationId,
         });
+
+        if (!result.ok) {
+          return createDeploymentErrorToResponse(result);
+        }
 
         return applyAuthDeprecations(
           NextResponse.json(
             {
-              deploymentId,
-              siteId,
-              status: 'in_progress',
-              targets,
+              deploymentId: result.deploymentId,
+              siteId: result.siteId,
+              status: result.status,
+              targets: result.targets,
             },
             { status: 201 },
           ),
@@ -312,11 +143,71 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/deployments:POST');
   }
-}
+});
 
 /* --------------------------------------------------------------------- */
-/*  helpers                                                              */
+/*  helpers                                                               */
 /* --------------------------------------------------------------------- */
+
+function actorIdentifier(auth: Extract<Awaited<ReturnType<typeof requireSiteAuthAndScope>>, { ok: true }>): string {
+  return auth.auth.keyContext
+    ? `apiKey:${auth.auth.keyContext.keyId}`
+    : `user:${auth.userId}`;
+}
+
+function createDeploymentErrorToResponse(
+  result: Extract<CreateDeploymentResult, { ok: false }>,
+): NextResponse {
+  if (result.code === 'over_quota') {
+    return problem({
+      type: ProblemType.PayloadTooLarge,
+      title: 'over quota',
+      status: 413,
+      detail: result.message,
+      code: 'over_quota',
+      quota: result.details,
+    });
+  }
+
+  return problemValidation(result.message, validationErrorsFor(result));
+}
+
+function validationErrorsFor(
+  result: Extract<CreateDeploymentResult, { ok: false }>,
+): Record<string, string[]> {
+  switch (result.code) {
+    case 'invalid_name':
+      return { 'body.name': ['required non-empty string'] };
+    case 'invalid_installer_name':
+      return { 'body.installer_name': ['required non-empty string'] };
+    case 'invalid_installer_url':
+      return {
+        'body.installer_url': [
+          result.message === 'installer_url must be a valid URL'
+            ? 'invalid url'
+            : 'required non-empty string',
+        ],
+      };
+    case 'installer_url_not_https':
+      return { 'body.installer_url': ['must be https://'] };
+    case 'invalid_silent_flags':
+      return { 'body.silent_flags': ['required string'] };
+    case 'invalid_verify_path':
+      return { 'body.verify_path': ['must be a string'] };
+    case 'invalid_sha256_checksum':
+      return { 'body.sha256_checksum': ['must be 64-char hex'] };
+    case 'invalid_machines':
+      return {
+        'body.machines': [
+          result.message === 'machines must not be empty'
+            ? 'must be non-empty'
+            : 'must be string[]',
+        ],
+      };
+    default:
+      return { body: [result.message] };
+  }
+}
 
 function serializeDeployment(id: string, data: Record<string, unknown>) {
   return {

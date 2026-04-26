@@ -1,5 +1,5 @@
 /**
- * Public Scoped Process API — detail / update / delete
+ * Public Scoped Process API - detail / update / delete
  *
  * `GET    /api/sites/{siteId}/machines/{machineId}/processes/{processId}`
  * `PATCH  /api/sites/{siteId}/machines/{machineId}/processes/{processId}`
@@ -8,26 +8,26 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError } from '@/lib/apiAuth.server';
+import { ApiAuthError, resolveAuth } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withIdempotency } from '@/lib/idempotency';
-import { emitMutation } from '@/lib/auditLogClient';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import {
-  withProcessLock,
   readProcessList,
-  findProcessIndex,
   ProcessConfigError,
   PublicProcessConfig,
 } from '@/lib/processConfig.server';
 import { requireMachineAuthAndScope } from '@/app/api/_shared';
-import logger from '@/lib/logger';
+import { ActionInputError } from '@/lib/actions/createProcess.server';
+import { updateProcess } from '@/lib/actions/updateProcess.server';
+import { deleteProcess } from '@/lib/actions/deleteProcess.server';
 
 interface RouteContext {
   params: Promise<{ siteId: string; machineId: string; processId: string }>;
 }
 
 /* -------------------------------------------------------------------------- */
-/*  GET — single process detail                                               */
+/*  GET - single process detail                                               */
 /* -------------------------------------------------------------------------- */
 
 export const GET = withRateLimit(
@@ -69,161 +69,125 @@ export const GET = withRateLimit(
 );
 
 /* -------------------------------------------------------------------------- */
-/*  PATCH — partial update                                                    */
+/*  PATCH - partial update                                                    */
 /* -------------------------------------------------------------------------- */
 
-export const PATCH = withRateLimit(
-  async (request: NextRequest, context: RouteContext) => {
+const patchWrapped = authorizedSiteHandler<{
+  siteId: string;
+  machineId: string;
+  processId: string;
+}>({
+  capability: 'MACHINE_CONFIG_WRITE',
+  siteIdParam: 'path',
+  targetKind: 'process',
+  targetIdParam: 'processId',
+  apiKeyScope: { resource: 'machine', idParam: 'machineId', permission: 'write' },
+})(async (request, ctx, routeContext) => {
+  try {
+    const { machineId, processId } = await routeContext.params;
+
+    const rawBody = await request.text();
+    let body: Record<string, unknown>;
     try {
-      const { siteId, machineId, processId } = await context.params;
-      const auth = await requireMachineAuthAndScope(request, siteId, machineId, 'write');
-      if (!auth.ok) return auth.response;
-
-      const rawBody = await request.text();
-      let body: Record<string, unknown>;
-      try {
-        body = rawBody ? JSON.parse(rawBody) : {};
-      } catch {
-        return problem(400, 'invalid_body', 'Request body must be valid JSON.');
-      }
-
-      // Strip server-managed fields. Returning 400 (vs silent strip) makes
-      // tampering attempts visible to clients.
-      if ('processId' in body || 'id' in body) {
-        return problem(400, 'forbidden_field', 'Cannot mutate `processId` or `id`.');
-      }
-
-      if (Object.keys(body).length === 0) {
-        return problem(400, 'no_fields', 'Request body must contain at least one field to update.');
-      }
-
-      // PATCH idempotency-key is optional per api-surface convention but if
-      // supplied we honour replay.
-      return withIdempotency(
-        request,
-        {
-          userId: auth.userId,
-          environment: auth.auth.keyContext?.environment ?? 'unknown',
-        },
-        rawBody,
-        async () => {
-          try {
-            await withProcessLock(siteId, machineId, (processes) => {
-              const idx = findProcessIndex(processes, processId);
-              if (idx === -1) {
-                throw new ProcessConfigError(404, `Process ${processId} not found`, 'process_not_found');
-              }
-              const updated = [...processes];
-              const merged: PublicProcessConfig = {
-                ...updated[idx],
-                ...(body as Partial<PublicProcessConfig>),
-                // Re-pin id fields so a malicious body can't override them
-                // even if the field check above is bypassed.
-                id: processId,
-                processId,
-              };
-              // If launch_mode is being set, mirror autolaunch (matches admin).
-              if (typeof body.launch_mode === 'string') {
-                merged.autolaunch = body.launch_mode !== 'off';
-              }
-              updated[idx] = merged;
-              return { processes: updated, result: undefined };
-            });
-          } catch (e) {
-            if (e instanceof ProcessConfigError) {
-              return problem(e.status, e.code || 'process_config_error', e.message);
-            }
-            throw e;
-          }
-
-          emitMutation({
-            kind: 'process_mutated',
-            siteId,
-            actor: auth.auth.keyContext
-              ? `apiKey:${auth.auth.keyContext.keyId}`
-              : `user:${auth.userId}`,
-            targetId: processId,
-            attributes: { verb: 'update', endpoint: 'processes', method: 'PATCH', machineId },
-          });
-
-          logger.info(`Process updated: ${processId} on ${machineId}`, {
-            context: 'sites/machines/processes',
-          });
-
-          return NextResponse.json({ ok: true, data: { processId } });
-        }
-      );
-    } catch (error: unknown) {
-      return errorResponse(error, 'sites/machines/processes/[id] PATCH');
+      body = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      return problem(400, 'invalid_body', 'Request body must be valid JSON.');
     }
-  },
-  { strategy: 'api', identifier: 'ip' }
-);
 
-/* -------------------------------------------------------------------------- */
-/*  DELETE — remove from array (true-idempotent: 200 on missing)              */
-/* -------------------------------------------------------------------------- */
+    // Strip server-managed fields. Returning 400 (vs silent strip) makes
+    // tampering attempts visible to clients.
+    if ('processId' in body || 'id' in body) {
+      return problem(400, 'forbidden_field', 'Cannot mutate `processId` or `id`.');
+    }
 
-export const DELETE = withRateLimit(
-  async (request: NextRequest, context: RouteContext) => {
-    try {
-      const { siteId, machineId, processId } = await context.params;
-      const auth = await requireMachineAuthAndScope(request, siteId, machineId, 'write');
-      if (!auth.ok) return auth.response;
+    if (Object.keys(body).length === 0) {
+      return problem(400, 'no_fields', 'Request body must contain at least one field to update.');
+    }
 
-      let alreadyDeleted = false;
+    const auth = await resolveAuth(request);
+    const auditActor = auth.keyContext
+      ? `apiKey:${auth.keyContext.keyId}`
+      : `user:${auth.userId}`;
 
-      try {
-        await withProcessLock(siteId, machineId, (processes) => {
-          const idx = findProcessIndex(processes, processId);
-          if (idx === -1) {
-            alreadyDeleted = true;
-            return { processes, result: undefined };
-          }
-          return {
-            processes: processes.filter((p) => p.processId !== processId),
-            result: undefined,
-          };
-        });
-      } catch (e) {
-        if (e instanceof ProcessConfigError && e.status === 404) {
-          // Config doc itself is missing — also "already deleted" semantics.
-          alreadyDeleted = true;
-        } else if (e instanceof ProcessConfigError) {
-          return problem(e.status, e.code || 'process_config_error', e.message);
-        } else {
+    // PATCH idempotency-key is optional per api-surface convention but if
+    // supplied we honour replay.
+    return withIdempotency(
+      request,
+      {
+        userId: auth.userId,
+        environment: auth.keyContext?.environment ?? 'unknown',
+      },
+      rawBody,
+      async () => {
+        try {
+          const result = await updateProcess(
+            { siteId: ctx.siteId, actor: ctx.actor, auditActor },
+            {
+              machineId,
+              processId,
+              patch: body as Partial<PublicProcessConfig>,
+            },
+          );
+          return NextResponse.json({ ok: true, data: { processId: result.processId } });
+        } catch (e) {
+          const mapped = mapActionError(e);
+          if (mapped) return mapped;
           throw e;
         }
       }
+    );
+  } catch (error: unknown) {
+    return errorResponse(error, 'sites/machines/processes/[id] PATCH');
+  }
+});
 
-      // Emit audit even on no-op delete for traceability.
-      emitMutation({
-        kind: 'process_mutated',
-        siteId,
-        actor: auth.auth.keyContext
-          ? `apiKey:${auth.auth.keyContext.keyId}`
-          : `user:${auth.userId}`,
-        targetId: processId,
-        attributes: {
-          verb: 'delete',
-          endpoint: 'processes',
-          method: 'DELETE',
-          machineId,
-          alreadyDeleted,
-        },
-      });
+export const PATCH = withRateLimit(patchWrapped, {
+  strategy: 'api',
+  identifier: 'ip',
+});
 
-      logger.info(`Process deleted: ${processId} on ${machineId} (alreadyDeleted=${alreadyDeleted})`, {
-        context: 'sites/machines/processes',
-      });
+/* -------------------------------------------------------------------------- */
+/*  DELETE - remove from array (true-idempotent: 200 on missing)              */
+/* -------------------------------------------------------------------------- */
 
-      return NextResponse.json({ ok: true, data: { processId, alreadyDeleted } });
-    } catch (error: unknown) {
-      return errorResponse(error, 'sites/machines/processes/[id] DELETE');
+const deleteWrapped = authorizedSiteHandler<{
+  siteId: string;
+  machineId: string;
+  processId: string;
+}>({
+  capability: 'MACHINE_CONFIG_WRITE',
+  siteIdParam: 'path',
+  targetKind: 'process',
+  targetIdParam: 'processId',
+  apiKeyScope: { resource: 'machine', idParam: 'machineId', permission: 'write' },
+})(async (request, ctx, routeContext) => {
+  try {
+    const { machineId, processId } = await routeContext.params;
+    const auth = await resolveAuth(request);
+    const auditActor = auth.keyContext
+      ? `apiKey:${auth.keyContext.keyId}`
+      : `user:${auth.userId}`;
+
+    try {
+      const result = await deleteProcess(
+        { siteId: ctx.siteId, actor: ctx.actor, auditActor },
+        { machineId, processId },
+      );
+      return NextResponse.json({ ok: true, data: result });
+    } catch (e) {
+      const mapped = mapActionError(e);
+      if (mapped) return mapped;
+      throw e;
     }
-  },
-  { strategy: 'api', identifier: 'ip' }
-);
+  } catch (error: unknown) {
+    return errorResponse(error, 'sites/machines/processes/[id] DELETE');
+  }
+});
+
+export const DELETE = withRateLimit(deleteWrapped, {
+  strategy: 'api',
+  identifier: 'ip',
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
@@ -263,9 +227,22 @@ function problem(status: number, code: string, detail: string): NextResponse {
   );
 }
 
+function mapActionError(error: unknown): NextResponse | null {
+  if (error instanceof ActionInputError) {
+    return problem(error.status, error.code, error.message);
+  }
+  if (error instanceof ProcessConfigError) {
+    return problem(error.status, error.code || 'process_config_error', error.message);
+  }
+  return null;
+}
+
 function errorResponse(error: unknown, ctx: string): NextResponse {
   if (error instanceof ApiAuthError) {
     return problem(error.status, error.status === 403 ? 'scope_insufficient' : 'unauthorized', error.message);
+  }
+  if (error instanceof ActionInputError) {
+    return problem(error.status, error.code, error.message);
   }
   if (error instanceof ProcessConfigError) {
     return problem(error.status, error.code || 'process_config_error', error.message);

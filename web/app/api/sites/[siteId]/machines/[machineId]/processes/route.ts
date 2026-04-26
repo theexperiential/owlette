@@ -12,19 +12,21 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError } from '@/lib/apiAuth.server';
+import { ApiAuthError, resolveAuth } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withIdempotency } from '@/lib/idempotency';
-import { emitMutation } from '@/lib/auditLogClient';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import {
-  withProcessLock,
   readProcessList,
-  generateProcessId,
   ProcessConfigError,
   PublicProcessConfig,
 } from '@/lib/processConfig.server';
 import { requireMachineAuthAndScope } from '@/app/api/_shared';
-import logger from '@/lib/logger';
+import {
+  createProcess,
+  ActionInputError,
+  type CreateProcessInput,
+} from '@/lib/actions/createProcess.server';
 
 interface RouteContext {
   params: Promise<{ siteId: string; machineId: string }>;
@@ -86,101 +88,75 @@ export const GET = withRateLimit(
 /*  POST — create a new process                                               */
 /* -------------------------------------------------------------------------- */
 
-export const POST = withRateLimit(
-  async (request: NextRequest, context: RouteContext) => {
+const postWrapped = authorizedSiteHandler<{ siteId: string; machineId: string }>({
+  capability: 'MACHINE_CONFIG_WRITE',
+  siteIdParam: 'path',
+  targetKind: 'machine',
+  targetIdParam: 'machineId',
+  apiKeyScope: { resource: 'machine', idParam: 'machineId', permission: 'write' },
+})(async (request, ctx, routeContext) => {
+  try {
+    const { machineId } = await routeContext.params;
+
+    const rawBody = await request.text();
+    let body: Record<string, unknown>;
     try {
-      const { siteId, machineId } = await context.params;
-      const auth = await requireMachineAuthAndScope(request, siteId, machineId, 'write');
-      if (!auth.ok) return auth.response;
+      body = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      return problem(400, 'invalid_body', 'Request body must be valid JSON.');
+    }
 
-      const rawBody = await request.text();
-      let body: Record<string, unknown>;
-      try {
-        body = rawBody ? JSON.parse(rawBody) : {};
-      } catch {
-        return problem(400, 'invalid_body', 'Request body must be valid JSON.');
-      }
+    const name = typeof body.name === 'string' ? body.name : '';
+    const exePath = typeof body.exe_path === 'string' ? body.exe_path : '';
 
-      const name = typeof body.name === 'string' ? body.name : '';
-      const exePath = typeof body.exe_path === 'string' ? body.exe_path : '';
+    if (!name) {
+      return problem(400, 'missing_field', 'Field `name` is required.');
+    }
+    if (!exePath) {
+      return problem(400, 'missing_field', 'Field `exe_path` is required.');
+    }
+    if ('processId' in body) {
+      return problem(400, 'forbidden_field', 'Field `processId` is server-generated; do not include it.');
+    }
 
-      if (!name) {
-        return problem(400, 'missing_field', 'Field `name` is required.');
-      }
-      if (!exePath) {
-        return problem(400, 'missing_field', 'Field `exe_path` is required.');
-      }
-      if ('processId' in body) {
-        return problem(400, 'forbidden_field', 'Field `processId` is server-generated; do not include it.');
-      }
+    const auth = await resolveAuth(request);
+    const auditActor = auth.keyContext
+      ? `apiKey:${auth.keyContext.keyId}`
+      : `user:${auth.userId}`;
 
-      return withIdempotency(
-        request,
-        {
-          userId: auth.userId,
-          environment: auth.auth.keyContext?.environment ?? 'unknown',
-        },
-        rawBody,
-        async () => {
-          const newProcessId = generateProcessId();
-          const launchMode = (body.launch_mode as string) || 'off';
-
-          try {
-            await withProcessLock(siteId, machineId, (processes) => {
-              const newProcess: PublicProcessConfig = {
-                id: newProcessId,
-                processId: newProcessId,
-                name,
-                exe_path: exePath,
-                file_path: (body.file_path as string) || '',
-                cwd: (body.cwd as string) || '',
-                priority: (body.priority as string) || 'Normal',
-                visibility: (body.visibility as string) || 'Show',
-                time_delay: (body.time_delay as string) || '0',
-                time_to_init: (body.time_to_init as string) || '10',
-                relaunch_attempts: (body.relaunch_attempts as string) || '3',
-                autolaunch: launchMode !== 'off',
-                launch_mode: launchMode as 'off' | 'always' | 'scheduled',
-                schedules: (body.schedules as PublicProcessConfig['schedules']) ?? null,
-              };
-              return {
-                processes: [...processes, newProcess],
-                result: newProcessId,
-              };
-            });
-          } catch (e) {
-            if (e instanceof ProcessConfigError) {
-              return problem(e.status, e.code || 'process_config_error', e.message);
-            }
-            throw e;
-          }
-
-          emitMutation({
-            kind: 'process_mutated',
-            siteId,
-            actor: auth.auth.keyContext
-              ? `apiKey:${auth.auth.keyContext.keyId}`
-              : `user:${auth.userId}`,
-            targetId: newProcessId,
-            attributes: { verb: 'create', endpoint: 'processes', method: 'POST', machineId },
-          });
-
-          logger.info(`Process created: ${name} on ${machineId}`, {
-            context: 'sites/machines/processes',
-          });
-
+    return withIdempotency(
+      request,
+      {
+        userId: auth.userId,
+        environment: auth.keyContext?.environment ?? 'unknown',
+      },
+      rawBody,
+      async () => {
+        try {
+          const result = await createProcess(
+            { siteId: ctx.siteId, actor: ctx.actor, auditActor },
+            bodyToCreateInput(machineId, body, name, exePath),
+          );
           return NextResponse.json(
-            { ok: true, data: { processId: newProcessId } },
+            { ok: true, data: { processId: result.processId } },
             { status: 201 }
           );
+        } catch (e) {
+          const mapped = mapActionError(e);
+          if (mapped) return mapped;
+          throw e;
         }
-      );
-    } catch (error: unknown) {
-      return errorResponse(error, 'sites/machines/processes POST');
-    }
-  },
-  { strategy: 'api', identifier: 'ip' }
-);
+      }
+    );
+  } catch (error: unknown) {
+    return errorResponse(error, 'sites/machines/processes POST');
+  }
+});
+
+export const POST = withRateLimit(postWrapped, {
+  strategy: 'api',
+  identifier: 'ip',
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
@@ -221,9 +197,44 @@ function problem(status: number, code: string, detail: string): NextResponse {
   );
 }
 
+function bodyToCreateInput(
+  machineId: string,
+  body: Record<string, unknown>,
+  name: string,
+  exePath: string,
+): CreateProcessInput {
+  return {
+    machineId,
+    name,
+    exe_path: exePath,
+    file_path: (body.file_path as string) || '',
+    cwd: (body.cwd as string) || '',
+    priority: (body.priority as string) || 'Normal',
+    visibility: (body.visibility as string) || 'Show',
+    time_delay: (body.time_delay as string) || '0',
+    time_to_init: (body.time_to_init as string) || '10',
+    relaunch_attempts: (body.relaunch_attempts as string) || '3',
+    launch_mode: ((body.launch_mode as CreateProcessInput['launch_mode']) || 'off'),
+    schedules: (body.schedules as PublicProcessConfig['schedules']) ?? null,
+  };
+}
+
+function mapActionError(error: unknown): NextResponse | null {
+  if (error instanceof ActionInputError) {
+    return problem(error.status, error.code, error.message);
+  }
+  if (error instanceof ProcessConfigError) {
+    return problem(error.status, error.code || 'process_config_error', error.message);
+  }
+  return null;
+}
+
 function errorResponse(error: unknown, ctx: string): NextResponse {
   if (error instanceof ApiAuthError) {
     return problem(error.status, error.status === 403 ? 'scope_insufficient' : 'unauthorized', error.message);
+  }
+  if (error instanceof ActionInputError) {
+    return problem(error.status, error.code, error.message);
   }
   if (error instanceof ProcessConfigError) {
     return problem(error.status, error.code || 'process_config_error', error.message);
