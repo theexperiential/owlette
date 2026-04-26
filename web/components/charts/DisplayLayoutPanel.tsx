@@ -46,6 +46,12 @@ import {
   type MonitorInfo,
 } from '@/hooks/useDisplayState';
 import { useDisplayActions } from '@/hooks/useDisplayActions';
+import {
+  useAckBanner,
+  startAckCountdown,
+  clearAckCountdown,
+  setAckInFlight,
+} from '@/hooks/useAckBanner';
 import { useDisplayDraft } from '@/hooks/useDisplayDraft';
 import { useDisplayModes } from '@/hooks/useDisplayModes';
 import {
@@ -317,20 +323,41 @@ export function DisplayLayoutPanel({
     [shiftSecondariesBy],
   );
 
-  // Post-apply ack state. When a dispatch succeeds we store the wall-clock
-  // deadline (Date.now() + ack_timeout_ms) and the apply's generation token.
-  // The countdown displayed in the banner is derived from the deadline on
-  // every tick — so tab throttling / backgrounding / clock drift don't
-  // lie about how much time is left. `pendingApplyId` is threaded back
-  // into the ack so a stale keep-click on a prior apply can't cancel the
-  // current watchdog.
-  const [ackDeadlineMs, setAckDeadlineMs] = useState<number | null>(null);
-  const [pendingApplyId, setPendingApplyId] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  const ackSecondsLeft = useMemo(() => {
-    if (ackDeadlineMs === null) return null;
-    return Math.max(0, Math.ceil((ackDeadlineMs - nowMs) / 1000));
-  }, [ackDeadlineMs, nowMs]);
+  // Wave 6.5(f) — per-machine ack banner state lives in a module-level
+  // hook so the countdown survives the panel closing and re-opening.
+  // `useAckBanner` exposes derived `ackSecondsLeft` (recomputed each tick
+  // from an absolute wall-clock deadline) plus the `pendingApplyId` we
+  // thread into `actions.ackLayout`. The auto-revert toast on deadline
+  // crossing is fired inside the hook so it surfaces even when the panel
+  // is unmounted.
+  const { ackSecondsLeft, pendingApplyId, ackInFlight } = useAckBanner(
+    siteId, machineId,
+  );
+
+  // Wave 6.4 capability handshake. Subscribes to the machine doc's
+  // `capabilities.displayRemoteApply` field (written by the agent's
+  // `_upload_metrics` heartbeat). When absent or below version 1 the
+  // recall button disables itself with an "agent too old" tooltip so a
+  // pre-Wave-3 agent can't be sent a command it can't dispatch. `null`
+  // means "first snapshot hasn't landed" — distinct from `0` ("agent
+  // sent it explicitly as not supported"). Both are treated as
+  // unsupported by the gate, but holding them apart leaves room for a
+  // future "loading" state if ever needed.
+  const [capabilityVersion, setCapabilityVersion] = useState<number | null>(null);
+  useEffect(() => {
+    if (!db || !siteId || !machineId) return;
+    const ref = doc(db, 'sites', siteId, 'machines', machineId);
+    const unsubscribe = onSnapshot(ref, (snap) => {
+      if (!snap.exists()) {
+        setCapabilityVersion(null);
+        return;
+      }
+      const raw = snap.data()?.capabilities?.displayRemoteApply;
+      setCapabilityVersion(typeof raw === 'number' ? raw : null);
+    });
+    return () => unsubscribe();
+  }, [siteId, machineId]);
+  const agentSupportsApply = capabilityVersion !== null && capabilityVersion >= 1;
 
   // Full drift report, computed from the live+assigned snapshot. Callers
   // pick the key they need: live-id for the live tab's table and canvas,
@@ -520,10 +547,15 @@ export function DisplayLayoutPanel({
 
   // Button disabled-state logic:
   //  - store: needs live data to store (otherwise there's nothing to save)
-  //  - recall: needs an assigned layout to push
+  //  - recall: needs an assigned layout to push AND the agent must advertise
+  //    the displayRemoteApply capability (Wave 6.4) — pre-Wave-3 agents
+  //    can't dispatch the apply command, so disable the button with a
+  //    targeted tooltip rather than letting the operator fire-and-forget
+  //    a command that would never complete.
   // `actions.applying` blocks repeat-clicks during in-flight writes.
   const captureDisabled = !hasLiveProfile || actions.applying;
-  const applyDisabled = !hasAssignedLayout || actions.applying;
+  const applyDisabled =
+    !hasAssignedLayout || actions.applying || !agentSupportsApply;
   const editDisabled = !hasAssignedLayout || !!profile?.mosaicActive;
 
   // Stable click handler so memoized children (DisplayCanvas, DisplayMonitorCard)
@@ -1282,9 +1314,11 @@ export function DisplayLayoutPanel({
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {hasDriftVisible
-                    ? 'drift detected — recall the stored layout to fix it'
-                    : 'recall the stored layout — push it to this machine'}
+                  {!agentSupportsApply
+                    ? 'agent too old'
+                    : hasDriftVisible
+                      ? 'drift detected — recall the stored layout to fix it'
+                      : 'recall the stored layout — push it to this machine'}
                 </TooltipContent>
               </Tooltip>
               {activeTab === 'assigned' && (

@@ -1371,6 +1371,13 @@ class FirebaseClient:
                 'machine_timezone_iana': shared_utils.get_machine_timezone_iana(),
                 'machineId': self.machine_id,
                 'siteId': self.site_id,
+                # Wave 6.4 capability handshake — the dashboard reads
+                # `capabilities.displayRemoteApply` and disables the apply
+                # button when missing or below version 1, so pre-Wave-3
+                # agents can't be sent commands they can't handle. Bumped
+                # when the helper IPC contract changes; unrelated to
+                # `agent_version` (which moves on every release).
+                'capabilities.displayRemoteApply': 1,
                 'metrics.schemaVersion': 2,
                 'metrics.profileHash': profile_hash,
                 'metrics.timestamp': SERVER_TIMESTAMP,
