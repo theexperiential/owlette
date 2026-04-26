@@ -118,7 +118,7 @@ export class RoostClient {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
       'Roost-Version': this.roostVersion,
-      'User-Agent': '@owlette/roost (node-sdk) 0.1.0',
+      'User-Agent': '@owlette/api (node-sdk) 0.1.0',
       Accept: 'application/json',
       ...(options.headers ?? {}),
     };

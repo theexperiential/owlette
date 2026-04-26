@@ -5,7 +5,7 @@
  *
  * Public API used by consumers:
  *
- *   import { verifySignature } from '@owlette/roost';
+ *   import { verifySignature } from '@owlette/api';
  *   const ok = verifySignature(request.headers['roost-signature'], rawBody, secret);
  *
  * The verify fn is designed to be called on the raw request body

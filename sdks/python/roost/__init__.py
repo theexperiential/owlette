@@ -1,4 +1,4 @@
-"""``owlette-roost`` — async Python SDK for the roost public API.
+"""``owlette-api`` — async Python SDK for the owlette public API.
 
 Typical usage::
 
@@ -41,17 +41,36 @@ from roost.client import (
     RoostClient,
 )
 from roost.resources import (
+    AddRole,
     ApiKeyRecord,
     ApiKeyScope,
+    Chat,
     Chunks,
+    CommandStatus,
+    CommandType,
+    ControlVerb,
+    ConversationSummary,
     DeployOptions,
     DeployResult,
     Deployments,
+    Installer,
+    InstallerDeploymentDetail,
+    InstallerDeploymentSummary,
+    InstallerDeploymentTarget,
+    InstallerDeployments,
+    InstallerVersion,
     Keys,
     MachineDeployment,
     MachineDetail,
     MachineSummary,
     Machines,
+    Member,
+    Members,
+    PerSiteRole,
+    PlatformUser,
+    ProcessRecord,
+    Processes,
+    PromoteRole,
     PushOptions,
     PushResult,
     QuotaHistoryDay,
@@ -62,8 +81,10 @@ from roost.resources import (
     RoostDetail,
     Roosts,
     RoostSummary,
+    ScheduleMode,
     Site,
     Sites,
+    Users,
     VersionSummary,
     Versions,
     WebhookSubscription,
@@ -122,6 +143,10 @@ class Roost:
         self._sites: Sites | None = None
         self._machines: Machines | None = None
         self._quotas: Quotas | None = None
+        self._installer: Installer | None = None
+        self._installer_deployments: InstallerDeployments | None = None
+        self._chat: Chat | None = None
+        self._users: Users | None = None
 
     # ----- async context manager --------------------------------------------
 
@@ -200,6 +225,44 @@ class Roost:
             self._quotas = Quotas(self._client)
         return self._quotas
 
+    @property
+    def installer(self) -> Installer:
+        if self._installer is None:
+            self._installer = Installer(self._client)
+        return self._installer
+
+    @property
+    def installer_deployments(self) -> InstallerDeployments:
+        if self._installer_deployments is None:
+            self._installer_deployments = InstallerDeployments(self._client)
+        return self._installer_deployments
+
+    @property
+    def chat(self) -> Chat:
+        if self._chat is None:
+            self._chat = Chat(self._client)
+        return self._chat
+
+    @property
+    def users(self) -> Users:
+        if self._users is None:
+            self._users = Users(self._client)
+        return self._users
+
+    # ----- factory accessors (require extra args, can't be properties) ------
+
+    def processes(self, site_id: str, machine_id: str) -> Processes:
+        """Return a ``Processes`` handle bound to one (site, machine) pair.
+
+        Cheap to call repeatedly — no caching needed; the handle just
+        stores a few strings.
+        """
+        return Processes(self._client, site_id, machine_id)
+
+    def members(self, site_id: str) -> Members:
+        """Return a ``Members`` handle bound to one site."""
+        return Members(self._client, site_id)
+
 
 __version__ = SDK_VERSION
 
@@ -209,24 +272,43 @@ __all__ = [
     "DEFAULT_REPLAY_TOLERANCE_SECONDS",
     "DEFAULT_ROOST_VERSION",
     "SDK_VERSION",
+    "AddRole",
     "ApiKeyRecord",
     "ApiKeyScope",
     "ApiResponse",
+    "Chat",
     "ChunkDescriptor",
     "ChunkProgressEvent",
     "ChunkedFileEntry",
     "Chunks",
+    "CommandStatus",
+    "CommandType",
+    "ControlVerb",
+    "ConversationSummary",
     "DeployOptions",
     "DeployResult",
     "Deployments",
     "DiscoverProgress",
     "Environment",
     "HashProgress",
+    "Installer",
+    "InstallerDeploymentDetail",
+    "InstallerDeploymentSummary",
+    "InstallerDeploymentTarget",
+    "InstallerDeployments",
+    "InstallerVersion",
     "Keys",
     "MachineDeployment",
     "MachineDetail",
     "MachineSummary",
     "Machines",
+    "Member",
+    "Members",
+    "PerSiteRole",
+    "PlatformUser",
+    "ProcessRecord",
+    "Processes",
+    "PromoteRole",
     "PushOptions",
     "PushResult",
     "QuotaHistoryDay",
@@ -241,8 +323,10 @@ __all__ = [
     "RoostDetail",
     "RoostSummary",
     "Roosts",
+    "ScheduleMode",
     "Site",
     "Sites",
+    "Users",
     "VerifyReason",
     "VerifySignatureResult",
     "VersionSummary",

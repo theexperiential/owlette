@@ -108,7 +108,7 @@ class RoostClient:
             "headers": {
                 "Authorization": f"Bearer {self.token}",
                 "Roost-Version": self.roost_version,
-                "User-Agent": f"owlette-roost-python/{SDK_VERSION}",
+                "User-Agent": f"owlette-api-python/{SDK_VERSION}",
                 "Accept": "application/json",
             },
         }

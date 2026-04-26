@@ -1,7 +1,7 @@
 # sdk — node / typescript
 
 **Last updated**: 2026-04-24
-**Package**: [`@owlette/roost`](https://www.npmjs.com/package/@owlette/roost) · node ≥ 20 · zero runtime deps
+**Package**: [`@owlette/api`](https://www.npmjs.com/package/@owlette/api) · node ≥ 20 · zero runtime deps
 
 the official typescript sdk for the [roost api](./overview.md). wraps the rest surface with a typed resource tree, auto-retry, automatic `Idempotency-Key`, chunk-aware `push()`, stripe-style webhook verification, version-ref resolution, and progress events. if you can use `fetch` directly you can use this — it just adds the tedious bits.
 
@@ -10,9 +10,9 @@ the official typescript sdk for the [roost api](./overview.md). wraps the rest s
 ## installation
 
 ```bash
-npm install @owlette/roost
-# or: pnpm add @owlette/roost
-# or: yarn add @owlette/roost
+npm install @owlette/api
+# or: pnpm add @owlette/api
+# or: yarn add @owlette/api
 ```
 
 the package ships `.js` + `.d.ts` for both esm and cjs. no native modules; no wasm; no postinstall script.
@@ -22,7 +22,7 @@ the package ships `.js` + `.d.ts` for both esm and cjs. no native modules; no wa
 ## hello world (< 10 lines)
 
 ```ts
-import { Roost } from '@owlette/roost';
+import { Roost } from '@owlette/api';
 
 const roost = new Roost({ token: process.env.ROOST_TOKEN! });
 const result = await roost.roosts.push('./dist', 'rst_abc', {
@@ -303,7 +303,7 @@ interface PushOptions {
 roost signs every webhook with `Roost-Signature: t=<unix_seconds>,v1=<hmac_sha256_hex>`. the sdk ships a verifier that enforces a 5-minute replay window and uses `crypto.timingSafeEqual`:
 
 ```ts
-import { verifySignature, isSignatureValid } from '@owlette/roost';
+import { verifySignature, isSignatureValid } from '@owlette/api';
 
 // in your raw-body webhook handler:
 const result = verifySignature(
@@ -327,7 +327,7 @@ if (!isSignatureValid(sig, raw, secret)) return res.status(401).end();
 ### signing outbound (for tests)
 
 ```ts
-import { signBody } from '@owlette/roost';
+import { signBody } from '@owlette/api';
 
 const sig = signBody(JSON.stringify({ event: 'version.published' }), 'whsec_...');
 // → 't=1735689600,v1=ab12...'
@@ -340,7 +340,7 @@ const sig = signBody(JSON.stringify({ event: 'version.published' }), 'whsec_...'
 every non-2xx response throws `RoostApiError` with structured fields pulled from the rfc 7807 problem+json body:
 
 ```ts
-import { Roost, RoostApiError } from '@owlette/roost';
+import { Roost, RoostApiError } from '@owlette/api';
 
 try {
   await roost.roosts.get('rst_missing', { siteId: 'site-1' });
@@ -395,7 +395,7 @@ import type {
   RoostSummary, RoostDetail, VersionSummary, VersionDetail,
   PushOptions, PushProgressEvent, PushResult,
   ApiKeyScope, WebhookEvent, VersionRef,
-} from '@owlette/roost';
+} from '@owlette/api';
 ```
 
 ---

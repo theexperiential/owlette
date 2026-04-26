@@ -334,9 +334,9 @@ all three examples below implement the same three-step protocol: split the heade
 ### node
 
 ```ts
-// npm install @owlette/roost express
+// npm install @owlette/api express
 import express from 'express';
-import { verifySignature } from '@owlette/roost';
+import { verifySignature } from '@owlette/api';
 
 const app = express();
 const SECRET = process.env.ROOST_WEBHOOK_SECRET!;
@@ -375,7 +375,7 @@ app.listen(8080);
 ### python
 
 ```python
-# pip install owlette-roost fastapi uvicorn
+# pip install owlette-api fastapi uvicorn
 import os
 from fastapi import FastAPI, Request, HTTPException
 from roost import verify_signature

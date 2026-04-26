@@ -1,7 +1,7 @@
 /**
- * `@owlette/roost` — node sdk entry point.
+ * `@owlette/api` — node sdk entry point.
  *
- *   import { Roost } from '@owlette/roost';
+ *   import { Roost } from '@owlette/api';
  *   const roost = new Roost({ token: process.env.ROOST_TOKEN! });
  *   await roost.roosts.push('./dist', 'rst_abc', { siteId: 'site-1' });
  *
@@ -20,6 +20,12 @@ import { Keys } from './resources/keys';
 import { Sites } from './resources/sites';
 import { Machines } from './resources/machines';
 import { Quotas } from './resources/quotas';
+import { InstallerDeployments } from './resources/installerDeployments';
+import { Installer } from './resources/installer';
+import { Processes } from './resources/processes';
+import { Chat } from './resources/chat';
+import { Users } from './resources/users';
+import { Members } from './resources/members';
 import {
   verifySignature,
   isSignatureValid,
@@ -42,6 +48,10 @@ export class Roost {
   #sites?: Sites;
   #machines?: Machines;
   #quotas?: Quotas;
+  #installerDeployments?: InstallerDeployments;
+  #installer?: Installer;
+  #chat?: Chat;
+  #users?: Users;
 
   constructor(opts: RoostClientOpts) {
     this.client = new RoostClient(opts);
@@ -81,6 +91,39 @@ export class Roost {
 
   get quotas(): Quotas {
     return (this.#quotas ??= new Quotas(this.client));
+  }
+
+  get installerDeployments(): InstallerDeployments {
+    return (this.#installerDeployments ??= new InstallerDeployments(this.client));
+  }
+
+  get installer(): Installer {
+    return (this.#installer ??= new Installer(this.client));
+  }
+
+  get chat(): Chat {
+    return (this.#chat ??= new Chat(this.client));
+  }
+
+  get users(): Users {
+    return (this.#users ??= new Users(this.client));
+  }
+
+  /**
+   * Site-scoped process resource. Returns a fresh `Processes` instance bound
+   * to the (siteId, machineId) tuple — not memoised because the tuple is
+   * part of the constructor identity. Cheap to construct on each call.
+   */
+  processes(siteId: string, machineId: string): Processes {
+    return new Processes(this.client, siteId, machineId);
+  }
+
+  /**
+   * Site-scoped membership resource. Returns a fresh `Members` instance
+   * bound to `siteId` — not memoised for the same reason as `processes()`.
+   */
+  members(siteId: string): Members {
+    return new Members(this.client, siteId);
   }
 
   /**
@@ -140,10 +183,75 @@ export type {
 } from './resources/roosts';
 export type { ApiKeyPermission, ApiKeyResource, ApiKeyScope, ApiKeyRecord } from './resources/keys';
 export type { Site } from './resources/sites';
-export type { MachineSummary, MachineDetail, MachineDeployment } from './resources/machines';
+export type {
+  MachineSummary,
+  MachineDetail,
+  MachineDeployment,
+  MachineCommandType,
+  MachineCommandStatus,
+  DispatchCommandResult,
+  CommandStatus,
+  CaptureScreenshotOptions,
+  CaptureScreenshotResult,
+} from './resources/machines';
 export type { QuotaSnapshot, QuotaHistoryDay } from './resources/quotas';
 export type { WebhookSubscription } from './resources/webhooks';
 export type { VersionDetail, VersionFilesPage, VersionDiff } from './resources/versions';
 export type { ChunkedFileEntry, ChunkProgressEvent } from './lib/chunker';
+export type {
+  InstallerDeploymentTarget,
+  InstallerDeploymentTargetStatus,
+  InstallerDeploymentStatus,
+  InstallerDeploymentSummary,
+  InstallerDeploymentDetail,
+  ListInstallerDeploymentsOptions,
+  ListInstallerDeploymentsResult,
+  CreateInstallerDeploymentOptions,
+  CreateInstallerDeploymentResult,
+  InstallerDeploymentMutationResult,
+} from './resources/installerDeployments';
+export type {
+  InstallerVersion,
+  ListInstallerOptions,
+  ListInstallerResult,
+  UploadRequestOptions,
+  UploadResult,
+} from './resources/installer';
+export type {
+  ProcessSummary,
+  ProcessLaunchMode,
+  ProcessScheduleBlock,
+  ListProcessesResult,
+  CreateProcessOptions,
+  UpdateProcessOptions,
+  ScheduleOptions,
+} from './resources/processes';
+export type {
+  ChatRole,
+  ConversationSummary,
+  ListConversationsOptions,
+  ListConversationsResult,
+  CreateConversationOptions,
+  CreateConversationResult,
+  SendMessageOptions,
+  SendMessageStream,
+} from './resources/chat';
+export type {
+  UserRole,
+  UserSummary,
+  ListUsersOptions,
+  ListUsersResult,
+  RoleChangeResult,
+  AssignSitesResult,
+  RemoveSitesResult,
+  DeleteUserResult,
+} from './resources/users';
+export type {
+  SiteMemberRole,
+  SiteMember,
+  AddMemberOptions,
+  AddMemberResult,
+  RemoveMemberResult,
+} from './resources/members';
 
 export const VERSION = SDK_VERSION;

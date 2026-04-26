@@ -286,6 +286,501 @@ describe('roost.keys', () => {
   });
 });
 
+describe('roost.installerDeployments', () => {
+  it('list → GET /api/sites/{siteId}/deployments?page_size=…', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { items: [], next_page_token: 'cursor' } },
+    ]);
+    const result = await roost.installerDeployments.list('site-1', { pageSize: 10 });
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/deployments?page_size=10');
+    expect(result.nextPageToken).toBe('cursor');
+  });
+
+  it('create → POST with Idempotency-Key auto-gen + machines body', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 201,
+        body: {
+          deploymentId: 'deploy-1',
+          siteId: 'site-1',
+          status: 'in_progress',
+          targets: [],
+        },
+      },
+    ]);
+    await roost.installerDeployments.create('site-1', {
+      name: 'rollout',
+      installer_url: 'https://example.com/x.exe',
+      installer_name: 'x.exe',
+      silent_flags: '/SILENT',
+      machines: ['m-1', 'm-2'],
+    });
+    const call = calls[0]!;
+    expect(call.url).toBe('https://dev.test/api/sites/site-1/deployments');
+    expect(call.init.method).toBe('POST');
+    const headers = call.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^sdk-installer-deployments-create-/);
+    const body = JSON.parse(String(call.init.body));
+    expect(body.machines).toEqual(['m-1', 'm-2']);
+    expect(body.name).toBe('rollout');
+  });
+
+  it('cancel → POST /cancel surfaces RoostApiError on 409', async () => {
+    const { roost } = makeRoost([
+      {
+        status: 409,
+        body: { code: 'no_cancellable_targets', detail: 'every target is past queue' },
+      },
+    ]);
+    await expect(
+      roost.installerDeployments.cancel('site-1', 'deploy-1'),
+    ).rejects.toMatchObject({ name: 'RoostApiError', status: 409, code: 'no_cancellable_targets' });
+  });
+
+  it('uninstall → POST and honours custom idempotency-key', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          deploymentId: 'deploy-1',
+          siteId: 'site-1',
+          status: 'uninstalling',
+          queued: 3,
+          machine_ids: ['m-1', 'm-2', 'm-3'],
+        },
+      },
+    ]);
+    await roost.installerDeployments.uninstall('site-1', 'deploy-1', {
+      idempotencyKey: 'caller-supplied',
+    });
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toBe('caller-supplied');
+    expect(calls[0]!.url).toBe(
+      'https://dev.test/api/sites/site-1/deployments/deploy-1/uninstall',
+    );
+  });
+});
+
+describe('roost.installer', () => {
+  it('list → GET /api/installer with pagination', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { versions: [], nextPageToken: '' } },
+    ]);
+    await roost.installer.list({ pageSize: 5, includeDeleted: true });
+    expect(calls[0]!.url).toContain('/api/installer?');
+    expect(calls[0]!.url).toContain('page_size=5');
+    expect(calls[0]!.url).toContain('includeDeleted=true');
+  });
+
+  it('setLatest → POST /api/installer/{version}/set-latest with auto idempotency-key', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: { version: '2.10.0', latest: { version: '2.10.0' } },
+      },
+    ]);
+    await roost.installer.setLatest('2.10.0');
+    const call = calls[0]!;
+    expect(call.url).toBe('https://dev.test/api/installer/2.10.0/set-latest');
+    expect(call.init.method).toBe('POST');
+    const headers = call.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^sdk-installer-set-latest-/);
+  });
+
+  it('delete → DELETE /api/installer/{version}', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { version: '2.5.0', deletedAt: 1, alreadyDeleted: false } },
+    ]);
+    const result = await roost.installer.delete('2.5.0');
+    expect(calls[0]!.init.method).toBe('DELETE');
+    expect(calls[0]!.url).toBe('https://dev.test/api/installer/2.5.0');
+    expect(result.alreadyDeleted).toBe(false);
+  });
+});
+
+describe('roost.processes (factory)', () => {
+  it('list → GET /api/sites/{siteId}/machines/{machineId}/processes', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { ok: true, data: { processes: [], nextPageToken: null } } },
+    ]);
+    await roost.processes('site-1', 'm-1').list();
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/machines/m-1/processes');
+  });
+
+  it('create → POST with required fields + auto idempotency-key', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 201, body: { ok: true, data: { processId: 'p-1' } } },
+    ]);
+    await roost.processes('site-1', 'm-1').create({
+      name: 'TouchDesigner',
+      exe_path: 'C:/Program Files/Derivative/TouchDesigner/bin/TouchDesigner.exe',
+      launch_mode: 'always',
+    });
+    const call = calls[0]!;
+    expect(call.init.method).toBe('POST');
+    const headers = call.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^sdk-processes-create-/);
+    const body = JSON.parse(String(call.init.body));
+    expect(body.name).toBe('TouchDesigner');
+    expect(body.launch_mode).toBe('always');
+  });
+
+  it('start verb → POST /processes/{id}/start', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { ok: true, data: { processId: 'p-1' } } },
+    ]);
+    await roost.processes('site-1', 'm-1').start('p-1');
+    expect(calls[0]!.url).toBe(
+      'https://dev.test/api/sites/site-1/machines/m-1/processes/p-1/start',
+    );
+    expect(calls[0]!.init.method).toBe('POST');
+  });
+
+  it('schedule → POST /schedule with mode + blocks', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { ok: true, data: { processId: 'p-1', mode: 'scheduled' } } },
+    ]);
+    await roost.processes('site-1', 'm-1').schedule('p-1', {
+      mode: 'scheduled',
+      blocks: [{ days: ['Mon'], ranges: [{ start: '09:00', stop: '17:00' }] }],
+    });
+    const body = JSON.parse(String(calls[0]!.init.body));
+    expect(body.mode).toBe('scheduled');
+    expect(body.blocks).toHaveLength(1);
+  });
+});
+
+describe('roost.chat', () => {
+  it('new → POST /api/chat/new with siteId', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 201,
+        body: {
+          ok: true,
+          data: { conversationId: 'conv-1', title: null, siteId: 'site-1' },
+        },
+      },
+    ]);
+    const result = await roost.chat.new({ siteId: 'site-1', title: 'help me' });
+    expect(calls[0]!.url).toBe('https://dev.test/api/chat/new');
+    expect(calls[0]!.init.method).toBe('POST');
+    const body = JSON.parse(String(calls[0]!.init.body));
+    expect(body.siteId).toBe('site-1');
+    expect(body.title).toBe('help me');
+    expect(result.conversationId).toBe('conv-1');
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^sdk-chat-new-/);
+  });
+
+  it('list → GET /api/chat?page_size=…', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { ok: true, data: { conversations: [], nextPageToken: '' } } },
+    ]);
+    await roost.chat.list({ pageSize: 25, ownerOnly: true });
+    expect(calls[0]!.url).toContain('/api/chat?');
+    expect(calls[0]!.url).toContain('page_size=25');
+    expect(calls[0]!.url).toContain('owner=me');
+  });
+
+  it('rename → PATCH /api/chat/{id}', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: { ok: true, data: { conversationId: 'conv-1', title: 'renamed' } },
+      },
+    ]);
+    await roost.chat.rename('conv-1', 'renamed');
+    expect(calls[0]!.init.method).toBe('PATCH');
+    expect(calls[0]!.url).toBe('https://dev.test/api/chat/conv-1');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ title: 'renamed' });
+  });
+
+  it('delete → DELETE /api/chat/{id} returns alreadyDeleted', async () => {
+    const { roost } = makeRoost([
+      {
+        status: 200,
+        body: { ok: true, data: { conversationId: 'conv-1', alreadyDeleted: true } },
+      },
+    ]);
+    const result = await roost.chat.delete('conv-1');
+    expect(result.alreadyDeleted).toBe(true);
+  });
+
+  it('send → streams text deltas from line-prefixed AI-SDK protocol', async () => {
+    // Build a streaming ReadableStream of AI-SDK frames.
+    const encoder = new TextEncoder();
+    const frames = [
+      '0:"hello "\n',
+      '0:"world"\n',
+      'd:{"finishReason":"stop"}\n',
+    ];
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const f of frames) controller.enqueue(encoder.encode(f));
+        controller.close();
+      },
+    });
+    const fetchMock = (async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      text: async () => '',
+      body: stream,
+    })) as unknown as typeof fetch;
+
+    const { Roost } = await import('../src/index');
+    const roost = new Roost({
+      token: 'owk_test_x',
+      apiUrl: 'https://dev.test',
+      fetch: fetchMock,
+      retry: { maxAttempts: 1 },
+    });
+    const handle = await roost.chat.send('conv-1', 'hi');
+    const collected: string[] = [];
+    for await (const delta of handle.deltas) collected.push(delta);
+    expect(collected.join('')).toBe('hello world');
+    await expect(handle.complete).resolves.toBe('hello world');
+  });
+});
+
+describe('roost.users', () => {
+  it('list → GET /api/users with role + site filters', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { users: [], nextPageToken: '' } },
+    ]);
+    await roost.users.list({ role: 'admin', site: 'site-1', pageSize: 50 });
+    expect(calls[0]!.url).toContain('/api/users?');
+    expect(calls[0]!.url).toContain('role=admin');
+    expect(calls[0]!.url).toContain('site=site-1');
+    expect(calls[0]!.url).toContain('page_size=50');
+  });
+
+  it('promote → POST /api/users/{uid}/promote auto-generates idempotency-key', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: { uid: 'u-1', role: 'admin', previousRole: 'member', changed: true },
+      },
+    ]);
+    await roost.users.promote('u-1', 'admin');
+    expect(calls[0]!.url).toBe('https://dev.test/api/users/u-1/promote');
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^sdk-users-promote-/);
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ role: 'admin' });
+  });
+
+  it('demote → surfaces last_superadmin error code on 409', async () => {
+    const { roost } = makeRoost([
+      {
+        status: 409,
+        body: {
+          code: 'last_superadmin',
+          detail: 'cannot demote: only 1 active superadmin remains',
+        },
+      },
+    ]);
+    await expect(roost.users.demote('u-1')).rejects.toMatchObject({
+      name: 'RoostApiError',
+      status: 409,
+      code: 'last_superadmin',
+    });
+  });
+
+  it('assignSites → POST with body.siteIds array', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { uid: 'u-1', assignedSiteIds: ['site-1'] } },
+    ]);
+    await roost.users.assignSites('u-1', ['site-1', 'site-2']);
+    const body = JSON.parse(String(calls[0]!.init.body));
+    expect(body.siteIds).toEqual(['site-1', 'site-2']);
+  });
+
+  it('delete with successorUid forwards the query param', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          uid: 'u-1',
+          alreadyDeleted: false,
+          deletedAt: 0,
+          transferredSites: ['site-1'],
+          revokedKeyIds: [],
+        },
+      },
+    ]);
+    await roost.users.delete('u-1', { successorUid: 'u-2' });
+    expect(calls[0]!.init.method).toBe('DELETE');
+    expect(calls[0]!.url).toBe('https://dev.test/api/users/u-1?successorUid=u-2');
+  });
+});
+
+describe('roost.members (factory)', () => {
+  it('list → GET /api/sites/{siteId}/members', async () => {
+    const { roost, calls } = makeRoost([{ status: 200, body: { members: [] } }]);
+    await roost.members('site-1').list();
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/members');
+  });
+
+  it('add → POST with uid + role and auto idempotency-key', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          uid: 'u-1',
+          siteId: 'site-1',
+          requestedRole: 'admin',
+          roleHonored: true,
+          globalRole: 'admin',
+        },
+      },
+    ]);
+    await roost.members('site-1').add({ uid: 'u-1', role: 'admin' });
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^sdk-members-add-/);
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ uid: 'u-1', role: 'admin' });
+  });
+
+  it('remove → DELETE /api/sites/{siteId}/members/{uid}', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { siteId: 'site-1', uid: 'u-1', wasMember: true } },
+    ]);
+    const result = await roost.members('site-1').remove('u-1');
+    expect(calls[0]!.init.method).toBe('DELETE');
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/members/u-1');
+    expect(result.wasMember).toBe(true);
+  });
+});
+
+describe('roost.machines (extended)', () => {
+  it('dispatchCommand → POST /commands with type + auto idempotency-key', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 202,
+        body: { ok: true, data: { commandId: 'cmd_abc', status: 'pending' } },
+      },
+    ]);
+    const result = await roost.machines.dispatchCommand(
+      'site-1',
+      'm-1',
+      'reboot_machine',
+      { delay_seconds: 30 },
+    );
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/machines/m-1/commands');
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^sdk-machines-dispatch-command-/);
+    const body = JSON.parse(String(calls[0]!.init.body));
+    expect(body.type).toBe('reboot_machine');
+    expect(body.params).toEqual({ delay_seconds: 30 });
+    expect(result.commandId).toBe('cmd_abc');
+  });
+
+  it('getCommand → GET /commands/{commandId}', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          ok: true,
+          data: {
+            commandId: 'cmd_abc',
+            status: 'completed',
+            result: { ok: true },
+            createdAt: null,
+            updatedAt: null,
+          },
+        },
+      },
+    ]);
+    const result = await roost.machines.getCommand('site-1', 'm-1', 'cmd_abc');
+    expect(calls[0]!.url).toBe(
+      'https://dev.test/api/sites/site-1/machines/m-1/commands/cmd_abc',
+    );
+    expect(result.status).toBe('completed');
+  });
+
+  it('captureScreenshot → dispatch + poll + fetch signed URL', async () => {
+    // 1: dispatch returns commandId
+    // 2: first poll returns pending
+    // 3: second poll returns completed with screenshot_url
+    // 4: signed-url fetch returns binary bytes
+    const calls: Call[] = [];
+    let i = 0;
+    const responses: Array<{ status: number; body: unknown; bytes?: Uint8Array }> = [
+      {
+        status: 202,
+        body: { ok: true, data: { commandId: 'cmd_screen', status: 'pending' } },
+      },
+      {
+        status: 200,
+        body: {
+          ok: true,
+          data: {
+            commandId: 'cmd_screen',
+            status: 'pending',
+            createdAt: null,
+            updatedAt: null,
+          },
+        },
+      },
+      {
+        status: 200,
+        body: {
+          ok: true,
+          data: {
+            commandId: 'cmd_screen',
+            status: 'completed',
+            result: {
+              screenshot_url: 'https://signed.test/img.png',
+              expires_at: '2030-01-01T00:00:00Z',
+            },
+            createdAt: null,
+            updatedAt: null,
+          },
+        },
+      },
+      { status: 200, body: '', bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]) },
+    ];
+    const fetch: typeof global.fetch = async (input, init = {}) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : (input as Request).url;
+      calls.push({ url, init });
+      const r = responses[Math.min(i, responses.length - 1)]!;
+      i += 1;
+      return {
+        ok: r.status >= 200 && r.status < 300,
+        status: r.status,
+        headers: new Headers(),
+        text: async () =>
+          typeof r.body === 'string' ? r.body : JSON.stringify(r.body),
+        arrayBuffer: async () =>
+          r.bytes ? r.bytes.buffer.slice(r.bytes.byteOffset, r.bytes.byteOffset + r.bytes.byteLength) : new ArrayBuffer(0),
+      } as Response;
+    };
+    const { Roost } = await import('../src/index');
+    const roost = new Roost({
+      token: 'owk_live_x',
+      apiUrl: 'https://dev.test',
+      fetch,
+      retry: { maxAttempts: 1 },
+    });
+
+    const result = await roost.machines.captureScreenshot('site-1', 'm-1', {
+      pollIntervalMs: 1, // keep tests fast
+      timeoutMs: 1000,
+    });
+    expect(result.status).toBe('completed');
+    expect(result.screenshotUrl).toBe('https://signed.test/img.png');
+    expect(result.bytes?.length).toBe(4);
+    expect(result.bytes?.[0]).toBe(0x89);
+    // Sanity-check call order: dispatch, ≥1 poll, signed-url fetch.
+    expect(calls[0]!.url).toContain('/commands');
+    expect(calls[calls.length - 1]!.url).toBe('https://signed.test/img.png');
+  });
+});
+
 describe('roost.events signature helpers', () => {
   it('signBody round-trips through verifySignature', async () => {
     const { roost } = makeRoost([]);

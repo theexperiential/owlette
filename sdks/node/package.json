@@ -1,7 +1,7 @@
 {
-  "name": "@owlette/roost",
+  "name": "@owlette/api",
   "version": "0.1.0",
-  "description": "node sdk for the roost public api (owlette.app)",
+  "description": "node sdk for the owlette public api (owlette.app)",
   "license": "FSL-1.1-Apache-2.0",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
