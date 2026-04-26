@@ -64,6 +64,27 @@ export interface AssignedLayout {
   capturedBy?: string;
 }
 
+export interface DisplayAutoRestoreCircuitBreaker {
+  tripped: boolean;
+  failures: number;
+  trippedAt?: number;
+  lastSuccessAt?: number;
+  lastFailureAt?: number;
+  lastError?: string;
+}
+
+export interface DisplayAutoRestoreState {
+  enabled: boolean;
+  enabledBy?: string;
+  enabledAt?: number;
+  circuitBreaker: DisplayAutoRestoreCircuitBreaker;
+}
+
+const DEFAULT_AUTO_RESTORE: DisplayAutoRestoreState = {
+  enabled: false,
+  circuitBreaker: { tripped: false, failures: 0 },
+};
+
 /**
  * Normalize a `capturedAt` value into epoch milliseconds.
  *
@@ -95,6 +116,16 @@ function normalizeTimestamp(value: unknown): number {
 interface UseDisplayStateResult {
   profile: DisplayProfile | null;
   assigned: AssignedLayout | null;
+  autoRestore: DisplayAutoRestoreState;
+  /**
+   * Wave 6.1 master kill switch on the agent (config field
+   * `displays.remoteApplyEnabled`). `true` enables the remote apply path;
+   * any other value (including missing) treats it as off. The dashboard
+   * uses this to decide whether to surface the "test apply capability"
+   * button (visible only when the switch is off so operators can verify
+   * the helper IPC before flipping it on).
+   */
+  remoteApplyEnabled: boolean;
   loading: boolean;
   error: string | null;
 }
@@ -130,9 +161,48 @@ interface InternalState {
   machineId: string;
   profile: DisplayProfile | null;
   assigned: AssignedLayout | null;
+  autoRestore: DisplayAutoRestoreState;
+  remoteApplyEnabled: boolean;
   profileLoaded: boolean;
   assignedLoaded: boolean;
   error: string | null;
+}
+
+/**
+ * Parse the `displays.autoRestore` subobject from the config doc into the
+ * typed shape. Tolerates missing/partial data — agent writes only the fields
+ * it owns (timestamps + counters), the dashboard writes `enabled`/`enabledBy`/
+ * `enabledAt`, and the doc may carry neither on a fresh machine. Timestamp
+ * fields go through `normalizeTimestamp` because they may be Firestore
+ * Timestamps (server writes) or epoch numbers / iso8601 (agent REST writes).
+ */
+function parseAutoRestore(raw: unknown): DisplayAutoRestoreState {
+  if (!raw || typeof raw !== 'object') return DEFAULT_AUTO_RESTORE;
+  const r = raw as Record<string, unknown>;
+  const cbRaw = (r.circuitBreaker && typeof r.circuitBreaker === 'object'
+    ? r.circuitBreaker
+    : {}) as Record<string, unknown>;
+
+  const trippedAt = normalizeTimestamp(cbRaw.trippedAt);
+  const lastSuccessAt = normalizeTimestamp(cbRaw.lastSuccessAt);
+  const lastFailureAt = normalizeTimestamp(cbRaw.lastFailureAt);
+  const enabledAt = normalizeTimestamp(r.enabledAt);
+
+  const circuitBreaker: DisplayAutoRestoreCircuitBreaker = {
+    tripped: typeof cbRaw.tripped === 'boolean' ? cbRaw.tripped : false,
+    failures: typeof cbRaw.failures === 'number' ? cbRaw.failures : 0,
+    ...(trippedAt > 0 ? { trippedAt } : {}),
+    ...(lastSuccessAt > 0 ? { lastSuccessAt } : {}),
+    ...(lastFailureAt > 0 ? { lastFailureAt } : {}),
+    ...(typeof cbRaw.lastError === 'string' ? { lastError: cbRaw.lastError } : {}),
+  };
+
+  return {
+    enabled: typeof r.enabled === 'boolean' ? r.enabled : false,
+    ...(typeof r.enabledBy === 'string' ? { enabledBy: r.enabledBy } : {}),
+    ...(enabledAt > 0 ? { enabledAt } : {}),
+    circuitBreaker,
+  };
 }
 
 /**
@@ -301,6 +371,8 @@ export function useDisplayState(
     machineId: '',
     profile: null,
     assigned: null,
+    autoRestore: DEFAULT_AUTO_RESTORE,
+    remoteApplyEnabled: false,
     profileLoaded: false,
     assignedLoaded: false,
     error: null,
@@ -329,6 +401,8 @@ export function useDisplayState(
             machineId,
             profile: next,
             assigned: sameTarget ? prev.assigned : null,
+            autoRestore: sameTarget ? prev.autoRestore : DEFAULT_AUTO_RESTORE,
+            remoteApplyEnabled: sameTarget ? prev.remoteApplyEnabled : false,
             profileLoaded: true,
             assignedLoaded: sameTarget ? prev.assignedLoaded : false,
             error: sameTarget ? prev.error : null,
@@ -344,6 +418,8 @@ export function useDisplayState(
             machineId,
             profile: sameTarget ? prev.profile : null,
             assigned: sameTarget ? prev.assigned : null,
+            autoRestore: sameTarget ? prev.autoRestore : DEFAULT_AUTO_RESTORE,
+            remoteApplyEnabled: sameTarget ? prev.remoteApplyEnabled : false,
             profileLoaded: true,
             assignedLoaded: sameTarget ? prev.assignedLoaded : false,
             error: err.message,
@@ -365,6 +441,8 @@ export function useDisplayState(
         configRef,
         (snap) => {
           let next: AssignedLayout | null = null;
+          let nextAutoRestore: DisplayAutoRestoreState = DEFAULT_AUTO_RESTORE;
+          let nextRemoteApplyEnabled = false;
           if (snap.exists()) {
             const data = snap.data();
             const candidate = data?.displays?.assigned;
@@ -375,6 +453,12 @@ export function useDisplayState(
                 capturedBy: typeof candidate.capturedBy === 'string' ? candidate.capturedBy : undefined,
               };
             }
+            nextAutoRestore = parseAutoRestore(data?.displays?.autoRestore);
+            // Wave 6.1 master kill switch — only literal `true` enables the
+            // remote apply path. Anything else (false / missing / non-bool)
+            // collapses to off so a fresh agent doc can't accidentally opt
+            // in by having the field default to a truthy non-boolean.
+            nextRemoteApplyEnabled = data?.displays?.remoteApplyEnabled === true;
           }
           setState((prev) => {
             const sameTarget = prev.siteId === siteId && prev.machineId === machineId;
@@ -383,6 +467,8 @@ export function useDisplayState(
               machineId,
               profile: sameTarget ? prev.profile : null,
               assigned: next,
+              autoRestore: nextAutoRestore,
+              remoteApplyEnabled: nextRemoteApplyEnabled,
               profileLoaded: sameTarget ? prev.profileLoaded : false,
               assignedLoaded: true,
               error: sameTarget ? prev.error : null,
@@ -398,6 +484,8 @@ export function useDisplayState(
               machineId,
               profile: sameTarget ? prev.profile : null,
               assigned: sameTarget ? prev.assigned : null,
+              autoRestore: sameTarget ? prev.autoRestore : DEFAULT_AUTO_RESTORE,
+              remoteApplyEnabled: sameTarget ? prev.remoteApplyEnabled : false,
               profileLoaded: sameTarget ? prev.profileLoaded : false,
               assignedLoaded: true,
               error: err.message,
@@ -421,12 +509,14 @@ export function useDisplayState(
   // would surface a permission error in the panel's loading state.
   if (demo) {
     if (!enabled || !machineId) {
-      return { profile: null, assigned: null, loading: false, error: null };
+      return { profile: null, assigned: null, autoRestore: DEFAULT_AUTO_RESTORE, remoteApplyEnabled: false, loading: false, error: null };
     }
     const { profile, assigned } = demo.getDisplayState(machineId);
     return {
       profile,
       assigned: subscribeAssigned ? assigned : null,
+      autoRestore: DEFAULT_AUTO_RESTORE,
+      remoteApplyEnabled: false,
       loading: false,
       error: null,
     };
@@ -436,6 +526,8 @@ export function useDisplayState(
     return {
       profile: null,
       assigned: null,
+      autoRestore: DEFAULT_AUTO_RESTORE,
+      remoteApplyEnabled: false,
       loading: false,
       error: 'Firebase not configured',
     };
@@ -448,6 +540,8 @@ export function useDisplayState(
     return {
       profile: null,
       assigned: null,
+      autoRestore: DEFAULT_AUTO_RESTORE,
+      remoteApplyEnabled: false,
       loading: false,
       error: null,
     };
@@ -457,6 +551,8 @@ export function useDisplayState(
     return {
       profile: null,
       assigned: null,
+      autoRestore: DEFAULT_AUTO_RESTORE,
+      remoteApplyEnabled: false,
       loading: false,
       error: null,
     };
@@ -469,6 +565,8 @@ export function useDisplayState(
     return {
       profile: null,
       assigned: null,
+      autoRestore: DEFAULT_AUTO_RESTORE,
+      remoteApplyEnabled: false,
       loading: true,
       error: null,
     };
@@ -478,6 +576,13 @@ export function useDisplayState(
     profile: state.profile,
     // Opt-out callers never see an assigned layout; the effect skips the sub.
     assigned: subscribeAssigned ? state.assigned : null,
+    // autoRestore lives on the same config doc as `assigned`, so when the
+    // assigned sub is opted out we have no live source for it — fall back to
+    // the safe default so consumers can still read flags without null-checks.
+    autoRestore: subscribeAssigned ? state.autoRestore : DEFAULT_AUTO_RESTORE,
+    // remoteApplyEnabled lives on the same config doc — opt-out callers see
+    // the safe default (off) so the apply / test buttons stay hidden.
+    remoteApplyEnabled: subscribeAssigned ? state.remoteApplyEnabled : false,
     // When subscribeAssigned is false, treat assignedLoaded as implicitly
     // satisfied so `loading` flips as soon as the profile sub lands.
     loading: !state.profileLoaded || (subscribeAssigned && !state.assignedLoaded),

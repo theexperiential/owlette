@@ -31,9 +31,12 @@ import {
   useState,
 } from 'react';
 import { toast } from 'sonner';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, Monitor, X } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { AlertTriangle, Loader2, Monitor, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -45,6 +48,10 @@ import {
 import { useDisplayActions } from '@/hooks/useDisplayActions';
 import { useDisplayDraft } from '@/hooks/useDisplayDraft';
 import { useDisplayModes } from '@/hooks/useDisplayModes';
+import {
+  useDisplayEventFeed,
+  type DisplayEventEntry,
+} from '@/hooks/useDisplayEventFeed';
 import { DisplayCanvas } from './DisplayCanvas';
 import { DisplayMonitorTable } from './DisplayMonitorTable';
 import { DisplayEditorDialog } from './DisplayEditorDialog';
@@ -62,7 +69,107 @@ interface DisplayLayoutPanelProps {
   onClose: () => void;
 }
 
-type DisplayTab = 'live' | 'assigned';
+type DisplayTab = 'live' | 'assigned' | 'events';
+
+const DISPLAY_EVENT_LABEL: Record<string, string> = {
+  display_monitor_removed: 'monitor removed',
+  display_apply_failed: 'apply failed',
+  display_auto_revert_fired: 'auto-reverted',
+  display_sync_lost: 'sync lost',
+  display_drift: 'drift',
+  display_monitor_swapped: 'monitor swapped',
+  display_mosaic_disabled: 'mosaic disabled',
+  display_apply_refused_mosaic: 'apply refused (mosaic)',
+  display_monitor_added: 'monitor added',
+  display_apply_succeeded: 'apply succeeded',
+};
+
+/**
+ * Compact relative-time formatter for the events tab. Takes epoch ms and
+ * returns "just now" / "Nm ago" / "Nh ago" / "Nd ago" for the last week,
+ * or a "MMM D" date for older. The shared `formatRelativeTime` in
+ * `lib/timeUtils.ts` takes seconds and never falls back to a date, so we
+ * keep this one local.
+ */
+function formatEventRelativeTime(epochMs: number): string {
+  if (!epochMs) return '—';
+  const diffMs = Date.now() - epochMs;
+  if (diffMs < 60_000) return 'just now';
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(epochMs).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+/** Parse the JSON-serialized agent payload, returning {} on any failure. */
+function parseEventDetails(details: string): Record<string, unknown> {
+  if (!details) return {};
+  try {
+    const parsed = JSON.parse(details) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Pull the operator-friendly monitor name from a parsed event payload, when
+ * the agent attached one. Shapes: `{monitor: {friendlyName}}` for per-monitor
+ * events, falls back to `''` so the column renders an em-dash.
+ */
+function eventMonitorName(payload: Record<string, unknown>): string {
+  const monitor = payload.monitor;
+  if (monitor && typeof monitor === 'object') {
+    const fn = (monitor as { friendlyName?: unknown }).friendlyName;
+    if (typeof fn === 'string') return fn;
+  }
+  return '';
+}
+
+/**
+ * Per-action details snippet:
+ *  - `display_drift`        → `changes.join(', ')`
+ *  - `display_apply_failed` → `error`
+ *  - everything else        → '' (em-dash placeholder in the cell)
+ */
+function eventDetailsSnippet(
+  action: string,
+  payload: Record<string, unknown>,
+): string {
+  if (action === 'display_drift') {
+    const changes = payload.changes;
+    if (Array.isArray(changes)) {
+      return changes.filter((c): c is string => typeof c === 'string').join(', ');
+    }
+    return '';
+  }
+  if (action === 'display_apply_failed') {
+    const err = payload.error;
+    if (typeof err === 'string') return err;
+  }
+  return '';
+}
+
+/** Severity badge classes — matches the amber-500 / destructive tokens used
+ *  elsewhere in this file (recall banner, drift overlay). */
+function eventLevelBadgeClass(level: string): string {
+  if (level === 'critical') {
+    return 'bg-destructive/20 text-destructive border-destructive/30';
+  }
+  if (level === 'warning') {
+    return 'bg-amber-500/20 text-amber-300 border-amber-500/30';
+  }
+  return 'bg-muted text-muted-foreground border-border';
+}
 
 /**
  * Sort monitors left-to-right, top-to-bottom by virtual-desktop position so
@@ -112,7 +219,7 @@ export function DisplayLayoutPanel({
 }: DisplayLayoutPanelProps) {
   const { isSiteAdmin, user } = useAuth();
   const canSiteAdmin = isSiteAdmin(siteId);
-  const { profile, assigned, loading, error } = useDisplayState(siteId, machineId);
+  const { profile, assigned, autoRestore, remoteApplyEnabled, loading, error } = useDisplayState(siteId, machineId);
   // `applying` drives the disabled-state on every write button so repeat-clicks
   // during in-flight operations are blocked at the UI boundary.
   const actions = useDisplayActions(siteId, machineId);
@@ -332,9 +439,26 @@ export function DisplayLayoutPanel({
   // Single source of truth for the active tab's semantic color. Threaded into
   // the canvas (selection ring), monitor cards (left border + selected ring),
   // and the apply button (drift-state accent) so every visible signal of the
-  // current mode reads as one coherent color.
+  // current mode reads as one coherent color. The events tab is read-only and
+  // doesn't drive any canvas/cards, but a neutral accent keeps the tab pill
+  // styling consistent with the active-tab ring above.
   const tabAccentColor =
-    activeTab === 'live' ? 'var(--primary)' : 'var(--chart-4)';
+    activeTab === 'live'
+      ? 'var(--primary)'
+      : activeTab === 'assigned'
+        ? 'var(--chart-4)'
+        : 'var(--muted-foreground)';
+
+  // Display-event feed for the events tab. Subscription only opens while the
+  // tab is active so the dashboard doesn't hold dozens of 50-event listeners
+  // open across panels in the background.
+  const {
+    events: displayEvents,
+    loading: eventsLoading,
+    error: eventsError,
+  } = useDisplayEventFeed(siteId, machineId, {
+    enabled: activeTab === 'events',
+  });
 
   const hasLiveProfile = !!profile && liveMonitors.length > 0;
   const hasAssignedLayout = !!assigned && assignedMonitors.length > 0;
@@ -538,6 +662,47 @@ export function DisplayLayoutPanel({
     }
   };
 
+  // Wave 6.3 — apply self-test ("test apply capability" button). Dispatches a
+  // `test_display_apply` command and subscribes to its completed-doc entry so
+  // the result text lands inline next to the button. The button is hidden when
+  // remote apply is already enabled (the operator no longer needs to verify
+  // the helper IPC) so there's no per-machine timeout to manage if the
+  // command never lands — closing the panel just discards the pending state.
+  const [testApplyCmdId, setTestApplyCmdId] = useState<string | null>(null);
+  const [testApplyResult, setTestApplyResult] = useState<string | null>(null);
+  const [testApplyInFlight, setTestApplyInFlight] = useState(false);
+
+  const handleTestApply = async () => {
+    setTestApplyResult(null);
+    setTestApplyInFlight(true);
+    try {
+      const cmdId = await actions.testDisplayApply();
+      setTestApplyCmdId(cmdId);
+    } catch (e) {
+      console.error('Failed to dispatch test_display_apply', e);
+      toast.error(`test failed: ${formatError(e)}`);
+      setTestApplyInFlight(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!testApplyCmdId || !db || !siteId || !machineId) return;
+    const ref = doc(
+      db, 'sites', siteId, 'machines', machineId, 'commands', 'completed',
+    );
+    const unsubscribe = onSnapshot(ref, (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      const entry = data?.[testApplyCmdId];
+      if (!entry || entry.status !== 'completed') return;
+      const result = typeof entry.result === 'string' ? entry.result : 'no result';
+      setTestApplyResult(result);
+      setTestApplyInFlight(false);
+      setTestApplyCmdId(null);
+    });
+    return () => unsubscribe();
+  }, [testApplyCmdId, siteId, machineId]);
+
   // Drive the countdown from an absolute deadline, not a decrementing state.
   // `setInterval` at 250ms keeps the displayed value accurate when the tab
   // is backgrounded (Chrome/Firefox throttle timers to ≥1s there, so a
@@ -662,7 +827,141 @@ export function DisplayLayoutPanel({
     }
   };
 
+  const handleAutoRestoreToggle = async (next: boolean) => {
+    try {
+      await actions.setAutoRestore(next, user?.email ?? 'unknown');
+    } catch (e) {
+      console.error('Failed to update auto-restore', e);
+      toast.error(`auto-restore update failed: ${formatError(e)}`);
+    }
+  };
+
+  const handleResetBreaker = async () => {
+    try {
+      await actions.resetAutoRestoreBreaker();
+      toast.success('auto-restore re-enabled');
+    } catch (e) {
+      console.error('Failed to reset auto-restore breaker', e);
+      toast.error(`reset failed: ${formatError(e)}`);
+    }
+  };
+
+  const autoRestoreDisabled =
+    !hasAssignedLayout || !!profile?.mosaicActive || actions.applying;
+  const autoRestoreDisabledReason = !hasAssignedLayout
+    ? 'store a layout first'
+    : profile?.mosaicActive
+      ? "auto-restore can't run while nvidia mosaic is active"
+      : 'auto-restore';
+  const breakerTripped = autoRestore.circuitBreaker.tripped;
+  const breakerLastError =
+    autoRestore.circuitBreaker.lastError || '(no error message)';
+
+  const renderEventsTab = (
+    events: DisplayEventEntry[],
+    eventsLoadingArg: boolean,
+    eventsErrorArg: string | null,
+  ) => {
+    if (eventsErrorArg) {
+      return (
+        <div
+          className="h-[280px] flex items-center justify-center text-destructive text-sm"
+          role="alert"
+        >
+          failed to load events — {eventsErrorArg}
+        </div>
+      );
+    }
+    if (eventsLoadingArg) {
+      return (
+        <div
+          className="h-[280px] flex items-center justify-center"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+          aria-label="loading events"
+        >
+          <div className="text-muted-foreground animate-pulse text-sm">
+            loading...
+          </div>
+        </div>
+      );
+    }
+    if (events.length === 0) {
+      return (
+        <div className="h-[280px] flex items-center justify-center px-6 text-center">
+          <p className="text-sm text-muted-foreground max-w-md">
+            no display events yet. events appear here as the agent reports
+            display changes.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div
+        className="h-[280px] overflow-y-auto border border-border rounded-lg"
+        data-testid="display-events-table"
+      >
+        <table className="w-full text-xs">
+          <thead className="bg-muted/40 text-muted-foreground sticky top-0 z-10">
+            <tr>
+              <th className="text-left font-normal px-3 py-1.5 w-[80px]">when</th>
+              <th className="text-left font-normal px-3 py-1.5 w-[80px]">level</th>
+              <th className="text-left font-normal px-3 py-1.5 w-[160px]">event</th>
+              <th className="text-left font-normal px-3 py-1.5 w-[180px]">monitor</th>
+              <th className="text-left font-normal px-3 py-1.5">details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {events.map((event) => {
+              const payload = parseEventDetails(event.details);
+              const monitorName = eventMonitorName(payload);
+              const snippet = eventDetailsSnippet(event.action, payload);
+              const label = DISPLAY_EVENT_LABEL[event.action] ?? event.action;
+              return (
+                <tr
+                  key={event.id}
+                  className="border-t border-border/60 hover:bg-accent/30"
+                >
+                  <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
+                    {formatEventRelativeTime(event.timestamp)}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <span
+                      className={cn(
+                        'inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide',
+                        eventLevelBadgeClass(event.level),
+                      )}
+                    >
+                      {event.level || 'info'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-1.5 text-foreground whitespace-nowrap">
+                    {label}
+                  </td>
+                  <td className="px-3 py-1.5 text-muted-foreground truncate">
+                    {monitorName || '—'}
+                  </td>
+                  <td className="px-3 py-1.5 text-muted-foreground truncate">
+                    {snippet || '—'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
   const renderBody = () => {
+    // Events tab is sourced from a separate Firestore subscription and has its
+    // own loading / error / empty states — bypass the display-state guards
+    // below so a still-loading topology doesn't hide the events table.
+    if (activeTab === 'events') {
+      return renderEventsTab(displayEvents, eventsLoading, eventsError);
+    }
+
     if (error) {
       return (
         <div
@@ -830,7 +1129,12 @@ export function DisplayLayoutPanel({
   // tabAccentColor above) so user always knows which mode they're in.
   const renderTab = (tab: DisplayTab, label: string, badge?: string) => {
     const isActive = activeTab === tab;
-    const ringColor = tab === 'live' ? 'var(--primary)' : 'var(--chart-4)';
+    const ringColor =
+      tab === 'live'
+        ? 'var(--primary)'
+        : tab === 'assigned'
+          ? 'var(--chart-4)'
+          : 'var(--muted-foreground)';
     return (
       <Button
         key={tab}
@@ -878,12 +1182,36 @@ export function DisplayLayoutPanel({
               'stored',
               hasDriftVisible ? `(${effectiveDriftCount})` : undefined,
             )}
+            {renderTab('events', 'events')}
             {mode === 'edit' && (
               <span className="text-[10px] text-muted-foreground px-2 py-1 rounded bg-muted/40 border border-border">
                 editing stored — drift check paused
               </span>
             )}
           </div>
+
+          {canSiteAdmin && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  tabIndex={autoRestoreDisabled ? 0 : -1}
+                  className="flex items-center gap-2"
+                >
+                  <span className="text-xs text-muted-foreground">
+                    auto-restore
+                  </span>
+                  <Switch
+                    checked={autoRestore.enabled}
+                    onCheckedChange={handleAutoRestoreToggle}
+                    disabled={autoRestoreDisabled}
+                    data-testid="display-auto-restore-toggle"
+                    aria-label="auto-restore"
+                  />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{autoRestoreDisabledReason}</TooltipContent>
+            </Tooltip>
+          )}
 
           <div className="flex-1" />
 
@@ -893,7 +1221,7 @@ export function DisplayLayoutPanel({
                 - edit mode: store, discard
               Recall is visible on both view tabs so drift can be fixed from
               wherever the operator noticed it. */}
-          {canSiteAdmin && mode === 'view' && (
+          {canSiteAdmin && mode === 'view' && activeTab !== 'events' && (
             <div className="flex items-center gap-1.5">
               {activeTab === 'live' && (
                 <Tooltip>
@@ -919,6 +1247,12 @@ export function DisplayLayoutPanel({
                     store the current live arrangement as the stored layout
                   </TooltipContent>
                 </Tooltip>
+              )}
+              {autoRestore.enabled && (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <span className="bg-green-500 rounded-full h-1.5 w-1.5" />
+                  auto
+                </span>
               )}
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -975,6 +1309,36 @@ export function DisplayLayoutPanel({
                       : profile?.mosaicActive
                         ? 'editing unavailable while mosaic is active'
                         : 'edit the stored layout'}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              {/* Wave 6.3 — visible only when remote apply is OFF so operators
+                  can verify the helper IPC works on this machine before
+                  flipping the kill switch on. Hides itself once
+                  `displays.remoteApplyEnabled` is true. */}
+              {!remoteApplyEnabled && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span tabIndex={testApplyInFlight ? 0 : -1}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={testApplyInFlight}
+                        onClick={handleTestApply}
+                        data-testid="display-test-apply-button"
+                        className="bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs"
+                      >
+                        {testApplyInFlight ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          'test apply capability'
+                        )}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    run a read-only apply self-test (no display changes) to
+                    verify the helper works on this machine
                   </TooltipContent>
                 </Tooltip>
               )}
@@ -1073,6 +1437,68 @@ export function DisplayLayoutPanel({
             aria-live="polite"
           >
             <span>monitors overlap — usually unintentional</span>
+          </div>
+        )}
+
+        {breakerTripped && canSiteAdmin && (
+          <div
+            className="mt-3 flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
+            role="alert"
+            data-testid="display-auto-restore-breaker-banner"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+              <span className="text-destructive truncate">
+                auto-restore paused — 3 attempts failed. last error:{' '}
+                {breakerLastError}.
+              </span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleResetBreaker}
+              disabled={actions.applying}
+              data-testid="display-auto-restore-reset-button"
+              className="h-7 px-2 text-xs shrink-0 bg-transparent border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              reset
+            </Button>
+          </div>
+        )}
+
+        {breakerTripped && !canSiteAdmin && (
+          <div
+            className="mt-3 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
+            role="status"
+            data-testid="display-auto-restore-breaker-readonly"
+          >
+            <AlertTriangle className="h-4 w-4 text-amber-300 shrink-0" />
+            <span className="text-amber-200 truncate">
+              auto-restore paused — 3 attempts failed. last error:{' '}
+              {breakerLastError}.
+            </span>
+          </div>
+        )}
+
+        {testApplyResult !== null && (
+          <div
+            className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs"
+            role="status"
+            aria-live="polite"
+            data-testid="display-test-apply-result"
+          >
+            <span className="text-muted-foreground truncate">
+              {testApplyResult}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTestApplyResult(null)}
+              className="h-6 w-6 p-0 shrink-0 text-muted-foreground hover:text-white"
+              aria-label="dismiss"
+            >
+              <X className="h-3 w-3" />
+            </Button>
           </div>
         )}
 

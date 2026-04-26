@@ -40,6 +40,15 @@ interface UseDisplayActionsResult {
   applyLayout: (monitors: MonitorInfo[]) => Promise<ApplyDispatchResult>;
   ackLayout: (applyId: string) => Promise<string>;
   /**
+   * Wave 6.3 — dispatch a `test_display_apply` command. The agent spawns
+   * the apply helper in self-test mode (query + SDC_VALIDATE only, never
+   * SDC_APPLY) so operators can verify the helper IPC works end-to-end
+   * before flipping `displays.remoteApplyEnabled` on. Returns the command
+   * id only — the structured result lands in the command doc's `result`
+   * field, which the panel reads via the existing command-result hook.
+   */
+  testDisplayApply: () => Promise<string>;
+  /**
    * Dispatch an `enumerate_display_modes` command. The agent walks
    * EnumDisplaySettingsExW per monitor and (re-)uploads the per-edidHash
    * catalogue to `sites/{siteId}/machines/{machineId}/hardware/displayModes`,
@@ -49,6 +58,8 @@ interface UseDisplayActionsResult {
    * doc's return string.
    */
   enumerateDisplayModes: () => Promise<string>;
+  setAutoRestore: (enabled: boolean, userEmail: string) => Promise<void>;
+  resetAutoRestoreBreaker: () => Promise<void>;
   applying: boolean;
 }
 
@@ -227,12 +238,127 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
     return commandId;
   };
 
+  /**
+   * Toggle the per-machine auto-restore feature on or off. When the agent sees
+   * `displays.autoRestore.enabled === true` on its config doc it begins
+   * comparing the live monitor topology against the assigned layout on every
+   * heartbeat and silently re-applies the assigned layout when drift is
+   * detected (gated by the circuit breaker — see `resetAutoRestoreBreaker`).
+   *
+   * On enable we also stamp `enabledBy` (operator email) and `enabledAt`
+   * (server timestamp) so the dashboard can surface "auto-restore turned on
+   * by alice@acme.com on 2026-04-25". On disable we deliberately leave those
+   * fields untouched so the historical "who last enabled this" record
+   * survives toggling — the `enabled: false` write alone is enough to stop
+   * the agent from acting.
+   *
+   * Uses a nested merge-write so sibling fields under `displays.autoRestore`
+   * (notably the agent-managed `circuitBreaker` subtree) are preserved.
+   */
+  const setAutoRestore = async (enabled: boolean, userEmail: string): Promise<void> => {
+    if (!db) throw new Error('Firebase not configured');
+    if (!siteId || !machineId) throw new Error('Site and machine required');
+
+    setApplying(true);
+    try {
+      const configRef = doc(db, 'config', siteId, 'machines', machineId);
+      const autoRestorePatch = enabled
+        ? { enabled: true, enabledBy: userEmail, enabledAt: serverTimestamp() }
+        : { enabled: false };
+      await setDoc(
+        configRef,
+        {
+          displays: {
+            autoRestore: autoRestorePatch,
+          },
+        },
+        { merge: true },
+      );
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  /**
+   * Wave 6.3 — dispatch a `test_display_apply` command. Returns the command
+   * id so the caller can subscribe to `commands/completed/{commandId}` for
+   * the structured response. Read-only by construction (the agent runs
+   * query + SDC_VALIDATE only) so this bypasses the apply kill switch and
+   * is safe to invoke on machines with `displays.remoteApplyEnabled: false`.
+   */
+  const testDisplayApply = async (): Promise<string> => {
+    if (!db) throw new Error('Firebase not configured');
+    if (!siteId || !machineId) throw new Error('Site and machine required');
+
+    const commandId = `test_display_apply_${Date.now()}`;
+    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
+    await setDoc(
+      commandRef,
+      {
+        [commandId]: {
+          type: 'test_display_apply',
+          timestamp: serverTimestamp(),
+          status: 'pending',
+        },
+      },
+      { merge: true },
+    );
+    return commandId;
+  };
+
+  /**
+   * Manually reset the auto-restore circuit breaker. After three consecutive
+   * apply failures the agent trips the breaker (`tripped: true`) and stops
+   * attempting auto-restore until an operator clears it — this prevents a
+   * persistently broken layout (e.g. a monitor that was permanently unplugged)
+   * from generating an endless retry loop. This method is the operator's
+   * "I've fixed the underlying issue, try again" button.
+   *
+   * Writes only `tripped: false` and `failures: 0` — the agent-written history
+   * fields (`lastSuccessAt`, `lastFailureAt`, `lastError`, `trippedAt`) are
+   * left intact so the dashboard can still show the last known failure context
+   * even after a reset. No audit trail field is added here; the existing
+   * timestamps tell the story.
+   *
+   * Uses a nested merge-write so sibling fields under
+   * `displays.autoRestore.circuitBreaker` and elsewhere in the config doc
+   * are preserved.
+   */
+  const resetAutoRestoreBreaker = async (): Promise<void> => {
+    if (!db) throw new Error('Firebase not configured');
+    if (!siteId || !machineId) throw new Error('Site and machine required');
+
+    setApplying(true);
+    try {
+      const configRef = doc(db, 'config', siteId, 'machines', machineId);
+      await setDoc(
+        configRef,
+        {
+          displays: {
+            autoRestore: {
+              circuitBreaker: {
+                tripped: false,
+                failures: 0,
+              },
+            },
+          },
+        },
+        { merge: true },
+      );
+    } finally {
+      setApplying(false);
+    }
+  };
+
   return {
     captureLayout,
     clearLayout,
     applyLayout,
     ackLayout,
+    testDisplayApply,
     enumerateDisplayModes,
+    setAutoRestore,
+    resetAutoRestoreBreaker,
     applying,
   };
 }

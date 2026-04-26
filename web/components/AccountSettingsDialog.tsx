@@ -81,6 +81,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [processAlerts, setProcessAlerts] = useState(true);
   const [thresholdAlerts, setThresholdAlerts] = useState(true);
   const [cortexAlerts, setCortexAlerts] = useState(true);
+  const [displayAlerts, setDisplayAlerts] = useState(true);
   const [alertCcEmails, setAlertCcEmails] = useState<string[]>([]);
   const [newCcEmail, setNewCcEmail] = useState('');
   const [ccEmailError, setCcEmailError] = useState('');
@@ -164,6 +165,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setProcessAlerts(userPreferences.processAlerts);
       setThresholdAlerts(userPreferences.thresholdAlerts);
       setCortexAlerts(userPreferences.cortexAlerts);
+      setDisplayAlerts(userPreferences.displayAlerts);
       setAlertCcEmails(userPreferences.alertCcEmails || []);
       setNewCcEmail('');
       setCcEmailError('');
@@ -322,9 +324,10 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         || processAlerts !== userPreferences.processAlerts
         || thresholdAlerts !== userPreferences.thresholdAlerts
         || cortexAlerts !== userPreferences.cortexAlerts
+        || displayAlerts !== userPreferences.displayAlerts
         || JSON.stringify(alertCcEmails) !== JSON.stringify(userPreferences.alertCcEmails || []);
       if (prefsChanged) {
-        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, timeDisplayMode, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts, alertCcEmails });
+        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, timeDisplayMode, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts, displayAlerts, alertCcEmails });
       }
       if (showPasswordSection && (currentPassword || newPassword || confirmPassword)) {
         if (!validatePassword()) {
@@ -652,6 +655,19 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       id="cortexAlerts"
                       checked={cortexAlerts}
                       onCheckedChange={setCortexAlerts}
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="displayAlerts" className="text-white">display events</Label>
+                      <p className="text-xs text-muted-foreground">receive email alerts when monitors are removed, layouts drift, or display apply fails</p>
+                    </div>
+                    <Switch
+                      id="displayAlerts"
+                      checked={displayAlerts}
+                      onCheckedChange={setDisplayAlerts}
                       disabled={loading}
                     />
                   </div>

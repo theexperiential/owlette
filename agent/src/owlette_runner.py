@@ -170,6 +170,8 @@ if __name__ == '__main__':
             self._display_check_counter = 0
             self._cached_display_hash = None
             self._cached_display_profile = None
+            # Auto-restore drift-persistence gate (mirror OwletteService.__init__).
+            self._drift_pending_tick_count = 0
             self._shutting_down = False
             self._live_view_active = False
             self._live_view_stop_time = 0
@@ -189,6 +191,11 @@ if __name__ == '__main__':
                 _register_roost_handlers(self._command_router)
             except Exception as e:
                 logging.warning(f"Failed to register roost handlers: {e}")
+            try:
+                from machine_commands import register_handlers as _register_machine_handlers
+                _register_machine_handlers(self._command_router)
+            except Exception as e:
+                logging.warning(f"Failed to register machine-api handlers: {e}")
             # Throttle state for _write_service_status() — OwletteService has
             # a hasattr() guard, but mirror here so the safety net never has
             # to fire under NSSM.

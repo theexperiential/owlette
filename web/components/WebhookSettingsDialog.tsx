@@ -60,6 +60,21 @@ const SUPPORTED_EVENTS = [
   { id: 'machine.online', label: 'machine online', description: 'machine comes back online (future)' },
   { id: 'deployment.completed', label: 'deployment completed', description: 'software deployment succeeds (future)' },
   { id: 'deployment.failed', label: 'deployment failed', description: 'software deployment fails (future)' },
+  // [B4.2] Display events. Unchecked by default — operators must opt in
+  // explicitly so existing webhooks don't suddenly start firing on monitor
+  // events they never subscribed to. The 10 ids below mirror the
+  // `webhookEventName`s in `web/lib/alerts/displayEventRouting.ts`; severity
+  // labels in the description help the operator decide which to enable.
+  { id: 'display.monitor_removed', label: 'display: monitor removed', description: 'a monitor disappears from the live topology (critical)' },
+  { id: 'display.apply_failed', label: 'display: apply failed', description: 'a layout apply rejected by the OS (critical)' },
+  { id: 'display.auto_revert_fired', label: 'display: auto-reverted', description: 'no ack within window — agent reverted the apply (critical)' },
+  { id: 'display.sync_lost', label: 'display: sync lost', description: 'nvidia gsync / framelock device dropped (critical)' },
+  { id: 'display.drift', label: 'display: drift', description: 'live config diverged from the stored layout (warning)' },
+  { id: 'display.monitor_swapped', label: 'display: monitor swapped', description: 'same port now reports a different panel (warning)' },
+  { id: 'display.mosaic_disabled', label: 'display: mosaic disabled', description: 'nvidia mosaic spanning turned off (warning)' },
+  { id: 'display.apply_refused_mosaic', label: 'display: apply refused (mosaic)', description: 'apply rejected because mosaic is active (warning)' },
+  { id: 'display.monitor_added', label: 'display: monitor added', description: 'a new monitor appeared in the live topology (info)' },
+  { id: 'display.apply_succeeded', label: 'display: apply succeeded', description: 'a layout apply completed successfully (info)' },
 ];
 
 /* -------------------------------------------------------------------------- */

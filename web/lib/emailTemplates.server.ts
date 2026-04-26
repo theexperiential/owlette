@@ -147,3 +147,200 @@ export function emailTimestamp(date: Date = new Date(), timezone?: string): stri
 
   return `${formatted} ${tzLabel}`;
 }
+
+// ---------------------------------------------------------------------------
+// [B3.2] Display digest email
+// ---------------------------------------------------------------------------
+
+/**
+ * Single pending display alert as it lands in `pending_display_alerts`.
+ * Mirrors the queue-write shape from `/api/agent/alert` (B3.1) — keeps
+ * the cron + critical-path immediate-send (B3.3) reading from the same type.
+ */
+export interface PendingDisplayAlert {
+  docId: string;
+  siteId: string;
+  machineId: string;
+  eventType: string;
+  data: Record<string, unknown>;
+  agentVersion: string;
+  correlatedApplyId: string;
+  timestamp: FirebaseFirestore.Timestamp | Date | null;
+}
+
+/**
+ * Operator-facing event labels. Snake_case agent type → human phrase used
+ * in subject + body. Critical events read as actions ("monitor removed");
+ * warnings as states ("display drift detected"). Lowercase per the project's
+ * UI copy convention.
+ */
+const DISPLAY_EVENT_LABEL: Record<string, string> = {
+  display_monitor_removed: 'monitor removed',
+  display_apply_failed: 'display apply failed',
+  display_auto_revert_fired: 'display auto-reverted',
+  display_sync_lost: 'display sync lost',
+  display_drift: 'display drift detected',
+  display_monitor_swapped: 'monitor swapped',
+  display_mosaic_disabled: 'nvidia mosaic disabled',
+  display_apply_refused_mosaic: 'display apply refused (mosaic active)',
+  display_monitor_added: 'monitor added',
+  display_apply_succeeded: 'display apply succeeded',
+};
+
+/**
+ * Severity color for an event — drives the heading + table row accents.
+ * Critical: red; warning: amber; everything else (info / success): blue.
+ */
+function displayEventColor(eventType: string): string {
+  if (
+    eventType === 'display_monitor_removed' ||
+    eventType === 'display_apply_failed' ||
+    eventType === 'display_auto_revert_fired' ||
+    eventType === 'display_sync_lost'
+  ) {
+    return EMAIL_COLORS.red;
+  }
+  if (
+    eventType === 'display_drift' ||
+    eventType === 'display_monitor_swapped' ||
+    eventType === 'display_mosaic_disabled' ||
+    eventType === 'display_apply_refused_mosaic'
+  ) {
+    return EMAIL_COLORS.amber;
+  }
+  return EMAIL_COLORS.blue;
+}
+
+/**
+ * Pull `monitor.friendlyName` (or fallback) out of the alert's `data`
+ * payload. Display events emitted by the agent (B2.2) carry a
+ * `monitor: {friendlyName, port, edidHash}` blob. Returns empty string
+ * when absent so callers can fall through to "—" placeholders.
+ */
+function monitorLabel(data: Record<string, unknown>): string {
+  const monitor = data?.monitor as Record<string, unknown> | undefined;
+  if (!monitor) return '';
+  const name = (monitor.friendlyName ?? monitor.id ?? '') as string;
+  const port = (monitor.port ?? '') as string;
+  if (name && port) return `${name} (${port})`;
+  return name || port || '';
+}
+
+/**
+ * Per-event detail string for the table body. Drift surfaces the field
+ * list; apply_failed surfaces the error text; everything else returns
+ * empty so callers can fall through to a placeholder.
+ */
+function displayEventDetail(eventType: string, data: Record<string, unknown>): string {
+  if (eventType === 'display_drift' && Array.isArray(data?.changes)) {
+    const changes = (data.changes as unknown[]).filter(
+      (c): c is string => typeof c === 'string',
+    );
+    if (changes.length > 0) return `changes: ${changes.join(', ')}`;
+  }
+  const error = (data?.error ?? data?.errorMessage ?? '') as string;
+  if (error) return error;
+  return '';
+}
+
+function displayAlertRow(label: string, value: string, alt: boolean, highlight?: string): string {
+  const bg = alt ? `background:${EMAIL_COLORS.altRow};` : '';
+  const color = highlight || EMAIL_COLORS.text;
+  const safeValue = value || '—';
+  return `
+    <tr>
+      <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};font-size:13px;font-weight:600;white-space:nowrap;border-bottom:1px solid ${EMAIL_COLORS.border};width:140px;">${label}</td>
+      <td style="padding:10px 14px;${bg}color:${color};font-size:13px;border-bottom:1px solid ${EMAIL_COLORS.border};">${safeValue}</td>
+    </tr>`;
+}
+
+/**
+ * Render the email body for a batch of pending display alerts. Single-alert
+ * payloads use a focused key/value layout; multi-alert payloads render a
+ * digest table grouped by event severity color. Caller supplies the
+ * unsubscribe link + recipient timezone; this helper handles the layout.
+ *
+ * Used by both the digest cron (B3.2 — drains `pending_display_alerts` every
+ * 3 min) and the critical-path immediate-send (B3.3 — bypasses the digest
+ * for `display_monitor_removed` / `display_auto_revert_fired`).
+ */
+export function buildDisplayDigestEmail(
+  siteId: string,
+  alerts: PendingDisplayAlert[],
+  unsubscribeUrl?: string,
+  timezone?: string,
+): string {
+  // Single alert: focused key/value layout, mirrors the single-process
+  // email shape so operators in mixed alert categories get a consistent feel.
+  if (alerts.length === 1) {
+    const a = alerts[0];
+    const label = DISPLAY_EVENT_LABEL[a.eventType] ?? a.eventType;
+    const color = displayEventColor(a.eventType);
+    const monitor = monitorLabel(a.data);
+    const detail = displayEventDetail(a.eventType, a.data);
+    const ts = a.timestamp && typeof a.timestamp === 'object' && 'toDate' in a.timestamp
+      ? (a.timestamp as FirebaseFirestore.Timestamp).toDate()
+      : (a.timestamp instanceof Date ? a.timestamp : new Date());
+    const content = `
+      <h2 style="color:${color};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">${label}</h2>
+      <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a display event was detected on one of your machines.</p>
+      <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
+        ${displayAlertRow('site', siteId, false)}
+        ${displayAlertRow('machine', a.machineId, true)}
+        ${displayAlertRow('event', label, false, color)}
+        ${displayAlertRow('monitor', monitor, true)}
+        ${detail ? displayAlertRow('details', detail, false) : ''}
+        ${displayAlertRow('agent version', a.agentVersion, !detail)}
+        ${displayAlertRow('time', emailTimestamp(ts, timezone), !!detail)}
+      </table>
+      <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">open the dashboard to inspect the layout and take action.</p>
+    `;
+    return wrapEmailLayout(content, {
+      preheader: `${label} on ${a.machineId}`,
+      unsubscribeUrl,
+    });
+  }
+
+  // Multi-alert digest: per-event row, color-coded by severity.
+  const rows = alerts
+    .map((a, i) => {
+      const label = DISPLAY_EVENT_LABEL[a.eventType] ?? a.eventType;
+      const color = displayEventColor(a.eventType);
+      const monitor = monitorLabel(a.data) || '—';
+      const detail = displayEventDetail(a.eventType, a.data) || '—';
+      const bg = i % 2 === 1 ? `background:${EMAIL_COLORS.altRow};` : '';
+      return `
+      <tr>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.machineId}</td>
+        <td style="padding:10px 14px;${bg}color:${color};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${label}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${monitor}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${detail}</td>
+      </tr>`;
+    })
+    .join('');
+
+  const thStyle = `padding:10px 14px;text-align:left;background:${EMAIL_COLORS.altRow};color:${EMAIL_COLORS.muted};font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid ${EMAIL_COLORS.border};`;
+
+  const content = `
+    <h2 style="color:${EMAIL_COLORS.amber};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">display alerts: ${alerts.length} event(s)</h2>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} display event(s) detected in site <strong style="color:${EMAIL_COLORS.text};">${siteId}</strong>.</p>
+    <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
+      <thead>
+        <tr>
+          <th style="${thStyle}">machine</th>
+          <th style="${thStyle}">event</th>
+          <th style="${thStyle}">monitor</th>
+          <th style="${thStyle}">details</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">open the dashboard to inspect each machine's layout and take action.</p>
+    <p style="margin:8px 0 0;color:${EMAIL_COLORS.border};font-size:11px;">checked at ${emailTimestamp(new Date(), timezone)}</p>
+  `;
+
+  return wrapEmailLayout(content, {
+    preheader: `${alerts.length} display event(s) in ${siteId}`,
+    unsubscribeUrl,
+  });
+}

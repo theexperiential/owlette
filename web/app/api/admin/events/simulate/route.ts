@@ -1,10 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
-import { getSiteAlertEmailsWithCc } from '@/lib/adminUtils.server';
+import { getSiteAlertEmailsWithCc, getSiteAlertRecipients } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
-import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@/lib/emailTemplates.server';
+import {
+  wrapEmailLayout,
+  emailDataTable,
+  emailTimestamp,
+  EMAIL_COLORS,
+  buildDisplayDigestEmail,
+  type PendingDisplayAlert,
+} from '@/lib/emailTemplates.server';
 import { fireWebhooks } from '@/lib/webhookSender.server';
+import {
+  DISPLAY_EVENT_ROUTING,
+  isDisplayEventType,
+} from '@/lib/alerts/displayEventRouting';
+import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
@@ -16,19 +28,28 @@ import logger from '@/lib/logger';
  *
  * Request body:
  *   siteId: string
- *   event: string           — Event type: "process_crash", "machine_offline", "connection_failure"
+ *   event: string           — Event type. One of:
+ *     - process: "process_crash"
+ *     - connection: "machine_offline", "connection_failure"
+ *     - display: any key in DISPLAY_EVENT_ROUTING (10 events)
  *   data?: {
- *     machineId?: string    — Machine ID (default: "test-machine")
- *     machineName?: string  — Display name (default: "Test Machine")
- *     processName?: string  — For process events
- *     errorMessage?: string — Error details
+ *     machineId?: string         — Machine ID (default: "test-machine")
+ *     machineName?: string       — Display name (default: "Test Machine")
+ *     processName?: string       — For process events
+ *     errorMessage?: string      — Error details
+ *     applyId?: string           — Display: source apply that triggered this event
+ *     correlatedApplyId?: string — Display: apply correlated with this event (drift / auto-revert)
+ *     monitor?: { friendlyName?, id?, port?, edidHash? }  — Display: subject monitor
+ *     changes?: string[]         — Display: drift change list (e.g. ["resolution.width"])
  *   }
  *
  * Response:
  *   { success: true, event, emailSent: boolean, webhooksFired: number }
  */
 
-const SUPPORTED_EVENTS = ['process_crash', 'machine_offline', 'connection_failure'];
+const NON_DISPLAY_EVENTS = ['process_crash', 'machine_offline', 'connection_failure'] as const;
+const DISPLAY_EVENTS = Object.keys(DISPLAY_EVENT_ROUTING);
+const SUPPORTED_EVENTS = [...NON_DISPLAY_EVENTS, ...DISPLAY_EVENTS];
 
 function buildSimulatedAlertEmail(
   event: string,
@@ -74,6 +95,127 @@ function buildSimulatedAlertEmail(
   };
 }
 
+/**
+ * Simulate a display event by mirroring the agent-side dispatch in
+ * `/api/agent/alert`. Both critical-path and digest-routed display emails
+ * are sent inline here (rather than queued to `pending_display_alerts`) so
+ * admins see the email + webhook output synchronously — the digest cadence
+ * isn't useful in a preview context. Layout still flows through
+ * `buildDisplayDigestEmail` so what admins preview matches the real cron
+ * output exactly.
+ */
+async function simulateDisplayEvent(params: {
+  request: NextRequest;
+  event: string;
+  siteId: string;
+  siteName: string;
+  machineId: string;
+  machineName: string;
+  data: Record<string, unknown>;
+}): Promise<NextResponse> {
+  const { request, event, siteId, siteName, machineId, machineName, data } = params;
+  const route = DISPLAY_EVENT_ROUTING[event];
+
+  // Pull through the optional fields the routing table's downstream
+  // consumers (webhookSender extractFields, emailTemplates displayEventDetail)
+  // expect, so a simulated event renders identically to a real one.
+  const displayData: Record<string, unknown> = {
+    machine: { id: machineId, name: machineName },
+    ...(typeof data.applyId === 'string' ? { applyId: data.applyId } : {}),
+    ...(data.monitor && typeof data.monitor === 'object' ? { monitor: data.monitor } : {}),
+    ...(Array.isArray(data.changes) ? { changes: data.changes } : {}),
+    simulated: true,
+  };
+  const correlatedApplyId =
+    typeof data.correlatedApplyId === 'string' ? data.correlatedApplyId : '';
+
+  // --- Email path (inline for simulator) ---
+  let emailsSent = 0;
+  let emailSkippedReason: string | undefined;
+  if (route.email) {
+    const resendClient = getResend();
+    if (!resendClient) {
+      emailSkippedReason = 'Resend not configured';
+      logger.warn('RESEND_API_KEY not configured — simulated display alert not sent', {
+        context: 'admin/events/simulate',
+      });
+    } else {
+      const recipients = await getSiteAlertRecipients(siteId, 'displayAlerts');
+      if (recipients.length === 0) {
+        emailSkippedReason = 'No recipients';
+      } else {
+        const alert: PendingDisplayAlert = {
+          docId: `sim-${Date.now()}`,
+          siteId,
+          machineId,
+          eventType: event,
+          data: displayData,
+          agentVersion: 'simulated',
+          correlatedApplyId,
+          timestamp: new Date(),
+        };
+        const baseUrl = request.nextUrl.origin;
+        const subject = `[${ENV_LABEL}] [SIMULATED] ${event.replace(/_/g, ' ')} on ${machineName}`;
+
+        for (const recipient of recipients) {
+          // Mirror the production critical-path send loop: honor mutedMachines
+          // so simulated events respect the same operator escape hatch.
+          if (recipient.mutedMachines.includes(machineId)) continue;
+
+          const unsubscribeUrl = recipient.userId !== 'fallback'
+            ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
+            : undefined;
+          const html = buildDisplayDigestEmail(siteId, [alert], unsubscribeUrl);
+
+          try {
+            const result = await resendClient.emails.send({
+              from: FROM_EMAIL,
+              to: [recipient.email],
+              ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
+              subject,
+              html,
+            });
+            if (result.error) {
+              console.error(`[admin/events/simulate] Resend error for ${recipient.email}:`, result.error);
+            } else {
+              emailsSent++;
+            }
+          } catch (e) {
+            console.error(`[admin/events/simulate] Failed to send to ${recipient.email}:`, e);
+          }
+        }
+      }
+    }
+  }
+
+  // --- Webhook path ---
+  let webhooksFired = 0;
+  if (route.webhook) {
+    try {
+      webhooksFired = await fireWebhooks(siteId, siteName, route.webhookEventName, displayData);
+    } catch (e) {
+      console.error('[admin/events/simulate] Webhook error:', e);
+    }
+  }
+
+  logger.info(
+    `Simulated display ${event} for site ${siteId}: emails=${emailsSent} webhooks=${webhooksFired}`,
+    { context: 'admin/events/simulate' },
+  );
+
+  return NextResponse.json({
+    success: true,
+    event,
+    emailSent: emailsSent > 0,
+    emailsSent,
+    webhooksFired,
+    criticalPath: !!route.criticalPath,
+    routedEmail: route.email,
+    routedWebhook: route.webhook,
+    ...(emailSkippedReason ? { reason: emailSkippedReason } : {}),
+  });
+}
+
 export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
@@ -102,6 +244,22 @@ export const POST = withRateLimit(
       const machineName = data?.machineName || 'Test Machine';
       const processName = data?.processName;
       const errorMessage = data?.errorMessage || 'Simulated error';
+
+      // --- Display events: route through DISPLAY_EVENT_ROUTING ---
+      if (isDisplayEventType(event)) {
+        logger.info(`Simulating display ${event} for site ${siteId} by user ${userId}`, {
+          context: 'admin/events/simulate',
+        });
+        return await simulateDisplayEvent({
+          request,
+          event,
+          siteId,
+          siteName,
+          machineId,
+          machineName,
+          data: (data && typeof data === 'object') ? (data as Record<string, unknown>) : {},
+        });
+      }
 
       if (event === 'process_crash' && !processName) {
         return NextResponse.json(

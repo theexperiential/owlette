@@ -263,6 +263,107 @@ stateDiagram-v2
 
 ---
 
+## display layout management
+
+owlette tracks per-machine monitor topology end-to-end: the agent enumerates the live config via Windows CCD, an operator can capture the current arrangement as the "stored" layout, and a recall command pushes the stored layout back when monitors drift. The dashboard panel lets operators edit stored layouts in-place; an opt-in auto-restore feature reapplies the stored layout automatically on detected drift.
+
+### data model (machine-scoped)
+
+| Firestore path | Owner | Purpose |
+|---|---|---|
+| `sites/{siteId}/machines/{machineId}/hardware/display` | agent | live topology snapshot — refreshed every 5 min and on topology-change events |
+| `sites/{siteId}/machines/{machineId}/hardware/displayModes` | agent | per-`edidHash` supported-modes catalogue. on-demand: dashboard fires `enumerate_display_modes` when the editor opens, agent skips re-upload if `signatureHash` unchanged |
+| `config/{siteId}/machines/{machineId}` (`displays.assigned`) | operator | the stored layout — `{monitors: MonitorInfo[], capturedAt, capturedBy}` |
+| `config/{siteId}/machines/{machineId}` (`displays.autoRestore`) | mixed | `{enabled, enabledBy, enabledAt}` operator-set; `circuitBreaker.{tripped, failures, lastError, lastSuccessAt, lastFailureAt, trippedAt}` agent-set (operator can reset `tripped: false` + `failures: 0`) |
+| `sites/{siteId}/logs` (`action.startsWith('display_')`) | agent | event audit log — each entry has `{action, level, machineId, details (json)}` |
+| `pending_display_alerts/*` | web (`/api/agent/alert`) → cron | digest queue for non-critical-path display alerts |
+
+### event taxonomy
+
+10 audit-log actions emitted from `_emit_display_change_events` (in `agent/src/owlette_service.py`):
+
+| event | trigger | severity |
+|---|---|---|
+| `display_monitor_added` | new edidHash in live not in prev | info |
+| `display_monitor_removed` | prev edidHash gone from live | critical |
+| `display_monitor_swapped` | same `targetId` reports a different `edidHash` | warning |
+| `display_drift` | same `edidHash`, one or more tracked fields (position, resolution, refreshHz, rotation, scalePct, primary) changed | warning |
+| `display_mosaic_disabled` | nvidia mosaic was active in prev, not in current | warning |
+| `display_sync_lost` | gsync/framelock device that was `locked` in prev is no longer locked | warning |
+| `display_apply_succeeded` | recall finished cleanly | info |
+| `display_apply_failed` | sdc_validate or sdc_apply rejected | critical |
+| `display_apply_refused_mosaic` | recall blocked because mosaic active | warning |
+| `display_auto_revert_fired` | watchdog auto-reverted a recall (no operator ack within 30s) | critical |
+
+The routing table at `web/lib/alerts/displayEventRouting.ts` is the single source of truth for which channel each event ships to (email, webhook, dashboard-only) — see the changelog for severity decisions.
+
+### post-apply suppression window
+
+The agent stamps `_last_apply_finished_at = time.time()` at the end of every successful apply (manual or auto-restore). When `_emit_display_change_events` runs within 90s of that timestamp, every event payload gets `suppressAlert: true` + `correlatedApplyId: <the apply's uuid>`. The `/api/agent/alert` route honors the flag: skips email digest queue, still fires webhook (receivers handle their own dedup). This eliminates the recall-then-N-drift-emails avalanche where a successful 8-monitor recall would otherwise emit 8 individual `display_drift` events as the OS settled.
+
+### auto-restore — gate chain
+
+`_maybe_auto_restore(new_profile)` runs the 7-gate chain in order. First failure exits early; only when all 7 pass does the function spawn `_run_auto_restore` on a daemon thread.
+
+```
+1. displays.enabled            (kill switch — operator-set; missing = enabled)
+2. displays.autoRestore.enabled (per-machine opt-in — default false)
+3. circuitBreaker.tripped       (false required)
+4. _apply_in_flight             (false required — no concurrent manual apply)
+5. drift fixable                (every drifted edidHash present in assigned.monitors)
+                                — else: emit display_auto_restore_skipped_unfixable, return
+6. _drift_pending_tick_count    (>= 2 — drift persisted across two 30s topology checks ≈ 60s)
+7. apply cooldown               (time.time() - _last_apply_time >= _APPLY_COOLDOWN_SECONDS)
+```
+
+Gates 1–3 short-circuit silently (the operator already knows their config; no audit needed). Gate 5 emits the `display_auto_restore_skipped_unfixable` audit so the operator sees why the auto-fix didn't fire when a new monitor was plugged in. Gates 4, 6, 7 are silent — the next topology check tick will retry.
+
+### auto-restore — fixability model
+
+Only `display_drift` events trigger auto-restore. The other monitor-change events (`_added`, `_removed`, `_swapped`) are explicitly NOT wired into `_maybe_auto_restore` because they describe drift that re-applying the stored layout *can't fix*:
+
+- **`_monitor_added`** — a new physical panel is in live but not in assigned. Re-applying assigned wouldn't change anything because the new monitor isn't referenced. Looping would fire the auto-restore cooldown forever with no change.
+- **`_monitor_removed`** — the assigned monitor is unplugged. Windows can't apply a config that references an absent panel; SDC_VALIDATE would reject. Looping would burn the breaker on guaranteed-failure attempts.
+- **`_monitor_swapped`** — same `targetId` now reports a different `edidHash`. The stored layout doesn't reference the new edidHash so the apply is unfixable in the same way as `_removed`.
+
+For all three "unfixable" cases the operator gets the audit event in the dashboard events tab and (per the routing table) a webhook delivery — but no auto-restore attempt and no breaker increment.
+
+### auto-restore — circuit breaker
+
+`_run_auto_restore` writes the breaker state to `config/{siteId}/machines/{machineId}.displays.autoRestore.circuitBreaker` after each attempt:
+
+- **success** → `{failures: 0, tripped: false, lastSuccessAt: <iso8601>}`
+- **rate-limited** (`AUTO_RESTORE_RATE_LIMITED`) → no-op (skipped on purpose; not a real failure)
+- **unfixable** (`AUTO_RESTORE_SKIPPED_UNFIXABLE`) → no-op (same)
+- **other failure** → `{failures: <prev + 1>, lastFailureAt: <iso8601>, lastError: <truncated to 500 chars>}`. At `failures >= 3` also sets `{tripped: true, trippedAt: <iso8601>}` and emits `display_auto_restore_circuit_breaker_tripped` audit at error severity.
+
+While `tripped: true`, gate 3 short-circuits subsequent `_maybe_auto_restore` calls — no thread spawned, no further failures counted. The dashboard panel's red banner offers a single-click reset (`tripped: false, failures: 0`); the next drift event after reset re-fires through the gate chain normally.
+
+### state-machine reference
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> DriftDetected : topology check sees drift
+    DriftDetected --> DriftPending : tick 1, _drift_pending_tick_count=1
+    DriftPending --> Idle : drift cleared (no-drift tick)
+    DriftPending --> Gating : tick 2, count=2 → _maybe_auto_restore
+    Gating --> Idle : any gate fails (silent or audit per gate)
+    Gating --> Applying : all 7 gates pass → spawn _run_auto_restore
+    Applying --> Idle : success → reset breaker, audit display_auto_restore_fired
+    Applying --> Failing : apply failed
+    Failing --> Idle : failures < 3 → increment counter
+    Failing --> Tripped : failures >= 3 → tripped=true, audit breaker_tripped
+    Tripped --> Tripped : new drift events skipped at gate 3
+    Tripped --> Idle : operator resets via dashboard banner
+```
+
+### in-process / firestore boundaries
+
+Module-state held by `display_manager.py`: `_apply_in_flight`, `_apply_lock`, `_current_apply_id`, `_last_apply_time`, `_last_apply_finished_at`, `_ack_event`. These coordinate the apply path and the suppression window across threads but never touch Firestore directly — Firestore writes go through `firebase_client` helpers (`_ensure_display_profile`, `_ensure_display_modes_catalogue`, `update_display_autorestore_state`, `log_event`). Service-class state held by `OwletteService`: `_drift_pending_tick_count` (per-tick counter for the persistence gate). The `MockService` in `owlette_runner.py` mirrors every new instance attribute so NSSM-mode startup doesn't crash on a missing field.
+
+---
+
 ## roost — content-addressed project distribution (v2)
 
 roost replaces v1's single-URL-per-distribution model with a content-addressed sync layer. a *synced folder* maps to an immutable sequence of *manifests*; flipping a folder's `currentManifestId` pointer is what triggers a deploy or rollback.

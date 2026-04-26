@@ -644,6 +644,13 @@ function MachineCard({
                         title={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
                       />
                     )}
+                    {machine.displayBreakerTripped && (
+                      <span
+                        className="inline-block w-2 h-2 rounded-full bg-destructive ml-1 flex-shrink-0"
+                        aria-label="auto-restore disabled — circuit breaker tripped"
+                        title="auto-restore disabled — circuit breaker tripped"
+                      />
+                    )}
                   </div>
                 ) : (
                   <span className="text-muted-foreground text-sm">displays: no data</span>

@@ -430,6 +430,15 @@ export function MachineRow({
                     title={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
                   />
                 )}
+                {machine.displayBreakerTripped && (
+                  <span
+                    className={`absolute inline-block w-2 h-2 rounded-full bg-destructive pointer-events-none ${
+                      displayDriftCount > 0 ? '-bottom-0.5 -right-0.5' : '-top-0.5 -right-0.5'
+                    }`}
+                    aria-label="auto-restore disabled — circuit breaker tripped"
+                    title="auto-restore disabled — circuit breaker tripped"
+                  />
+                )}
               </div>
               <span className="truncate">{machine.machineId}</span>
               {isMuted && <span title="alerts muted"><BellOff className="h-3 w-3 text-muted-foreground flex-shrink-0" /></span>}

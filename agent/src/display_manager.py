@@ -37,6 +37,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,10 @@ class DisplayErrorCode(str, enum.Enum):
     # Preconditions / kill switches
     MOSAIC_ACTIVE = 'mosaic_active'
     NO_CONSOLE_SESSION = 'no_console_session'
+
+    # Auto-restore skip reasons (Wave C2 — not failures)
+    AUTO_RESTORE_SKIPPED_UNFIXABLE = 'auto_restore_skipped_unfixable'
+    AUTO_RESTORE_RATE_LIMITED = 'auto_restore_rate_limited'
 
     # Helper lifecycle
     HELPER_FAILED = 'helper_failed'
@@ -230,6 +235,11 @@ _last_apply_finished_at = 0.0  # [B2.1] wall-clock seconds at the moment an
                                 # while still firing the webhook for audit.
                                 # 0.0 = no apply has succeeded since service
                                 # startup (suppression window inactive).
+_APPLY_SUPPRESS_WINDOW_S = 90.0  # [B2.4] default suppression window for
+                                  # display events that follow a successful
+                                  # apply. Exposed as a module constant so
+                                  # tests can override and so the service
+                                  # consumer doesn't redefine it locally.
 _APPLY_COOLDOWN_SECONDS = 10  # min gap between applies to prevent rapid-fire
 _SENTINEL_PATH = None  # lazy-init via shared_utils.get_data_path('.display_revert_pending')
 # `_sentinel_lock` is an IN-PROCESS lock; it serialises sentinel I/O between
@@ -242,6 +252,17 @@ _SENTINEL_PATH = None  # lazy-init via shared_utils.get_data_path('.display_reve
 # visible even if the service also reads at that instant.
 _sentinel_lock = threading.Lock()
 _SENTINEL_SCHEMA_VERSION = 1  # bump when the on-disk sentinel shape changes
+
+# Wave 5: deferred-revert state. When startup recovery finds a sentinel but
+# no console user is logged in, it cannot delegate to a user-session helper
+# (the entire write path requires Session 1+). Instead we set this flag,
+# preserve the sentinel, and let the main-loop tick (`_check_display_topology`
+# in owlette_service) retry once a console session appears. The
+# `_deferred_revert_alerted` companion gates the Firestore alert so we emit
+# `display_revert_deferred` exactly once per pending sentinel — re-cleared
+# in `_cleanup_sentinel()` so a fresh deferred state re-alerts cleanly.
+_deferred_revert_pending = False
+_deferred_revert_alerted = False
 
 _ROTATION_FROM_DEGREES = {
     0: DISPLAYCONFIG_ROTATION_IDENTITY,
@@ -1853,8 +1874,11 @@ def _cleanup_sentinel():
 
     Held under ``_sentinel_lock`` to serialise with readers and writers —
     ack-path, watchdog-path, startup-recovery path and the helper subprocess
-    all may race otherwise.
+    all may race otherwise. Also clears the Wave 5 deferred-revert flags so
+    a future apply that gets stuck mid-flight can re-defer and re-alert
+    independently of any prior pending sentinel.
     """
+    global _deferred_revert_pending, _deferred_revert_alerted
     with _sentinel_lock:
         try:
             path = _get_sentinel_path()
@@ -1862,6 +1886,8 @@ def _cleanup_sentinel():
                 os.remove(path)
         except OSError as e:
             logger.warning('_cleanup_sentinel: failed to delete sentinel (%s)', e)
+        _deferred_revert_pending = False
+        _deferred_revert_alerted = False
 
 
 def _count_active_paths(paths) -> int:
@@ -2285,6 +2311,36 @@ def _revert_via_user_session(
                 pass
 
 
+def _self_test_via_user_session() -> dict:
+    """Service-side wrapper: drive the Wave 6.2 read-only apply self-test
+    through the user-session helper.
+
+    Spawns ``display_manager.py --self-test ...`` in the active console
+    session and returns the parsed response. Used by the dashboard's "test
+    apply capability" button so operators can verify the helper IPC works
+    on a given machine before flipping the ``displays.remoteApplyEnabled``
+    kill switch on. Never mutates display state.
+    """
+    tmp_dir = tempfile.gettempdir()
+    uid = uuid.uuid4().hex
+    out_path = os.path.join(tmp_dir, f'owlette_display_selftest_{uid}.out.json')
+    try:
+        payload = _spawn_user_session_helper(
+            helper_args=['--self-test', out_path],
+            out_path=out_path,
+            timeout=_APPLY_HELPER_TIMEOUT,
+        )
+        return payload
+    except DisplayEnumerationError as e:
+        return {'ok': False, 'error': str(e), 'code': DisplayErrorCode.HELPER_FAILED}
+    finally:
+        try:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+        except OSError:
+            pass
+
+
 def _apply_core(
     desired_layout: dict,
     sentinel_path: str,
@@ -2498,6 +2554,7 @@ def apply_topology(
     ack_timeout: int = 30,
     firebase_client=None,
     apply_id: str = None,
+    auto_restore: bool = False,
 ) -> dict:
     """Apply a desired monitor layout with ack-or-revert safety.
 
@@ -2512,10 +2569,48 @@ def apply_topology(
     ``display_auto_revert_fired``). When ``None`` — e.g. unit tests or the
     CLI smoke path — events are skipped silently. The caller need not check
     connectivity; ``log_event`` is already non-blocking and swallows errors.
+
+    ``auto_restore`` (Feature C): when ``True`` the apply is treated as an
+    unattended drift-correction apply driven by the topology checker. The
+    correctness gates (kill switch, Mosaic refuse, lock, cooldown, validate)
+    still apply, but on success the watchdog is NOT armed (no operator to
+    ack), the sentinel is removed (no recovery hook needed — drift will
+    re-fire auto-restore from a fresh state), and the audit event is
+    emitted as ``display_auto_restore_fired`` instead of
+    ``display_apply_succeeded``.
     """
     global _last_apply_time, _apply_in_flight
 
     monitor_count = len(desired_layout.get('monitors', [])) if isinstance(desired_layout, dict) else 0
+
+    def _emit_auto_restore_success(changes: list) -> dict:
+        # Auto-restore success path: no watchdog, no revert deadline, no
+        # sentinel — the topology checker re-evaluates drift on each tick
+        # and will re-fire if the apply silently regressed.
+        global _last_apply_finished_at
+        _last_apply_finished_at = time.time()
+        _cleanup_sentinel()
+        _emit_audit(
+            firebase_client,
+            'display_auto_restore_fired',
+            'info',
+            f'{len(changes)} changes applied (auto-restore)',
+            {
+                'eventType': 'display_auto_restore_fired',
+                'severity': 'info',
+                'monitorCount': monitor_count,
+                'changes': changes,
+                'applyId': apply_id,
+                'autoRestore': True,
+            },
+        )
+        _trigger_profile_resync(firebase_client)
+        return {
+            'success': True,
+            'applyId': apply_id,
+            'changes': changes,
+            'autoRestore': True,
+        }
 
     def _emit_failure(error_str: str, code: Optional[str] = None) -> None:
         payload = {
@@ -2545,6 +2640,18 @@ def apply_topology(
         import shared_utils
         if shared_utils.read_config(['displays', 'enabled']) is False:
             return {'success': False, 'error': 'displays feature disabled by config'}
+    except Exception:  # pragma: no cover — config read failures shouldn't block apply
+        pass
+
+    # Master kill switch for the Wave 6 rollout. Defaults OFF on fresh
+    # installs so a bare agent can't be remotely reconfigured until the
+    # operator explicitly opts in via a Firestore config update. Distinct
+    # from `displays.enabled` (which gates the whole feature including
+    # drift detection); this flag scopes only the write path.
+    try:
+        import shared_utils
+        if shared_utils.read_config(['displays', 'remoteApplyEnabled']) is not True:
+            return {'success': False, 'error': 'remote apply disabled by config'}
     except Exception:  # pragma: no cover — config read failures shouldn't block apply
         pass
 
@@ -2659,6 +2766,12 @@ def apply_topology(
             # reading from the sentinel file (S0 service can't call CCD itself).
             changes = helper_result.get('changes', [])
             _last_apply_time = time.time()
+            if auto_restore:
+                logger.info(
+                    'apply_topology (helper, auto-restore) succeeded (%s changes); '
+                    'no watchdog armed', len(changes),
+                )
+                return _emit_auto_restore_success(changes)
             watchdog = _make_revert_watchdog(
                 lambda sp=sentinel_path: _revert_via_user_session(sentinel_path=sp),
                 ack_timeout,
@@ -2712,6 +2825,12 @@ def apply_topology(
         # contract, not surfaced across IPC.
         snapshot = core_result.get('_snapshot')
         _last_apply_time = time.time()
+        if auto_restore:
+            logger.info(
+                'apply_topology (auto-restore) succeeded (%s changes); '
+                'no watchdog armed', len(changes),
+            )
+            return _emit_auto_restore_success(changes)
         watchdog = _make_revert_watchdog(
             lambda snap=snapshot: {'ok': _apply_snapshot(snap)},
             ack_timeout,
@@ -2741,6 +2860,31 @@ def apply_topology(
             # apply isn't blocked by a stale True.
             _apply_in_flight = False
         _apply_lock.release()
+
+
+def is_within_apply_suppression_window(
+    now: float = None, window_s: float = None,
+) -> bool:
+    """[B2.4] True when ``now`` falls within the post-apply suppression
+    window relative to ``_last_apply_finished_at`` — the signal the service
+    uses (``_emit_display_change_events``) to decide whether to stamp
+    ``suppressAlert: True`` on drift-class events that follow a successful
+    apply.
+
+    Pure function over module state — testable without monkey-patching the
+    service caller. Returns ``False`` whenever ``_last_apply_finished_at``
+    is still its initial 0.0 (no successful apply since startup), which
+    keeps fresh-boot drift events from being mis-classified as
+    apply-correlated.
+
+    ``now`` defaults to ``time.time()`` and ``window_s`` to
+    ``_APPLY_SUPPRESS_WINDOW_S`` (90s). Both are exposed for test injection.
+    """
+    if _last_apply_finished_at == 0.0:
+        return False
+    current = time.time() if now is None else now
+    window = _APPLY_SUPPRESS_WINDOW_S if window_s is None else window_s
+    return (current - _last_apply_finished_at) < window
 
 
 def ack_apply(apply_id: str = None) -> dict:
@@ -2775,7 +2919,7 @@ def ack_apply(apply_id: str = None) -> dict:
     return {'success': True, 'message': 'apply acknowledged', 'applyId': _current_apply_id}
 
 
-def apply_revert_from_sentinel() -> dict:
+def apply_revert_from_sentinel(firebase_client=None) -> dict:
     """Restore the display config from a stale sentinel file.
 
     Called by service startup if a sentinel is found (service crashed or
@@ -2789,7 +2933,13 @@ def apply_revert_from_sentinel() -> dict:
         unknown schema version) → preserve as well; a corrupt sentinel
         needs operator intervention, not a silent delete.
       - Success → delete via `_cleanup_sentinel()`.
+
+    ``firebase_client`` is an optional handle used to emit the Wave 5
+    ``display_revert_deferred`` audit event when the helper path can't run
+    because no console user is logged in. Throttled to one emission per
+    pending sentinel via ``_deferred_revert_alerted``.
     """
+    global _deferred_revert_pending, _deferred_revert_alerted
     path = _get_sentinel_path()
     if not os.path.exists(path):
         return {'success': False, 'error': 'no sentinel file present'}
@@ -2842,6 +2992,47 @@ def apply_revert_from_sentinel() -> dict:
     # failure (no console user at boot is the common case) so the main
     # loop can retry when a session becomes available.
     if _is_session_0():
+        # Wave 5.1: short-circuit before spawning the helper if there's no
+        # active console session at all. The helper path requires a logged-in
+        # user (CreateProcessAsUser needs the console token); attempting it
+        # at headless boot would just churn through token-acquisition errors.
+        # Set the deferred flag, alert once, and let _check_display_topology
+        # in the main loop retry once a session appears.
+        try:
+            import win32ts
+            console_session = win32ts.WTSGetActiveConsoleSessionId()
+        except Exception as e:  # pragma: no cover — defensive on import / call failure
+            logger.debug(
+                'apply_revert_from_sentinel: WTSGetActiveConsoleSessionId failed (%s)', e,
+            )
+            console_session = 0xFFFFFFFF
+        if console_session == 0xFFFFFFFF:
+            _deferred_revert_pending = True
+            logger.warning(
+                'deferring display revert — no console session '
+                '(sentinel preserved for retry once a user logs in)'
+            )
+            # Wave 5.3: emit one Firestore alert per pending sentinel so the
+            # dashboard event feed surfaces the deferred state. Throttled by
+            # `_deferred_revert_alerted`; reset in `_cleanup_sentinel()`.
+            if not _deferred_revert_alerted:
+                _emit_audit(
+                    firebase_client,
+                    action='display_revert_deferred',
+                    level='warning',
+                    details=(
+                        'display revert deferred — no console session at startup; '
+                        'will retry when a user logs in'
+                    ),
+                    extras={
+                        'eventType': 'display_revert_deferred',
+                        'severity': 'warning',
+                        'sentinelVersion': version,
+                    },
+                )
+                _deferred_revert_alerted = True
+            return {'success': False, 'deferred': True, 'error': 'no console session'}
+
         rev = _revert_via_user_session(sentinel_path=path)
         if rev.get('ok'):
             _cleanup_sentinel()
@@ -2952,6 +3143,94 @@ def _helper_enumerate_modes_to_json(out_path: str) -> int:
         sys.stderr.write('helper: failed to write {0}: {1}\n'.format(out_path, e))
         return 2
     return exit_code
+
+
+def _helper_self_test_to_json(resp_path: str) -> int:
+    """Helper-mode entry point for the Wave 6.2 apply self-test.
+
+    Read-only verification that the helper IPC plumbing (CreateProcessAsUser,
+    env block, response file, atomic rename) works end-to-end and that CCD is
+    reachable from the active console session, without ever calling
+    ``SDC_APPLY``. Runs ``QueryDisplayConfig`` to fetch the live paths/modes,
+    then ``SetDisplayConfig(SDC_VALIDATE)`` against those exact paths — a
+    true no-op the OS validates against itself.
+
+    Writes ``{ok, monitors_seen, query_ms, validate_ms}`` (plus ``error``/
+    ``code`` on failure) to ``resp_path`` atomically. Never mutates display
+    state.
+    """
+    def _respond(payload: dict) -> int:
+        try:
+            _atomic_write_json(resp_path, payload)
+            return 0 if payload.get('ok') else 1
+        except OSError as e:
+            sys.stderr.write('helper: failed to write response {0}: {1}\n'.format(resp_path, e))
+            return 2
+
+    try:
+        t0 = time.time()
+        current = _query_active_paths_safe()
+        query_ms = int((time.time() - t0) * 1000)
+        if current is None:
+            return _respond({
+                'ok': False,
+                'error': 'failed to query current display config',
+                'code': DisplayErrorCode.QUERY_FAILED,
+                'query_ms': query_ms,
+            })
+        paths, modes = current
+        monitors_seen = _count_active_paths(paths)
+
+        # Re-pack into ctypes arrays so SDC_VALIDATE accepts them (lists don't
+        # auto-coerce to pointers — same pattern as `_apply_core`).
+        paths_arr = (DISPLAYCONFIG_PATH_INFO * len(paths))()
+        for _i, _p in enumerate(paths):
+            paths_arr[_i] = _p
+        modes_arr = (DISPLAYCONFIG_MODE_INFO * len(modes))()
+        for _i, _m in enumerate(modes):
+            modes_arr[_i] = _m
+
+        def _do_validate():
+            return _SetDisplayConfig(
+                len(paths_arr), paths_arr, len(modes_arr), modes_arr,
+                SDC_VALIDATE | SDC_USE_SUPPLIED_DISPLAY_CONFIG,
+            )
+        t1 = time.time()
+        try:
+            rc = _with_timeout(_do_validate, _CCD_APPLY_TIMEOUT)
+        except FuturesTimeoutError:
+            return _respond({
+                'ok': False,
+                'error': 'SDC_VALIDATE timed out',
+                'code': DisplayErrorCode.VALIDATE_REJECTED,
+                'monitors_seen': monitors_seen,
+                'query_ms': query_ms,
+                'validate_ms': int((time.time() - t1) * 1000),
+            })
+        validate_ms = int((time.time() - t1) * 1000)
+        if rc != ERROR_SUCCESS:
+            return _respond({
+                'ok': False,
+                'error': f'SDC_VALIDATE rejected live config (rc={rc})',
+                'code': _ccd_failure_code(rc, 'validate'),
+                'rc': rc,
+                'monitors_seen': monitors_seen,
+                'query_ms': query_ms,
+                'validate_ms': validate_ms,
+            })
+        return _respond({
+            'ok': True,
+            'monitors_seen': monitors_seen,
+            'query_ms': query_ms,
+            'validate_ms': validate_ms,
+        })
+    except Exception as e:
+        sys.stderr.write('helper: self-test unexpected failure: {0}: {1}\n'.format(type(e).__name__, e))
+        return _respond({
+            'ok': False,
+            'error': f'unexpected: {type(e).__name__}: {e}',
+            'code': DisplayErrorCode.UNEXPECTED,
+        })
 
 
 def _helper_apply_to_json(req_path: str, resp_path: str) -> int:
@@ -3082,6 +3361,8 @@ def _main():
         sys.exit(_helper_apply_to_json(argv[2], argv[3]))
     if len(argv) >= 4 and argv[1] == '--revert-json':
         sys.exit(_helper_revert_from_json(argv[2], argv[3]))
+    if len(argv) >= 3 and argv[1] == '--self-test':
+        sys.exit(_helper_self_test_to_json(argv[2]))
 
     # Smoke-test mode — prints the full profile for manual verification.
     logging.basicConfig(level=logging.DEBUG, format='%(levelname)s %(name)s: %(message)s')

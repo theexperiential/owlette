@@ -261,6 +261,16 @@ export interface Machine {
     timestamp: number | null;
   };
   rebootSchedule?: RebootSchedule;
+  /**
+   * Mirrors `displays.autoRestore.circuitBreaker.tripped` from the config doc.
+   * Surfaced on the dashboard list/card views as a small red dot next to the
+   * existing drift indicator so operators can see "auto-restore is broken on
+   * this machine" without expanding the panel. Sourced from the same single
+   * collection-wide config listener that already streams `rebootSchedule` —
+   * no new per-card subscriptions. Undefined / false on machines whose agent
+   * hasn't enabled auto-restore.
+   */
+  displayBreakerTripped?: boolean;
   rebootState?: {
     lastFiredByEntry?: { [entryId: string]: string }; // ISO date "YYYY-MM-DD"
     attempt?: {
@@ -791,6 +801,12 @@ export function useMachines(siteId: string) {
   // pushed down to the agent's local cache and survive Firestore disconnections.
   const rebootScheduleOverridesRef = useRef<Record<string, RebootSchedule | undefined>>({});
 
+  // Display auto-restore circuit-breaker state lives in the same config doc
+  // (`displays.autoRestore.circuitBreaker.tripped`). Mirrored onto each
+  // machine so the list/card views can render the breaker indicator without
+  // opening a per-row subscription. Keyed by machineId; absent entry == false.
+  const displayBreakerTrippedOverridesRef = useRef<Record<string, boolean>>({});
+
   // Real-time listener on config docs for authoritative launch_mode/schedules.
   // Config doc is source of truth — status doc may lag behind by 10-120s.
   // Using onSnapshot (not getDocs) so agent-originated changes propagate to the web.
@@ -800,6 +816,7 @@ export function useMachines(siteId: string) {
     const unsubConfig = onSnapshot(configCol, (snapshot) => {
       const overrides: typeof configOverridesRef.current = {};
       const rebootOverrides: typeof rebootScheduleOverridesRef.current = {};
+      const breakerOverrides: typeof displayBreakerTrippedOverridesRef.current = {};
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
         if (data.processes && Array.isArray(data.processes)) {
@@ -819,15 +836,24 @@ export function useMachines(siteId: string) {
         if (data.rebootSchedule) {
           rebootOverrides[docSnap.id] = data.rebootSchedule as RebootSchedule;
         }
+        // Display auto-restore breaker state lives under `displays.autoRestore`.
+        // Only record `true` so the absent-entry == false invariant holds; when
+        // the agent later writes `tripped: false` the entry simply isn't added,
+        // which is what the consumer expects.
+        if (data.displays?.autoRestore?.circuitBreaker?.tripped === true) {
+          breakerOverrides[docSnap.id] = true;
+        }
       });
       configOverridesRef.current = overrides;
       rebootScheduleOverridesRef.current = rebootOverrides;
+      displayBreakerTrippedOverridesRef.current = breakerOverrides;
 
       // Apply overrides to any already-loaded machines
       setMachines(prev => prev.map(machine => {
         const machineOverrides = overrides[machine.machineId];
         const rebootSchedule = rebootOverrides[machine.machineId];
-        const next: Machine = { ...machine, rebootSchedule };
+        const displayBreakerTripped = breakerOverrides[machine.machineId] === true;
+        const next: Machine = { ...machine, rebootSchedule, displayBreakerTripped };
         if (machineOverrides && next.processes) {
           next.processes = next.processes.map(p => {
             const override = machineOverrides[p.id];
@@ -1095,6 +1121,10 @@ export function useMachines(siteId: string) {
               shutdownScheduledAt,
               // rebootSchedule lives in the config doc — sourced from rebootScheduleOverridesRef
               rebootSchedule: rebootScheduleOverridesRef.current[doc.id],
+              // displayBreakerTripped also lives in the config doc — sourced from
+              // the same single collection-wide listener so the dashboard can
+              // render the breaker indicator without per-row subscriptions.
+              displayBreakerTripped: displayBreakerTrippedOverridesRef.current[doc.id] === true,
               rebootState: data.rebootState,
               // rebootPending is the agent-published "needs reboot" banner
               // payload — surfaced on the card view as the amber approve /

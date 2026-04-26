@@ -3,11 +3,26 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
-import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@/lib/emailTemplates.server';
+import {
+  wrapEmailLayout,
+  emailDataTable,
+  emailTimestamp,
+  EMAIL_COLORS,
+  buildDisplayDigestEmail,
+  type PendingDisplayAlert,
+} from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { checkRateLimit, processAlertRateLimit } from '@/lib/rateLimit';
+import {
+  checkRateLimit,
+  processAlertRateLimit,
+  getDisplayAlertRateLimit,
+} from '@/lib/rateLimit';
 import { fireWebhooks } from '@/lib/webhookSender.server';
+import {
+  DISPLAY_EVENT_ROUTING,
+  isDisplayEventType,
+} from '@/lib/alerts/displayEventRouting';
 import { apiError } from '@/lib/apiErrorResponse';
 
 /**
@@ -84,11 +99,21 @@ export const POST = withRateLimit(
 
       // Parse body
       const body = await request.json();
-      const { siteId, machineId, errorCode, errorMessage, agentVersion, eventType, processName } = body;
+      const { siteId, machineId, errorCode, errorMessage, agentVersion, eventType, processName, data } = body;
 
       // Determine event type (default to connection_failure for backward compat)
       const resolvedEventType = eventType || 'connection_failure';
       const isProcessEvent = resolvedEventType === 'process_crash' || resolvedEventType === 'process_start_failed';
+      // [B3.1] Display events route through `DISPLAY_EVENT_ROUTING` rather
+      // than the legacy email-immediate / process-digest branches.
+      const isDisplayEvent =
+        typeof resolvedEventType === 'string' &&
+        resolvedEventType.startsWith('display_') &&
+        isDisplayEventType(resolvedEventType);
+      const displayData: Record<string, unknown> =
+        isDisplayEvent && data && typeof data === 'object'
+          ? (data as Record<string, unknown>)
+          : {};
 
       // Validate required fields
       if (!siteId || !machineId) {
@@ -98,7 +123,7 @@ export const POST = withRateLimit(
         );
       }
 
-      if (!isProcessEvent && !errorCode) {
+      if (!isProcessEvent && !isDisplayEvent && !errorCode) {
         return NextResponse.json(
           { error: 'Missing required field: errorCode (for connection_failure events)' },
           { status: 400 }
@@ -135,6 +160,99 @@ export const POST = withRateLimit(
       }
 
       const db = getAdminDb();
+
+      // --- Display events (B3.1 + B3.3) ---
+      // Routed through `DISPLAY_EVENT_ROUTING`. `suppressAlert === true`
+      // (stamped agent-side when the event fires within 90s of a successful
+      // apply) skips email entirely but still fires the webhook — receivers
+      // handle their own dedupe and the audit trail stays complete.
+      // Critical-path events (`route.criticalPath: true` —
+      // `display_monitor_removed` / `display_auto_revert_fired`) bypass the
+      // 3-min digest and email inline so operators get sub-minute delivery.
+      if (isDisplayEvent) {
+        const route = DISPLAY_EVENT_ROUTING[resolvedEventType];
+        const suppressAlert = displayData.suppressAlert === true;
+        const correlatedApplyId =
+          typeof displayData.correlatedApplyId === 'string'
+            ? displayData.correlatedApplyId
+            : '';
+
+        // Per-(machineId, eventType) rate limit — drift gets 4h, others 1h.
+        const displayLimiter = getDisplayAlertRateLimit(resolvedEventType);
+        if (displayLimiter) {
+          const rateLimitKey = `display_alert:${machineId}:${resolvedEventType}`;
+          const rateResult = await checkRateLimit(displayLimiter, rateLimitKey);
+          if (!rateResult.success) {
+            console.warn(
+              `[agent/alert] Display alert rate limited: ${rateLimitKey}`,
+            );
+            return NextResponse.json({
+              success: true,
+              emailSent: false,
+              webhookFired: false,
+              reason: 'Display alert rate limited',
+            });
+          }
+        }
+
+        // Email path: critical-path events send inline; everything else
+        // queues to the digest cron. Both paths respect suppressAlert + the
+        // route.email flag.
+        let queuedForEmail = false;
+        let immediateEmailsSent = 0;
+        if (route.email && !suppressAlert) {
+          if (route.criticalPath) {
+            immediateEmailsSent = await sendCriticalDisplayEmailNow({
+              siteId,
+              machineId,
+              eventType: resolvedEventType,
+              data: displayData,
+              agentVersion: agentVersion || '',
+              correlatedApplyId,
+              baseUrl: request.nextUrl.origin,
+            });
+          } else {
+            await db.collection('pending_display_alerts').add({
+              siteId,
+              machineId,
+              eventType: resolvedEventType,
+              data: displayData,
+              agentVersion: agentVersion || '',
+              correlatedApplyId,
+              timestamp: FieldValue.serverTimestamp(),
+            });
+            queuedForEmail = true;
+          }
+        }
+
+        // Webhook path: fire immediately (still happens when suppressAlert
+        // is set — receivers see the activity even if email is squelched).
+        let webhookFired = false;
+        if (route.webhook) {
+          const siteDoc = await db.collection('sites').doc(siteId).get();
+          const siteName = siteDoc.data()?.name || siteId;
+          fireWebhooks(siteId, siteName, route.webhookEventName, {
+            machine: { id: machineId, name: machineId },
+            ...displayData,
+          }).catch(console.error);
+          webhookFired = true;
+        }
+
+        console.log(
+          `[agent/alert] Display ${resolvedEventType} on ${machineId} (${siteId}): ` +
+          `email=${queuedForEmail ? 'queued' : immediateEmailsSent > 0 ? `inline:${immediateEmailsSent}` : 'no'} ` +
+          `webhook=${webhookFired} suppressed=${suppressAlert}`,
+        );
+        return NextResponse.json({
+          success: true,
+          emailSent: immediateEmailsSent > 0,
+          emailsSent: immediateEmailsSent,
+          queued: queuedForEmail,
+          webhookFired,
+          suppressed: suppressAlert,
+          criticalPath: !!route.criticalPath,
+        });
+      }
 
       // Determine webhook event type (used by both process and connection paths)
       const webhookEvent = resolvedEventType === 'process_crash' ? 'process.crashed'
@@ -316,4 +434,93 @@ async function triggerAutonomousCortex(
     },
     body: JSON.stringify(params),
   }).catch(err => console.error('[agent/alert] Autonomous Cortex request failed:', err));
+}
+
+/**
+ * [B3.3] Send a single critical-path display alert immediately, bypassing
+ * the digest cron. Used by `display_monitor_removed` and
+ * `display_auto_revert_fired` — events where minute-scale latency is
+ * unacceptable (panel down, apply silently auto-reverted) and the
+ * standard digest cadence would let the operator miss them.
+ *
+ * Uses the same `buildDisplayDigestEmail` helper as the cron path so the
+ * single-event email layout is identical regardless of which path emitted
+ * it. Per-recipient send loop honors `mutedMachines` + emits individual
+ * unsubscribe links the same way the digest cron does.
+ *
+ * Returns the count of emails actually sent (after Resend failures) so
+ * the caller can include it in the response payload.
+ */
+async function sendCriticalDisplayEmailNow(params: {
+  siteId: string;
+  machineId: string;
+  eventType: string;
+  data: Record<string, unknown>;
+  agentVersion: string;
+  correlatedApplyId: string;
+  baseUrl: string;
+}): Promise<number> {
+  const { siteId, machineId, eventType, data, agentVersion, correlatedApplyId, baseUrl } = params;
+
+  const resendClient = getResend();
+  if (!resendClient) {
+    console.warn('[agent/alert] Resend not configured — critical display alert dropped');
+    return 0;
+  }
+
+  const [recipients, tz] = await Promise.all([
+    getSiteAlertRecipients(siteId, 'displayAlerts'),
+    getMachineTimezone(siteId, machineId),
+  ]);
+  if (recipients.length === 0) return 0;
+
+  // Build a synthetic single-alert payload that buildDisplayDigestEmail
+  // expects — mirrors the queue-write shape from the digest path so the
+  // template can't tell the two routes apart.
+  const alert: PendingDisplayAlert = {
+    docId: `inline-${Date.now()}`,
+    siteId,
+    machineId,
+    eventType,
+    data,
+    agentVersion,
+    correlatedApplyId,
+    timestamp: new Date(),
+  };
+
+  let emailsSent = 0;
+  for (const recipient of recipients) {
+    try {
+      // Honor per-user mute on the same machine. mutedMachines is the
+      // operator's escape hatch for noisy installations; critical-path
+      // bypass shouldn't override that intent.
+      if (recipient.mutedMachines.includes(machineId)) continue;
+
+      const unsubscribeUrl = recipient.userId !== 'fallback'
+        ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
+        : undefined;
+
+      const html = buildDisplayDigestEmail(siteId, [alert], unsubscribeUrl, tz);
+      const subject = `[owlette] critical display alert on ${machineId}`;
+
+      const result = await resendClient.emails.send({
+        from: FROM_EMAIL,
+        to: [recipient.email],
+        ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
+        subject,
+        html,
+      });
+      if (result.error) {
+        console.error(`[agent/alert] Resend error for ${recipient.email}:`, result.error);
+      } else {
+        emailsSent++;
+      }
+    } catch (e) {
+      console.error(`[agent/alert] Failed to send critical display email to ${recipient.email}:`, e);
+    }
+  }
+  console.log(
+    `[agent/alert] Critical display email sent: ${eventType} on ${machineId} → ${emailsSent}/${recipients.length} recipients`,
+  );
+  return emailsSent;
 }

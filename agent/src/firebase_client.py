@@ -202,6 +202,19 @@ class FirebaseClient:
         self._last_primary: Optional[Dict] = None
         self._profile_hash_path: str = shared_utils.get_data_path('tmp/profile_hash.json')
 
+        # [B2.3] Display-alert pending queue. Network drops at the exact
+        # moment a display event fires (e.g. a power outage that takes a
+        # monitor down also takes the agent's network down) would silently
+        # lose the most operator-critical alerts without a buffer. Send-
+        # failures append here; the connection-state listener drains the
+        # buffer when ConnectionState transitions back to CONNECTED.
+        # In-memory only — service restart wipes the queue. Cap of 100
+        # prevents unbounded growth during a long outage; oldest entries
+        # are dropped first when full.
+        self._pending_display_alerts: list = []
+        self._pending_display_alerts_lock = threading.Lock()
+        self._PENDING_DISPLAY_ALERTS_MAX = 100
+
         # Display profile state (schemaVersion 1). Mirrors the hardware-profile
         # cache: rate-limited rebuild, signature-hashed uploads, on-disk hash
         # persisted across service restarts so we don't re-upload on boot when
@@ -330,6 +343,12 @@ class FirebaseClient:
         if event.new_state == ConnectionState.FATAL_ERROR:
             # Machine may have been removed from site
             self._handle_fatal_error(event.reason)
+        elif event.new_state == ConnectionState.CONNECTED:
+            # [B2.3] Drain any display alerts that failed to send while we
+            # were offline. Runs on a daemon thread so a slow drain doesn't
+            # block the connection-state listener (other listeners would
+            # otherwise queue behind this one).
+            self._drain_pending_display_alerts_async()
 
     def _handle_fatal_error(self, reason: str):
         """
@@ -1117,6 +1136,51 @@ class FirebaseClient:
                 'error': str(e),
                 'code': 'upload_failed',
             }
+
+    def update_display_autorestore_state(self, state_patch: dict) -> None:
+        """Partial-update of config/{siteId}/machines/{machineId}.displays.autoRestore.circuitBreaker.
+
+        state_patch fields (all optional — only the keys present in the patch are written):
+            failures: int        — current consecutive-failure counter
+            tripped: bool        — True when failures >= 3; manual reset only
+            trippedAt: str       — iso8601 timestamp of the trip event
+            lastFailureAt: str   — iso8601 timestamp of last failure
+            lastSuccessAt: str   — iso8601 timestamp of last successful auto-restore
+            lastError: str       — last failure's error message (truncated to 500 chars by the caller)
+
+        The merge target is the `circuitBreaker` subobject ONLY. Sibling fields under
+        `displays.autoRestore` (e.g. `enabled`, `enabledBy`, `enabledAt`) MUST NOT be
+        touched — those are operator-set via the dashboard and writing them here would
+        silently overwrite operator intent. The Firestore document path is the same
+        one the existing `_ensure_display_modes_catalogue` uses for siteId/machineId
+        resolution.
+
+        Non-blocking semantics — failures are silently logged + swallowed (mirrors
+        `send_process_alert` and `_ensure_display_modes_catalogue`). Returns nothing.
+        """
+        if not state_patch:
+            return
+
+        if not self.connected or not self.db:
+            self.logger.debug(
+                "Skipping display autoRestore state write — not connected to Firestore"
+            )
+            return
+
+        try:
+            config_ref = self.db.collection('config').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+            config_ref.set({
+                'displays': {
+                    'autoRestore': {
+                        'circuitBreaker': state_patch,
+                    },
+                },
+            }, merge=True)
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to update display autoRestore circuit-breaker state: {e}"
+            )
 
     def _ensure_display_profile(self, force: bool = False) -> Optional[Dict[str, Any]]:
         """
@@ -2062,6 +2126,91 @@ class FirebaseClient:
 
         thread = threading.Thread(target=_send, daemon=True)
         thread.start()
+
+    def send_display_alert(self, event_type: str, data: dict):
+        """[B2.3] Send a display-event alert to the web API.
+
+        Mirrors ``send_process_alert`` shape but with two key differences:
+
+          1. Carries an arbitrary ``data`` dict rather than fixed fields
+             (display events have heterogenous payloads — `display_drift`
+             has `changes[]`, `display_apply_failed` has `error`, etc.).
+          2. On send failure, queues into ``_pending_display_alerts`` so the
+             connection-state listener can drain on reconnect. Critical
+             because the most operator-relevant display events
+             (``display_monitor_removed``, ``display_auto_revert_fired``)
+             often coincide with the very network outage that would lose
+             a fire-and-forget call.
+
+        Non-blocking: spawns a daemon thread for the actual POST.
+        """
+        def _send():
+            try:
+                token = self.auth_manager.get_valid_token()
+                api_base = shared_utils.get_api_base_url()
+                import requests
+                response = requests.post(
+                    f"{api_base}/agent/alert",
+                    json={
+                        'siteId': self.site_id,
+                        'machineId': self.machine_id,
+                        'eventType': event_type,
+                        'data': data,
+                        'agentVersion': shared_utils.APP_VERSION,
+                    },
+                    headers={'Authorization': f'Bearer {token}'},
+                    timeout=10
+                )
+                response.raise_for_status()
+                self.logger.info(f"[ALERT] Display alert sent: {event_type}")
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to send display alert ({event_type}); queueing for retry: {e}"
+                )
+                self._enqueue_pending_display_alert(event_type, data)
+
+        thread = threading.Thread(target=_send, daemon=True)
+        thread.start()
+
+    def _enqueue_pending_display_alert(self, event_type: str, data: dict):
+        """Append a failed display alert to the in-memory pending queue.
+        Drops the oldest entry when the queue hits its cap so a long
+        outage can't OOM the agent. The drain runs on the next
+        ConnectionState.CONNECTED transition.
+        """
+        with self._pending_display_alerts_lock:
+            if len(self._pending_display_alerts) >= self._PENDING_DISPLAY_ALERTS_MAX:
+                dropped = self._pending_display_alerts.pop(0)
+                self.logger.warning(
+                    f"[ALERT] Pending display-alert queue full; dropped oldest "
+                    f"({dropped.get('event_type')})"
+                )
+            self._pending_display_alerts.append({
+                'event_type': event_type,
+                'data': data,
+            })
+
+    def _drain_pending_display_alerts_async(self):
+        """Spawn a daemon thread to retry queued display alerts. Called by
+        the connection-state listener on transition to CONNECTED.
+        """
+        with self._pending_display_alerts_lock:
+            pending = list(self._pending_display_alerts)
+            self._pending_display_alerts.clear()
+        if not pending:
+            return
+
+        def _drain():
+            self.logger.info(
+                f"[ALERT] Draining {len(pending)} pending display alerts after reconnect"
+            )
+            for entry in pending:
+                # Re-route through send_display_alert so a second outage
+                # mid-drain re-enqueues each failure cleanly. No back-off
+                # needed — connection_manager already tracks reachability.
+                self.send_display_alert(entry['event_type'], entry['data'])
+
+        threading.Thread(target=_drain, daemon=True).start()
 
     def get_chunk_download_urls(self, chunk_hashes: list) -> dict:
         """

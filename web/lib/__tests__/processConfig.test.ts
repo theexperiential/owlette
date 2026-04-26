@@ -57,7 +57,7 @@ const runTransaction = jest.fn((fn: (txn: unknown) => Promise<unknown>) => {
         continue;
       }
       if (pendingPatch && Array.isArray((pendingPatch as { processes?: unknown }).processes)) {
-        storedData = { ...(storedData || {}), ...pendingPatch };
+        storedData = { ...(storedData || {}), ...(pendingPatch as Record<string, unknown>) };
         storedExists = true;
       }
       return result;

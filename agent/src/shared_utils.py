@@ -1838,7 +1838,8 @@ def generate_config_file(existing_config=None):
         "displays": {
             "enabled": True,
             "assigned": None,
-            "auto_enforce": False
+            "auto_enforce": False,
+            "remoteApplyEnabled": False
         },
         "watchdog": {
             "enabled": True,

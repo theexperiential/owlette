@@ -47,6 +47,7 @@ def reset_apply_state():
     dm._apply_in_flight = False
     dm._ack_event.clear()
     dm._current_apply_id = None
+    dm._last_apply_time = 0.0
 
 
 class TestDisplayErrorCode:
@@ -75,6 +76,8 @@ class TestDisplayErrorCode:
         ('MULTIPLE_PRIMARY', 'multiple_primary'),
         ('INVALID_ROTATION', 'invalid_rotation'),
         ('UNSUPPORTED_MODE', 'unsupported_mode'),
+        ('AUTO_RESTORE_SKIPPED_UNFIXABLE', 'auto_restore_skipped_unfixable'),
+        ('AUTO_RESTORE_RATE_LIMITED', 'auto_restore_rate_limited'),
     ])
     def test_required_codes_present(self, name, value):
         assert getattr(DisplayErrorCode, name).value == value
@@ -604,3 +607,570 @@ class TestEnumerateModes:
         cat = dm._build_display_modes_catalogue()
         assert cat['enumerationFailed'] is True
         assert cat['byEdidHash'] == {}
+
+
+# ---------------------------------------------------------------------------
+# Wave B2.4 — post-apply suppression window for display events
+
+
+@pytest.fixture
+def reset_suppression_state():
+    """Restore `_last_apply_finished_at` after each test so the global
+    doesn't leak between cases. Default 0.0 = "no apply since startup".
+    """
+    yield
+    dm._last_apply_finished_at = 0.0
+
+
+class TestSuppressionWindow:
+    """`is_within_apply_suppression_window(now, window_s)` — pure predicate
+    behind owlette_service's `suppressAlert` stamping. Default window is
+    90s; pre-apply (initial 0.0 timestamp) returns False unconditionally.
+    """
+
+    def test_initial_state_is_not_suppressed(self, reset_suppression_state):
+        # Fresh service start — no apply has run yet. Drift events emitted
+        # in the first 90s of uptime must NOT be misclassified as
+        # apply-correlated, or the operator never sees real bootup drift.
+        dm._last_apply_finished_at = 0.0
+        assert dm.is_within_apply_suppression_window(now=1_700_000_000.0) is False
+
+    def test_event_within_window_is_suppressed(self, reset_suppression_state):
+        # Apply finished 30s ago — well inside the 90s window. The follow-on
+        # drift events that always arrive after a successful apply (OS
+        # settling + topology re-check tick) get correctly tagged for
+        # suppression downstream.
+        dm._last_apply_finished_at = 1_700_000_000.0
+        assert (
+            dm.is_within_apply_suppression_window(now=1_700_000_030.0) is True
+        )
+
+    def test_event_at_window_edge_is_suppressed(self, reset_suppression_state):
+        # Strictly less-than gate: an event 89.999s after apply still
+        # qualifies. Off-by-one guard so a single-second floor doesn't
+        # collapse "just inside" to False.
+        dm._last_apply_finished_at = 1_700_000_000.0
+        assert (
+            dm.is_within_apply_suppression_window(now=1_700_000_089.999) is True
+        )
+
+    def test_event_after_window_is_not_suppressed(self, reset_suppression_state):
+        # 91s after apply — past the window, so the event represents real
+        # operator-relevant drift (something physically changed long after
+        # the apply settled) and routing should treat it as a normal alert.
+        dm._last_apply_finished_at = 1_700_000_000.0
+        assert (
+            dm.is_within_apply_suppression_window(now=1_700_000_091.0) is False
+        )
+
+    def test_window_boundary_exactly_90s_is_not_suppressed(
+        self, reset_suppression_state,
+    ):
+        # The < (not <=) comparison means 90.0 exactly falls OUTSIDE the
+        # window. Documents the boundary so a future tweak to <= can't
+        # silently flip the semantics.
+        dm._last_apply_finished_at = 1_700_000_000.0
+        assert (
+            dm.is_within_apply_suppression_window(now=1_700_000_090.0) is False
+        )
+
+    def test_custom_window_s_overrides_default(self, reset_suppression_state):
+        # Test injection: caller can shorten or lengthen the window for
+        # specific scenarios. 30s window with a 60s gap → not suppressed
+        # even though 60s would suppress under the default 90s.
+        dm._last_apply_finished_at = 1_700_000_000.0
+        assert (
+            dm.is_within_apply_suppression_window(
+                now=1_700_000_060.0, window_s=30.0,
+            ) is False
+        )
+        # Same gap, 90s window → suppressed (sanity-check the override).
+        assert (
+            dm.is_within_apply_suppression_window(
+                now=1_700_000_060.0, window_s=90.0,
+            ) is True
+        )
+
+    def test_now_defaults_to_wall_clock(self, reset_suppression_state):
+        # When `now` is omitted the helper reads `time.time()`. Set
+        # `_last_apply_finished_at` to "just now" via the same source so
+        # the helper sees a sub-second elapsed value and reports True.
+        import time as _time
+        dm._last_apply_finished_at = _time.time()
+        assert dm.is_within_apply_suppression_window() is True
+        # And the converse: an apply timestamp from far in the past falls
+        # outside the window even with the default-now path.
+        dm._last_apply_finished_at = _time.time() - 3600
+        assert dm.is_within_apply_suppression_window() is False
+
+
+# ---------------------------------------------------------------------------
+# Wave C1 — auto_restore branch in apply_topology
+
+
+class TestApplyTopologyAutoRestore:
+    """`apply_topology(..., auto_restore=True)` is the unattended drift-correction
+    path driven by the topology checker (C2). Success skips the watchdog (no
+    operator to ack), removes the sentinel, emits ``display_auto_restore_fired``,
+    and returns a dict shaped for `_maybe_auto_restore` to consume.
+    """
+
+    def _patch_auto_restore_success_path(self, monkeypatch, changes=None):
+        """Force the S1 in-process branch with `_apply_core` returning success.
+
+        Stubs out: session probe (S1), Mosaic detect (inactive),
+        `shared_utils.read_config` (kill switch absent → enabled), CCD apply,
+        and the profile resync trigger.
+        """
+        if changes is None:
+            changes = [{'monitorId': 'aaaaaaaa', 'field': 'primary'}]
+
+        # Force S1 (in-process) so `_apply_core` is the success-path stub point.
+        monkeypatch.setattr(dm, '_is_session_0', lambda: False)
+
+        # `displays.enabled` absent → feature enabled (missing-key default);
+        # `displays.remoteApplyEnabled` must read True or the Wave 6.1 master
+        # kill switch rejects the apply.
+        import shared_utils
+
+        def _read_config(keys=None, **kw):
+            if keys == ['displays', 'remoteApplyEnabled']:
+                return True
+            return None
+        monkeypatch.setattr(shared_utils, 'read_config', _read_config)
+
+        # Mosaic refuse-guard inactive on the test host.
+        import nvapi_display
+        monkeypatch.setattr(
+            nvapi_display, 'detect_mosaic', lambda: {'mosaicActive': False},
+        )
+
+        # `_apply_core` is the only CCD-touching call on the S1 path; stub the
+        # whole thing so the test never reaches Win32.
+        monkeypatch.setattr(
+            dm,
+            '_apply_core',
+            lambda *a, **kw: {'ok': True, 'changes': changes, '_snapshot': SAMPLE_SNAPSHOT},
+        )
+        # `_trigger_profile_resync` is fire-and-forget; stub to avoid touching
+        # the (mocked) firebase client's `_ensure_display_profile`.
+        monkeypatch.setattr(dm, '_trigger_profile_resync', lambda fb: None)
+
+        return changes
+
+    def test_no_watchdog_thread_started_on_success(
+        self, monkeypatch, tmp_sentinel, reset_apply_state,
+    ):
+        self._patch_auto_restore_success_path(monkeypatch)
+        # Pre-test sanity: no leftover watchdog from a prior test in this proc.
+        assert not any(
+            t.name == 'display-apply-watchdog' and t.is_alive()
+            for t in threading.enumerate()
+        )
+        fb = MagicMock()
+        result = dm.apply_topology(
+            SAMPLE_DESIRED, firebase_client=fb, apply_id='test-apply-1',
+            auto_restore=True,
+        )
+        assert result['success'] is True
+        # Watchdog is the only thing that holds `_apply_in_flight` past return.
+        assert dm._apply_in_flight is False
+        assert not any(
+            t.name == 'display-apply-watchdog' and t.is_alive()
+            for t in threading.enumerate()
+        ), 'auto-restore success path must not arm a revert watchdog'
+
+    def test_sentinel_cleaned_up_on_success(
+        self, monkeypatch, tmp_sentinel, reset_apply_state,
+    ):
+        self._patch_auto_restore_success_path(monkeypatch)
+        # Pre-create a sentinel as if a prior interactive apply orphaned one;
+        # auto-restore success must remove it (no recovery hook needed —
+        # drift will re-fire from a fresh state on the next checker tick).
+        with open(tmp_sentinel, 'w') as f:
+            json.dump({'version': 1, 'snapshot': {}}, f)
+        assert os.path.exists(tmp_sentinel)
+        result = dm.apply_topology(
+            SAMPLE_DESIRED, firebase_client=MagicMock(),
+            apply_id='test-apply-2', auto_restore=True,
+        )
+        assert result['success'] is True
+        assert not os.path.exists(tmp_sentinel), \
+            'auto-restore success must clean up any sentinel on disk'
+
+    def test_audit_event_shape(
+        self, monkeypatch, tmp_sentinel, reset_apply_state,
+    ):
+        changes = [
+            {'monitorId': 'aaaaaaaa', 'field': 'primary'},
+            {'monitorId': 'bbbbbbbb', 'field': 'position'},
+        ]
+        self._patch_auto_restore_success_path(monkeypatch, changes=changes)
+        fb = MagicMock()
+        result = dm.apply_topology(
+            SAMPLE_DESIRED, firebase_client=fb,
+            apply_id='audit-id-xyz', auto_restore=True,
+        )
+        assert result['success'] is True
+        # Exactly one audit event on the auto-restore success path.
+        assert fb.log_event.call_count == 1
+        kwargs = fb.log_event.call_args.kwargs
+        assert kwargs['action'] == 'display_auto_restore_fired'
+        assert kwargs['level'] == 'info'
+        extras = kwargs['extra_fields']
+        assert extras['eventType'] == 'display_auto_restore_fired'
+        assert extras['autoRestore'] is True
+        assert extras['applyId'] == 'audit-id-xyz'
+        assert extras['monitorCount'] == len(SAMPLE_DESIRED['monitors'])
+        assert extras['changes'] == changes
+
+    def test_lock_contention_returns_graceful_error(
+        self, monkeypatch, tmp_sentinel, reset_apply_state,
+    ):
+        self._patch_auto_restore_success_path(monkeypatch)
+        # Simulate a concurrent apply by holding the apply lock; a separate
+        # in-flight flag is set so we can verify the contention path doesn't
+        # clobber it (the holder still owns that flag's lifecycle).
+        dm._apply_in_flight = True
+        assert dm._apply_lock.acquire(blocking=False), 'precondition: lock free'
+        try:
+            fb = MagicMock()
+            result = dm.apply_topology(
+                SAMPLE_DESIRED, firebase_client=fb,
+                apply_id='contention-id', auto_restore=True,
+            )
+            assert result['success'] is False
+            assert 'apply already in progress' in result['error']
+            # Contention path emits no audit event — it's a pre-apply gate.
+            assert fb.log_event.call_count == 0
+            # Crucially, the contention return path must NOT touch
+            # `_apply_in_flight` — the existing apply's holder owns it.
+            assert dm._apply_in_flight is True
+        finally:
+            dm._apply_lock.release()
+
+    def test_rate_limit_returns_cooldown_response(
+        self, monkeypatch, tmp_sentinel, reset_apply_state,
+    ):
+        import time as _time
+        self._patch_auto_restore_success_path(monkeypatch)
+        # Simulate an apply that finished < cooldown ago.
+        original_last = dm._last_apply_time
+        dm._last_apply_time = _time.time()
+        try:
+            fb = MagicMock()
+            result = dm.apply_topology(
+                SAMPLE_DESIRED, firebase_client=fb,
+                apply_id='cooldown-id', auto_restore=True,
+            )
+            assert result['success'] is False
+            assert 'rate limited' in result['error']
+            # No `code` field — C2 must distinguish rate-limit (transient,
+            # not a failure) from a real failure with a code.
+            assert 'code' not in result
+            # No audit event on rate-limit return.
+            assert fb.log_event.call_count == 0
+        finally:
+            dm._last_apply_time = original_last
+
+    def test_killswitch_returns_disabled_error(
+        self, monkeypatch, tmp_sentinel, reset_apply_state,
+    ):
+        # Force just the displays.enabled key to read False; everything else
+        # behaves as default. Mosaic stub still installed in case the killswitch
+        # gate ever moves (defensive).
+        import shared_utils
+        import nvapi_display
+        monkeypatch.setattr(dm, '_is_session_0', lambda: False)
+        monkeypatch.setattr(
+            nvapi_display, 'detect_mosaic', lambda: {'mosaicActive': False},
+        )
+
+        def _fake_read_config(keys=None, **kw):
+            if keys == ['displays', 'enabled']:
+                return False
+            return None
+        monkeypatch.setattr(shared_utils, 'read_config', _fake_read_config)
+
+        fb = MagicMock()
+        result = dm.apply_topology(
+            SAMPLE_DESIRED, firebase_client=fb,
+            apply_id='killswitch-id', auto_restore=True,
+        )
+        assert result == {
+            'success': False,
+            'error': 'displays feature disabled by config',
+        }
+        # Killswitch returns before any audit emit — no event on disable.
+        assert fb.log_event.call_count == 0
+
+    def test_return_shape_on_success(
+        self, monkeypatch, tmp_sentinel, reset_apply_state,
+    ):
+        changes = [{'monitorId': 'aaaaaaaa', 'field': 'primary'}]
+        self._patch_auto_restore_success_path(monkeypatch, changes=changes)
+        result = dm.apply_topology(
+            SAMPLE_DESIRED, firebase_client=MagicMock(),
+            apply_id='shape-id', auto_restore=True,
+        )
+        # C2's `_maybe_auto_restore` reads each of these fields; pin the shape.
+        assert result['success'] is True
+        assert result['autoRestore'] is True
+        assert result['applyId'] == 'shape-id'
+        assert result['changes'] == changes
+
+
+# ---------------------------------------------------------------------------
+# Wave C2.5 — full auto-restore cycle integration test
+
+
+class _FakeService:
+    """Minimum surface needed to bind `OwletteService._maybe_auto_restore` and
+    `_run_auto_restore` as bound methods. Constructing a real OwletteService
+    pulls in pywin32 ServiceFramework, threading watchdogs, Firestore listeners
+    — all unnecessary noise for unit-testing the orchestration logic.
+
+    Method binding (in tests) uses ``OwletteService.<method>.__get__(fake, OwletteService)``
+    so the production code paths execute verbatim against the fake's attributes.
+    """
+
+    def __init__(self):
+        # `_run_auto_restore` reads ``self.firebase_client.update_display_autorestore_state``
+        # and `_maybe_auto_restore` doesn't touch firebase_client directly, but
+        # both methods reach `self._emit_display_event` via the unfixable /
+        # breaker-trip branches.
+        self.firebase_client = MagicMock()
+        # Drift-persistence gate (gate 6): default at the firing threshold so
+        # _maybe_auto_restore proceeds unless a test overrides it.
+        self._drift_pending_tick_count = 2
+        # _emit_display_event is invoked by both methods; mock so tests can
+        # assert call_args_list against the real production-side payloads.
+        self._emit_display_event = MagicMock()
+
+
+class TestAutoRestoreCycle:
+    """Full auto-restore cycle (C2.5): drift -> apply -> failure-counter ->
+    breaker trip -> skip-while-tripped -> manual reset re-enables.
+
+    Mocks at the I/O boundary only (apply_topology, update_display_autorestore_state,
+    shared_utils.read_config); the orchestration logic in `_maybe_auto_restore` /
+    `_run_auto_restore` runs unmodified by binding the real methods to a tiny
+    `_FakeService` via descriptor protocol (``__get__``).
+    """
+
+    @pytest.fixture
+    def fake_service(self):
+        from owlette_service import OwletteService
+        svc = _FakeService()
+        # Bind the production methods so the body executes against the fake's
+        # attributes. ``__get__(svc, cls)`` is the standard descriptor recipe
+        # for turning an unbound function into a bound method on a foreign
+        # instance — keeps the test honest (real branches, real call shapes).
+        svc._maybe_auto_restore = OwletteService._maybe_auto_restore.__get__(
+            svc, OwletteService,
+        )
+        svc._run_auto_restore = OwletteService._run_auto_restore.__get__(
+            svc, OwletteService,
+        )
+        return svc
+
+    @pytest.fixture
+    def assigned_layout(self):
+        # The layout `_run_auto_restore` passes to `apply_topology`. Identical
+        # shape to what gates pull from `displays.assigned` in a real config.
+        return {
+            'monitors': [
+                {'edidHash': 'aaaaaaaa', 'primary': True,
+                 'position': {'x': 0, 'y': 0}},
+                {'edidHash': 'bbbbbbbb', 'primary': False,
+                 'position': {'x': 1920, 'y': 0}},
+            ],
+        }
+
+    def _make_config_reader(self, config_state):
+        """Build a `shared_utils.read_config` stub that resolves dotted-key paths
+        from a nested ``config_state`` dict. Mirrors the production traversal
+        (return None on missing key) so the gate logic sees the same shape.
+        """
+        def _read(keys=None, **kw):
+            if not keys:
+                return config_state
+            cur = config_state
+            for k in keys:
+                if not isinstance(cur, dict):
+                    return None
+                cur = cur.get(k)
+                if cur is None:
+                    return None
+            return cur
+        return _read
+
+    def test_full_cycle(
+        self, monkeypatch, fake_service, assigned_layout, reset_apply_state,
+    ):
+        """End-to-end: 3 consecutive failures trip the breaker, the next drift
+        is skipped while tripped, and a manual reset re-enables firing.
+
+        Failure-counter steps invoke `_run_auto_restore` directly — bypassing
+        the thread spawn keeps the assertions deterministic without monkey-
+        patching `threading.Thread`. The skip-while-tripped + reset steps
+        invoke `_maybe_auto_restore` end-to-end so the real gate chain runs.
+        """
+        import shared_utils
+        import display_manager as dm_mod
+
+        # Mutable config state — drives both `shared_utils.read_config` (gate
+        # reads) and the in-flight breaker counter `_run_auto_restore` reads
+        # before incrementing. Tests mutate this dict to simulate Firestore
+        # -> local config sync (e.g., manual reset writing tripped=False).
+        config_state = {
+            'displays': {
+                'enabled': True,
+                'autoRestore': {
+                    'enabled': True,
+                    'circuitBreaker': {'failures': 0, 'tripped': False},
+                },
+                'assigned': assigned_layout,
+            },
+        }
+        monkeypatch.setattr(
+            shared_utils, 'read_config', self._make_config_reader(config_state),
+        )
+
+        # `update_display_autorestore_state` is the sole Firestore write surface
+        # for breaker bookkeeping. Patch it on the fake's MagicMock so we can
+        # also propagate writes back into local `config_state` — that mirrors
+        # the real Firestore listener pulling the new value into `config.json`
+        # on the next sync tick, which is what the gate chain will read.
+        def _record_state_write(patch):
+            cb = config_state['displays']['autoRestore']['circuitBreaker']
+            cb.update(patch)
+        fake_service.firebase_client.update_display_autorestore_state.side_effect = (
+            _record_state_write
+        )
+
+        # Sequence of `apply_topology` outcomes: fail, fail, fail (which trips
+        # the breaker on the 3rd). Codes are the generic apply-failure path
+        # (NOT rate-limited / unfixable, which are pre-apply skips that don't
+        # increment the counter).
+        apply_results = [
+            {'success': False, 'error': 'ccd rejected layout',
+             'code': dm_mod.DisplayErrorCode.APPLY_FAILED},
+            {'success': False, 'error': 'set-display-config rc=87',
+             'code': dm_mod.DisplayErrorCode.VALIDATE_REJECTED},
+            {'success': False, 'error': 'unsupported mode',
+             'code': dm_mod.DisplayErrorCode.UNSUPPORTED_MODE},
+        ]
+        apply_calls = []
+
+        def _mock_apply_topology(layout, **kw):
+            apply_calls.append({'layout': layout, 'kwargs': kw})
+            return apply_results[len(apply_calls) - 1]
+
+        monkeypatch.setattr(dm_mod, 'apply_topology', _mock_apply_topology)
+
+        # --- Failure 1: counter -> 1, breaker untripped ---------------------
+        fake_service._run_auto_restore(assigned_layout)
+        cb = config_state['displays']['autoRestore']['circuitBreaker']
+        assert cb['failures'] == 1
+        assert cb.get('tripped') is False
+        # No trip event yet — only fires when failures >= 3.
+        assert fake_service._emit_display_event.call_count == 0
+
+        # --- Failure 2: counter -> 2, breaker still untripped ---------------
+        fake_service._run_auto_restore(assigned_layout)
+        cb = config_state['displays']['autoRestore']['circuitBreaker']
+        assert cb['failures'] == 2
+        assert cb.get('tripped') is False
+        assert fake_service._emit_display_event.call_count == 0
+
+        # --- Failure 3: counter -> 3, breaker trips, audit event fires ------
+        fake_service._run_auto_restore(assigned_layout)
+        cb = config_state['displays']['autoRestore']['circuitBreaker']
+        assert cb['failures'] == 3
+        assert cb['tripped'] is True
+        assert 'trippedAt' in cb
+        # The trip event must fire exactly once at the trip moment.
+        assert fake_service._emit_display_event.call_count == 1
+        trip_call = fake_service._emit_display_event.call_args_list[0]
+        # _emit_display_event(event_type, severity, payload) — positional.
+        assert trip_call.args[0] == 'display_auto_restore_circuit_breaker_tripped'
+        assert trip_call.args[1] == 'error'
+        trip_payload = trip_call.args[2]
+        assert trip_payload['eventType'] == (
+            'display_auto_restore_circuit_breaker_tripped'
+        )
+        assert trip_payload['failures'] == 3
+        assert trip_payload['lastError'] == 'unsupported mode'
+
+        # --- 3 apply_topology calls so far; no more should occur while tripped
+        assert len(apply_calls) == 3
+
+        # --- New drift while tripped: gate 3 short-circuits, no apply spawn -
+        # `_maybe_auto_restore` is the gate-chain entry point. With tripped=True
+        # in local config it must return before reaching the thread spawn.
+        # Use a fresh profile object — content is irrelevant since gate 3
+        # rejects before any profile-shape reads.
+        new_profile = {'monitors': [], 'signatureHash': 'abc'}
+        drifted_hashes = ['aaaaaaaa']
+        fake_service._maybe_auto_restore(new_profile, drifted_hashes)
+        # Apply count unchanged, no new audit events.
+        assert len(apply_calls) == 3
+        assert fake_service._emit_display_event.call_count == 1
+
+        # --- Manual reset (dashboard writes tripped=False; Firestore listener
+        # propagates back into local config.json on next sync) ----------------
+        # Also reset the failures counter, mirroring how the manual-reset
+        # endpoint clears both fields atomically.
+        config_state['displays']['autoRestore']['circuitBreaker'] = {
+            'failures': 0, 'tripped': False,
+        }
+        # Next apply succeeds — `_maybe_auto_restore` should let it through
+        # and `_run_auto_restore` (called manually here, since we don't want
+        # the test to depend on real thread-spawn timing) writes the success
+        # state back. Replace the apply mock with a success result.
+        success_changes = [{'monitorId': 'aaaaaaaa', 'field': 'primary'}]
+        success_result = {
+            'success': True,
+            'applyId': 'reset-apply-id',
+            'autoRestore': True,
+            'changes': success_changes,
+        }
+        post_reset_calls = []
+
+        def _mock_apply_success(layout, **kw):
+            post_reset_calls.append({'layout': layout, 'kwargs': kw})
+            return success_result
+
+        monkeypatch.setattr(dm_mod, 'apply_topology', _mock_apply_success)
+
+        # First, prove the gate chain now lets `_maybe_auto_restore` through —
+        # it spawns a daemon thread that calls `_run_auto_restore`. Capture
+        # the spawn so we can join it deterministically rather than racing.
+        spawned = []
+        real_thread_cls = threading.Thread
+
+        def _capture_thread(target, args=(), daemon=False, name=None, **kw):
+            t = real_thread_cls(
+                target=target, args=args, daemon=daemon, name=name, **kw,
+            )
+            spawned.append(t)
+            return t
+        monkeypatch.setattr(threading, 'Thread', _capture_thread)
+
+        fake_service._maybe_auto_restore(new_profile, drifted_hashes)
+        # Exactly one auto-restore worker spawned (and `_maybe_auto_restore`
+        # already invoked .start() on it before returning).
+        assert len(spawned) == 1
+        assert spawned[0].name == 'display-auto-restore'
+        spawned[0].join(timeout=2.0)
+        assert not spawned[0].is_alive(), 'auto-restore worker must complete'
+
+        # The worker called apply_topology and wrote the success state.
+        assert len(post_reset_calls) == 1
+        cb = config_state['displays']['autoRestore']['circuitBreaker']
+        assert cb['failures'] == 0
+        assert cb['tripped'] is False
+        assert 'lastSuccessAt' in cb
+        # No additional breaker-trip events from the success path.
+        assert fake_service._emit_display_event.call_count == 1

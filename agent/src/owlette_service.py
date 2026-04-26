@@ -270,6 +270,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self._display_check_counter = 0
         self._cached_display_hash = None
         self._cached_display_profile = None
+        # Auto-restore drift-persistence gate (Wave C2.4). Increments every
+        # topology tick that emits a display_drift event; resets to 0 on a
+        # tick where no drift fires. _maybe_auto_restore requires >= 2 to
+        # fire so a single-tick flap (cable wiggle for one heartbeat) doesn't
+        # trigger an unattended re-apply.
+        self._drift_pending_tick_count = 0
         # roost periodic on-disk scrub (wave 4b.7). Counter increments every
         # main-loop iteration; when it reaches ROOST_SCRUB_CHECK_ITERATIONS
         # the dispatcher considers running scrub_all_due() on a daemon thread.
@@ -298,6 +304,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Non-fatal — agent still runs v1 commands; v2 commands will return
             # "Unknown command type" until the handlers are loadable.
             logging.warning(f"Failed to register roost handlers: {e}")
+
+        # Register machine-api public handlers (api-sprint wave 2 track 2A).
+        # capture_screenshot now routes through the public signed-URL flow;
+        # legacy if/elif handler is bypassed because the router takes
+        # precedence in handle_firebase_command's dispatch chain.
+        try:
+            from machine_commands import register_handlers as _register_machine_handlers
+            _register_machine_handlers(self._command_router)
+        except Exception as e:
+            logging.warning(f"Failed to register machine-api handlers: {e}")
 
         # Initialize Firebase client
         self.firebase_client = None
@@ -3779,6 +3795,37 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 except Exception as e:
                     return f"Error: {e}"
 
+            elif cmd_type == 'test_display_apply':
+                # Wave 6.3 — read-only smoke test for the apply helper IPC.
+                # Spawns the helper in the active console session and runs
+                # query + SDC_VALIDATE against the live layout (a true no-op
+                # — never calls SDC_APPLY). The dashboard surfaces the
+                # response so operators can verify the plumbing works on a
+                # given machine before flipping `displays.remoteApplyEnabled`
+                # on. Bypasses the apply kill switch (read-only).
+                try:
+                    result = display_manager._self_test_via_user_session()
+                    if isinstance(result, dict) and result.get('ok'):
+                        seen = result.get('monitors_seen', 0)
+                        q = result.get('query_ms', 0)
+                        v = result.get('validate_ms', 0)
+                        return (
+                            f"Self-test ok — {seen} monitors, "
+                            f"query {q}ms, validate {v}ms"
+                        )
+                    err = (
+                        result.get('error', 'unknown')
+                        if isinstance(result, dict) else str(result)
+                    )
+                    code = (
+                        result.get('code') if isinstance(result, dict) else None
+                    )
+                    if code:
+                        return f"Error: {code}: {err}"
+                    return f"Error: {err}"
+                except Exception as e:
+                    return f"Error: {e}"
+
             else:
                 logging.warning(f"Unknown command type: {cmd_type}")
                 return f"Unknown command type: {cmd_type}"
@@ -3798,8 +3845,36 @@ class OwletteService(win32serviceutil.ServiceFramework):
         signature hash to the cached value. Firestore upload of the profile
         happens in firebase_client's metrics loop (Task 2.2), so nothing is
         dispatched from here.
+
+        Also drives the Wave 5 deferred-revert retry: if startup found a
+        sentinel but no console user was logged in, this tick re-checks for
+        a console session and re-runs ``apply_revert_from_sentinel`` once one
+        appears. Runs before the kill switch so a pending recovery hook
+        finishes even if the operator toggled ``displays.enabled`` off after
+        the original apply.
         """
         try:
+            # Wave 5.2: retry deferred startup revert when a console session
+            # appears. Cheap probes — module flag check + a single Win32 call.
+            if getattr(display_manager, '_deferred_revert_pending', False):
+                try:
+                    console_session = win32ts.WTSGetActiveConsoleSessionId()
+                except Exception as e:
+                    logging.debug(f"WTSGetActiveConsoleSessionId failed during deferred-revert probe: {e}")
+                    console_session = 0xFFFFFFFF
+                if console_session != 0xFFFFFFFF:
+                    logging.info(
+                        f"Console session {console_session} now available — "
+                        "retrying deferred display revert"
+                    )
+                    try:
+                        result = display_manager.apply_revert_from_sentinel(
+                            firebase_client=self.firebase_client,
+                        )
+                        logging.info(f"Deferred display revert retry: {result}")
+                    except Exception as revert_err:
+                        logging.error(f"Deferred display revert retry failed: {revert_err}")
+
             # Kill switch: only short-circuit when explicitly disabled.
             # Missing key (None) or any other value defaults to enabled so
             # existing installs without the `displays` config block still
@@ -3921,14 +3996,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
             details=details,
         )
 
-    # [B2.2] Suppression window: drift-class events fired within this many
-    # seconds of a successful apply are stamped `suppressAlert: True` so the
-    # routing endpoint can skip email delivery (still fires the webhook —
-    # webhook receivers handle their own dedupe). 90s gives the OS enough
-    # time to settle the new config + the next topology check tick to
-    # observe and emit, with a small margin for slow rigs.
-    _DISPLAY_APPLY_SUPPRESS_WINDOW_S = 90.0
-
     def _emit_display_change_events(self, prev_profile: dict, new_profile: dict):
         """Diff two display profiles and emit one log event per distinct
         change category. Called only when the topology signature actually
@@ -3954,15 +4021,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # If we're inside the post-apply suppression window, stamp the
         # `suppressAlert` flag + the apply that caused the suppression so
-        # the routing endpoint can correlate. Reads display_manager module
-        # state directly — that's where the apply path stamps the
-        # `_last_apply_finished_at` timestamp (B2.1).
+        # the routing endpoint can correlate. Window threshold + the
+        # `_last_apply_finished_at == 0` guard live in
+        # `display_manager.is_within_apply_suppression_window` (B2.4) —
+        # extracting the predicate keeps it testable without driving this
+        # whole event-emission method.
         try:
-            elapsed = time.time() - display_manager._last_apply_finished_at
-            if (
-                display_manager._last_apply_finished_at > 0
-                and elapsed < self._DISPLAY_APPLY_SUPPRESS_WINDOW_S
-            ):
+            if display_manager.is_within_apply_suppression_window():
                 base_payload['suppressAlert'] = True
                 base_payload['correlatedApplyId'] = (
                     display_manager._current_apply_id or ''
@@ -4015,6 +4080,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # 4. Drift — same edidHash, but one or more tracked fields changed.
         # One event per drifted monitor (not bundled) per the task spec.
+        # Collect drifted edidHashes so the auto-restore orchestrator below
+        # can decide whether the assigned layout can actually fix this drift
+        # (gate 5 — every drifted monitor must be present in assigned).
+        drifted_hashes: list = []
         for edid_hash, new_monitor in new_by_hash.items():
             prev_monitor = prev_by_hash.get(edid_hash)
             if prev_monitor is None:
@@ -4029,6 +4098,27 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'monitor': self._display_monitor_summary(new_monitor),
                     'changes': changes,
                 })
+                drifted_hashes.append(edid_hash)
+
+        # Drift-persistence counter (Wave C2.4): increment on any drift this
+        # tick, reset to 0 when no drift fired. _maybe_auto_restore consumes
+        # the count to require sustained drift (>= 2 ticks ~= 60s) before
+        # firing an unattended re-apply.
+        if drifted_hashes:
+            self._drift_pending_tick_count += 1
+        else:
+            self._drift_pending_tick_count = 0
+
+        # Auto-restore dispatch (Wave C2.2). Runs only for drift events
+        # (added / removed / swapped / mosaic_disabled / sync_lost are
+        # categorically different and don't trigger). Emitted AFTER the
+        # display_drift events above so the audit log preserves the natural
+        # display_drift -> display_auto_restore_fired order.
+        if drifted_hashes:
+            try:
+                self._maybe_auto_restore(new_profile, drifted_hashes)
+            except Exception as e:
+                logging.debug(f"_maybe_auto_restore raised: {e}")
 
         # 5. Mosaic disabled — grid active previously, not active now.
         prev_mosaic = bool(prev_profile.get('mosaicActive'))
@@ -4060,6 +4150,164 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     **base_payload,
                     'deviceId': device_id or '',
                 })
+
+    def _maybe_auto_restore(self, new_profile: dict, drifted_hashes: list):
+        """Gate chain + dispatch for unattended drift-correction apply (C2.1).
+
+        Called from ``_emit_display_change_events`` after drift events fire.
+        Walks 7 gates in order; on first failure, returns without spawning
+        the worker. On all-pass, spawns ``_run_auto_restore`` on a daemon
+        thread (off-loop so the apply call never stalls process monitoring).
+        """
+        # Gate 1: kill switch — displays feature must not be explicitly disabled.
+        try:
+            if shared_utils.read_config(['displays', 'enabled']) is False:
+                return
+        except Exception as e:
+            logging.debug(f"auto-restore gate 1 (displays.enabled) read failed: {e}")
+            return
+
+        # Gate 2: opt-in — autoRestore must be explicitly enabled per machine.
+        try:
+            if shared_utils.read_config(['displays', 'autoRestore', 'enabled']) is not True:
+                return
+        except Exception as e:
+            logging.debug(f"auto-restore gate 2 (autoRestore.enabled) read failed: {e}")
+            return
+
+        # Gate 3: circuit breaker — operator-resettable via dashboard, which
+        # writes Firestore -> local config sync brings new value in on next tick.
+        try:
+            if shared_utils.read_config(
+                ['displays', 'autoRestore', 'circuitBreaker', 'tripped']
+            ) is True:
+                return
+        except Exception as e:
+            logging.debug(f"auto-restore gate 3 (breaker.tripped) read failed: {e}")
+            return
+
+        # Gate 4: no manual apply in flight — never race against an operator.
+        if display_manager._apply_in_flight:
+            return
+
+        # Gate 5: drift must be fixable by re-applying the assigned layout.
+        # If a drifted monitor isn't in assigned (probably a new monitor was
+        # added), re-apply can't help — emit unfixable audit and return.
+        try:
+            assigned_layout = shared_utils.read_config(['displays', 'assigned'])
+        except Exception as e:
+            logging.debug(f"auto-restore: read assigned layout failed: {e}")
+            return
+        if not isinstance(assigned_layout, dict):
+            return
+        assigned_monitors = assigned_layout.get('monitors') or []
+        assigned_hashes = {
+            m.get('edidHash') for m in assigned_monitors if m.get('edidHash')
+        }
+        missing = [h for h in drifted_hashes if h not in assigned_hashes]
+        if missing:
+            self._emit_display_event('display_auto_restore_skipped_unfixable', 'info', {
+                'eventType': 'display_auto_restore_skipped_unfixable',
+                'severity': 'info',
+                'reason': 'unfixable',
+                'missingFromAssigned': missing,
+            })
+            return
+
+        # Gate 6: drift-persistence — require >= 2 consecutive ticks of drift
+        # so a single-tick flap (cable wiggle for one heartbeat) doesn't fire.
+        if self._drift_pending_tick_count < 2:
+            return
+
+        # Gate 7: cooldown — never fire inside the apply_topology rate-limit window.
+        if (time.time() - display_manager._last_apply_time
+                < display_manager._APPLY_COOLDOWN_SECONDS):
+            return
+
+        t = threading.Thread(
+            target=self._run_auto_restore,
+            args=(assigned_layout,),
+            daemon=True,
+            name='display-auto-restore',
+        )
+        t.start()
+
+    def _run_auto_restore(self, assigned_layout: dict):
+        """Daemon worker: invoke apply_topology(auto_restore=True) and update
+        circuit-breaker state in Firestore based on the result. Never raises
+        — always logs + swallows so a stray exception can't kill the thread
+        without trace.
+        """
+        try:
+            import uuid
+            apply_id = uuid.uuid4().hex
+            result = display_manager.apply_topology(
+                assigned_layout,
+                firebase_client=self.firebase_client,
+                auto_restore=True,
+                apply_id=apply_id,
+            )
+
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+            if result.get('success'):
+                # Reset breaker on every success so an isolated failure earlier
+                # doesn't leave a stale `failures` counter that could trip on
+                # a single future failure.
+                self.firebase_client.update_display_autorestore_state({
+                    'failures': 0,
+                    'tripped': False,
+                    'lastSuccessAt': now_iso,
+                })
+                return
+
+            code = result.get('code')
+            # Cooldown / unfixable returned by apply_topology itself — these
+            # are pre-apply skips, not real failures, so don't increment.
+            # AUTO_RESTORE_SKIPPED_UNFIXABLE is gated above and shouldn't
+            # reach here, but defensive matching keeps the contract clear.
+            if code in (
+                display_manager.DisplayErrorCode.AUTO_RESTORE_RATE_LIMITED,
+                display_manager.DisplayErrorCode.AUTO_RESTORE_SKIPPED_UNFIXABLE,
+            ):
+                return
+
+            # Real failure — increment breaker. Read current value from local
+            # config (Firestore-synced) and write incremented value back.
+            try:
+                current_failures = shared_utils.read_config(
+                    ['displays', 'autoRestore', 'circuitBreaker', 'failures']
+                )
+            except Exception:
+                current_failures = 0
+            if not isinstance(current_failures, int) or current_failures < 0:
+                current_failures = 0
+            new_failures = current_failures + 1
+
+            error_str = str(result.get('error') or 'unknown error')[:500]
+            patch = {
+                'failures': new_failures,
+                'lastFailureAt': now_iso,
+                'lastError': error_str,
+            }
+            if new_failures >= 3:
+                patch['tripped'] = True
+                patch['trippedAt'] = now_iso
+            self.firebase_client.update_display_autorestore_state(patch)
+
+            if new_failures >= 3:
+                self._emit_display_event(
+                    'display_auto_restore_circuit_breaker_tripped',
+                    'error',
+                    {
+                        'eventType': 'display_auto_restore_circuit_breaker_tripped',
+                        'severity': 'error',
+                        'failures': new_failures,
+                        'lastError': error_str,
+                    },
+                )
+        except Exception as e:
+            logging.warning(f"_run_auto_restore failed: {e}")
 
     def _maybe_dispatch_roost_scrub(self):
         """Run roost scrub_all_due() on a daemon thread if not already in-flight.
@@ -5722,7 +5970,9 @@ with open(out_path, 'wb') as f:
                 apply_revert = getattr(display_manager, 'apply_revert_from_sentinel', None)
                 if callable(apply_revert):
                     try:
-                        result = apply_revert()
+                        # Pass firebase_client so the no-console-session deferral
+                        # path (Wave 5) can emit `display_revert_deferred`.
+                        result = apply_revert(firebase_client=self.firebase_client)
                         logging.info(f"Display revert from sentinel: {result}")
                     except Exception as revert_err:
                         logging.error(f"Display revert from sentinel failed: {revert_err}")

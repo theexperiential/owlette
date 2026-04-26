@@ -13,6 +13,58 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-04-25
+
+### added — display alert routing (Feature B)
+
+owlette now emits structured display events when monitor topology changes — drift, monitor added/removed/swapped, mosaic disabled, sync lost, apply succeeded/failed, auto-revert fired, apply-refused-mosaic. The new alert pipeline routes these through the existing email + webhook infrastructure with severity-aware delivery.
+
+**routing table** — single source of truth at `web/lib/alerts/displayEventRouting.ts`. Severity decisions:
+- **email + webhook (critical)**: `display_monitor_removed`, `display_apply_failed`, `display_auto_revert_fired`, `display_sync_lost`
+- **webhook only (warning)**: `display_drift`, `display_monitor_swapped`, `display_mosaic_disabled`, `display_apply_refused_mosaic`
+- **dashboard only (info)**: `display_monitor_added`, `display_apply_succeeded`
+
+**critical-path bypass** — `display_monitor_removed` and `display_auto_revert_fired` skip the 3-min digest cron and email inline so operators see them in seconds. Everything else queues to `pending_display_alerts` and ships via the new `/api/cron/display-alerts` cron (3 min interval, 2 min accumulation window — same cadence as `pending_process_alerts`).
+
+**operator-caused-drift suppression** — agent stamps `suppressAlert: true` + `correlatedApplyId` on display events that fire within 90s of a successful apply. The `/api/agent/alert` route honors the flag: skips email, still fires webhook. Closes the recall-then-N-drift-emails avalanche.
+
+**rate limiting** — 1 per `(machineId, eventType)` per hour for most events; `display_drift` gets a tighter 1 per 4h window because cable-flap drift can fire repeatedly on rack-mount installations.
+
+**preferences** — new `displayAlerts: boolean` toggle in account settings (opt-out, defaults to true). 30-day migration banner on `/admin/alerts` directs existing operators to the new control. Webhook config UI exposes all 10 new event ids as opt-in subscriptions (existing webhooks NOT auto-subscribed).
+
+**dashboard surface** — new `events` tab on the display panel renders the last 50 display events for the selected machine, severity-color-badged, with relative timestamps. Subscription opens only when the tab is visible.
+
+### added — auto-restore (Feature C)
+
+opt-in per-machine toggle: when enabled, the agent automatically reapplies the stored layout on detected drift instead of waiting for a human to click recall.
+
+**state machine** — drift detected → 30s topology-check tick → drift persists across 2 ticks (~60s) → fixability check (every drifted edidHash present in assigned) → cooldown clear → spawn worker thread → `apply_topology(..., auto_restore=True)` → emit `display_auto_restore_fired` audit. No watchdog (no operator to ack), no sentinel (next topology check re-fires from clean state if anything goes wrong).
+
+**circuit breaker** — 3 consecutive auto-restore failures trip the breaker (`circuitBreaker.tripped: true` in the config doc). While tripped, `_maybe_auto_restore` short-circuits at gate 3 — no thread spawned, no further failures counted. Operator resets via the panel's banner (single click → `circuitBreaker.tripped: false, failures: 0`). Rate-limited responses (`AUTO_RESTORE_RATE_LIMITED`) and unfixable skips (`AUTO_RESTORE_SKIPPED_UNFIXABLE`) do NOT count toward the failure counter.
+
+**fixability model** — only `display_drift` triggers auto-restore. `_monitor_added` (new monitor in live, not in assigned) and `_monitor_removed` (assigned monitor unplugged) are unfixable by re-applying assigned and would loop infinitely if attempted. The unfixable-skip emits `display_auto_restore_skipped_unfixable` (info severity) so operators see why the auto-fix didn't fire.
+
+**dashboard surface** — `<Switch>` toggle in the panel header (any site member with write access; not admin-gated). When armed, a small "auto" micro-label + green dot renders next to the recall button. When tripped, a red banner appears at the top of the panel body with the last error and a single-click reset. Fleet-view: small red dot next to existing drift indicator on both `MachineCardView` + `MachineListView` so operators can spot tripped machines without expanding any panel.
+
+**permissions** — `displays.autoRestore.enabled` writable by any site member (matches existing config-doc write rule). Admin role is reserved for cross-site administration, not per-site feature toggles. `circuitBreaker.tripped: false` reset uses the same gate. Agent retains exclusive write on `circuitBreaker.{failures, lastError, lastFailureAt, lastSuccessAt, trippedAt}`.
+
+### added — remote-apply master kill switch + helper self-test (Wave 6)
+
+Defence-in-depth gate over the apply path so a fresh agent doesn't auto-trust remote layout writes until an operator explicitly opts in.
+
+**kill switch** — `apply_topology` now also reads `displays.remoteApplyEnabled` from the agent's local config. Anything other than literal `True` rejects the apply with `remote apply disabled by config` *before* any locks, audit events, or CCD calls. Distinct from `displays.enabled` (which gates the entire feature including drift detection); this flag scopes only the write path. Defaults `False` on fresh installs (`generate_config_file`); existing installs without the field also read as off.
+
+**self-test** — `test_display_apply` command runs the apply helper in read-only mode (`QueryDisplayConfig` + `SetDisplayConfig(SDC_VALIDATE)` against the live config — never `SDC_APPLY`) so operators can verify the helper IPC plumbing (CreateProcessAsUser, env block, atomic response file) works end-to-end on a given machine *before* flipping the kill switch on. New `_self_test_via_user_session` service-side wrapper + `_helper_self_test_to_json` helper-mode entry. Surfaced in the dashboard panel only while `remoteApplyEnabled` is off.
+
+### migration
+
+- New Firestore subcollection: `pending_display_alerts/*` (digest queue). Created on first display event. No backfill needed.
+- New machine config field: `displays.autoRestore.{enabled, enabledBy, enabledAt, circuitBreaker}`. Default-absent = disabled, breaker reads as not-tripped via the typed default sentinel in `useDisplayState`.
+- New machine config field: `displays.remoteApplyEnabled: boolean`. **Default false on fresh installs and on existing installs with the field missing — operators must explicitly enable per machine via Firestore (or the upcoming dashboard toggle) before remote apply / auto-restore writes will land.** Existing operators relying on the v2.10 apply button must flip this to `true` after upgrading the agent.
+- New user preference: `displayAlerts: boolean`. Missing field treated as `true` (opt-out semantics — existing users continue to receive display events until they explicitly disable).
+- New cron required: `/api/cron/display-alerts` every 3 minutes via Railway cron (same cadence as `/api/cron/process-alerts`). Set the `X-Cron-Secret` header to the existing `CRON_SECRET` env var.
+- No agent-side migration. v2.10+ agents emit display events through the existing log_event path; pre-2.10 agents simply don't emit them and the dashboard's events tab stays empty for those machines.
+
 ## [2.10.0] - 2026-04-24
 
 ### breaking — roost: `manifest` → `version` rename + per-roost version numbering

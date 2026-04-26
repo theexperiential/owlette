@@ -144,6 +144,8 @@ export interface UserPreferences {
   processAlerts: boolean; // Receive email alerts when processes crash or fail to start. Default: true
   thresholdAlerts: boolean; // Receive email alerts when health metrics exceed thresholds. Default: true
   cortexAlerts: boolean; // Receive email alerts when Cortex AI escalates unresolved issues. Default: true
+  displayAlerts: boolean; // Receive email alerts when display layout / topology events fire (drift, monitor removed, apply failed, auto-revert, etc). Default: true
+  displayAlertsBannerDismissed: boolean; // [B4.3] One-shot dismissal of the "new: display alerts" banner on /admin/alerts. Default: false (banner shows). The banner also auto-hides after 30 days from feature launch regardless of dismissal state.
   mutedMachines: string[]; // Machine IDs to suppress all alerts for. Default: []
   alertCcEmails: string[]; // Additional CC recipients for alert emails. Default: []
   statsExpanded: boolean; // Whether stats section is expanded in card view. Default: false
@@ -200,7 +202,7 @@ const AuthContext = createContext<AuthContextType>({
   lastMachineIds: {},
   requiresMfaSetup: false,
   passkeyEnrolled: false,
-  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
+  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
   signIn: async () => {},
   signUp: async () => {},
   signInWithGoogle: async () => {},
@@ -229,7 +231,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
   const [passkeyEnrolled, setPasskeyEnrolled] = useState(false);
-  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
+  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
   // Mirror userPreferences in a ref so updateUserPreferences can read the
   // current value without putting userPreferences in its useCallback deps —
   // putting it in deps caused stale closures to overwrite recent changes
@@ -361,6 +363,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   processAlerts: preferences.processAlerts !== false, // Default: true
                   thresholdAlerts: preferences.thresholdAlerts !== false, // Default: true
                   cortexAlerts: preferences.cortexAlerts !== false, // Default: true
+                  displayAlerts: preferences.displayAlerts !== false, // Default: true
+                  displayAlertsBannerDismissed: preferences.displayAlertsBannerDismissed === true, // Default: false (banner shows)
                   mutedMachines: preferences.mutedMachines || [], // Default: []
                   alertCcEmails: preferences.alertCcEmails || [], // Default: []
                   statsExpanded: preferences.statsExpanded ?? true, // Default: expanded
