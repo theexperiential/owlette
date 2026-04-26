@@ -1,4 +1,4 @@
-"""``owlette-api`` — async Python SDK for the owlette public API.
+"""``owlette-sdk`` — async Python SDK for the owlette public API.
 
 Typical usage::
 

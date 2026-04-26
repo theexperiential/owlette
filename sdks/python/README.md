@@ -1,4 +1,4 @@
-# owlette-api — python SDK
+# owlette-sdk — python SDK
 
 Async Python SDK for the [roost](https://owlette.app) public API. Built on
 `httpx.AsyncClient`, typed end-to-end, mypy-strict clean.
@@ -8,7 +8,7 @@ Requires Python ≥ 3.10.
 ## install
 
 ```bash
-pip install owlette-api
+pip install owlette-sdk
 ```
 
 ## quickstart

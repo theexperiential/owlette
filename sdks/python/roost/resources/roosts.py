@@ -649,7 +649,7 @@ def _build_version_body(files: Sequence[ChunkedFileEntry]) -> dict[str, Any]:
         "schemaVersion": 2,
         "mediaType": "application/vnd.owlette.version.v1+json",
         "config": {
-            "producer": "owlette-api python-sdk",
+            "producer": "owlette-sdk python-sdk",
             "cliVersion": SDK_VERSION,
             "createdAt": now,
             "hostname": socket.gethostname(),

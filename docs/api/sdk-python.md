@@ -1,18 +1,18 @@
 # sdk — python
 
 **Last updated**: 2026-04-24
-**Package**: [`owlette-api`](https://pypi.org/project/owlette-api/) · python ≥ 3.10 · single runtime dep on `httpx`
+**Package**: [`owlette-sdk`](https://pypi.org/project/owlette-sdk/) · python ≥ 3.10 · single runtime dep on `httpx`
 
-the official async python sdk for the [roost api](./overview.md). `async`-first (built on `httpx.AsyncClient`), typed with dataclasses + `py.typed` marker, and behaviour-compatible with [`@owlette/api`](./sdk-node.md) — the resource tree, method names, progress events, error codes, and signature scheme are identical across the two. if the node docs say `roost.roosts.push(...)`, the python sdk calls it `await client.roosts.push(...)`.
+the official async python sdk for the [roost api](./overview.md). `async`-first (built on `httpx.AsyncClient`), typed with dataclasses + `py.typed` marker, and behaviour-compatible with [`@owlette/sdk`](./sdk-node.md) — the resource tree, method names, progress events, error codes, and signature scheme are identical across the two. if the node docs say `roost.roosts.push(...)`, the python sdk calls it `await client.roosts.push(...)`.
 
 ---
 
 ## installation
 
 ```bash
-pip install owlette-api
-# or: poetry add owlette-api
-# or: uv pip install owlette-api
+pip install owlette-sdk
+# or: poetry add owlette-sdk
+# or: uv pip install owlette-sdk
 ```
 
 python 3.10+ is required (async iterator + `match` + pep 604 unions). the package has one runtime dependency: `httpx>=0.27`.

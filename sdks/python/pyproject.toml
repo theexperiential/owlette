@@ -3,7 +3,7 @@ requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [project]
-name = "owlette-api"
+name = "owlette-sdk"
 version = "0.1.0"
 description = "Python SDK for the owlette public API (owlette.app)"
 readme = "README.md"
