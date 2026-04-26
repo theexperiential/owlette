@@ -6,6 +6,12 @@ breaking surface and how it's softened during the deprecation window.
 **Hard deprecation date**: 2026-10-01. After that, the legacy paths
 listed below stop working. Plan to migrate before then.
 
+> 📘 The canonical docs-site version of this page lives at
+> [docs/cli/migration-from-roost-cli.md](../docs/cli/migration-from-roost-cli.md)
+> and includes copy-paste before/after blocks per surface plus a CI
+> upgrade guide. Either page is current; the docs-site version is
+> what the public site renders.
+
 ## what changed
 
 | area              | before                         | after                            |

@@ -56,7 +56,7 @@ const FIXTURES: StubFixture[] = [
     verb: 'live-view',
     argv: ['machine', 'live-view', 'm-1', '--site', 'site-1'],
     dashboardPath: '/dashboard',
-    futurePlanSubstr: 'wave 4',
+    futurePlanSubstr: 'live-view-webrtc',
   },
 ];
 

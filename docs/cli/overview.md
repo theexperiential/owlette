@@ -155,38 +155,39 @@ Every command lives under one of these top-level groups. **`[ready]`** verbs hit
 
 | command | tier | description |
 |---|---|---|
-| `owlette auth login` | ready | device-code login; stores token in active profile |
-| `owlette auth status` | ready | alias of `owlette whoami` |
-| `owlette auth logout` | ready | clear token from active profile |
-| `owlette whoami` | ready | print server-resolved identity + scopes |
-| `owlette version` | ready | print cli version, server version, supported `Roost-Version` values |
+| [`owlette auth login`](reference/auth.md) | ready | device-code login; stores token in active profile |
+| [`owlette auth status`](reference/auth.md) | ready | alias of `owlette whoami` |
+| [`owlette auth logout`](reference/auth.md) | ready | clear token from active profile |
+| [`owlette whoami`](reference/whoami.md) | ready | print server-resolved identity + scopes |
+| [`owlette version`](reference/version.md) | ready | print cli version, server version, supported `Roost-Version` values |
 
 ### operator nouns (site-scoped)
 
 | noun | tier | verbs | what it does |
 |---|---|---|---|
-| `roost` | ready | `push` `list` `get` `diff` `versions` `deploy` | content-addressed project distribution |
-| `machine` | ready | `list` `get` `deployments` `reboot` `shutdown` `screenshot` | manage windows machines |
-| `machine live-view` | stub | — | streaming desktop feed (api-sprint wave 4) |
-| `audit-log` | ready | `list` `get` | site audit log + hash-chain verification |
-| `quota` | ready | `show` `history` | site storage + bandwidth usage |
-| `chat` | ready | `new` `list` `send` `delete` `rename` | cortex ai chat |
-| `deploy` | ready | `create` `list` `get` `retry` `cancel` `uninstall` | classic agent-installer deploys (NOT `roost deploy`) |
-| `process` | ready | `list` `get` `create` `update` `delete` `kill` `start` `stop` `schedule` | process lifecycle on machines |
+| [`roost`](reference/roost.md) | ready | `push` `list` `get` `diff` `versions` `deploy` | content-addressed project distribution |
+| [`machine`](reference/machine.md) | ready | `list` `get` `deployments` `reboot` `shutdown` `screenshot` | manage windows machines |
+| [`machine live-view`](reference/machine.md) | stub | — | streaming desktop feed (dev/active/live-view-webrtc/) |
+| [`audit-log`](reference/audit-log.md) | ready | `list` `get` | site audit log + hash-chain verification |
+| [`quota`](reference/quota.md) | ready | `show` `history` | site storage + bandwidth usage |
+| [`chat`](reference/chat.md) | ready | `new` `list` `send` `delete` `rename` | cortex ai chat |
+| [`webhook`](reference/webhook.md) | planned | (12 verbs — coming in roost-public-api W5/W7) | event subscriptions + deliveries |
+| [`deploy`](reference/deploy.md) | ready | `create` `list` `get` `retry` `cancel` `uninstall` | classic agent-installer deploys (NOT `roost deploy`) |
+| [`process`](reference/process.md) | ready | `list` `get` `create` `update` `delete` `kill` `start` `stop` `schedule` | process lifecycle on machines |
 
 ### user nouns
 
 | noun | tier | verbs | what it does |
 |---|---|---|---|
-| `site` | ready | `list` `get` | sites you have access to |
-| `key` | ready | `create` `list` `rotate` `revoke` | your api keys |
+| [`site`](reference/site.md) | ready | `list` `get` | sites you have access to |
+| [`key`](reference/key.md) | ready | `create` `list` `rotate` `revoke` | your api keys |
 
 ### superadmin nouns
 
 | noun | tier | verbs | what it does |
 |---|---|---|---|
-| `user` | ready | `list` `get` `promote` `demote` `assign-sites` `remove-sites` `delete` | platform user management |
-| `installer` | ready | `list` `upload` `set-latest` `delete` | agent installer binary management |
+| [`user`](reference/user.md) | ready | `list` `get` `promote` `demote` `assign-sites` `remove-sites` `delete` | platform user management |
+| [`installer`](reference/installer.md) | ready | `list` `upload` `set-latest` `delete` | agent installer binary management |
 
 ### legacy top-level verbs (kept for muscle memory)
 
@@ -235,7 +236,7 @@ stable `code` values match the api's problem+json codes (`scope_insufficient`, `
 
 **stub (exit 3 only)**
 ```json
-{ "ok": false, "stub": true, "noun": "machine", "reason": "wave-4 surface — not yet shipped", "dashboard_url": "https://owlette.app/dashboard", "future_plan": "dev/active/owlette-machine-api/" }
+{ "ok": false, "stub": true, "noun": "machine", "reason": "live-view streaming is being reframed as a webrtc-native feature; resume when prioritized", "dashboard_url": "https://owlette.app/dashboard", "future_plan": "dev/active/live-view-webrtc/" }
 ```
 
 ---

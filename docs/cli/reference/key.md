@@ -1,0 +1,140 @@
+---
+hide:
+  - navigation
+---
+
+# key
+
+manage your own api keys — mint scoped `owk_*` keys, rotate with a 24-hour grace period, or revoke immediately. **scope**: user-scoped (you manage your own keys; admins manage everyone's via the dashboard). **tier**: A — every verb hits a public api today.
+
+> ⚠️ **`key create` and `key rotate` print the raw `owk_*` key exactly once.** the server never returns it again. copy it into a secret manager or env file immediately — there is no recovery path if you lose it.
+
+---
+
+## scope spec grammar
+
+`--scope <spec>` accepts the same grammar everywhere it appears:
+
+```
+<resource>=<id>:<perm>[,<perm>...]
+```
+
+- `<resource>` — `roost` | `site` | `machine`
+- `<id>` — a specific resource id (e.g. `rst_abc`, `site-1`, `m_abc123`) or `*` for wildcard
+- `<perm>` — one or more of `read`, `write`, `deploy`, `rollback`, `admin`
+
+`--scope` is repeatable. examples: `roost=rst_abc:write,deploy`, `site=*:read`, `machine=m_abc123:write`.
+
+`--preset` is a shortcut that wildcards every resource type with a canonical permission set: `readonly` (read), `publisher` (read+write), `operator` (read+write+deploy+rollback), `admin` (all). `--preset` and `--scope` are mutually exclusive — pick one.
+
+---
+
+## create
+
+mint a new scoped api key. server returns the raw key in the response body **once**.
+
+**synopsis** — `owlette key create --name <name> (--scope <spec>... | --preset <p>) [--ttl-days <n>] [--environment <env>]`
+
+| flag | required | purpose |
+|---|---|---|
+| `--name <name>` | yes | human-readable label for the key |
+| `--scope <spec>` | one of | repeatable scope spec (mutually exclusive with `--preset`) |
+| `--preset <p>` | one of | `readonly` \| `publisher` \| `operator` \| `admin` (mutually exclusive with `--scope`) |
+| `--ttl-days <n>` | no | lifetime in days (default 90, min 1, max 365) |
+| `--environment <env>` | no | `live` or `test` (default `live`) |
+
+```bash
+# mint a deploy-capable key for one specific roost, 30-day ttl
+owlette key create --name "ci-deployer" --scope roost=rst_abc:write,deploy --ttl-days 30
+
+# mint a fleet-wide read-only key using the preset shortcut
+owlette key create --name "metrics-scraper" --preset readonly
+
+# mint a multi-resource key — flag is repeatable
+owlette key create --name "site-1 publisher" \
+  --scope site=site-1:read \
+  --scope roost=*:write \
+  --json | jq -r '.key' > .env.owlette
+```
+
+**backing endpoint**: `POST /api/keys`
+
+---
+
+## list
+
+list api keys for the authenticated user, with status (`active`, `rotated`, `expired`, `retired`, `revoked`), last-used date, and a one-line scope summary. raw key bytes are never returned by `list`.
+
+**synopsis** — `owlette key list [--json]`
+
+(no flags; uses global `--profile` / `--json`.)
+
+```bash
+owlette key list
+owlette key list --json | jq '.keys[] | select(.expired == true) | .id'
+```
+
+**backing endpoint**: `GET /api/keys`
+
+---
+
+## rotate
+
+issue a new key with the **same scopes** as the rotated one. the new key is shown once, just like `create`. the **old key continues to work for a 24-hour grace period** so you can roll out the replacement without downtime — after 24h the old key auto-retires.
+
+**synopsis** — `owlette key rotate <keyId> [--ttl-days <n>]`
+
+| flag | required | purpose |
+|---|---|---|
+| `--ttl-days <n>` | no | lifetime in days for the **new** key (default 90, min 1, max 365) |
+
+```bash
+# standard rotation — old key retires in 24h
+owlette key rotate k_abc123
+
+# rotate with a shorter ttl on the new key
+owlette key rotate k_abc123 --ttl-days 30 --json | jq -r '.key' > .env.new
+```
+
+**backing endpoint**: `POST /api/keys/{keyId}/rotate`
+
+---
+
+## revoke
+
+delete an api key **immediately**. there is no grace period — pending requests with that key will start failing with `unauthorized` as soon as the call completes. for graceful cutover, prefer `rotate`.
+
+**synopsis** — `owlette key revoke <keyId> [--yes]`
+
+| flag | required | purpose |
+|---|---|---|
+| `--yes` | no | skip the interactive confirmation prompt (required when stdin is not a tty) |
+
+```bash
+owlette key revoke k_abc123             # interactive confirm
+owlette key revoke k_abc123 --yes       # script-friendly
+owlette key revoke k_abc123 --yes --json
+```
+
+**backing endpoint**: `DELETE /api/keys/{keyId}`
+
+---
+
+## exit codes
+
+- `0` — success
+- `1` — generic error (network, api 5xx, unexpected response shape)
+- `2` — usage error (missing required flag, both `--scope` and `--preset` passed, bad scope spec, invalid `--ttl-days`, invalid `--environment`, refusing to revoke without `--yes` from a non-tty)
+
+`key` has no stub verbs and no exit-3 paths.
+
+---
+
+## notes
+
+- **scope of these commands**: user-scoped — you can only create/list/rotate/revoke your own keys. site admins manage other users' keys via the dashboard.
+- **raw key emission**: `create` and `rotate` are the **only** commands that ever return the raw `owk_*` value. `list` returns `keyPrefix` (first ~12 chars) and metadata only. lose the raw key, rotate or revoke it.
+- **rotation grace**: 24h hard-coded server-side. plan your roll-out window accordingly — at hour 24 the old key returns `token_expired`.
+- **mutual exclusion**: `--scope` and `--preset` are exclusive on `create`. `rotate` cannot change scopes — if you need different scopes, `create` a new key and `revoke` the old one.
+- **ttl bounds**: `--ttl-days` must be an integer between 1 and 365 inclusive. anything outside that range fails with exit 2 before the http call.
+- see [overview](../overview.md) for global flags, config precedence, and the json envelope schema.

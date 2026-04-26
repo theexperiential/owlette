@@ -18,8 +18,9 @@
  * endpoint until terminal, then download the signed-url bytes to
  * `--output <path>` (default: `screenshot-<machineId>-<timestamp>.png`).
  *
- * `live-view` remains a wave-4 stub — that surface is intentionally out
- * of scope for the api-sprint and stays a c-tier `stubExit()` shim.
+ * `live-view` remains the only c-tier `stubExit()` shim. Reframed as a
+ * WebRTC-native feature in `dev/active/live-view-webrtc/`; resume when
+ * prioritized.
  */
 
 import { Command } from 'commander';
@@ -433,9 +434,9 @@ export function registerMachineCommands(program: Command): void {
         noun: 'machine',
         verb: 'live-view',
         reason:
-          'live-view streaming is wave-4 of api-sprint and remains deferred',
+          'live-view streaming is being reframed as a webrtc-native feature; resume when prioritized',
         dashboardUrl: `${apiUrl}/dashboard`,
-        futurePlan: 'dev/active/api-sprint/ wave 4 (deferred)',
+        futurePlan: 'dev/active/live-view-webrtc/',
         cmd,
       });
     });
