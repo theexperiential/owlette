@@ -2403,6 +2403,104 @@ paths:
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
+  /api/roosts/{roostId}/rollback:
+    parameters:
+      - $ref: '#/components/parameters/RoostIdPath'
+      - $ref: '#/components/parameters/RoostVersionHeader'
+    post:
+      operationId: rollbackRoost
+      tags: [roosts]
+      summary: flip currentVersionId to a previously-published version
+      description: |
+        Rolls a roost back by flipping its `currentVersionId` pointer to
+        a previously-published version. Does NOT mint a new version —
+        rollback is a pointer change, not a publish, and versions are
+        immutable once written.
+
+        `targetVersion` accepts every form supported by the version-ref
+        resolver:
+          - alias: `current` | `previous` | `first`
+          - stable id: `vrs_<hex>`
+          - number: `3` / `"3"` / `"#3"` / `"v3"`
+        Defaults to `previous` when omitted, matching one-click
+        "undo last publish".
+
+        Auth: scope `rollback`. The scope grammar separates rollback
+        from write so an operator key can be issued with rollback-only
+        powers (no new pushes).
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId]
+              properties:
+                siteId:
+                  type: string
+                targetVersion:
+                  oneOf:
+                    - type: string
+                    - type: integer
+                  nullable: true
+                  description: |
+                    Version to roll back to. Accepts an alias
+                    (`current` | `previous` | `first`), a stable id
+                    (`vrs_<hex>`), or a number (`3` / `"v3"` / `"#3"`).
+                    Defaults to `previous` when omitted.
+      responses:
+        '200':
+          description: Pointer flipped. Returns the new current/previous ids.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - ok
+                  - roostId
+                  - siteId
+                  - currentVersionId
+                  - currentVersionNumber
+                properties:
+                  ok:
+                    type: boolean
+                  roostId:
+                    type: string
+                  siteId:
+                    type: string
+                  currentVersionId:
+                    type: string
+                  currentVersionNumber:
+                    type: integer
+                  previousVersionId:
+                    type: string
+                    nullable: true
+        '400':
+          description: |
+            Validation failed. Codes include `version_ref_malformed`
+            (bad `targetVersion` grammar) and `rollback_no_op`
+            (target is already the current version).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '422':
+          description: |
+            Idempotency-Key reuse with a different request body.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
   # ──────────────────────────────────────────────────────────────────────
   # 3. versions — list + publish (POST) are live above. detail, files,
   # diff endpoints are proposed.
