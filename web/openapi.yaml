@@ -1125,6 +1125,290 @@ paths:
                       $ref: '#/components/schemas/InstallerVersion'
 
   # ──────────────────────────────────────────────────────────────────────
+  # Installer (public — superadmin-only, scoped via `installer=*:<perm>`)
+  # ──────────────────────────────────────────────────────────────────────
+  /api/installer:
+    get:
+      operationId: listInstallers
+      tags: [Installer]
+      summary: List installer versions (public, superadmin)
+      description: |
+        Returns paginated installer versions, newest-first. Superadmin-only.
+        API-key callers must hold `installer=*:read`.
+      parameters:
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: page_token
+          in: query
+          schema:
+            type: string
+          description: Cursor for the next page (opaque, returned by a previous response).
+        - name: includeDeleted
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: When true, soft-deleted versions are included.
+      responses:
+        '200':
+          description: Paginated installer versions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/InstallerVersion'
+                  nextPageToken:
+                    type: string
+        '403':
+          description: Forbidden — caller is not a superadmin or the API key lacks `installer=*:read`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/installer/upload:
+    post:
+      operationId: requestInstallerUpload
+      tags: [Installer]
+      summary: Request signed upload URL (step 1)
+      description: |
+        Step 1 of the two-step installer upload. Returns a signed PUT URL the
+        client uses to upload the binary directly to Storage, plus an
+        `uploadId` to pass to step 2 (`PUT /api/installer/upload`).
+        Superadmin-only; API-key callers need `installer=*:write`.
+        Honors `Idempotency-Key` for safe retry.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, fileName]
+              properties:
+                version:
+                  type: string
+                  description: Semver string (e.g. "3.0.0").
+                fileName:
+                  type: string
+                  description: Must end in `.exe`.
+                contentType:
+                  type: string
+                  default: application/octet-stream
+                releaseNotes:
+                  type: string
+                  nullable: true
+                setAsLatest:
+                  type: boolean
+                  default: true
+      responses:
+        '200':
+          description: Signed upload URL + opaque uploadId
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uploadUrl:
+                    type: string
+                    format: uri
+                  uploadId:
+                    type: string
+                  storagePath:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — superadmin required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    put:
+      operationId: finalizeInstallerUpload
+      tags: [Installer]
+      summary: Finalize installer upload (step 2)
+      description: |
+        Step 2 of the two-step installer upload. Verifies the binary is in
+        Storage, computes the SHA-256 if `checksum_sha256` is omitted, and
+        writes `installer_metadata/{version}` (and the `latest` pointer if
+        `setAsLatest` was true at step 1). Superadmin-only;
+        API-key callers need `installer=*:write`.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uploadId]
+              properties:
+                uploadId:
+                  type: string
+                checksum_sha256:
+                  type: string
+                  description: Optional — server computes if omitted.
+      responses:
+        '200':
+          description: Upload finalized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                  download_url:
+                    type: string
+                    format: uri
+                  checksum_sha256:
+                    type: string
+                  file_size:
+                    type: integer
+        '404':
+          description: Upload record or file not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Upload already finalized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '410':
+          description: Upload window expired — restart the flow
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/installer/{version}:
+    delete:
+      operationId: deleteInstallerVersion
+      tags: [Installer]
+      summary: Soft-delete an installer version
+      description: |
+        Soft-deletes the version (sets `deletedAt`); the storage object is
+        retained. Refuses to drop the active count below 2 — returns 409
+        `min_versions_violated` if it would. Idempotent: deleting an
+        already-soft-deleted version returns 200 with `alreadyDeleted: true`.
+        Superadmin-only; API-key callers need `installer=*:admin`.
+      parameters:
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^\d+\.\d+\.\d+$'
+      responses:
+        '200':
+          description: Version deleted (or already deleted)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                  deletedAt:
+                    type: integer
+                  alreadyDeleted:
+                    type: boolean
+        '404':
+          description: Version not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Min active version count would be violated
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/installer/{version}/set-latest:
+    post:
+      operationId: setInstallerLatest
+      tags: [Installer]
+      summary: Promote a version to latest
+      description: |
+        Atomically updates the `installer_metadata/latest` pointer to
+        the given version. Refuses if the version is missing or
+        soft-deleted. Superadmin-only; API-key callers need
+        `installer=*:admin`. Honors `Idempotency-Key`.
+      parameters:
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^\d+\.\d+\.\d+$'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Latest pointer updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                  latest:
+                    $ref: '#/components/schemas/InstallerVersion'
+        '404':
+          description: Version not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Version is soft-deleted — restore before promoting
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  # ──────────────────────────────────────────────────────────────────────
   # Tools
   # ──────────────────────────────────────────────────────────────────────
   /api/admin/tools:
@@ -2708,6 +2992,297 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   # ──────────────────────────────────────────────────────────────────────
+  # 7b. installer-deploys (api-sprint wave 1 — track 1A)
+  #     Public, scoped, api-key-friendly counterparts of
+  #     /api/admin/deployments.
+  # ──────────────────────────────────────────────────────────────────────
+  /api/sites/{siteId}/deployments:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/RoostVersionHeader'
+    get:
+      operationId: listSiteDeployments
+      tags: [Deployments]
+      summary: list installer deployments for a site
+      description: |
+        Cursor-paginated list of installer deployments on a site,
+        newest first. Requires `site=<siteId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/PageSizeQuery'
+        - $ref: '#/components/parameters/PageTokenQuery'
+      responses:
+        '200':
+          description: Paginated deployments.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_page_token]
+                properties:
+                  items:
+                    type: array
+                    items: { type: object }
+                  next_page_token:
+                    type: string
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    post:
+      operationId: createSiteDeployment
+      tags: [Deployments]
+      summary: create an installer deployment
+      description: |
+        Creates a deployment record + fans out `install_software`
+        commands to each target machine. Requires
+        `site=<siteId>:write` and an `Idempotency-Key` header for
+        replay-safe retries.
+
+        Per-site target quota is read from `sites/{siteId}.deployQuota`
+        (default 100). Requests over the quota return 413 with
+        `code: over_quota`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, installer_url, installer_name, silent_flags, machines]
+              properties:
+                name: { type: string }
+                installer_url:
+                  type: string
+                  format: uri
+                  description: Must be an `https://` url.
+                installer_name: { type: string }
+                silent_flags:
+                  type: string
+                  example: '/SILENT /NORESTART'
+                verify_path: { type: string, nullable: true }
+                sha256_checksum:
+                  type: string
+                  pattern: '^[a-f0-9]{64}$'
+                  nullable: true
+                parallel_install: { type: boolean }
+                machines:
+                  type: array
+                  items: { type: string }
+                  minItems: 1
+      responses:
+        '201':
+          description: Deployment queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deploymentId, siteId, status, targets]
+                properties:
+                  deploymentId: { type: string }
+                  siteId: { type: string }
+                  status: { type: string }
+                  targets:
+                    type: array
+                    items: { type: object }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '413': { $ref: '#/components/responses/Problem413' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/deployments/{deploymentId}:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/DeploymentIdPath'
+      - $ref: '#/components/parameters/RoostVersionHeader'
+    get:
+      operationId: getSiteDeployment
+      tags: [Deployments]
+      summary: fetch deployment detail
+      description: |
+        Returns the deployment doc with per-target status array.
+        Requires `site=<siteId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Deployment detail.
+          content:
+            application/json:
+              schema: { type: object }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/deployments/{deploymentId}/retry:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/DeploymentIdPath'
+      - $ref: '#/components/parameters/RoostVersionHeader'
+    post:
+      operationId: retrySiteDeployment
+      tags: [Deployments]
+      summary: re-queue install for failed targets only
+      description: |
+        Targets in `failed` state are reset to `pending` and the
+        `install_software` command is re-queued for each. Targets
+        in any other state are untouched. Deployment-level status
+        flips back to `in_progress`. Requires `site=<siteId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Retry queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deploymentId, siteId, status, retried, machine_ids]
+                properties:
+                  deploymentId: { type: string }
+                  siteId: { type: string }
+                  status: { type: string }
+                  retried: { type: integer }
+                  machine_ids:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/deployments/{deploymentId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/DeploymentIdPath'
+      - $ref: '#/components/parameters/RoostVersionHeader'
+    post:
+      operationId: cancelSiteDeployment
+      tags: [Deployments]
+      summary: cancel pending targets + purge their queued commands
+      description: |
+        Marks every target in `pending` / `closing_processes` /
+        `downloading` state as `cancelled`, and removes the
+        `install_software` command from each affected machine's
+        pending command queue. Targets that have started
+        `installing` (or are already terminal) are left alone.
+        Requires `site=<siteId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Cancellation processed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deploymentId, siteId, status, cancelled, machine_ids]
+                properties:
+                  deploymentId: { type: string }
+                  siteId: { type: string }
+                  status: { type: string }
+                  cancelled: { type: integer }
+                  machine_ids:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/deployments/{deploymentId}/uninstall:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/DeploymentIdPath'
+      - $ref: '#/components/parameters/RoostVersionHeader'
+    post:
+      operationId: uninstallSiteDeployment
+      tags: [Deployments]
+      summary: queue uninstall_software per target
+      description: |
+        Queues `uninstall_software` on every target machine and flips
+        the deployment-level status to `uninstalling`. Per-target
+        reconciliation is asynchronous — poll `GET ../{deploymentId}`
+        for progress. Requires `site=<siteId>:admin` (privileged
+        relative to retry/cancel).
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Uninstall queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deploymentId, siteId, status, queued, machine_ids]
+                properties:
+                  deploymentId: { type: string }
+                  siteId: { type: string }
+                  status: { type: string }
+                  queued: { type: integer }
+                  machine_ids:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  # ──────────────────────────────────────────────────────────────────────
   # 8. quotas
   # ──────────────────────────────────────────────────────────────────────
   /api/sites/{siteId}/quota:
@@ -3326,6 +3901,1162 @@ paths:
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
+  # ──────────────────────────────────────────────────────────────────────
+  # api-sprint wave 2 — track 2A (machine-api MVP).
+  # appended at end-of-paths to avoid line-conflict with parallel work.
+  # ──────────────────────────────────────────────────────────────────────
+
+  /api/sites/{siteId}/machines/{machineId}/commands:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+    post:
+      operationId: dispatchMachineCommand
+      tags: [machines]
+      summary: queue a command on a machine
+      description: |
+        Public counterpart of `/api/admin/commands/send`. Restricted to
+        an operator-safe allowlist: `reboot_machine`, `shutdown_machine`,
+        `capture_screenshot`. Live-view is intentionally absent (deferred
+        to wave 4). Requires `machine=<machineId>:write` for api-key
+        callers; session/id-token callers fall through to site
+        membership.
+
+        Returns 409 `machine_offline` if `machines/{machineId}.online`
+        is `false` — the command is NOT queued.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type:
+                  type: string
+                  enum: [reboot_machine, shutdown_machine, capture_screenshot]
+                params:
+                  type: object
+                  description: |
+                    Per-type parameters. `reboot_machine` /
+                    `shutdown_machine` accept `delay_seconds` (>=0).
+                    `capture_screenshot` accepts `monitor` ('all' |
+                    'primary' | non-negative integer).
+                  properties:
+                    delay_seconds: { type: integer, minimum: 0 }
+                    monitor:
+                      oneOf:
+                        - type: string
+                          enum: [all, primary]
+                        - type: integer
+                          minimum: 0
+                timeout_seconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 600
+                  default: 60
+      responses:
+        '202':
+          description: Command queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    required: [commandId, status]
+                    properties:
+                      commandId: { type: string }
+                      status:
+                        type: string
+                        enum: [pending]
+        '400':
+          description: |
+            Validation failure. Stable code `unsupported_command_type`
+            indicates the requested type is outside the public allowlist.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409':
+          description: |
+            `machine_offline` — machine is not currently connected; queueing is refused.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/machines/{machineId}/commands/{commandId}:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+      - name: commandId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^cmd_[A-Za-z0-9_-]{1,80}$'
+        description: Command id returned by the dispatch endpoint.
+    get:
+      operationId: getMachineCommandStatus
+      tags: [machines]
+      summary: poll command status
+      description: |
+        Returns the current status of a queued command. For completed
+        `capture_screenshot` commands, the response includes a freshly-
+        minted 1-hour signed read URL under `result.screenshot_url` —
+        the URL is per-request and is never persisted.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Command status envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    required: [commandId, status]
+                    properties:
+                      commandId: { type: string }
+                      status:
+                        type: string
+                        enum: [pending, in_progress, completed, failed]
+                      result:
+                        type: object
+                        description: |
+                          Present when status=completed. For
+                          capture_screenshot commands, includes
+                          `screenshot_url` (1-hour signed) +
+                          `expires_at`.
+                        properties:
+                          screenshot_url: { type: string, format: uri }
+                          expires_at: { type: string, format: date-time }
+                      error:
+                        type: string
+                        description: Present when status=failed.
+                      createdAt: { type: string, format: date-time, nullable: true }
+                      updatedAt: { type: string, format: date-time, nullable: true }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/machines/{machineId}/screenshots/upload-url:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+    post:
+      operationId: issueScreenshotUploadUrl
+      tags: [machines]
+      summary: mint a 5-minute signed write url for screenshot upload
+      description: |
+        Agent-internal helper invoked during a `capture_screenshot`
+        command. Returns a 5-minute v4-signed PUT URL plus the
+        canonical storage path (`screenshots/{siteId}/{machineId}/...png`)
+        the agent should write to. Decoupling upload from command
+        queueing keeps multi-megabyte image payloads off the web tier.
+
+        30-day retention is enforced via a separate Firebase Storage
+        lifecycle rule (out of scope for this endpoint).
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                contentType:
+                  type: string
+                  enum: [image/png, image/jpeg]
+                  default: image/png
+      responses:
+        '200':
+          description: Signed upload url issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    required: [uploadUrl, storagePath, contentType, expiresAt]
+                    properties:
+                      uploadUrl: { type: string, format: uri }
+                      storagePath: { type: string }
+                      contentType: { type: string }
+                      expiresAt: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+# ════════════════════════════════════════════════════════════════════════
+# Components
+# ════════════════════════════════════════════════════════════════════════
+  /api/sites/{siteId}/machines/{machineId}/processes:
+    parameters:
+      - name: siteId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: machineId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Processes]
+      summary: list processes on a machine
+      description: |
+        List all processes configured on a machine, merged with their live
+        runtime status (pid, responsiveness, last update). Requires
+        `machine=<machineId>:read`.
+      responses:
+        '200':
+          description: List of processes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      processes:
+                        type: array
+                        items: { type: object }
+                      nextPageToken:
+                        type: string
+                        nullable: true
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+    post:
+      tags: [Processes]
+      summary: create a process
+      description: |
+        Create a new process configuration. `processId` is server-generated.
+        Duplicate `name` per machine is rejected with 409 `duplicate_process_name`.
+        Requires `machine=<machineId>:write` and `Idempotency-Key`.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, exe_path]
+              properties:
+                name: { type: string }
+                exe_path: { type: string }
+                file_path: { type: string }
+                cwd: { type: string }
+                priority: { type: string }
+                visibility: { type: string }
+                time_delay: { type: string }
+                time_to_init: { type: string }
+                relaunch_attempts: { type: string }
+                launch_mode:
+                  type: string
+                  enum: [off, always, scheduled]
+                schedules: { type: array, items: { type: object } }
+      responses:
+        '201':
+          description: Process created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      processId: { type: string }
+        '400': { description: Invalid request }
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+        '409':
+          description: Duplicate process name
+          content:
+            application/problem+json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, example: duplicate_process_name }
+
+  /api/sites/{siteId}/machines/{machineId}/processes/{processId}:
+    parameters:
+      - name: siteId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: machineId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: processId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Processes]
+      summary: get a single process detail
+      description: Requires `machine=<machineId>:read`.
+      responses:
+        '200': { description: Process detail }
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+        '404': { description: Process not found }
+    patch:
+      tags: [Processes]
+      summary: partial update a process
+      description: |
+        Update one or more process fields. `processId` and `id` cannot be
+        mutated. Duplicate-name attempts return 409. Requires `machine=<id>:write`.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: Updated }
+        '400': { description: Invalid request }
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+        '404': { description: Process not found }
+        '409': { description: Duplicate process name }
+    delete:
+      tags: [Processes]
+      summary: delete a process
+      description: |
+        True-idempotent: returns 200 with `alreadyDeleted: true` when the
+        process is already missing. Does NOT kill a running pid — issue
+        `/kill` first if needed. Requires `machine=<id>:write`.
+      responses:
+        '200':
+          description: Removed (or already absent)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      processId: { type: string }
+                      alreadyDeleted: { type: boolean }
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+
+  /api/sites/{siteId}/machines/{machineId}/processes/{processId}/kill:
+    parameters:
+      - name: siteId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: machineId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: processId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Processes]
+      summary: kill a running process (queued command)
+      description: |
+        Queue a `kill_process` command on the machine. Requires `machine=<id>:write`.
+        Returns 202 with the queued `commandId`.
+      responses:
+        '202':
+          description: Command queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      commandId: { type: string }
+                      status: { type: string, example: pending }
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+        '404': { description: Process not found }
+
+  /api/sites/{siteId}/machines/{machineId}/processes/{processId}/start:
+    parameters:
+      - name: siteId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: machineId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: processId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Processes]
+      summary: start a process (queued command)
+      description: Queue a `start_process` command. Requires `machine=<id>:write`.
+      responses:
+        '202': { description: Command queued }
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+        '404': { description: Process not found }
+
+  /api/sites/{siteId}/machines/{machineId}/processes/{processId}/stop:
+    parameters:
+      - name: siteId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: machineId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: processId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Processes]
+      summary: stop a process gracefully (queued command)
+      description: Queue a `stop_process` command. Requires `machine=<id>:write`.
+      responses:
+        '202': { description: Command queued }
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+        '404': { description: Process not found }
+
+  /api/sites/{siteId}/machines/{machineId}/processes/{processId}/schedule:
+    parameters:
+      - name: siteId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: machineId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: processId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Processes]
+      summary: update a process schedule (no command queue)
+      description: |
+        Update the schedule on a process. Does NOT queue a command — the
+        agent picks up the new schedule on its next monitoring cycle.
+        Requires `machine=<id>:write`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [off, always, scheduled]
+                blocks:
+                  type: array
+                  description: required when mode=scheduled
+                  items:
+                    type: object
+                    properties:
+                      days: { type: array, items: { type: string } }
+                      ranges:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            start: { type: string }
+                            stop: { type: string }
+      responses:
+        '200': { description: Schedule updated }
+        '400': { description: Invalid mode or missing blocks }
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+        '404': { description: Process not found }
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Chat (cortex-api / api-sprint wave 3 — track 3A)
+  # ──────────────────────────────────────────────────────────────────────
+
+  /api/chat:
+    get:
+      tags: [Chat]
+      summary: list conversations the caller can see
+      description: |
+        List chat conversations the caller has access to. For api-key callers
+        the returned set is filtered to sites where the key holds
+        `chat=<siteId>:read` (or `chat=*:read`). Session/id-token callers
+        see every conversation in their site-membership list. Cursor-paginated.
+      parameters:
+        - name: page_size
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: page_token
+          in: query
+          required: false
+          schema: { type: string }
+        - name: includeDeleted
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: owner
+          in: query
+          required: false
+          description: Set to `me` to filter to conversations the caller owns.
+          schema: { type: string, enum: [me] }
+      responses:
+        '200':
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      conversations:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            conversationId: { type: string }
+                            title: { type: string }
+                            siteId: { type: string }
+                            machineId: { type: string }
+                            ownerUid: { type: string }
+                            createdAt: { type: string, format: date-time }
+                            updatedAt: { type: string, format: date-time }
+                            deletedAt: { type: string, format: date-time }
+                            messageCount: { type: integer }
+                      nextPageToken: { type: string }
+        '401': { description: Unauthorized }
+
+  /api/chat/new:
+    post:
+      tags: [Chat]
+      summary: create a chat conversation
+      description: |
+        Create a new conversation. Pin to a single machine via `machineId`,
+        or omit it for site-wide mode (server-side LLM fans tools across
+        every online machine). Requires `chat=<siteId>:write`. Idempotent.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId]
+              properties:
+                siteId: { type: string }
+                machineId: { type: string }
+                title: { type: string, maxLength: 100 }
+                initial_message:
+                  type: object
+                  required: [role, content]
+                  properties:
+                    role: { type: string, enum: [user, assistant, system] }
+                    content: { type: string }
+      responses:
+        '201':
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      conversationId: { type: string }
+                      title: { type: string }
+                      siteId: { type: string }
+                      machineId: { type: string }
+                      ownerUid: { type: string }
+                      createdAt: { type: string, format: date-time }
+                      updatedAt: { type: string, format: date-time }
+                      messages:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            role: { type: string, enum: [user, assistant, system] }
+                            content: { type: string }
+                            timestamp: { type: string, format: date-time }
+                      messageCount: { type: integer }
+        '400': { description: Validation failed }
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+
+  /api/chat/{conversationId}:
+    parameters:
+      - name: conversationId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Chat]
+      summary: send a message and stream the response
+      description: |
+        Append a message to the conversation and stream the assistant's reply.
+        The response is `text/plain; charset=utf-8` carrying AI-SDK protocol
+        frames (`0:"delta"`, `d:{...}`, `3:"err"`) — same format as the
+        legacy `/api/cortex` endpoint. Requires `chat=<siteId>:write`. Idempotent.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, content]
+              properties:
+                role: { type: string, enum: [user, assistant, system] }
+                content: { type: string }
+                machineId:
+                  type: string
+                  description: Override the conversation's pinned machine for this turn.
+                machineName: { type: string }
+      responses:
+        '200':
+          description: Streaming response (text/plain, AI-SDK frames)
+          content:
+            text/plain:
+              schema: { type: string }
+        '400': { description: Validation failed }
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+        '404': { description: Conversation not found }
+        '503': { description: Cortex / target machine unavailable }
+    patch:
+      tags: [Chat]
+      summary: rename a conversation
+      description: |
+        Update the conversation title. Other fields are rejected with
+        400 `forbidden_field`. Requires `chat=<siteId>:write`. Idempotent.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: Renamed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      conversationId: { type: string }
+                      title: { type: string }
+        '400': { description: Validation failed / forbidden_field }
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+        '404': { description: Conversation not found }
+    delete:
+      tags: [Chat]
+      summary: soft-delete a conversation
+      description: |
+        True-idempotent: a second DELETE on the same conversationId returns
+        200 with `alreadyDeleted: true` and the original deletedAt. Requires
+        `chat=<siteId>:write`.
+      responses:
+        '200':
+          description: Soft-deleted (or already absent)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      conversationId: { type: string }
+                      alreadyDeleted: { type: boolean }
+        '401': { description: Unauthorized }
+        '403': { description: Scope insufficient }
+        '404': { description: Conversation never existed }
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Users (users-api / api-sprint wave 3 — track 3B)
+  # ──────────────────────────────────────────────────────────────────────
+
+  /api/users:
+    get:
+      tags: [Users]
+      summary: list platform users (superadmin only)
+      description: |
+        Cursor-paginated per AIP-158. Soft-deleted users are excluded by
+        default. Requires `user=*:read` scope (superadmin-only at minting)
+        or a session/id-token from a superadmin user.
+      parameters:
+        - name: page_size
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: page_token
+          in: query
+          required: false
+          schema: { type: string }
+        - name: role
+          in: query
+          required: false
+          schema: { type: string, enum: [member, admin, superadmin] }
+        - name: site
+          in: query
+          required: false
+          description: filter to users where this siteId is in their `sites[]`
+          schema: { type: string }
+        - name: includeDeleted
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Page of users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        uid: { type: string }
+                        email: { type: string, nullable: true }
+                        role: { type: string, enum: [member, admin, superadmin] }
+                        sites: { type: array, items: { type: string } }
+                        deletedAt: { type: integer, nullable: true }
+                  nextPageToken: { type: string }
+        '400': { description: Invalid filter }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not superadmin) }
+
+  /api/users/{uid}:
+    parameters:
+      - name: uid
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Users]
+      summary: get user detail (superadmin only)
+      description: |
+        Returns the user's role, site assignments, and metadata. Requires
+        `user=*:read` scope or session/id-token from a superadmin user.
+      responses:
+        '200': { description: User detail }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not superadmin) }
+        '404': { description: User not found }
+    delete:
+      tags: [Users]
+      summary: soft-delete a user with cascade (superadmin only)
+      description: |
+        Soft-delete cascade. Sets `deletedAt`, revokes the user's api keys,
+        cancels their pending commands (best-effort, async), and transfers
+        owned sites to the supplied `successorUid`. Refuses if the user
+        owns sites and `successorUid` is not provided (409 `orphan_sites`).
+
+        True-idempotent: re-issuing DELETE on an already-deleted user
+        returns 200 with `alreadyDeleted: true`.
+
+        Requires `user=*:admin` scope or session/id-token from a superadmin.
+      parameters:
+        - name: successorUid
+          in: query
+          required: false
+          description: |
+            Required when the user owns one or more sites. The successor
+            must exist, not be soft-deleted, and have role `admin` or
+            `superadmin`.
+          schema: { type: string }
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Soft-deleted (or already deleted)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uid: { type: string }
+                  alreadyDeleted: { type: boolean }
+                  deletedAt: { type: integer }
+                  transferredSites:
+                    type: array
+                    items: { type: string }
+                  revokedKeyIds:
+                    type: array
+                    items: { type: string }
+        '400': { description: Invalid successor }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not superadmin) }
+        '404': { description: User not found }
+        '409': { description: Orphan sites (provide successorUid) }
+
+  /api/users/{uid}/promote:
+    parameters:
+      - name: uid
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema: { type: string }
+    post:
+      tags: [Users]
+      summary: promote a user to admin or superadmin
+      description: |
+        Atomic role update via Firestore transaction. Requires `user=*:write`
+        scope or session/id-token from a superadmin user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [admin, superadmin]
+      responses:
+        '200': { description: Promoted (or noop if already at requested role) }
+        '400': { description: Invalid role / soft-deleted target }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not superadmin) }
+        '404': { description: User not found }
+
+  /api/users/{uid}/demote:
+    parameters:
+      - name: uid
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema: { type: string }
+    post:
+      tags: [Users]
+      summary: demote a user to member
+      description: |
+        Atomic role update via Firestore transaction. Refuses to demote the
+        last active superadmin (409 `last_superadmin`). Requires
+        `user=*:write` scope or session/id-token from a superadmin user.
+      responses:
+        '200': { description: Demoted (or noop if already member) }
+        '400': { description: Soft-deleted target }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not superadmin) }
+        '404': { description: User not found }
+        '409': { description: Last superadmin (cannot demote) }
+
+  /api/users/{uid}/assign-sites:
+    parameters:
+      - name: uid
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema: { type: string }
+    post:
+      tags: [Users]
+      summary: assign sites to a user
+      description: |
+        Adds siteIds to `users/{uid}.sites[]` via `arrayUnion` (idempotent
+        at the field level). Validates each siteId exists; rejects the
+        whole batch if any are unknown. Requires `user=*:write` scope or
+        session/id-token from a superadmin user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteIds]
+              properties:
+                siteIds:
+                  type: array
+                  items: { type: string }
+                  minItems: 1
+                  maxItems: 100
+      responses:
+        '200': { description: Sites assigned }
+        '400': { description: Validation failure / unknown_site }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not superadmin) }
+        '404': { description: User not found }
+
+  /api/users/{uid}/remove-sites:
+    parameters:
+      - name: uid
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema: { type: string }
+    post:
+      tags: [Users]
+      summary: remove sites from a user
+      description: |
+        Removes siteIds from `users/{uid}.sites[]` via `arrayRemove`. Best-
+        effort cancels pending commands the user issued on those sites
+        (failure does not block the response). Requires `user=*:write`
+        scope or session/id-token from a superadmin user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteIds]
+              properties:
+                siteIds:
+                  type: array
+                  items: { type: string }
+                  minItems: 1
+                  maxItems: 100
+      responses:
+        '200': { description: Sites removed }
+        '400': { description: Validation failure }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not superadmin) }
+        '404': { description: User not found }
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Site members (users-api / api-sprint wave 3 — track 3B)
+  # ──────────────────────────────────────────────────────────────────────
+
+  /api/sites/{siteId}/members:
+    parameters:
+      - name: siteId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [SiteMembers]
+      summary: list site members with derived per-site role
+      description: |
+        Membership lives only on `users/{uid}.sites[]` (per the api-sprint
+        wave 0.2 decision). This endpoint resolves it by querying users
+        where `sites array-contains <siteId>` and additionally surfaces
+        the site `owner` if they aren't already in that set. Per-site
+        role is derived: `owner` (always wins), then `superadmin`,
+        `admin` (global admin assigned to the site), else `member`.
+
+        Requires `site=<siteId>:admin` scope or session/id-token from an
+        admin of this site.
+      responses:
+        '200':
+          description: Members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        uid: { type: string }
+                        email: { type: string, nullable: true }
+                        role:
+                          type: string
+                          enum: [owner, superadmin, admin, member]
+                        globalRole:
+                          type: string
+                          enum: [member, admin, superadmin]
+                        sites: { type: array, items: { type: string } }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not site admin) }
+        '404': { description: Site not found or no access }
+    post:
+      tags: [SiteMembers]
+      summary: add a member to a site
+      description: |
+        Adds siteId to the target user's `users/{uid}.sites[]` via
+        `arrayUnion`. The per-site role is derived from global role at
+        read time, so requesting `role: 'admin'` for a member-tier user
+        only succeeds in extending membership — the global role is
+        unchanged (use `/api/users/{uid}/promote` for that). The
+        response includes `roleHonored: false` in that case.
+
+        Requires `site=<siteId>:admin` scope or session/id-token from an
+        admin of this site.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uid, role]
+              properties:
+                uid: { type: string }
+                role: { type: string, enum: [admin, member] }
+      responses:
+        '200': { description: Member added }
+        '400': { description: Validation failure }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not site admin) }
+        '404': { description: User or site not found }
+
+  /api/sites/{siteId}/members/{uid}:
+    parameters:
+      - name: siteId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: uid
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema: { type: string }
+    delete:
+      tags: [SiteMembers]
+      summary: remove a member from a site
+      description: |
+        Removes siteId from the target user's `users/{uid}.sites[]` via
+        `arrayRemove`. Refuses to remove the site owner (409
+        `cannot_remove_owner`) — use `DELETE /api/users/{uid}?successorUid=<uid>`
+        to transfer ownership instead.
+
+        True-idempotent: removing a non-member returns 200 with
+        `wasMember: false`.
+
+        Requires `site=<siteId>:admin` scope or session/id-token from an
+        admin of this site.
+      responses:
+        '200':
+          description: Member removed (or was not a member)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  siteId: { type: string }
+                  uid: { type: string }
+                  wasMember: { type: boolean }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not site admin) }
+        '404': { description: User or site not found }
+        '409': { description: Cannot remove site owner }
+
 # ════════════════════════════════════════════════════════════════════════
 # Components
 # ════════════════════════════════════════════════════════════════════════
@@ -3597,6 +5328,22 @@ components:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
     Problem412:
       description: Precondition failed (optimistic concurrency miss on finalize).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    Problem413:
+      description: |
+        Payload too large or quota-bound size limit exceeded — e.g. a
+        deployment with more target machines than the per-site quota
+        allows. The body carries `code: over_quota` and a `quota` block
+        describing the active limit.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    Problem422:
+      description: |
+        Request semantics violated a constraint — e.g. an `Idempotency-Key`
+        was reused with a different request body (`code: idempotency_key_mismatch`).
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
