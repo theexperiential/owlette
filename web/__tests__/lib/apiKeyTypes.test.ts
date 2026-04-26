@@ -10,7 +10,6 @@ import {
   ALL_RESOURCES,
   SUPERADMIN_ONLY_RESOURCES,
   scopeMatches,
-  type ApiKeyResource,
   type ApiKeyScope,
 } from '@/lib/apiKeyTypes';
 

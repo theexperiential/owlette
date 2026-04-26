@@ -5,7 +5,6 @@ import {
   mocks,
   mockDbFactory,
   docSnapshot,
-  querySnapshot,
 } from './helpers/firestore-mock';
 
 jest.mock('@sentry/nextjs', () => ({

@@ -1,5 +1,6 @@
 /** @jest-environment node */
 
+import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { createMockRequest } from './helpers/utils';
 import {
@@ -211,8 +212,7 @@ describe('withIdempotency wrapper', () => {
   });
 
   it('returns cached replay without calling the handler on body-identical retry', async () => {
-    const bodyHash = require('crypto')
-      .createHash('sha256')
+    const bodyHash = createHash('sha256')
       .update('{"a":1}')
       .digest('hex');
     const expiresAt = Date.now() + 1_000_000;
@@ -243,8 +243,7 @@ describe('withIdempotency wrapper', () => {
   });
 
   it('returns 422 mismatch without calling the handler when body differs', async () => {
-    const otherHash = require('crypto')
-      .createHash('sha256')
+    const otherHash = createHash('sha256')
       .update('{"a":2}')
       .digest('hex');
     mocks.get.mockResolvedValue({

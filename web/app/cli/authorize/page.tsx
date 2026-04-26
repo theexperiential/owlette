@@ -31,18 +31,13 @@ function CliAuthorizeInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
-  const [code, setCode] = useState('');
+  const code = (searchParams?.get('code') ?? '').toLowerCase().trim();
   const [name, setName] = useState('my cli');
   const [preset, setPreset] = useState<ApiKeyScopePreset>('publisher');
   const [ttlDays, setTtlDays] = useState(DEFAULT_TTL_DAYS);
   const [environment, setEnvironment] = useState<ApiKeyEnvironment>('live');
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
-
-  useEffect(() => {
-    const paramCode = searchParams?.get('code') ?? '';
-    setCode(paramCode.toLowerCase().trim());
-  }, [searchParams]);
 
   useEffect(() => {
     if (authLoading) return;
