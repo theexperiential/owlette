@@ -53,7 +53,6 @@ async function fetchVersionFiles(
     // max limit is 500 per request.
     const collected: VersionFile[] = [];
     let cursor = '';
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const qs = new URLSearchParams({
         siteId,
@@ -120,21 +119,35 @@ export function useRoostManifestFiles(
 
   useEffect(() => {
     if (!enabled || !versionId || !siteId || !roostId) return;
+    let cancelled = false;
     const cached = cache.get(versionId);
     if (cached) {
-      setResult({ files: cached, loading: false, error: null });
-      return;
+      queueMicrotask(() => {
+        if (!cancelled && aliveRef.current) {
+          setResult({ files: cached, loading: false, error: null });
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
     }
-    setResult((prev) => ({ ...prev, loading: true, error: null }));
+    queueMicrotask(() => {
+      if (!cancelled && aliveRef.current) {
+        setResult((prev) => ({ ...prev, loading: true, error: null }));
+      }
+    });
     fetchVersionFiles(siteId, roostId, versionId)
       .then((files) => {
-        if (!aliveRef.current) return;
+        if (cancelled || !aliveRef.current) return;
         setResult({ files, loading: false, error: null });
       })
       .catch((err: Error) => {
-        if (!aliveRef.current) return;
+        if (cancelled || !aliveRef.current) return;
         setResult({ files: [], loading: false, error: err.message });
       });
+    return () => {
+      cancelled = true;
+    };
   }, [enabled, siteId, roostId, versionId]);
 
   return result;
