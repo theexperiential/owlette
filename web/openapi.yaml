@@ -91,6 +91,8 @@ tags:
     description: Manage your API keys
   - name: Logs
     description: Query activity logs
+  - name: Alerts
+    description: Manage alert rules
   - name: Screenshots
     description: Manage machine screenshots
   - name: Software Inventory
@@ -1022,6 +1024,53 @@ paths:
   # ──────────────────────────────────────────────────────────────────────
   # Screenshots
   # ──────────────────────────────────────────────────────────────────────
+  /api/sites/{siteId}/logs:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    delete:
+      operationId: clearSiteLogs
+      tags: [Logs]
+      summary: Clear site logs
+      description: |
+        Deletes log entries from `sites/{siteId}/logs`. Optional filters
+        match the current logs view: action, machineId, and level.
+        Capability is currently `GLOBAL_SETTINGS_WRITE` pending a narrower
+        site-log capability.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                machineId:
+                  type: string
+                level:
+                  type: string
+                  enum: [debug, info, warning, error, critical]
+      responses:
+        '200':
+          description: Logs cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  siteId:
+                    type: string
+                  deletedCount:
+                    type: integer
+                  filters:
+                    type: object
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/admin/screenshots:
     delete:
       operationId: deleteScreenshots
@@ -1080,6 +1129,272 @@ paths:
   # ──────────────────────────────────────────────────────────────────────
   # Installer
   # ──────────────────────────────────────────────────────────────────────
+  /api/admin/system-presets:
+    get:
+      operationId: listSystemPresets
+      tags: [Installer]
+      summary: List system presets
+      description: Lists global system presets. Requires `SYSTEM_PRESET_MANAGE`.
+      responses:
+        '200':
+          description: System presets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SystemPreset'
+    post:
+      operationId: createSystemPreset
+      tags: [Installer]
+      summary: Create system preset
+      description: Creates a global system preset. Requires `SYSTEM_PRESET_MANAGE`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemPresetInput'
+      responses:
+        '201':
+          description: Preset created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  presetId:
+                    type: string
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/admin/system-presets/{presetId}:
+    parameters:
+      - $ref: '#/components/parameters/PresetIdPath'
+    get:
+      operationId: getSystemPreset
+      tags: [Installer]
+      summary: Get system preset
+      description: Returns one global system preset. Requires `SYSTEM_PRESET_MANAGE`.
+      responses:
+        '200':
+          description: System preset
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemPreset'
+        '404':
+          description: Preset not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    patch:
+      operationId: updateSystemPreset
+      tags: [Installer]
+      summary: Update system preset
+      description: Partially updates a global system preset. Requires `SYSTEM_PRESET_MANAGE`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                software_name: { type: string }
+                category: { type: string }
+                description: { type: string, nullable: true }
+                icon: { type: string, nullable: true }
+                installer_name: { type: string }
+                installer_url: { type: string }
+                silent_flags: { type: string }
+                verify_path: { type: string, nullable: true }
+                close_processes:
+                  type: array
+                  items: { type: string }
+                parallel_install: { type: boolean }
+                is_owlette_agent: { type: boolean }
+                timeout_seconds: { type: integer, nullable: true }
+                order: { type: integer }
+      responses:
+        '200':
+          description: Preset updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  presetId:
+                    type: string
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Preset not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    delete:
+      operationId: deleteSystemPreset
+      tags: [Installer]
+      summary: Delete system preset
+      description: Hard-deletes a global system preset. Requires `SYSTEM_PRESET_MANAGE`.
+      responses:
+        '204':
+          description: Preset deleted
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/admin/alerts:
+    put:
+      operationId: setAlertRules
+      tags: [Alerts]
+      summary: Set alert rules
+      description: |
+        Replaces the alert `rules` array at
+        `sites/{siteId}/settings/alerts`. Requires `GLOBAL_SETTINGS_WRITE`.
+        This is a site-scoped write retained under the admin namespace until
+        a narrower alert-rules capability exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId, rules]
+              properties:
+                siteId:
+                  type: string
+                rules:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/AlertRule'
+      responses:
+        '200':
+          description: Alert rules saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  siteId:
+                    type: string
+                  ruleCount:
+                    type: integer
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/admin/installer/upload:
+    post:
+      operationId: requestAdminInstallerUpload
+      tags: [Installer]
+      summary: Request admin installer upload URL
+      description: |
+        Step 1 of the installer upload flow. Returns a signed PUT URL for
+        direct binary upload plus an uploadId for finalization. Requires
+        `INSTALLER_MANAGE`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, fileName]
+              properties:
+                version:
+                  type: string
+                  pattern: '^\d+\.\d+\.\d+$'
+                fileName:
+                  type: string
+                contentType:
+                  type: string
+                  default: application/octet-stream
+                releaseNotes:
+                  type: string
+                  nullable: true
+                setAsLatest:
+                  type: boolean
+                  default: true
+      responses:
+        '200':
+          description: Signed upload URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  uploadUrl:
+                    type: string
+                    format: uri
+                  uploadId:
+                    type: string
+                  storagePath:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+    put:
+      operationId: finalizeAdminInstallerUpload
+      tags: [Installer]
+      summary: Finalize admin installer upload
+      description: |
+        Step 3 of the installer upload flow after the client uploads the
+        binary to the signed URL. Verifies storage, computes checksum when
+        omitted, and writes installer metadata. Requires `INSTALLER_MANAGE`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uploadId]
+              properties:
+                uploadId:
+                  type: string
+                checksum_sha256:
+                  type: string
+      responses:
+        '200':
+          description: Upload finalized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  version:
+                    type: string
+                  download_url:
+                    type: string
+                    format: uri
+                  checksum_sha256:
+                    type: string
+                  file_size:
+                    type: integer
+
   /api/admin/installer/latest:
     get:
       operationId: getLatestInstaller
@@ -1099,6 +1414,88 @@ paths:
                 downloadUrl: "https://storage.googleapis.com/..."
                 releaseNotes: Bug fixes and performance improvements
                 uploadedAt: "2026-03-20T10:00:00Z"
+    put:
+      operationId: setAdminLatestInstaller
+      tags: [Installer]
+      summary: Set latest installer
+      description: Promotes an existing installer version to latest. Requires `INSTALLER_MANAGE`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version:
+                  type: string
+                  pattern: '^\d+\.\d+\.\d+$'
+      responses:
+        '200':
+          description: Latest pointer updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                  latest:
+                    type: object
+        '404':
+          description: Version not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Version is soft-deleted
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/admin/installer/{version}:
+    parameters:
+      - name: version
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^\d+\.\d+\.\d+$'
+    delete:
+      operationId: deleteAdminInstallerVersion
+      tags: [Installer]
+      summary: Delete installer version
+      description: |
+        Soft-deletes an installer version. Requires `INSTALLER_MANAGE`.
+        Refuses to drop active installer count below the retention floor.
+      responses:
+        '200':
+          description: Version deleted or already deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                  deletedAt:
+                    type: integer
+                  alreadyDeleted:
+                    type: boolean
+        '404':
+          description: Version not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Min active version count would be violated
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 
   /api/admin/installer/versions:
     get:
@@ -5260,6 +5657,58 @@ paths:
         '400': { description: Invalid filter }
         '401': { description: Unauthorized }
         '403': { description: Forbidden (not superadmin) }
+
+  /api/users/bootstrap:
+    post:
+      tags: [Users]
+      summary: bootstrap the caller user document
+      description: |
+        Creates `users/{uid}` for the authenticated caller on first sign-in
+        or sign-up. The uid is taken from the verified session or Firebase
+        ID token, not from the request body. This route intentionally does
+        not use the platform superadmin handler because a new caller has no
+        user document yet.
+      security:
+        - firebaseIdToken: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                displayName:
+                  type: string
+                  maxLength: 200
+                timezone:
+                  type: string
+                  maxLength: 100
+      responses:
+        '200':
+          description: User document created, or already existed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [uid, alreadyExists]
+                properties:
+                  uid: { type: string }
+                  alreadyExists: { type: boolean }
+                  email: { type: string, nullable: true }
+                  displayName: { type: string, nullable: true }
+                  timezone: { type: string, nullable: true }
+                  createdAt: { type: integer, nullable: true }
+        '400': { description: Invalid bootstrap payload }
+        '401': { description: Unauthorized }
 
   /api/users/{uid}:
     parameters:
