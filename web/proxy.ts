@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { validateSessionFromRequest } from '@/lib/sessionManager.server';
+import { CURRENT_SECURITY_VERSION, SECURITY_VERSION_HEADER } from '@/lib/securityVersion';
 
 /**
  * Next.js Proxy for Route Protection
@@ -27,6 +28,16 @@ export async function proxy(request: NextRequest) {
   if (pathname.startsWith('/api/folders/') || pathname === '/api/folders') {
     const rewritten = pathname.replace(/^\/api\/folders/, '/api/roosts');
     return NextResponse.redirect(new URL(rewritten + search, request.url), 308);
+  }
+
+  // Stamp every `/api/*` response with the current security version so
+  // stale tabs can detect when they are out of sync with the deployed
+  // client and prompt the user to reload. UX nudge only — never a
+  // security boundary; see `lib/securityVersion.ts` for rationale.
+  if (pathname.startsWith('/api/')) {
+    const response = NextResponse.next();
+    response.headers.set(SECURITY_VERSION_HEADER, String(CURRENT_SECURITY_VERSION));
+    return response;
   }
 
   // Define protected routes
@@ -90,20 +101,17 @@ export async function proxy(request: NextRequest) {
  * Specifies which routes this proxy should run on
  */
 export const config = {
-  // Match all routes except:
-  // - API routes
-  // - Static files (_next/static)
-  // - Image optimization files (_next/image)
-  // - Favicon and other public files
+  // Match all routes except static assets. `/api/*` is included so the
+  // proxy can stamp the `x-security-version` response header on every API
+  // response (see `lib/securityVersion.ts` — UX, not safety).
   matcher: [
     /*
      * Match all request paths except for the ones starting with:
-     * - api (API routes)
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      * - *.png, *.jpg, *.jpeg, *.gif, *.svg, *.ico (image files)
      */
-    '/((?!api|_next/static|_next/image|favicon.ico|.*\\.png$|.*\\.jpg$|.*\\.jpeg$|.*\\.gif$|.*\\.svg$|.*\\.ico$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.png$|.*\\.jpg$|.*\\.jpeg$|.*\\.gif$|.*\\.svg$|.*\\.ico$).*)',
   ],
 };

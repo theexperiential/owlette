@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Footer } from "@/components/Footer";
 import SentryInit from "@/components/SentryInit";
+import { SecurityVersionBanner } from "@/components/SecurityVersionBanner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const geist = Geist({
@@ -114,6 +115,7 @@ export default function RootLayout({
 
 -->` }} style={{ display: 'none' }} />
         <SentryInit />
+        <SecurityVersionBanner />
         <ErrorBoundary>
           <LazyAuthProvider>
             <TooltipProvider delayDuration={300}>
