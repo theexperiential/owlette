@@ -279,6 +279,35 @@ export async function getVersionBody(
   roostId: string,
   versionId: string,
 ): Promise<unknown | null> {
+  // E2E branch: same shape as hasChunk — under OWLETTE_E2E=1 there is no real
+  // R2, so we synthesize a structurally-valid empty version body iff the
+  // version's metadata doc exists in Firestore. seed.ts:seedVersion writes
+  // metadata only (no body); routes treat null body as 410 Gone, which is
+  // not what we want for a seeded version. Returning {schemaVersion, mediaType,
+  // config, files: []} matches the production envelope shape; routes that
+  // only need versionId/versionNumber/description (the addressing-grammar
+  // resolver) get past the 410 gate, and routes that read files[] (diff,
+  // files list) see an empty list — callers seed real `files` only via the
+  // full push pipeline (installPushMocks + chunks/check), which is unchanged.
+  if (process.env.OWLETTE_E2E === '1') {
+    const { getAdminDb } = await import('@/lib/firebase-admin');
+    const snap = await getAdminDb()
+      .collection('sites')
+      .doc(siteId)
+      .collection('roosts')
+      .doc(roostId)
+      .collection('versions')
+      .doc(versionId)
+      .get();
+    if (!snap.exists) return null;
+    return {
+      schemaVersion: 2,
+      mediaType: 'application/vnd.owlette.version.v2+json',
+      config: {},
+      files: [],
+    };
+  }
+
   const client = getR2Client();
   const bucket = bucketFor(currentEnv(), 'manifests');
   try {

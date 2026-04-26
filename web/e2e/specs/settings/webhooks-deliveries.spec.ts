@@ -114,6 +114,12 @@ async function cleanup(): Promise<void> {
   await Promise.all(deliveries.docs.map((d) => d.ref.delete()));
 }
 
+function deliveryRows(page: Page) {
+  return page
+    .locator('div.text-xs.py-1.px-2')
+    .filter({ has: page.locator('span.font-mono', { hasText: 'roost.version.published' }) });
+}
+
 async function gotoExpandedWebhook(page: Page): Promise<void> {
   await page.goto('/settings/webhooks');
   await expect(
@@ -196,11 +202,7 @@ test('expanded row lists deliveries newest-first with state icons, attempts, and
     page.getByRole('heading', { name: 'recent deliveries' }),
   ).toBeVisible();
 
-  const rows = page
-    .locator('div')
-    .filter({ hasText: /^roost\.version\.published/ })
-    .filter({ has: page.locator('svg') })
-    .filter({ has: page.locator('text=/^att \\d+$/') });
+  const rows = deliveryRows(page);
   await expect(rows).toHaveCount(3);
 
   const pendingRow = rows.nth(0);
@@ -214,8 +216,12 @@ test('expanded row lists deliveries newest-first with state icons, attempts, and
   await expect(failedRow.getByText('att 3', { exact: true })).toBeVisible();
 
   const succeededRow = rows.nth(2);
+  // CheckCircle2 in lucide-react v0.548 re-exports from circle-check, which
+  // renders class "lucide-circle-check" (no "-big" suffix and not the legacy
+  // "check-circle-2" alias). Accept either modern variant so this remains
+  // robust across minor lucide bumps.
   await expect(
-    succeededRow.locator('svg.lucide-circle-check-big, svg.lucide-check-circle-2'),
+    succeededRow.locator('svg.lucide-circle-check, svg.lucide-circle-check-big'),
   ).toHaveCount(1);
   await expect(succeededRow.getByText('200', { exact: true })).toBeVisible();
   await expect(succeededRow.getByText('att 1', { exact: true })).toBeVisible();
@@ -226,11 +232,7 @@ test('retrying a failed delivery posts /retry and seeds a pending delivery with 
 }) => {
   await gotoExpandedWebhook(page);
 
-  const rows = page
-    .locator('div')
-    .filter({ hasText: /^roost\.version\.published/ })
-    .filter({ has: page.locator('svg') })
-    .filter({ has: page.locator('text=/^att \\d+$/') });
+  const rows = deliveryRows(page);
   await expect(rows).toHaveCount(3);
 
   const failedRow = rows.nth(1);
@@ -246,7 +248,7 @@ test('retrying a failed delivery posts /retry and seeds a pending delivery with 
     { timeout: 10_000 },
   );
 
-  await failedRow.getByRole('button', { name: 'retry this delivery' }).click();
+  await failedRow.locator('button:has(svg.lucide-rotate-ccw)').click();
 
   const retryResponse = await retryResponsePromise;
   expect(retryResponse.status()).toBe(202);
@@ -294,17 +296,6 @@ test('retrying a failed delivery posts /retry and seeds a pending delivery with 
   expect(originalSnap.data()!.lastStatus).toBe(500);
 
   await expect
-    .poll(
-      async () =>
-        (
-          await page
-            .locator('div')
-            .filter({ hasText: /^roost\.version\.published/ })
-            .filter({ has: page.locator('svg') })
-            .filter({ has: page.locator('text=/^att \\d+$/') })
-            .count()
-        ),
-      { timeout: 5_000 },
-    )
+    .poll(async () => deliveryRows(page).count(), { timeout: 5_000 })
     .toBe(4);
 });

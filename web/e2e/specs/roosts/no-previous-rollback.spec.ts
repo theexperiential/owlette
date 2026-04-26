@@ -50,7 +50,7 @@ test('rollback action is disabled on the only/current version', async ({ page })
   await expect(roostRow).toBeVisible();
   await roostRow.click();
   await expect(
-    page.getByRole('heading', { name: 'version history' }),
+    page.getByRole('button', { name: 'version history' }),
   ).toBeVisible();
 
   // Exactly one version row. Walk up from `#1` to the row container —

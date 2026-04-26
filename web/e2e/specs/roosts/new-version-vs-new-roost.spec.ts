@@ -72,7 +72,7 @@ test('per-roost "+ new version" opens dialog in new-version mode with locked fie
   await page.goto('/roosts');
   await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
   await page.locator(`[data-roost-row="${ROOST_ID}"]`).click();
-  await expect(page.getByRole('heading', { name: 'version history' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
   await page.getByRole('button', { name: /^new version$/i }).click();
 
   // Title is `publish new version of "lobby"` — the roost name disambiguates.

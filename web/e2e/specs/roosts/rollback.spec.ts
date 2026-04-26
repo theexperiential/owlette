@@ -58,7 +58,7 @@ test('admin rolls back from v5 to v3 — POST body, firestore pointer, and UI al
 
   // Expand the panel.
   await rowButton.click();
-  await expect(page.getByRole('heading', { name: 'version history' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 
   // Resilient: pick the row whose `#N` cell renders `#3`.
   const v3Row = page

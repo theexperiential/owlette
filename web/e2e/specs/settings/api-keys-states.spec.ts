@@ -172,7 +172,9 @@ test.afterEach(async () => {
 
 test('active key row renders the green "active" badge', async ({ page }) => {
   await page.goto('/settings/api-keys');
-  await expect(page.getByRole('heading', { name: 'api keys', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'api keys', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   const row = rowFor(page, 'e2e state active');
   await expect(row).toBeVisible();
@@ -186,7 +188,9 @@ test('rotated-in-grace row renders amber "rotated (grace)" badge with retire-by 
   page,
 }) => {
   await page.goto('/settings/api-keys');
-  await expect(page.getByRole('heading', { name: 'api keys', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'api keys', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   const row = rowFor(page, 'e2e state rotated');
   await expect(row).toBeVisible();
@@ -207,7 +211,9 @@ test.fixme(
     // once GET /api/keys derives `expired` or KeyCard reads `expiresAt`
     // directly.
     await page.goto('/settings/api-keys');
-    await expect(page.getByRole('heading', { name: 'api keys', exact: true })).toBeVisible();
+    await expect(
+    page.getByRole('heading', { name: 'api keys', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
     const row = rowFor(page, 'e2e state expired');
     const badge = row.locator('[data-slot="badge"]', { hasText: /^expired$/ });
@@ -225,7 +231,9 @@ test.fixme(
     // Promote this fixme once revoke moves to a soft-delete and KeyCard
     // grows a terminal "revoked" branch.
     await page.goto('/settings/api-keys');
-    await expect(page.getByRole('heading', { name: 'api keys', exact: true })).toBeVisible();
+    await expect(
+    page.getByRole('heading', { name: 'api keys', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
     const row = rowFor(page, 'e2e state revoked');
     const badge = row.locator('[data-slot="badge"]', { hasText: /^revoked$/ });

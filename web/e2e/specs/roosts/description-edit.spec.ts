@@ -42,7 +42,7 @@ async function expandRoost(page: Page) {
   await page.goto('/roosts');
   await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
   await page.locator(`[data-roost-row="${ROOST_ID}"]`).click();
-  await expect(page.getByRole('heading', { name: 'version history' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 }
 
 const waitPatch = (page: Page, n: number) =>
@@ -87,7 +87,7 @@ test('A — blur saves the edited description and the row re-renders', async ({ 
 
   const responsePromise = waitPatch(page, 3);
   // Blur by clicking the page-level heading.
-  await page.getByRole('heading', { name: 'version history' }).click();
+  await page.getByRole('button', { name: 'version history' }).click();
 
   const response = await responsePromise;
   expect(response.status()).toBe(200);
@@ -182,7 +182,7 @@ test('D — edited description persists across a full page reload', async ({ pag
   await page.reload();
   await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
   await page.locator(`[data-roost-row="${ROOST_ID}"]`).click();
-  await expect(page.getByRole('heading', { name: 'version history' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 
   await expect(rowFor(page, 3).getByRole('button', { name: 'edit description' }))
     .toContainText('initial + fixed video');

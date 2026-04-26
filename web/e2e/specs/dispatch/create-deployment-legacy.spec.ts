@@ -1,22 +1,7 @@
 /**
- * Dispatch — create project distribution / roost (D5.1)
- *
- * Flow mirrors D4.1 (create deployment) but targets the roost surface:
- *   1. Seed a machine on site-A.
- *   2. UI: /roosts → "new roost" → ProjectDistributionDialog ("roost a
- *      project") → fill distribution name + project URL → check target
- *      machine → "distribute to 1 machine".
- *   3. Firestore (per useProjectDistributions.createDistribution):
- *      - `sites/{siteId}/project_distributions/project-dist-{ts}` doc with
- *        `{ name, file_name (auto-extracted from URL path), project_url,
- *           targets, createdAt, status }`. Status flips pending →
- *        in_progress once all per-machine commands write.
- *      - One `distribute_{distId}_{machineId}_{ts}` command per target in
- *        `sites/{siteId}/machines/{id}/commands/pending` with
- *        `{ type: 'distribute_project', project_url, project_name,
- *           distribution_id, status: 'pending' }`.
- *
- * Admin role — roost creation is a site-admin action.
+ * LEGACY v1 — tests `project_distributions` collection + `distribute_project` command.
+ * This is the PRE-roost-v2 single-URL ZIP deploy surface. Kept until v1 drops.
+ * New v2 coverage lives in `specs/roosts/`.
  */
 
 import { test, expect } from '@playwright/test';

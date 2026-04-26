@@ -41,7 +41,13 @@ async function stubTestEmail(page: Page, response: Record<string, unknown>, stat
 test('config card renders provider + from/admin emails + environment', async ({ page }) => {
   await page.goto('/admin/email');
 
-  await expect(page.getByRole('heading', { name: 'email', exact: true })).toBeVisible();
+  // Bumped to 10s because RequireSuperadmin renders a "verifying permissions..."
+  // gate while AuthContext hydrates against the auth emulator; the default 5s
+  // expect timeout occasionally races that hydration on cold-emulator runs.
+  // Subsequent heading-readiness checks in this spec keep the same bump.
+  await expect(
+    page.getByRole('heading', { name: 'email', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   // Config read-through is async — wait for the provider field to populate.
   // "Resend" is inline with the badge inside <dd>, so the <dd>'s full text
@@ -56,6 +62,11 @@ test('config card renders provider + from/admin emails + environment', async ({ 
 
 test('template selector shows all 9 templates and updates the description', async ({ page }) => {
   await page.goto('/admin/email');
+
+  // Wait for RequireSuperadmin's spinner to clear (see top-of-file comment).
+  await expect(
+    page.getByRole('heading', { name: 'email', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   const select = page.locator('#template-select');
   await expect(select).toBeVisible();
@@ -81,6 +92,10 @@ test('clicking "send test email" with a stubbed success response shows the succe
   });
 
   await page.goto('/admin/email');
+  // Wait for RequireSuperadmin's spinner to clear (see top-of-file comment).
+  await expect(
+    page.getByRole('heading', { name: 'email', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: /^send test email$/i }).click();
 
   // Success toast.
@@ -101,6 +116,10 @@ test('clicking "send test email" with a stubbed failure surfaces the error', asy
   );
 
   await page.goto('/admin/email');
+  // Wait for RequireSuperadmin's spinner to clear (see top-of-file comment).
+  await expect(
+    page.getByRole('heading', { name: 'email', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: /^send test email$/i }).click();
 
   // Error toast.

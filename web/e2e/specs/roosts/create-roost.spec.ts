@@ -54,7 +54,7 @@ test('submit stays disabled until the roost name is non-empty', async ({ page })
 
   const nameInput = dialog.locator('#distribution-name');
   // Submit's accessible name varies by selected-machine count.
-  const submit = dialog.getByRole('button', { name: /^distribute to \d+ machines?$/i });
+  const submit = dialog.getByRole('button', { name: /^upload and distribute to \d+ machines?$/i });
 
   // Empty name → disabled, no inline error (error only renders once the
   // user has typed and then cleared back to whitespace).

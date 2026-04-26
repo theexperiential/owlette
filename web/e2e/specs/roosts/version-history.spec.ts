@@ -64,7 +64,7 @@ test('expanded roost renders version rows newest-first with current marker on he
   const row = page.locator(`[data-roost-row="${ROOST_ID}"]`);
   await expect(row).toBeVisible();
   await row.click();
-  await expect(page.getByRole('heading', { name: 'version history' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 
   // Each VersionRow renders a `<span class="font-mono">#N</span>`. Once the
   // `version-row` testid lands (planned same wave), this collapses to

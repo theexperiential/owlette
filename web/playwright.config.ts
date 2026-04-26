@@ -31,6 +31,13 @@ export default defineConfig({
   globalSetup: require.resolve('./e2e/global-setup'),
   globalTeardown: require.resolve('./e2e/global-teardown'),
 
+  // expect() default timeout. The use.actionTimeout below is 10s but the per-assertion
+  // expect timeout falls back to Playwright's 5s default unless set here, which produced a
+  // pattern of ~40 failures where hydration races on auth-gated pages tripped the 5s ceiling
+  // even though actions/navigation already had headroom. Aligning the two at 10s removes the
+  // mismatch; passing tests are unaffected (assertions still resolve as soon as they're true).
+  expect: { timeout: 10_000 },
+
   use: {
     baseURL: BASE_URL,
     // Always capture traces + screenshots on failure for post-mortem.

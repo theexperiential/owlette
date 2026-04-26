@@ -80,7 +80,12 @@ test.beforeEach(async () => {
 
 async function gotoTokensForSeededSite(page: Page) {
   await page.goto('/admin/tokens');
-  await expect(page.getByRole('heading', { name: 'agent tokens', exact: true })).toBeVisible();
+  // Bumped to 10s because RequireSuperadmin renders a "verifying permissions..."
+  // gate while AuthContext hydrates against the auth emulator; the default 5s
+  // expect timeout occasionally races that hydration on cold-emulator runs.
+  await expect(
+    page.getByRole('heading', { name: 'agent tokens', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
   const siteSelect = page.getByRole('combobox').first();
   await siteSelect.click();
   await page.getByRole('option', { name: SITE_NAME, exact: true }).click();

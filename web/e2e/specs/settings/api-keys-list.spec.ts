@@ -50,7 +50,14 @@ test('create key reveals raw owk_live_* once, copies to clipboard, then list sho
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
   await page.goto('/settings/api-keys');
-  await expect(page.getByRole('heading', { name: 'api keys', exact: true })).toBeVisible();
+  // The heading only renders after AuthContext finishes hydrating (the page
+  // shows a full-screen Loader2 while `loading || (!user && loading)` is
+  // true). Bumped to 10s so this spec is robust to cold-start hydration when
+  // it runs late in the suite — the default 5s expect timeout occasionally
+  // races the IndexedDB→onAuthStateChanged→user-doc fetch chain.
+  await expect(
+    page.getByRole('heading', { name: 'api keys', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   // Empty-state — no keys seeded for this admin.
   await expect(page.getByText('no api keys yet')).toBeVisible();
@@ -115,7 +122,9 @@ test('create key reveals raw owk_live_* once, copies to clipboard, then list sho
 
   // Reload — the one-time-reveal contract holds across navigations.
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'api keys', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'api keys', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText(keyName)).toBeVisible();
   await expect(page.locator('code', { hasText: expectedPrefix })).toBeVisible();
   await expect(page.getByText(rawKey, { exact: true })).toHaveCount(0);

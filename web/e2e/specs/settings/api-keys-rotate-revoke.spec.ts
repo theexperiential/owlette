@@ -131,7 +131,13 @@ test('rotate issues a new key, reveals it once, and stamps the original as rotat
   page,
 }) => {
   await page.goto('/settings/api-keys');
-  await expect(page.getByRole('heading', { name: 'api keys', exact: true })).toBeVisible();
+  // Heading visibility doubles as the "AuthContext finished hydrating" wait —
+  // KeyCard rows only render after `loading` flips false, so there's no need
+  // for a separate spinner-gone guard. Bumped to 10s to cover cold-start
+  // hydration when this spec runs late in a long suite.
+  await expect(
+    page.getByRole('heading', { name: 'api keys', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   const oldRow = rowByPrefix(page, keyOne.keyPrefix);
   await expect(oldRow).toBeVisible();
@@ -144,7 +150,12 @@ test('rotate issues a new key, reveals it once, and stamps the original as rotat
     { timeout: 10_000 },
   );
 
-  await oldRow.getByRole('button', { name: /rotate — issues new key/i }).click();
+  // The rotate button is icon-only — KeyCard wraps a lucide RefreshCw inside a
+  // Radix Tooltip, but Radix tooltip text is not exposed as the button's
+  // accessible name in the DOM (it's a sibling popover with aria-describedby).
+  // Locate by the icon's class instead. (UI gap: KeyCard's rotate/revoke
+  // buttons should grow explicit aria-labels.)
+  await oldRow.locator('button:has(svg.lucide-refresh-cw)').click();
 
   const rotateResponse = await rotateResponsePromise;
   expect(rotateResponse.status()).toBe(200);
@@ -194,12 +205,16 @@ test('revoke removes the targeted key from the list and deletes both firestore d
   page,
 }) => {
   await page.goto('/settings/api-keys');
-  await expect(page.getByRole('heading', { name: 'api keys', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'api keys', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   const revokeRow = rowByPrefix(page, keyTwo.keyPrefix);
   await expect(revokeRow).toBeVisible();
 
-  await revokeRow.getByRole('button', { name: /revoke this key immediately/i }).click();
+  // Same Radix-tooltip caveat as the rotate test — locate the trash button by
+  // its lucide icon class rather than the (non-attached) tooltip text.
+  await revokeRow.locator('button:has(svg.lucide-trash-2)').click();
   await expect(revokeRow.getByText('revoke?', { exact: true })).toBeVisible();
 
   const revokeResponsePromise = page.waitForResponse(

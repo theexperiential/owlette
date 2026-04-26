@@ -70,7 +70,7 @@ test('roost with zero versions renders cleanly in collapsed row + expanded panel
 
   // ---- Assertion B — expanded panel ----
   await row.click();
-  await expect(page.getByRole('heading', { name: 'version history' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 
   // Empty-state copy is literal "no versions yet" (VersionHistory.tsx:124).
   await expect(page.getByText('no versions yet', { exact: true })).toBeVisible();

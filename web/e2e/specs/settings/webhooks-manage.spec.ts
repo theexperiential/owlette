@@ -91,7 +91,9 @@ test('pause -> resume -> rotate-secret -> delete round-trip', async ({ page, con
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
   await page.goto('/settings/webhooks');
-  await expect(page.getByRole('heading', { name: 'webhooks', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'webhooks', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   const card = page.locator(`code:has-text("${WEBHOOK_URL}")`).locator('xpath=ancestor::*[@data-slot="card"][1]');
   await expect(card).toBeVisible();

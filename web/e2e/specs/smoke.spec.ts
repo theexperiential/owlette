@@ -43,6 +43,11 @@ test.describe('smoke — superadmin', () => {
     await page.goto('/admin/users');
     await expect(page).toHaveURL(/\/admin\/users/);
     // Scope to the heading — "user management" also appears in the sidebar nav.
-    await expect(page.getByRole('heading', { name: 'user management' })).toBeVisible();
+    // Bumped to 10s because RequireSuperadmin renders a "verifying permissions..."
+    // gate while AuthContext hydrates against the auth emulator + the role
+    // lookup completes; on cold-start runs this can briefly exceed the 5s default.
+    await expect(
+      page.getByRole('heading', { name: 'user management' }),
+    ).toBeVisible({ timeout: 10_000 });
   });
 });

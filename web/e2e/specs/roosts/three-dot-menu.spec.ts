@@ -65,7 +65,7 @@ async function expandRoostAndOpenMenu(
   await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
 
   await page.locator(`[data-roost-row="${ROOST_ID}"]`).click();
-  await expect(page.getByRole('heading', { name: 'version history' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 
   const row = rowFor(page, versionNumber);
   await expect(row).toBeVisible();

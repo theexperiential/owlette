@@ -60,7 +60,9 @@ test('create webhook reveals whsec_* once, copies to clipboard, then list shows 
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
   await page.goto('/settings/webhooks');
-  await expect(page.getByRole('heading', { name: 'webhooks', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'webhooks', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   // Empty-state — no webhooks seeded for this site.
   await expect(page.getByText('no webhooks yet')).toBeVisible();
@@ -111,8 +113,11 @@ test('create webhook reveals whsec_* once, copies to clipboard, then list shows 
   const rawSecret = (await revealCard.locator('code').innerText()).trim();
   expect(rawSecret).toBe(responseBody.signingSecret);
 
-  // Copy-to-clipboard — the icon-only button inside the reveal card.
-  await revealCard.getByRole('button').filter({ hasNotText: /.+/ }).first().click();
+  // Copy-to-clipboard — the reveal card has two icon-only buttons: the X
+  // (aria-label="dismiss") and the copy button (TooltipTrigger). Match the
+  // copy button by excluding the dismiss aria-label.
+  const copyButton = revealCard.locator('button:not([aria-label="dismiss"])');
+  await copyButton.click();
   await expect(page.getByText('copied to clipboard')).toBeVisible();
   const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
   expect(clipboardText).toBe(rawSecret);
@@ -155,7 +160,9 @@ test('create webhook reveals whsec_* once, copies to clipboard, then list shows 
 
   // Reload — the one-time-reveal contract holds across navigations.
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'webhooks', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'webhooks', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
   await expect(page.locator('code', { hasText: WEBHOOK_URL })).toBeVisible();
   await expect(page.getByText(rawSecret, { exact: true })).toHaveCount(0);
 });

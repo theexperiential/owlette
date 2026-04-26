@@ -92,8 +92,14 @@ test.beforeEach(async () => {
 test('lists seeded versions with sizes, uploader and the latest badge on the right row', async ({ page }) => {
   await page.goto('/admin/installers');
 
-  // Heading pins the page.
-  await expect(page.getByRole('heading', { name: 'installers', exact: true })).toBeVisible();
+  // Heading pins the page. Bumped to 10s because RequireSuperadmin renders a
+  // "verifying permissions..." gate while AuthContext hydrates against the
+  // auth emulator; the default 5s expect timeout occasionally races that
+  // hydration on cold-emulator runs. Subsequent heading checks in this spec
+  // keep the same bump.
+  await expect(
+    page.getByRole('heading', { name: 'installers', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   // Stats card shows the latest version.
   await expect(page.getByText('current latest version')).toBeVisible();
@@ -127,6 +133,10 @@ test('lists seeded versions with sizes, uploader and the latest badge on the rig
 
 test('the latest row hides the set-as-latest and delete buttons', async ({ page }) => {
   await page.goto('/admin/installers');
+  // Wait for RequireSuperadmin's spinner to clear (see top-of-file comment).
+  await expect(
+    page.getByRole('heading', { name: 'installers', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   const latestRow = page.locator('table tr').filter({ hasText: LATEST_VERSION.version });
   await expect(latestRow).toBeVisible();
@@ -149,6 +159,10 @@ test('the latest row hides the set-as-latest and delete buttons', async ({ page 
 
 test('set-as-latest confirms via dialog and updates Firestore latest doc', async ({ page }) => {
   await page.goto('/admin/installers');
+  // Wait for RequireSuperadmin's spinner to clear (see top-of-file comment).
+  await expect(
+    page.getByRole('heading', { name: 'installers', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   const olderRow = page.locator('table tr').filter({ hasText: OLDER_VERSION.version });
   await olderRow.getByRole('button', { name: /set as latest/i }).click();
@@ -177,6 +191,10 @@ test('set-as-latest confirms via dialog and updates Firestore latest doc', async
 
 test('clicking "upload new version" opens the upload dialog', async ({ page }) => {
   await page.goto('/admin/installers');
+  // Wait for RequireSuperadmin's spinner to clear (see top-of-file comment).
+  await expect(
+    page.getByRole('heading', { name: 'installers', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 
   await page.getByRole('button', { name: /upload new version/i }).click();
 

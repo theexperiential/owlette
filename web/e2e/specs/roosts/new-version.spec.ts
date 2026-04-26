@@ -113,7 +113,7 @@ test('+ new version round-trips through the full push pipeline', async ({ page }
 
   // Expand the panel.
   await row.click();
-  await expect(page.getByRole('heading', { name: 'version history' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 
   // Click the "+ new version" button inside the VersionHistory panel.
   await page.getByRole('button', { name: /^new version$/i }).click();

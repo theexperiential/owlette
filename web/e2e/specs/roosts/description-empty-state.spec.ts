@@ -54,7 +54,7 @@ test('description placeholder renders, edits round-trip null → set → null', 
   await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
 
   await page.locator(`[data-roost-row="${ROOST_ID}"]`).click();
-  await expect(page.getByRole('heading', { name: 'version history' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 
   // Walk from the `#1` cell up to the VersionRow wrapper (flex items-center gap-3).
   const row = page
