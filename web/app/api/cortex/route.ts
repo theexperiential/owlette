@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
-import { requireSession } from '@/lib/apiAuth.server';
+import { resolveAuth, requireScope } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { createModel, buildSystemPrompt, type ProcessSummary } from '@/lib/llm';
@@ -110,7 +110,11 @@ async function isCortexLocal(
 // so we handle rate limiting manually if needed in the future.
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireSession(request);
+    // Accept session, ID-token, or scoped API key. Session/ID-token callers
+    // bypass scope enforcement (dashboard); api-key callers must hold
+    // `chat=<siteId>:write` to send a message into a conversation.
+    const auth = await resolveAuth(request);
+    const userId = auth.userId;
     const body = await request.json();
 
     const {
@@ -133,6 +137,11 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+
+    // Scope check is only enforced for API-key callers; session/ID-token
+    // auth bypasses (own-site dashboard access is checked below via
+    // verifyUserSiteAccess). Throws 403 scope_insufficient on mismatch.
+    requireScope(auth, 'chat', siteId, 'write');
 
     const db = getAdminDb();
     const isSiteMode = machineId === SITE_TARGET_ID;
