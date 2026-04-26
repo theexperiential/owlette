@@ -1,27 +1,12 @@
 /**
- * GET    /api/users/{uid}     — user detail incl. site assignments
- * DELETE /api/users/{uid}     — soft-delete cascade (transfer/revoke/cancel)
+ * GET    /api/users/{uid}     - user detail incl. site assignments
+ * DELETE /api/users/{uid}     - soft-delete cascade (transfer/revoke/cancel)
  *
- * Auth (both verbs):
- *   - api key with `user=*:read` (GET) or `user=*:admin` (DELETE)
- *     — superadmin-only at minting
- *   - session / id-token from a superadmin user
- *
- * The DELETE flow is fully described in
- * [`web/lib/userDeleteCascade.server.ts`](../../../lib/userDeleteCascade.server.ts):
- *   1. orphan-sites guard (`successorUid` query param required when the
- *      user owns sites)
- *   2. successor validation (must exist, not soft-deleted, role ≥ admin)
- *   3. site ownership transfer
- *   4. api-key revocation (subcollection + lookup table)
- *   5. background sweep cancelling pending commands the user issued
- *   6. set `users/{uid}.deletedAt`
- *
- * Idempotent: re-issuing DELETE on an already-deleted user returns 200
- * with `alreadyDeleted: true` and no further side-effects.
- *
- * api-sprint wave 3 track 3B (users-api).
+ * GET keeps the existing read-only public route. DELETE now delegates to
+ * `deleteUser` behind `authorizedPlatformHandler(USER_DELETE)` while
+ * preserving the response/error contract from the api-sprint users route.
  */
+
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import {
@@ -33,19 +18,18 @@ import {
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withIdempotency } from '@/lib/idempotency';
-import { emitMutation } from '@/lib/auditLogClient';
 import {
   applyAuthDeprecations,
   readAndParseJsonBody,
   requirePlatformAuthAndScope,
 } from '../../_shared';
-import { performUserDeleteCascade } from '@/lib/userDeleteCascade.server';
+import { authorizedPlatformHandler, type PlatformHandlerContext } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
+import { deleteUser } from '@/lib/actions/deleteUser.server';
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 
-interface RouteParams {
-  params: Promise<{ uid: string }>;
-}
+type RouteParams = { uid: string };
 
 interface UserDoc {
   email?: string;
@@ -76,11 +60,17 @@ function timestampToIso(value: unknown): string | null {
   return null;
 }
 
+function auditActor(ctx: PlatformHandlerContext): string {
+  return ctx.auth.keyContext
+    ? `apiKey:${ctx.auth.keyContext.keyId}`
+    : `user:${ctx.actor.userId}`;
+}
+
 /* --------------------------------------------------------------------- */
-/*  GET — detail                                                         */
+/*  GET - detail                                                         */
 /* --------------------------------------------------------------------- */
 
-export async function GET(request: NextRequest, { params }: RouteParams) {
+export async function GET(request: NextRequest, { params }: { params: Promise<RouteParams> }) {
   try {
     const { uid } = await params;
     if (!UID_REGEX.test(uid)) {
@@ -125,25 +115,24 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 }
 
 /* --------------------------------------------------------------------- */
-/*  DELETE — soft-delete cascade                                         */
+/*  DELETE - soft-delete cascade                                         */
 /* --------------------------------------------------------------------- */
 
-export async function DELETE(request: NextRequest, { params }: RouteParams) {
+export const DELETE = authorizedPlatformHandler<RouteParams>({
+  capability: Capability.USER_DELETE,
+  targetKind: 'user',
+  apiKeyScope: { resource: 'user', permission: 'admin' },
+})(async (request: NextRequest, ctx: PlatformHandlerContext, routeContext) => {
   try {
-    const { uid } = await params;
+    const { uid } = await routeContext!.params;
     if (!UID_REGEX.test(uid)) {
       return problemValidation('uid must be 1-128 chars', {
         'path.uid': ['letters, digits, underscore, hyphen only'],
       });
     }
 
-    // DELETE may carry a body for idempotency body-hashing; tolerate
-    // empty/missing body without rejecting.
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
-
-    const auth = await requirePlatformAuthAndScope(request, 'user', 'admin');
-    if (!auth.ok) return auth.response;
 
     const successorUid = request.nextUrl.searchParams.get('successorUid');
     if (successorUid && !UID_REGEX.test(successorUid)) {
@@ -155,12 +144,19 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return await withIdempotency(
       request,
       {
-        userId: auth.userId,
-        environment: auth.auth.keyContext?.environment ?? 'unknown',
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
-        const result = await performUserDeleteCascade(uid, { successorUid });
+        const result = await deleteUser(
+          {
+            auditActor: auditActor(ctx),
+            endpoint: `/api/users/${uid}`,
+            method: 'DELETE',
+          },
+          { uid, successorUid },
+        );
 
         if (result.kind === 'not_found') {
           return problemNotFound(`user ${uid} not found`);
@@ -205,27 +201,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
               alreadyDeleted: true,
               deletedAt: result.deletedAt,
             }),
-            auth.scopeCheck,
+            ctx.scopeCheck,
           );
         }
-
-        // result.kind === 'deleted'
-        emitMutation({
-          kind: 'user_mutated',
-          siteId: '',
-          actor: auth.auth.keyContext
-            ? `apiKey:${auth.auth.keyContext.keyId}`
-            : `user:${auth.userId}`,
-          targetId: uid,
-          attributes: {
-            endpoint: `/api/users/${uid}`,
-            method: 'DELETE',
-            verb: 'soft_deleted',
-            successorUid: successorUid ?? null,
-            transferredSites: result.transferredSites,
-            revokedKeyCount: result.revokedKeyIds.length,
-          },
-        });
 
         return applyAuthDeprecations(
           NextResponse.json({
@@ -235,11 +213,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             transferredSites: result.transferredSites,
             revokedKeyIds: result.revokedKeyIds,
           }),
-          auth.scopeCheck,
+          ctx.scopeCheck,
         );
       },
     );
   } catch (err) {
     return problemFromError(err, 'users/[uid]:DELETE');
   }
-}
+});

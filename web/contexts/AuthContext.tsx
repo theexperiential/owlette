@@ -104,6 +104,31 @@ const destroySessionCookie = async (): Promise<void> => {
   }
 };
 
+const bootstrapUserDocument = async (
+  user: User,
+  displayName: string
+): Promise<{ alreadyExists: boolean }> => {
+  const idToken = await user.getIdToken();
+  const response = await fetch('/api/users/bootstrap', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({
+      email: user.email,
+      displayName,
+      timezone: getBrowserTimezone(),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  return response.json() as Promise<{ alreadyExists: boolean }>;
+};
+
 export type UserRole = 'member' | 'admin' | 'superadmin';
 
 /**
@@ -418,35 +443,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 console.log('⚠️ User document missing, creating now...');
                 try {
                   const displayName = user.displayName || '';
-                  await setDoc(userDocRef, {
-                    email: user.email,
-                    role: 'member',
-                    sites: [],
-                    createdAt: new Date(),
-                    displayName,
-                    // MFA fields for new users
-                    mfaEnrolled: false,
-                    requiresMfaSetup: true, // Mandatory 2FA for new users
-                    // Default preferences
-                    preferences: {
-                      temperatureUnit: 'C',
-                      timezone: getBrowserTimezone(),
-                    },
-                  });
+                  const bootstrap = await bootstrapUserDocument(user, displayName);
                   console.log('✅ User document created by listener');
 
                   // Send user creation notification (likely Google sign-in)
-                  sendUserCreatedNotification(
-                    user.email || '',
-                    displayName,
-                    'google'
-                  );
+                  if (!bootstrap.alreadyExists) {
+                    sendUserCreatedNotification(
+                      user.email || '',
+                      displayName,
+                      'google'
+                    );
+                  }
 
                   // Don't set loading to false yet - wait for the listener to fire again
-                } catch (firestoreError: unknown) {
-                  const code = (firestoreError as { code?: string } | null)?.code;
-                  console.error('❌ Listener failed to create document:', firestoreError);
-                  console.error('Error code:', code);
+                } catch (bootstrapError: unknown) {
+                  const err = bootstrapError as { message?: string } | null;
+                  console.error('listener failed to bootstrap document:', bootstrapError);
+                  console.error('Error message:', err?.message);
                   setRole(null);
                   setUserSites([]);
                   setLoading(false);
@@ -520,37 +533,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await updateProfile(userCredential.user, { displayName });
       }
 
-      // Immediately create user document in Firestore
-      const userDocRef = doc(db, 'users', userCredential.user.uid);
+      // Immediately bootstrap the user document server-side.
       try {
         const displayName = [firstName, lastName].filter(Boolean).join(' ') || '';
-        await setDoc(userDocRef, {
-          email: userCredential.user.email,
-          role: 'member',
-          sites: [],
-          createdAt: new Date(),
-          displayName,
-          // MFA fields for new users
-          mfaEnrolled: false,
-          requiresMfaSetup: true, // Mandatory 2FA for new users
-          // Default preferences
-          preferences: {
-            temperatureUnit: 'C',
-            timezone: getBrowserTimezone(),
-          },
-        });
+        const bootstrap = await bootstrapUserDocument(userCredential.user, displayName);
         console.log('✅ User document created in Firestore:', userCredential.user.uid);
 
         // Send user creation notification
-        sendUserCreatedNotification(
-          userCredential.user.email || '',
-          displayName,
-          'email'
-        );
-      } catch (firestoreError: unknown) {
-        const err = firestoreError as { code?: string; message?: string } | null;
-        console.error('❌ Failed to create user document:', firestoreError);
-        console.error('Error code:', err?.code);
+        if (!bootstrap.alreadyExists) {
+          sendUserCreatedNotification(
+            userCredential.user.email || '',
+            displayName,
+            'email'
+          );
+        }
+      } catch (bootstrapError: unknown) {
+        const err = bootstrapError as { message?: string } | null;
+        console.error('failed to bootstrap user document:', bootstrapError);
         console.error('Error message:', err?.message);
         // Don't throw - let the user continue even if Firestore fails
         // The onAuthStateChanged listener will retry

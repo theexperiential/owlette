@@ -38,6 +38,19 @@ jest.mock('@/lib/apiAuth.server', () => {
   };
 });
 
+jest.mock('@/lib/rateLimit.server', () => ({
+  checkRateLimit: jest.fn(async () => ({ ok: true })),
+}));
+
+jest.mock('@/lib/securityConfig.server', () => ({
+  securityConfig: {
+    read: jest.fn(async () => ({
+      capability_enforcement: true,
+      rate_limit_enforcement: true,
+    })),
+  },
+}));
+
 /* -------------------------------------------------------------------------- */
 /*  firebase-admin/firestore mock for FieldValue                              */
 /* -------------------------------------------------------------------------- */
