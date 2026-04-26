@@ -22,6 +22,10 @@ import { registerMachineCommands } from './commands/machine';
 import { registerAuditLogCommands } from './commands/audit-log';
 import { registerWhoamiCommand } from './commands/whoami';
 import { registerVersionCommand } from './commands/version';
+import { registerChatCommands } from './commands/chat';
+import { registerUserCommands } from './commands/user';
+import { registerProcessCommands } from './commands/process';
+import { registerInstallerCommands } from './commands/installer';
 
 const PROGRAM_NAME = 'owlette';
 const VERSION = '0.2.0';
@@ -52,6 +56,14 @@ export function buildProgram(): Command {
   registerQuotaCommands(program);
   registerMachineCommands(program);
   registerAuditLogCommands(program);
+
+  // c-tier stubs (wave 3): chat / user / process / installer.
+  // (deploy stub deferred — see dev/active/owlette-cli/tasks.md task 3.4
+  // for the namespace conflict with the existing top-level `deploy`.)
+  registerChatCommands(program);
+  registerUserCommands(program);
+  registerProcessCommands(program);
+  registerInstallerCommands(program);
 
   // top-level verbs (kept top-level for muscle memory; may move under
   // nouns in a future restructure)
