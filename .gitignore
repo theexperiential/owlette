@@ -50,6 +50,7 @@ agent/logs/
 agent/tmp/
 
 # Build artifacts
+node_modules/
 site/
 build/
 dist/
