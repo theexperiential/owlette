@@ -4,8 +4,8 @@
   "description": "owlette — command line for the owlette api (owlette.app)",
   "license": "FSL-1.1-Apache-2.0",
   "bin": {
-    "owlette": "./bin/owlette",
-    "roost": "./bin/roost"
+    "owlette": "bin/owlette",
+    "roost": "bin/roost"
   },
   "main": "./dist/index.js",
   "type": "commonjs",

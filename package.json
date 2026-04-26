@@ -1,0 +1,19 @@
+{
+  "name": "owlette-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "monorepo workspace for the owlette cli and public api sdks.",
+  "license": "FSL-1.1-Apache-2.0",
+  "workspaces": [
+    "cli",
+    "sdks/node"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm test --workspaces",
+    "build:cli": "npm run build --workspace @owlette/cli",
+    "test:cli": "npm test --workspace @owlette/cli",
+    "build:sdk": "npm run build --workspace @owlette/sdk",
+    "test:sdk": "npm test --workspace @owlette/sdk"
+  }
+}
