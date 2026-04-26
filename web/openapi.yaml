@@ -83,6 +83,8 @@ tags:
     description: Send commands to machines (restart, reboot, etc.)
   - name: Deployments
     description: Deploy software to machines
+  - name: Presets
+    description: Manage site-scoped schedule, reboot, and installer template presets
   - name: Webhooks
     description: Subscribe to events via HTTP callbacks
   - name: API Keys
@@ -3383,6 +3385,437 @@ paths:
   # ──────────────────────────────────────────────────────────────────────
   # 8. quotas
   # ──────────────────────────────────────────────────────────────────────
+  # ----------------------------------------------------------------------
+  # Site preset management (security boundary migration wave 3.6)
+  # ----------------------------------------------------------------------
+  /api/sites/{siteId}/presets/schedule:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: listSchedulePresets
+      tags: [Presets]
+      summary: list schedule preset override docs
+      description: |
+        Lists schedule presets stored in Firestore at
+        `config/{siteId}/schedule_presets`. Built-in defaults are merged
+        by dashboard clients, not by this API. Requires the
+        `PRESET_MANAGE` capability; API keys need `site=<siteId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Schedule preset docs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SchedulePreset' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    post:
+      operationId: createSchedulePreset
+      tags: [Presets]
+      summary: create a custom schedule preset
+      description: |
+        Creates a custom schedule preset under
+        `config/{siteId}/schedule_presets/{presetId}`. The server
+        generates `sched-{slug}-{epochMs}` and stamps `createdAt`.
+        Requires `PRESET_MANAGE`; API keys need `site=<siteId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SchedulePresetInput' }
+      responses:
+        '201':
+          description: Schedule preset created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [presetId, siteId]
+                properties:
+                  presetId: { type: string }
+                  siteId: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/presets/schedule/{presetId}:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/PresetIdPath'
+    get:
+      operationId: getSchedulePreset
+      tags: [Presets]
+      summary: fetch a schedule preset doc
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Schedule preset.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SchedulePreset' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    patch:
+      operationId: updateSchedulePreset
+      tags: [Presets]
+      summary: update a schedule preset or built-in override
+      description: |
+        For `builtin-*` ids, the route uses set-with-merge to create or
+        update the override doc and forces `isBuiltIn: true`. Custom
+        ids require an existing doc. Requires `PRESET_MANAGE`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SchedulePresetPatch' }
+      responses:
+        '200':
+          description: Schedule preset updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [presetId, siteId, isBuiltInOverride]
+                properties:
+                  presetId: { type: string }
+                  siteId: { type: string }
+                  isBuiltInOverride: { type: boolean }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    delete:
+      operationId: deleteSchedulePreset
+      tags: [Presets]
+      summary: delete a schedule preset or built-in override
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '204':
+          description: Schedule preset deleted.
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/presets/reboot:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: listRebootPresets
+      tags: [Presets]
+      summary: list reboot preset override docs
+      description: |
+        Lists reboot presets stored at `config/{siteId}/reboot_presets`.
+        Built-in defaults are merged by dashboard clients. Requires
+        `PRESET_MANAGE`; API keys need `site=<siteId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Reboot preset docs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/RebootPreset' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    post:
+      operationId: createRebootPreset
+      tags: [Presets]
+      summary: create a custom reboot preset
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RebootPresetInput' }
+      responses:
+        '201':
+          description: Reboot preset created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [presetId, siteId]
+                properties:
+                  presetId: { type: string }
+                  siteId: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/presets/reboot/{presetId}:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/PresetIdPath'
+    get:
+      operationId: getRebootPreset
+      tags: [Presets]
+      summary: fetch a reboot preset doc
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Reboot preset.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RebootPreset' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    patch:
+      operationId: updateRebootPreset
+      tags: [Presets]
+      summary: update a reboot preset or built-in override
+      description: |
+        For `builtin-*` ids, the route uses set-with-merge to create or
+        update the override doc and forces `isBuiltIn: true`. Custom
+        ids require an existing doc. Requires `PRESET_MANAGE`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RebootPresetPatch' }
+      responses:
+        '200':
+          description: Reboot preset updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [presetId, siteId, isBuiltInOverride]
+                properties:
+                  presetId: { type: string }
+                  siteId: { type: string }
+                  isBuiltInOverride: { type: boolean }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    delete:
+      operationId: deleteRebootPreset
+      tags: [Presets]
+      summary: delete a reboot preset or built-in override
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '204':
+          description: Reboot preset deleted.
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/presets/deployment-template:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: listDeploymentTemplates
+      tags: [Presets]
+      summary: list deployment templates
+      description: |
+        Lists installer templates at
+        `sites/{siteId}/installer_templates`. Requires
+        `PRESET_MANAGE`; API keys need `site=<siteId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Deployment templates.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/DeploymentTemplate' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    post:
+      operationId: createDeploymentTemplate
+      tags: [Presets]
+      summary: create a deployment template
+      description: |
+        Creates an installer template at
+        `sites/{siteId}/installer_templates/{templateId}`. The server
+        generates `template-{epochMs}` and stamps `createdAt`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeploymentTemplateInput' }
+      responses:
+        '201':
+          description: Deployment template created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [templateId, siteId]
+                properties:
+                  templateId: { type: string }
+                  siteId: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/presets/deployment-template/{templateId}:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/TemplateIdPath'
+    get:
+      operationId: getDeploymentTemplate
+      tags: [Presets]
+      summary: fetch a deployment template
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Deployment template.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentTemplate' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    patch:
+      operationId: updateDeploymentTemplate
+      tags: [Presets]
+      summary: update a deployment template
+      description: |
+        Merges provided fields into an existing installer template.
+        Requires `PRESET_MANAGE`; API keys need `site=<siteId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeploymentTemplatePatch' }
+      responses:
+        '200':
+          description: Deployment template updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [templateId, siteId]
+                properties:
+                  templateId: { type: string }
+                  siteId: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    delete:
+      operationId: deleteDeploymentTemplate
+      tags: [Presets]
+      summary: delete a deployment template
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '204':
+          description: Deployment template deleted.
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
   /api/sites/{siteId}/quota:
     x-stub: true
     parameters:
@@ -5221,6 +5654,24 @@ components:
         type: string
       description: The deployment ID
 
+    PresetIdPath:
+      name: presetId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{1,128}$'
+      description: The preset ID
+
+    TemplateIdPath:
+      name: templateId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{1,128}$'
+      description: The deployment template ID
+
     RoostIdPath:
       name: roostId
       in: path
@@ -5544,6 +5995,195 @@ components:
           type: string
           description: 24-hour time (HH:MM)
           example: "18:00"
+
+    ScheduleTimeRange:
+      type: object
+      required: [start, end]
+      properties:
+        start:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          example: "09:00"
+        end:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          example: "17:00"
+
+    ScheduleBlock:
+      type: object
+      required: [days, ranges]
+      properties:
+        name: { type: string }
+        colorIndex: { type: number }
+        days:
+          type: array
+          items:
+            type: string
+            enum: [mon, tue, wed, thu, fri, sat, sun]
+        ranges:
+          type: array
+          items: { $ref: '#/components/schemas/ScheduleTimeRange' }
+
+    SchedulePresetInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        blocks:
+          type: array
+          items: { $ref: '#/components/schemas/ScheduleBlock' }
+          default: []
+        isBuiltIn:
+          type: boolean
+          default: false
+        order:
+          type: number
+          default: 0
+
+    SchedulePresetPatch:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        blocks:
+          type: array
+          items: { $ref: '#/components/schemas/ScheduleBlock' }
+        isBuiltIn: { type: boolean }
+        order: { type: number }
+
+    SchedulePreset:
+      allOf:
+        - $ref: '#/components/schemas/SchedulePresetInput'
+        - type: object
+          required: [id, blocks, isBuiltIn, order, createdBy, createdAt]
+          properties:
+            id: { type: string }
+            createdBy: { type: string }
+            createdAt:
+              type: string
+              format: date-time
+              nullable: true
+            updatedAt:
+              type: string
+              format: date-time
+              nullable: true
+
+    RebootScheduleEntry:
+      type: object
+      required: [id, days, time]
+      properties:
+        id: { type: string }
+        days:
+          type: array
+          items:
+            type: string
+            enum: [mon, tue, wed, thu, fri, sat, sun]
+        time:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          example: "03:00"
+
+    RebootPresetInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/RebootScheduleEntry' }
+          default: []
+        isBuiltIn:
+          type: boolean
+          default: false
+        order:
+          type: number
+          default: 0
+
+    RebootPresetPatch:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/RebootScheduleEntry' }
+        isBuiltIn: { type: boolean }
+        order: { type: number }
+
+    RebootPreset:
+      allOf:
+        - $ref: '#/components/schemas/RebootPresetInput'
+        - type: object
+          required: [id, entries, isBuiltIn, order, createdBy, createdAt]
+          properties:
+            id: { type: string }
+            createdBy: { type: string }
+            createdAt:
+              type: string
+              format: date-time
+              nullable: true
+            updatedAt:
+              type: string
+              format: date-time
+              nullable: true
+
+    DeploymentTemplateInput:
+      type: object
+      required: [name, installer_name, installer_url, silent_flags]
+      properties:
+        name: { type: string }
+        installer_name: { type: string }
+        installer_url:
+          type: string
+          format: uri
+          description: Must use `https://`.
+        silent_flags: { type: string }
+        verify_path:
+          type: string
+          nullable: true
+        close_processes:
+          type: array
+          items: { type: string }
+        parallel_install: { type: boolean }
+
+    DeploymentTemplatePatch:
+      type: object
+      properties:
+        name: { type: string }
+        installer_name: { type: string }
+        installer_url:
+          type: string
+          format: uri
+        silent_flags: { type: string }
+        verify_path:
+          type: string
+          nullable: true
+        close_processes:
+          type: array
+          items: { type: string }
+        parallel_install: { type: boolean }
+
+    DeploymentTemplate:
+      allOf:
+        - $ref: '#/components/schemas/DeploymentTemplateInput'
+        - type: object
+          required: [id, name, installer_name, installer_url, silent_flags, createdAt]
+          properties:
+            id: { type: string }
+            close_processes:
+              type: array
+              items: { type: string }
+              nullable: true
+            createdAt:
+              type: string
+              format: date-time
+              nullable: true
+            updatedAt:
+              type: string
+              format: date-time
+              nullable: true
 
     DeploymentSummary:
       type: object
