@@ -1,4 +1,4 @@
-import { _internals } from '../src/commands/deploy';
+import { _internals } from '../src/commands/roost-deploy';
 
 const { formatDeployResult } = _internals;
 

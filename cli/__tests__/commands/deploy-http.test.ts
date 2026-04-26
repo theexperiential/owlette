@@ -1,11 +1,11 @@
 import { Command } from 'commander';
-import { registerDeployCommand } from '../../src/commands/deploy';
+import { registerRoostDeployCommand } from '../../src/commands/roost-deploy';
 import { _resetConfigCache } from '../../src/config';
 
 function buildProgram(): Command {
   const program = new Command();
   program.name('owlette').exitOverride().option('--profile <name>').option('--json');
-  registerDeployCommand(program);
+  registerRoostDeployCommand(program);
   return program;
 }
 
@@ -54,7 +54,7 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-describe('owlette deploy (dry-run)', () => {
+describe('owlette roost deploy (dry-run)', () => {
   it('POSTs /api/roosts/:id/deploy with dryRun:true and no idempotency key', async () => {
     const calls = installFetchStub({
       rolloutId: 'vrs_01',
@@ -72,6 +72,7 @@ describe('owlette deploy (dry-run)', () => {
     await program.parseAsync(
       [
         '--json',
+        'roost',
         'deploy',
         'rst_testrs01234',
         '--site',
@@ -104,7 +105,7 @@ describe('owlette deploy (dry-run)', () => {
     });
     const program = buildProgram();
     await program.parseAsync(
-      ['--json', 'deploy', 'rst_testrs01234', '--site', 'site-1'],
+      ['--json', 'roost', 'deploy', 'rst_testrs01234', '--site', 'site-1'],
       { from: 'user' },
     );
     const headers = calls[0]!.init.headers as Record<string, string>;
@@ -127,6 +128,7 @@ describe('owlette deploy (dry-run)', () => {
     await program.parseAsync(
       [
         '--json',
+        'roost',
         'deploy',
         'rst_testrs01234',
         '--site',

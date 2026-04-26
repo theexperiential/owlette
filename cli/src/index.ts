@@ -12,7 +12,8 @@ import { registerAuthCommands } from './commands/auth';
 import { registerPushCommand } from './commands/push';
 import { registerRoostInspectCommands } from './commands/roost';
 import { registerRollbackCommand } from './commands/rollback';
-import { registerDeployCommand } from './commands/deploy';
+import { registerRoostDeployCommand } from './commands/roost-deploy';
+import { registerDeployCommands } from './commands/deploy';
 import { registerKeyCommands } from './commands/key';
 import { registerListenCommand } from './commands/listen';
 import { registerTriggerCommand } from './commands/trigger';
@@ -46,10 +47,11 @@ export function buildProgram(): Command {
   registerWhoamiCommand(program);
   registerVersionCommand(program);
 
-  // noun: roost — push / list / get / diff / versions
+  // noun: roost — push / list / get / diff / versions / deploy
   program.command('roost').description('manage roosts + versions');
   registerPushCommand(program);
   registerRoostInspectCommands(program);
+  registerRoostDeployCommand(program);
 
   // a-tier nouns (wave 2): site / quota / machine / audit-log
   registerSiteCommands(program);
@@ -57,18 +59,18 @@ export function buildProgram(): Command {
   registerMachineCommands(program);
   registerAuditLogCommands(program);
 
-  // c-tier stubs (wave 3): chat / user / process / installer.
-  // (deploy stub deferred — see dev/active/owlette-cli/tasks.md task 3.4
-  // for the namespace conflict with the existing top-level `deploy`.)
+  // c-tier stubs (wave 3): chat / user / deploy / process / installer.
+  // top-level `deploy` is the classic-installer stub group; the real
+  // content-addressed deploy lives at `roost deploy` above.
   registerChatCommands(program);
   registerUserCommands(program);
+  registerDeployCommands(program);
   registerProcessCommands(program);
   registerInstallerCommands(program);
 
   // top-level verbs (kept top-level for muscle memory; may move under
   // nouns in a future restructure)
   registerRollbackCommand(program);
-  registerDeployCommand(program);
   registerKeyCommands(program);
   registerListenCommand(program);
   registerTriggerCommand(program);
