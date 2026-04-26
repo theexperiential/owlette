@@ -654,16 +654,17 @@ export function DisplayLayoutPanel({
   };
 
   // Apply dispatches the assigned layout to the agent. On success we start
-  // a 30s ack countdown — the operator must click "keep" in the banner or
-  // the agent auto-reverts. ConfirmDialog closes itself on confirm; on
-  // error we reopen so the user can retry.
+  // the 30s ack countdown via `startAckCountdown` — module-level state so
+  // the banner survives the panel closing. The operator must click "keep"
+  // in the banner or the agent auto-reverts. ConfirmDialog closes itself
+  // on confirm; on error we reopen so the user can retry.
   const handleApplyConfirm = async () => {
     try {
       const { applyId } = await actions.applyLayout(assignedMonitors);
+      // Wave 6.5(c) — honest copy: the Firestore write succeeded but the
+      // agent hasn't even seen the command yet, let alone applied it.
       toast.success('recall dispatched — monitors will change shortly');
-      setPendingApplyId(applyId);
-      setAckDeadlineMs(Date.now() + 30_000);
-      setNowMs(Date.now());
+      startAckCountdown(siteId, machineId, applyId, Date.now() + 30_000);
     } catch (e) {
       console.error('Failed to recall display layout', e);
       toast.error(applyErrorToast(e));
@@ -680,17 +681,24 @@ export function DisplayLayoutPanel({
   // countdown to retry against and the agent's auto-revert watchdog would
   // keep running on the far side — the "keep" click would silently turn
   // into a revert.
+  //
+  // Wave 6.5(b) — `setAckInFlight` flips the keep button's disabled state
+  // through the module store so a double-click can't dispatch two acks.
   const handleAckKeep = async () => {
     const applyId = pendingApplyId;
     if (!applyId) return;
+    setAckInFlight(siteId, machineId, true);
     try {
       await actions.ackLayout(applyId);
-      setAckDeadlineMs(null);
-      setPendingApplyId(null);
-      toast.success('layout kept');
+      clearAckCountdown(siteId, machineId);
+      // Wave 6.5(c) — honest copy: the agent confirms the keep when it
+      // emits `display_apply_acked`; from the dashboard's perspective we
+      // only know the ack command was written.
+      toast.success('ack sent');
     } catch (e) {
       console.error('Failed to ack display layout', e);
       toast.error(`keep failed: ${formatError(e)} — try again before the countdown ends`);
+      setAckInFlight(siteId, machineId, false);
     }
   };
 
@@ -735,46 +743,16 @@ export function DisplayLayoutPanel({
     return () => unsubscribe();
   }, [testApplyCmdId, siteId, machineId]);
 
-  // Drive the countdown from an absolute deadline, not a decrementing state.
-  // `setInterval` at 250ms keeps the displayed value accurate when the tab
-  // is backgrounded (Chrome/Firefox throttle timers to ≥1s there, so a
-  // state-based countdown drifts — using the wall clock corrects on resume).
-  // State-mutation for the auto-revert transition happens inside the tick
-  // callback, keeping the effect a pure synchronizer.
-  //
-  // Once we cross the deadline we clear the interval *immediately* and
-  // latch a `fired` flag. Without the latch, a backgrounded tab can let
-  // multiple 250ms ticks queue up between `setAckDeadlineMs(null)` and the
-  // effect-cleanup run, firing the auto-revert toast more than once. The
-  // flag is re-created per effect instance, so a fresh deadline resets it.
-  useEffect(() => {
-    if (ackDeadlineMs === null) return;
-    let fired = false;
-    let id: ReturnType<typeof setInterval> | null = null;
-    const tick = () => {
-      if (fired) return;
-      const now = Date.now();
-      if (now >= ackDeadlineMs) {
-        fired = true;
-        if (id !== null) clearInterval(id);
-        toast.error('no confirmation sent — agent will auto-revert');
-        setAckDeadlineMs(null);
-        setPendingApplyId(null);
-        return;
-      }
-      setNowMs(now);
-    };
-    tick();
-    id = setInterval(tick, 250);
-    return () => {
-      if (id !== null) clearInterval(id);
-    };
-  }, [ackDeadlineMs]);
+  // Wave 6.5(a/f) — countdown derivation + auto-revert toast both live
+  // inside `useAckBanner`'s shared 250ms tick. No per-panel effect needed
+  // here; the hook fires the toast and clears the entry on deadline cross
+  // even when the panel is unmounted.
 
-
-  // [RECONSTRUCTED — Wave A1.2] Close-with-unsaved-changes gate. Ack countdown
-  // disables the close button via the existing disabled prop; this handler
-  // only fires for the clean case.
+  // [RECONSTRUCTED — Wave A1.2] Close-with-unsaved-changes gate. Wave 6.5(f)
+  // dropped the previous "block close while ack countdown active" guard —
+  // the banner now lives in a per-machine module store so closing the
+  // panel during the countdown is safe (re-opening the panel resurfaces
+  // the banner; deadline elapsing fires the toast regardless).
   const handleCloseClick = () => {
     if (mode === 'edit' && isDirty) {
       setCloseUnsavedDialogOpen(true);
@@ -1431,17 +1409,12 @@ export function DisplayLayoutPanel({
                 variant="ghost"
                 size="sm"
                 onClick={handleCloseClick}
-                disabled={ackSecondsLeft !== null}
                 className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0 shrink-0"
               >
                 <X className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
-              {ackSecondsLeft !== null
-                ? 'confirm or wait for auto-revert before closing'
-                : 'close panel'}
-            </TooltipContent>
+            <TooltipContent>close panel</TooltipContent>
           </Tooltip>
         </div>
 
@@ -1457,9 +1430,14 @@ export function DisplayLayoutPanel({
             <Button
               size="sm"
               onClick={handleAckKeep}
+              disabled={ackInFlight}
               className="h-7 bg-amber-500 text-black hover:bg-amber-400"
             >
-              keep
+              {ackInFlight ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                'keep'
+              )}
             </Button>
           </div>
         )}

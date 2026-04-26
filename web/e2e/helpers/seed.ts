@@ -258,6 +258,11 @@ export async function seedMachine(
       lastHeartbeat: heartbeat,
       agent_version: '2.9.0',
       machine_timezone_iana: 'UTC',
+      // Wave 6.4 capability handshake — without this, the dashboard's
+      // recall button stays disabled with an "agent too old" tooltip,
+      // which would break every recall-related e2e spec. The agent
+      // writes this on every heartbeat in production.
+      capabilities: { displayRemoteApply: 1 },
       metrics: {
         schemaVersion: 2,
         timestamp: new Date(),

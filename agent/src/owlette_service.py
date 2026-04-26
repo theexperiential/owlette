@@ -3784,7 +3784,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # whose id doesn't match the in-flight apply.
                 apply_id = cmd_data.get('applyId') or cmd_data.get('apply_id')
                 try:
-                    result = display_manager.ack_apply(apply_id=apply_id)
+                    result = display_manager.ack_apply(
+                        apply_id=apply_id, firebase_client=self.firebase_client,
+                    )
                     if isinstance(result, dict) and result.get('success'):
                         return result.get('message', 'apply acknowledged')
                     err = (

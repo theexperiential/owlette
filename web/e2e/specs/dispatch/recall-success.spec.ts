@@ -14,7 +14,7 @@
  *        b) completeCommand on apply_display_topology with status
  *           'completed'
  *   4. Operator clicks "keep" → ackLayout writes ack_display_topology
- *      → banner dismisses + "layout kept" toast.
+ *      → banner dismisses + "ack sent" toast.
  *   5. Drift map empties out because live === assigned now.
  *
  * The component dismisses the banner client-side on the keep click
@@ -157,7 +157,7 @@ test('admin recalls a drifted layout — agent applies + operator keeps + banner
   // Operator clicks keep — fires ack_display_topology + dismisses banner
   // (banner dismissal is local UI state; the keep click is what closes it).
   await banner.getByRole('button', { name: /^keep$/i }).click();
-  await expect(page.getByText('layout kept', { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('ack sent', { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(banner).toBeHidden();
 
   // Firestore: ack_display_topology written, apply moved pending → completed.

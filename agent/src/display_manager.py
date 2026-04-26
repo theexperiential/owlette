@@ -2887,7 +2887,7 @@ def is_within_apply_suppression_window(
     return (current - _last_apply_finished_at) < window
 
 
-def ack_apply(apply_id: str = None) -> dict:
+def ack_apply(apply_id: str = None, firebase_client=None) -> dict:
     """Acknowledge a pending apply, cancelling its auto-revert watchdog.
 
     If ``apply_id`` is supplied, it must match the in-flight apply's generation
@@ -2897,6 +2897,12 @@ def ack_apply(apply_id: str = None) -> dict:
 
     Returns ``{'success': False}`` if no apply is in flight or the supplied
     ``apply_id`` doesn't match.
+
+    ``firebase_client`` is an optional handle used to emit a Wave 6.5(d)
+    ``display_apply_acked`` audit event on a successful ack so the dashboard
+    event feed has an honest "operator confirmed" record (the toast on the
+    web side can only confirm the Firestore write, not the agent's
+    acknowledgement).
     """
     if not _apply_in_flight:
         return {
@@ -2915,8 +2921,20 @@ def ack_apply(apply_id: str = None) -> dict:
             'code': DisplayErrorCode.STALE_ACK,
         }
     _ack_event.set()
-    logger.info('ack_apply: pending apply %s acknowledged', _current_apply_id or '(unknown)')
-    return {'success': True, 'message': 'apply acknowledged', 'applyId': _current_apply_id}
+    acked_id = _current_apply_id
+    logger.info('ack_apply: pending apply %s acknowledged', acked_id or '(unknown)')
+    _emit_audit(
+        firebase_client,
+        'display_apply_acked',
+        'info',
+        f'apply {acked_id or "(unknown)"} acknowledged by operator',
+        {
+            'eventType': 'display_apply_acked',
+            'severity': 'info',
+            'applyId': acked_id,
+        },
+    )
+    return {'success': True, 'message': 'apply acknowledged', 'applyId': acked_id}
 
 
 def apply_revert_from_sentinel(firebase_client=None) -> dict:

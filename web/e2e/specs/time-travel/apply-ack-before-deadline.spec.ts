@@ -8,7 +8,7 @@
  *   2. Dispatch recall → banner appears with deadline = t+30s.
  *   3. fastForward 15s — banner still up, countdown halfway.
  *   4. Click "keep" → ackLayout writes ack_display_topology + banner
- *      dismisses locally + "layout kept" toast fires.
+ *      dismisses locally + "ack sent" toast fires.
  *   5. fastForward another 20s — confirms the deadline-expiry
  *      setInterval was cleared on keep (no auto-revert toast fires
  *      even though wall-clock equivalent has elapsed past 30s).
@@ -109,7 +109,7 @@ test('operator keeps the layout at t=15s — banner dismisses + no auto-revert f
 
   // Operator clicks "keep" → ackLayout writes + banner dismisses locally.
   await banner.getByRole('button', { name: /^keep$/i }).click();
-  await expect(page.getByText('layout kept', { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('ack sent', { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(banner).toBeHidden();
 
   // Now the load-bearing check: advance PAST the original 30s deadline.
