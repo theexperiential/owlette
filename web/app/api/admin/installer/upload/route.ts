@@ -49,6 +49,8 @@ interface PostBody {
  */
 export const POST = authorizedPlatformHandler({
   capability: 'INSTALLER_MANAGE',
+  targetKind: 'installer',
+  apiKeyScope: { resource: 'installer', permission: 'write' },
 })(async (request: NextRequest, ctx) => {
   try {
     let body: PostBody;
@@ -137,6 +139,8 @@ interface PutBody {
  */
 export const PUT = authorizedPlatformHandler({
   capability: 'INSTALLER_MANAGE',
+  targetKind: 'installer',
+  apiKeyScope: { resource: 'installer', permission: 'write' },
 })(async (request: NextRequest, ctx) => {
   try {
     let body: PutBody;

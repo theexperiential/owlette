@@ -31,6 +31,7 @@ import {
 
 export const GET = authorizedPlatformHandler({
   capability: 'SYSTEM_PRESET_MANAGE',
+  targetKind: 'preset',
   apiKeyScope: { resource: 'user', permission: 'read' },
 })(async () => {
   try {
@@ -70,6 +71,7 @@ interface CreateBody {
 
 export const POST = authorizedPlatformHandler({
   capability: 'SYSTEM_PRESET_MANAGE',
+  targetKind: 'preset',
 })(async (request: NextRequest, ctx) => {
   try {
     const parsed = await parseJsonBody(request);

@@ -52,6 +52,7 @@ function validatePresetId(presetId: string | undefined): NextResponse | null {
 
 export const GET = authorizedPlatformHandler<RouteParams>({
   capability: 'SYSTEM_PRESET_MANAGE',
+  targetKind: 'preset',
   apiKeyScope: { resource: 'user', permission: 'read' },
 })(async (_request, _ctx, routeContext) => {
   try {
@@ -93,6 +94,7 @@ interface PatchBody {
 
 export const PATCH = authorizedPlatformHandler<RouteParams>({
   capability: 'SYSTEM_PRESET_MANAGE',
+  targetKind: 'preset',
 })(async (request: NextRequest, ctx, routeContext) => {
   try {
     const params = await routeContext!.params;
@@ -154,6 +156,7 @@ export const PATCH = authorizedPlatformHandler<RouteParams>({
 
 export const DELETE = authorizedPlatformHandler<RouteParams>({
   capability: 'SYSTEM_PRESET_MANAGE',
+  targetKind: 'preset',
 })(async (_request, ctx, routeContext) => {
   try {
     const params = await routeContext!.params;

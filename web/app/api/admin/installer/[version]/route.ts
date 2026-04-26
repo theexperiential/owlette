@@ -37,6 +37,8 @@ type RouteParams = {
 
 export const DELETE = authorizedPlatformHandler<RouteParams>({
   capability: 'INSTALLER_MANAGE',
+  targetKind: 'installer',
+  apiKeyScope: { resource: 'installer', permission: 'admin' },
 })(async (_request: NextRequest, ctx, routeContext) => {
   try {
     const params = await routeContext!.params;

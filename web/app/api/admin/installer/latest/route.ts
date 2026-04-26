@@ -31,6 +31,7 @@ import { InstallerValidationError } from '@/lib/actions/uploadInstaller.server';
  */
 export const GET = authorizedPlatformHandler({
   capability: 'INSTALLER_MANAGE',
+  targetKind: 'installer',
   apiKeyScope: { resource: 'installer', permission: 'read' },
 })(async () => {
   try {
@@ -73,6 +74,8 @@ interface PutBody {
  */
 export const PUT = authorizedPlatformHandler({
   capability: 'INSTALLER_MANAGE',
+  targetKind: 'installer',
+  apiKeyScope: { resource: 'installer', permission: 'admin' },
 })(async (request: NextRequest, ctx) => {
   try {
     const parsed = await parseJsonBody(request);
