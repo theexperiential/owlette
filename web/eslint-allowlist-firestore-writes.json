@@ -1,0 +1,8 @@
+{
+  "$schema-comment": "Allowlist for `no-direct-firestore-writes` (eslint rule B). Paths are relative to the `web/` directory and use forward slashes regardless of platform. Any file outside this list that imports a firestore client write call (`setDoc`, `updateDoc`, `deleteDoc`, `addDoc`, `writeBatch`, `runTransaction`) is flagged. Source: dev/active/security-boundary-migration/reference/write-inventory.md (preference allowlist).",
+  "files": [
+    "contexts/AuthContext.tsx",
+    "hooks/useCortex.ts",
+    "hooks/useDevicePrefs.ts"
+  ]
+}

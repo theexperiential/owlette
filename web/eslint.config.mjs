@@ -2,6 +2,10 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
+const systemInvokerImportMessage =
+  "systemInvoker.server may only be imported from web/lib/cortex/**, web/lib/jobs/**, or web/__tests__/**. " +
+  "Use authorizedHandler for user-facing routes. Keep this rule in sync with scripts/check-system-invoker-callers.mjs.";
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -36,12 +40,56 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // security-boundary-migration wave 2.3 — editor-time import boundary
+  // for system actors. The CI-time gate is
+  // `scripts/check-system-invoker-callers.mjs`; update both together.
+  {
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@/lib/systemInvoker.server",
+              message: systemInvokerImportMessage,
+            },
+            {
+              name: "@/lib/systemInvoker.server.ts",
+              message: systemInvokerImportMessage,
+            },
+          ],
+          patterns: [
+            {
+              group: [
+                "**/lib/systemInvoker.server",
+                "**/lib/systemInvoker.server.ts",
+              ],
+              message: systemInvokerImportMessage,
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: [
+      "lib/cortex/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+      "lib/jobs/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+      "__tests__/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+      "lib/systemInvoker.server.ts",
+    ],
+    rules: {
+      "no-restricted-imports": "off",
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
     "out/**",
     "build/**",
+    "coverage/**",
+    "e2e/.output/**",
     "next-env.d.ts",
   ]),
 ]);
