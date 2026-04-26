@@ -357,6 +357,22 @@
 .animate-collapsible-down { animation: collapsible-down 200ms ease-out; }
 .animate-collapsible-up   { animation: collapsible-up   180ms ease-in; }
 
+@keyframes display-test-result-flash {
+  0% {
+    border-color: rgb(245 158 11 / 0.8);
+    background-color: rgb(245 158 11 / 0.18);
+    box-shadow: inset 0 0 0 1px rgb(245 158 11 / 0.45);
+  }
+  100% {
+    border-color: var(--border);
+    background-color: color-mix(in oklab, var(--muted) 40%, transparent);
+    box-shadow: inset 0 0 0 0 rgb(245 158 11 / 0);
+  }
+}
+.animate-display-test-result-flash {
+  animation: display-test-result-flash 1100ms ease-out 1;
+}
+
 /* Cortex markdown styling */
 .cortex-markdown {
   line-height: 1.75;
