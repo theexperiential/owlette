@@ -21,7 +21,14 @@ const env = (key, fallback) =>
 export const BASE_URL = env('K6_BASE_URL', 'http://localhost:3000');
 export const SITE_ID = env('K6_SITE_ID', 'roost-load-site');
 export const ROOST_ID = env('K6_ROOST_ID', 'roost-load-folder');
+export const MACHINE_ID = env('K6_MACHINE_ID', 'roost-load-machine');
 export const ID_TOKEN = env('K6_FIREBASE_ID_TOKEN', '');
+/**
+ * Optional `owk_*` api key. When set, takes precedence over ID_TOKEN — the
+ * api-sprint endpoints (/api/sites/{s}/deployments etc.) accept either, but
+ * SDK-style clients always carry an api key, so load tests should mirror that.
+ */
+export const API_KEY = env('K6_API_KEY', '');
 
 /**
  * Per-endpoint SLO targets (p99 latency, ms). Numbers chosen so each
@@ -42,6 +49,13 @@ export const SLO_P99_MS = {
   'chunks_download_urls': 400,
   'roosts_manifests_finalize': 800,
   'roosts_rollback': 400,
+  // api-sprint additions (wave 5.4):
+  'sites_deployments_list': 250, // small Firestore range read
+  'process_list': 250, // single doc read + status merge
+  'chat_list': 300, // Firestore-heavy: composite query w/ siteId filter
+  'users_list': 300, // platform-wide users collection scan
+  'machine_command_dispatch': 400, // mutation: write + audit emit
+  'process_create': 400, // mutation: process-config-lock txn + audit
 };
 
 /**
@@ -72,8 +86,28 @@ export function headers() {
     'Content-Type': 'application/json',
     Accept: 'application/problem+json, application/json',
   };
-  if (ID_TOKEN) h.Authorization = `Bearer ${ID_TOKEN}`;
+  // API_KEY wins when both are set — mirrors how SDK clients are typically
+  // configured. This preserves the existing roost script behaviour for
+  // ID_TOKEN-only environments.
+  if (API_KEY) h.Authorization = `Bearer ${API_KEY}`;
+  else if (ID_TOKEN) h.Authorization = `Bearer ${ID_TOKEN}`;
   return h;
+}
+
+/**
+ * Headers + a per-VU per-iteration unique `Idempotency-Key`. Use on POST / PUT
+ * load scripts so the idempotency cache doesn't make every VU share one
+ * cached response. Each call returns a fresh map — never mutate the result.
+ *
+ * The header value embeds `__VU` and `__ITER` so a replayed iteration on the
+ * same VU still produces a deterministic key (k6 retries are rare but the
+ * shape is replay-safe by construction).
+ */
+export function mutationHeaders(vu, iter) {
+  return {
+    ...headers(),
+    'Idempotency-Key': `k6-${BASE_URL.replace(/[^a-z0-9]/gi, '')}-${vu}-${iter}-${Date.now()}`,
+  };
 }
 
 /**
