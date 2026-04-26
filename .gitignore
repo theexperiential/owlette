@@ -71,6 +71,7 @@ agent/config/config.json
 agent/config/app_states.json
 
 # Firebase
+.firebase-config/
 firebase-credentials.json
 config/firebase-credentials.json
 config/firebase_cache.json
