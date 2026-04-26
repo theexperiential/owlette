@@ -65,6 +65,7 @@ const config = {
     '/.next/',
     '__tests__/api/helpers/',
     '/e2e/', // Playwright specs — use `npm run e2e`, not jest.
+    '/__tests__/rules/', // Firestore rules tests — use `npm run test:rules` (boots emulator).
   ],
 
   // Transform ignore patterns

@@ -10,6 +10,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:rules": "cd .. && firebase emulators:exec --only firestore --project demo-rules-harness \"cd web && jest --config jest.rules.config.js --runInBand\"",
+    "scan:firestore-writes": "node ../scripts/scan-firestore-writes.mjs",
     "validate:api": "npx tsx scripts/validate-openapi.ts",
     "e2e:build": "cross-env NEXT_PUBLIC_USE_FIREBASE_EMULATOR=true NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-playwright-e2e NEXT_PUBLIC_FIREBASE_API_KEY=demo-api-key NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-playwright-e2e.firebaseapp.com NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=demo-playwright-e2e.firebasestorage.app NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=000000000000 NEXT_PUBLIC_FIREBASE_APP_ID=demo-app-id next build",
     "e2e": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test\"",
