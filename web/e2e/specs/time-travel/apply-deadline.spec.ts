@@ -9,10 +9,10 @@
  *     will auto-revert".
  *
  * This spec drives that deadline via page.clock:
- *   1. Pre-seed assigned layout so recall is enabled.
+ *   1. Pre-seed assigned layout so restore is enabled.
  *   2. Install clock BEFORE goto (E1.2 lesson) so setInterval is
  *      captured by the fake clock from mount.
- *   3. Dispatch recall → banner appears.
+ *   3. Dispatch restore → banner appears.
  *   4. fastForward 31s → banner clears + auto-revert toast fires.
  */
 
@@ -52,6 +52,7 @@ async function seedAssignedLayout() {
   await db.collection('config').doc(SITE_ID).collection('machines').doc(MACHINE_ID).set(
     {
       displays: {
+        remoteApplyEnabled: true,
         assigned: {
           monitors: [monitor(0, { x: 0, y: 0 }), monitor(1, { x: 1920, y: 0 })],
           capturedAt: Timestamp.now(),
@@ -89,14 +90,14 @@ test('apply deadline expires without ack — banner clears + auto-revert toast f
   const panel = page.getByTestId('display-layout-panel');
   await expect(panel).toBeVisible();
 
-  // Dispatch recall — apply_display_topology lands, 30s banner appears.
+  // Dispatch restore — apply_display_topology lands, 30s banner appears.
   await panel.getByTestId('display-recall-button').click();
-  const confirmDialog = page.getByRole('dialog', { name: new RegExp(`recall this layout to ${MACHINE_ID}\\?`, 'i') });
+  const confirmDialog = page.getByRole('dialog', { name: new RegExp(`restore this layout to ${MACHINE_ID}\\?`, 'i') });
   await expect(confirmDialog).toBeVisible();
-  await confirmDialog.getByRole('button', { name: /^recall$/i }).click();
+  await confirmDialog.getByRole('button', { name: /^restore$/i }).click();
 
   // DisplayLayoutPanel has two role="status" elements: the ack banner
-  // and the loading spinner (aria-label="loading displays"). A recall
+  // and the loading spinner (aria-label="loading displays"). A restore
   // dispatch can re-flip `loading` on the display hook mid-tick, so
   // `getByRole('status')` alone hits a strict-mode violation. Scope to
   // the banner via its distinctive text.

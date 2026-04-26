@@ -20,7 +20,7 @@
  */
 
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
   AssignedLayout,
@@ -86,7 +86,22 @@ jest.mock('@/components/charts/DisplayEditorDialog', () => ({
 }));
 jest.mock('@/components/ConfirmDialog', () => ({
   __esModule: true,
-  default: () => null,
+  default: ({
+    open,
+    title,
+    confirmText,
+    onConfirm,
+  }: {
+    open: boolean;
+    title: string;
+    confirmText: string;
+    onConfirm: () => void | Promise<void>;
+  }) =>
+    open ? (
+      <div role="dialog" aria-label={title}>
+        <button onClick={onConfirm}>{confirmText}</button>
+      </div>
+    ) : null,
 }));
 
 import { DisplayLayoutPanel } from '@/components/charts/DisplayLayoutPanel';
@@ -166,6 +181,7 @@ interface SetupOptions {
   hasAssignedLayout?: boolean;
   hasLiveProfile?: boolean;
   mosaicActive?: boolean;
+  remoteApplyEnabled?: boolean;
   autoRestore?: Partial<DisplayAutoRestoreState>;
 }
 
@@ -178,6 +194,7 @@ interface SetupResult {
   clearLayout: jest.Mock;
   enumerateDisplayModes: jest.Mock;
   testDisplayApply: jest.Mock;
+  setRemoteApplyEnabled: jest.Mock;
 }
 
 /**
@@ -191,6 +208,7 @@ function setup(options: SetupOptions = {}): SetupResult {
     hasAssignedLayout = true,
     hasLiveProfile = true,
     mosaicActive = false,
+    remoteApplyEnabled = true,
     autoRestore = {},
   } = options;
 
@@ -206,7 +224,7 @@ function setup(options: SetupOptions = {}): SetupResult {
     profile: hasLiveProfile ? makeProfile({ mosaicActive }) : null,
     assigned: hasAssignedLayout ? makeAssigned() : null,
     autoRestore: makeAutoRestore(autoRestore),
-    remoteApplyEnabled: false,
+    remoteApplyEnabled,
     loading: false,
     error: null,
   });
@@ -242,6 +260,7 @@ function setup(options: SetupOptions = {}): SetupResult {
   const clearLayout = jest.fn().mockResolvedValue(undefined);
   const enumerateDisplayModes = jest.fn().mockResolvedValue('enum');
   const testDisplayApply = jest.fn().mockResolvedValue('test-cmd');
+  const setRemoteApplyEnabled = jest.fn().mockResolvedValue(undefined);
 
   mockedUseDisplayActions.mockReturnValue({
     captureLayout,
@@ -250,6 +269,7 @@ function setup(options: SetupOptions = {}): SetupResult {
     ackLayout,
     testDisplayApply,
     enumerateDisplayModes,
+    setRemoteApplyEnabled,
     setAutoRestore,
     resetAutoRestoreBreaker,
     applying: false,
@@ -264,6 +284,7 @@ function setup(options: SetupOptions = {}): SetupResult {
     clearLayout,
     enumerateDisplayModes,
     testDisplayApply,
+    setRemoteApplyEnabled,
   };
 }
 
@@ -346,6 +367,31 @@ describe('DisplayLayoutPanel — auto-restore UI', () => {
     setup({ canSiteAdmin: true, hasAssignedLayout: true, mosaicActive: true });
     renderPanel();
     expect(screen.getByTestId('display-auto-restore-toggle')).toBeDisabled();
+  });
+
+  it('toggle is disabled when remote display apply is off', () => {
+    setup({ canSiteAdmin: true, hasAssignedLayout: true, remoteApplyEnabled: false });
+    renderPanel();
+    expect(screen.getByTestId('display-auto-restore-toggle')).toBeDisabled();
+  });
+
+  it('renders an enable action when remote display apply is off', async () => {
+    const user = userEvent.setup();
+    const { setRemoteApplyEnabled } = setup({
+      canSiteAdmin: true,
+      hasAssignedLayout: true,
+      remoteApplyEnabled: false,
+    });
+    renderPanel();
+
+    await user.click(screen.getByTestId('display-enable-remote-apply-button'));
+    const dialog = screen.getByRole('dialog', {
+      name: /enable restore/i,
+    });
+    expect(dialog).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /^enable restore$/i }));
+
+    expect(setRemoteApplyEnabled).toHaveBeenCalledWith(true);
   });
 
   it('renders the admin breaker banner with a reset button when tripped + canSiteAdmin', () => {

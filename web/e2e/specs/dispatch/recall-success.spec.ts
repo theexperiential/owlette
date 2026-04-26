@@ -1,11 +1,11 @@
 /**
- * Dispatch — recall success path (D3.4)
+ * Dispatch — restore success path (D3.4)
  *
  * Builds on D3.3 (dispatch-only) by exercising the FULL happy path:
  *   1. Pre-seed an assigned layout that differs from the seeded live
- *      hardware/display profile — drift map is non-empty, recall
+ *      hardware/display profile — drift map is non-empty, restore
  *      button has an amber "drift detected" affordance.
- *   2. Click recall → confirm → apply_display_topology dispatched +
+ *   2. Click restore → confirm → apply_display_topology dispatched +
  *      30s ack banner appears (covered by D3.3, repeated minimally
  *      here as setup).
  *   3. Stub the agent finishing the apply:
@@ -70,6 +70,7 @@ async function seedAssignedLayout(monitors = ASSIGNED_MONITORS) {
   await db.collection('config').doc(SITE_ID).collection('machines').doc(MACHINE_ID).set(
     {
       displays: {
+        remoteApplyEnabled: true,
         assigned: {
           monitors,
           capturedAt: Timestamp.now(),
@@ -124,7 +125,7 @@ test.beforeEach(async () => {
   ]);
 });
 
-test('admin recalls a drifted layout — agent applies + operator keeps + banner dismisses + drift clears', async ({ page }) => {
+test('admin restores a drifted layout — agent applies + operator keeps + banner dismisses + drift clears', async ({ page }) => {
   await page.goto('/dashboard');
   await page.getByTestId('view-toggle-list').click();
   const row = page.getByTestId('machine-row').filter({ hasText: MACHINE_ID });
@@ -133,11 +134,11 @@ test('admin recalls a drifted layout — agent applies + operator keeps + banner
   const panel = page.getByTestId('display-layout-panel');
   await expect(panel).toBeVisible();
 
-  // Dispatch recall — same as D3.3.
+  // Dispatch restore — same as D3.3.
   await panel.getByTestId('display-recall-button').click();
-  const confirmDialog = page.getByRole('dialog', { name: new RegExp(`recall this layout to ${MACHINE_ID}\\?`, 'i') });
+  const confirmDialog = page.getByRole('dialog', { name: new RegExp(`restore this layout to ${MACHINE_ID}\\?`, 'i') });
   await expect(confirmDialog).toBeVisible();
-  await confirmDialog.getByRole('button', { name: /^recall$/i }).click();
+  await confirmDialog.getByRole('button', { name: /^restore$/i }).click();
 
   // Banner appears.
   const banner = panel.getByRole('status');

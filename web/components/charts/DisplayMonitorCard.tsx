@@ -97,28 +97,28 @@ function DisplayMonitorCardImpl({
         </div>
       )}
 
-      <div className={cn('text-xs', resolutionDrifted && 'text-accent-coral')}>
+      <div className={cn('text-xs', resolutionDrifted && 'text-amber-400')}>
         {monitor.resolution.width}x{monitor.resolution.height} @{monitor.refreshHz}hz
       </div>
 
-      <div className={cn('text-xs', scaleDrifted && 'text-accent-coral')}>
+      <div className={cn('text-xs', scaleDrifted && 'text-amber-400')}>
         scale {monitor.scalePct}%
         {monitor.rotation !== 0 && ` /${monitor.rotation}`}
       </div>
 
       <div className="text-xs text-muted-foreground">
         pos{' '}
-        <span className={xDrifted ? 'text-accent-coral' : undefined}>
+        <span className={xDrifted ? 'text-amber-400' : undefined}>
           {monitor.position.x}
         </span>
         ,{' '}
-        <span className={yDrifted ? 'text-accent-coral' : undefined}>
+        <span className={yDrifted ? 'text-amber-400' : undefined}>
           {monitor.position.y}
         </span>
         {monitor.primary && (
           <>
             {' \u00b7 '}
-            <span className={primaryDrifted ? 'text-accent-coral' : undefined}>
+            <span className={primaryDrifted ? 'text-amber-400' : undefined}>
               primary
             </span>
           </>

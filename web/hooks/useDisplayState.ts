@@ -121,7 +121,7 @@ interface UseDisplayStateResult {
    * Wave 6.1 master kill switch on the agent (config field
    * `displays.remoteApplyEnabled`). `true` enables the remote apply path;
    * any other value (including missing) treats it as off. The dashboard
-   * uses this to decide whether to surface the "test apply capability"
+   * uses this to decide whether to surface the "test" apply self-check
    * button (visible only when the switch is off so operators can verify
    * the helper IPC before flipping it on).
    */

@@ -15,11 +15,11 @@
  *    When an assigned layout exists, the live tab overlays the assigned
  *    monitors as dashed "ghost" rectangles so drift is visually obvious.
  *
- * Action buttons (store / recall) are wired via useDisplayActions. Recall
+ * Action buttons (store / restore) are wired via useDisplayActions. Restore
  * is the single primary action — when drift is detected, its border turns
  * amber so the same button reads as "undo drift" in that context.
  *
- * Permission gating: store / recall are write operations and are hidden
+ * Permission gating: store / restore are write operations and are hidden
  * entirely for non-admins (read-only view).
  */
 
@@ -166,7 +166,7 @@ function eventDetailsSnippet(
 }
 
 /** Severity badge classes — matches the amber-500 / destructive tokens used
- *  elsewhere in this file (recall banner, drift overlay). */
+ *  elsewhere in this file (restore banner, drift overlay). */
 function eventLevelBadgeClass(level: string): string {
   if (level === 'critical') {
     return 'bg-destructive/20 text-destructive border-destructive/30';
@@ -237,6 +237,7 @@ export function DisplayLayoutPanel({
   );
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false);
   const [applyDialogOpen, setApplyDialogOpen] = useState(false);
+  const [enableRemoteApplyDialogOpen, setEnableRemoteApplyDialogOpen] = useState(false);
   const [closeUnsavedDialogOpen, setCloseUnsavedDialogOpen] = useState(false);
   // [A2.6] Id of the monitor currently being edited via DisplayEditorDialog.
   // Double-click a rect in the canvas or a row in the table (in edit mode on
@@ -337,7 +338,7 @@ export function DisplayLayoutPanel({
   // Wave 6.4 capability handshake. Subscribes to the machine doc's
   // `capabilities.displayRemoteApply` field (written by the agent's
   // `_upload_metrics` heartbeat). When absent or below version 1 the
-  // recall button disables itself with an "agent too old" tooltip so a
+  // restore button disables itself with an "agent too old" tooltip so a
   // pre-Wave-3 agent can't be sent a command it can't dispatch. `null`
   // means "first snapshot hasn't landed" — distinct from `0` ("agent
   // sent it explicitly as not supported"). Both are treated as
@@ -547,15 +548,14 @@ export function DisplayLayoutPanel({
 
   // Button disabled-state logic:
   //  - store: needs live data to store (otherwise there's nothing to save)
-  //  - recall: needs an assigned layout to push AND the agent must advertise
-  //    the displayRemoteApply capability (Wave 6.4) — pre-Wave-3 agents
-  //    can't dispatch the apply command, so disable the button with a
-  //    targeted tooltip rather than letting the operator fire-and-forget
-  //    a command that would never complete.
+  //  - restore: needs an assigned layout to push, a capable agent, and the
+  //    per-machine `displays.remoteApplyEnabled` write-path switch. The
+  //    capability says the agent can handle the command; the config switch
+  //    says this machine is allowed to mutate Windows display state.
   // `actions.applying` blocks repeat-clicks during in-flight writes.
   const captureDisabled = !hasLiveProfile || actions.applying;
   const applyDisabled =
-    !hasAssignedLayout || actions.applying || !agentSupportsApply;
+    !hasAssignedLayout || actions.applying || !agentSupportsApply || !remoteApplyEnabled;
   const editDisabled = !hasAssignedLayout || !!profile?.mosaicActive;
 
   // Stable click handler so memoized children (DisplayCanvas, DisplayMonitorCard)
@@ -630,12 +630,12 @@ export function DisplayLayoutPanel({
     const msg = formatError(e);
     if (msg.includes('unsupported_mode')) {
       return (
-        "recall failed: one or more monitors can't do the requested " +
+        "restore failed: one or more monitors can't do the requested " +
         'resolution or refresh rate — pick a supported mode from the ' +
         'dropdowns and try again'
       );
     }
-    return `recall failed: ${msg}`;
+    return `restore failed: ${msg}`;
   };
 
   // Capture writes the current live arrangement as the assigned layout. We
@@ -663,10 +663,10 @@ export function DisplayLayoutPanel({
       const { applyId } = await actions.applyLayout(assignedMonitors);
       // Wave 6.5(c) — honest copy: the Firestore write succeeded but the
       // agent hasn't even seen the command yet, let alone applied it.
-      toast.success('recall dispatched — monitors will change shortly');
+      toast.success('restore dispatched — monitors will change shortly');
       startAckCountdown(siteId, machineId, applyId, Date.now() + 30_000);
     } catch (e) {
-      console.error('Failed to recall display layout', e);
+      console.error('Failed to restore display layout', e);
       toast.error(applyErrorToast(e));
       setApplyDialogOpen(true);
     }
@@ -702,7 +702,7 @@ export function DisplayLayoutPanel({
     }
   };
 
-  // Wave 6.3 — apply self-test ("test apply capability" button). Dispatches a
+  // Wave 6.3 — apply self-test ("test" button). Dispatches a
   // `test_display_apply` command and subscribes to its completed-doc entry so
   // the result text lands inline next to the button. The button is hidden when
   // remote apply is already enabled (the operator no longer needs to verify
@@ -846,6 +846,16 @@ export function DisplayLayoutPanel({
     }
   };
 
+  const handleEnableRemoteApply = async () => {
+    try {
+      await actions.setRemoteApplyEnabled(true);
+      toast.success('restore enabled');
+    } catch (e) {
+      console.error('Failed to enable display restore', e);
+      toast.error(`enable failed: ${formatError(e)}`);
+    }
+  };
+
   const handleResetBreaker = async () => {
     try {
       await actions.resetAutoRestoreBreaker();
@@ -857,12 +867,16 @@ export function DisplayLayoutPanel({
   };
 
   const autoRestoreDisabled =
-    !hasAssignedLayout || !!profile?.mosaicActive || actions.applying;
+    !hasAssignedLayout || !!profile?.mosaicActive || !remoteApplyEnabled || actions.applying;
   const autoRestoreDisabledReason = !hasAssignedLayout
-    ? 'store a layout first'
+    ? 'store a layout before enabling automatic restore'
     : profile?.mosaicActive
       ? "auto-restore can't run while nvidia mosaic is active"
-      : 'auto-restore';
+      : !remoteApplyEnabled
+        ? 'enable restore before enabling automatic restore'
+        : autoRestore.enabled
+          ? 'automatically reapplies the stored layout when this machine reports display drift'
+          : 'turn on automatic restore so the agent reapplies the stored layout when display drift is detected';
   const breakerTripped = autoRestore.circuitBreaker.tripped;
   const breakerLastError =
     autoRestore.circuitBreaker.lastError || '(no error message)';
@@ -901,8 +915,7 @@ export function DisplayLayoutPanel({
       return (
         <div className="h-[280px] flex items-center justify-center px-6 text-center">
           <p className="text-sm text-muted-foreground max-w-md">
-            no display events yet. events appear here as the agent reports
-            display changes.
+            no display events yet. display changes will appear here.
           </p>
         </div>
       );
@@ -1148,22 +1161,26 @@ export function DisplayLayoutPanel({
     return (
       <Button
         key={tab}
-        variant={isActive ? 'default' : 'outline'}
+        variant="ghost"
         size="sm"
         onClick={() => setActiveTab(tab)}
+        title={badge ? `${badge} display change${badge === '1' ? '' : 's'} from stored layout` : undefined}
+        aria-label={badge ? `${label}, ${badge} display change${badge === '1' ? '' : 's'} from stored layout` : label}
         style={isActive ? { boxShadow: `inset 0 0 0 1px ${ringColor}` } : undefined}
         className={cn(
-          'h-8 px-3 text-xs transition-colors',
+          'relative bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs transition-colors',
           isActive
-            ? 'bg-accent text-foreground border-transparent hover:bg-accent'
-            : 'bg-card text-muted-foreground border-border hover:bg-accent/40 hover:text-foreground',
+            ? 'border-transparent text-white hover:bg-card'
+            : 'hover:bg-card',
         )}
       >
         <span>{label}</span>
         {badge && (
-          <span className="ml-1.5 flex items-center gap-1 text-[10px] text-accent-coral">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent-coral" />
-            {badge}
+          <span
+            className="absolute -top-0.5 -right-0.5 inline-flex"
+            aria-hidden="true"
+          >
+            <span className="inline-block w-2 h-2 rounded-full bg-amber-500" />
           </span>
         )}
       </Button>
@@ -1190,7 +1207,7 @@ export function DisplayLayoutPanel({
             {renderTab(
               'assigned',
               'stored',
-              hasDriftVisible ? `(${effectiveDriftCount})` : undefined,
+              hasDriftVisible ? String(effectiveDriftCount) : undefined,
             )}
             {renderTab('events', 'events')}
             {mode === 'edit' && (
@@ -1225,14 +1242,45 @@ export function DisplayLayoutPanel({
 
           <div className="flex-1" />
 
-          {/* Admin action bar. Four verbs: store / recall / edit / discard.
-                - live tab (view): store, recall
-                - stored tab (view): recall, edit
+          {/* Admin action bar. Four verbs: store / restore / edit / discard.
+                - live tab (view): store, restore
+                - stored tab (view): restore, edit
                 - edit mode: store, discard
-              Recall is visible on both view tabs so drift can be fixed from
-              wherever the operator noticed it. */}
+              Restore is visible on both view tabs so drift can be fixed from
+              wherever the operator noticed it. When auto-restore is enabled,
+              its status chip occupies the same slot as the manual restore
+              action. */}
           {canSiteAdmin && mode === 'view' && activeTab !== 'events' && (
             <div className="flex items-center gap-1.5">
+              {/* Restore setup flow: test -> store -> restore. Test is a
+                  pre-enable safety check; once restore is enabled, real
+                  restore/auto-restore runs are the meaningful verification. */}
+              {!remoteApplyEnabled && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span tabIndex={testApplyInFlight ? 0 : -1}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={testApplyInFlight}
+                        onClick={handleTestApply}
+                        data-testid="display-test-apply-button"
+                        className="bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs"
+                      >
+                        {testApplyInFlight ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          'test'
+                        )}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    run a read-only apply self-test (no display changes) to
+                    verify the helper works on this machine before enabling restore
+                  </TooltipContent>
+                </Tooltip>
+              )}
               {activeTab === 'live' && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1258,47 +1306,6 @@ export function DisplayLayoutPanel({
                   </TooltipContent>
                 </Tooltip>
               )}
-              {autoRestore.enabled && (
-                <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <span className="bg-green-500 rounded-full h-1.5 w-1.5" />
-                  auto
-                </span>
-              )}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span tabIndex={applyDisabled ? 0 : -1}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={applyDisabled}
-                      onClick={() => setApplyDialogOpen(true)}
-                      data-testid="display-recall-button"
-                      style={
-                        hasDriftVisible
-                          ? { boxShadow: 'inset 0 0 0 1px var(--chart-4)' }
-                          : undefined
-                      }
-                      className={cn(
-                        'bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs',
-                        hasDriftVisible && 'border-transparent',
-                      )}
-                    >
-                      {actions.applying ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        'recall'
-                      )}
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {!agentSupportsApply
-                    ? 'agent too old'
-                    : hasDriftVisible
-                      ? 'drift detected — recall the stored layout to fix it'
-                      : 'recall the stored layout — push it to this machine'}
-                </TooltipContent>
-              </Tooltip>
               {activeTab === 'assigned' && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1324,33 +1331,82 @@ export function DisplayLayoutPanel({
                   </TooltipContent>
                 </Tooltip>
               )}
-              {/* Wave 6.3 — visible only when remote apply is OFF so operators
-                  can verify the helper IPC works on this machine before
-                  flipping the kill switch on. Hides itself once
-                  `displays.remoteApplyEnabled` is true. */}
-              {!remoteApplyEnabled && (
+              {autoRestore.enabled ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <span tabIndex={testApplyInFlight ? 0 : -1}>
+                    <span
+                      data-testid="display-auto-restore-status"
+                      className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-card px-3 text-xs text-muted-foreground"
+                    >
+                      <span className="bg-green-500 rounded-full h-1.5 w-1.5" />
+                      auto
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    auto-restore is enabled; the agent restores the stored
+                    layout after it detects display drift
+                  </TooltipContent>
+                </Tooltip>
+              ) : !remoteApplyEnabled ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span tabIndex={actions.applying ? 0 : -1}>
                       <Button
                         variant="ghost"
                         size="sm"
-                        disabled={testApplyInFlight}
-                        onClick={handleTestApply}
-                        data-testid="display-test-apply-button"
+                        disabled={actions.applying}
+                        onClick={() => setEnableRemoteApplyDialogOpen(true)}
+                        data-testid="display-enable-remote-apply-button"
                         className="bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs"
                       >
-                        {testApplyInFlight ? (
+                        {actions.applying ? (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         ) : (
-                          'test apply capability'
+                          'enable restore'
                         )}
                       </Button>
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>
-                    run a read-only apply self-test (no display changes) to
-                    verify the helper works on this machine
+                    allow admins to restore the stored display layout on this machine
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span tabIndex={applyDisabled ? 0 : -1}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={applyDisabled}
+                        onClick={() => setApplyDialogOpen(true)}
+                        data-testid="display-recall-button"
+                        style={
+                          hasDriftVisible
+                            ? { boxShadow: 'inset 0 0 0 1px var(--chart-4)' }
+                            : undefined
+                        }
+                        className={cn(
+                          'bg-card border border-border text-muted-foreground hover:text-white h-8 px-3 text-xs',
+                          hasDriftVisible && 'border-transparent',
+                        )}
+                      >
+                        {actions.applying ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          'restore'
+                        )}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {!agentSupportsApply
+                      ? 'agent too old'
+                      : !remoteApplyEnabled
+                        ? 'restore is disabled'
+                        : hasDriftVisible
+                        ? 'drift detected — restore the stored layout to fix it'
+                        : 'restore the stored layout — push it to this machine'}
                   </TooltipContent>
                 </Tooltip>
               )}
@@ -1492,27 +1548,39 @@ export function DisplayLayoutPanel({
           </div>
         )}
 
-        {testApplyResult !== null && (
-          <div
-            className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs"
-            role="status"
-            aria-live="polite"
-            data-testid="display-test-apply-result"
-          >
-            <span className="text-muted-foreground truncate">
-              {testApplyResult}
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setTestApplyResult(null)}
-              className="h-6 w-6 p-0 shrink-0 text-muted-foreground hover:text-white"
-              aria-label="dismiss"
-            >
-              <X className="h-3 w-3" />
-            </Button>
+        <div
+          className={cn(
+            'grid transition-[grid-template-rows,opacity,margin] duration-300 ease-out',
+            testApplyResult !== null
+              ? 'mt-3 grid-rows-[1fr] opacity-100'
+              : 'mt-0 grid-rows-[0fr] opacity-0',
+          )}
+        >
+          <div className="overflow-hidden">
+            {testApplyResult !== null && (
+              <div
+                key={testApplyResult}
+                className="flex items-center justify-between gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
+                role="status"
+                aria-live="polite"
+                data-testid="display-test-apply-result"
+              >
+                <span className="text-amber-200 truncate">
+                  {testApplyResult}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setTestApplyResult(null)}
+                  className="h-7 w-7 p-0 shrink-0 text-amber-200 hover:bg-amber-500/10 hover:text-amber-100"
+                  aria-label="dismiss"
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            )}
           </div>
-        )}
+        </div>
 
         <div className="mt-3">{renderBody()}</div>
       </CardContent>
@@ -1529,17 +1597,27 @@ export function DisplayLayoutPanel({
         onConfirm={handleCaptureConfirm}
       />
 
-      {/* Recall confirmation — kicks the agent to reconfigure the OS. Title
+      {/* Restore confirmation — kicks the agent to reconfigure the OS. Title
           includes machineName so bulk-operators don't fire against the wrong
           machine by accident. */}
       <ConfirmDialog
         open={applyDialogOpen}
         onOpenChange={setApplyDialogOpen}
-        title={`recall this layout to ${machineName || machineId}?`}
+        title={`restore this layout to ${machineName || machineId}?`}
         description="monitors will rearrange in a few seconds. owlette will auto-revert if no confirmation arrives within 30 seconds."
         cancelText="cancel"
-        confirmText="recall"
+        confirmText="restore"
         onConfirm={handleApplyConfirm}
+      />
+
+      <ConfirmDialog
+        open={enableRemoteApplyDialogOpen}
+        onOpenChange={setEnableRemoteApplyDialogOpen}
+        title={`enable restore on ${machineName || machineId}?`}
+        description="this allows owlette admins to remotely restore the stored display layout on this machine. use it only after the display apply test succeeds and you are ready for restore or auto-restore to move monitors."
+        cancelText="cancel"
+        confirmText="enable restore"
+        onConfirm={handleEnableRemoteApply}
       />
 
       <ConfirmDialog

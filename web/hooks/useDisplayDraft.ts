@@ -210,7 +210,7 @@ export function useDisplayDraft(args: UseDisplayDraftArgs): UseDisplayDraftResul
         // Windows pins the primary monitor at (0, 0). Dropping position
         // updates on the primary keeps the draft canonical — moving the
         // primary rect would produce a preview the OS would translate away
-        // on recall. The primary-drag canvas gesture goes through
+        // on restore. The primary-drag canvas gesture goes through
         // `shiftSecondariesBy` instead so the operator still has a way to
         // visually reposition the primary.
         //

@@ -5,7 +5,7 @@
  * a fake clock partway into the 30s ack window:
  *
  *   1. Install clock (E1.2 pattern) + seed assigned layout.
- *   2. Dispatch recall → banner appears with deadline = t+30s.
+ *   2. Dispatch restore → banner appears with deadline = t+30s.
  *   3. fastForward 15s — banner still up, countdown halfway.
  *   4. Click "keep" → ackLayout writes ack_display_topology + banner
  *      dismisses locally + "ack sent" toast fires.
@@ -55,6 +55,7 @@ async function seedAssignedLayout() {
   await db.collection('config').doc(SITE_ID).collection('machines').doc(MACHINE_ID).set(
     {
       displays: {
+        remoteApplyEnabled: true,
         assigned: {
           monitors: [monitor(0, { x: 0, y: 0 }), monitor(1, { x: 1920, y: 0 })],
           capturedAt: Timestamp.now(),
@@ -90,12 +91,12 @@ test('operator keeps the layout at t=15s — banner dismisses + no auto-revert f
   await expect(panel).toBeVisible();
 
   await panel.getByTestId('display-recall-button').click();
-  const confirmDialog = page.getByRole('dialog', { name: new RegExp(`recall this layout to ${MACHINE_ID}\\?`, 'i') });
+  const confirmDialog = page.getByRole('dialog', { name: new RegExp(`restore this layout to ${MACHINE_ID}\\?`, 'i') });
   await expect(confirmDialog).toBeVisible();
-  await confirmDialog.getByRole('button', { name: /^recall$/i }).click();
+  await confirmDialog.getByRole('button', { name: /^restore$/i }).click();
 
   // DisplayLayoutPanel has two role="status" elements: the ack banner
-  // and the loading spinner (aria-label="loading displays"). A recall
+  // and the loading spinner (aria-label="loading displays"). A restore
   // dispatch can re-flip `loading` on the display hook mid-tick, so
   // `getByRole('status')` alone hits a strict-mode violation. Scope to
   // the banner via its distinctive text.

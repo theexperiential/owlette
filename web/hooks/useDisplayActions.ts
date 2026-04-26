@@ -15,7 +15,7 @@
  *   - applyLayout:   dispatch an `apply_display_topology` command to the
  *     agent to reconfigure the OS to match the given layout. Returns the
  *     command id + a client-generated `applyId` (UUID) that must be sent
- *     back in the matching `ackLayout` call. Surfaced in the UI as "recall".
+ *     back in the matching `ackLayout` call. Surfaced in the UI as "restore".
  *   - ackLayout:     acknowledge an in-flight apply within the revert
  *     deadline. Must carry the same `applyId` returned from `applyLayout`.
  *   - clearLayout:   remove the assigned layout entirely. Destructive.
@@ -58,6 +58,7 @@ interface UseDisplayActionsResult {
    * doc's return string.
    */
   enumerateDisplayModes: () => Promise<string>;
+  setRemoteApplyEnabled: (enabled: boolean) => Promise<void>;
   setAutoRestore: (enabled: boolean, userEmail: string) => Promise<void>;
   resetAutoRestoreBreaker: () => Promise<void>;
   applying: boolean;
@@ -138,7 +139,7 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
    *
    * Normalizes the primary to the origin before dispatch — mirrors the
    * guarantee `captureLayout` makes at the storage boundary. Without this,
-   * a recall of a legacy non-canonical assigned layout would push a primary
+   * a restore of a legacy non-canonical assigned layout would push a primary
    * at (0, −130) to the agent, which Windows would silently re-anchor on
    * apply and report back as drift on the next heartbeat.
    */
@@ -279,6 +280,27 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
     }
   };
 
+  const setRemoteApplyEnabled = async (enabled: boolean): Promise<void> => {
+    if (!db) throw new Error('Firebase not configured');
+    if (!siteId || !machineId) throw new Error('Site and machine required');
+
+    setApplying(true);
+    try {
+      const configRef = doc(db, 'config', siteId, 'machines', machineId);
+      await setDoc(
+        configRef,
+        {
+          displays: {
+            remoteApplyEnabled: enabled,
+          },
+        },
+        { merge: true },
+      );
+    } finally {
+      setApplying(false);
+    }
+  };
+
   /**
    * Wave 6.3 — dispatch a `test_display_apply` command. Returns the command
    * id so the caller can subscribe to `commands/completed/{commandId}` for
@@ -357,6 +379,7 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
     ackLayout,
     testDisplayApply,
     enumerateDisplayModes,
+    setRemoteApplyEnabled,
     setAutoRestore,
     resetAutoRestoreBreaker,
     applying,

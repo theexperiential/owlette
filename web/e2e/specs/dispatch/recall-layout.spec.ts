@@ -1,14 +1,14 @@
 /**
- * Dispatch — recall display layout (D3.3)
+ * Dispatch — restore display layout (D3.3)
  *
  * No time-travel here (D3.4 covers the success-ack path; E2.x covers
  * the deadline-expiry path). This spec just validates the dispatch
  * half:
  *
  *   1. Seed machine + pre-populate config doc's `displays.assigned`
- *      so the recall button is enabled (gated on hasAssignedLayout).
- *   2. UI: list view → display panel → recall button → confirm dialog
- *      "recall this layout to {machineId}?" → confirm.
+ *      so the restore button is enabled (gated on hasAssignedLayout).
+ *   2. UI: list view → display panel → restore button → confirm dialog
+ *      "restore this layout to {machineId}?" → confirm.
  *   3. Firestore: useDisplayActions.applyLayout writes
  *      `apply_display_topology_{Date.now()}` to commands/pending
  *      with `{ type, layout: { monitors }, applyId, status: 'pending' }`.
@@ -36,6 +36,7 @@ async function seedAssignedLayout() {
   await db.collection('config').doc(SITE_ID).collection('machines').doc(MACHINE_ID).set(
     {
       displays: {
+        remoteApplyEnabled: true,
         assigned: {
           monitors: [
             {
@@ -78,7 +79,7 @@ test.beforeEach(async () => {
   await seedAssignedLayout();
 });
 
-test('admin recalls a layout — apply_display_topology command dispatched + 30s ack banner appears', async ({ page }) => {
+test('admin restores a layout — apply_display_topology command dispatched + 30s ack banner appears', async ({ page }) => {
   await page.goto('/dashboard');
 
   await page.getByTestId('view-toggle-list').click();
@@ -88,17 +89,17 @@ test('admin recalls a layout — apply_display_topology command dispatched + 30s
   const panel = page.getByTestId('display-layout-panel');
   await expect(panel).toBeVisible();
 
-  // Recall button is enabled because hasAssignedLayout is true.
+  // Restore button is enabled because hasAssignedLayout is true.
   await panel.getByTestId('display-recall-button').click();
 
   // Confirmation dialog title includes the machine identifier so bulk
   // operators don't fire against the wrong machine.
-  const confirmDialog = page.getByRole('dialog', { name: new RegExp(`recall this layout to ${MACHINE_ID}\\?`, 'i') });
+  const confirmDialog = page.getByRole('dialog', { name: new RegExp(`restore this layout to ${MACHINE_ID}\\?`, 'i') });
   await expect(confirmDialog).toBeVisible();
-  await confirmDialog.getByRole('button', { name: /^recall$/i }).click();
+  await confirmDialog.getByRole('button', { name: /^restore$/i }).click();
 
   // Wait for the success toast — proves applyLayout's setDoc resolved.
-  await expect(page.getByText('recall dispatched', { exact: false })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('restore dispatched', { exact: false })).toBeVisible({ timeout: 10_000 });
 
   // The amber ack banner is the load-bearing UI signal — operator must
   // press "keep" within 30s or the agent auto-reverts. role="status"

@@ -578,7 +578,7 @@ function DisplayCanvasImpl({
       fill = 'color-mix(in oklab, var(--chart-4) 10%, transparent)';
       strokeDash = '5,4';
     } else if (isDrifted) {
-      fill = 'color-mix(in oklab, var(--accent-coral) 40%, var(--secondary))';
+      fill = 'color-mix(in oklab, var(--accent-warm) 40%, var(--secondary))';
     } else {
       const tintPct = isPrimary ? 32 : 22;
       fill = `color-mix(in oklab, ${accentColor} ${tintPct}%, var(--secondary))`;

@@ -1,7 +1,7 @@
 /**
  * Access-control — DisplayLayoutPanel (site-scoped admin gates)
  *
- * The DisplayLayoutPanel hides its three write actions (store / recall /
+ * The DisplayLayoutPanel hides its three write actions (store / restore /
  * clear) from any viewer who fails `isSiteAdmin(siteId)` — that's the
  * member/admin/superadmin site-scoping contract in action. This spec
  * automates the "display panel" row of the permission-model-split manual
@@ -18,11 +18,12 @@
  * current DisplayLayoutPanel or DisplayEditorDialog (verified via grep);
  * those are aspirational rows that haven't shipped yet. This spec covers
  * the three buttons that actually exist in the component today
- * (store / recall / clear). When the editor + auto-restore toggles land,
+ * (store / restore / clear). When the editor + auto-restore toggles land,
  * add `canSiteAdmin`-gated + ungated assertions here per the checklist.
  */
 
 import { test, expect, type Page } from '@playwright/test';
+import { getAdminDb } from '../../helpers/emulator';
 import { roleState } from '../../helpers/roles';
 import { seedMachine } from '../../helpers/seed';
 
@@ -31,6 +32,12 @@ const MACHINE_ID = 'e2e-display-machine';
 
 test.beforeAll(async () => {
   await seedMachine(SITE_ID, MACHINE_ID);
+  await getAdminDb()
+    .collection('config')
+    .doc(SITE_ID)
+    .collection('machines')
+    .doc(MACHINE_ID)
+    .set({ displays: { remoteApplyEnabled: true } }, { merge: true });
 });
 
 /**
@@ -59,7 +66,7 @@ async function openDisplayPanel(page: Page): Promise<void> {
 test.describe('display panel — member on site-A', () => {
   test.use(roleState('member'));
 
-  test('opens the panel but sees no store/recall/clear buttons', async ({ page }) => {
+  test('opens the panel but sees no store/restore/clear buttons', async ({ page }) => {
     await openDisplayPanel(page);
 
     // Panel renders for read-only viewing — the member gets the live
@@ -76,12 +83,12 @@ test.describe('display panel — member on site-A', () => {
 test.describe('display panel — admin on site-A', () => {
   test.use(roleState('admin'));
 
-  test('sees store + recall buttons on the live tab', async ({ page }) => {
+  test('sees store + restore buttons on the live tab', async ({ page }) => {
     await openDisplayPanel(page);
 
     const panel = page.getByTestId('display-layout-panel');
     // Both gated buttons render. They're disabled in our seeded state
-    // (no assigned layout → recall disabled) but visibility is the contract
+    // (no assigned layout → restore disabled) but visibility is the contract
     // we're exercising, not enable-state.
     await expect(panel.getByTestId('display-store-button')).toBeVisible();
     await expect(panel.getByTestId('display-recall-button')).toBeVisible();
@@ -101,7 +108,7 @@ test.describe('display panel — admin on site-A', () => {
 test.describe('display panel — superadmin', () => {
   test.use(roleState('superadmin'));
 
-  test('sees store + recall buttons on the live tab', async ({ page }) => {
+  test('sees store + restore buttons on the live tab', async ({ page }) => {
     await openDisplayPanel(page);
 
     const panel = page.getByTestId('display-layout-panel');

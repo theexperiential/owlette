@@ -18,7 +18,7 @@
  * needed: this is a pure client-SDK Firestore write, no command/agent
  * roundtrip.
  *
- * Admin role (the store/recall buttons are isSiteAdmin-gated, per
+ * Admin role (the store/restore buttons are isSiteAdmin-gated, per
  * B3.1's coverage of the same DisplayLayoutPanel).
  */
 

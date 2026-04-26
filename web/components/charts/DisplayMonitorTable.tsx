@@ -407,7 +407,7 @@ function DisplayMonitorTableImpl({
                 <td
                   className={cn(
                     'py-1.5 px-1 tabular-nums',
-                    resolutionDrifted ? 'text-accent-coral' : 'text-foreground',
+                    resolutionDrifted ? 'text-amber-400' : 'text-foreground',
                   )}
                   onClick={canEdit ? undefined : rowClick}
                   onDoubleClick={canEdit ? undefined : rowDblClick}
@@ -447,7 +447,7 @@ function DisplayMonitorTableImpl({
                     // [A3.5] Off-catalogue detection — signal to the operator
                     // when the current pick isn't something the driver
                     // advertises so the apply-at-your-own-risk implication is
-                    // surfaced before they hit recall. Two independent flags
+                    // surfaced before they hit restore. Two independent flags
                     // so a matching resolution + non-matching refresh (valid
                     // at a different rate) shows only on the refresh widget.
                     const resolutionOffList = !monitorModes.some(
@@ -555,7 +555,7 @@ function DisplayMonitorTableImpl({
                 <td
                   className={cn(
                     'py-1.5 px-1 tabular-nums',
-                    scaleDrifted ? 'text-accent-coral' : 'text-foreground',
+                    scaleDrifted ? 'text-amber-400' : 'text-foreground',
                   )}
                 >
                   {canEdit ? (
@@ -582,7 +582,7 @@ function DisplayMonitorTableImpl({
                 <td
                   className={cn(
                     'py-1.5 px-1',
-                    orientationDrifted ? 'text-accent-coral' : 'text-muted-foreground',
+                    orientationDrifted ? 'text-amber-400' : 'text-muted-foreground',
                   )}
                 >
                   {canEdit ? (
@@ -638,11 +638,11 @@ function DisplayMonitorTableImpl({
                           : undefined
                       }
                     >
-                      <span className={xDrifted ? 'text-accent-coral' : undefined}>
+                      <span className={xDrifted ? 'text-amber-400' : undefined}>
                         {monitor.position.x}
                       </span>
                       ,{' '}
-                      <span className={yDrifted ? 'text-accent-coral' : undefined}>
+                      <span className={yDrifted ? 'text-amber-400' : undefined}>
                         {monitor.position.y}
                       </span>
                     </span>
