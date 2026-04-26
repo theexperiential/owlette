@@ -562,7 +562,7 @@ function buildVersionObject(
     schemaVersion: 2,
     mediaType: 'application/vnd.owlette.version.v1+json',
     config: {
-      producer: '@owlette/api node-sdk',
+      producer: '@owlette/sdk node-sdk',
       cliVersion,
       createdAt: new Date().toISOString(),
       hostname: hostname(),

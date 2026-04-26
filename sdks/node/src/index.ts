@@ -1,7 +1,7 @@
 /**
- * `@owlette/api` — node sdk entry point.
+ * `@owlette/sdk` — node sdk entry point.
  *
- *   import { Roost } from '@owlette/api';
+ *   import { Roost } from '@owlette/sdk';
  *   const roost = new Roost({ token: process.env.ROOST_TOKEN! });
  *   await roost.roosts.push('./dist', 'rst_abc', { siteId: 'site-1' });
  *

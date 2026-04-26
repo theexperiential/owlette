@@ -1,4 +1,4 @@
-# @owlette/api — node sdk
+# @owlette/sdk — node sdk
 
 Programmatic access to the [roost](https://owlette.app) public api from
 Node 20+. Zero runtime dependencies — uses the built-in `fetch`, `crypto`,
@@ -7,13 +7,13 @@ and `fs` modules.
 ## install
 
 ```bash
-npm install @owlette/api
+npm install @owlette/sdk
 ```
 
 ## quickstart
 
 ```ts
-import { Roost } from '@owlette/api';
+import { Roost } from '@owlette/sdk';
 
 const roost = new Roost({
   token: process.env.ROOST_TOKEN!,
@@ -84,7 +84,7 @@ result.events.on('progress', (evt) => console.log(evt));
 ## webhook signature verification
 
 ```ts
-import { verifySignature } from '@owlette/api';
+import { verifySignature } from '@owlette/sdk';
 
 // In your raw-body webhook handler:
 const result = verifySignature(
@@ -106,7 +106,7 @@ to compare hashes.
 All non-2xx api responses throw `RoostApiError`:
 
 ```ts
-import { Roost, RoostApiError } from '@owlette/api';
+import { Roost, RoostApiError } from '@owlette/sdk';
 
 try {
   await roost.roosts.get('rst_missing', { siteId: 'site-1' });

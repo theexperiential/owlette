@@ -186,7 +186,7 @@ export class Chat {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.client.token}`,
       'Roost-Version': this.client.roostVersion,
-      'User-Agent': '@owlette/api (node-sdk) 0.1.0',
+      'User-Agent': '@owlette/sdk (node-sdk) 0.1.0',
       Accept: 'application/json',
       'Content-Type': 'application/json',
       'Idempotency-Key': opts.idempotencyKey ?? `sdk-chat-send-${randomUUID()}`,
