@@ -934,6 +934,17 @@ class _FakeService:
     so the production code paths execute verbatim against the fake's attributes.
     """
 
+    _DISPLAY_DRIFT_FIELDS = (
+        ('position.x',        lambda m: (m.get('position') or {}).get('x')),
+        ('position.y',        lambda m: (m.get('position') or {}).get('y')),
+        ('resolution.width',  lambda m: (m.get('resolution') or {}).get('width')),
+        ('resolution.height', lambda m: (m.get('resolution') or {}).get('height')),
+        ('refreshHz',         lambda m: m.get('refreshHz')),
+        ('rotation',          lambda m: m.get('rotation')),
+        ('scalePct',          lambda m: m.get('scalePct')),
+        ('primary',           lambda m: m.get('primary')),
+    )
+
     def __init__(self):
         # `_run_auto_restore` reads ``self.firebase_client.update_display_autorestore_state``
         # and `_maybe_auto_restore` doesn't touch firebase_client directly, but
@@ -968,6 +979,14 @@ class TestAutoRestoreCycle:
         # instance — keeps the test honest (real branches, real call shapes).
         svc._maybe_auto_restore = OwletteService._maybe_auto_restore.__get__(
             svc, OwletteService,
+        )
+        svc._assigned_drift_hashes = OwletteService._assigned_drift_hashes.__get__(
+            svc, OwletteService,
+        )
+        svc._maybe_auto_restore_assigned_drift = (
+            OwletteService._maybe_auto_restore_assigned_drift.__get__(
+                svc, OwletteService,
+            )
         )
         svc._run_auto_restore = OwletteService._run_auto_restore.__get__(
             svc, OwletteService,
@@ -1174,3 +1193,68 @@ class TestAutoRestoreCycle:
         assert 'lastSuccessAt' in cb
         # No additional breaker-trip events from the success path.
         assert fake_service._emit_display_event.call_count == 1
+
+    def test_stable_assigned_drift_fires_after_two_display_ticks(
+        self, monkeypatch, fake_service, assigned_layout, reset_apply_state,
+    ):
+        """Auto-restore must catch stable live-vs-assigned drift, not only
+        topology-change events. First tick records persistence; second tick
+        enters the normal gate chain and spawns the worker.
+        """
+        import shared_utils
+        import display_manager as dm_mod
+
+        config_state = {
+            'displays': {
+                'enabled': True,
+                'autoRestore': {
+                    'enabled': True,
+                    'circuitBreaker': {'failures': 0, 'tripped': False},
+                },
+                'assigned': assigned_layout,
+            },
+        }
+        monkeypatch.setattr(
+            shared_utils, 'read_config', self._make_config_reader(config_state),
+        )
+
+        live_profile = {
+            'monitors': [
+                {'edidHash': 'aaaaaaaa', 'primary': True,
+                 'position': {'x': 0, 'y': 0}},
+                {'edidHash': 'bbbbbbbb', 'primary': False,
+                 'position': {'x': 1920, 'y': 100}},
+            ],
+        }
+
+        apply_calls = []
+
+        def _mock_apply_success(layout, **kw):
+            apply_calls.append({'layout': layout, 'kwargs': kw})
+            return {'success': True, 'changes': [], 'autoRestore': True}
+
+        monkeypatch.setattr(dm_mod, 'apply_topology', _mock_apply_success)
+
+        spawned = []
+        real_thread_cls = threading.Thread
+
+        def _capture_thread(target, args=(), daemon=False, name=None, **kw):
+            t = real_thread_cls(
+                target=target, args=args, daemon=daemon, name=name, **kw,
+            )
+            spawned.append(t)
+            return t
+
+        monkeypatch.setattr(threading, 'Thread', _capture_thread)
+        fake_service._drift_pending_tick_count = 0
+
+        fake_service._maybe_auto_restore_assigned_drift(live_profile)
+        assert fake_service._drift_pending_tick_count == 1
+        assert spawned == []
+
+        fake_service._maybe_auto_restore_assigned_drift(live_profile)
+        assert fake_service._drift_pending_tick_count == 2
+        assert len(spawned) == 1
+        spawned[0].join(timeout=2.0)
+        assert len(apply_calls) == 1
+        assert apply_calls[0]['layout'] == assigned_layout

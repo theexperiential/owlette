@@ -3953,6 +3953,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         self._emit_display_change_events(prev_profile, profile)
                     except Exception as e:
                         logging.debug(f"Display change event emission failed: {e}")
+
+            # Auto-restore is a live-vs-assigned concern, not only a
+            # previous-live-vs-current-live event. Run this every display check
+            # so stable drift is corrected even when the topology signature
+            # stops changing after the first drifted sample.
+            try:
+                self._maybe_auto_restore_assigned_drift(profile)
+            except Exception as e:
+                logging.debug(f"Assigned-drift auto-restore check failed: {e}")
         except Exception as e:
             logging.warning(f"Display topology check failed: {e}")
 
@@ -3997,6 +4006,65 @@ class OwletteService(win32serviceutil.ServiceFramework):
             level=severity,
             details=details,
         )
+
+    def _assigned_drift_hashes(self, profile: dict, assigned_layout: dict) -> list:
+        """Return edidHashes whose live monitor state differs from assigned.
+
+        This mirrors the dashboard/heartbeat drift model: match physical
+        monitors by edidHash, compare the tracked display fields, and ignore
+        added/removed monitors because re-applying the stored layout cannot
+        safely fix topology membership changes.
+        """
+        live_monitors = (
+            profile.get('monitors') if isinstance(profile, dict) else None
+        ) or []
+        assigned_monitors = (
+            assigned_layout.get('monitors')
+            if isinstance(assigned_layout, dict) else None
+        ) or []
+        assigned_by_hash = {
+            m.get('edidHash'): m for m in assigned_monitors
+            if isinstance(m, dict) and m.get('edidHash')
+        }
+        if not assigned_by_hash:
+            return []
+
+        drifted = []
+        for live_monitor in live_monitors:
+            if not isinstance(live_monitor, dict):
+                continue
+            edid_hash = live_monitor.get('edidHash')
+            assigned_monitor = assigned_by_hash.get(edid_hash)
+            if not edid_hash or assigned_monitor is None:
+                continue
+            if any(
+                extract(live_monitor) != extract(assigned_monitor)
+                for _label, extract in self._DISPLAY_DRIFT_FIELDS
+            ):
+                drifted.append(edid_hash)
+        return drifted
+
+    def _maybe_auto_restore_assigned_drift(self, profile: dict):
+        """Evaluate live-vs-assigned drift every display-check tick.
+
+        Display change events only fire when the live topology signature
+        changes. Auto-restore must also catch stable drift, so this method
+        maintains the persistence counter from the current live profile
+        against the stored layout and then enters the normal gate chain.
+        """
+        try:
+            assigned_layout = shared_utils.read_config(['displays', 'assigned'])
+        except Exception as e:
+            logging.debug(f"auto-restore: read assigned layout failed: {e}")
+            self._drift_pending_tick_count = 0
+            return
+
+        drifted_hashes = self._assigned_drift_hashes(profile, assigned_layout)
+        if drifted_hashes:
+            self._drift_pending_tick_count += 1
+            self._maybe_auto_restore(profile, drifted_hashes)
+        else:
+            self._drift_pending_tick_count = 0
 
     def _emit_display_change_events(self, prev_profile: dict, new_profile: dict):
         """Diff two display profiles and emit one log event per distinct
@@ -4101,26 +4169,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'changes': changes,
                 })
                 drifted_hashes.append(edid_hash)
-
-        # Drift-persistence counter (Wave C2.4): increment on any drift this
-        # tick, reset to 0 when no drift fired. _maybe_auto_restore consumes
-        # the count to require sustained drift (>= 2 ticks ~= 60s) before
-        # firing an unattended re-apply.
-        if drifted_hashes:
-            self._drift_pending_tick_count += 1
-        else:
-            self._drift_pending_tick_count = 0
-
-        # Auto-restore dispatch (Wave C2.2). Runs only for drift events
-        # (added / removed / swapped / mosaic_disabled / sync_lost are
-        # categorically different and don't trigger). Emitted AFTER the
-        # display_drift events above so the audit log preserves the natural
-        # display_drift -> display_auto_restore_fired order.
-        if drifted_hashes:
-            try:
-                self._maybe_auto_restore(new_profile, drifted_hashes)
-            except Exception as e:
-                logging.debug(f"_maybe_auto_restore raised: {e}")
 
         # 5. Mosaic disabled — grid active previously, not active now.
         prev_mosaic = bool(prev_profile.get('mosaicActive'))
