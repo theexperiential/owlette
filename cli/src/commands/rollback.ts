@@ -1,5 +1,5 @@
 /**
- * `roost rollback <roostId>` — wave 4.5.
+ * `owlette rollback <roostId>`.
  *
  * Flow:
  *   1. load the roost (GET /api/roosts/{id}) → pick `current` as the
@@ -96,7 +96,7 @@ export function registerRollbackCommand(program: Command): void {
       const { apiUrl, token } = loadConfig({ profile: globals.profile });
       if (!token) {
         process.stderr.write(
-          'roost: no token configured. run `roost auth login` or set ROOST_TOKEN.\n',
+          'owlette: no token configured. run `owlette auth login` or set OWLETTE_TOKEN.\n',
         );
         process.exitCode = 2;
         return;
@@ -205,7 +205,7 @@ export function registerRollbackCommand(program: Command): void {
         );
       } else {
         process.stdout.write(
-          `roost: rolled back\n` +
+          `owlette: rolled back\n` +
             `  current   ${result.currentVersionId}\n` +
             `  previous  ${result.previousVersionId ?? '(none)'}\n`,
         );
@@ -304,7 +304,7 @@ function promptYesNo(question: string): Promise<boolean> {
 }
 
 function fatal(msg: string): void {
-  process.stderr.write(`roost: ${msg}\n`);
+  process.stderr.write(`owlette: ${msg}\n`);
   process.exitCode = 1;
 }
 

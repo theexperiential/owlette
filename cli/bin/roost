@@ -1,38 +1,16 @@
 #!/usr/bin/env node
-// Launcher for the roost CLI. Prefers the compiled `dist/index.js` when
-// present (production / published install); falls back to the TS source
-// via ts-node during local development so `./cli/bin/roost --help` works
-// without a prior `npm run build`.
+// Deprecation wrapper for the legacy `roost` binary name. Prints a one-time
+// migration notice to stderr, then delegates to ./owlette so existing
+// scripts and muscle memory keep working.
 //
-// Keep this file thin — any real logic lives in src/index.ts.
+// Removal target: 2026-10-01 (6 months after rename). After that date, drop
+// this file + the `roost` bin entry in package.json. See cli/MIGRATION.md.
 
 'use strict';
 
-const path = require('path');
-const fs = require('fs');
+process.stderr.write(
+  '[owlette] the `roost` binary is deprecated; use `owlette` instead. ' +
+    'this wrapper will be removed on 2026-10-01. see cli/MIGRATION.md.\n',
+);
 
-const compiled = path.join(__dirname, '..', 'dist', 'index.js');
-
-let mod;
-if (fs.existsSync(compiled)) {
-  mod = require(compiled);
-} else {
-  try {
-    require('ts-node/register/transpile-only');
-    mod = require(path.join(__dirname, '..', 'src', 'index.ts'));
-  } catch (err) {
-    process.stderr.write(
-      `roost: compiled output not found at ${compiled} and ts-node is not installed.\n` +
-        `  run \`npm install\` + \`npm run build\` inside cli/ first, or install ts-node as a dev dependency.\n`,
-    );
-    process.stderr.write(String((err && err.message) || err) + '\n');
-    process.exit(1);
-  }
-}
-
-if (typeof mod.main === 'function') {
-  mod.main().catch((err) => {
-    process.stderr.write(`[roost] ${(err && err.message) || err}\n`);
-    process.exit(1);
-  });
-}
+require('./owlette');

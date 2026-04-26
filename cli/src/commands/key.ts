@@ -1,5 +1,5 @@
 /**
- * `roost key create | list | rotate | revoke` — wave 4.7.
+ * `owlette key create | list | rotate | revoke`.
  *
  * create   POST /api/keys                        { name, scopes[], ttlDays, environment }
  * list     GET  /api/keys
@@ -214,7 +214,7 @@ export function registerKeyCommands(program: Command): void {
       }
 
       process.stdout.write(
-        `roost: key created — copy it NOW, it will not be shown again.\n\n` +
+        `owlette: key created — copy it NOW, it will not be shown again.\n\n` +
           `  ${data.key}\n\n` +
           `  keyId       ${data.keyId}\n` +
           `  name        ${data.name}\n` +
@@ -337,7 +337,7 @@ export function registerKeyCommands(program: Command): void {
       }
 
       process.stdout.write(
-        `roost: key rotated — new key shown ONCE. old key works for 24h.\n\n` +
+        `owlette: key rotated — new key shown ONCE. old key works for 24h.\n\n` +
           `  ${data.key}\n\n` +
           `  new keyId       ${data.keyId}\n` +
           `  old keyId       ${data.rotatedFromKeyId ?? keyId}\n` +
@@ -389,7 +389,7 @@ export function registerKeyCommands(program: Command): void {
       if (json) {
         process.stdout.write(JSON.stringify({ keyId, revoked: true }, null, 2) + '\n');
       } else {
-        process.stdout.write(`roost: key ${keyId} revoked\n`);
+        process.stdout.write(`owlette: key ${keyId} revoked\n`);
       }
     });
 }
@@ -440,13 +440,13 @@ async function promptYesNo(question: string): Promise<boolean> {
 
 function noTokenExit(): void {
   process.stderr.write(
-    'roost: no token configured. run `roost auth login` or set ROOST_TOKEN.\n',
+    'owlette: no token configured. run `owlette auth login` or set OWLETTE_TOKEN.\n',
   );
   process.exitCode = 2;
 }
 
 function fatal(msg: string): void {
-  process.stderr.write(`roost: ${msg}\n`);
+  process.stderr.write(`owlette: ${msg}\n`);
   process.exitCode = 1;
 }
 

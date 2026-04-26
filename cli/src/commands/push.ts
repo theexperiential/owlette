@@ -1,5 +1,5 @@
 /**
- * `roost roost push <dir> --to <roostId> --site <siteId>` — wave 4.3.
+ * `owlette roost push <dir> --to <roostId> --site <siteId>`.
  *
  * End-to-end publish of a directory:
  *
@@ -77,7 +77,7 @@ export function registerPushCommand(program: Command): void {
       const { apiUrl, token, profile } = loadConfig({ profile: globals.profile });
       if (!token) {
         process.stderr.write(
-          'roost: no token configured. run `roost auth login` or set ROOST_TOKEN.\n',
+          'owlette: no token configured. run `owlette auth login` or set OWLETTE_TOKEN.\n',
         );
         process.exitCode = 2;
         return;
@@ -107,7 +107,7 @@ export function registerPushCommand(program: Command): void {
         // chunk-upload cycle. The server re-validates the same limit.
         if (desc.length > MAX_DESCRIPTION_LENGTH) {
           process.stderr.write(
-            `roost: --description is ${desc.length} chars; max is ${MAX_DESCRIPTION_LENGTH}.\n`,
+            `owlette: --description is ${desc.length} chars; max is ${MAX_DESCRIPTION_LENGTH}.\n`,
           );
           process.exitCode = 2;
           return;
@@ -141,18 +141,18 @@ async function runPush(input: PushInputs): Promise<void> {
 
   const stat = await fs.stat(dir).catch(() => null);
   if (!stat || !stat.isDirectory()) {
-    process.stderr.write(`roost: ${dir} is not a directory\n`);
+    process.stderr.write(`owlette: ${dir} is not a directory\n`);
     process.exitCode = 2;
     return;
   }
 
-  log(json, `roost: walking ${dir}…`);
+  log(json, `owlette: walking ${dir}…`);
   const files = await chunkDirectory(dir, {
     onProgress: (evt) => {
       if (json) return;
       if (evt.phase === 'discover') {
         process.stderr.write(
-          `roost: ${evt.fileCount} files, ${humanBytes(evt.totalBytes)} total\n`,
+          `owlette: ${evt.fileCount} files, ${humanBytes(evt.totalBytes)} total\n`,
         );
       } else if (evt.phase === 'hash' && evt.file) {
         process.stderr.write(
@@ -163,7 +163,7 @@ async function runPush(input: PushInputs): Promise<void> {
   });
 
   if (files.length === 0) {
-    process.stderr.write('roost: no non-empty files found — nothing to push\n');
+    process.stderr.write('owlette: no non-empty files found — nothing to push\n');
     process.exitCode = 2;
     return;
   }
@@ -171,25 +171,25 @@ async function runPush(input: PushInputs): Promise<void> {
   const summary = summariseVersion(files);
   log(
     json,
-    `roost: ${summary.fileCount} files / ${summary.totalChunks} chunks ` +
+    `owlette: ${summary.fileCount} files / ${summary.totalChunks} chunks ` +
       `(${summary.uniqueChunks} unique) / ${humanBytes(summary.totalBytes)}`,
   );
 
   const allHashes = uniqueHashes(files);
 
-  log(json, 'roost: querying server for missing chunks…');
+  log(json, 'owlette: querying server for missing chunks…');
   const missing = await checkMissing({ apiUrl, token, siteId, hashes: allHashes });
   log(
     json,
-    `roost: ${missing.length}/${allHashes.length} chunks need upload ` +
+    `owlette: ${missing.length}/${allHashes.length} chunks need upload ` +
       `(${allHashes.length - missing.length} deduped)`,
   );
 
   if (missing.length > 0) {
-    log(json, 'roost: minting signed upload urls…');
+    log(json, 'owlette: minting signed upload urls…');
     const urls = await mintUploadUrls({ apiUrl, token, siteId, hashes: missing });
 
-    log(json, `roost: uploading ${missing.length} chunks (${UPLOAD_CONCURRENCY}-wide)…`);
+    log(json, `owlette: uploading ${missing.length} chunks (${UPLOAD_CONCURRENCY}-wide)…`);
     await uploadChunksInParallel({
       missing,
       urls,
@@ -199,7 +199,7 @@ async function runPush(input: PushInputs): Promise<void> {
     });
   }
 
-  log(json, 'roost: publishing version (with optimistic retry on 412)…');
+  log(json, 'owlette: publishing version (with optimistic retry on 412)…');
   const version = buildVersion({
     files,
     cliVersion: CLI_VERSION,
@@ -226,7 +226,7 @@ async function runPush(input: PushInputs): Promise<void> {
     const numberLabel =
       typeof result.versionNumber === 'number' ? ` (#${result.versionNumber})` : '';
     process.stdout.write(
-      `roost: published ${result.versionId}${numberLabel}\n` +
+      `owlette: published ${result.versionId}${numberLabel}\n` +
         `       previous: ${result.previousVersionId ?? '(none)'}\n`,
     );
   }

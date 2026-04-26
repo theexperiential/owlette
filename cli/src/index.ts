@@ -1,13 +1,10 @@
 #!/usr/bin/env node
 /**
- * roost CLI entrypoint — builds the commander program, wires sub-
- * commands, and dispatches argv. The `./bin/roost` launcher exec's
+ * owlette CLI entrypoint — builds the commander program, wires sub-
+ * commands, and dispatches argv. The `./bin/owlette` launcher exec's
  * `dist/index.js` (after `npm run build`) or `ts-node src/index.ts`
- * during development.
- *
- * Sub-commands are stubbed in this file and will be filled in during
- * tasks 4.2 (auth), 4.3 (push), 4.4 (inspect), 4.5 (rollback), 4.6
- * (deploy), 4.7 (key), 4.8 (listen), 4.9 (trigger).
+ * during development. The `./bin/roost` wrapper prints a deprecation
+ * notice and forwards to this same entrypoint.
  */
 
 import { Command } from 'commander';
@@ -19,37 +16,50 @@ import { registerDeployCommand } from './commands/deploy';
 import { registerKeyCommands } from './commands/key';
 import { registerListenCommand } from './commands/listen';
 import { registerTriggerCommand } from './commands/trigger';
+import { registerSiteCommands } from './commands/site';
+import { registerQuotaCommands } from './commands/quota';
+import { registerMachineCommands } from './commands/machine';
+import { registerAuditLogCommands } from './commands/audit-log';
+import { registerWhoamiCommand } from './commands/whoami';
+import { registerVersionCommand } from './commands/version';
 
-const PROGRAM_NAME = 'roost';
-const VERSION = '0.1.0';
+const PROGRAM_NAME = 'owlette';
+const VERSION = '0.2.0';
 
 export function buildProgram(): Command {
   const program = new Command();
   program
     .name(PROGRAM_NAME)
-    .description('roost — cli for the owlette public api (v0.1 scaffold)')
+    .description('owlette — cli for the owlette api')
     .version(VERSION)
-    .option('--profile <name>', 'named profile from ~/.config/roost/config.toml')
+    .option('--profile <name>', 'named profile from ~/.config/owlette/config.toml')
     .option('--json', 'emit structured JSON instead of ascii tables on stdout');
 
-  // noun: auth — wave 4.2 (login / status / logout)
+  // top-level: auth (login / status / logout)
   registerAuthCommands(program);
 
-  // noun: roost — wave 4.3 / 4.4 / 4.5
+  // top-level: whoami + version (bare verbs that ask about cli/server state)
+  registerWhoamiCommand(program);
+  registerVersionCommand(program);
+
+  // noun: roost — push / list / get / diff / versions
   program.command('roost').description('manage roosts + versions');
+  registerPushCommand(program);
+  registerRoostInspectCommands(program);
 
-  registerPushCommand(program); // wave 4.3
-  registerRoostInspectCommands(program); // wave 4.4 — list / get / diff
+  // a-tier nouns (wave 2): site / quota / machine / audit-log
+  registerSiteCommands(program);
+  registerQuotaCommands(program);
+  registerMachineCommands(program);
+  registerAuditLogCommands(program);
 
-  registerRollbackCommand(program); // wave 4.5
-
-  registerDeployCommand(program); // wave 4.6
-
-  registerKeyCommands(program); // wave 4.7 — create / list / rotate / revoke
-
-  registerListenCommand(program); // wave 4.8
-
-  registerTriggerCommand(program); // wave 4.9
+  // top-level verbs (kept top-level for muscle memory; may move under
+  // nouns in a future restructure)
+  registerRollbackCommand(program);
+  registerDeployCommand(program);
+  registerKeyCommands(program);
+  registerListenCommand(program);
+  registerTriggerCommand(program);
 
   return program;
 }
@@ -62,7 +72,7 @@ export async function main(argv: readonly string[] = process.argv): Promise<void
 // Only run main() when invoked as a script (not when imported for tests).
 if (require.main === module) {
   main().catch((err: unknown) => {
-    console.error(`[roost] ${(err as Error).message}`);
+    console.error(`[owlette] ${(err as Error).message}`);
     process.exit(1);
   });
 }

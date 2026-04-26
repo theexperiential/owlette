@@ -1,5 +1,5 @@
 /**
- * `roost deploy <roostId>` — wave 4.6.
+ * `owlette deploy <roostId>`.
  *
  * Drives POST /api/roosts/{id}/deploy with body:
  *   {
@@ -71,7 +71,7 @@ export function registerDeployCommand(program: Command): void {
       const { apiUrl, token } = loadConfig({ profile: globals.profile });
       if (!token) {
         process.stderr.write(
-          'roost: no token configured. run `roost auth login` or set ROOST_TOKEN.\n',
+          'owlette: no token configured. run `owlette auth login` or set OWLETTE_TOKEN.\n',
         );
         process.exitCode = 2;
         return;
@@ -158,7 +158,7 @@ function formatDeployResult(r: DeployResponse, roostId: string): string {
         ? 'scheduled'
         : 'rollout started';
 
-  lines.push(`roost: ${label} for ${roostId}`);
+  lines.push(`owlette: ${label} for ${roostId}`);
   lines.push(`  version       ${r.versionId}`);
   lines.push(`  stage         ${r.stage}`);
   lines.push(`  extract root  ${r.extractRoot}`);
@@ -184,7 +184,7 @@ function formatDeployResult(r: DeployResponse, roostId: string): string {
 }
 
 function fatal(msg: string): void {
-  process.stderr.write(`roost: ${msg}\n`);
+  process.stderr.write(`owlette: ${msg}\n`);
   process.exitCode = 1;
 }
 

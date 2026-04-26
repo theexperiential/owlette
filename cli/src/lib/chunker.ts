@@ -1,5 +1,5 @@
 /**
- * Node-side chunker for the `roost push` CLI command.
+ * Node-side chunker for the `owlette roost push` CLI command.
  *
  * The web counterpart lives in `web/lib/chunking.ts` and operates on Blobs
  * via Web Crypto. This is the fs-streaming equivalent used by the cli:

@@ -1,10 +1,10 @@
 /**
- * `roost auth login | status | logout` — wave 4.2.
+ * `owlette auth login | status | logout`.
  *
  * login: kicks off the cli device-code flow against `/api/cli/device-code`,
  *        prints the pairing phrase + verification URL, polls until
  *        authorised, and writes the returned owk_* key to the active
- *        profile in ~/.config/roost/config.toml.
+ *        profile in ~/.config/owlette/config.toml.
  * status: calls GET /api/whoami with the configured token and prints
  *         the server-resolved identity + scope + quota summary.
  * logout: removes the token from the active profile in config.toml.
@@ -20,6 +20,7 @@ import {
   loadConfig,
 } from '../config';
 import { writeTokenToConfig, clearTokenFromConfig } from '../configWriter';
+import { runWhoami } from './whoami';
 
 const POLL_INTERVAL_MS = 5_000;
 const MAX_POLL_DURATION_MS = 10 * 60 * 1000;
@@ -71,7 +72,7 @@ async function post<T>(
 }
 
 export function registerAuthCommands(program: Command): void {
-  const auth = program.command('auth').description('authenticate with the roost api');
+  const auth = program.command('auth').description('authenticate with the owlette api');
 
   auth
     .command('login')
@@ -85,11 +86,11 @@ export function registerAuthCommands(program: Command): void {
         profile: cmd.optsWithGlobals().profile,
       });
 
-      process.stdout.write(`roost: requesting device code from ${apiUrl}\n`);
+      process.stdout.write(`owlette: requesting device code from ${apiUrl}\n`);
       const startRes = await post<DeviceCodeResponse>(apiUrl, '/api/cli/device-code', {});
       if (startRes.status !== 200) {
         process.stderr.write(
-          `roost: failed to obtain device code (${startRes.status}): ${JSON.stringify(
+          `owlette: failed to obtain device code (${startRes.status}): ${JSON.stringify(
             startRes.data,
           )}\n`,
         );
@@ -106,10 +107,10 @@ export function registerAuthCommands(program: Command): void {
       process.stdout.write('\n');
 
       if (opts.browser !== false) {
-        process.stdout.write('roost: opening the verification url in your browser…\n');
+        process.stdout.write('owlette: opening the verification url in your browser…\n');
         tryOpenBrowser(pairingUrl);
       } else {
-        process.stdout.write('roost: open the url above in your browser to continue.\n');
+        process.stdout.write('owlette: open the url above in your browser to continue.\n');
       }
 
       const deadline = Date.now() + Math.min(expiresIn * 1000, MAX_POLL_DURATION_MS);
@@ -125,7 +126,7 @@ export function registerAuthCommands(program: Command): void {
           continue;
         }
         if (pollRes.status === 200 && pollRes.data.apiKey) {
-          process.stdout.write('\nroost: authorised — storing key…\n');
+          process.stdout.write('\nowlette: authorised — storing key…\n');
           const writeOpts: Parameters<typeof writeTokenToConfig>[0] = {
             configPath: configPath ?? defaultConfigPath(),
             profile,
@@ -136,7 +137,7 @@ export function registerAuthCommands(program: Command): void {
           const written = writeTokenToConfig(writeOpts);
           _resetConfigCache();
           process.stdout.write(
-            `roost: stored key in profile '${profile}' at ${written}\n`,
+            `owlette: stored key in profile '${profile}' at ${written}\n`,
           );
           if (pollRes.data.keyId) {
             process.stdout.write(`       keyId: ${pollRes.data.keyId}\n`);
@@ -147,65 +148,27 @@ export function registerAuthCommands(program: Command): void {
           return;
         }
         if (pollRes.status === 410) {
-          process.stderr.write('\nroost: pairing phrase expired; re-run `roost auth login`.\n');
+          process.stderr.write('\nowlette: pairing phrase expired; re-run `owlette auth login`.\n');
           process.exitCode = 1;
           return;
         }
         process.stderr.write(
-          `\nroost: unexpected poll response (${pollRes.status}): ${JSON.stringify(
+          `\nowlette: unexpected poll response (${pollRes.status}): ${JSON.stringify(
             pollRes.data,
           )}\n`,
         );
         process.exitCode = 1;
         return;
       }
-      process.stderr.write('\nroost: timed out waiting for authorisation.\n');
+      process.stderr.write('\nowlette: timed out waiting for authorisation.\n');
       process.exitCode = 1;
     });
 
   auth
     .command('status')
-    .description('call /api/whoami and print the server-resolved identity')
+    .description('alias of `owlette whoami` — print server-resolved identity + scopes')
     .action(async (_opts, cmd) => {
-      const { apiUrl, token, profile, environment, configPath } = loadConfig({
-        profile: cmd.optsWithGlobals().profile,
-      });
-      if (!token) {
-        process.stderr.write(
-          'roost: no token configured. set ROOST_TOKEN or run `roost auth login`.\n',
-        );
-        process.exitCode = 2;
-        return;
-      }
-      try {
-        const res = await fetch(`${apiUrl}/api/whoami`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-        if (!res.ok) {
-          process.stderr.write(
-            `roost: whoami failed (${res.status}): ${JSON.stringify(data)}\n`,
-          );
-          process.exitCode = 1;
-          return;
-        }
-        process.stdout.write(
-          JSON.stringify(
-            {
-              apiUrl,
-              profile,
-              configPath,
-              environment,
-              whoami: data,
-            },
-            null,
-            2,
-          ) + '\n',
-        );
-      } catch (err) {
-        process.stderr.write(`roost: whoami request failed: ${(err as Error).message}\n`);
-        process.exitCode = 1;
-      }
+      await runWhoami(cmd);
     });
 
   auth
@@ -219,10 +182,10 @@ export function registerAuthCommands(program: Command): void {
       const cleared = clearTokenFromConfig({ configPath: target, profile });
       _resetConfigCache();
       if (cleared) {
-        process.stdout.write(`roost: cleared token from profile '${profile}' at ${target}\n`);
+        process.stdout.write(`owlette: cleared token from profile '${profile}' at ${target}\n`);
       } else {
         process.stdout.write(
-          `roost: profile '${profile}' had no stored token (nothing to clear).\n`,
+          `owlette: profile '${profile}' had no stored token (nothing to clear).\n`,
         );
       }
     });

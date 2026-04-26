@@ -1,5 +1,5 @@
 /**
- * `roost roost list | get | diff | versions` — wave 4.4.
+ * `owlette roost list | get | diff | versions`.
  *
  * Drives:
  *   GET /api/roosts?siteId=...&limit=...&cursor=...
@@ -416,7 +416,7 @@ function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json
   const { apiUrl, token } = loadConfig({ profile: cmd.optsWithGlobals().profile });
   if (!token) {
     process.stderr.write(
-      'roost: no token configured. run `roost auth login` or set ROOST_TOKEN.\n',
+      'owlette: no token configured. run `owlette auth login` or set OWLETTE_TOKEN.\n',
     );
     process.exitCode = 2;
     return { apiUrl, token: null, json: isJson(cmd) };
@@ -425,7 +425,7 @@ function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json
 }
 
 function fatal(msg: string): void {
-  process.stderr.write(`roost: ${msg}\n`);
+  process.stderr.write(`owlette: ${msg}\n`);
   process.exitCode = 1;
 }
 

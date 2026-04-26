@@ -5,7 +5,7 @@ import { _resetConfigCache } from '../../src/config';
 
 function buildProgram(): Command {
   const program = new Command();
-  program.name('roost').exitOverride().option('--profile <name>').option('--json');
+  program.name('owlette').exitOverride().option('--profile <name>').option('--json');
   registerTriggerCommand(program);
   return program;
 }
@@ -41,21 +41,21 @@ afterAll(() => {
 
 beforeEach(() => {
   _resetConfigCache();
-  process.env.ROOST_TOKEN = 'owk_live_testtoken';
-  process.env.ROOST_API_URL = 'https://dev.test';
-  process.env.ROOST_PROFILE = 'default';
+  process.env.OWLETTE_TOKEN = 'owk_live_testtoken';
+  process.env.OWLETTE_API_URL = 'https://dev.test';
+  process.env.OWLETTE_PROFILE = 'default';
   jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
   jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
 });
 
 afterEach(() => {
-  delete process.env.ROOST_TOKEN;
-  delete process.env.ROOST_API_URL;
-  delete process.env.ROOST_PROFILE;
+  delete process.env.OWLETTE_TOKEN;
+  delete process.env.OWLETTE_API_URL;
+  delete process.env.OWLETTE_PROFILE;
   jest.restoreAllMocks();
 });
 
-describe('roost trigger (server-probe mode)', () => {
+describe('owlette trigger (server-probe mode)', () => {
   it('POSTs /api/webhooks/probe with {kind, siteId, deliveryId, payload}', async () => {
     const calls = installFetchStub({ success: true });
     const program = buildProgram();
@@ -82,7 +82,7 @@ describe('roost trigger (server-probe mode)', () => {
   });
 });
 
-describe('roost trigger (direct mode)', () => {
+describe('owlette trigger (direct mode)', () => {
   it('POSTs to --to url with headers + hmac signature', async () => {
     const calls = installFetchStub({});
     const program = buildProgram();

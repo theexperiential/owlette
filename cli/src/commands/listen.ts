@@ -1,8 +1,8 @@
 /**
- * `roost listen --forward-to <url>` — wave 4.8.
+ * `owlette listen --forward-to <url>`.
  *
  * Opens a persistent SSE connection to `/api/events/stream` on the
- * roost api, parses each incoming event, and replays it as an HTTP
+ * owlette api, parses each incoming event, and replays it as an HTTP
  * POST to the user's local url with the original headers (including
  * `Roost-Signature`) preserved. The practical shape of this loop
  * mirrors `stripe listen` — the cli becomes a development webhook
@@ -48,7 +48,7 @@ export function registerListenCommand(program: Command): void {
 
   program
     .command('listen')
-    .description('tunnel webhook events from the roost api to a local url')
+    .description('tunnel webhook events from the owlette api to a local url')
     .requiredOption('--forward-to <url>', 'local http endpoint that receives each event')
     .option(
       '--events <names>',
@@ -67,7 +67,7 @@ export function registerListenCommand(program: Command): void {
       const { apiUrl, token } = loadConfig({ profile: globals.profile });
       if (!token) {
         process.stderr.write(
-          'roost: no token configured. run `roost auth login` or set ROOST_TOKEN.\n',
+          'owlette: no token configured. run `owlette auth login` or set OWLETTE_TOKEN.\n',
         );
         process.exitCode = 2;
         return;
@@ -78,7 +78,7 @@ export function registerListenCommand(program: Command): void {
       try {
         forwardUrl = new URL(String(opts.forwardTo));
       } catch {
-        process.stderr.write(`roost: --forward-to '${opts.forwardTo}' is not a valid url\n`);
+        process.stderr.write(`owlette: --forward-to '${opts.forwardTo}' is not a valid url\n`);
         process.exitCode = 2;
         return;
       }
@@ -96,7 +96,7 @@ export function registerListenCommand(program: Command): void {
       streamUrl.searchParams.set('api_key', token);
 
       process.stderr.write(
-        `roost: listening on ${apiUrl}/api/events/stream\n` +
+        `owlette: listening on ${apiUrl}/api/events/stream\n` +
           `       forwarding to ${forwardUrl}\n` +
           (allowedEvents
             ? `       events: ${[...allowedEvents].join(', ')}\n`
@@ -125,7 +125,7 @@ export function registerListenCommand(program: Command): void {
         });
       } catch (err) {
         process.stderr.write(
-          `roost: failed to open stream: ${(err as Error).message}\n`,
+          `owlette: failed to open stream: ${(err as Error).message}\n`,
         );
         process.exitCode = 1;
         return;
@@ -133,7 +133,7 @@ export function registerListenCommand(program: Command): void {
 
       if (!res.ok || !res.body) {
         process.stderr.write(
-          `roost: stream open failed (${res.status}): ${await res.text().catch(() => '')}\n`,
+          `owlette: stream open failed (${res.status}): ${await res.text().catch(() => '')}\n`,
         );
         process.exitCode = 1;
         return;
@@ -145,7 +145,7 @@ export function registerListenCommand(program: Command): void {
         for await (const event of sseEvents(res.body)) {
           if (event.kind === CONNECTED_EVENT) {
             counts.connected += 1;
-            process.stderr.write(`roost: stream connected\n`);
+            process.stderr.write(`owlette: stream connected\n`);
             continue;
           }
           if (event.kind === KEEPALIVE_EVENT) {
@@ -155,13 +155,13 @@ export function registerListenCommand(program: Command): void {
 
           counts.event += 1;
           if (allowedEvents && !allowedEvents.has(event.kind)) {
-            process.stderr.write(`roost: (filtered) ${event.kind}\n`);
+            process.stderr.write(`owlette: (filtered) ${event.kind}\n`);
             continue;
           }
 
           const headers = buildForwardHeaders(event, opts.signingSecret);
           process.stderr.write(
-            `roost: → forwarding ${event.kind}` +
+            `owlette: → forwarding ${event.kind}` +
               (headers['Roost-Signature'] ? ` [sig: ${headers['Roost-Signature']}]` : '') +
               '\n',
           );
@@ -174,26 +174,26 @@ export function registerListenCommand(program: Command): void {
             });
             counts.forwarded += 1;
             process.stderr.write(
-              `roost: ← ${forwarded.status} from ${forwardUrl}\n`,
+              `owlette: ← ${forwarded.status} from ${forwardUrl}\n`,
             );
           } catch (err) {
             counts.forwardErrors += 1;
             process.stderr.write(
-              `roost: forward failed for ${event.kind}: ${(err as Error).message}\n`,
+              `owlette: forward failed for ${event.kind}: ${(err as Error).message}\n`,
             );
           }
         }
       } catch (err) {
         if (!stopping) {
           process.stderr.write(
-            `roost: stream error: ${(err as Error).message}\n`,
+            `owlette: stream error: ${(err as Error).message}\n`,
           );
           process.exitCode = 1;
         }
       }
 
       process.stderr.write(
-        `roost: listener stopped. ` +
+        `owlette: listener stopped. ` +
           `connected=${counts.connected} events=${counts.event} ` +
           `forwarded=${counts.forwarded} forwardErrors=${counts.forwardErrors} ` +
           `keepalives=${counts.keepalive}\n`,

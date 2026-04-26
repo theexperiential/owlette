@@ -4,7 +4,7 @@ import { _resetConfigCache } from '../../src/config';
 
 function buildProgram(): Command {
   const program = new Command();
-  program.name('roost').exitOverride().option('--profile <name>').option('--json');
+  program.name('owlette').exitOverride().option('--profile <name>').option('--json');
   registerKeyCommands(program);
   return program;
 }
@@ -40,20 +40,20 @@ afterAll(() => {
 
 beforeEach(() => {
   _resetConfigCache();
-  process.env.ROOST_TOKEN = 'owk_live_testtoken';
-  process.env.ROOST_API_URL = 'https://dev.test';
-  process.env.ROOST_PROFILE = 'default';
+  process.env.OWLETTE_TOKEN = 'owk_live_testtoken';
+  process.env.OWLETTE_API_URL = 'https://dev.test';
+  process.env.OWLETTE_PROFILE = 'default';
   jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
 });
 
 afterEach(() => {
-  delete process.env.ROOST_TOKEN;
-  delete process.env.ROOST_API_URL;
-  delete process.env.ROOST_PROFILE;
+  delete process.env.OWLETTE_TOKEN;
+  delete process.env.OWLETTE_API_URL;
+  delete process.env.OWLETTE_PROFILE;
   jest.restoreAllMocks();
 });
 
-describe('roost key list', () => {
+describe('owlette key list', () => {
   it('GETs /api/keys with Bearer auth', async () => {
     const calls = installFetchStub({ success: true, keys: [] });
     const program = buildProgram();
@@ -64,7 +64,7 @@ describe('roost key list', () => {
   });
 });
 
-describe('roost key create', () => {
+describe('owlette key create', () => {
   it('POSTs /api/keys with name/scopes/ttl/environment from --preset', async () => {
     const calls = installFetchStub({
       success: true,
@@ -143,7 +143,7 @@ describe('roost key create', () => {
   });
 });
 
-describe('roost key rotate', () => {
+describe('owlette key rotate', () => {
   it('POSTs /api/keys/:id/rotate with ttlDays body', async () => {
     const calls = installFetchStub({
       success: true,
@@ -167,7 +167,7 @@ describe('roost key rotate', () => {
   });
 });
 
-describe('roost key revoke', () => {
+describe('owlette key revoke', () => {
   it('DELETEs /api/keys/:id when --yes is supplied', async () => {
     const calls = installFetchStub({ success: true });
     const program = buildProgram();

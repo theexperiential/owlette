@@ -1,5 +1,5 @@
 /**
- * Shared output helpers used by every roost CLI command.
+ * Shared output helpers used by every owlette CLI command.
  *
  * Consolidates the small primitives every command reaches for:
  *   - `isJson(cmd)` — read the global `--json` flag off a commander
@@ -11,9 +11,8 @@
  *   - `humanBytes(n)` — human-readable bytes (B / KiB / MiB / …)
  *   - `truncate(s, n)` — ellipsize long strings
  *
- * All commands adopt this module in wave 4.10 so the --json envelope
- * stays byte-identical across commands (important for users piping
- * output into `jq`).
+ * The --json envelope stays byte-identical across commands (important
+ * for users piping output into `jq`).
  */
 
 import type { Command } from 'commander';

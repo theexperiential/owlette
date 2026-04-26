@@ -1,5 +1,5 @@
 /**
- * Minimal writer for ~/.config/roost/config.toml.
+ * Minimal writer for ~/.config/owlette/config.toml.
  *
  * Parses with smol-toml, mutates the in-memory JS object, then serialises
  * by hand — smol-toml only exports a parser today, so we write a narrow

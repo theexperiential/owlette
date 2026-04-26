@@ -13,7 +13,7 @@ import { _resetConfigCache } from '../../src/config';
 function buildProgram(): Command {
   const program = new Command();
   program
-    .name('roost')
+    .name('owlette')
     .exitOverride()
     .option('--profile <name>')
     .option('--json');
@@ -52,20 +52,20 @@ afterAll(() => {
 
 beforeEach(() => {
   _resetConfigCache();
-  process.env.ROOST_TOKEN = 'owk_live_testtoken';
-  process.env.ROOST_API_URL = 'https://dev.test';
-  process.env.ROOST_PROFILE = 'default';
+  process.env.OWLETTE_TOKEN = 'owk_live_testtoken';
+  process.env.OWLETTE_API_URL = 'https://dev.test';
+  process.env.OWLETTE_PROFILE = 'default';
 });
 
 afterEach(() => {
-  delete process.env.ROOST_TOKEN;
-  delete process.env.ROOST_API_URL;
-  delete process.env.ROOST_PROFILE;
+  delete process.env.OWLETTE_TOKEN;
+  delete process.env.OWLETTE_API_URL;
+  delete process.env.OWLETTE_PROFILE;
   jest.restoreAllMocks();
   jest.spyOn(process.stdout, 'write').mockRestore();
 });
 
-describe('roost roost list', () => {
+describe('owlette roost list', () => {
   it('GETs /api/roosts with siteId + limit + Bearer auth', async () => {
     const calls = installFetchStub({ roosts: [], nextPageToken: '' });
     jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
@@ -85,7 +85,7 @@ describe('roost roost list', () => {
   });
 });
 
-describe('roost roost get', () => {
+describe('owlette roost get', () => {
   it('GETs /api/roosts/:id with siteId + Bearer auth', async () => {
     const calls = installFetchStub({
       roostId: 'rst_testrs01234',
@@ -116,7 +116,7 @@ describe('roost roost get', () => {
   });
 });
 
-describe('roost roost diff', () => {
+describe('owlette roost diff', () => {
   it('resolves currentVersionId then calls /diff?against=...', async () => {
     const roostDetail = {
       roostId: 'rst_testrs01234',
@@ -226,7 +226,7 @@ describe('roost roost diff', () => {
   });
 });
 
-describe('roost roost versions', () => {
+describe('owlette roost versions', () => {
   it('GETs /api/roosts/:id/versions with siteId + page-size + Bearer auth', async () => {
     const calls = installFetchStub({ versions: [], nextCursor: null });
     jest.spyOn(process.stdout, 'write').mockImplementation(() => true);

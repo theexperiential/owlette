@@ -1,9 +1,10 @@
 {
-  "name": "@owlette/roost-cli",
-  "version": "0.1.0",
-  "description": "roost — command line for the roost public api (owlette.app)",
+  "name": "@owlette/cli",
+  "version": "0.2.0",
+  "description": "owlette — command line for the owlette api (owlette.app)",
   "license": "FSL-1.1-Apache-2.0",
   "bin": {
+    "owlette": "./bin/owlette",
     "roost": "./bin/roost"
   },
   "main": "./dist/index.js",
@@ -11,7 +12,8 @@
   "files": [
     "bin/",
     "dist/",
-    "README.md"
+    "README.md",
+    "MIGRATION.md"
   ],
   "engines": {
     "node": ">=20"
@@ -19,7 +21,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json -w",
-    "start": "node bin/roost",
+    "start": "node bin/owlette",
     "test": "jest",
     "lint": "eslint 'src/**/*.ts'"
   },

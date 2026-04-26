@@ -1,5 +1,5 @@
 /**
- * `roost trigger <event>` — wave 4.9.
+ * `owlette trigger <event>`.
  *
  * Fires a synthetic webhook for local testing. Two modes:
  *
@@ -7,7 +7,7 @@
  *      POSTs to /api/webhooks/probe with { kind, siteId, payload? }.
  *      The server re-signs with the caller's own signing key (whoever
  *      owns the webhook subscription being probed) and dispatches it
- *      through the same pipeline as a real event — so `roost listen`
+ *      through the same pipeline as a real event — so `owlette listen`
  *      will pick it up just like production traffic.
  *
  *   2. direct (`--to <url>`)
@@ -117,7 +117,7 @@ export function registerTriggerCommand(program: Command): void {
 
       if (!KNOWN_EVENTS.includes(event) && !opts.payload && !opts.payloadFile) {
         process.stderr.write(
-          `roost: event '${event}' has no canned payload; pass --payload or --payload-file\n` +
+          `owlette: event '${event}' has no canned payload; pass --payload or --payload-file\n` +
             `       known events: ${KNOWN_EVENTS.join(', ')}\n`,
         );
         process.exitCode = 2;
@@ -131,7 +131,7 @@ export function registerTriggerCommand(program: Command): void {
           payload = JSON.parse(String(opts.payload)) as Record<string, unknown>;
         } catch (err) {
           process.stderr.write(
-            `roost: --payload is not valid json: ${(err as Error).message}\n`,
+            `owlette: --payload is not valid json: ${(err as Error).message}\n`,
           );
           process.exitCode = 2;
           return;
@@ -144,7 +144,7 @@ export function registerTriggerCommand(program: Command): void {
           >;
         } catch (err) {
           process.stderr.write(
-            `roost: --payload-file ${opts.payloadFile} unreadable or not json: ${(err as Error).message}\n`,
+            `owlette: --payload-file ${opts.payloadFile} unreadable or not json: ${(err as Error).message}\n`,
           );
           process.exitCode = 2;
           return;
@@ -179,13 +179,13 @@ export function registerTriggerCommand(program: Command): void {
       // Server-probe mode — requires auth + siteId.
       if (!token) {
         process.stderr.write(
-          'roost: no token configured. run `roost auth login` or set ROOST_TOKEN.\n',
+          'owlette: no token configured. run `owlette auth login` or set OWLETTE_TOKEN.\n',
         );
         process.exitCode = 2;
         return;
       }
       if (!opts.site) {
-        process.stderr.write('roost: --site <siteId> is required when firing via the server probe\n');
+        process.stderr.write('owlette: --site <siteId> is required when firing via the server probe\n');
         process.exitCode = 2;
         return;
       }
@@ -231,7 +231,7 @@ async function fireDirect(opts: FireDirectOpts): Promise<void> {
   }
 
   process.stderr.write(
-    `roost: → POST ${opts.to} ${opts.event} [delivery ${opts.deliveryId}]\n` +
+    `owlette: → POST ${opts.to} ${opts.event} [delivery ${opts.deliveryId}]\n` +
       (headers['Roost-Signature']
         ? `       sig: ${headers['Roost-Signature']}\n`
         : '       (no --signing-secret; forwarded unsigned)\n'),
@@ -249,11 +249,11 @@ async function fireDirect(opts: FireDirectOpts): Promise<void> {
         ) + '\n',
       );
     } else {
-      process.stderr.write(`roost: ← ${res.status}${text ? ` — ${truncate(text, 120)}` : ''}\n`);
+      process.stderr.write(`owlette: ← ${res.status}${text ? ` — ${truncate(text, 120)}` : ''}\n`);
     }
     if (!res.ok) process.exitCode = 1;
   } catch (err) {
-    process.stderr.write(`roost: direct post failed: ${(err as Error).message}\n`);
+    process.stderr.write(`owlette: direct post failed: ${(err as Error).message}\n`);
     process.exitCode = 1;
   }
 }
@@ -281,7 +281,7 @@ async function fireServerProbe(opts: FireProbeOpts): Promise<void> {
   };
 
   process.stderr.write(
-    `roost: → POST ${opts.apiUrl}/api/webhooks/probe ${opts.event} [delivery ${opts.deliveryId}]\n`,
+    `owlette: → POST ${opts.apiUrl}/api/webhooks/probe ${opts.event} [delivery ${opts.deliveryId}]\n`,
   );
 
   try {
@@ -297,7 +297,7 @@ async function fireServerProbe(opts: FireProbeOpts): Promise<void> {
 
     if (res.status === 404) {
       process.stderr.write(
-        `roost: /api/webhooks/probe not available yet (ships in wave 6.8). ` +
+        `owlette: /api/webhooks/probe not available yet (ships in wave 6.8). ` +
           `use --to <url> to fire the probe directly at a local listener.\n`,
       );
       process.exitCode = 1;
@@ -309,11 +309,11 @@ async function fireServerProbe(opts: FireProbeOpts): Promise<void> {
         JSON.stringify({ mode: 'server-probe', status: res.status, request: body, response: data }, null, 2) + '\n',
       );
     } else {
-      process.stderr.write(`roost: ← ${res.status} ${JSON.stringify(data)}\n`);
+      process.stderr.write(`owlette: ← ${res.status} ${JSON.stringify(data)}\n`);
     }
     if (!res.ok) process.exitCode = 1;
   } catch (err) {
-    process.stderr.write(`roost: probe post failed: ${(err as Error).message}\n`);
+    process.stderr.write(`owlette: probe post failed: ${(err as Error).message}\n`);
     process.exitCode = 1;
   }
 }
