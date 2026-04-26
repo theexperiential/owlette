@@ -32,6 +32,7 @@ import {
 } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
+  ALL_RESOURCES,
   type ApiKeyEnvironment,
   type ApiKeyLookup,
   type ApiKeyPermission,
@@ -43,7 +44,7 @@ import {
 } from '@/lib/apiKeyTypes';
 import { apiError } from '@/lib/apiErrorResponse';
 
-const VALID_RESOURCES: readonly ApiKeyResource[] = ['roost', 'site', 'machine'];
+const VALID_RESOURCES: readonly ApiKeyResource[] = ALL_RESOURCES;
 const VALID_PERMISSIONS: readonly ApiKeyPermission[] = [
   'read',
   'write',

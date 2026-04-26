@@ -214,3 +214,47 @@ function rebuildResponse(data: CachedDoc): NextResponse {
   response.headers.set('Idempotent-Replayed', 'true');
   return response;
 }
+
+/**
+ * High-level wrapper for the standard {check → handler → save} flow.
+ *
+ * Use this in any route that needs idempotency:
+ *
+ * ```ts
+ * return withIdempotency(
+ *   request,
+ *   { userId: auth.userId, environment: auth.auth.keyContext?.environment ?? 'unknown' },
+ *   parsed.raw,
+ *   async () => buildResponseHere(),
+ * );
+ * ```
+ *
+ * Behavior matches the two-step `checkIdempotency` + `saveIdempotency`
+ * pattern already in use across roost routes — short-circuits to cached
+ * replay / mismatch / invalid-key responses, otherwise runs the handler
+ * and saves a successful response. Caching only applies to 2xx-3xx
+ * responses; errors are returned but never cached.
+ *
+ * Routes that need to add headers to the saved response (e.g.
+ * `applyAuthDeprecations`) should do so inside the handler before
+ * returning — the wrapper saves whatever NextResponse the handler emits.
+ */
+export async function withIdempotency(
+  request: NextRequest,
+  ctx: IdempotencyContext,
+  rawBody: string,
+  handler: () => Promise<NextResponse>,
+): Promise<NextResponse> {
+  const idem = await checkIdempotency(request, ctx, rawBody);
+  if (idem.mode === 'invalid' || idem.mode === 'replay' || idem.mode === 'mismatch') {
+    return idem.response;
+  }
+
+  const response = await handler();
+
+  if (idem.mode === 'proceed') {
+    await saveIdempotency(idem.token, response);
+  }
+
+  return response;
+}

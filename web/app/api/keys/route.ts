@@ -17,6 +17,7 @@ import {
   ProblemType,
 } from '@/lib/apiErrors';
 import {
+  ALL_RESOURCES,
   type ApiKeyEnvironment,
   type ApiKeyLookup,
   type ApiKeyPermission,
@@ -27,7 +28,7 @@ import {
   MAX_TTL_DAYS,
 } from '@/lib/apiKeyTypes';
 
-const VALID_RESOURCES: readonly ApiKeyResource[] = ['roost', 'site', 'machine'];
+const VALID_RESOURCES: readonly ApiKeyResource[] = ALL_RESOURCES;
 const VALID_PERMISSIONS: readonly ApiKeyPermission[] = [
   'read',
   'write',

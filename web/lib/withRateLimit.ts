@@ -59,16 +59,21 @@ function reasonFor(strategy: RateLimitStrategy, identifier: IdentifierType): Rat
 }
 
 /**
- * Rate limit middleware wrapper
+ * Rate limit middleware wrapper.
+ *
+ * Generic over any extra arguments Next.js passes to the route (e.g. the
+ * App-Router `context` object containing dynamic-route params). Extra
+ * args are forwarded to the handler unchanged.
+ *
  * @param handler - The API route handler function
  * @param options - Rate limiting configuration
  * @returns Wrapped handler with rate limiting
  */
-export function withRateLimit(
-  handler: (request: NextRequest) => Promise<NextResponse>,
+export function withRateLimit<TArgs extends unknown[]>(
+  handler: (request: NextRequest, ...rest: TArgs) => Promise<NextResponse>,
   options: RateLimitOptions
 ) {
-  return async (request: NextRequest): Promise<NextResponse> => {
+  return async (request: NextRequest, ...rest: TArgs): Promise<NextResponse> => {
     // Select rate limiter based on strategy
     const ratelimiter =
       options.strategy === 'auth' ? authRateLimit :
@@ -121,7 +126,7 @@ export function withRateLimit(
     }
 
     // Rate limit passed, call the handler
-    const response = await handler(request);
+    const response = await handler(request, ...rest);
 
     // Add rate limit headers to successful response (counters only — no
     // Retry-After or reason on 200s).

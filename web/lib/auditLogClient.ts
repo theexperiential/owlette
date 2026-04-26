@@ -98,6 +98,77 @@ export function emitApiKeyUsed(event: ApiKeyUsedEvent): void {
     },
   };
 
+  postAudit(url, body, 'api_key_used');
+}
+
+/**
+ * Mutation-event taxonomy used by api-sprint waves 1-3. Each track picks
+ * the kind that matches the surface it's promoting; new kinds are added
+ * here (and in the cloud function's recogniser) when a new track lands.
+ */
+export type MutationKind =
+  | 'deployment_mutated' // installer-deploys-api: create / retry / cancel / uninstall
+  | 'process_mutated' // process-api: create / update / delete / kill / start / stop / schedule
+  | 'machine_command_dispatched' // machine-api: reboot / shutdown / capture_screenshot
+  | 'user_mutated' // users-api: promote / demote / assign-sites / remove-sites / delete
+  | 'site_member_mutated' // /api/sites/{siteId}/members
+  | 'installer_mutated' // installer-api: upload / set-latest / delete
+  | 'chat_mutated'; // cortex-api: new conversation / rename / soft-delete
+
+export interface MutationEvent {
+  /** Mutation kind — see {@link MutationKind}. */
+  kind: MutationKind;
+  /**
+   * Site this mutation belongs to. For platform-wide mutations
+   * (`user_mutated`, `installer_mutated`) pass an empty string — the
+   * cloud-function side records these under the platform tenant.
+   */
+  siteId: string;
+  /**
+   * Who did it. `apiKey:<keyId>` for key-mediated mutations,
+   * `user:<uid>` for session/ID-token mediated mutations.
+   */
+  actor: string;
+  /**
+   * The resource being mutated — `deploymentId`, `processId`, `uid`,
+   * `installerVersion`, `conversationId`, etc. Used as the dedup target
+   * for "did this entity change?" queries.
+   */
+  targetId: string;
+  /**
+   * Free-form attributes. Convention: include `endpoint` + `method` for
+   * traceability, and the verb-specific delta (e.g. `from`/`to` for
+   * promote/demote, `reason` for cancel).
+   */
+  attributes: Record<string, unknown>;
+}
+
+/**
+ * Fire-and-forget mutation audit. Never throws. Same delivery/abort
+ * semantics as {@link emitApiKeyUsed} — callers should not await.
+ *
+ * One call per mutation. The integration test in
+ * `__tests__/api/auditMutationCoverage.test.ts` (added in api-sprint
+ * waves 1-3) asserts every mutating route produces exactly one entry.
+ */
+export function emitMutation(event: MutationEvent): void {
+  const url = getAuditLogUrl();
+  if (!url) return;
+
+  const body = {
+    kind: event.kind,
+    siteId: event.siteId,
+    actor: event.actor,
+    occurredAt: Date.now(),
+    target: event.targetId,
+    attributes: event.attributes,
+  };
+
+  postAudit(url, body, event.kind);
+}
+
+/** Internal: shared POST-with-timeout used by every emit helper. */
+function postAudit(url: string, body: unknown, label: string): void {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AUDIT_TIMEOUT_MS);
 
@@ -111,7 +182,7 @@ export function emitApiKeyUsed(event: ApiKeyUsedEvent): void {
       // Audit log failures must NOT propagate. Log at warn so ops can see
       // the outage without spiking error rates.
       console.warn(
-        `[auditLogClient] api_key_used emit failed: ${(err as Error).message}`,
+        `[auditLogClient] ${label} emit failed: ${(err as Error).message}`,
       );
     })
     .finally(() => {

@@ -1,6 +1,38 @@
 export type ApiKeyPermission = 'read' | 'write' | 'deploy' | 'rollback' | 'admin';
-export type ApiKeyResource = 'roost' | 'site' | 'machine';
+export type ApiKeyResource =
+  | 'roost'
+  | 'site'
+  | 'machine'
+  // api-sprint additions:
+  | 'chat' // site-scoped cortex conversations
+  | 'deploy' // site-scoped classic-installer deploys (distinct from the `deploy` permission on roosts)
+  | 'process' // machine-scoped process management
+  | 'user' // platform-wide user administration (superadmin)
+  | 'installer'; // platform-wide installer-binary management (superadmin)
 export type ApiKeyEnvironment = 'live' | 'test';
+
+/**
+ * Canonical list of every accepted resource type. Imported by route
+ * validators + the dashboard scope picker so the allowlist can't drift
+ * across multiple call sites.
+ */
+export const ALL_RESOURCES: readonly ApiKeyResource[] = [
+  'roost',
+  'site',
+  'machine',
+  'chat',
+  'deploy',
+  'process',
+  'user',
+  'installer',
+];
+
+/**
+ * Resources that require superadmin to grant. Route validators reject
+ * scope creation if a non-superadmin attempts to mint a key carrying
+ * any of these.
+ */
+export const SUPERADMIN_ONLY_RESOURCES: readonly ApiKeyResource[] = ['user', 'installer'];
 
 export interface ApiKeyScope {
   resource: ApiKeyResource;

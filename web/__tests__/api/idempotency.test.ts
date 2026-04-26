@@ -16,6 +16,7 @@ jest.mock('@/lib/firebase-admin', () => ({ getAdminDb: () => mockDbFactory() }))
 import {
   checkIdempotency,
   saveIdempotency,
+  withIdempotency,
   IDEMPOTENCY_HEADER,
   IDEMPOTENCY_MAX_KEY_LENGTH,
   type IdempotencyToken,
@@ -184,5 +185,142 @@ describe('saveIdempotency', () => {
     await expect(saveIdempotency(token, response)).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('withIdempotency wrapper', () => {
+  it('runs handler and persists 2xx when no cache hit', async () => {
+    mocks.get.mockResolvedValue({ exists: false });
+    const handler = jest.fn(async () =>
+      NextResponse.json({ ok: true, n: 1 }, { status: 201 }),
+    );
+
+    const response = await withIdempotency(
+      reqWithKey('idem-fresh'),
+      CTX,
+      '{"a":1}',
+      handler,
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(201);
+    expect(mocks.set).toHaveBeenCalledTimes(1);
+    const saved = (mocks.set as jest.Mock).mock.calls[0][0];
+    expect(saved.status).toBe(201);
+    expect(saved.body).toBe('{"ok":true,"n":1}');
+  });
+
+  it('returns cached replay without calling the handler on body-identical retry', async () => {
+    const bodyHash = require('crypto')
+      .createHash('sha256')
+      .update('{"a":1}')
+      .digest('hex');
+    const expiresAt = Date.now() + 1_000_000;
+    mocks.get.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        bodyHash,
+        status: 201,
+        body: '{"replayed":true}',
+        headers: { 'content-type': 'application/json' },
+        expiresAt,
+      }),
+    });
+    const handler = jest.fn();
+
+    const response = await withIdempotency(
+      reqWithKey('idem-replay'),
+      CTX,
+      '{"a":1}',
+      handler,
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(mocks.set).not.toHaveBeenCalled();
+    expect(response.headers.get('Idempotent-Replayed')).toBe('true');
+    expect(response.status).toBe(201);
+    expect(await response.text()).toBe('{"replayed":true}');
+  });
+
+  it('returns 422 mismatch without calling the handler when body differs', async () => {
+    const otherHash = require('crypto')
+      .createHash('sha256')
+      .update('{"a":2}')
+      .digest('hex');
+    mocks.get.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        bodyHash: otherHash,
+        status: 201,
+        body: '{}',
+        headers: {},
+        expiresAt: Date.now() + 1_000_000,
+      }),
+    });
+    const handler = jest.fn();
+
+    const response = await withIdempotency(
+      reqWithKey('idem-mismatch'),
+      CTX,
+      '{"a":1}',
+      handler,
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(mocks.set).not.toHaveBeenCalled();
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body.code).toBe('idempotency_key_mismatch');
+  });
+
+  it('runs handler but skips save when no Idempotency-Key header is present', async () => {
+    const handler = jest.fn(async () =>
+      NextResponse.json({ ok: true }, { status: 200 }),
+    );
+
+    const response = await withIdempotency(
+      reqWithKey(null),
+      CTX,
+      '{"a":1}',
+      handler,
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(200);
+    expect(mocks.set).not.toHaveBeenCalled();
+  });
+
+  it('runs handler but does not persist a 4xx response', async () => {
+    mocks.get.mockResolvedValue({ exists: false });
+    const handler = jest.fn(async () =>
+      NextResponse.json({ error: 'bad input' }, { status: 400 }),
+    );
+
+    const response = await withIdempotency(
+      reqWithKey('idem-error'),
+      CTX,
+      '{"a":1}',
+      handler,
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(400);
+    expect(mocks.set).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 invalid response when key exceeds max length, without calling the handler', async () => {
+    const tooLong = 'a'.repeat(IDEMPOTENCY_MAX_KEY_LENGTH + 1);
+    const handler = jest.fn();
+
+    const response = await withIdempotency(
+      reqWithKey(tooLong),
+      CTX,
+      '{}',
+      handler,
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(mocks.set).not.toHaveBeenCalled();
+    expect(response.status).toBe(400);
   });
 });

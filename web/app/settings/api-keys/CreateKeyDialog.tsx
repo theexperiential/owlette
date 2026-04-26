@@ -23,6 +23,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  ALL_RESOURCES,
   DEFAULT_TTL_DAYS,
   MAX_TTL_DAYS,
   SCOPE_PRESETS,
@@ -33,7 +34,7 @@ import {
   type ApiKeyScopePreset,
 } from '@/lib/apiKeyTypes';
 
-const RESOURCES: ApiKeyResource[] = ['roost', 'site', 'machine'];
+const RESOURCES: readonly ApiKeyResource[] = ALL_RESOURCES;
 const PERMISSIONS: ApiKeyPermission[] = ['read', 'write', 'deploy', 'rollback', 'admin'];
 const PRESETS: ApiKeyScopePreset[] = ['readonly', 'publisher', 'operator', 'admin'];
 

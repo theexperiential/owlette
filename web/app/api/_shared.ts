@@ -30,7 +30,7 @@ import {
 } from '@/lib/apiAuth.server';
 import type { ApiKeyPermission, ApiKeyResource } from '@/lib/apiKeyTypes';
 import { checkRoostVersion } from '@/lib/versionHeader';
-import { getAdminAuth } from '@/lib/firebase-admin';
+import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 
 export const MAX_HASHES_PER_REQUEST = 1000;
 
@@ -348,6 +348,65 @@ export async function requireSiteAuthAndScope(
   };
 }
 
+/**
+ * machine-scoped auth + scope check. used by `/api/sites/{siteId}/machines/{machineId}/...`
+ * routes (api-sprint wave 2 — track 2A).
+ *
+ * - session/id-token callers: must have site access (membership / ownership /
+ *   superadmin); scope check is bypassed (consistent with `requireScope`
+ *   semantics for non-key auth).
+ * - api-key callers: must additionally satisfy `machine=<machineId>:<permission>`.
+ *   wildcard id (`machine=*`) matches any machineId.
+ *
+ * machineId validation matches siteId — 1-128 chars of letters / digits /
+ * underscore / hyphen — since machine ids in this codebase have multiple
+ * historical shapes (`mach_*`, hostnames, uuids).
+ *
+ * Skips `checkRoostVersion()` because machine endpoints are not part of the
+ * roost (project distribution) surface and don't need the deprecation header.
+ */
+export async function requireMachineAuthAndScope(
+  req: NextRequest,
+  siteId: string,
+  machineId: string,
+  permission: ApiKeyPermission,
+): Promise<ScopedAuthResult> {
+  if (!SITE_ID_RE.test(siteId)) {
+    return {
+      ok: false,
+      response: problemValidation('invalid siteId format', {
+        siteId: ['must be 1-128 chars: letters, digits, underscore, hyphen'],
+      }),
+    };
+  }
+  if (!SITE_ID_RE.test(machineId)) {
+    return {
+      ok: false,
+      response: problemValidation('invalid machineId format', {
+        machineId: ['must be 1-128 chars: letters, digits, underscore, hyphen'],
+      }),
+    };
+  }
+
+  const authResult = await resolveAuthOrProblem(req);
+  if (!authResult.ok) return authResult;
+
+  const accessError = await assertSiteAccessOrProblem(authResult.auth.userId, siteId);
+  if (accessError) return { ok: false, response: accessError };
+
+  const scopeResult = runScopeCheck(authResult.auth, 'machine', machineId, permission);
+  if (!scopeResult.ok) return scopeResult;
+
+  auditApiKeyUse(authResult.auth, siteId, req);
+
+  return {
+    ok: true,
+    userId: authResult.auth.userId,
+    auth: authResult.auth,
+    scopeCheck: scopeResult.scopeCheck,
+  };
+}
+
 export async function requireRoostAuthAndScope(
   req: NextRequest,
   siteId: string,
@@ -391,6 +450,99 @@ export async function requireRoostAuthAndScope(
     userId: authResult.auth.userId,
     auth: authResult.auth,
     scopeCheck: { ...scopeResult.scopeCheck, missingVersion: versionCheck.missing },
+  };
+}
+
+/**
+ * superadmin-gated platform-wide auth + scope check. used by routes that
+ * operate on platform-level resources (`installer`, `user`) where access
+ * is not site-scoped — only superadmins may call these endpoints, even
+ * with a session or id-token.
+ *
+ * for api-key callers the scope check enforces `<resource>=*:<permission>`;
+ * scope minting for `SUPERADMIN_ONLY_RESOURCES` is already restricted to
+ * superadmins at key-creation time (wave 0.1), but we still re-verify the
+ * caller's role here as defense-in-depth (e.g. the user could have been
+ * demoted after the key was minted).
+ *
+ * for session/id-token callers, only the role check applies — they bypass
+ * scope enforcement (consistent with `requireScope` semantics for non-key
+ * auth).
+ *
+ * audit log emission for api-key callers uses `siteId=''` since platform
+ * mutations have no site association.
+ */
+export async function requirePlatformAuthAndScope(
+  req: NextRequest,
+  resource: ApiKeyResource,
+  permission: ApiKeyPermission,
+): Promise<ScopedAuthResult> {
+  const authResult = await resolveAuthOrProblem(req);
+  if (!authResult.ok) return authResult;
+
+  // role gate: platform endpoints require superadmin regardless of scope.
+  const db = getAdminDb();
+  const userDoc = await db.collection('users').doc(authResult.auth.userId).get();
+  const role = userDoc.exists ? userDoc.data()?.role : null;
+  if (role !== 'superadmin') {
+    return { ok: false, response: problemForbidden('superadmin access required') };
+  }
+
+  // scope gate (api-key callers only; session/id-token bypasses).
+  const scopeResult = runScopeCheck(authResult.auth, resource, '*', permission);
+  if (!scopeResult.ok) return scopeResult;
+
+  auditApiKeyUse(authResult.auth, '', req);
+
+  return {
+    ok: true,
+    userId: authResult.auth.userId,
+    auth: authResult.auth,
+    scopeCheck: scopeResult.scopeCheck,
+  };
+}
+
+/**
+ * site-scoped chat-conversation auth + scope check. used by `/api/chat/*`
+ * routes (api-sprint wave 3 — track 3A).
+ *
+ * - session/id-token callers: must have site access; scope check is bypassed.
+ * - api-key callers: must satisfy `chat=<siteId>:<permission>`. wildcard id
+ *   (`chat=*`) matches any siteId.
+ *
+ * Skips `checkRoostVersion()` because chat endpoints are not part of the
+ * roost (project distribution) surface and don't need the deprecation header.
+ */
+export async function requireChatAuthAndScope(
+  req: NextRequest,
+  siteId: string,
+  permission: ApiKeyPermission,
+): Promise<ScopedAuthResult> {
+  if (!SITE_ID_RE.test(siteId)) {
+    return {
+      ok: false,
+      response: problemValidation('invalid siteId format', {
+        siteId: ['must be 1-128 chars: letters, digits, underscore, hyphen'],
+      }),
+    };
+  }
+
+  const authResult = await resolveAuthOrProblem(req);
+  if (!authResult.ok) return authResult;
+
+  const accessError = await assertSiteAccessOrProblem(authResult.auth.userId, siteId);
+  if (accessError) return { ok: false, response: accessError };
+
+  const scopeResult = runScopeCheck(authResult.auth, 'chat', siteId, permission);
+  if (!scopeResult.ok) return scopeResult;
+
+  auditApiKeyUse(authResult.auth, siteId, req);
+
+  return {
+    ok: true,
+    userId: authResult.auth.userId,
+    auth: authResult.auth,
+    scopeCheck: scopeResult.scopeCheck,
   };
 }
 
