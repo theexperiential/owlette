@@ -2,30 +2,35 @@
 
 import { NextRequest } from 'next/server';
 
-jest.mock('@/lib/withRateLimit', () => ({
-  withRateLimit: <H,>(handler: H): H => handler,
-}));
 jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   __esModule: true,
 }));
 
-jest.mock('@/lib/apiAuth.server', () => {
-  class _ApiAuthError extends Error {
-    status: number;
-    constructor(status: number, message: string) {
-      super(message);
-      this.status = status;
-    }
-  }
-  return {
-    requireAdminOrIdToken: jest.fn().mockResolvedValue('test-admin'),
-    requireAdmin: jest.fn().mockResolvedValue('test-admin'),
-    ApiAuthError: _ApiAuthError,
-  };
-});
+let mockAuthorizedDeny = false;
 
-const { requireAdminOrIdToken, ApiAuthError } = jest.requireMock('@/lib/apiAuth.server');
+jest.mock('@/lib/authorizedHandler.server', () => ({
+  authorizedPlatformHandler: jest.fn(() => (handler: (...args: unknown[]) => unknown) => {
+    return async (request: NextRequest, routeContext?: unknown) => {
+      if (mockAuthorizedDeny) {
+        return Response.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      return handler(
+        request,
+        {
+          actor: {
+            type: 'user',
+            userId: 'test-admin',
+            role: 'superadmin',
+            sites: [],
+          },
+          correlationId: 'test-correlation',
+        },
+        routeContext,
+      );
+    };
+  }),
+}));
 
 const mockGet = jest.fn();
 const mockSet = jest.fn().mockResolvedValue(undefined);
@@ -97,7 +102,7 @@ function makePutRequest(body: Record<string, unknown>) {
 describe('POST /api/admin/installer/upload', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (requireAdminOrIdToken as jest.Mock).mockResolvedValue('test-admin');
+    mockAuthorizedDeny = false;
     mockGetSignedUrl.mockResolvedValue(['https://storage.example.com/signed-upload']);
   });
 
@@ -147,9 +152,7 @@ describe('POST /api/admin/installer/upload', () => {
   });
 
   it('returns 401 when unauthorized', async () => {
-    (requireAdminOrIdToken as jest.Mock).mockRejectedValueOnce(
-      new ApiAuthError(401, 'Unauthorized')
-    );
+    mockAuthorizedDeny = true;
 
     const res = await POST(
       makePostRequest({ version: '2.2.1', fileName: 'Owlette-Installer.exe' })
@@ -164,7 +167,7 @@ describe('POST /api/admin/installer/upload', () => {
 describe('PUT /api/admin/installer/upload', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (requireAdminOrIdToken as jest.Mock).mockResolvedValue('test-admin');
+    mockAuthorizedDeny = false;
     mockExists.mockResolvedValue([true]);
     mockGetMetadata.mockResolvedValue([{ size: '1048576' }]);
     mockGetSignedUrl.mockResolvedValue(['https://storage.example.com/signed-download']);
