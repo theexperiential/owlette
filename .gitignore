@@ -43,6 +43,8 @@ dev/active/
 *.log
 logs/
 !web/app/logs/
+!web/app/api/sites/*/logs/
+!web/app/api/sites/*/logs/route.ts
 tmp/
 agent/logs/
 agent/tmp/
