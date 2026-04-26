@@ -4014,11 +4014,11 @@ paths:
       summary: queue a command on a machine
       description: |
         Public counterpart of `/api/admin/commands/send`. Restricted to
-        an operator-safe allowlist: `reboot_machine`, `shutdown_machine`,
-        `capture_screenshot`. Live-view is intentionally absent (deferred
-        to wave 4). Requires `machine=<machineId>:write` for api-key
-        callers; session/id-token callers fall through to site
-        membership.
+        an operator-safe allowlist covering machine power, screenshots,
+        live view, display topology, process commands, cortex MCP tool
+        calls, and Owlette updates. Requires `machine=<machineId>:write`
+        for api-key callers; session/id-token callers fall through to
+        site membership.
 
         Returns 409 `machine_offline` if `machines/{machineId}.online`
         is `false` — the command is NOT queued.
@@ -4038,14 +4038,15 @@ paths:
               properties:
                 type:
                   type: string
-                  enum: [reboot_machine, shutdown_machine, capture_screenshot]
+                  enum: [reboot_machine, shutdown_machine, cancel_reboot, dismiss_reboot_pending, capture_screenshot, start_live_view, stop_live_view, restart_process, start_process, kill_process, set_launch_mode, apply_display_topology, ack_display_topology, enumerate_display_modes, test_display_apply, mcp_tool_call, update_owlette]
                 params:
                   type: object
                   description: |
                     Per-type parameters. `reboot_machine` /
                     `shutdown_machine` accept `delay_seconds` (>=0).
                     `capture_screenshot` accepts `monitor` ('all' |
-                    'primary' | non-negative integer).
+                    'primary' | non-negative integer). Other command
+                    types accept their command-specific allowlisted fields.
                   properties:
                     delay_seconds: { type: integer, minimum: 0 }
                     monitor:
@@ -5633,6 +5634,70 @@ components:
         lastUsedAt:
           type: string
           format: date-time
+
+    SystemPresetInput:
+      type: object
+      required:
+        - name
+        - software_name
+        - category
+        - installer_name
+        - installer_url
+        - silent_flags
+        - is_owlette_agent
+        - order
+      properties:
+        name: { type: string }
+        software_name: { type: string }
+        category: { type: string }
+        description: { type: string, nullable: true }
+        icon: { type: string, nullable: true }
+        installer_name: { type: string }
+        installer_url: { type: string }
+        silent_flags: { type: string }
+        verify_path: { type: string, nullable: true }
+        close_processes:
+          type: array
+          items: { type: string }
+        parallel_install: { type: boolean }
+        is_owlette_agent: { type: boolean }
+        timeout_seconds: { type: integer, nullable: true }
+        order: { type: integer }
+
+    SystemPreset:
+      allOf:
+        - $ref: '#/components/schemas/SystemPresetInput'
+        - type: object
+          properties:
+            id: { type: string }
+            createdBy: { type: string }
+            createdAt: { type: string, format: date-time, nullable: true }
+            updatedAt: { type: string, format: date-time, nullable: true }
+
+    AlertRule:
+      type: object
+      required:
+        - id
+        - name
+        - metric
+        - operator
+        - value
+        - severity
+        - channels
+        - enabled
+        - cooldownMinutes
+      properties:
+        id: { type: string }
+        name: { type: string }
+        metric: { type: string }
+        operator: { type: string, enum: ['>', '<', '>=', '<='] }
+        value: { type: number }
+        severity: { type: string, enum: [info, warning, critical] }
+        channels:
+          type: array
+          items: { type: string, enum: [email, webhook] }
+        enabled: { type: boolean }
+        cooldownMinutes: { type: number, minimum: 0 }
 
     InstallerVersion:
       type: object
