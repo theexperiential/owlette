@@ -31,9 +31,11 @@ import {
   resolveLlmConfig,
   isMachineOnline,
   isCortexEnabled,
-  executeToolOnAgent,
-  executeExistingCommand,
 } from '@/lib/cortex-utils.server';
+import {
+  dispatchToolCallAsSystem,
+  dispatchExistingCommandAsSystem,
+} from '@/lib/cortex/dispatch.server';
 import { escalate } from '@/lib/cortex-escalation.server';
 
 const MAX_STEPS = 15;
@@ -63,6 +65,13 @@ interface CortexSettings {
 
 /**
  * Build executable tools for autonomous mode (single machine, no streaming).
+ *
+ * security-boundary-migration wave 3.12 — every dispatch flows through
+ * `invokeAsSystem` (via `dispatchToolCallAsSystem` /
+ * `dispatchExistingCommandAsSystem`) so the cortex_autonomous actor's
+ * audit rows + system rate-limit bucket are honored. Tool implementations
+ * themselves still live on the agent — only the dispatch layer changed.
+ *
  * Separate from the shared buildExecutableTools to avoid the `tool()` import issue
  * with generateText vs streamText — they use the same tool() helper.
  */
@@ -71,8 +80,11 @@ function buildAutonomousTools(
   siteId: string,
   machineId: string,
   chatId: string,
+  eventId: string,
   toolDefs: McpToolDefinition[]
 ) {
+  const dispatchCtx = { db, siteId, machineId, chatId, eventId };
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: Record<string, any> = {};
 
@@ -86,10 +98,13 @@ function buildAutonomousTools(
       execute: async (params) => {
         const existingCmd = EXISTING_COMMAND_MAPPINGS[toolName];
         if (existingCmd) {
-          const processName = (params as Record<string, unknown>).process_name as string;
-          return executeExistingCommand(db, siteId, machineId, existingCmd, processName);
+          return dispatchExistingCommandAsSystem(
+            dispatchCtx,
+            existingCmd,
+            params as Record<string, unknown>,
+          );
         }
-        return executeToolOnAgent(db, siteId, machineId, toolName, params as Record<string, unknown>, chatId);
+        return dispatchToolCallAsSystem(dispatchCtx, toolName, params as Record<string, unknown>);
       },
     });
   }
@@ -289,7 +304,7 @@ async function runAutonomousInvestigation(
     // Build tools (tier-capped)
     const maxTier = settings.maxTier ?? 2;
     const toolDefs = getToolsByTier(maxTier as 1 | 2 | 3);
-    const tools = buildAutonomousTools(db, siteId, machineId, chatId, toolDefs);
+    const tools = buildAutonomousTools(db, siteId, machineId, chatId, eventId, toolDefs);
 
     // Build event context
     const eventLabel = eventType === 'process_start_failed' ? 'failed to start' : 'crashed';
