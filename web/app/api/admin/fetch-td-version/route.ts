@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { requireAdminOrIdToken } from '@/lib/apiAuth.server';
+import { authorizedPlatformHandler } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
 import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 const TD_ARCHIVE_URL = 'https://derivative.ca/download/archive';
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 // Match TouchDesigner full installer URLs: TouchDesigner.YYYY.NNNNN.exe
 const TD_FULL_REGEX = /https:\/\/download\.derivative\.ca\/TouchDesigner\.(\d{4}\.\d{4,5})\.exe/g;
@@ -25,10 +27,17 @@ interface TdBuild {
  * Returns the latest build with download URLs.
  */
 export const GET = withRateLimit(
-  async (request: NextRequest) => {
+  authorizedPlatformHandler({
+    capability: Capability.SYSTEM_PRESET_MANAGE,
+    targetKind: 'preset',
+    apiKeyScope: { resource: 'user', permission: 'admin' },
+    deprecated: true,
+    canonicalUrl: '/api/admin/system-presets',
+    sunsetDate: LEGACY_ADMIN_SUNSET,
+    routeName: 'GET /api/admin/fetch-td-version',
+  })(
+  async (_request: NextRequest) => {
     try {
-      await requireAdminOrIdToken(request);
-
       const response = await fetch(TD_ARCHIVE_URL, {
         headers: {
           'User-Agent': 'Owlette/2.3 (deployment-manager)',
@@ -95,6 +104,6 @@ export const GET = withRateLimit(
       }
       return apiError(error, 'admin/fetch-td-version');
     }
-  },
+  }),
   { strategy: 'api', identifier: 'ip' }
 );

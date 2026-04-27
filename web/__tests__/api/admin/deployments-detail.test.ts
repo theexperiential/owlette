@@ -7,6 +7,7 @@ import {
   docSnapshot,
 } from '../helpers/firestore-mock';
 import { createMockRequest } from '../helpers/utils';
+import * as mockAuthorizedHandler from '../helpers/authorized-handler-mock';
 
 // --- jest.mock() calls (hoisted by Jest — must be top-level) ---
 jest.mock('@/lib/withRateLimit', () => ({ withRateLimit: <H,>(h: H): H => h }));
@@ -14,6 +15,7 @@ jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   __esModule: true,
 }));
+jest.mock('@/lib/authorizedHandler.server', () => mockAuthorizedHandler);
 jest.mock('@/lib/apiHelpers.server', () => ({
   requireAdminWithSiteAccess: (...a: unknown[]) => mocks.requireAdmin(...a),
   getRouteParam: jest.fn((req: { url: string }, idx: number) => {

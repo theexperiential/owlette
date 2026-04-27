@@ -1,6 +1,7 @@
 /** @jest-environment node */
 
 import { NextRequest } from 'next/server';
+import * as mockAuthorizedHandler from '../helpers/authorized-handler-mock';
 
 jest.mock('@/lib/withRateLimit', () => ({
   withRateLimit: <H,>(handler: H): H => handler,
@@ -9,6 +10,7 @@ jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   __esModule: true,
 }));
+jest.mock('@/lib/authorizedHandler.server', () => mockAuthorizedHandler);
 
 const mockRequireAdminWithSiteAccess = jest.fn().mockResolvedValue({ userId: 'test-admin' });
 jest.mock('@/lib/apiHelpers.server', () => ({
@@ -51,6 +53,26 @@ jest.mock('@/lib/firebase-admin', () => ({
 const mockWithProcessConfig = jest.fn();
 jest.mock('@/lib/processConfig.server', () => ({
   withProcessConfig: (...args: unknown[]) => mockWithProcessConfig(...args),
+  withProcessLock: async (
+    siteId: string,
+    machineId: string,
+    mutator: (processes: Array<Record<string, unknown>>) => { result: unknown },
+  ) => {
+    await mockWithProcessConfig(siteId, machineId, mutator);
+    const mutation = mutator([
+      {
+        id: 'p1',
+        processId: 'p1',
+        name: 'ExistingProcess',
+        exe_path: 'C:/app.exe',
+        launch_mode: 'off',
+        autolaunch: false,
+      },
+    ]);
+    return mutation.result;
+  },
+  findProcessIndex: (processes: Array<{ processId?: string }>, processId: string) =>
+    processes.findIndex((process) => process.processId === processId),
   ProcessConfigError: class extends Error {
     status: number;
     constructor(s: number, m: string) {
@@ -59,6 +81,7 @@ jest.mock('@/lib/processConfig.server', () => ({
     }
   },
 }));
+jest.mock('@/lib/auditLogClient', () => ({ emitMutation: jest.fn() }));
 
 import { PATCH, DELETE } from '@/app/api/admin/processes/[processId]/route';
 import { ProcessConfigError } from '@/lib/processConfig.server';

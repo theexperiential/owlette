@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdminOrIdToken } from '@/lib/apiAuth.server';
+import { authorizedPlatformHandler } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
+
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 /**
  * GET /api/admin/installer/versions?limit=10
@@ -10,10 +13,17 @@ import { apiError } from '@/lib/apiErrorResponse';
  * List all uploaded installer versions, ordered by upload date (newest first).
  */
 export const GET = withRateLimit(
+  authorizedPlatformHandler({
+    capability: Capability.INSTALLER_MANAGE,
+    targetKind: 'installer',
+    apiKeyScope: { resource: 'user', permission: 'admin' },
+    deprecated: true,
+    canonicalUrl: '/api/admin/installer/latest',
+    sunsetDate: LEGACY_ADMIN_SUNSET,
+    routeName: 'GET /api/admin/installer/versions',
+  })(
   async (request: NextRequest) => {
     try {
-      await requireAdminOrIdToken(request);
-
       const limitParam = request.nextUrl.searchParams.get('limit');
       const queryLimit = Math.min(Math.max(parseInt(limitParam || '20', 10) || 20, 1), 100);
 
@@ -39,11 +49,8 @@ export const GET = withRateLimit(
 
       return NextResponse.json({ success: true, versions });
     } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
       return apiError(error, 'admin/installer/versions');
     }
-  },
+  }),
   { strategy: 'api', identifier: 'ip' }
 );

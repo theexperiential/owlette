@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
+import {
+  authorizedLegacyBodySiteHandler,
+  authorizedSiteHandler,
+  type SiteHandlerContext,
+} from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { apiError } from '@/lib/apiErrorResponse';
+
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 /**
  * GET /api/admin/webhooks?siteId=xxx
@@ -19,15 +26,21 @@ import { apiError } from '@/lib/apiErrorResponse';
  *
  * Delete a webhook.
  */
-export async function GET(request: NextRequest) {
+export const GET = authorizedSiteHandler({
+  capability: Capability.WEBHOOK_MANAGE,
+  siteIdParam: 'query',
+  targetKind: 'site',
+  apiKeyPermission: 'read',
+  deprecated: true,
+  canonicalUrl: '/api/sites/{siteId}/webhooks',
+  sunsetDate: LEGACY_ADMIN_SUNSET,
+  routeName: 'GET /api/admin/webhooks',
+})(async function GET(request: NextRequest) {
   try {
-    const userId = await requireAdminOrIdToken(request);
     const siteId = request.nextUrl.searchParams.get('siteId');
     if (!siteId) {
       return NextResponse.json({ error: 'Missing siteId' }, { status: 400 });
     }
-
-    await assertUserHasSiteAccess(userId, siteId);
 
     const db = getAdminDb();
     const snap = await db.collection(`sites/${siteId}/webhooks`).get();
@@ -40,16 +53,19 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, webhooks });
   } catch (error: unknown) {
-    if (error instanceof ApiAuthError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
     return apiError(error, 'admin/webhooks GET');
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = authorizedLegacyBodySiteHandler({
+  capability: Capability.WEBHOOK_MANAGE,
+  targetKind: 'site',
+  deprecated: true,
+  canonicalUrl: '/api/sites/{siteId}/webhooks',
+  sunsetDate: LEGACY_ADMIN_SUNSET,
+  routeName: 'POST /api/admin/webhooks',
+})(async function POST(request: NextRequest, ctx: SiteHandlerContext) {
   try {
-    const userId = await requireAdminOrIdToken(request);
     const body = await request.json();
     const { siteId, name, url, events } = body;
 
@@ -65,8 +81,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'events must be a non-empty array' }, { status: 400 });
     }
 
-    await assertUserHasSiteAccess(userId, siteId);
-
     const db = getAdminDb();
     const secret = crypto.randomBytes(32).toString('hex');
 
@@ -77,7 +91,7 @@ export async function POST(request: NextRequest) {
       enabled: true,
       secret,
       createdAt: FieldValue.serverTimestamp(),
-      createdBy: userId,
+      createdBy: ctx.actor.userId,
       lastTriggered: null,
       lastStatus: 0,
       failCount: 0,
@@ -85,16 +99,20 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, webhookId: ref.id, secret });
   } catch (error: unknown) {
-    if (error instanceof ApiAuthError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
     return apiError(error, 'admin/webhooks POST');
   }
-}
+});
 
-export async function DELETE(request: NextRequest) {
+export const DELETE = authorizedSiteHandler({
+  capability: Capability.WEBHOOK_MANAGE,
+  siteIdParam: 'query',
+  targetKind: 'site',
+  deprecated: true,
+  canonicalUrl: '/api/sites/{siteId}/webhooks/{webhookId}',
+  sunsetDate: LEGACY_ADMIN_SUNSET,
+  routeName: 'DELETE /api/admin/webhooks',
+})(async function DELETE(request: NextRequest) {
   try {
-    const userId = await requireAdminOrIdToken(request);
     const siteId = request.nextUrl.searchParams.get('siteId');
     const webhookId = request.nextUrl.searchParams.get('webhookId');
 
@@ -102,16 +120,11 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Missing siteId or webhookId' }, { status: 400 });
     }
 
-    await assertUserHasSiteAccess(userId, siteId);
-
     const db = getAdminDb();
     await db.collection(`sites/${siteId}/webhooks`).doc(webhookId).delete();
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    if (error instanceof ApiAuthError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
     return apiError(error, 'admin/webhooks DELETE');
   }
-}
+});

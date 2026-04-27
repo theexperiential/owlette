@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase-admin';
-import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 
 /**
  * GET /api/admin/tokens/list
@@ -19,20 +19,15 @@ import { apiError } from '@/lib/apiErrorResponse';
  * - 401: Unauthorized
  * - 500: Server error
  */
-export async function GET(request: NextRequest) {
+export const GET = authorizedSiteHandler({
+  capability: 'GLOBAL_SETTINGS_WRITE',
+  siteIdParam: 'query',
+  apiKeyPermission: 'read',
+  deprecated: true,
+  routeName: 'GET /api/admin/tokens/list',
+})(async (_request: NextRequest, ctx) => {
   try {
-    await requireAdmin(request);
-
-    // Get siteId from query params
-    const { searchParams } = new URL(request.url);
-    const siteId = searchParams.get('siteId');
-
-    if (!siteId) {
-      return NextResponse.json(
-        { error: 'Missing required parameter: siteId' },
-        { status: 400 }
-      );
-    }
+    const siteId = ctx.siteId;
 
     const db = adminDb.value;
 
@@ -69,9 +64,6 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error: unknown) {
-    if (error instanceof ApiAuthError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
     return apiError(error, 'admin/tokens/list');
   }
-}
+});

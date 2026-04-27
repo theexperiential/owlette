@@ -1,141 +1,136 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError } from '@/lib/apiAuth.server';
-import { requireAdminWithSiteAccess, getRouteParam } from '@/lib/apiHelpers.server';
-import { getAdminDb } from '@/lib/firebase-admin';
-import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { FieldValue } from 'firebase-admin/firestore';
 import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
-import type { DeploymentTarget } from '@/hooks/useDeployments';
+import { getAdminDb } from '@/lib/firebase-admin';
+import {
+  authorizedLegacyBodySiteHandler,
+  type SiteHandlerContext,
+} from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
+
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
+
+type RouteParams = { deploymentId: string };
 
 /**
  * POST /api/admin/deployments/{deploymentId}/cancel
  *
- * Cancel a deployment for a specific machine. Sends cancel_installation command
- * and updates the target status to 'cancelled'.
- *
- * Request body:
- *   siteId: string
- *   machineId: string
- *   installer_name: string
+ * Legacy single-target cancel route. The canonical site route cancels every
+ * cancellable target on the deployment; this URL keeps the old machineId
+ * contract for compatibility while running through the new auth wrapper.
  */
-export const POST = withRateLimit(
-  async (request: NextRequest) => {
-    try {
-      // /api/admin/deployments/{deploymentId}/cancel → segments: ['api','admin','deployments','{id}','cancel']
-      const deploymentId = getRouteParam(request, 3);
-      const body = await request.json();
-      const { siteId, machineId, installer_name } = body;
+export const POST = authorizedLegacyBodySiteHandler<RouteParams>({
+  capability: Capability.DEPLOYMENT_MANAGE,
+  targetKind: 'deployment',
+  targetIdParam: 'deploymentId',
+  deprecated: true,
+  canonicalUrl: '/api/sites/{siteId}/deployments/{deploymentId}/cancel',
+  sunsetDate: LEGACY_ADMIN_SUNSET,
+  routeName: 'POST /api/admin/deployments/{deploymentId}/cancel',
+})(async (request: NextRequest, ctx: SiteHandlerContext, routeContext) => {
+  try {
+    const deploymentId = await readDeploymentId(request, routeContext.params);
+    const body = await request.json();
+    const { siteId, machineId, installer_name } = body;
 
-      if (!siteId || !machineId || !installer_name) {
-        return NextResponse.json(
-          { error: 'Missing required fields: siteId, machineId, installer_name' },
-          { status: 400 }
-        );
-      }
-
-      await requireAdminWithSiteAccess(request, siteId);
-
-      const db = getAdminDb();
-
-      // Verify deployment exists
-      const deploymentRef = db.collection('sites').doc(siteId).collection('deployments').doc(deploymentId);
-      const deploymentSnap = await deploymentRef.get();
-
-      if (!deploymentSnap.exists) {
-        return NextResponse.json(
-          { error: 'Deployment not found' },
-          { status: 404 }
-        );
-      }
-
-      const deploymentData = deploymentSnap.data()!;
-
-      // Verify machine is a target in this deployment
-      const target = (deploymentData.targets || []).find(
-        (t: DeploymentTarget) => t.machineId === machineId
+    if (!siteId || !machineId || !installer_name) {
+      return NextResponse.json(
+        { error: 'Missing required fields: siteId, machineId, installer_name' },
+        { status: 400 }
       );
-
-      if (!target) {
-        return NextResponse.json(
-          { error: `Machine ${machineId} is not a target of this deployment` },
-          { status: 400 }
-        );
-      }
-
-      // Verify target is in a cancellable state
-      const nonCancellableStatuses = ['completed', 'failed', 'cancelled', 'uninstalled'];
-      if (nonCancellableStatuses.includes(target.status)) {
-        return NextResponse.json(
-          { error: `Cannot cancel target in "${target.status}" state` },
-          { status: 409 }
-        );
-      }
-
-      // Send cancel_installation command (mirrors cancelDeployment in useDeployments.ts)
-      const sanitizedMachineId = machineId.replace(/-/g, '_');
-      const commandId = `cancel_${Date.now()}_${sanitizedMachineId}`;
-      const pendingRef = db
-        .collection('sites').doc(siteId)
-        .collection('machines').doc(machineId)
-        .collection('commands').doc('pending');
-
-      await pendingRef.set({
-        [commandId]: {
-          type: 'cancel_installation',
-          installer_name,
-          deployment_id: deploymentId,
-          timestamp: FieldValue.serverTimestamp(),
-        },
-      }, { merge: true });
-      const now = Timestamp.now();
-      const updatedTargets: DeploymentTarget[] = (deploymentData.targets || []).map((target: DeploymentTarget) => {
-        if (target.machineId === machineId) {
-          return {
-            ...target,
-            status: 'cancelled',
-            cancelledAt: now,
-          };
-        }
-        return target;
-      });
-
-      // Recalculate deployment-level status if all targets are now terminal
-      const targetTerminalStatuses = ['completed', 'failed', 'cancelled', 'uninstalled'];
-      const allTerminal = updatedTargets.every((t: DeploymentTarget) =>
-        targetTerminalStatuses.includes(t.status)
-      );
-
-      const updatePayload: Record<string, unknown> = {
-        targets: updatedTargets,
-        updatedAt: FieldValue.serverTimestamp(),
-      };
-
-      if (allTerminal) {
-        const statuses = new Set(updatedTargets.map((t: DeploymentTarget) => t.status));
-        if (statuses.size === 1 && statuses.has('cancelled')) {
-          updatePayload.status = 'cancelled';
-        } else if (statuses.size === 1 && statuses.has('completed')) {
-          updatePayload.status = 'completed';
-        } else {
-          updatePayload.status = 'partial';
-        }
-        updatePayload.completedAt = FieldValue.serverTimestamp();
-      }
-
-      await deploymentRef.update(updatePayload);
-
-      logger.info(`Deployment ${deploymentId} cancelled for machine ${machineId}`, {
-        context: 'admin/deployments',
-      });
-
-      return NextResponse.json({ success: true, commandId });
-    } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
-      return apiError(error, 'admin/deployments/[id]/cancel');
     }
-  },
-  { strategy: 'api', identifier: 'ip' }
-);
+
+    const db = getAdminDb();
+    const deploymentRef = db
+      .collection('sites')
+      .doc(ctx.siteId)
+      .collection('deployments')
+      .doc(deploymentId);
+
+    const deploymentSnap = await deploymentRef.get();
+    if (!deploymentSnap.exists) {
+      return NextResponse.json({ error: 'Deployment not found' }, { status: 404 });
+    }
+
+    const deployment = deploymentSnap.data() ?? {};
+    const targets = Array.isArray(deployment.targets) ? deployment.targets : [];
+    const targetIndex = targets.findIndex((target) => target?.machineId === machineId);
+    if (targetIndex < 0) {
+      return NextResponse.json(
+        { error: `Machine ${machineId} is not a target of this deployment` },
+        { status: 400 },
+      );
+    }
+
+    const existingStatus = targets[targetIndex]?.status;
+    if (isTerminalStatus(existingStatus)) {
+      return NextResponse.json(
+        { error: `Cannot cancel target in ${existingStatus} state` },
+        { status: 409 },
+      );
+    }
+
+    const commandId = `cancel_${Date.now()}_${machineId.replace(/-/g, '_')}`;
+    await db
+      .collection('sites')
+      .doc(ctx.siteId)
+      .collection('machines')
+      .doc(machineId)
+      .collection('commands')
+      .doc('pending')
+      .set(
+        {
+          [commandId]: {
+            type: 'cancel_installation',
+            installer_name,
+            deployment_id: deploymentId,
+            timestamp: FieldValue.serverTimestamp(),
+            status: 'pending',
+            auditCorrelationId: ctx.correlationId,
+          },
+        },
+        { merge: true },
+      );
+
+    const cancelledTarget = {
+      ...targets[targetIndex],
+      status: 'cancelled',
+      cancelledAt: FieldValue.serverTimestamp(),
+    };
+    const nextTargets = targets.map((target, index) => (
+      index === targetIndex ? cancelledTarget : target
+    ));
+    const updateData: Record<string, unknown> = { targets: nextTargets };
+    if (nextTargets.every((target) => isTerminalStatus(target?.status))) {
+      updateData.status = nextTargets.every((target) => target?.status === 'cancelled')
+        ? 'cancelled'
+        : 'partial';
+      updateData.completedAt = FieldValue.serverTimestamp();
+    }
+    await deploymentRef.update(updateData);
+
+    logger.info(`Deployment ${deploymentId} cancel sent to ${machineId}`, {
+      context: 'admin/deployments',
+    });
+
+    return NextResponse.json({ success: true, commandId });
+  } catch (error: unknown) {
+    return apiError(error, 'admin/deployments/[id]/cancel');
+  }
+});
+
+function isTerminalStatus(status: unknown): boolean {
+  return status === 'completed' || status === 'cancelled' || status === 'failed';
+}
+
+async function readDeploymentId(
+  request: NextRequest,
+  paramsPromise: Promise<RouteParams>,
+): Promise<string> {
+  const params = await paramsPromise;
+  if (params.deploymentId) return params.deploymentId;
+  const segments = request.nextUrl.pathname.split('/').filter(Boolean);
+  const idx = segments.indexOf('deployments');
+  return decodeURIComponent(segments[idx + 1] ?? '');
+}

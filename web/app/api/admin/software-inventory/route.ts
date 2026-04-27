@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError } from '@/lib/apiAuth.server';
-import { requireAdminWithSiteAccess } from '@/lib/apiHelpers.server';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
+
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 /**
  * GET /api/admin/software-inventory?siteId=xxx&machineId=xxx&search=xxx
@@ -15,6 +17,16 @@ import { apiError } from '@/lib/apiErrorResponse';
  * useful for programmatic uninstall via the commands/send endpoint.
  */
 export const GET = withRateLimit(
+  authorizedSiteHandler({
+    capability: Capability.MACHINE_CONFIG_WRITE,
+    siteIdParam: 'query',
+    targetKind: 'machine',
+    apiKeyPermission: 'read',
+    deprecated: true,
+    canonicalUrl: '/api/sites/{siteId}/machines/{machineId}/software-inventory',
+    sunsetDate: LEGACY_ADMIN_SUNSET,
+    routeName: 'GET /api/admin/software-inventory',
+  })(
   async (request: NextRequest) => {
     try {
       const siteId = request.nextUrl.searchParams.get('siteId');
@@ -27,8 +39,6 @@ export const GET = withRateLimit(
           { status: 400 }
         );
       }
-
-      await requireAdminWithSiteAccess(request, siteId);
 
       const db = getAdminDb();
       const inventoryRef = db
@@ -61,11 +71,8 @@ export const GET = withRateLimit(
 
       return NextResponse.json({ success: true, software });
     } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
       return apiError(error, 'admin/software-inventory');
     }
-  },
+  }),
   { strategy: 'api', identifier: 'ip' }
 );

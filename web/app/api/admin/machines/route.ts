@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
+
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 /**
  * GET /api/admin/machines?siteId=xxx
@@ -26,16 +29,23 @@ import logger from '@/lib/logger';
  *   }
  */
 export const GET = withRateLimit(
+  authorizedSiteHandler({
+    capability: Capability.MACHINE_CONFIG_WRITE,
+    siteIdParam: 'query',
+    targetKind: 'site',
+    apiKeyPermission: 'read',
+    deprecated: true,
+    canonicalUrl: '/api/sites/{siteId}/machines',
+    sunsetDate: LEGACY_ADMIN_SUNSET,
+    routeName: 'GET /api/admin/machines',
+  })(
   async (request: NextRequest) => {
     try {
-      const userId = await requireAdminOrIdToken(request);
       const siteId = request.nextUrl.searchParams.get('siteId');
 
       if (!siteId) {
         return NextResponse.json({ error: 'Missing required param: siteId' }, { status: 400 });
       }
-
-      await assertUserHasSiteAccess(userId, siteId);
 
       const db = getAdminDb();
       const machinesSnap = await db
@@ -64,11 +74,8 @@ export const GET = withRateLimit(
       logger.info(`Listed ${machines.length} machines for site ${siteId}`, { context: 'admin/machines' });
       return NextResponse.json({ success: true, machines });
     } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
       return apiError(error, 'admin/machines');
     }
-  },
+  }),
   { strategy: 'api', identifier: 'ip' }
 );

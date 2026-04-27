@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
+import { authorizedLegacyBodySiteHandler } from '@/lib/authorizedHandler.server';
+import { getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertEmailsWithCc, getSiteAlertRecipients } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import {
@@ -217,15 +218,20 @@ async function simulateDisplayEvent(params: {
 }
 
 export const POST = withRateLimit(
-  async (request: NextRequest) => {
+  authorizedLegacyBodySiteHandler({
+    capability: 'GLOBAL_SETTINGS_WRITE',
+    deprecated: true,
+    routeName: 'POST /api/admin/events/simulate',
+  })(async (request: NextRequest, ctx) => {
     try {
-      const userId = await requireAdminOrIdToken(request);
       const body = await request.json();
-      const { siteId, event, data } = body;
+      const { event, data } = body;
+      const siteId = ctx.siteId;
+      const userId = ctx.actor.userId;
 
-      if (!siteId || !event) {
+      if (!event) {
         return NextResponse.json(
-          { error: 'Missing required fields: siteId, event' },
+          { error: 'Missing required field: event' },
           { status: 400 }
         );
       }
@@ -237,8 +243,9 @@ export const POST = withRateLimit(
         );
       }
 
-      const { siteData } = await assertUserHasSiteAccess(userId, siteId);
-      const siteName = (siteData as Record<string, unknown>)?.name as string || siteId;
+      const siteDoc = await getAdminDb().collection('sites').doc(siteId).get();
+      const siteData = siteDoc.exists ? siteDoc.data() : undefined;
+      const siteName = (siteData as Record<string, unknown> | undefined)?.name as string || siteId;
 
       const machineId = data?.machineId || 'test-machine';
       const machineName = data?.machineName || 'Test Machine';
@@ -343,11 +350,8 @@ export const POST = withRateLimit(
         webhooksFired,
       });
     } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
       return apiError(error, 'admin/events/simulate');
     }
-  },
+  }),
   { strategy: 'agentAlert', identifier: 'ip' }
 );

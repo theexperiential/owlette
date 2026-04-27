@@ -1,210 +1,160 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError } from '@/lib/apiAuth.server';
-import { requireAdminWithSiteAccess } from '@/lib/apiHelpers.server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { FieldValue } from 'firebase-admin/firestore';
 import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
+import {
+  authorizedLegacyBodySiteHandler,
+  authorizedSiteHandler,
+  type SiteHandlerContext,
+} from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
+import {
+  createDeployment,
+  type CreateDeploymentInput,
+  type CreateDeploymentResult,
+} from '@/lib/actions/createDeployment.server';
+
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 /**
  * GET /api/admin/deployments?siteId=xxx&limit=20
  *
  * List deployments for a site, ordered by creation date (newest first).
  */
-export const GET = withRateLimit(
-  async (request: NextRequest) => {
-    try {
-      const siteId = request.nextUrl.searchParams.get('siteId');
-
-      if (!siteId) {
-        return NextResponse.json(
-          { error: 'Missing required query param: siteId' },
-          { status: 400 }
-        );
-      }
-
-      await requireAdminWithSiteAccess(request, siteId);
-
-      const limitParam = request.nextUrl.searchParams.get('limit');
-      const queryLimit = Math.min(Math.max(parseInt(limitParam || '20', 10) || 20, 1), 100);
-
-      const db = getAdminDb();
-      const deploymentsRef = db.collection('sites').doc(siteId).collection('deployments');
-      const snapshot = await deploymentsRef
-        .orderBy('createdAt', 'desc')
-        .limit(queryLimit)
-        .get();
-
-      const deployments = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          name: data.name || 'Unnamed Deployment',
-          installer_name: data.installer_name || '',
-          installer_url: data.installer_url || '',
-          silent_flags: data.silent_flags || '',
-          verify_path: data.verify_path || undefined,
-          targets: data.targets || [],
-          createdAt: data.createdAt || 0,
-          completedAt: data.completedAt || undefined,
-          status: data.status || 'pending',
-        };
-      });
-
-      return NextResponse.json({ success: true, deployments });
-    } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
-      return apiError(error, 'admin/deployments GET');
+export const GET = authorizedSiteHandler({
+  capability: Capability.DEPLOYMENT_MANAGE,
+  siteIdParam: 'query',
+  targetKind: 'deployment',
+  apiKeyPermission: 'read',
+  deprecated: true,
+  canonicalUrl: '/api/sites/{siteId}/deployments',
+  sunsetDate: LEGACY_ADMIN_SUNSET,
+  routeName: 'GET /api/admin/deployments',
+})(async (request: NextRequest) => {
+  try {
+    const siteId = request.nextUrl.searchParams.get('siteId');
+    if (!siteId) {
+      return NextResponse.json(
+        { error: 'Missing required query param: siteId' },
+        { status: 400 }
+      );
     }
-  },
-  { strategy: 'api', identifier: 'ip' }
-);
+
+    const limitParam = request.nextUrl.searchParams.get('limit');
+    const queryLimit = Math.min(Math.max(parseInt(limitParam || '20', 10) || 20, 1), 100);
+
+    const db = getAdminDb();
+    const deploymentsRef = db.collection('sites').doc(siteId).collection('deployments');
+    const snapshot = await deploymentsRef
+      .orderBy('createdAt', 'desc')
+      .limit(queryLimit)
+      .get();
+
+    const deployments = snapshot.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        name: data.name || 'Unnamed Deployment',
+        installer_name: data.installer_name || '',
+        installer_url: data.installer_url || '',
+        silent_flags: data.silent_flags || '',
+        verify_path: data.verify_path || undefined,
+        targets: data.targets || [],
+        createdAt: data.createdAt || 0,
+        completedAt: data.completedAt || undefined,
+        status: data.status || 'pending',
+      };
+    });
+
+    return NextResponse.json({ success: true, deployments });
+  } catch (error: unknown) {
+    return apiError(error, 'admin/deployments GET');
+  }
+});
 
 /**
  * POST /api/admin/deployments
  *
- * Create a new deployment — creates deployment doc and sends install_software
- * commands to each target machine.
- *
- * Request body:
- *   siteId: string
- *   name: string
- *   installer_name: string
- *   installer_url: string
- *   silent_flags: string
- *   verify_path?: string
- *   machineIds: string[]
+ * Legacy body-scoped create route. Delegates to the canonical deployment
+ * action core used by `/api/sites/{siteId}/deployments`.
  */
-export const POST = withRateLimit(
-  async (request: NextRequest) => {
-    try {
-      const body = await request.json();
-      const { siteId, name, installer_name, installer_url, silent_flags, sha256_checksum, verify_path, parallel_install, machineIds } = body;
+export const POST = authorizedLegacyBodySiteHandler({
+  capability: Capability.DEPLOYMENT_MANAGE,
+  targetKind: 'deployment',
+  deprecated: true,
+  canonicalUrl: '/api/sites/{siteId}/deployments',
+  sunsetDate: LEGACY_ADMIN_SUNSET,
+  routeName: 'POST /api/admin/deployments',
+})(async (request: NextRequest, ctx: SiteHandlerContext) => {
+  try {
+    const body = await request.json();
+    const {
+      siteId,
+      name,
+      installer_name,
+      installer_url,
+      silent_flags,
+      sha256_checksum,
+      verify_path,
+      close_processes,
+      suppress_projects,
+      parallel_install,
+      machineIds,
+    } = body;
 
-      if (!siteId || !name || !installer_name || !installer_url || !silent_flags) {
-        return NextResponse.json(
-          { error: 'Missing required fields: siteId, name, installer_name, installer_url, silent_flags' },
-          { status: 400 }
-        );
-      }
-
-      // Validate sha256_checksum format if provided (recommended for supply-chain security).
-      // The agent logs a warning when checksum is missing but still proceeds.
-      if (sha256_checksum && (typeof sha256_checksum !== 'string' || !/^[a-f0-9]{64}$/i.test(sha256_checksum))) {
-        return NextResponse.json(
-          { error: 'sha256_checksum must be a valid 64-character hex SHA-256 hash' },
-          { status: 400 }
-        );
-      }
-
-      if (!machineIds || !Array.isArray(machineIds) || machineIds.length === 0) {
-        return NextResponse.json(
-          { error: 'machineIds must be a non-empty array' },
-          { status: 400 }
-        );
-      }
-
-      // Validate installer_url is a valid HTTPS URL
-      try {
-        const parsedUrl = new URL(installer_url);
-        if (parsedUrl.protocol !== 'https:') {
-          return NextResponse.json(
-            { error: 'installer_url must use HTTPS protocol' },
-            { status: 400 }
-          );
-        }
-      } catch {
-        return NextResponse.json(
-          { error: 'installer_url must be a valid URL' },
-          { status: 400 }
-        );
-      }
-
-      await requireAdminWithSiteAccess(request, siteId);
-
-      const db = getAdminDb();
-      const deploymentId = `deploy-${Date.now()}`;
-      const deploymentRef = db.collection('sites').doc(siteId).collection('deployments').doc(deploymentId);
-
-      // Initialize targets with pending status
-      const targets = machineIds.map((machineId: string) => ({
-        machineId,
-        status: 'pending',
-      }));
-
-      // Create deployment document
-      const deploymentData: Record<string, unknown> = {
-        name,
-        installer_name,
-        installer_url,
-        silent_flags,
-        sha256_checksum,
-        targets,
-        createdAt: FieldValue.serverTimestamp(),
-        status: 'pending',
-      };
-
-      if (verify_path) {
-        deploymentData.verify_path = verify_path;
-      }
-      if (parallel_install) {
-        deploymentData.parallel_install = true;
-      }
-
-      await deploymentRef.set(deploymentData);
-
-      // Send install_software command to each machine in parallel
-      // (mirrors createDeployment in useDeployments.ts)
-      const commandPromises = machineIds.map(async (machineId: string) => {
-        const sanitizedDeploymentId = deploymentId.replace(/-/g, '_');
-        const sanitizedMachineId = machineId.replace(/-/g, '_');
-        const commandId = `install_${sanitizedDeploymentId}_${sanitizedMachineId}_${Date.now()}`;
-
-        const pendingRef = db
-          .collection('sites').doc(siteId)
-          .collection('machines').doc(machineId)
-          .collection('commands').doc('pending');
-
-        const commandData: Record<string, unknown> = {
-          type: 'install_software',
-          installer_url,
-          installer_name,
-          silent_flags,
-          sha256_checksum,
-          deployment_id: deploymentId,
-          timestamp: FieldValue.serverTimestamp(),
-          status: 'pending',
-        };
-
-        if (verify_path) {
-          commandData.verify_path = verify_path;
-        }
-        if (parallel_install) {
-          commandData.parallel_install = true;
-        }
-
-        await pendingRef.set({ [commandId]: commandData }, { merge: true });
-      });
-
-      await Promise.all(commandPromises);
-
-      // Update deployment status to in_progress
-      await deploymentRef.update({ status: 'in_progress' });
-
-      logger.info(`Deployment created: ${deploymentId} targeting ${machineIds.length} machines`, {
-        context: 'admin/deployments',
-      });
-
-      return NextResponse.json({ success: true, deploymentId });
-    } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
-      return apiError(error, 'admin/deployments POST');
+    if (!siteId || !name || !installer_name || !installer_url || silent_flags === undefined) {
+      return NextResponse.json(
+        { error: 'Missing required fields: siteId, name, installer_name, installer_url, silent_flags' },
+        { status: 400 }
+      );
     }
-  },
-  { strategy: 'api', identifier: 'ip' }
-);
+
+    if (!machineIds || !Array.isArray(machineIds) || machineIds.length === 0) {
+      return NextResponse.json(
+        { error: 'machineIds must be a non-empty array' },
+        { status: 400 }
+      );
+    }
+
+    const input: CreateDeploymentInput = {
+      name,
+      installer_name,
+      installer_url,
+      silent_flags,
+      machines: machineIds,
+      ...(sha256_checksum ? { sha256_checksum } : {}),
+      ...(verify_path ? { verify_path } : {}),
+      ...(Array.isArray(close_processes) ? { close_processes } : {}),
+      ...(Array.isArray(suppress_projects) ? { suppress_projects } : {}),
+      ...(parallel_install ? { parallel_install: true } : {}),
+    };
+
+    const result = await createDeployment(input, {
+      siteId: ctx.siteId,
+      createdBy: ctx.actor.userId,
+      actorIdentifier: actorIdentifier(ctx),
+      correlationId: ctx.correlationId,
+    });
+
+    if (!result.ok) return createDeploymentLegacyError(result);
+
+    logger.info(`Deployment created: ${result.deploymentId} targeting ${machineIds.length} machines`, {
+      context: 'admin/deployments',
+    });
+
+    return NextResponse.json({ success: true, deploymentId: result.deploymentId });
+  } catch (error: unknown) {
+    return apiError(error, 'admin/deployments POST');
+  }
+});
+
+function actorIdentifier(ctx: SiteHandlerContext): string {
+  return ctx.auth.keyContext
+    ? `apiKey:${ctx.auth.keyContext.keyId}`
+    : `user:${ctx.actor.userId}`;
+}
+
+function createDeploymentLegacyError(result: Extract<CreateDeploymentResult, { ok: false }>): NextResponse {
+  const status = result.code === 'over_quota' ? 413 : 400;
+  return NextResponse.json({ error: result.message }, { status });
+}

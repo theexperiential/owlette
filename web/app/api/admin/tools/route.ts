@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdminOrIdToken } from '@/lib/apiAuth.server';
+import { authorizedPlatformHandler } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
 import { getToolsByTier, type ToolTier } from '@/lib/mcp-tools';
 import { apiError } from '@/lib/apiErrorResponse';
+
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 /**
  * GET /api/admin/tools
@@ -14,10 +17,17 @@ import { apiError } from '@/lib/apiErrorResponse';
  *   { tools: McpToolDefinition[], count: number }
  */
 export const GET = withRateLimit(
+  authorizedPlatformHandler({
+    capability: Capability.MACHINE_EXEC_COMMAND,
+    targetKind: 'site',
+    apiKeyScope: { resource: 'user', permission: 'admin' },
+    deprecated: true,
+    canonicalUrl: '/api/cortex/tools',
+    sunsetDate: LEGACY_ADMIN_SUNSET,
+    routeName: 'GET /api/admin/tools',
+  })(
   async (request: NextRequest) => {
     try {
-      await requireAdminOrIdToken(request);
-
       const tierParam = request.nextUrl.searchParams.get('tier');
       const maxTier = tierParam ? (Math.min(Math.max(parseInt(tierParam, 10), 1), 3) as ToolTier) : 3;
 
@@ -25,11 +35,8 @@ export const GET = withRateLimit(
 
       return NextResponse.json({ tools, count: tools.length });
     } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
       return apiError(error, 'admin/tools');
     }
-  },
+  }),
   { strategy: 'api', identifier: 'ip' }
 );

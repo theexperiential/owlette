@@ -67,6 +67,7 @@ function buildDoc(path: string): unknown {
 jest.mock('firebase-admin/firestore', () => ({
   FieldValue: {
     serverTimestamp: () => '__SERVER_TS__',
+    increment: (value: number) => ({ __increment: value }),
   },
   Timestamp: { now: () => ({ toMillis: () => 0 }) },
 }));
@@ -238,6 +239,40 @@ describe('authorizedSiteHandler — happy path', () => {
     await wrapped(makeRequest('http://localhost/api/x?siteId=site-a'), { params: Promise.resolve({}) });
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0][1].siteId).toBe('site-a');
+  });
+
+  it('emits deprecation headers and records usage telemetry', async () => {
+    const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedSiteHandler({
+      capability: 'MACHINE_EXEC_COMMAND',
+      siteIdParam: 'query',
+      deprecated: true,
+      canonicalUrl: '/api/sites/{siteId}/machines/{machineId}/commands',
+      sunsetDate: 'Wed, 30 Sep 2026 00:00:00 GMT',
+      routeName: 'POST /api/admin/commands/send',
+    })(handler);
+
+    const res = await wrapped(
+      makeRequest('http://localhost/api/admin/commands/send?siteId=site-a', 'POST'),
+      { params: Promise.resolve({}) },
+    );
+
+    expect(res.headers.get('deprecation')).toBe('true');
+    expect(res.headers.get('sunset')).toBe('Wed, 30 Sep 2026 00:00:00 GMT');
+    expect(res.headers.get('link')).toBe(
+      '</api/sites/{siteId}/machines/{machineId}/commands>; rel="successor-version"',
+    );
+
+    const usage = setCalls.find((c) => c.path.startsWith('global/deprecation_usage/routes/'));
+    expect(usage).toBeDefined();
+    expect(usage!.payload).toMatchObject({
+      method: 'POST',
+      path: '/api/admin/commands/send',
+      canonicalUrl: '/api/sites/{siteId}/machines/{machineId}/commands',
+      sunsetDate: 'Wed, 30 Sep 2026 00:00:00 GMT',
+      count: { __increment: 1 },
+      lastUsedAt: '__SERVER_TS__',
+    });
   });
 });
 

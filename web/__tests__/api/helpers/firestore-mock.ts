@@ -59,14 +59,40 @@ export const mocks = {
 /*  DB factory — returns a recursive collection/doc tree                      */
 /* -------------------------------------------------------------------------- */
 
-function buildCollection(): Record<string, unknown> {
+function buildCollection(path = ''): Record<string, unknown> {
+  return {
+    doc: (_id?: string) => buildDoc(`${path}/${_id ?? 'auto'}`),
+    orderBy: mocks.orderBy,
+    limit: mocks.limit,
+    where: mocks.where,
+    get: mocks.collectionGet,
+  };
+}
+
+function buildDoc(path: string): Record<string, unknown> {
+  return {
+    get: () => {
+      const parts = path.split('/').filter(Boolean);
+      if (parts.length === 2 && parts[0] === 'sites') {
+        return Promise.resolve(docSnapshot(parts[1], {}));
+      }
+      return mocks.get();
+    },
+    set: mocks.set,
+    update: mocks.update,
+    delete: mocks.del,
+    collection: (sub: string) => buildCollection(`${path}/${sub}`),
+  };
+}
+
+function buildLegacyCollection(): Record<string, unknown> {
   return {
     doc: (_id?: string) => ({
       get: mocks.get,
       set: mocks.set,
       update: mocks.update,
       delete: mocks.del,
-      collection: buildCollection,
+      collection: buildLegacyCollection,
     }),
     orderBy: mocks.orderBy,
     limit: mocks.limit,
@@ -77,7 +103,11 @@ function buildCollection(): Record<string, unknown> {
 
 /** Returns a mock Firestore db object. Use inside jest.mock factory. */
 export function mockDbFactory(): Record<string, unknown> {
-  return { collection: buildCollection };
+  return {
+    collection: (name: string) => (
+      name.includes('/') ? buildLegacyCollection() : buildCollection(name)
+    ),
+  };
 }
 
 /* -------------------------------------------------------------------------- */

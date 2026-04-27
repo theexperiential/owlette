@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdminOrIdToken } from '@/lib/apiAuth.server';
+import { authorizedPlatformHandler, type PlatformHandlerContext } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
+
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 /**
  * GET /api/admin/sites
@@ -18,14 +21,21 @@ import { apiError } from '@/lib/apiErrorResponse';
  *   }
  */
 export const GET = withRateLimit(
-  async (request: NextRequest) => {
+  authorizedPlatformHandler({
+    capability: Capability.SITE_MEMBER_MANAGE,
+    targetKind: 'site',
+    apiKeyScope: { resource: 'user', permission: 'admin' },
+    deprecated: true,
+    canonicalUrl: '/api/sites',
+    sunsetDate: LEGACY_ADMIN_SUNSET,
+    routeName: 'GET /api/admin/sites',
+  })(
+  async (_request: NextRequest, ctx: PlatformHandlerContext) => {
     try {
-      const userId = await requireAdminOrIdToken(request);
-
       const db = getAdminDb();
 
       // Check if user is superadmin (superadmins see all sites — platform god-mode).
-      const userDoc = await db.collection('users').doc(userId).get();
+      const userDoc = await db.collection('users').doc(ctx.actor.userId).get();
       const userData = userDoc.data();
       const isSuperadmin = userData?.role === 'superadmin';
       const assignedSites: string[] = Array.isArray(userData?.sites) ? userData.sites : [];
@@ -72,11 +82,8 @@ export const GET = withRateLimit(
 
       return NextResponse.json({ success: true, sites });
     } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: (error as ApiAuthError).message }, { status: (error as ApiAuthError).status });
-      }
       return apiError(error, 'admin/sites');
     }
-  },
+  }),
   { strategy: 'api', identifier: 'ip' }
 );

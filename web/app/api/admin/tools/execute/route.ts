@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
+import { authorizedLegacyBodySiteHandler } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getToolByName, EXISTING_COMMAND_MAPPINGS } from '@/lib/mcp-tools';
@@ -10,6 +11,7 @@ import logger from '@/lib/logger';
 const POLL_INTERVAL_MS = 1500;
 const DEFAULT_TIMEOUT_S = 30;
 const MAX_TIMEOUT_S = 120;
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 /**
  * POST /api/admin/tools/execute
@@ -31,9 +33,16 @@ const MAX_TIMEOUT_S = 120;
  *   { success: true, commandId, tool, tier, status: "timeout" } — if wait=true and timed out
  */
 export const POST = withRateLimit(
+  authorizedLegacyBodySiteHandler({
+    capability: Capability.MACHINE_EXEC_COMMAND,
+    targetKind: 'machine',
+    deprecated: true,
+    canonicalUrl: '/api/sites/{siteId}/machines/{machineId}/commands',
+    sunsetDate: LEGACY_ADMIN_SUNSET,
+    routeName: 'POST /api/admin/tools/execute',
+  })(
   async (request: NextRequest) => {
     try {
-      const userId = await requireAdminOrIdToken(request);
       const body = await request.json();
       const {
         siteId,
@@ -71,8 +80,6 @@ export const POST = withRateLimit(
           );
         }
       }
-
-      await assertUserHasSiteAccess(userId, siteId);
 
       const db = getAdminDb();
       const commandId = crypto.randomUUID();
@@ -157,11 +164,8 @@ export const POST = withRateLimit(
 
       return NextResponse.json({ ...base, status: 'timeout' });
     } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
       return apiError(error, 'admin/tools/execute');
     }
-  },
+  }),
   { strategy: 'api', identifier: 'ip' }
 );

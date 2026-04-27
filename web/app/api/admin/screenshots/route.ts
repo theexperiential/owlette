@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdminOrIdToken, assertUserHasSiteAccess, ApiAuthError } from '@/lib/apiAuth.server';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
 import { getAdminDb, getAdminStorage } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
+
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 /**
  * DELETE /api/admin/screenshots
@@ -13,9 +16,16 @@ import { apiError } from '@/lib/apiErrorResponse';
  *   machineId: string
  *   screenshotId?: string  — Delete a single screenshot. If omitted, deletes ALL history.
  */
-export async function DELETE(request: NextRequest) {
+export const DELETE = authorizedSiteHandler({
+  capability: Capability.MACHINE_CONFIG_WRITE,
+  siteIdParam: 'query',
+  targetKind: 'machine',
+  deprecated: true,
+  canonicalUrl: '/api/sites/{siteId}/machines/{machineId}/screenshots',
+  sunsetDate: LEGACY_ADMIN_SUNSET,
+  routeName: 'DELETE /api/admin/screenshots',
+})(async function DELETE(request: NextRequest) {
   try {
-    const userId = await requireAdminOrIdToken(request);
     const { searchParams } = request.nextUrl;
     const siteId = searchParams.get('siteId');
     const machineId = searchParams.get('machineId');
@@ -24,8 +34,6 @@ export async function DELETE(request: NextRequest) {
     if (!siteId || !machineId) {
       return NextResponse.json({ error: 'Missing siteId or machineId' }, { status: 400 });
     }
-
-    await assertUserHasSiteAccess(userId, siteId);
 
     const db = getAdminDb();
     const storage = getAdminStorage();
@@ -99,9 +107,6 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ success: true, deleted });
   } catch (error: unknown) {
-    if (error instanceof ApiAuthError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
     return apiError(error, 'admin/screenshots');
   }
-}
+});

@@ -1,10 +1,12 @@
 /** @jest-environment node */
 
 import { NextRequest } from 'next/server';
+import * as mockAuthorizedHandler from '../helpers/authorized-handler-mock';
 
 jest.mock('@/lib/withRateLimit', () => ({
   withRateLimit: <H,>(handler: H): H => handler,
 }));
+jest.mock('@/lib/authorizedHandler.server', () => mockAuthorizedHandler);
 
 jest.mock('@/lib/apiAuth.server', () => {
   class _ApiAuthError extends Error {

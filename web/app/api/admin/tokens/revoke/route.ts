@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
+import { authorizedLegacyBodySiteHandler } from '@/lib/authorizedHandler.server';
 
 /**
  * POST /api/admin/tokens/revoke
@@ -29,20 +29,16 @@ import logger from '@/lib/logger';
  * - 401: Unauthorized
  * - 500: Server error
  */
-export const POST = withRateLimit(async (request: NextRequest) => {
+export const POST = withRateLimit(authorizedLegacyBodySiteHandler({
+  capability: 'GLOBAL_SETTINGS_WRITE',
+  deprecated: true,
+  routeName: 'POST /api/admin/tokens/revoke',
+})(async (request: NextRequest, ctx) => {
   try {
-    await requireAdmin(request);
-
     // Parse request body
     const body = await request.json();
-    const { siteId, tokenId, machineId, all } = body;
-
-    if (!siteId) {
-      return NextResponse.json(
-        { error: 'Missing required field: siteId' },
-        { status: 400 }
-      );
-    }
+    const { tokenId, machineId, all } = body;
+    const siteId = ctx.siteId;
 
     if (!tokenId && !machineId && !all) {
       return NextResponse.json(
@@ -138,12 +134,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
   } catch (error: unknown) {
-    if (error instanceof ApiAuthError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
     return apiError(error, 'admin/tokens/revoke');
   }
-}, {
+}), {
   strategy: 'api',
   identifier: 'ip',
 });

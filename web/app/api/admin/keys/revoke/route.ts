@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
+import { authorizedPlatformHandler } from '@/lib/authorizedHandler.server';
 
 /**
  * DELETE /api/admin/keys/revoke
@@ -16,9 +16,13 @@ import { apiError } from '@/lib/apiErrorResponse';
  *   { success: true }
  */
 export const DELETE = withRateLimit(
-  async (request: NextRequest) => {
+  authorizedPlatformHandler({
+    capability: 'GLOBAL_SETTINGS_WRITE',
+    deprecated: true,
+    routeName: 'DELETE /api/admin/keys/revoke',
+  })(async (request: NextRequest, ctx) => {
     try {
-      const userId = await requireAdmin(request);
+      const userId = ctx.actor.userId;
       const body = await request.json();
       const { keyId } = body;
 
@@ -49,11 +53,8 @@ export const DELETE = withRateLimit(
 
       return NextResponse.json({ success: true });
     } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
       return apiError(error, 'admin/keys/revoke');
     }
-  },
+  }),
   { strategy: 'api', identifier: 'ip' }
 );

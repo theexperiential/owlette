@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess } from '@/lib/apiAuth.server';
+import { authorizedLegacyBodySiteHandler } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { apiError } from '@/lib/apiErrorResponse';
@@ -9,6 +10,7 @@ import logger from '@/lib/logger';
 const COMMAND_POLL_INTERVAL_MS = 1500;
 const DEFAULT_TIMEOUT_S = 30;
 const MAX_TIMEOUT_S = 120;
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 /** Allowed data fields per command type. Fields not in this map are stripped. */
 const COMMAND_ALLOWED_FIELDS: Record<string, string[]> = {
@@ -60,9 +62,16 @@ const COMMAND_ALLOWED_FIELDS: Record<string, string[]> = {
  *   { success: true, commandId: string, status: "timeout" }       — if wait=true and timed out
  */
 export const POST = withRateLimit(
+  authorizedLegacyBodySiteHandler({
+    capability: Capability.MACHINE_EXEC_COMMAND,
+    targetKind: 'machine',
+    deprecated: true,
+    canonicalUrl: '/api/sites/{siteId}/machines/{machineId}/commands',
+    sunsetDate: LEGACY_ADMIN_SUNSET,
+    routeName: 'POST /api/admin/commands/send',
+  })(
   async (request: NextRequest) => {
     try {
-      const userId = await requireAdminOrIdToken(request);
       const body = await request.json();
       const { siteId, machineId, command, data, wait, timeout } = body;
 
@@ -72,8 +81,6 @@ export const POST = withRateLimit(
           { status: 400 }
         );
       }
-
-      await assertUserHasSiteAccess(userId, siteId);
 
       const db = getAdminDb();
       const commandId = crypto.randomUUID();
@@ -142,11 +149,8 @@ export const POST = withRateLimit(
 
       return NextResponse.json({ success: true, commandId, status: 'timeout' });
     } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
       return apiError(error, 'admin/commands/send');
     }
-  },
+  }),
   { strategy: 'api', identifier: 'ip' }
 );

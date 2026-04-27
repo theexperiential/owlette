@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { apiError } from '@/lib/apiErrorResponse';
+import { authorizedPlatformHandler } from '@/lib/authorizedHandler.server';
 
 /**
  * POST /api/admin/keys/create
@@ -19,9 +19,13 @@ import { apiError } from '@/lib/apiErrorResponse';
  *   { success: true, key: "owk_...", keyId: string, name: string }
  */
 export const POST = withRateLimit(
-  async (request: NextRequest) => {
+  authorizedPlatformHandler({
+    capability: 'GLOBAL_SETTINGS_WRITE',
+    deprecated: true,
+    routeName: 'POST /api/admin/keys/create',
+  })(async (request: NextRequest, ctx) => {
     try {
-      const userId = await requireAdmin(request);
+      const userId = ctx.actor.userId;
       const body = await request.json().catch(() => ({}));
       const name = body.name || 'API Key';
 
@@ -60,11 +64,8 @@ export const POST = withRateLimit(
         name,
       });
     } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
       return apiError(error, 'admin/keys/create');
     }
-  },
+  }),
   { strategy: 'api', identifier: 'ip' }
 );

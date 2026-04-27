@@ -104,6 +104,15 @@ export interface SiteHandlerOptions {
   capability: Capability;
   siteIdParam: SiteIdSource;
   /**
+   * Legacy admin route marker. When true, the wrapper adds HTTP deprecation
+   * headers and records best-effort usage telemetry under
+   * `global/deprecation_usage/{routeName}`.
+   */
+  deprecated?: boolean;
+  canonicalUrl?: string;
+  sunsetDate?: string;
+  routeName?: string;
+  /**
    * Audit `target.kind`. Defaults to `'site'`. Routes that operate on a
    * specific machine / deployment / etc. should pass the matching kind so
    * the audit row groups correctly.
@@ -139,6 +148,10 @@ export interface SiteHandlerOptions {
 
 export interface PlatformHandlerOptions {
   capability: Capability;
+  deprecated?: boolean;
+  canonicalUrl?: string;
+  sunsetDate?: string;
+  routeName?: string;
   targetKind?: AuditTargetKind;
   /**
    * API-key scope that callers must hold to invoke this route. Sessions
@@ -282,6 +295,67 @@ function platformDenyAudit(entry: AuditEntryInput): void {
   });
 }
 
+type DeprecationOptions = Pick<
+  SiteHandlerOptions,
+  'deprecated' | 'canonicalUrl' | 'sunsetDate' | 'routeName'
+>;
+
+function applyDeprecationHeaders(
+  response: NextResponse,
+  request: NextRequest,
+  options: DeprecationOptions,
+): NextResponse {
+  if (!options.deprecated) return response;
+
+  response.headers.set('deprecation', 'true');
+  if (options.sunsetDate) response.headers.set('sunset', options.sunsetDate);
+  if (options.canonicalUrl) {
+    response.headers.append('link', `<${options.canonicalUrl}>; rel="successor-version"`);
+  }
+
+  recordDeprecationUsage(request, options);
+  return response;
+}
+
+function recordDeprecationUsage(request: NextRequest, options: DeprecationOptions): void {
+  if (!options.deprecated) return;
+
+  const routeName = sanitizeDeprecationRouteName(
+    options.routeName ?? `${request.method} ${request.nextUrl.pathname}`,
+  );
+  const db = getAdminDb();
+  void db
+    .collection('global')
+    .doc('deprecation_usage')
+    .collection('routes')
+    .doc(routeName)
+    .set(
+      {
+        routeName,
+        method: request.method,
+        path: request.nextUrl.pathname,
+        canonicalUrl: options.canonicalUrl ?? null,
+        sunsetDate: options.sunsetDate ?? null,
+        count: FieldValue.increment(1),
+        lastUsedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    )
+    .catch((err) => {
+      logger.warn('[authorizedHandler] deprecation usage write failed', {
+        context: 'authorizedHandler',
+        data: {
+          routeName,
+          err: err instanceof Error ? err.message : String(err),
+        },
+      });
+    });
+}
+
+function sanitizeDeprecationRouteName(routeName: string): string {
+  return routeName.replace(/[^A-Za-z0-9_.:-]+/g, '_').slice(0, 180);
+}
+
 /* -------------------------------------------------------------------------- */
 /*  site-scoped wrapper                                                       */
 /* -------------------------------------------------------------------------- */
@@ -313,6 +387,22 @@ async function extractRouteParam(
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function extractRouteParamFromPath(request: NextRequest, paramName: string): string | null {
+  const segments = request.nextUrl.pathname.split('/').filter(Boolean);
+  const markerByParam: Record<string, string> = {
+    deploymentId: 'deployments',
+    processId: 'processes',
+    presetId: 'system-presets',
+    version: 'installer',
+    webhookId: 'webhooks',
+  };
+  const marker = markerByParam[paramName];
+  if (!marker) return null;
+  const idx = segments.indexOf(marker);
+  const value = idx >= 0 ? segments[idx + 1] : null;
+  return value ? decodeURIComponent(value) : null;
+}
+
 /**
  * Site-scoped authorized handler. Use for any route that operates on a
  * single site (and any nested resource under it).
@@ -328,13 +418,13 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
   return function wrap(handler: SiteRouteHandler<TParams>) {
     return async function authorizedRoute(
       request: NextRequest,
-      routeContext: { params: Promise<TParams> },
+      routeContext?: { params: Promise<TParams> },
     ): Promise<NextResponse> {
       const correlationId = generateCorrelationId();
       let actor: UserActor | null = null;
       let siteId = '';
       const targetKind: AuditTargetKind = options.targetKind ?? 'site';
-      const routeParamsPromise = routeContext.params as Promise<Record<string, string | undefined>>;
+      const routeParamsPromise = (routeContext?.params ?? Promise.resolve({} as TParams)) as Promise<Record<string, string | undefined>>;
 
       // 1. Resolve auth.
       let auth: ResolvedAuth;
@@ -362,7 +452,8 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
       siteId = resolvedSiteId;
 
       const targetId = options.targetIdParam
-        ? await extractRouteParam(routeParamsPromise, options.targetIdParam)
+        ? (await extractRouteParam(routeParamsPromise, options.targetIdParam))
+          ?? extractRouteParamFromPath(request, options.targetIdParam)
         : siteId;
       if (!targetId) {
         return problem({
@@ -375,7 +466,8 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
 
       const apiKeyScopeId = options.apiKeyScope?.id
         ?? (options.apiKeyScope?.idParam
-          ? await extractRouteParam(routeParamsPromise, options.apiKeyScope.idParam)
+          ? (await extractRouteParam(routeParamsPromise, options.apiKeyScope.idParam))
+            ?? extractRouteParamFromPath(request, options.apiKeyScope.idParam)
           : siteId);
       if (!apiKeyScopeId) {
         return problem({
@@ -513,7 +605,8 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
       // 10. Invoke handler.
       try {
         const ctx: SiteHandlerContext = { actor, siteId, correlationId, auth, scopeCheck };
-        return await handler(request, ctx, routeContext);
+        const response = await handler(request, ctx, { params: routeParamsPromise as Promise<TParams> });
+        return applyDeprecationHeaders(response, request, options);
       } catch (err) {
         // Best-effort error audit; then re-throw so the framework's
         // error response path runs.
@@ -530,6 +623,91 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
       }
     };
   };
+}
+
+/**
+ * Compatibility wrapper for old `/api/admin/*` POST/PATCH routes whose
+ * public contract carried `siteId` only in the JSON body. New routes must
+ * use path/query scoping directly. This adapter exists solely to keep legacy
+ * URLs working while they emit deprecation headers:
+ *
+ * - if `?siteId=` is present, it is authoritative
+ * - if body `siteId` is also present, it must match the query value
+ * - if query is absent, body `siteId` is copied into the query before the
+ *   normal `authorizedSiteHandler({ siteIdParam: 'query' })` pipeline runs
+ */
+export function authorizedLegacyBodySiteHandler<
+  TParams extends Record<string, string | undefined> = Record<string, string | undefined>
+>(
+  options: Omit<SiteHandlerOptions, 'siteIdParam'> & { siteIdField?: string },
+) {
+  const siteIdField = options.siteIdField ?? 'siteId';
+  const { siteIdField: _siteIdField, ...siteOptions } = options;
+  void _siteIdField;
+  const wrapped = authorizedSiteHandler<TParams>({
+    ...siteOptions,
+    siteIdParam: 'query',
+  });
+
+  return function wrap(handler: SiteRouteHandler<TParams>) {
+    const route = wrapped(handler);
+
+    return async function legacyBodySiteRoute(
+      request: NextRequest,
+      routeContext?: { params: Promise<TParams> },
+    ): Promise<NextResponse> {
+      const querySiteId = request.nextUrl.searchParams.get('siteId');
+      const bodyInfo = await readJsonBodySiteId(request, siteIdField);
+
+      if (querySiteId && bodyInfo.siteId && querySiteId !== bodyInfo.siteId) {
+        return problem({
+          type: ProblemType.ValidationFailed,
+          title: 'validation failed',
+          status: 400,
+          detail: `query siteId must match body ${siteIdField}`,
+        });
+      }
+
+      if (querySiteId || !bodyInfo.siteId) {
+        return route(request, routeContext);
+      }
+
+      const rewrittenUrl = new URL(request.url);
+      rewrittenUrl.searchParams.set('siteId', bodyInfo.siteId);
+      const headers = new Headers(request.headers);
+      const rewrittenRequest = new NextRequest(rewrittenUrl, {
+        method: request.method,
+        headers,
+        body: bodyInfo.raw.length > 0 ? bodyInfo.raw : undefined,
+      });
+      return route(rewrittenRequest, routeContext);
+    };
+  };
+}
+
+async function readJsonBodySiteId(
+  request: NextRequest,
+  siteIdField: string,
+): Promise<{ raw: string; siteId: string | null }> {
+  if (request.method === 'GET' || request.method === 'HEAD') {
+    return { raw: '', siteId: null };
+  }
+
+  let raw = '';
+  try {
+    raw = await request.clone().text();
+  } catch {
+    return { raw: '', siteId: null };
+  }
+  if (!raw) return { raw, siteId: null };
+
+  try {
+    const body = JSON.parse(raw) as Record<string, unknown>;
+    const siteId = body && typeof body[siteIdField] === 'string' ? body[siteIdField] : null;
+    return { raw, siteId };
+  } catch {
+    return { raw, siteId: null };
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -685,7 +863,8 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
       }
 
       try {
-        return await handler(request, { actor, correlationId, auth, scopeCheck }, routeContext);
+        const response = await handler(request, { actor, correlationId, auth, scopeCheck }, routeContext);
+        return applyDeprecationHeaders(response, request, options);
       } catch (err) {
         platformDenyAudit({
           correlationId,

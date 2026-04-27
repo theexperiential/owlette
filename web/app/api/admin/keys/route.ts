@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
+import { authorizedPlatformHandler } from '@/lib/authorizedHandler.server';
 
 /**
  * GET /api/admin/keys
@@ -19,9 +19,13 @@ import { apiError } from '@/lib/apiErrorResponse';
  *   }
  */
 export const GET = withRateLimit(
-  async (request: NextRequest) => {
+  authorizedPlatformHandler({
+    capability: 'GLOBAL_SETTINGS_WRITE',
+    deprecated: true,
+    routeName: 'GET /api/admin/keys',
+  })(async (_request: NextRequest, ctx) => {
     try {
-      const userId = await requireAdmin(request);
+      const userId = ctx.actor.userId;
       const db = getAdminDb();
 
       const keysSnap = await db
@@ -44,11 +48,8 @@ export const GET = withRateLimit(
 
       return NextResponse.json({ success: true, keys });
     } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
       return apiError(error, 'admin/keys');
     }
-  },
+  }),
   { strategy: 'api', identifier: 'ip' }
 );

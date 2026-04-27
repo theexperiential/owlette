@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError } from '@/lib/apiAuth.server';
-import { requireAdminWithSiteAccess } from '@/lib/apiHelpers.server';
+import { authorizedLegacyBodySiteHandler } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
+
+const LEGACY_ADMIN_SUNSET = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 /**
  * POST /api/admin/machines/update
@@ -17,6 +19,14 @@ import logger from '@/lib/logger';
  *   machineIds?: string[] (optional — if omitted, targets all online machines for the site)
  */
 export const POST = withRateLimit(
+  authorizedLegacyBodySiteHandler({
+    capability: Capability.MACHINE_EXEC_COMMAND,
+    targetKind: 'machine',
+    deprecated: true,
+    canonicalUrl: '/api/sites/{siteId}/machines/{machineId}/commands',
+    sunsetDate: LEGACY_ADMIN_SUNSET,
+    routeName: 'POST /api/admin/machines/update',
+  })(
   async (request: NextRequest) => {
     try {
       const body = await request.json();
@@ -35,8 +45,6 @@ export const POST = withRateLimit(
           { status: 400 }
         );
       }
-
-      await requireAdminWithSiteAccess(request, siteId);
 
       const db = getAdminDb();
 
@@ -152,11 +160,8 @@ export const POST = withRateLimit(
         errors: failed.length > 0 ? failed : undefined,
       });
     } catch (error: unknown) {
-      if (error instanceof ApiAuthError) {
-        return NextResponse.json({ error: error.message }, { status: error.status });
-      }
       return apiError(error, 'admin/machines/update');
     }
-  },
+  }),
   { strategy: 'api', identifier: 'ip' }
 );
