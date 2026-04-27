@@ -49,7 +49,9 @@ export default function TokensPage() {
 
     setLoading(true);
     try {
-      const response = await fetch(`/api/sites/${encodeURIComponent(selectedSiteId)}/agent-tokens`);
+      const response = await fetch(`/api/sites/${encodeURIComponent(selectedSiteId)}/agent-tokens`, {
+        cache: 'no-store',
+      });
       const data = await response.json();
 
       if (!response.ok) {

@@ -10,7 +10,7 @@
  *
  * This spec:
  *   - asserts the config card renders (provider + badges + env +
- *     from/admin emails) — read-through from /api/admin/email/config
+ *     from/admin emails) — read-through from /api/platform/email/config
  *   - exercises the template selector (chevron-styled native <select>)
  *     and confirms the description text updates
  *   - stubs /api/test-email via Playwright's page.route() to return a

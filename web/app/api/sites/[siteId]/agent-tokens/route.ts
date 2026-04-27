@@ -7,6 +7,8 @@ type RouteParams = {
   siteId: string;
 } & Record<string, string | undefined>;
 
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/sites/{siteId}/agent-tokens
  *
@@ -45,10 +47,17 @@ export const GET = authorizedSiteHandler<RouteParams>({
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
-    return NextResponse.json({
-      tokens,
-      count: tokens.length,
-    });
+    return NextResponse.json(
+      {
+        tokens,
+        count: tokens.length,
+      },
+      {
+        headers: {
+          'Cache-Control': 'no-store',
+        },
+      },
+    );
   } catch (error: unknown) {
     return apiError(error, 'sites/agent-tokens:list');
   }

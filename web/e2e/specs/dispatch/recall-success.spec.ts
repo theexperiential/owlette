@@ -29,7 +29,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { roleState } from '../../helpers/roles';
 import { getAdminDb } from '../../helpers/emulator';
 import { seedMachine } from '../../helpers/seed';
-import { completeCommand, getPendingCommandIds } from '../../helpers/stubAgent';
+import { completeCommand } from '../../helpers/stubAgent';
 
 test.use(roleState('admin'));
 
@@ -109,6 +109,15 @@ async function clearMachineCommands() {
   await Promise.all(snap.docs.map((d) => d.ref.delete()));
 }
 
+async function getPendingCommandEntries() {
+  const db = getAdminDb();
+  const snap = await db
+    .collection('sites').doc(SITE_ID)
+    .collection('machines').doc(MACHINE_ID)
+    .collection('commands').doc('pending').get();
+  return Object.entries(snap.data() ?? {}) as Array<[string, Record<string, unknown>]>;
+}
+
 test.beforeEach(async () => {
   // seedMachine writes 2 monitors at (0, 0) and (1920, 0) by default —
   // matching ASSIGNED_MONITORS exactly. To force drift, we seed
@@ -146,10 +155,10 @@ test('admin restores a drifted layout — agent applies + operator keeps + banne
   await expect(banner).toContainText(/keep this layout\?/);
 
   // Grab the apply command id so we can stub its completion.
-  const applyKeys = (await getPendingCommandIds(SITE_ID, MACHINE_ID))
-    .filter((id) => id.startsWith('apply_display_topology_'));
-  expect(applyKeys).toHaveLength(1);
-  const applyCmdId = applyKeys[0];
+  const applyEntries = (await getPendingCommandEntries())
+    .filter(([, cmd]) => cmd.type === 'apply_display_topology');
+  expect(applyEntries).toHaveLength(1);
+  const [applyCmdId] = applyEntries[0];
 
   // Stub the agent finishing the os-level apply: live now matches assigned.
   await stubLivePushMatchingAssigned();
@@ -163,10 +172,10 @@ test('admin restores a drifted layout — agent applies + operator keeps + banne
 
   // Firestore: ack_display_topology written, apply moved pending → completed.
   const db = getAdminDb();
-  const pendingAfter = await getPendingCommandIds(SITE_ID, MACHINE_ID);
-  const ackKeys = pendingAfter.filter((id) => id.startsWith('ack_display_topology_'));
-  expect(ackKeys).toHaveLength(1);
-  expect(pendingAfter).not.toContain(applyCmdId);
+  const pendingAfter = await getPendingCommandEntries();
+  const ackEntries = pendingAfter.filter(([, cmd]) => cmd.type === 'ack_display_topology');
+  expect(ackEntries).toHaveLength(1);
+  expect(pendingAfter.map(([id]) => id)).not.toContain(applyCmdId);
 
   const completedSnap = await db
     .collection('sites').doc(SITE_ID)
@@ -179,7 +188,7 @@ test('admin restores a drifted layout — agent applies + operator keeps + banne
     .collection('sites').doc(SITE_ID)
     .collection('machines').doc(MACHINE_ID)
     .collection('commands').doc('pending').get();
-  const ackCmd = pendingSnap.data()![ackKeys[0]];
+  const ackCmd = pendingSnap.data()![ackEntries[0][0]];
   expect(ackCmd.type).toBe('ack_display_topology');
   expect(typeof ackCmd.applyId).toBe('string');
   expect(ackCmd.applyId.length).toBeGreaterThan(0);

@@ -15,7 +15,7 @@ import type { SiteHandlerContext } from '@/lib/authorizedHandler.server';
 /** Time range within a day. Mirrors web/hooks/useFirestore.ts:TimeRange. */
 export interface TimeRange {
   start: string; // "HH:MM"
-  end: string;   // "HH:MM"
+  stop: string;  // "HH:MM"
 }
 
 /** A single block within a schedule preset. Mirrors web/hooks/useFirestore.ts:ScheduleBlock. */
@@ -90,8 +90,8 @@ export function validateSchedulePresetInput(
         if (typeof range.start !== 'string' || !HHMM_RE.test(range.start)) {
           throw new SchedulePresetValidationError(`blocks[${i}].ranges[${r}].start`, 'start must be HH:MM 24h');
         }
-        if (typeof range.end !== 'string' || !HHMM_RE.test(range.end)) {
-          throw new SchedulePresetValidationError(`blocks[${i}].ranges[${r}].end`, 'end must be HH:MM 24h');
+        if (typeof range.stop !== 'string' || !HHMM_RE.test(range.stop)) {
+          throw new SchedulePresetValidationError(`blocks[${i}].ranges[${r}].stop`, 'stop must be HH:MM 24h');
         }
       }
       if (block.name !== undefined && typeof block.name !== 'string') {

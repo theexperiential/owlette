@@ -1,7 +1,7 @@
 /**
- * Access-control — admin API 403 gates (server-side).
+ * Access-control — platform API 403 gates (server-side).
  *
- * Every `/api/admin/*` route funnels through `requireAdminOrIdToken` in
+ * Platform/global API routes require a superadmin role through the shared
  * `web/lib/apiAuth.server.ts`, which throws 403 "Forbidden: Superadmin
  * access required" for any authenticated user whose role isn't
  * `superadmin`. Member + site-admin must see 403 regardless of body,
@@ -13,9 +13,9 @@
  * avoidable Playwright gap flagged in B4.1's coverage audit).
  *
  * Endpoint selection:
- *   - GET /api/admin/sites               → list sites (smoke-checklist row 1)
- *   - GET /api/admin/installer/versions  → list installer versions
- *   - POST /api/admin/installer/upload   → upload dialog (smoke-checklist row 2;
+ *   - GET /api/platform/system-presets   → global template library
+ *   - GET /api/installer                 → list installer versions
+ *   - POST /api/installer/upload         → upload dialog (smoke-checklist row 2;
  *                                          body is irrelevant — the auth gate
  *                                          short-circuits before validation)
  *
@@ -27,9 +27,9 @@ import { test, expect, type Page } from '@playwright/test';
 import { roleState } from '../../helpers/roles';
 
 const ADMIN_ENDPOINTS = [
-  { method: 'GET', path: '/api/admin/sites' },
-  { method: 'GET', path: '/api/admin/installer/versions' },
-  { method: 'POST', path: '/api/admin/installer/upload', body: {} },
+  { method: 'GET', path: '/api/platform/system-presets' },
+  { method: 'GET', path: '/api/installer' },
+  { method: 'POST', path: '/api/installer/upload', body: {} },
 ] as const;
 
 // We call through `page.evaluate(fetch(...))` instead of Playwright's
@@ -80,13 +80,13 @@ test.describe('admin API 403 — admin (site-A)', () => {
 test.describe('admin API 403 — superadmin', () => {
   test.use(roleState('superadmin'));
 
-  test('GET /api/admin/sites returns 200', async ({ page }) => {
-    const status = await fetchStatus(page, { method: 'GET', path: '/api/admin/sites' });
+  test('GET /api/platform/system-presets returns 200', async ({ page }) => {
+    const status = await fetchStatus(page, { method: 'GET', path: '/api/platform/system-presets' });
     expect(status).toBe(200);
   });
 
-  test('GET /api/admin/installer/versions returns 200', async ({ page }) => {
-    const status = await fetchStatus(page, { method: 'GET', path: '/api/admin/installer/versions' });
+  test('GET /api/installer returns 200', async ({ page }) => {
+    const status = await fetchStatus(page, { method: 'GET', path: '/api/installer' });
     expect(status).toBe(200);
   });
 
@@ -94,8 +94,8 @@ test.describe('admin API 403 — superadmin', () => {
   // auth gate and then fails body validation — that's 400, not 403. The
   // load-bearing assertion is "not 403" (i.e. the auth gate doesn't block
   // superadmin); the 400 is incidental to sending an empty body.
-  test('POST /api/admin/installer/upload passes the auth gate (non-403)', async ({ page }) => {
-    const status = await fetchStatus(page, { method: 'POST', path: '/api/admin/installer/upload', body: {} });
+  test('POST /api/installer/upload passes the auth gate (non-403)', async ({ page }) => {
+    const status = await fetchStatus(page, { method: 'POST', path: '/api/installer/upload', body: {} });
     expect(status).not.toBe(403);
   });
 });

@@ -378,6 +378,13 @@ export async function checkRateLimit(
   capability: Capability,
   siteId: string
 ): Promise<RateLimitResult> {
+  // E2E runs exercise many capability-protected routes back-to-back through
+  // one browser actor. Keep production enforcement on by default, but honor
+  // the explicit Playwright env override used by the older API limiter.
+  if (process.env.E2E_DISABLE_RATE_LIMIT === 'true') {
+    return { ok: true };
+  }
+
   const bucket = bucketForActor(actor);
   const limits = bucket === 'system' ? SYSTEM_LIMITS : USER_LIMITS;
   const limit = limits[capability];

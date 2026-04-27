@@ -3,8 +3,8 @@
  *
  * Agent tokens are stored at the root collection `agent_refresh_tokens`
  * and filtered by the `siteId` field (not a subcollection). The page
- * reads through the API route `/api/admin/tokens/list?siteId=...` and
- * revokes via POST `/api/admin/tokens/revoke`.
+ * reads through `/api/sites/{siteId}/agent-tokens` and revokes via
+ * POST `/api/sites/{siteId}/agent-tokens/revoke`.
  *
  * Covered:
  *   - list rendering — seeded tokens appear in the table with machineId,
@@ -154,12 +154,18 @@ test('revoking all tokens clears every doc for the site', async ({ page }) => {
 
   await gotoTokensForSeededSite(page);
 
-  await page.getByRole('button', { name: /revoke all/i }).click();
+  await expect(page.getByRole('row', { name: /machine-1/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /machine-2/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /machine-3/ })).toBeVisible();
+
+  const revokeAllButton = page.getByRole('button', { name: /^revoke all$/i });
+  await expect(revokeAllButton).toBeVisible();
+  await revokeAllButton.click();
 
   const confirmDialog = page.getByRole('dialog', { name: /revoke all tokens/i });
   await expect(confirmDialog).toBeVisible();
   // The confirm button's text varies with count: "revoke all 3 tokens".
-  await confirmDialog.getByRole('button', { name: /revoke all 3 tokens/i }).click();
+  await confirmDialog.getByRole('button', { name: /^revoke all 3 tokens$/i }).click();
 
   await expect(page.getByText('All tokens revoked', { exact: true })).toBeVisible();
   // Empty state returns.

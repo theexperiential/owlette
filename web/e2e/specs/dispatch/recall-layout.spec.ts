@@ -9,9 +9,8 @@
  *      so the restore button is enabled (gated on hasAssignedLayout).
  *   2. UI: list view → display panel → restore button → confirm dialog
  *      "restore this layout to {machineId}?" → confirm.
- *   3. Firestore: useDisplayActions.applyLayout writes
- *      `apply_display_topology_{Date.now()}` to commands/pending
- *      with `{ type, layout: { monitors }, applyId, status: 'pending' }`.
+ *   3. Firestore: useDisplayActions.applyLayout writes a pending command
+ *      with `{ type: 'apply_display_topology', layout: { monitors }, applyId, status }`.
  *   4. UI: success toast + amber "keep this layout? auto-revert in 30s"
  *      banner appears (role="status" with the "keep" button).
  */
@@ -21,7 +20,6 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { roleState } from '../../helpers/roles';
 import { getAdminDb } from '../../helpers/emulator';
 import { seedMachine } from '../../helpers/seed';
-import { getPendingCommandIds } from '../../helpers/stubAgent';
 
 test.use(roleState('admin'));
 
@@ -109,21 +107,23 @@ test('admin restores a layout — apply_display_topology command dispatched + 30
   await expect(banner).toContainText(/keep this layout\? auto-revert in \d+s/);
   await expect(banner.getByRole('button', { name: /^keep$/i })).toBeVisible();
 
-  // Firestore: exactly one apply_display_topology_* entry with the right shape.
-  const pendingIds = await getPendingCommandIds(SITE_ID, MACHINE_ID);
-  const applyKeys = pendingIds.filter((id) => id.startsWith('apply_display_topology_'));
-  expect(applyKeys).toHaveLength(1);
-
   const db = getAdminDb();
   const pendingSnap = await db
     .collection('sites').doc(SITE_ID)
     .collection('machines').doc(MACHINE_ID)
     .collection('commands').doc('pending').get();
-  const cmd = pendingSnap.data()![applyKeys[0]];
+  const pending = pendingSnap.data() ?? {};
+  const applyEntries = Object.entries(pending)
+    .filter(([, cmd]) => (cmd as { type?: unknown }).type === 'apply_display_topology');
+  expect(applyEntries).toHaveLength(1);
+
+  // Firestore: exactly one apply_display_topology entry with the right shape.
+  const [, cmd] = applyEntries[0] as [string, Record<string, unknown>];
   expect(cmd.type).toBe('apply_display_topology');
   expect(cmd.status).toBe('pending');
   expect(typeof cmd.applyId).toBe('string');
   expect(cmd.applyId.length).toBeGreaterThan(0);
-  expect(Array.isArray(cmd.layout?.monitors)).toBe(true);
-  expect(cmd.layout.monitors.length).toBe(1);
+  const layout = cmd.layout as { monitors?: unknown } | undefined;
+  expect(Array.isArray(layout?.monitors)).toBe(true);
+  expect((layout!.monitors as unknown[]).length).toBe(1);
 });
