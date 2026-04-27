@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, runTransaction, serverTimestamp, Timestamp, type Unsubscribe } from 'firebase/firestore';
+import { collection, onSnapshot, doc, getDoc, Timestamp, type Unsubscribe } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
 
@@ -101,6 +101,19 @@ function parseFirestoreSeconds(value: unknown): number {
   return 0;
 }
 
+async function apiJson<T>(
+  url: string,
+  init: RequestInit,
+): Promise<T> {
+  const res = await fetch(url, init);
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    throw new Error(body?.detail || body?.title || `Request failed with ${res.status}`);
+  }
+  return body as T;
+}
+
 export type LaunchMode = 'off' | 'always' | 'scheduled';
 
 export interface TimeRange {
@@ -155,21 +168,8 @@ export interface Process {
 }
 
 /**
- * Shape of a process entry as it lives in the config doc (`config/{siteId}/machines/{machineId}`).
- * This is narrower than `Process` (the enriched UI type) — the config doc only stores the
- * persistent fields; runtime status/metrics are merged in from the status doc elsewhere.
- * Indexed signature allows additional fields to pass through via spread without losing them.
+ * Static CPU hardware profile attached to a machine.
  */
-type ProcessConfig = {
-  id: string;
-  name?: string;
-  launch_mode?: LaunchMode;
-  autolaunch?: boolean;
-  schedules?: ScheduleBlock[] | null;
-  schedulePresetId?: string | null;
-  [key: string]: unknown;
-};
-
 export interface CpuProfile {
   id: string;              // "CPU0", "CPU1", ...
   model: string;
@@ -683,7 +683,7 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
     }
   }, [userId, userSites, isSuperadmin]);
 
-  const createSite = async (siteId: string, name: string, userId: string, timezone?: string): Promise<string> => {
+  const createSite = async (siteId: string, name: string, _userId: string, timezone?: string): Promise<string> => {
     if (!db) throw new Error('Firebase not configured');
 
     // Validate site ID format
@@ -697,17 +697,19 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
     // so getDoc would fail with permission-denied. Firestore rules protect against overwrites:
     // setDoc on an existing doc triggers the 'update' rule (requires canAccessSite), so a
     // non-owner can't overwrite someone else's site. Availability is checked in CreateSiteDialog.
-    const siteRef = doc(db, 'sites', siteId);
     try {
-      await setDoc(siteRef, {
-        name,
-        createdAt: serverTimestamp(),
-        owner: userId,
-        timezone: timezone || 'UTC',
+      await apiJson('/api/sites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          siteId,
+          name,
+          timezone: timezone || 'UTC',
+        }),
       });
     } catch (err: unknown) {
-      const code = (err as { code?: string })?.code;
-      if (code === 'permission-denied') {
+      const message = err instanceof Error ? err.message : '';
+      if (message.includes('already exists')) {
         throw new Error(`Site ID "${siteId}" is already taken. Please choose a different ID.`);
       }
       throw err;
@@ -730,8 +732,11 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
 
     if (Object.keys(updateData).length === 0) return;
 
-    const siteRef = doc(db, 'sites', siteId);
-    await updateDoc(siteRef, updateData);
+    await apiJson(`/api/sites/${encodeURIComponent(siteId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updateData),
+    });
   };
 
   const deleteSite = async (siteId: string) => {
@@ -740,8 +745,11 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
     // Delete the site document
     // Note: Firestore doesn't automatically delete subcollections (machines)
     // In a production app, you might want to use a Cloud Function to handle this
-    const siteRef = doc(db, 'sites', siteId);
-    await deleteDoc(siteRef);
+    await apiJson(`/api/sites/${encodeURIComponent(siteId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
 
     // TODO: Clean up user references to this site
     // This should query all users with this siteId in their sites array
@@ -1164,28 +1172,18 @@ export function useMachines(siteId: string) {
   const killProcess = async (machineId: string, processId: string, processName: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const commandPath = `sites/${siteId}/machines/${machineId}/commands/pending`;
-    const commandId = `kill_${Date.now()}`;
-
     logger.debug(`Sending kill command for process "${processName}"`, {
       context: 'killProcess',
-      data: { machineId, processId, commandId },
+      data: { machineId, processId },
     });
 
-    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-    const commandData = {
-      type: 'kill_process',
-      process_name: processName,
-      timestamp: serverTimestamp(),
-      status: 'pending',
-    };
-
     try {
-      await setDoc(commandRef, {
-        [commandId]: commandData
-      }, { merge: true });
+      const result = await sendMachineCommand(machineId, 'kill_process', {
+        process_name: processName,
+        process_id: processId,
+      });
 
-      logger.firestore.write(commandPath, commandId, 'create');
+      logger.firestore.write(`api/sites/${siteId}/machines/${machineId}/commands`, result, 'create');
       logger.debug('Kill command sent successfully', { context: 'killProcess' });
     } catch (error) {
       logger.firestore.error('Failed to send kill command', error);
@@ -1232,7 +1230,6 @@ export function useMachines(siteId: string) {
       schedulePresetId: schedulePresetId,
     };
 
-    const configRef = doc(db, 'config', siteId, 'machines', machineId);
     const configPath = `config/${siteId}/machines/${machineId}`;
 
     logger.debug(`Setting launch mode for "${processName}" to ${mode}`, {
@@ -1249,47 +1246,19 @@ export function useMachines(siteId: string) {
         return clean;
       });
 
-      // Use a transaction to prevent race conditions from rapid clicks
-      // (non-transactional read-modify-write can clobber concurrent changes)
-      await runTransaction(db, async (transaction) => {
-        const configSnap = await transaction.get(configRef);
-        if (!configSnap.exists()) {
-          throw new Error('Configuration not found');
-        }
-
-        const config = configSnap.data();
-        if (!config.processes || !Array.isArray(config.processes)) {
-          throw new Error('Invalid configuration structure');
-        }
-
-        const updatedProcesses = config.processes.map((proc: ProcessConfig) =>
-          proc.name === processName ? {
-            ...proc,
-            launch_mode: mode,
-            autolaunch: mode !== 'off',
+      await apiJson(
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/processes/${encodeURIComponent(processId)}/launch-mode`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode,
             ...(cleanSchedules !== undefined ? { schedules: cleanSchedules } : {}),
             ...(schedulePresetId !== undefined ? { schedulePresetId: schedulePresetId || null } : {}),
-          } : proc
-        );
-
-        transaction.update(configRef, { processes: updatedProcesses });
-      });
+          }),
+        },
+      );
       logger.firestore.write(configPath, undefined, 'update');
-
-      // Mirror launch_mode + schedules to status doc for immediate UI visibility
-      // configChangeFlag signals the agent to pick up config changes
-      try {
-        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-        await updateDoc(statusRef, {
-          configChangeFlag: true,
-          [`metrics.processes.${processId}.launch_mode`]: mode,
-          [`metrics.processes.${processId}.autolaunch`]: mode !== 'off',
-          ...(cleanSchedules !== undefined ? { [`metrics.processes.${processId}.schedules`]: cleanSchedules } : {}),
-          ...(schedulePresetId !== undefined ? { [`metrics.processes.${processId}.schedulePresetId`]: schedulePresetId || null } : {}),
-        });
-      } catch {
-        logger.debug('Status doc mirror write skipped (non-critical)', { context: 'setLaunchMode' });
-      }
 
       logger.debug('Launch mode set via config system', { context: 'setLaunchMode' });
     } catch (error) {
@@ -1323,7 +1292,6 @@ export function useMachines(siteId: string) {
   const updateProcess = async (machineId: string, processId: string, updatedData: Partial<Process>) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const configRef = doc(db, 'config', siteId, 'machines', machineId);
     const configPath = `config/${siteId}/machines/${machineId}`;
 
     logger.debug(`Updating process "${processId}"`, {
@@ -1343,39 +1311,39 @@ export function useMachines(siteId: string) {
         });
       }
 
-      await runTransaction(db, async (transaction) => {
-        const configSnap = await transaction.get(configRef);
-        if (!configSnap.exists()) {
-          throw new Error('Configuration not found');
-        }
+      const patchData = { ...cleanedData } as Record<string, unknown>;
+      for (const key of [
+        'id',
+        'processId',
+        'status',
+        'pid',
+        'responsive',
+        'last_updated',
+        'index',
+        '_optimisticAutolaunch',
+        '_optimisticLaunchMode',
+        '_optimisticSchedules',
+        '_optimisticPresetId',
+      ]) {
+        delete patchData[key];
+      }
 
-        const config = configSnap.data();
-        if (!config.processes || !Array.isArray(config.processes)) {
-          throw new Error('Invalid configuration structure');
-        }
+      if (Object.keys(patchData).length === 0) {
+        logger.debug('No persisted process fields to update', { context: 'updateProcess' });
+        return;
+      }
 
-        const targetProcess = config.processes.find((proc: ProcessConfig) => proc.id === processId);
-        if (!targetProcess) {
-          throw new Error('Process not found');
-        }
-
-        const updatedProcesses = config.processes.map((proc: ProcessConfig) =>
-          proc.id === processId ? { ...proc, ...cleanedData } : proc
-        );
-
-        transaction.update(configRef, { processes: updatedProcesses });
-      });
+      await apiJson(
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/processes/${encodeURIComponent(processId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patchData),
+        },
+      );
 
       logger.firestore.write(configPath, undefined, 'update');
       logger.debug('Process updated successfully', { context: 'updateProcess' });
-
-      // Set config change flag to notify agent (non-critical, agent polls anyway)
-      try {
-        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-        await updateDoc(statusRef, { configChangeFlag: true });
-      } catch {
-        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'updateProcess' });
-      }
     } catch (error: unknown) {
       logger.firestore.error('Failed to update process', error);
 
@@ -1407,7 +1375,6 @@ export function useMachines(siteId: string) {
   const deleteProcess = async (machineId: string, processId: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const configRef = doc(db, 'config', siteId, 'machines', machineId);
     const configPath = `config/${siteId}/machines/${machineId}`;
 
     logger.debug(`Deleting process "${processId}"`, {
@@ -1416,36 +1383,13 @@ export function useMachines(siteId: string) {
     });
 
     try {
-      await runTransaction(db, async (transaction) => {
-        const configSnap = await transaction.get(configRef);
-        if (!configSnap.exists()) {
-          throw new Error('Configuration not found');
-        }
-
-        const config = configSnap.data();
-        if (!config.processes || !Array.isArray(config.processes)) {
-          throw new Error('Invalid configuration structure');
-        }
-
-        const targetProcess = config.processes.find((proc: ProcessConfig) => proc.id === processId);
-        if (!targetProcess) {
-          throw new Error('Process not found');
-        }
-
-        const updatedProcesses = config.processes.filter((proc: ProcessConfig) => proc.id !== processId);
-        transaction.update(configRef, { processes: updatedProcesses });
-      });
+      await apiJson(
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/processes/${encodeURIComponent(processId)}`,
+        { method: 'DELETE' },
+      );
 
       logger.firestore.write(configPath, undefined, 'delete');
       logger.debug('Process deleted successfully', { context: 'deleteProcess' });
-
-      // Set config change flag to notify agent (non-critical, agent polls anyway)
-      try {
-        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-        await updateDoc(statusRef, { configChangeFlag: true });
-      } catch {
-        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'deleteProcess' });
-      }
     } catch (error: unknown) {
       logger.firestore.error('Failed to delete process', error);
 
@@ -1477,7 +1421,6 @@ export function useMachines(siteId: string) {
   const createProcess = async (machineId: string, processData: Partial<Process>) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const configRef = doc(db, 'config', siteId, 'machines', machineId);
     const configPath = `config/${siteId}/machines/${machineId}`;
 
     logger.debug('Creating new process', {
@@ -1486,10 +1429,14 @@ export function useMachines(siteId: string) {
     });
 
     try {
-      const newProcessId = crypto.randomUUID();
+      const schedules = processData.schedules?.map(b => {
+        const clean: ScheduleBlock = { days: b.days, ranges: b.ranges };
+        if (b.name) clean.name = b.name;
+        if (b.colorIndex != null) clean.colorIndex = b.colorIndex;
+        return clean;
+      }) ?? null;
 
-      const newProcess = {
-        id: newProcessId,
+      const payload = {
         name: processData.name || 'Untitled Process',
         exe_path: processData.exe_path || '',
         file_path: processData.file_path || '',
@@ -1499,36 +1446,22 @@ export function useMachines(siteId: string) {
         time_delay: processData.time_delay || '0',
         time_to_init: processData.time_to_init || '10',
         relaunch_attempts: processData.relaunch_attempts || '3',
-        autolaunch: processData.autolaunch ?? false,
         launch_mode: processData.launch_mode || 'off',
-        schedules: processData.schedules || null
+        schedules,
       };
 
-      await runTransaction(db, async (transaction) => {
-        const configSnap = await transaction.get(configRef);
-        if (!configSnap.exists()) {
-          throw new Error('Configuration not found');
-        }
-
-        const config = configSnap.data();
-        if (!config.processes || !Array.isArray(config.processes)) {
-          throw new Error('Invalid configuration structure');
-        }
-
-        const updatedProcesses = [...config.processes, newProcess];
-        transaction.update(configRef, { processes: updatedProcesses });
-      });
+      const response = await apiJson<{ ok: true; data: { processId: string } }>(
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/processes`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+      );
+      const newProcessId = response.data.processId;
 
       logger.firestore.write(configPath, undefined, 'create');
       logger.debug('Process created successfully', { context: 'createProcess', data: { newProcessId } });
-
-      // Set config change flag to notify agent (non-critical, agent polls anyway)
-      try {
-        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-        await updateDoc(statusRef, { configChangeFlag: true });
-      } catch {
-        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'createProcess' });
-      }
 
       return newProcessId;
     } catch (error: unknown) {
@@ -1562,55 +1495,51 @@ export function useMachines(siteId: string) {
   const sendMachineCommand = async (machineId: string, commandType: string, extraData: Record<string, unknown> = {}) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const commandId = `${commandType}_${Date.now()}`;
-    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-    const commandData = {
-      type: commandType,
-      timestamp: serverTimestamp(),
-      status: 'pending',
-      ...extraData,
-    };
+    const response = await apiJson<{ ok: true; data: { commandId: string } }>(
+      `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: commandType,
+          params: extraData,
+        }),
+      },
+    );
 
-    await setDoc(commandRef, {
-      [commandId]: commandData
-    }, { merge: true });
+    return response.data.commandId;
   };
 
   const rebootMachine = async (machineId: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
-    const machineRef = doc(db, 'sites', siteId, 'machines', machineId);
-    // Pre-compute the TARGET reboot time as Unix seconds (now + 30s, matching
-    // the agent's `shutdown /r /t 30` in _handle_reboot_machine). Writing a
-    // plain number — not serverTimestamp() — means the dashboard pill renders
-    // the countdown the moment the listener fires, with no second round trip.
-    //
-    // configChangeFlag is REQUIRED by firestore.rules for any dashboard write
-    // to the machine status doc. Without it the rule rejects the write
-    // silently, which is why the previous version of this code never made
-    // the optimistic countdown appear — the dashboard write was rejected.
+    // Pre-compute the target reboot time so the dashboard renders the
+    // countdown immediately while the API queues the command.
     const targetReboot = Math.floor(Date.now() / 1000) + 30;
-    await Promise.all([
-      sendMachineCommand(machineId, 'reboot_machine'),
-      updateDoc(machineRef, {
-        rebootScheduledAt: targetReboot,
-        configChangeFlag: true,
-      }),
-    ]);
+    await sendMachineCommand(machineId, 'reboot_machine', { delay_seconds: 30 });
+    setMachines(prevMachines =>
+      prevMachines.map(machine =>
+        machine.machineId === machineId ? {
+          ...machine,
+          rebootScheduledAt: targetReboot,
+        } : machine
+      )
+    );
   };
 
   const shutdownMachine = async (machineId: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
-    const machineRef = doc(db, 'sites', siteId, 'machines', machineId);
-    // Same pattern as rebootMachine — pre-compute target time and include
-    // configChangeFlag to satisfy firestore.rules.
+    // Same pattern as rebootMachine: render the countdown optimistically while
+    // the API queues the command.
     const targetShutdown = Math.floor(Date.now() / 1000) + 30;
-    await Promise.all([
-      sendMachineCommand(machineId, 'shutdown_machine'),
-      updateDoc(machineRef, {
-        shutdownScheduledAt: targetShutdown,
-        configChangeFlag: true,
-      }),
-    ]);
+    await sendMachineCommand(machineId, 'shutdown_machine', { delay_seconds: 30 });
+    setMachines(prevMachines =>
+      prevMachines.map(machine =>
+        machine.machineId === machineId ? {
+          ...machine,
+          shutdownScheduledAt: targetShutdown,
+        } : machine
+      )
+    );
   };
 
   const cancelReboot = async (machineId: string) => {
@@ -1646,9 +1575,15 @@ export function useMachines(siteId: string) {
    * machine status doc require configChangeFlag.)
    */
   const updateRebootSchedule = async (machineId: string, schedule: RebootSchedule) => {
-    if (!db) throw new Error('Firebase not configured');
-    const configRef = doc(db, 'config', siteId, 'machines', machineId);
-    await setDoc(configRef, { rebootSchedule: schedule }, { merge: true });
+    if (!db || !siteId) throw new Error('Firebase not configured');
+    await apiJson(
+      `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/reboot-schedule`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule }),
+      },
+    );
   };
 
   // Join each machine with its hardware/profile doc (if any) and produce the

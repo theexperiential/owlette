@@ -82,7 +82,7 @@ export { app, auth, db, storage, isConfigured };
  * Firebase Helper Functions
  */
 
-import { getDoc, doc, setDoc, Timestamp } from 'firebase/firestore';
+import { getDoc, doc } from 'firebase/firestore';
 
 /**
  * Get the latest Owlette agent version from installer_metadata collection
@@ -179,25 +179,33 @@ export async function sendOwletteUpdateCommand(
       console.warn('Could not refresh download URL, using provided URL:', urlErr);
     }
 
-    const commandId = `update_owlette_${Date.now()}`;
-    const commandRef = doc(
-      db,
-      'sites', siteId,
-      'machines', machineId,
-      'commands', 'pending'
-    );
-
-    await setDoc(commandRef, {
-      [commandId]: {
-        type: 'update_owlette',
+    const params: Record<string, string> = {
         installer_url: freshUrl,
-        deployment_id: deploymentId || null,
         target_version: targetVersion,
         checksum_sha256: checksumSha256,
-        timestamp: Timestamp.now(),
-        status: 'pending',
-      }
-    }, { merge: true });
+    };
+    if (deploymentId) params.deployment_id = deploymentId;
+
+    const res = await fetch(
+      `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'update_owlette',
+          params,
+        }),
+      },
+    );
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(body?.detail || body?.title || 'Failed to queue update command');
+    }
+
+    const commandId = body?.data?.commandId;
+    if (typeof commandId !== 'string' || commandId.length === 0) {
+      throw new Error('Update command response did not include a commandId.');
+    }
 
     console.log(`Sent update_owlette command to ${machineId}:`, commandId);
     return commandId;

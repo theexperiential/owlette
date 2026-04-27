@@ -7,7 +7,7 @@ import { useSites } from '@/hooks/useFirestore';
 import { Card } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageHeader } from '@/components/PageHeader';
-import { collection, query, orderBy, limit, getDocs, where, startAfter, Query, DocumentData, Timestamp, onSnapshot, writeBatch, doc } from 'firebase/firestore';
+import { collection, query, orderBy, limit, getDocs, where, startAfter, Query, DocumentData, Timestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { ChevronDown, ChevronsUpDown, ChevronsDownUp, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle, Camera } from 'lucide-react';
@@ -532,56 +532,21 @@ export default function LogsPage() {
     setIsClearing(true);
 
     try {
-      // Build query with same filters as the display
-      const logsRef = collection(db, 'sites', currentSiteId, 'logs');
-      let q: Query = query(logsRef);
-
-      // Apply filters to match current view
-      if (filterAction !== 'all') {
-        q = query(q, where('action', '==', filterAction));
-      }
-      if (filterMachine !== 'all') {
-        q = query(q, where('machineId', '==', filterMachine));
-      }
-      if (filterLevel !== 'all') {
-        q = query(q, where('level', '==', filterLevel));
-      }
-
-      // Fetch all matching logs
-      const snapshot = await getDocs(q);
-
-      if (snapshot.empty) {
-        console.log('No logs to delete');
-        setIsClearing(false);
-        return;
-      }
-
-      // Delete in batches (Firestore limit is 500 per batch)
-      const batchSize = 500;
-      const batches = [];
-      let batch = writeBatch(db);
-      let operationCount = 0;
-
-      snapshot.docs.forEach((document) => {
-        batch.delete(doc(db!, 'sites', currentSiteId, 'logs', document.id));
-        operationCount++;
-
-        if (operationCount === batchSize) {
-          batches.push(batch.commit());
-          batch = writeBatch(db!);
-          operationCount = 0;
-        }
+      const res = await fetch(`/api/sites/${encodeURIComponent(currentSiteId)}/logs`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(filterAction !== 'all' ? { action: filterAction } : {}),
+          ...(filterMachine !== 'all' ? { machineId: filterMachine } : {}),
+          ...(filterLevel !== 'all' ? { level: filterLevel } : {}),
+        }),
       });
-
-      // Commit remaining operations
-      if (operationCount > 0) {
-        batches.push(batch.commit());
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(body?.detail || body?.title || 'Failed to clear logs');
       }
 
-      // Wait for all batches to complete
-      await Promise.all(batches);
-
-      console.log(`Deleted ${snapshot.docs.length} log entries`);
+      console.log(`Deleted ${body?.deletedCount ?? 0} log entries`);
 
       // Logs will refresh via the real-time listener
       setLogs([]);

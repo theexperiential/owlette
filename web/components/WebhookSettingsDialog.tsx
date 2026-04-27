@@ -5,10 +5,6 @@ import {
   collection,
   query,
   onSnapshot,
-  doc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
@@ -77,6 +73,41 @@ const SUPPORTED_EVENTS = [
   { id: 'display.apply_succeeded', label: 'display: apply succeeded', description: 'a layout apply completed successfully (info)' },
 ];
 
+async function apiJson<T>(url: string, init: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    throw new Error(body?.detail || body?.title || `Request failed with ${res.status}`);
+  }
+  return body as T;
+}
+
+function toDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? new Date(parsed) : null;
+  }
+  if (typeof value === 'object') {
+    const timestamp = value as { toDate?: () => Date; seconds?: number; _seconds?: number };
+    if (typeof timestamp.toDate === 'function') return timestamp.toDate();
+    if (typeof timestamp.seconds === 'number') return new Date(timestamp.seconds * 1000);
+    if (typeof timestamp._seconds === 'number') return new Date(timestamp._seconds * 1000);
+  }
+  return null;
+}
+
+function toStatusCode(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Shared hook for webhook data                                               */
 /* -------------------------------------------------------------------------- */
@@ -92,20 +123,25 @@ function useWebhooks(siteId: string) {
     const unsub = onSnapshot(q, (snapshot) => {
       const items: WebhookData[] = snapshot.docs.map((d) => {
         const data = d.data();
+        if (data.deletedAt) return null;
+        const description = typeof data.description === 'string' ? data.description : '';
+        const legacyName = typeof data.name === 'string' ? data.name : '';
+        const signingSecret = typeof data.signingSecret === 'string' ? data.signingSecret : '';
+        const legacySecret = typeof data.secret === 'string' ? data.secret : '';
         return {
           id: d.id,
           url: data.url || '',
-          name: data.name || '',
+          name: legacyName || description || data.url || '',
           events: data.events || [],
-          enabled: data.enabled ?? true,
-          secret: data.secret || '',
-          createdAt: data.createdAt?.toDate?.() || null,
+          enabled: data.enabled ?? data.paused !== true,
+          secret: legacySecret || signingSecret,
+          createdAt: toDate(data.createdAt),
           createdBy: data.createdBy || '',
-          lastTriggered: data.lastTriggered?.toDate?.() || null,
-          lastStatus: data.lastStatus || 0,
-          failCount: data.failCount || 0,
+          lastTriggered: toDate(data.lastTriggered) || toDate(data.lastDeliveryAt),
+          lastStatus: toStatusCode(data.lastStatus ?? data.lastDeliveryStatus),
+          failCount: data.failCount ?? data.failureCount ?? 0,
         };
-      });
+      }).filter((item): item is WebhookData => item !== null);
       setWebhooks(items);
       setLoading(false);
     });
@@ -153,8 +189,15 @@ export function WebhookList({ siteId }: { siteId: string }) {
     }
     setEditSaving(true);
     try {
-      const ref = doc(db!, `sites/${siteId}/webhooks`, editingWebhook.id);
-      await updateDoc(ref, { name: editName.trim(), url: editUrl.trim(), events: editEvents });
+      await apiJson(`/api/webhooks/${encodeURIComponent(editingWebhook.id)}?siteId=${encodeURIComponent(siteId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          description: editName.trim(),
+          url: editUrl.trim(),
+          events: editEvents,
+        }),
+      });
       toast.success('webhook updated');
       setEditingWebhook(null);
     } catch {
@@ -172,8 +215,11 @@ export function WebhookList({ siteId }: { siteId: string }) {
 
   const handleToggle = async (webhook: WebhookData) => {
     try {
-      const ref = doc(db!, `sites/${siteId}/webhooks`, webhook.id);
-      await updateDoc(ref, { enabled: !webhook.enabled, failCount: 0 });
+      await apiJson(`/api/webhooks/${encodeURIComponent(webhook.id)}?siteId=${encodeURIComponent(siteId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused: webhook.enabled }),
+      });
       toast.success(webhook.enabled ? 'webhook disabled' : 'webhook enabled');
     } catch {
       toast.error('failed to update webhook');
@@ -183,7 +229,9 @@ export function WebhookList({ siteId }: { siteId: string }) {
   const handleDelete = async (webhookId: string) => {
     setDeletingId(webhookId);
     try {
-      await deleteDoc(doc(db!, `sites/${siteId}/webhooks`, webhookId));
+      await apiJson(`/api/webhooks/${encodeURIComponent(webhookId)}?siteId=${encodeURIComponent(siteId)}`, {
+        method: 'DELETE',
+      });
       toast.success('webhook deleted');
       setDeleteConfirmId(null);
     } catch {
@@ -482,25 +530,17 @@ export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebh
 
     setSaving(true);
     try {
-      const array = new Uint8Array(32);
-      crypto.getRandomValues(array);
-      const secret = Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
-
-      const webhookRef = doc(collection(db!, `sites/${siteId}/webhooks`));
-      await setDoc(webhookRef, {
-        url: newUrl.trim(),
-        name: newName.trim(),
-        events: newEvents,
-        enabled: true,
-        secret,
-        createdAt: new Date(),
-        createdBy: '',
-        lastTriggered: null,
-        lastStatus: 0,
-        failCount: 0,
+      const response = await apiJson<{ signingSecret: string }>(`/api/webhooks?siteId=${encodeURIComponent(siteId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: newUrl.trim(),
+          description: newName.trim(),
+          events: newEvents,
+        }),
       });
 
-      setGeneratedSecret(secret);
+      setGeneratedSecret(response.signingSecret);
       onOpenChange(false);
       toast.success('webhook created');
     } catch (error: unknown) {

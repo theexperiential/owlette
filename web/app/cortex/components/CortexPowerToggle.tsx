@@ -2,8 +2,6 @@
 
 import React, { useState } from 'react';
 import { Brain } from 'lucide-react';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import type { Machine } from '@/hooks/useFirestore';
@@ -19,11 +17,21 @@ export function CortexPowerToggle({ siteId, machine }: CortexPowerToggleProps) {
   const enabled = machine.cortexEnabled !== false;
 
   const handleConfirm = async () => {
-    if (!db || busy) return;
+    if (busy) return;
     setBusy(true);
     try {
-      const machineRef = doc(db, 'sites', siteId, 'machines', machine.machineId);
-      await updateDoc(machineRef, { cortexEnabled: !enabled });
+      const res = await fetch(
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machine.machineId)}/cortex-enabled`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: !enabled }),
+        },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || body?.title || 'Failed to toggle cortex');
+      }
     } catch (err) {
       console.error('Failed to toggle cortexEnabled:', err);
     } finally {

@@ -4,7 +4,7 @@
  *             lastDeliveryAt, lastDeliveryStatus, failureCount }
  *
  * PATCH  /api/webhooks/{webhookId}?siteId=...
- *   body:   { url?, events?, paused? }    — all fields optional
+ *   body:   { url?, events?, description?, paused? }    — all fields optional
  *   output: serialized subscription (no signingSecret)
  *   - idempotency-key supported
  *   - events[] re-validated against `ROOST_WEBHOOK_EVENTS`
@@ -55,6 +55,7 @@ export const runtime = 'nodejs';
 
 const WEBHOOK_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_DESCRIPTION_LENGTH = 500;
 
 export async function GET(
   request: NextRequest,
@@ -110,6 +111,7 @@ export async function GET(
 interface PatchBody {
   url?: unknown;
   events?: unknown;
+  description?: unknown;
   paused?: unknown;
 }
 
@@ -197,6 +199,16 @@ export async function PATCH(
       updates.events = eventsValidation.events;
     }
 
+    if (body.description !== undefined) {
+      if (body.description !== null && typeof body.description !== 'string') {
+        return problemValidation('description must be a string when provided', {
+          'body.description': ['must be a string'],
+        });
+      }
+      const trimmed = typeof body.description === 'string' ? body.description.trim() : '';
+      updates.description = trimmed ? trimmed.slice(0, MAX_DESCRIPTION_LENGTH) : FieldValue.delete();
+    }
+
     if (body.paused !== undefined) {
       if (typeof body.paused !== 'boolean') {
         return problemValidation('paused must be a boolean when provided', {
@@ -208,7 +220,7 @@ export async function PATCH(
 
     if (Object.keys(updates).length === 0) {
       return problemValidation('no updatable fields provided', {
-        body: ['must include at least one of: url, events, paused'],
+        body: ['must include at least one of: url, events, description, paused'],
       });
     }
 
@@ -232,7 +244,7 @@ export async function PATCH(
     const refreshedData = refreshed.data() ?? existing;
 
     const response = applyAuthDeprecations(
-      NextResponse.json(serializeSubscription(webhookId, { ...existing, ...refreshedData })),
+      NextResponse.json(serializeSubscription(webhookId, refreshedData)),
       auth.scopeCheck,
     );
 
