@@ -84,7 +84,7 @@ test('admin clears the assigned display layout — deleteField removes it + assi
   await expect(panel).toBeVisible();
 
   // Clear is only visible on the assigned tab — switch first.
-  await panel.getByRole('button', { name: 'assigned', exact: true }).click();
+  await panel.getByRole('button', { name: 'stored', exact: true }).click();
 
   await panel.getByTestId('display-clear-button').click();
 

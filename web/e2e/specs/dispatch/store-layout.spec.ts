@@ -83,7 +83,7 @@ test('admin stores a display layout — capture writes config doc + assigned tab
 
   // UI: switch to the assigned tab — the captured monitors should render now
   // (rather than the empty-state "store current" CTA covered by B3.1).
-  await panel.getByRole('button', { name: 'assigned', exact: true }).click();
+  await panel.getByRole('button', { name: 'stored', exact: true }).click();
   // The empty-state CTA is gone now that hasAssignedLayout is true.
   await expect(panel.getByTestId('display-store-current-button')).toHaveCount(0);
 });

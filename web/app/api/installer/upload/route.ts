@@ -41,6 +41,7 @@ import {
 
 const VERSION_REGEX = /^\d+\.\d+\.\d+$/;
 const SIGNED_URL_EXPIRY_MINUTES = 15;
+const IS_E2E = process.env.OWLETTE_E2E === '1';
 
 interface UploadStartBody {
   version?: unknown;
@@ -137,12 +138,16 @@ export async function POST(request: NextRequest) {
         const expiresAt = new Date(
           Date.now() + SIGNED_URL_EXPIRY_MINUTES * 60 * 1000,
         );
-        const [uploadUrl] = await file.getSignedUrl({
-          action: 'write',
-          version: 'v4',
-          expires: expiresAt,
-          contentType,
-        });
+        const uploadUrl = IS_E2E
+          ? `http://127.0.0.1:9199/v0/b/${encodeURIComponent(bucket.name)}/o/${encodeURIComponent(storagePath)}?uploadType=media`
+          : (
+              await file.getSignedUrl({
+                action: 'write',
+                version: 'v4',
+                expires: expiresAt,
+                contentType,
+              })
+            )[0];
 
         const uploadId = randomUUID();
         await db.collection('installer_uploads').doc(uploadId).set({

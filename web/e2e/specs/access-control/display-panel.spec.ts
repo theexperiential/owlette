@@ -100,7 +100,7 @@ test.describe('display panel — admin on site-A', () => {
     const panel = page.getByTestId('display-layout-panel');
     // Switch to the assigned tab; our seed has no assigned layout, so the
     // empty-state panel with the gated "store current" CTA renders.
-    await panel.getByRole('button', { name: 'assigned', exact: true }).click();
+    await panel.getByRole('button', { name: 'stored', exact: true }).click();
     await expect(panel.getByTestId('display-store-current-button')).toBeVisible();
   });
 });
@@ -120,7 +120,7 @@ test.describe('display panel — superadmin', () => {
     await openDisplayPanel(page);
 
     const panel = page.getByTestId('display-layout-panel');
-    await panel.getByRole('button', { name: 'assigned', exact: true }).click();
+    await panel.getByRole('button', { name: 'stored', exact: true }).click();
     await expect(panel.getByTestId('display-store-current-button')).toBeVisible();
   });
 });

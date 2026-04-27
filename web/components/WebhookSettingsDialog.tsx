@@ -360,7 +360,7 @@ export function WebhookList({ siteId }: { siteId: string }) {
 
       {/* Edit webhook dialog */}
       <Dialog open={!!editingWebhook} onOpenChange={(open) => { if (!open) setEditingWebhook(null); }}>
-        <DialogContent className="bg-background border-border max-w-2xl">
+        <DialogContent className="bg-background border-border max-w-2xl max-h-[calc(100vh-2rem)] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Pencil className="h-5 w-5" />
@@ -520,7 +520,7 @@ export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebh
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="bg-background border-border max-w-2xl">
+        <DialogContent className="bg-background border-border max-w-2xl max-h-[calc(100vh-2rem)] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Webhook className="h-5 w-5" />

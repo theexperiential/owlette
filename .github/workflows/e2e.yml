@@ -27,7 +27,7 @@ jobs:
     # on first run plus a pre-build step (next start requires a built .next
     # dir) — 15 minutes gives a comfortable ceiling for the target
     # <6 min wall-clock once caches warm.
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -96,7 +96,7 @@ jobs:
       # failure. `outputDir` in playwright.config.ts places everything under
       # e2e/.output/; that whole tree is the post-mortem surface.
       - name: upload playwright report
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report

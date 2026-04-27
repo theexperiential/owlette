@@ -37,7 +37,7 @@ async function clearProcessConfig(): Promise<void> {
   // overwriting an empty list rather than deleting the whole doc (display
   // hardware subdoc would be lost otherwise).
   await db
-    .collection('sites')
+    .collection('config')
     .doc(SITE_ID)
     .collection('machines')
     .doc(MACHINE_ID)

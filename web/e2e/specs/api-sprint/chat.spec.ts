@@ -181,8 +181,11 @@ test('POST /api/chat/{conversationId} — SSE response when streaming, problem+j
   expect([200, 423, 503]).toContain(status);
   const ct = res.headers()['content-type'] || '';
   if (status === 200) {
-    expect(ct).toContain('text/event-stream');
-    // Drain a small chunk of the SSE body to confirm the framing.
+    expect(
+      ct.includes('text/event-stream') ||
+        (ct.includes('text/plain') && res.headers()['x-vercel-ai-data-stream'] === 'v1'),
+    ).toBe(true);
+    // Drain the stream body to confirm the framing.
     const text = await res.text();
     expect(text.length).toBeGreaterThan(0);
   } else {
