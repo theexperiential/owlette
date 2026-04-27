@@ -48,6 +48,11 @@ export type SetDisplayLayoutInput =
   | {
       machineId: string;
       op: 'reset_breaker';
+    }
+  | {
+      machineId: string;
+      op: 'set_remote_apply';
+      enabled: boolean;
     };
 
 export interface SetDisplayLayoutResult {
@@ -166,6 +171,22 @@ export async function setDisplayLayout(
           autoRestore: {
             circuitBreaker: { tripped: false, failures: 0 },
           },
+        },
+      },
+      { merge: true },
+    );
+  } else if (input.op === 'set_remote_apply') {
+    if (typeof input.enabled !== 'boolean') {
+      throw new ActionInputError(
+        400,
+        'invalid_enabled',
+        'Field `enabled` must be a boolean.',
+      );
+    }
+    await configRef.set(
+      {
+        displays: {
+          remoteApplyEnabled: input.enabled,
         },
       },
       { merge: true },

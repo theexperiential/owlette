@@ -5,11 +5,6 @@ import { db } from '@/lib/firebase';
 import {
   collection,
   onSnapshot,
-  doc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  serverTimestamp,
   Timestamp,
 } from 'firebase/firestore';
 import type { RebootScheduleEntry } from '@/hooks/useFirestore';
@@ -130,15 +125,15 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
   ): Promise<string> => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const presetId = `reboot-${preset.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
-    const presetRef = doc(db, 'config', siteId, 'reboot_presets', presetId);
-
-    await setDoc(presetRef, {
-      ...preset,
-      createdAt: serverTimestamp(),
+    const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/presets/reboot`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(preset),
     });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to create reboot preset'));
 
-    return presetId;
+    const body = await response.json();
+    return body.presetId;
   }, [siteId]);
 
   const updatePreset = useCallback(async (
@@ -147,27 +142,21 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
   ): Promise<void> => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const presetRef = doc(db, 'config', siteId, 'reboot_presets', id);
-
-    if (id.startsWith('builtin-')) {
-      await setDoc(presetRef, {
-        ...updates,
-        isBuiltIn: true,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-    } else {
-      await updateDoc(presetRef, {
-        ...updates,
-        updatedAt: serverTimestamp(),
-      });
-    }
+    const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/presets/reboot/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to update reboot preset'));
   }, [siteId]);
 
   const deletePreset = useCallback(async (id: string): Promise<void> => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const presetRef = doc(db, 'config', siteId, 'reboot_presets', id);
-    await deleteDoc(presetRef);
+    const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/presets/reboot/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete reboot preset'));
   }, [siteId]);
 
   return {
@@ -178,4 +167,13 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
     updatePreset,
     deletePreset,
   };
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }

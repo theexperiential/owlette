@@ -5,11 +5,6 @@ import { db } from '@/lib/firebase';
 import {
   collection,
   onSnapshot,
-  doc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  serverTimestamp,
   Timestamp,
 } from 'firebase/firestore';
 import type { ScheduleBlock } from '@/hooks/useFirestore';
@@ -136,15 +131,15 @@ export function useSchedulePresets(siteId: string | null): UseSchedulePresetsRet
   ): Promise<string> => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const presetId = `sched-${preset.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
-    const presetRef = doc(db, 'config', siteId, 'schedule_presets', presetId);
-
-    await setDoc(presetRef, {
-      ...preset,
-      createdAt: serverTimestamp(),
+    const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/presets/schedule`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(preset),
     });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to create schedule preset'));
 
-    return presetId;
+    const body = await response.json();
+    return body.presetId;
   }, [siteId]);
 
   const updatePreset = useCallback(async (
@@ -153,28 +148,21 @@ export function useSchedulePresets(siteId: string | null): UseSchedulePresetsRet
   ): Promise<void> => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const presetRef = doc(db, 'config', siteId, 'schedule_presets', id);
-
-    if (id.startsWith('builtin-')) {
-      // Built-in: use setDoc with merge so it creates the override doc on first edit
-      await setDoc(presetRef, {
-        ...updates,
-        isBuiltIn: true,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-    } else {
-      await updateDoc(presetRef, {
-        ...updates,
-        updatedAt: serverTimestamp(),
-      });
-    }
+    const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/presets/schedule/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to update schedule preset'));
   }, [siteId]);
 
   const deletePreset = useCallback(async (id: string): Promise<void> => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const presetRef = doc(db, 'config', siteId, 'schedule_presets', id);
-    await deleteDoc(presetRef);
+    const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/presets/schedule/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete schedule preset'));
   }, [siteId]);
 
   return {
@@ -185,4 +173,13 @@ export function useSchedulePresets(siteId: string | null): UseSchedulePresetsRet
     updatePreset,
     deletePreset,
   };
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }

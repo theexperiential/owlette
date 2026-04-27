@@ -1,16 +1,14 @@
 /**
  * deleteDistribution action core (security-boundary-migration wave 3.4).
  *
- * Mirror of `deleteDeployment` — but the deployment side currently has no
- * dedicated action; the existing `/api/admin/deployments/[id]/route.ts`
- * inlines the same rule we apply here: only delete when every target has
- * reached a terminal state. In-flight distributions cannot be deleted —
+ * Mirrors the deployment delete rule: only delete when every target has
+ * reached a terminal state. In-flight distributions cannot be deleted, so
  * the operator must cancel them first.
  *
  * The action does NOT cascade-delete queued `distribute_project` commands
- * from machine pending docs. Same rationale as the legacy admin route:
- * commands have a 24h `expiresAt` and the agent ignores entries it can't
- * resolve to a live distribution. Cleanup is wave 8.x housekeeping.
+ * from machine pending docs. Commands have a 24h `expiresAt` and the agent
+ * ignores entries it can't resolve to a live distribution. Cleanup is wave
+ * 8.x housekeeping.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
@@ -18,9 +16,9 @@ import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
 
 /**
- * Distribution-level statuses that allow a delete. Matches the legacy
- * admin-deployment terminal list, minus `uninstalled` (distributions don't
- * have an uninstall path).
+ * Distribution-level statuses that allow a delete. Matches the deployment
+ * terminal list, minus `uninstalled` (distributions don't have an uninstall
+ * path).
  */
 export const TERMINAL_DISTRIBUTION_STATUSES_FOR_DELETE = new Set<string>([
   'completed',

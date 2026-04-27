@@ -15,7 +15,7 @@ import {
   EmailAuthProvider,
   deleteUser,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, onSnapshot, collection, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { auth, db, storage } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
@@ -103,6 +103,15 @@ const destroySessionCookie = async (): Promise<void> => {
     console.error('[Session] Failed to destroy session:', error);
   }
 };
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
+}
 
 const bootstrapUserDocument = async (
   user: User,
@@ -847,56 +856,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await reauthenticateWithCredential(auth.currentUser, credential);
       }
 
-      // Delete all sites owned by the user
-      // Note: We only delete sites where the user is the sole owner
-      // Sites with multiple users should just remove this user from the sites array
-      const userDocRef = doc(db, 'users', userId);
-      const userDocSnap = await getDoc(userDocRef);
-
-      if (userDocSnap.exists()) {
-        const userData = userDocSnap.data();
-        const userSiteIds = userData.sites || [];
-
-        // Use batch for efficient deletion
-        const batch = writeBatch(db);
-
-        // Delete each site owned by the user
-        for (const siteId of userSiteIds) {
-          const siteRef = doc(db, 'sites', siteId);
-          const siteSnap = await getDoc(siteRef);
-
-          if (siteSnap.exists()) {
-            // Delete the site document
-            batch.delete(siteRef);
-
-            // Delete all machines in the site
-            const machinesRef = collection(db, `sites/${siteId}/machines`);
-            const machinesSnap = await getDocs(machinesRef);
-            machinesSnap.docs.forEach((machineDoc) => {
-              batch.delete(machineDoc.ref);
-            });
-
-            // Delete all deployments in the site
-            const deploymentsRef = collection(db, `sites/${siteId}/deployments`);
-            const deploymentsSnap = await getDocs(deploymentsRef);
-            deploymentsSnap.docs.forEach((deploymentDoc) => {
-              batch.delete(deploymentDoc.ref);
-            });
-
-            // Delete all logs in the site
-            const logsRef = collection(db, `sites/${siteId}/logs`);
-            const logsSnap = await getDocs(logsRef);
-            logsSnap.docs.forEach((logDoc) => {
-              batch.delete(logDoc.ref);
-            });
-          }
-        }
-
-        // Delete user document
-        batch.delete(userDocRef);
-
-        // Commit all deletions
-        await batch.commit();
+      const response = await fetch('/api/users/me', {
+        method: 'DELETE',
+        headers: { 'idempotency-key': `account-delete-${userId}` },
+      });
+      if (!response.ok) {
+        throw new Error(await readApiError(response, 'Failed to delete account data'));
       }
 
       // Delete Firebase Auth account

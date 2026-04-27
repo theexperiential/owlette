@@ -1,17 +1,18 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useProjectDistributionPresets } from '@/hooks/useProjectDistributionPresets';
 import { firestoreTsToMs, type FirestoreTs } from './useFirestore';
 
 export interface ProjectDistributionTarget {
   machineId: string;
-  status: 'pending' | 'downloading' | 'extracting' | 'completed' | 'failed';
+  status: 'pending' | 'downloading' | 'extracting' | 'completed' | 'failed' | 'cancelled';
   progress?: number;
   error?: string;
-  completedAt?: number;
+  completedAt?: FirestoreTs;
+  cancelledAt?: FirestoreTs;
 }
 
 export interface ProjectDistribution {
@@ -24,13 +25,12 @@ export interface ProjectDistribution {
   targets: ProjectDistributionTarget[];
   createdAt: FirestoreTs;
   completedAt?: FirestoreTs;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial';
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial' | 'cancelled';
 }
 
 export function useProjectDistributions(siteId: string) {
   // loadedSiteId pins data to the site it was populated for so `loading` can be
-  // derived at render — the effect never has to synchronously flip state on
-  // siteId change (which would violate react-hooks/set-state-in-effect).
+  // derived at render. Status reconciliation is server-owned.
   const [state, setState] = useState<{
     distributions: ProjectDistribution[];
     loadedSiteId: string | null;
@@ -38,7 +38,7 @@ export function useProjectDistributions(siteId: string) {
   }>({
     distributions: [],
     loadedSiteId: null,
-    error: !db || !siteId ? 'Firebase not configured or no site selected' : null,
+    error: db ? null : 'Firebase not configured',
   });
 
   useEffect(() => {
@@ -67,7 +67,6 @@ export function useProjectDistributions(siteId: string) {
           });
         });
 
-        // Sort by created date (newest first)
         distributionData.sort((a, b) => firestoreTsToMs(b.createdAt) - firestoreTsToMs(a.createdAt));
 
         setState({ distributions: distributionData, loadedSiteId: siteId, error: null });
@@ -81,8 +80,6 @@ export function useProjectDistributions(siteId: string) {
     return () => unsubscribe();
   }, [siteId]);
 
-  // Derive outputs: surface only data that matches the currently-requested
-  // site, and derive loading from whether we've loaded that site yet.
   const distributions = useMemo(
     () => (state.loadedSiteId === siteId ? state.distributions : []),
     [state.loadedSiteId, state.distributions, siteId],
@@ -90,212 +87,65 @@ export function useProjectDistributions(siteId: string) {
   const loading = !!db && !!siteId && state.loadedSiteId !== siteId;
   const error = state.error;
 
-  // Listen for command completions and update distribution status
-  useEffect(() => {
-    if (!db || !siteId || distributions.length === 0) return;
-
-    const unsubscribes: (() => void)[] = [];
-
-    // Get all unique machine IDs from in-progress distributions
-    const machineIds = new Set<string>();
-    distributions.forEach(distribution => {
-      if (distribution.status === 'in_progress' || distribution.status === 'pending') {
-        distribution.targets.forEach(target => machineIds.add(target.machineId));
-      }
-    });
-
-    // Listen to completed commands for each machine
-    machineIds.forEach(machineId => {
-      const completedRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'completed');
-
-      const unsubscribe = onSnapshot(completedRef, async (snapshot) => {
-        if (!snapshot.exists()) return;
-
-        const completedCommands = snapshot.data();
-
-        // Check each completed command for distribution_id
-        for (const [, commandData] of Object.entries(completedCommands)) {
-          const command = commandData as {
-            distribution_id?: string;
-            status?: 'pending' | 'completed' | 'failed' | 'downloading' | 'extracting';
-            progress?: number;
-            error?: string;
-            completedAt?: FirestoreTs;
-          };
-
-          if (command.distribution_id) {
-            const distribution = distributions.find(d => d.id === command.distribution_id);
-            if (!distribution) continue;
-
-            const distributionRef = doc(db!, 'sites', siteId, 'project_distributions', command.distribution_id);
-
-            if (command.status === 'completed') {
-              // Handle completed distributions
-              const updatedTargets = distribution.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: 'completed' as const, completedAt: command.completedAt || new Date() }
-                  : target
-              );
-
-              // Calculate overall status
-              const allCompleted = updatedTargets.every(t => t.status === 'completed');
-              const anyFailed = updatedTargets.some(t => t.status === 'failed');
-              const newStatus = allCompleted ? 'completed' : anyFailed ? 'partial' : 'in_progress';
-
-              // Update distribution
-              await setDoc(distributionRef, {
-                targets: updatedTargets,
-                status: newStatus,
-                ...(allCompleted ? { completedAt: serverTimestamp() } : {}),
-              }, { merge: true });
-            } else if (command.status === 'failed') {
-              // Handle failed distributions
-              const updatedTargets = distribution.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: 'failed' as const, error: command.error, completedAt: command.completedAt || new Date() }
-                  : target
-              );
-
-              // Calculate overall status
-              const allDone = updatedTargets.every(t => t.status === 'completed' || t.status === 'failed');
-              const anyCompleted = updatedTargets.some(t => t.status === 'completed');
-              const newStatus = allDone ? (anyCompleted ? 'partial' : 'failed') : 'in_progress';
-
-              // Update distribution
-              await setDoc(distributionRef, {
-                targets: updatedTargets,
-                status: newStatus,
-                ...(allDone ? { completedAt: serverTimestamp() } : {}),
-              }, { merge: true });
-            } else if (command.status === 'downloading' || command.status === 'extracting') {
-              // Handle intermediate states (downloading, extracting)
-              const updatedTargets = distribution.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: command.status as 'downloading' | 'extracting', progress: command.progress }
-                  : target
-              );
-
-              // Update distribution with new target status
-              await setDoc(distributionRef, {
-                targets: updatedTargets,
-                status: 'in_progress',
-              }, { merge: true });
-            }
-          }
-        }
-      });
-
-      unsubscribes.push(unsubscribe);
-    });
-
-    return () => {
-      unsubscribes.forEach(unsub => unsub());
-    };
-  }, [siteId, distributions]);
-
   const createDistribution = async (
     distribution: Omit<ProjectDistribution, 'id' | 'createdAt' | 'status'>,
     machineIds: string[]
   ) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const distributionId = `project-dist-${Date.now()}`;
-    const distributionRef = doc(db!, 'sites', siteId, 'project_distributions', distributionId);
-
-    // Initialize targets with pending status
-    const targets: ProjectDistributionTarget[] = machineIds.map(machineId => ({
-      machineId,
-      status: 'pending',
-    }));
-
-    // Create distribution document.
-    // Write file_name explicitly — firestore.rules requires this exact field name
-    // on project_distributions docs (hasRequiredFields). The command payload below
-    // keeps project_name since the agent reads that field and commands aren't
-    // subject to field-name rules.
-    //
-    // Optional fields (extract_path, verify_files) are omitted entirely when not
-    // set — Firestore rejects `undefined` field values with "invalid data".
-    const distributionDoc: Record<string, unknown> = {
+    const body = {
       name: distribution.name,
       file_name: distribution.file_name,
       project_url: distribution.project_url,
-      targets,
-      createdAt: serverTimestamp(),
-      status: 'pending',
+      machines: machineIds,
+      ...(distribution.extract_path ? { extract_path: distribution.extract_path } : {}),
+      ...(distribution.verify_files?.length ? { verify_files: distribution.verify_files } : {}),
     };
-    if (distribution.extract_path) distributionDoc.extract_path = distribution.extract_path;
-    if (distribution.verify_files && distribution.verify_files.length > 0) {
-      distributionDoc.verify_files = distribution.verify_files;
-    }
-    await setDoc(distributionRef, distributionDoc);
 
-    // Send distribute_project command to each machine in parallel
-    const commandPromises = machineIds.map(async (machineId) => {
-      // Use underscores to avoid Firestore field path parsing issues with hyphens
-      const sanitizedDistributionId = distributionId.replace(/-/g, '_');
-      const sanitizedMachineId = machineId.replace(/-/g, '_');
-      const commandId = `distribute_${sanitizedDistributionId}_${sanitizedMachineId}_${Date.now()}`;
-      const commandRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-
-      const commandPayload: Record<string, unknown> = {
-        type: 'distribute_project',
-        project_url: distribution.project_url,
-        // Agent reads project_name from the command payload — keep the legacy
-        // field name here so we don't have to touch agent-side code.
-        project_name: distribution.file_name,
-        distribution_id: distributionId,
-        timestamp: serverTimestamp(),
-        status: 'pending',
-      };
-      if (distribution.extract_path) commandPayload.extract_path = distribution.extract_path;
-      if (distribution.verify_files && distribution.verify_files.length > 0) {
-        commandPayload.verify_files = distribution.verify_files;
-      }
-
-      await setDoc(commandRef, {
-        [commandId]: commandPayload,
-      }, { merge: true });
+    const response = await fetch(projectDistributionsUrl(siteId), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'Idempotency-Key': makeIdempotencyKey('project-dist-create'),
+      },
+      body: JSON.stringify(body),
     });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to create project distribution'));
 
-    // Wait for all commands to be sent
-    await Promise.all(commandPromises);
-
-    // Update distribution status to in_progress
-    await setDoc(distributionRef, {
-      status: 'in_progress',
-    }, { merge: true });
-
-    return distributionId;
+    const result = await response.json();
+    return result.distributionId as string;
   };
 
   const cancelDistribution = async (distributionId: string, machineId: string, fileName: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
+    void machineId;
+    void fileName;
 
-    // Send cancel command to the machine
-    const sanitizedMachineId = machineId.replace(/-/g, '_');
-    const commandId = `cancel_${Date.now()}_${sanitizedMachineId}`;
-    const commandRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
+    const response = await fetch(`${projectDistributionsUrl(siteId)}/${encodeURIComponent(distributionId)}/cancel`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'Idempotency-Key': makeIdempotencyKey(`project-dist-cancel-${distributionId}`),
+      },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to cancel project distribution'));
 
-    await setDoc(commandRef, {
-      [commandId]: {
-        type: 'cancel_distribution',
-        // Agent reads project_name from the command payload — keep the legacy
-        // field name here (see createDistribution for the same rationale).
-        project_name: fileName,
-        distribution_id: distributionId,
-        timestamp: serverTimestamp(),
-      }
-    }, { merge: true });
-
-    return commandId;
+    return `cancel-project-dist-${distributionId}`;
   };
 
   const deleteDistribution = async (distributionId: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const distributionRef = doc(db!, 'sites', siteId, 'project_distributions', distributionId);
-    await deleteDoc(distributionRef);
+    const response = await fetch(`${projectDistributionsUrl(siteId)}/${encodeURIComponent(distributionId)}`, {
+      method: 'DELETE',
+      headers: {
+        'content-type': 'application/json',
+        'Idempotency-Key': makeIdempotencyKey(`project-dist-delete-${distributionId}`),
+      },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete project distribution'));
   };
 
   return { distributions, loading, error, createDistribution, cancelDistribution, deleteDistribution };
@@ -318,4 +168,21 @@ export function useProjectDistributionManager(siteId: string) {
     cancelDistribution: distributions.cancelDistribution,
     deleteDistribution: distributions.deleteDistribution,
   };
+}
+
+function projectDistributionsUrl(siteId: string): string {
+  return `/api/sites/${encodeURIComponent(siteId)}/project-distributions`;
+}
+
+function makeIdempotencyKey(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }

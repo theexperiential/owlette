@@ -8,9 +8,8 @@
  *          is in a terminal state and no target is still pre-flight.
  *          Requires `site=<id>:write` and an `Idempotency-Key` header.
  *
- * Mirror of `/api/sites/{siteId}/deployments/{deploymentId}` (GET) +
- * `/api/admin/deployments/{deploymentId}` (DELETE), specialised for the
- * project-distribution surface (security-boundary-migration wave 3.4).
+ * Mirror of `/api/sites/{siteId}/deployments/{deploymentId}`, specialised
+ * for the project-distribution surface (security-boundary-migration wave 3.4).
  * Action core: `web/lib/actions/deleteDistribution.server.ts`.
  */
 import type { NextRequest } from 'next/server';

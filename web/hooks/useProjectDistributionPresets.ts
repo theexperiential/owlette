@@ -5,11 +5,6 @@ import { db } from '@/lib/firebase';
 import {
   collection,
   onSnapshot,
-  doc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  serverTimestamp,
   Timestamp,
 } from 'firebase/firestore';
 import { BUILT_IN_PROJECT_DISTRIBUTION_PRESETS } from '@/lib/projectDistributionDefaults';
@@ -174,15 +169,15 @@ export function useProjectDistributionPresets(
   ): Promise<string> => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const presetId = `projdist-${preset.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
-    const presetRef = doc(db, 'config', siteId, 'project_distribution_presets', presetId);
-
-    await setDoc(presetRef, {
-      ...stripUndefined(preset),
-      createdAt: serverTimestamp(),
+    const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/presets/distribution`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(stripUndefined(preset)),
     });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to create distribution preset'));
 
-    return presetId;
+    const body = await response.json();
+    return body.presetId;
   }, [siteId]);
 
   const updatePreset = useCallback(async (
@@ -191,29 +186,23 @@ export function useProjectDistributionPresets(
   ): Promise<void> => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const presetRef = doc(db, 'config', siteId, 'project_distribution_presets', id);
     const cleanUpdates = stripUndefined(updates);
 
-    if (id.startsWith('builtin-')) {
-      // Built-in: use setDoc with merge so it creates the override doc on first edit
-      await setDoc(presetRef, {
-        ...cleanUpdates,
-        isBuiltIn: true,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-    } else {
-      await updateDoc(presetRef, {
-        ...cleanUpdates,
-        updatedAt: serverTimestamp(),
-      });
-    }
+    const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/presets/distribution/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(cleanUpdates),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to update distribution preset'));
   }, [siteId]);
 
   const deletePreset = useCallback(async (id: string): Promise<void> => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const presetRef = doc(db, 'config', siteId, 'project_distribution_presets', id);
-    await deleteDoc(presetRef);
+    const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/presets/distribution/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete distribution preset'));
   }, [siteId]);
 
   return {
@@ -224,4 +213,13 @@ export function useProjectDistributionPresets(
     updatePreset,
     deletePreset,
   };
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }

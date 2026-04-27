@@ -25,8 +25,6 @@
  */
 
 import { useState } from 'react';
-import { doc, setDoc, serverTimestamp, deleteField } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { normalizePrimaryToOrigin, type MonitorInfo } from '@/hooks/useDisplayState';
 
 interface ApplyDispatchResult {
@@ -79,25 +77,15 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
    * what the caller passed in.
    */
   const captureLayout = async (monitors: MonitorInfo[], userEmail: string): Promise<void> => {
-    if (!db) throw new Error('Firebase not configured');
     if (!siteId || !machineId) throw new Error('Site and machine required');
 
     setApplying(true);
     try {
-      const configRef = doc(db, 'config', siteId, 'machines', machineId);
-      await setDoc(
-        configRef,
-        {
-          displays: {
-            assigned: {
-              monitors: normalizePrimaryToOrigin(monitors),
-              capturedAt: serverTimestamp(),
-              capturedBy: userEmail,
-            },
-          },
-        },
-        { merge: true },
-      );
+      await putDisplayLayout(siteId, machineId, {
+        op: 'capture',
+        monitors: normalizePrimaryToOrigin(monitors),
+        capturedBy: userEmail,
+      });
     } finally {
       setApplying(false);
     }
@@ -111,21 +99,12 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
    * `enabled`, `auto_enforce`) survive untouched.
    */
   const clearLayout = async (): Promise<void> => {
-    if (!db) throw new Error('Firebase not configured');
     if (!siteId || !machineId) throw new Error('Site and machine required');
 
     setApplying(true);
     try {
-      const configRef = doc(db, 'config', siteId, 'machines', machineId);
-      await setDoc(
-        configRef,
-        {
-          displays: {
-            assigned: deleteField(),
-          },
-        },
-        { merge: true },
-      );
+      const response = await fetch(displayLayoutUrl(siteId, machineId), { method: 'DELETE' });
+      if (!response.ok) throw new Error(await readApiError(response, 'Failed to clear display layout'));
     } finally {
       setApplying(false);
     }
@@ -146,25 +125,13 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
   const dispatchTopologyCommand = async (
     monitors: MonitorInfo[],
   ): Promise<ApplyDispatchResult> => {
-    if (!db) throw new Error('Firebase not configured');
     if (!siteId || !machineId) throw new Error('Site and machine required');
 
     const applyId = crypto.randomUUID().replace(/-/g, '');
-    const commandId = `apply_display_topology_${Date.now()}`;
-    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-    await setDoc(
-      commandRef,
-      {
-        [commandId]: {
-          type: 'apply_display_topology',
-          layout: { monitors: normalizePrimaryToOrigin(monitors) },
-          applyId,
-          timestamp: serverTimestamp(),
-          status: 'pending',
-        },
-      },
-      { merge: true },
-    );
+    const commandId = await postMachineCommand(siteId, machineId, 'apply_display_topology', {
+      layout: { monitors: normalizePrimaryToOrigin(monitors) },
+      applyId,
+    });
     return { commandId, applyId };
   };
 
@@ -187,25 +154,10 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
    * will have already reverted; a late ack is a no-op.
    */
   const ackLayout = async (applyId: string): Promise<string> => {
-    if (!db) throw new Error('Firebase not configured');
     if (!siteId || !machineId) throw new Error('Site and machine required');
     if (!applyId) throw new Error('applyId required');
 
-    const commandId = `ack_display_topology_${Date.now()}`;
-    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-    await setDoc(
-      commandRef,
-      {
-        [commandId]: {
-          type: 'ack_display_topology',
-          applyId,
-          timestamp: serverTimestamp(),
-          status: 'pending',
-        },
-      },
-      { merge: true },
-    );
-    return commandId;
+    return postMachineCommand(siteId, machineId, 'ack_display_topology', { applyId });
   };
 
   /**
@@ -220,23 +172,9 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
    * (site, machine, hash) tuple in a given tab lifetime.
    */
   const enumerateDisplayModes = async (): Promise<string> => {
-    if (!db) throw new Error('Firebase not configured');
     if (!siteId || !machineId) throw new Error('Site and machine required');
 
-    const commandId = `enumerate_display_modes_${Date.now()}`;
-    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-    await setDoc(
-      commandRef,
-      {
-        [commandId]: {
-          type: 'enumerate_display_modes',
-          timestamp: serverTimestamp(),
-          status: 'pending',
-        },
-      },
-      { merge: true },
-    );
-    return commandId;
+    return postMachineCommand(siteId, machineId, 'enumerate_display_modes', {});
   };
 
   /**
@@ -257,45 +195,26 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
    * (notably the agent-managed `circuitBreaker` subtree) are preserved.
    */
   const setAutoRestore = async (enabled: boolean, userEmail: string): Promise<void> => {
-    if (!db) throw new Error('Firebase not configured');
     if (!siteId || !machineId) throw new Error('Site and machine required');
 
     setApplying(true);
     try {
-      const configRef = doc(db, 'config', siteId, 'machines', machineId);
-      const autoRestorePatch = enabled
-        ? { enabled: true, enabledBy: userEmail, enabledAt: serverTimestamp() }
-        : { enabled: false };
-      await setDoc(
-        configRef,
-        {
-          displays: {
-            autoRestore: autoRestorePatch,
-          },
-        },
-        { merge: true },
-      );
+      await putDisplayLayout(siteId, machineId, {
+        op: 'set_auto_restore',
+        enabled,
+        ...(enabled ? { enabledBy: userEmail } : {}),
+      });
     } finally {
       setApplying(false);
     }
   };
 
   const setRemoteApplyEnabled = async (enabled: boolean): Promise<void> => {
-    if (!db) throw new Error('Firebase not configured');
     if (!siteId || !machineId) throw new Error('Site and machine required');
 
     setApplying(true);
     try {
-      const configRef = doc(db, 'config', siteId, 'machines', machineId);
-      await setDoc(
-        configRef,
-        {
-          displays: {
-            remoteApplyEnabled: enabled,
-          },
-        },
-        { merge: true },
-      );
+      await putDisplayLayout(siteId, machineId, { op: 'set_remote_apply', enabled });
     } finally {
       setApplying(false);
     }
@@ -309,23 +228,9 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
    * is safe to invoke on machines with `displays.remoteApplyEnabled: false`.
    */
   const testDisplayApply = async (): Promise<string> => {
-    if (!db) throw new Error('Firebase not configured');
     if (!siteId || !machineId) throw new Error('Site and machine required');
 
-    const commandId = `test_display_apply_${Date.now()}`;
-    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-    await setDoc(
-      commandRef,
-      {
-        [commandId]: {
-          type: 'test_display_apply',
-          timestamp: serverTimestamp(),
-          status: 'pending',
-        },
-      },
-      { merge: true },
-    );
-    return commandId;
+    return postMachineCommand(siteId, machineId, 'test_display_apply', {});
   };
 
   /**
@@ -347,26 +252,11 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
    * are preserved.
    */
   const resetAutoRestoreBreaker = async (): Promise<void> => {
-    if (!db) throw new Error('Firebase not configured');
     if (!siteId || !machineId) throw new Error('Site and machine required');
 
     setApplying(true);
     try {
-      const configRef = doc(db, 'config', siteId, 'machines', machineId);
-      await setDoc(
-        configRef,
-        {
-          displays: {
-            autoRestore: {
-              circuitBreaker: {
-                tripped: false,
-                failures: 0,
-              },
-            },
-          },
-        },
-        { merge: true },
-      );
+      await putDisplayLayout(siteId, machineId, { op: 'reset_breaker' });
     } finally {
       setApplying(false);
     }
@@ -384,4 +274,46 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
     resetAutoRestoreBreaker,
     applying,
   };
+}
+
+function displayLayoutUrl(siteId: string, machineId: string): string {
+  return `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/display-layout`;
+}
+
+async function putDisplayLayout(
+  siteId: string,
+  machineId: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const response = await fetch(displayLayoutUrl(siteId, machineId), {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await readApiError(response, 'Failed to update display layout'));
+}
+
+async function postMachineCommand(
+  siteId: string,
+  machineId: string,
+  type: string,
+  params: Record<string, unknown>,
+): Promise<string> {
+  const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/commands`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type, params }),
+  });
+  if (!response.ok) throw new Error(await readApiError(response, 'Failed to dispatch display command'));
+  const body = await response.json();
+  return body.data?.commandId ?? body.commandId;
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }

@@ -5,13 +5,8 @@ import {
   collection,
   query,
   onSnapshot,
-  doc,
-  updateDoc,
   orderBy,
   Timestamp,
-  arrayUnion,
-  arrayRemove,
-  deleteDoc,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
@@ -96,10 +91,16 @@ export function useUserManagement() {
       }
 
       try {
-        const userRef = doc(db, 'users', userId);
-        await updateDoc(userRef, {
-          role: newRole,
+        const endpoint =
+          newRole === 'member'
+            ? `/api/users/${encodeURIComponent(userId)}/demote`
+            : `/api/users/${encodeURIComponent(userId)}/promote`;
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ role: newRole }),
         });
+        if (!response.ok) throw new Error(await readApiError(response, 'Failed to update user role'));
       } catch (err) {
         console.error('Error updating user role:', err);
         throw new Error(handleError(err));
@@ -140,10 +141,12 @@ export function useUserManagement() {
       }
 
       try {
-        const userRef = doc(db, 'users', userId);
-        await updateDoc(userRef, {
-          sites: arrayUnion(siteId),
+        const response = await fetch(`/api/users/${encodeURIComponent(userId)}/assign-sites`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ siteIds: [siteId] }),
         });
+        if (!response.ok) throw new Error(await readApiError(response, 'Failed to assign site'));
       } catch (err) {
         console.error('Error assigning site to user:', err);
         throw new Error(handleError(err));
@@ -165,10 +168,12 @@ export function useUserManagement() {
       }
 
       try {
-        const userRef = doc(db, 'users', userId);
-        await updateDoc(userRef, {
-          sites: arrayRemove(siteId),
+        const response = await fetch(`/api/users/${encodeURIComponent(userId)}/remove-sites`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ siteIds: [siteId] }),
         });
+        if (!response.ok) throw new Error(await readApiError(response, 'Failed to remove site'));
       } catch (err) {
         console.error('Error removing site from user:', err);
         throw new Error(handleError(err));
@@ -189,8 +194,8 @@ export function useUserManagement() {
       }
 
       try {
-        const userRef = doc(db, 'users', userId);
-        await deleteDoc(userRef);
+        const response = await fetch(`/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete user'));
       } catch (err) {
         console.error('Error deleting user:', err);
         throw new Error(handleError(err));
@@ -209,4 +214,13 @@ export function useUserManagement() {
     removeSiteFromUser,
     deleteUser,
   };
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }

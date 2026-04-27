@@ -76,11 +76,17 @@ const putWrapped = authorizedSiteHandler<{ siteId: string; machineId: string }>(
       };
     } else if (op === 'reset_breaker') {
       input = { machineId, op: 'reset_breaker' };
+    } else if (op === 'set_remote_apply') {
+      input = {
+        machineId,
+        op: 'set_remote_apply',
+        enabled: typeof body.enabled === 'boolean' ? body.enabled : false,
+      };
     } else {
       return problem(
         400,
         'invalid_op',
-        '`op` must be one of: capture, set_auto_restore, reset_breaker.',
+        '`op` must be one of: capture, set_auto_restore, reset_breaker, set_remote_apply.',
       );
     }
 

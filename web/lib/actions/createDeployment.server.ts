@@ -43,6 +43,10 @@ export interface CreateDeploymentInput {
   silent_flags: string;
   /** optional post-install verification path on disk. */
   verify_path?: string;
+  /** optional process exe names the agent closes before install. */
+  close_processes?: string[];
+  /** optional project names/paths the installer should suppress. */
+  suppress_projects?: string[];
   /** optional 64-char hex sha-256 of the installer binary. */
   sha256_checksum?: string;
   /** if true, agents may run the installer alongside other tasks. */
@@ -85,6 +89,8 @@ export type CreateDeploymentResult =
         | 'installer_url_not_https'
         | 'invalid_silent_flags'
         | 'invalid_verify_path'
+        | 'invalid_close_processes'
+        | 'invalid_suppress_projects'
         | 'invalid_sha256_checksum'
         | 'invalid_machines'
         | 'over_quota';
@@ -98,6 +104,8 @@ interface ValidatedInput {
   installerUrl: string;
   silentFlags: string;
   verifyPath?: string;
+  closeProcesses?: string[];
+  suppressProjects?: string[];
   sha256?: string;
   parallelInstall: boolean;
   machines: string[];
@@ -178,6 +186,40 @@ function validateInput(
     verifyPath = input.verify_path;
   }
 
+  let closeProcesses: string[] | undefined;
+  if (input.close_processes !== undefined && input.close_processes !== null) {
+    if (
+      !Array.isArray(input.close_processes) ||
+      input.close_processes.some((p) => typeof p !== 'string' || p.length === 0)
+    ) {
+      return {
+        error: {
+          ok: false,
+          code: 'invalid_close_processes',
+          message: 'close_processes must be a non-empty array of non-empty strings when provided',
+        },
+      };
+    }
+    if (input.close_processes.length > 0) closeProcesses = [...input.close_processes];
+  }
+
+  let suppressProjects: string[] | undefined;
+  if (input.suppress_projects !== undefined && input.suppress_projects !== null) {
+    if (
+      !Array.isArray(input.suppress_projects) ||
+      input.suppress_projects.some((p) => typeof p !== 'string' || p.length === 0)
+    ) {
+      return {
+        error: {
+          ok: false,
+          code: 'invalid_suppress_projects',
+          message: 'suppress_projects must be a non-empty array of non-empty strings when provided',
+        },
+      };
+    }
+    if (input.suppress_projects.length > 0) suppressProjects = [...input.suppress_projects];
+  }
+
   let sha256: string | undefined;
   if (input.sha256_checksum !== undefined && input.sha256_checksum !== null) {
     if (typeof input.sha256_checksum !== 'string' || !SHA256_HEX_RE.test(input.sha256_checksum)) {
@@ -223,6 +265,8 @@ function validateInput(
     installerUrl: input.installer_url,
     silentFlags: input.silent_flags,
     verifyPath,
+    closeProcesses,
+    suppressProjects,
     sha256,
     parallelInstall,
     machines,
@@ -291,6 +335,8 @@ export async function createDeployment(
   };
   if (validated.sha256) deploymentData.sha256_checksum = validated.sha256;
   if (validated.verifyPath) deploymentData.verify_path = validated.verifyPath;
+  if (validated.closeProcesses) deploymentData.close_processes = validated.closeProcesses;
+  if (validated.suppressProjects) deploymentData.suppress_projects = validated.suppressProjects;
   if (validated.parallelInstall) deploymentData.parallel_install = true;
 
   await deploymentRef.set(deploymentData);
@@ -320,6 +366,8 @@ export async function createDeployment(
       };
       if (validated.sha256) commandData.sha256_checksum = validated.sha256;
       if (validated.verifyPath) commandData.verify_path = validated.verifyPath;
+      if (validated.closeProcesses) commandData.close_processes = validated.closeProcesses;
+      if (validated.suppressProjects) commandData.suppress_projects = validated.suppressProjects;
       if (validated.parallelInstall) commandData.parallel_install = true;
       return { commandIdPrefix, commandData };
     },

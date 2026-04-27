@@ -194,6 +194,10 @@ function validationErrorsFor(
       return { 'body.silent_flags': ['required string'] };
     case 'invalid_verify_path':
       return { 'body.verify_path': ['must be a string'] };
+    case 'invalid_close_processes':
+      return { 'body.close_processes': ['must be a non-empty string array when provided'] };
+    case 'invalid_suppress_projects':
+      return { 'body.suppress_projects': ['must be a non-empty string array when provided'] };
     case 'invalid_sha256_checksum':
       return { 'body.sha256_checksum': ['must be 64-char hex'] };
     case 'invalid_machines':
