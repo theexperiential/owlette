@@ -15,7 +15,7 @@
  * transactional core out so the `authorizedPlatformHandler` shim can call it
  * directly. The existing `requirePlatformAuthAndScope`-wrapped route stays
  * untouched as the public surface (preserving idempotency keys + RFC 7807
- * shape); the `/api/admin/installer/[version]/set-latest` mirror created in
+ * shape); the `/api/installer/[version]/set-latest` route created in
  * this wave is the new admin-namespace entry point.
  *
  * firestore paths: platform-level (NOT site-scoped).

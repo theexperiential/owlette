@@ -3,8 +3,7 @@
  *
  * Mirrors the metadata-write half of `useInstallerManagement:uploadVersion`
  * (web/hooks/useInstallerManagement.ts:137-191) and the existing
- * `PUT /api/admin/installer/upload` finalize step
- * (web/app/api/admin/installer/upload/route.ts:107-237).
+ * `PUT /api/installer/upload` finalize step.
  *
  * Two writes happen atomically per call:
  *

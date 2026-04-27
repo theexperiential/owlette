@@ -1,7 +1,6 @@
 /**
  * Action core: set a process's launch mode (and optional schedule).
  *
- * Mirrors the admin route at `web/app/api/admin/processes/[processId]/launch-mode/route.ts`.
  * Performs two writes:
  *   1. Atomic config-doc update via `withProcessLock` — the source of truth.
  *   2. Best-effort mirror onto the machine status doc so the dashboard sees

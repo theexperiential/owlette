@@ -55,7 +55,7 @@ export default function EmailPage() {
 
   const fetchConfig = async () => {
     try {
-      const response = await fetch('/api/admin/email/config');
+      const response = await fetch('/api/platform/email/config');
       if (response.ok) {
         setConfig(await response.json());
       }

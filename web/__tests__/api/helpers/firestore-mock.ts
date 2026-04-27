@@ -19,7 +19,7 @@
  *     __esModule: true,
  *   }));
  *   jest.mock('@/lib/apiHelpers.server', () => ({
- *     requireAdminWithSiteAccess: (...a: any[]) => mocks.requireAdmin(...a),
+ *     requireAdminOrIdToken: (...a: any[]) => mocks.requireAdmin(...a),
  *     getRouteParam: jest.fn((req: any, idx: number) => {
  *       const s = new URL(req.url).pathname.split('/').filter(Boolean);
  *       return s[idx];
@@ -27,7 +27,7 @@
  *   }));
  *   jest.mock('@/lib/firebase-admin', () => ({ getAdminDb: () => mockDbFactory() }));
  *
- *   import { GET, POST } from '@/app/api/admin/...';
+ *   import { GET, POST } from '@/app/api/...';
  */
 
 /* -------------------------------------------------------------------------- */
@@ -51,7 +51,7 @@ export const mocks = {
   where: jest.fn().mockReturnThis(),
   /** terminal .get() on a query chain */
   collectionGet: jest.fn(),
-  /** requireAdminWithSiteAccess */
+  /** requireAdminOrIdToken */
   requireAdmin: jest.fn().mockResolvedValue({ userId: 'test-admin' }),
 };
 

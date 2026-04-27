@@ -4,10 +4,10 @@
  * `GET  /api/sites/{siteId}/machines/{machineId}/processes`
  * `POST /api/sites/{siteId}/machines/{machineId}/processes`
  *
- * Wave 2 / Track 2B of the api-sprint. Mirrors the admin route
- * (`/api/admin/processes`) but with public scoping (`machine=<id>:read|write`),
- * RFC-7807 problem+json errors, idempotency-key on POST create, and the
- * race-safe `withProcessLock` transaction helper.
+ * Wave 2 / Track 2B of the api-sprint. Canonical site-scoped process surface
+ * with public scoping (`machine=<id>:read|write`), RFC-7807 problem+json
+ * errors, idempotency-key on POST create, and the race-safe `withProcessLock`
+ * transaction helper.
  */
 
 import { NextRequest, NextResponse } from 'next/server';

@@ -183,7 +183,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         .catch(() => {});
 
       // Load API keys
-      fetch('/api/admin/keys')
+      fetch('/api/account/api-keys')
         .then((res) => res.json())
         .then((data) => {
           if (data.success) setApiKeys(data.keys || []);
@@ -1101,7 +1101,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                   <div>
                     <h3 className="text-base font-medium text-white">API keys</h3>
                     <p className="text-xs text-muted-foreground mt-1">
-                      create keys for programmatic access to the admin API
+                      create keys for programmatic access to the Owlette API
                     </p>
                   </div>
 
@@ -1164,7 +1164,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                         onClick={async () => {
                           setCreatingKey(true);
                           try {
-                            const res = await fetch('/api/admin/keys/create', {
+                            const res = await fetch('/api/account/api-keys', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ name: newKeyName || 'API Key' }),
@@ -1174,7 +1174,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                               setCreatedKey(data.key);
                               setNewKeyName('');
                               // Refresh list
-                              const listRes = await fetch('/api/admin/keys');
+                              const listRes = await fetch('/api/account/api-keys');
                               const listData = await listRes.json();
                               if (listData.success) setApiKeys(listData.keys || []);
                               toast.success('API key created');
@@ -1221,10 +1221,8 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                                   onClick={async () => {
                                     setRevokingKeyId(k.id);
                                     try {
-                                      const res = await fetch('/api/admin/keys/revoke', {
+                                      const res = await fetch(`/api/account/api-keys/${encodeURIComponent(k.id)}`, {
                                         method: 'DELETE',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ keyId: k.id }),
                                       });
                                       if (res.ok) {
                                         setApiKeys((prev) => prev.filter((key) => key.id !== k.id));
@@ -1278,7 +1276,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                   <div className="rounded-md border border-border bg-card/50 p-4 space-y-2">
                     <p className="text-xs text-muted-foreground font-medium">usage</p>
                     <code className="block text-[11px] bg-background rounded px-3 py-2 text-muted-foreground font-mono whitespace-pre-wrap">
-                      {`curl "https://owlette.app/api/admin/machines?siteId=SITE_ID&api_key=owk_..."`}
+                      {`curl "https://owlette.app/api/sites/SITE_ID/machines?api_key=owk_..."`}
                     </code>
                     <p className="text-[11px] text-muted-foreground">
                       or pass as header: <code className="font-mono">x-api-key: owk_...</code>

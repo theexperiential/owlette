@@ -9,7 +9,7 @@
  *   import { apiError } from '@/lib/apiErrorResponse';
  *   ...
  *   } catch (error) {
- *     return apiError(error, 'admin/commands/send');
+ *     return apiError(error, 'sites/machines/commands');
  *   }
  */
 import { NextResponse } from 'next/server';

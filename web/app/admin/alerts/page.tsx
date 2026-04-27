@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -216,13 +216,19 @@ export default function AlertsPage() {
     }
   }, [selectedSiteId, fetchRules]);
 
-  // Persist rules to Firestore
+  // Persist rules through the site-scoped API.
   const saveRules = async (updatedRules: AlertRule[]) => {
     if (!db || !selectedSiteId) return;
     setSaving(true);
     try {
-      const alertsRef = doc(db, 'sites', selectedSiteId, 'settings', 'alerts');
-      await setDoc(alertsRef, { rules: updatedRules }, { merge: true });
+      const response = await fetch(`/api/sites/${encodeURIComponent(selectedSiteId)}/alerts`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rules: updatedRules }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to save alert rules');
+      }
       setRules(updatedRules);
     } catch (err: unknown) {
       console.error('Failed to save alert rules:', err);

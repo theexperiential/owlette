@@ -91,10 +91,10 @@ export function MachineContextMenu({
   const handleRevokeToken = async () => {
     setIsRevoking(true);
     try {
-      const response = await fetch('/api/admin/tokens/revoke', {
+      const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/agent-tokens/revoke`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ siteId, machineId }),
+        body: JSON.stringify({ machineId }),
       });
 
       const data = await response.json();

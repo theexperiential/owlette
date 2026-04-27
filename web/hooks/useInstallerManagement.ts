@@ -6,17 +6,11 @@ import {
   query,
   onSnapshot,
   doc,
-  setDoc,
-  deleteDoc,
   orderBy,
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
-import {
-  uploadInstaller,
-  deleteInstallerVersion,
-} from '@/lib/storageUtils';
 import { useAuth } from '@/contexts/AuthContext';
 
 export interface InstallerVersion {
@@ -151,37 +145,34 @@ export function useInstallerManagement() {
       }
 
       try {
-        // Upload to Firebase Storage
-        const { downloadUrl, checksum, fileSize } = await uploadInstaller(
-          file,
-          version,
-          onProgress
-        );
+        const uploadInit = await fetch('/api/installer/upload', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'Idempotency-Key': createIdempotencyKey(`installer-upload-start-${version}`),
+          },
+          body: JSON.stringify({
+            version,
+            fileName: file.name,
+            contentType: file.type || 'application/octet-stream',
+            releaseNotes,
+            setAsLatest,
+          }),
+        });
+        if (!uploadInit.ok) throw new Error(await readApiError(uploadInit, 'Failed to start upload'));
+        const uploadBody = await uploadInit.json();
 
-        // Create metadata document
-        const versionData: Partial<Omit<InstallerVersion, 'id'>> = {
-          version,
-          download_url: downloadUrl,
-          file_size: fileSize,
-          release_date: Timestamp.now(),
-          checksum_sha256: checksum,
-          uploaded_by: user.email || user.uid,
-        };
+        await uploadFileToSignedUrl(uploadBody.uploadUrl, file, onProgress);
 
-        // Only add release_notes if it's not undefined
-        if (releaseNotes !== undefined) {
-          versionData.release_notes = releaseNotes;
-        }
-
-        // Save to versions collection
-        const versionRef = doc(db, 'installer_metadata', 'data', 'versions', version);
-        await setDoc(versionRef, versionData);
-
-        // If set as latest, also update the latest document
-        if (setAsLatest) {
-          const latestRef = doc(db, 'installer_metadata', 'latest');
-          await setDoc(latestRef, versionData);
-        }
+        const finalize = await fetch('/api/installer/upload', {
+          method: 'PUT',
+          headers: {
+            'content-type': 'application/json',
+            'Idempotency-Key': createIdempotencyKey(`installer-upload-finalize-${uploadBody.uploadId}`),
+          },
+          body: JSON.stringify({ uploadId: uploadBody.uploadId }),
+        });
+        if (!finalize.ok) throw new Error(await readApiError(finalize, 'Failed to finalize upload'));
       } catch (err) {
         console.error('Error uploading version:', err);
         throw new Error(handleError(err));
@@ -202,33 +193,21 @@ export function useInstallerManagement() {
       }
 
       try {
-        // Find the version data
-        const versionData = versions.find((v) => v.version === version);
-        if (!versionData) {
-          throw new Error('Version not found');
-        }
-
-        // Update the /latest document (sparse — release_notes only when set)
-        const latestRef = doc(db, 'installer_metadata', 'latest');
-        const latestData: Omit<InstallerVersion, 'id' | 'is_latest'> = {
-          version: versionData.version,
-          download_url: versionData.download_url,
-          file_size: versionData.file_size,
-          release_date: versionData.release_date,
-          checksum_sha256: versionData.checksum_sha256,
-          uploaded_by: versionData.uploaded_by,
-          ...(versionData.release_notes !== undefined
-            ? { release_notes: versionData.release_notes }
-            : {}),
-        };
-
-        await setDoc(latestRef, latestData);
+        const response = await fetch(`/api/installer/${encodeURIComponent(version)}/set-latest`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'Idempotency-Key': createIdempotencyKey(`installer-set-latest-${version}`),
+          },
+          body: JSON.stringify({}),
+        });
+        if (!response.ok) throw new Error(await readApiError(response, 'Failed to set latest version'));
       } catch (err) {
         console.error('Error setting latest version:', err);
         throw new Error(handleError(err));
       }
     },
-    [versions]
+    []
   );
 
   /**
@@ -242,12 +221,10 @@ export function useInstallerManagement() {
     }
 
     try {
-      // Delete from Firebase Storage
-      await deleteInstallerVersion(version);
-
-      // Delete metadata document
-      const versionRef = doc(db, 'installer_metadata', 'data', 'versions', version);
-      await deleteDoc(versionRef);
+      const response = await fetch(`/api/installer/${encodeURIComponent(version)}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete installer version'));
     } catch (err) {
       console.error('Error deleting version:', err);
       throw new Error(handleError(err));
@@ -337,4 +314,48 @@ export function useInstallerManagement() {
     getCleanupCandidates,
     cleanupVersions,
   };
+}
+
+function uploadFileToSignedUrl(
+  uploadUrl: string,
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('content-type', file.type || 'application/octet-stream');
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(100);
+        resolve();
+      } else {
+        reject(new Error(`Upload failed (${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Upload failed'));
+    xhr.send(file);
+  });
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? body.error ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
+}
+
+function createIdempotencyKey(prefix: string): string {
+  const random =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${random}`;
 }

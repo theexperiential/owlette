@@ -22,24 +22,7 @@ type PlatformHandler<TParams extends Params = Params> = (
   routeContext?: RouteContext<TParams>,
 ) => Promise<NextResponse> | NextResponse;
 
-type HandlerOptions = {
-  deprecated?: boolean;
-  canonicalUrl?: string;
-  sunsetDate?: string;
-};
-
-function withDeprecationHeaders<T extends NextResponse>(
-  response: T,
-  options: HandlerOptions,
-): T {
-  if (!options.deprecated) return response;
-  response.headers.set('deprecation', 'true');
-  if (options.sunsetDate) response.headers.set('sunset', options.sunsetDate);
-  if (options.canonicalUrl) {
-    response.headers.append('link', `<${options.canonicalUrl}>; rel="successor-version"`);
-  }
-  return response;
-}
+type HandlerOptions = Record<string, unknown>;
 
 function errorResponse(err: unknown): NextResponse {
   const status = typeof (err as { status?: unknown })?.status === 'number'
@@ -88,18 +71,6 @@ function routeContextFromPath<TParams extends Params>(
   return { params: Promise.resolve(params as TParams) };
 }
 
-async function bodySiteId(request: NextRequest, field = 'siteId'): Promise<string> {
-  try {
-    const raw = await request.clone().text();
-    if (!raw) return '';
-    const body = JSON.parse(raw) as Record<string, unknown>;
-    const value = body[field];
-    return typeof value === 'string' ? value : '';
-  } catch {
-    return '';
-  }
-}
-
 function requireOptionalMock(moduleName: string): Record<string, unknown> | null {
   try {
     return jest.requireMock(moduleName) as Record<string, unknown>;
@@ -109,12 +80,6 @@ function requireOptionalMock(moduleName: string): Record<string, unknown> | null
 }
 
 async function authorizeSite(request: NextRequest, siteId: string): Promise<string> {
-  const helpers = requireOptionalMock('@/lib/apiHelpers.server');
-  const requireAdminWithSiteAccess = helpers?.requireAdminWithSiteAccess;
-  if (typeof requireAdminWithSiteAccess === 'function') {
-    return normalizeUserId(await requireAdminWithSiteAccess(request, siteId));
-  }
-
   const apiAuth = requireOptionalMock('@/lib/apiAuth.server');
   const requireAdminOrIdToken = apiAuth?.requireAdminOrIdToken;
   const assertUserHasSiteAccess = apiAuth?.assertUserHasSiteAccess;
@@ -159,8 +124,7 @@ export function authorizedSiteHandler<TParams extends Params = Params>(options: 
           );
         }
         const userId = await authorizeSite(request, siteId);
-        const response = await handler(request, makeSiteContext(userId, siteId), context);
-        return withDeprecationHeaders(response, options);
+        return handler(request, makeSiteContext(userId, siteId), context);
       } catch (err) {
         return errorResponse(err);
       }
@@ -168,32 +132,7 @@ export function authorizedSiteHandler<TParams extends Params = Params>(options: 
   };
 }
 
-export function authorizedLegacyBodySiteHandler<TParams extends Params = Params>(
-  options: HandlerOptions & { siteIdField?: string },
-) {
-  return function wrap(handler: SiteHandler<TParams>) {
-    return async function legacyBodySiteRoute(
-      request: NextRequest,
-      routeContext?: RouteContext<TParams>,
-    ): Promise<NextResponse> {
-      try {
-        const querySiteId = request.nextUrl.searchParams.get('siteId') ?? '';
-        const siteId = querySiteId || await bodySiteId(request, options.siteIdField);
-        const userId = await authorizeSite(request, siteId);
-        const response = await handler(
-          request,
-          makeSiteContext(userId, siteId),
-          routeContextFromPath(request, routeContext),
-        );
-        return withDeprecationHeaders(response, options);
-      } catch (err) {
-        return errorResponse(err);
-      }
-    };
-  };
-}
-
-export function authorizedPlatformHandler<TParams extends Params = Params>(options: HandlerOptions) {
+export function authorizedPlatformHandler<TParams extends Params = Params>(_options: HandlerOptions) {
   return function wrap(handler: PlatformHandler<TParams>) {
     return async function authorizedRoute(
       request: NextRequest,
@@ -204,8 +143,7 @@ export function authorizedPlatformHandler<TParams extends Params = Params>(optio
         const siteContext = makeSiteContext(userId, '');
         const { siteId: _siteId, ...ctx } = siteContext;
         void _siteId;
-        const response = await handler(request, ctx, routeContextFromPath(request, routeContext));
-        return withDeprecationHeaders(response, options);
+        return handler(request, ctx, routeContextFromPath(request, routeContext));
       } catch (err) {
         return errorResponse(err);
       }

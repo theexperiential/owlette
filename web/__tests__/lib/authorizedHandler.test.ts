@@ -241,39 +241,6 @@ describe('authorizedSiteHandler — happy path', () => {
     expect(handler.mock.calls[0][1].siteId).toBe('site-a');
   });
 
-  it('emits deprecation headers and records usage telemetry', async () => {
-    const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
-    const wrapped = authorizedSiteHandler({
-      capability: 'MACHINE_EXEC_COMMAND',
-      siteIdParam: 'query',
-      deprecated: true,
-      canonicalUrl: '/api/sites/{siteId}/machines/{machineId}/commands',
-      sunsetDate: 'Wed, 30 Sep 2026 00:00:00 GMT',
-      routeName: 'POST /api/admin/commands/send',
-    })(handler);
-
-    const res = await wrapped(
-      makeRequest('http://localhost/api/admin/commands/send?siteId=site-a', 'POST'),
-      { params: Promise.resolve({}) },
-    );
-
-    expect(res.headers.get('deprecation')).toBe('true');
-    expect(res.headers.get('sunset')).toBe('Wed, 30 Sep 2026 00:00:00 GMT');
-    expect(res.headers.get('link')).toBe(
-      '</api/sites/{siteId}/machines/{machineId}/commands>; rel="successor-version"',
-    );
-
-    const usage = setCalls.find((c) => c.path.startsWith('global/deprecation_usage/routes/'));
-    expect(usage).toBeDefined();
-    expect(usage!.payload).toMatchObject({
-      method: 'POST',
-      path: '/api/admin/commands/send',
-      canonicalUrl: '/api/sites/{siteId}/machines/{machineId}/commands',
-      sunsetDate: 'Wed, 30 Sep 2026 00:00:00 GMT',
-      count: { __increment: 1 },
-      lastUsedAt: '__SERVER_TS__',
-    });
-  });
 });
 
 describe('authorizedSiteHandler — allow-audit fail-closed', () => {
@@ -418,7 +385,7 @@ describe('authorizedPlatformHandler', () => {
     const handler = makePlatformHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedPlatformHandler({ capability: 'GLOBAL_SETTINGS_WRITE' })(handler);
 
-    const res = await wrapped(makeRequest('http://localhost/api/admin/security/kill-switch', 'POST'));
+    const res = await wrapped(makeRequest('http://localhost/api/platform/security/kill-switch', 'POST'));
     expect(res.status).toBe(200);
     expect(handler).toHaveBeenCalledTimes(1);
     const allow = setCalls.find((c) => (c.payload as { outcome?: string }).outcome === 'allow');
@@ -431,7 +398,7 @@ describe('authorizedPlatformHandler', () => {
     const handler = makePlatformHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedPlatformHandler({ capability: 'GLOBAL_SETTINGS_WRITE' })(handler);
 
-    const res = await wrapped(makeRequest('http://localhost/api/admin/security/kill-switch', 'POST'));
+    const res = await wrapped(makeRequest('http://localhost/api/platform/security/kill-switch', 'POST'));
     expect(res.status).toBe(403);
     expect(handler).not.toHaveBeenCalled();
     // deny audit landed asynchronously
@@ -445,7 +412,7 @@ describe('authorizedPlatformHandler', () => {
     setShouldReject = new Error('audit firestore down');
     const handler = makePlatformHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedPlatformHandler({ capability: 'GLOBAL_SETTINGS_WRITE' })(handler);
-    const res = await wrapped(makeRequest('http://localhost/api/admin/security/kill-switch', 'POST'));
+    const res = await wrapped(makeRequest('http://localhost/api/platform/security/kill-switch', 'POST'));
     expect(res.status).toBe(503);
     expect(handler).not.toHaveBeenCalled();
   });

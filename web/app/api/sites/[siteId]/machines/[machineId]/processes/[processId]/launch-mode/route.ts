@@ -1,10 +1,9 @@
 /**
  * PATCH /api/sites/{siteId}/machines/{machineId}/processes/{processId}/launch-mode
  *
- * Site-scoped sibling of the admin route at
- * `/api/admin/processes/[processId]/launch-mode`. Sets a process's launch
- * mode and optional schedule. Atomic: writes both the config doc and the
- * machine status doc.
+ * Canonical site-scoped route for setting a process's launch mode and
+ * optional schedule. Atomic: writes both the config doc and the machine
+ * status doc.
  *
  * security-boundary-migration wave 3.2: capability `MACHINE_CONFIG_WRITE`,
  * api-key scope `machine=<id>:write`.

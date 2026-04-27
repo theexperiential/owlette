@@ -49,7 +49,7 @@ export default function TokensPage() {
 
     setLoading(true);
     try {
-      const response = await fetch(`/api/admin/tokens/list?siteId=${selectedSiteId}`);
+      const response = await fetch(`/api/sites/${encodeURIComponent(selectedSiteId)}/agent-tokens`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -98,11 +98,10 @@ export default function TokensPage() {
 
     setIsRevoking(true);
     try {
-      const response = await fetch('/api/admin/tokens/revoke', {
+      const response = await fetch(`/api/sites/${encodeURIComponent(selectedSiteId)}/agent-tokens/revoke`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          siteId: selectedSiteId,
           tokenId: tokenToRevoke.id,  // Use unique token ID, not machineId
         }),
       });
@@ -134,11 +133,10 @@ export default function TokensPage() {
   const handleRevokeAll = async () => {
     setIsRevoking(true);
     try {
-      const response = await fetch('/api/admin/tokens/revoke', {
+      const response = await fetch(`/api/sites/${encodeURIComponent(selectedSiteId)}/agent-tokens/revoke`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          siteId: selectedSiteId,
           all: true,
         }),
       });

@@ -191,7 +191,7 @@ export function ScreenshotDialog({
     setDeletingId(screenshotId);
     try {
       const res = await fetch(
-        `/api/admin/screenshots?siteId=${siteId}&machineId=${machineId}&screenshotId=${screenshotId}`,
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/screenshots?screenshotId=${encodeURIComponent(screenshotId)}`,
         { method: 'DELETE' }
       );
       if (!res.ok) {
@@ -215,7 +215,7 @@ export function ScreenshotDialog({
     setClearingAll(true);
     try {
       const res = await fetch(
-        `/api/admin/screenshots?siteId=${siteId}&machineId=${machineId}`,
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/screenshots`,
         { method: 'DELETE' }
       );
       if (!res.ok) {

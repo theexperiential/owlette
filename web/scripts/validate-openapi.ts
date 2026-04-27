@@ -8,9 +8,8 @@
  * Usage: npx tsx scripts/validate-openapi.ts
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
-import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
 const ROOT = join(__dirname, '..');
@@ -44,11 +43,6 @@ const INTERNAL_ROUTES = new Set([
   '/api/test-email',
   '/api/unsubscribe',
   '/api/webhooks/user-created',
-  '/api/admin/events/simulate',
-  '/api/admin/tokens/list',
-  '/api/admin/tokens/revoke',
-  '/api/admin/installer/upload',
-  '/api/admin/fetch-td-version',
   '/api/openapi',
 ]);
 
@@ -61,8 +55,8 @@ function loadSpec(): Record<string, unknown> {
 }
 
 /**
- * Convert an OpenAPI path like /api/admin/processes/{processId}
- * to a filesystem path like app/api/admin/processes/[processId]/route.ts
+ * Convert an OpenAPI path like /api/sites/{siteId}/deployments/{deploymentId}
+ * to a filesystem path like app/api/sites/[siteId]/deployments/[deploymentId]/route.ts
  */
 function specPathToRoutePath(specPath: string): string {
   const segments = specPath
@@ -76,11 +70,7 @@ function specPathToRoutePath(specPath: string): string {
  * Find all route.ts files under app/api/ and convert them to API paths.
  */
 function discoverRoutes(): string[] {
-  const result = execSync(`find "${API_DIR}" -name "route.ts" -type f`, { encoding: 'utf-8' });
-  return result
-    .trim()
-    .split('\n')
-    .filter(Boolean)
+  return findRouteFiles(API_DIR)
     .map((filePath) => {
       const rel = relative(ROOT, filePath)
         .replace(/\\/g, '/')
@@ -89,6 +79,23 @@ function discoverRoutes(): string[] {
         .replace(/\[([^\]]+)\]/g, '{$1}');
       return rel;
     });
+}
+
+function findRouteFiles(dir: string): string[] {
+  const files: string[] = [];
+
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...findRouteFiles(fullPath));
+      continue;
+    }
+    if (entry.isFile() && entry.name === 'route.ts') {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
 }
 
 /**

@@ -7,8 +7,8 @@ import {
 } from '@/lib/alerts/displayEventRouting';
 
 /**
- * Locks in the contract of DISPLAY_EVENT_ROUTING. Three downstream consumers
- * read this table (webhookSender, /api/agent/alert, /api/admin/events/simulate)
+ * Locks in the contract of DISPLAY_EVENT_ROUTING. Two downstream consumers
+ * read this table (webhookSender, /api/agent/alert)
  * so any drift here is a wire-format break — these tests must fail loudly if
  * the table is mutated without coordinated updates.
  */

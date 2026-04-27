@@ -15,8 +15,8 @@
  *
  * Each verb is covered for scope-pass + scope-fail + the verb-specific
  * happy / error paths (validation, 413 over_quota, idempotency replay).
- * The admin /api/admin/deployments suite stays as-is and continues to
- * cover the dashboard-facing surface.
+ * Retired compatibility admin routes are intentionally absent; the
+ * site-scoped endpoints are the deployment API.
  */
 
 import { createMockRequest } from './helpers/utils';

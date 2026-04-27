@@ -37,7 +37,7 @@ describe('proxy — x-security-version header', () => {
   });
 
   it('attaches x-security-version on nested /api/* paths', async () => {
-    const response = await proxy(makeRequest('/api/admin/installer/upload'));
+    const response = await proxy(makeRequest('/api/installer/upload'));
     expect(response.headers.get(SECURITY_VERSION_HEADER)).toBe(
       String(CURRENT_SECURITY_VERSION),
     );

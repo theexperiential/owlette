@@ -88,7 +88,7 @@ export default function SystemPresetDialog({
   const handleAutoFillTd = async () => {
     setFetchingTd(true);
     try {
-      const res = await fetch('/api/admin/fetch-td-version');
+      const res = await fetch('/api/platform/touchdesigner/builds');
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Failed to fetch' }));
         throw new Error(data.error || `HTTP ${res.status}`);

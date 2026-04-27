@@ -2,14 +2,11 @@
  * displayEventRouting — single source of truth for how `display_*` audit
  * events fan out across the alert pipeline.
  *
- * Three downstream consumers read this table:
+ * Two downstream consumers read this table:
  *   1. `webhookSender.server.ts` — derives EVENT_META + extractFields entries
  *      so the 10 events render with correct colors / titles in Slack/Discord.
  *   2. `/api/agent/alert` — uses `email` / `webhook` to decide whether to
  *      enqueue a digest entry vs. fire the webhook synchronously.
- *   3. `/api/admin/events/simulate` — exercises the same dispatch path so
- *      operators can preview the email + webhook output before a real event
- *      ever fires.
  *
  * Severity rationale (locked in plan.md decision log):
  *   - Email+webhook: critical events the operator MUST notice within seconds

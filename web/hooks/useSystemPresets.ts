@@ -12,11 +12,6 @@ import { db } from '@/lib/firebase';
 import {
   collection,
   onSnapshot,
-  doc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  serverTimestamp,
   Timestamp
 } from 'firebase/firestore';
 
@@ -130,16 +125,15 @@ export function useSystemPresets(): UseSystemPresetsReturn {
       throw new Error('Firebase not configured');
     }
 
-    // Generate preset ID from software_name
-    const presetId = `preset-${preset.software_name.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
-    const presetRef = doc(db, 'system_presets', presetId);
-
-    await setDoc(presetRef, {
-      ...preset,
-      createdAt: serverTimestamp(),
+    const response = await fetch('/api/platform/system-presets', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(preset),
     });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to create system preset'));
 
-    return presetId;
+    const body = await response.json();
+    return body.presetId;
   };
 
   /**
@@ -153,12 +147,12 @@ export function useSystemPresets(): UseSystemPresetsReturn {
       throw new Error('Firebase not configured');
     }
 
-    const presetRef = doc(db, 'system_presets', id);
-
-    await updateDoc(presetRef, {
-      ...updates,
-      updatedAt: serverTimestamp(),
+    const response = await fetch(`/api/platform/system-presets/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(updates),
     });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to update system preset'));
   };
 
   /**
@@ -169,8 +163,10 @@ export function useSystemPresets(): UseSystemPresetsReturn {
       throw new Error('Firebase not configured');
     }
 
-    const presetRef = doc(db, 'system_presets', id);
-    await deleteDoc(presetRef);
+    const response = await fetch(`/api/platform/system-presets/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete system preset'));
   };
 
   /**
@@ -203,4 +199,13 @@ export function useSystemPresets(): UseSystemPresetsReturn {
     getPresetsByCategory,
     categories,
   };
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }
