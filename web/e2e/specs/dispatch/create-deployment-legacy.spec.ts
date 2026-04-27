@@ -43,7 +43,7 @@ test('admin creates a roost distribution — project_distributions doc + per-tar
   // state — first() tolerates both without a deployments-list-loaded race.
   await page.getByRole('button', { name: /^new roost$/i }).first().click();
 
-  const dialog = page.getByRole('dialog', { name: /^roost a project$/i });
+  const dialog = page.getByRole('dialog', { name: /^new roost$/i });
   await expect(dialog).toBeVisible();
 
   // activeMode='deploy' by default. sourceMode flipped to 'upload' in
@@ -58,7 +58,7 @@ test('admin creates a roost distribution — project_distributions doc + per-tar
   const machineRow = dialog.locator('div').filter({ hasText: new RegExp(`^${MACHINE_ID}`) }).first();
   await machineRow.click();
 
-  await dialog.getByRole('button', { name: /^distribute to 1 machine$/i }).click();
+  await dialog.getByRole('button', { name: /^upload and distribute to 1 machine$/i }).click();
 
   // Toast — singular form when one machine.
   await expect(page.getByText(`roost started — syncing to 1 machine`, { exact: true })).toBeVisible({ timeout: 10_000 });

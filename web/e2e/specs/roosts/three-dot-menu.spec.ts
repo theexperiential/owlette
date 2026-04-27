@@ -52,9 +52,7 @@ test.afterEach(async () => {
  * convention in version-history.spec.ts.
  */
 function rowFor(page: import('@playwright/test').Page, n: number) {
-  return page
-    .locator('span.font-mono', { hasText: `#${n}` })
-    .locator('xpath=ancestor::div[contains(@class, "items-start")][1]');
+  return page.locator(`[data-testid="roost-version-row"][data-version-number="${n}"]`);
 }
 
 async function expandRoostAndOpenMenu(

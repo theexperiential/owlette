@@ -23,7 +23,6 @@ const MACHINE_ID = 'e2e-descedit-machine';
 const ROOST_ID = 'rst_test_descedit_001';
 // Mirrors seedRoostWithVersionHistory's deterministic id stamp.
 const versionIdFor = (n: number) => `vrs_${ROOST_ID}_v${n}`;
-const ROW_ANCESTOR_XPATH = 'xpath=ancestor::div[contains(@class, "items-center")][1]';
 
 async function cleanup() {
   const db = getAdminDb();
@@ -36,13 +35,25 @@ async function cleanup() {
 }
 
 const rowFor = (page: Page, n: number) =>
-  page.locator('span.font-mono', { hasText: `#${n}` }).locator(ROW_ANCESTOR_XPATH);
+  page.locator(`[data-testid="roost-version-row"][data-version-number="${n}"]`);
 
 async function expandRoost(page: Page) {
   await page.goto('/roosts');
   await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
-  await page.locator(`[data-roost-row="${ROOST_ID}"]`).click();
-  await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
+  await ensureRoostExpanded(page);
+}
+
+async function ensureRoostExpanded(page: Page) {
+  const row = page.locator(`[data-roost-row="${ROOST_ID}"]`);
+  await expect(row).toBeVisible();
+  const historyToggle = page.getByRole('button', { name: 'version history' });
+  if ((await row.getAttribute('aria-expanded')) !== 'true') {
+    await row.click();
+  }
+  await expect(historyToggle).toBeVisible();
+  // The panel may render a denormalized current-version fallback while
+  // GET /versions is still loading. v2 only exists in the real history list.
+  await expect(rowFor(page, 2)).toBeVisible();
 }
 
 const waitPatch = (page: Page, n: number) =>
@@ -86,8 +97,8 @@ test('A — blur saves the edited description and the row re-renders', async ({ 
   await editor.fill('initial + fixed video');
 
   const responsePromise = waitPatch(page, 3);
-  // Blur by clicking the page-level heading.
-  await page.getByRole('button', { name: 'version history' }).click();
+  // Blur without toggling the version-history section closed.
+  await page.getByRole('heading', { name: 'roosts', exact: true }).click();
 
   const response = await responsePromise;
   expect(response.status()).toBe(200);
@@ -181,8 +192,7 @@ test('D — edited description persists across a full page reload', async ({ pag
   // Reload, re-expand, assert v3 still reads the saved description.
   await page.reload();
   await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
-  await page.locator(`[data-roost-row="${ROOST_ID}"]`).click();
-  await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
+  await ensureRoostExpanded(page);
 
   await expect(rowFor(page, 3).getByRole('button', { name: 'edit description' }))
     .toContainText('initial + fixed video');

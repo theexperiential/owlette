@@ -29,7 +29,6 @@ const DESCRIPTIONS: Array<string | null> = [
 // Matches relativeTime() output in VersionRow.tsx (e.g. "just now", "12s ago",
 // "3m ago", "2h ago", "5d ago", "1mo ago", "1y ago").
 const TIMESTAMP_REGEX = /^(just now|\d+(s|m|h|d|mo|y) ago)$/;
-const ROW_ANCESTOR_XPATH = 'xpath=ancestor::div[contains(@class, "items-start")][1]';
 
 async function cleanup() {
   const db = getAdminDb();
@@ -66,10 +65,9 @@ test('expanded roost renders version rows newest-first with current marker on he
   await row.click();
   await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 
-  // Each VersionRow renders a `<span class="font-mono">#N</span>`. Once the
-  // `version-row` testid lands (planned same wave), this collapses to
-  // `page.getByTestId('version-row')`.
-  const versionNumbers = page.locator('span.font-mono', { hasText: /^#\d+$/ });
+  const versionRows = page.getByTestId('roost-version-row');
+  await expect(versionRows).toHaveCount(VERSION_COUNT);
+  const versionNumbers = versionRows.locator('span.font-mono', { hasText: /^#\d+$/ });
   await expect(versionNumbers).toHaveCount(VERSION_COUNT);
 
   // Newest-first ordering: #5 on top, #1 on bottom.
@@ -80,22 +78,21 @@ test('expanded roost renders version rows newest-first with current marker on he
 
   // Current-version dot — emerald-500 span with aria-label="current version",
   // rendered only when isCurrent is true. Exactly one across the panel.
-  const currentMarkers = page.getByLabel('current version');
+  const currentMarkers = versionRows.getByLabel('current version');
   await expect(currentMarkers).toHaveCount(1);
 
   // Marker sits inside #5's row container.
-  const headRow = currentMarkers.first().locator(ROW_ANCESTOR_XPATH);
+  const headRow = page.locator('[data-testid="roost-version-row"][data-version-number="5"]');
   await expect(headRow).toContainText('#5');
   await expect(headRow).toContainText('Bumped Q2 ads');
 
   // v1 had description=null → "(no description)" placeholder renders.
-  const v1Row = versionNumbers.filter({ hasText: '#1' }).locator(ROW_ANCESTOR_XPATH);
+  const v1Row = page.locator('[data-testid="roost-version-row"][data-version-number="1"]');
   await expect(v1Row).toContainText('(no description)');
 
   // Each row exposes a tabular-nums timestamp span; assert format on each.
   for (let i = 0; i < VERSION_COUNT; i++) {
-    const timestamp = versionNumbers.nth(i)
-      .locator(ROW_ANCESTOR_XPATH)
+    const timestamp = versionRows.nth(i)
       .locator('span.tabular-nums')
       .first();
     await expect(timestamp).toHaveText(TIMESTAMP_REGEX);

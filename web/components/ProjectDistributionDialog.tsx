@@ -1202,6 +1202,7 @@ export default function ProjectDistributionDialog({
                   >
                     <div className="flex items-center gap-3">
                       <Checkbox
+                        aria-label={machine.machineId}
                         checked={selectedMachines.has(machine.machineId)}
                         onCheckedChange={
                           isNewVersion ? undefined : () => toggleMachine(machine.machineId)

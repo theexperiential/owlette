@@ -55,12 +55,10 @@ test('rollback action is disabled on the only/current version', async ({ page })
 
   // Exactly one version row. Walk up from `#1` to the row container —
   // mirrors version-history.spec.ts + three-dot-menu.spec.ts.
-  const versionNumbers = page.locator('span.font-mono', { hasText: /^#\d+$/ });
-  await expect(versionNumbers).toHaveCount(1);
+  const versionRows = page.getByTestId('roost-version-row');
+  await expect(versionRows).toHaveCount(1);
 
-  const v1Row = versionNumbers
-    .filter({ hasText: '#1' })
-    .locator('xpath=ancestor::div[contains(@class, "items-start")][1]');
+  const v1Row = page.locator('[data-testid="roost-version-row"][data-version-number="1"]');
   await expect(v1Row.getByLabel('current version')).toBeVisible();
 
   // Open the three-dot menu on v1.

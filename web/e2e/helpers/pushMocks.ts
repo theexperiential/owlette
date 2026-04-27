@@ -34,16 +34,20 @@
 
 import type { Page, Route, Request } from '@playwright/test';
 
-/** Hostname we hand back from the upload-urls mock. matched by the PUT interceptor. */
-const MOCK_R2_HOST = 'e2e-mock-r2.test';
+/**
+ * Same-origin path we hand back from the upload-urls mock. Keeping the fake
+ * signed URL on the app origin still exercises the browser upload queue while
+ * avoiding cross-origin preflight differences between local Chrome and CI.
+ */
+const MOCK_R2_PATH_PREFIX = '/__e2e-r2/put';
 
 /**
- * matches the URLs the browser PUTs chunk bytes to. covers our mock host
- * plus the real R2 hostnames, in case a spec accidentally routes against
- * a real signed URL — we still want to absorb those rather than make a
- * network call from the e2e runner.
+ * matches the URLs the browser PUTs chunk bytes to. covers our same-origin
+ * mock path plus the real R2 hostnames, in case a spec accidentally routes
+ * against a real signed URL — we still want to absorb those rather than make
+ * a network call from the e2e runner.
  */
-const R2_PUT_PATTERN = /(r2[.-]mock|owlette-.*\.r2\.cloudflarestorage\.com|e2e-mock-r2\.test)/i;
+const R2_PUT_PATTERN = /(\/__e2e-r2\/put\/|r2[.-]mock|owlette-.*\.r2\.cloudflarestorage\.com|e2e-mock-r2\.test)/i;
 
 /** Glob patterns we install on `page.route()`. exposed so uninstall can mirror them. */
 const CHECK_GLOB = '**/api/chunks/check';
@@ -95,7 +99,7 @@ export async function installPushMocks(
 
     const urls: Record<string, string> = {};
     for (const hash of hashes) {
-      urls[hash] = `https://${MOCK_R2_HOST}/put/${hash}?sig=fake`;
+      urls[hash] = `${MOCK_R2_PATH_PREFIX}/${encodeURIComponent(hash)}?sig=fake`;
     }
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
@@ -107,7 +111,14 @@ export async function installPushMocks(
   });
 
   await page.route(R2_PUT_PATTERN, async (route: Route) => {
-    await route.fulfill({ status: 200 });
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'PUT, OPTIONS',
+        'access-control-allow-headers': '*',
+      },
+    });
   });
 }
 

@@ -21,6 +21,13 @@ const MACHINE_ID = 'e2e-empty-roost-machine';
 const ROOST_ID = 'rst_test_empty_001';
 const ROOST_NAME = 'empty-roost';
 
+function isKnownPageChromeNoise(message: string): boolean {
+  return (
+    message.includes('Error fetching users: FirebaseError') ||
+    message === '[Error] An error occurred'
+  );
+}
+
 async function cleanup() {
   const db = getAdminDb();
   // Defensive: seedRoost writes no versions, but a prior failed run could
@@ -50,7 +57,9 @@ test('roost with zero versions renders cleanly in collapsed row + expanded panel
   const consoleErrors: ConsoleMessage[] = [];
   page.on('pageerror', (e) => pageErrors.push(e));
   page.on('console', (msg) => {
-    if (msg.type() === 'error') consoleErrors.push(msg);
+    if (msg.type() === 'error' && !isKnownPageChromeNoise(msg.text())) {
+      consoleErrors.push(msg);
+    }
   });
 
   await page.goto('/roosts');

@@ -236,6 +236,7 @@ export function DisplayLayoutPanel({
     undefined,
   );
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false);
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [applyDialogOpen, setApplyDialogOpen] = useState(false);
   const [enableRemoteApplyDialogOpen, setEnableRemoteApplyDialogOpen] = useState(false);
   const [closeUnsavedDialogOpen, setCloseUnsavedDialogOpen] = useState(false);
@@ -650,6 +651,19 @@ export function DisplayLayoutPanel({
       console.error('Failed to store display layout', e);
       toast.error(`store failed: ${formatError(e)}`);
       setCaptureDialogOpen(true);
+    }
+  };
+
+  const handleClearConfirm = async () => {
+    try {
+      await actions.clearLayout();
+      toast.success('assigned layout cleared');
+      clearDraft();
+      setMode('view');
+    } catch (e) {
+      console.error('Failed to clear display layout', e);
+      toast.error(`clear failed: ${formatError(e)}`);
+      setClearDialogOpen(true);
     }
   };
 
@@ -1331,6 +1345,27 @@ export function DisplayLayoutPanel({
                   </TooltipContent>
                 </Tooltip>
               )}
+              {activeTab === 'assigned' && hasAssignedLayout && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span tabIndex={actions.applying ? 0 : -1}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={actions.applying}
+                        onClick={() => setClearDialogOpen(true)}
+                        data-testid="display-clear-button"
+                        className="bg-card border border-border text-muted-foreground hover:text-destructive h-8 px-3 text-xs"
+                      >
+                        clear
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    remove the stored display layout from this machine
+                  </TooltipContent>
+                </Tooltip>
+              )}
               {autoRestore.enabled ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1600,6 +1635,17 @@ export function DisplayLayoutPanel({
       {/* Restore confirmation — kicks the agent to reconfigure the OS. Title
           includes machineName so bulk-operators don't fire against the wrong
           machine by accident. */}
+      <ConfirmDialog
+        open={clearDialogOpen}
+        onOpenChange={setClearDialogOpen}
+        title="clear assigned layout?"
+        description="this removes the stored display layout. auto-restore and manual restore will stay unavailable until a layout is stored again."
+        cancelText="cancel"
+        confirmText="clear"
+        variant="destructive"
+        onConfirm={handleClearConfirm}
+      />
+
       <ConfirmDialog
         open={applyDialogOpen}
         onOpenChange={setApplyDialogOpen}

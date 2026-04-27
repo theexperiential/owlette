@@ -61,9 +61,7 @@ test('admin rolls back from v5 to v3 — POST body, firestore pointer, and UI al
   await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 
   // Resilient: pick the row whose `#N` cell renders `#3`.
-  const v3Row = page
-    .locator('div.flex.items-start.gap-3')
-    .filter({ has: page.getByText('#3', { exact: true }) });
+  const v3Row = page.locator('[data-testid="roost-version-row"][data-version-number="3"]');
   await expect(v3Row).toHaveCount(1);
 
   // Open v3's three-dot menu + click rollback.
@@ -126,9 +124,7 @@ test('admin rolls back from v5 to v3 — POST body, firestore pointer, and UI al
   ).toBe('current version v3');
 
   // Expanded VersionHistory — current-version dot now lives on v3's row, not v5.
-  const v5Row = page
-    .locator('div.flex.items-start.gap-3')
-    .filter({ has: page.getByText('#5', { exact: true }) });
+  const v5Row = page.locator('[data-testid="roost-version-row"][data-version-number="5"]');
   await expect.poll(
     async () => v3Row.getByLabel('current version').count(),
     { timeout: 5_000 },

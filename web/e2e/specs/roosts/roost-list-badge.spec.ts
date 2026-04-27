@@ -69,7 +69,7 @@ test('row renders v3 badge, short description preview, timestamp, and three-dot 
   // "just now" relative form. Match month + 4-digit year + HH:MM tokens so
   // the assertion isn't pinned to wall-clock seconds.
   await expect(
-    row.getByText(/(January|February|March|April|May|June|July|August|September|October|November|December) \d+, \d{4},?\s+\d{1,2}:\d{2}/i)
+    row.getByText(/(January|February|March|April|May|June|July|August|September|October|November|December) \d+, \d{4}(?:,?\s+| at )\d{1,2}:\d{2}/i)
   ).toBeVisible();
 
   // three-dot row-actions trigger — accessible name from `aria-label="row actions"`.

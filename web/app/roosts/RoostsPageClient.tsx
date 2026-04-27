@@ -35,6 +35,14 @@ import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 import { RoostDetailPanel } from '@/components/roost/RoostDetailPanel';
 import { RoostMobileSheet } from '@/components/roost/RoostMobileSheet';
 
+const DESCRIPTION_PREVIEW_CAP = 40;
+
+function formatDescriptionPreview(description: string | null): string | null {
+  if (!description) return null;
+  if (description.length <= DESCRIPTION_PREVIEW_CAP) return description;
+  return `${description.slice(0, DESCRIPTION_PREVIEW_CAP)}\u2026`;
+}
+
 export default function RoostsPageClient() {
   const { user, loading: authLoading, userSites, isSuperadmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
@@ -430,6 +438,9 @@ export default function RoostsPageClient() {
                     roost.currentVersionNumber !== null
                       ? `v${roost.currentVersionNumber}`
                       : null;
+                  const descriptionPreview = formatDescriptionPreview(
+                    roost.currentVersionDescription,
+                  );
                   return (
                     <div
                       key={roost.id}
@@ -463,6 +474,11 @@ export default function RoostsPageClient() {
                                 </span>
                               )}
                             </div>
+                            {descriptionPreview && (
+                              <p className="mt-1 text-xs text-muted-foreground truncate select-text">
+                                {descriptionPreview}
+                              </p>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-4 flex-shrink-0">
@@ -742,4 +758,3 @@ export default function RoostsPageClient() {
     </div>
   );
 }
-

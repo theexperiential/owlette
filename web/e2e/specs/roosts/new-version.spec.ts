@@ -139,10 +139,7 @@ test('+ new version round-trips through the full push pipeline', async ({ page }
     await expect(targetCheckboxes.nth(i)).toBeDisabled();
   }
   // The seeded target machine is the one ticked.
-  const seededCheckbox = dialog
-    .locator('div', { hasText: MACHINE_ID })
-    .getByRole('checkbox')
-    .first();
+  const seededCheckbox = dialog.getByRole('checkbox', { name: MACHINE_ID });
   await expect(seededCheckbox).toBeChecked();
 
   // ---- editable fields ----
@@ -264,9 +261,10 @@ test('+ new version round-trips through the full push pipeline', async ({ page }
 
   // VersionHistory re-fetches (refreshKey bumps after upload success).
   // #4 should now be the head row with the current-version marker.
-  const versionNumbers = page.locator('span.font-mono', { hasText: /^#\d+$/ });
+  const versionRows = page.getByTestId('roost-version-row');
+  const versionNumbers = versionRows.locator('span.font-mono', { hasText: /^#\d+$/ });
   await expect(versionNumbers.first()).toHaveText('#4', { timeout: 5_000 });
-  await expect(page.getByLabel('current version')).toHaveCount(1);
+  await expect(versionRows.getByLabel('current version')).toHaveCount(1);
 
   expect(pageErrors, `pageerror events: ${pageErrors.map((e) => e.message).join(' | ')}`).toHaveLength(0);
 });

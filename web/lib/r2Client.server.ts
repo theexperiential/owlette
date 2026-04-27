@@ -240,6 +240,19 @@ export async function putVersionBody(
   versionId: string,
   body: unknown,
 ): Promise<void> {
+  if (process.env.OWLETTE_E2E === '1') {
+    const { getAdminDb } = await import('@/lib/firebase-admin');
+    await getAdminDb()
+      .collection('sites')
+      .doc(siteId)
+      .collection('roosts')
+      .doc(roostId)
+      .collection('versionBodies')
+      .doc(versionId)
+      .set({ body, updatedAt: new Date() }, { merge: true });
+    return;
+  }
+
   const client = getR2Client();
   const bucket = bucketFor(currentEnv(), 'manifests');
   await client.send(
@@ -291,7 +304,18 @@ export async function getVersionBody(
   // full push pipeline (installPushMocks + chunks/check), which is unchanged.
   if (process.env.OWLETTE_E2E === '1') {
     const { getAdminDb } = await import('@/lib/firebase-admin');
-    const snap = await getAdminDb()
+    const db = getAdminDb();
+    const bodySnap = await db
+      .collection('sites')
+      .doc(siteId)
+      .collection('roosts')
+      .doc(roostId)
+      .collection('versionBodies')
+      .doc(versionId)
+      .get();
+    if (bodySnap.exists) return bodySnap.data()?.body ?? null;
+
+    const snap = await db
       .collection('sites')
       .doc(siteId)
       .collection('roosts')

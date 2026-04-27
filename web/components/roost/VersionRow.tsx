@@ -198,7 +198,13 @@ export function VersionRow({
   };
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2 rounded border border-border/40 bg-background/50">
+    <div
+      data-testid="roost-version-row"
+      data-version-id={version.versionId}
+      data-version-number={version.versionNumber ?? ''}
+      data-current-version={isCurrent ? 'true' : 'false'}
+      className="flex items-center gap-3 px-3 py-2 rounded border border-border/40 bg-background/50"
+    >
       <div className="flex items-center gap-2 flex-shrink-0">
         {isCurrent && (
           <span
