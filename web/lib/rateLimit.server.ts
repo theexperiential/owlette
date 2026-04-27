@@ -45,6 +45,7 @@ import {
   type Capability,
   Capability as CapabilityEnum,
 } from '@/lib/capabilities';
+import { FieldValue } from 'firebase-admin/firestore';
 
 /* -------------------------------------------------------------------------- */
 /*  default per-minute limits                                                 */
@@ -117,6 +118,8 @@ export const WINDOW_SEC = 60;
 export type RateLimitResult =
   | { ok: true }
   | { ok: false; reason: 'rate_limited'; retryAfterSec: number };
+
+type RateLimitObservationSource = 'in_memory' | 'firestore';
 
 /**
  * Resolve which bucket an actor lives in. User sessions and api keys both
@@ -207,6 +210,47 @@ export function checkInMemoryBurst(
 /** Test-only hook: clears the in-memory bucket map between tests. */
 export function __resetInMemoryBucketsForTests(): void {
   inMemoryBuckets.clear();
+}
+
+function isObserveOnly(): boolean {
+  return process.env.RATE_LIMIT_OBSERVE_ONLY === 'true';
+}
+
+async function recordRateLimitObservation(params: {
+  actor: Actor;
+  bucket: Bucket;
+  capability: Capability;
+  configuredLimitPerMinute: number;
+  siteId: string;
+  source: RateLimitObservationSource;
+  retryAfterSec: number;
+}): Promise<void> {
+  try {
+    await getAdminDb().collection('rate_limit_observations').add({
+      schemaVersion: 1,
+      siteId: params.siteId,
+      bucket: params.bucket,
+      capability: params.capability,
+      actorType: params.actor.type,
+      actorId: actorIdentifier(params.actor),
+      source: params.source,
+      configuredLimitPerMinute: params.configuredLimitPerMinute,
+      windowSec: WINDOW_SEC,
+      retryAfterSec: params.retryAfterSec,
+      observedMinuteMs: Math.floor(Date.now() / 60000) * 60000,
+      observedAt: FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    logger.warn('[rateLimit] observe-only write failed; allowing request', {
+      context: 'rateLimit',
+      data: {
+        err: err instanceof Error ? err.message : String(err),
+        siteId: params.siteId,
+        bucket: params.bucket,
+        capability: params.capability,
+      },
+    });
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -393,13 +437,42 @@ export async function checkRateLimit(
     return { ok: true };
   }
 
+  const observeOnly = isObserveOnly();
+
   if (!checkInMemoryBurst(actor, capability)) {
-    return {
+    const result: RateLimitResult = {
       ok: false,
       reason: 'rate_limited',
       retryAfterSec: WINDOW_SEC,
     };
+    if (observeOnly) {
+      await recordRateLimitObservation({
+        actor,
+        bucket,
+        capability,
+        configuredLimitPerMinute: limit.perMinute,
+        siteId,
+        source: 'in_memory',
+        retryAfterSec: result.retryAfterSec,
+      });
+      return { ok: true };
+    }
+    return result;
   }
 
-  return checkFirestoreLimit(siteId, bucket, capability, limit.perMinute);
+  const result = await checkFirestoreLimit(siteId, bucket, capability, limit.perMinute);
+  if (!result.ok && observeOnly) {
+    await recordRateLimitObservation({
+      actor,
+      bucket,
+      capability,
+      configuredLimitPerMinute: limit.perMinute,
+      siteId,
+      source: 'firestore',
+      retryAfterSec: result.retryAfterSec,
+    });
+    return { ok: true };
+  }
+
+  return result;
 }

@@ -36,6 +36,7 @@ interface ShardDoc {
 
 // Map keyed by absolute path → shard doc. Reset between tests via beforeEach.
 const fakeStore = new Map<string, ShardDoc>();
+const fakeObservationWrites: Array<{ path: string; data: Record<string, unknown> }> = [];
 
 // Fail-mode toggles (per-test).
 let failTransaction = false;
@@ -65,6 +66,10 @@ function makeDocRef(path: string) {
 function makeCollectionRef(path: string) {
   return {
     __path: path,
+    add: jest.fn(async (data: Record<string, unknown>) => {
+      fakeObservationWrites.push({ path, data });
+      return { id: `obs-${fakeObservationWrites.length}` };
+    }),
     doc: (id: string) => makeDocRef(`${path}/${id}`),
     get: jest.fn(async () => {
       if (failGetAll) throw new Error('mock firestore listing failure');
@@ -159,8 +164,10 @@ const systemActor: Actor = {
 
 beforeEach(() => {
   fakeStore.clear();
+  fakeObservationWrites.length = 0;
   failTransaction = false;
   failGetAll = false;
+  delete process.env.RATE_LIMIT_OBSERVE_ONLY;
   transactionSpy.mockClear();
   fakeDb.runTransaction.mockClear();
   __resetInMemoryBucketsForTests();
@@ -551,5 +558,65 @@ describe('checkRateLimit (combined)', () => {
     expect(denied.reason).toBe('rate_limited');
     expect(typeof denied.retryAfterSec).toBe('number');
     expect(denied.retryAfterSec).toBeGreaterThanOrEqual(1);
+  });
+
+  it('observe-only mode records in-memory rejections and allows the request', async () => {
+    process.env.RATE_LIMIT_OBSERVE_ONLY = 'true';
+
+    const ok = await checkRateLimit(userActor, Capability.USER_SELF_DELETE, 'site-1');
+    expect(ok).toEqual({ ok: true });
+    transactionSpy.mockClear();
+
+    const observed = await checkRateLimit(userActor, Capability.USER_SELF_DELETE, 'site-1');
+
+    expect(observed).toEqual({ ok: true });
+    expect(transactionSpy).not.toHaveBeenCalled();
+    expect(fakeObservationWrites).toHaveLength(1);
+    expect(fakeObservationWrites[0]).toMatchObject({
+      path: 'rate_limit_observations',
+      data: {
+        siteId: 'site-1',
+        bucket: 'user',
+        capability: Capability.USER_SELF_DELETE,
+        actorType: 'user',
+        actorId: 'user-1',
+        source: 'in_memory',
+        configuredLimitPerMinute: USER_LIMITS[Capability.USER_SELF_DELETE].perMinute,
+        retryAfterSec: WINDOW_SEC,
+      },
+    });
+  });
+
+  it('observe-only mode records firestore rejections and allows the request', async () => {
+    process.env.RATE_LIMIT_OBSERVE_ONLY = 'true';
+
+    const userLimit = USER_LIMITS[Capability.MACHINE_REMOVE].perMinute;
+    const path = `sites/site-1/rate_limits/user/MACHINE_REMOVE/shards/shards/0`;
+    fakeStore.set(path, {
+      count: userLimit,
+      windowStart: Math.floor(Date.now() / 1000),
+    });
+
+    const observed = await checkRateLimit(
+      userActor,
+      Capability.MACHINE_REMOVE,
+      'site-1'
+    );
+
+    expect(observed).toEqual({ ok: true });
+    expect(transactionSpy).toHaveBeenCalledTimes(1);
+    expect(fakeObservationWrites).toHaveLength(1);
+    expect(fakeObservationWrites[0]).toMatchObject({
+      path: 'rate_limit_observations',
+      data: {
+        siteId: 'site-1',
+        bucket: 'user',
+        capability: Capability.MACHINE_REMOVE,
+        actorType: 'user',
+        actorId: 'user-1',
+        source: 'firestore',
+        configuredLimitPerMinute: userLimit,
+      },
+    });
   });
 });
