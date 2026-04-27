@@ -172,10 +172,11 @@ function checkCalibrationReport() {
   }
 
   const body = readFileSync(CALIBRATION_PATH, 'utf8');
+  const hasCompleteStatus = /^status:\s*complete\b/im.test(body);
   const hasSevenDays = /(?:7\+|>=?7|seven)\s+days?/i.test(body);
   const hasP99 = /\bp99\b/i.test(body);
   const hasPostCalibration = /post[- ]calibration|calibrated limit|updated default/i.test(body);
-  const ok = hasSevenDays && hasP99 && hasPostCalibration;
+  const ok = hasCompleteStatus && hasSevenDays && hasP99 && hasPostCalibration;
   return {
     id: 'rate-limit-calibration',
     title: 'Wave 8.0 calibration data captured',
@@ -184,6 +185,7 @@ function checkCalibrationReport() {
       ? 'calibration report includes duration, p99s, and calibrated limits'
       : 'calibration report is present but incomplete',
     details:
+      `status=${hasCompleteStatus ? 'ok' : 'missing'}, ` +
       `duration=${hasSevenDays ? 'ok' : 'missing'}, ` +
       `p99=${hasP99 ? 'ok' : 'missing'}, ` +
       `post_calibration_limits=${hasPostCalibration ? 'ok' : 'missing'}`,
