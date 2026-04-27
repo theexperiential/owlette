@@ -103,9 +103,12 @@ test('admin creates a deployment — deployment doc + per-target install command
 
   // The install command landed in the target machine's pending doc with the
   // right type + deployment_id linkage.
-  const pendingIds = await getPendingCommandIds(SITE_ID, MACHINE_ID);
-  const installKeys = pendingIds.filter((id) => id.startsWith('install_'));
-  expect(installKeys).toHaveLength(1);
+  let installKeys: string[] = [];
+  await expect.poll(async () => {
+    const pendingIds = await getPendingCommandIds(SITE_ID, MACHINE_ID);
+    installKeys = pendingIds.filter((id) => id.startsWith('install_'));
+    return installKeys.length;
+  }, { timeout: 10_000 }).toBe(1);
 
   const pendingSnap = await db
     .collection('sites').doc(SITE_ID)

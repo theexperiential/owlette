@@ -300,6 +300,10 @@ type DeprecationOptions = Pick<
   'deprecated' | 'canonicalUrl' | 'sunsetDate' | 'routeName'
 >;
 
+// Firestore reserves document ids matching `__.*__`; platform routes still
+// need a stable bucket for rate-limit counters, so use a non-reserved id.
+const PLATFORM_RATE_LIMIT_SITE_ID = 'platform_global';
+
 function applyDeprecationHeaders(
   response: NextResponse,
   request: NextRequest,
@@ -816,7 +820,11 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
       if (config.rate_limit_enforcement) {
         // Platform endpoints have no siteId; use a synthetic identifier
         // so the firestore counter still partitions per-capability.
-        const rl = await checkRateLimit(actor as Actor, options.capability, '__platform__');
+        const rl = await checkRateLimit(
+          actor as Actor,
+          options.capability,
+          PLATFORM_RATE_LIMIT_SITE_ID,
+        );
         if (!rl.ok) {
           platformDenyAudit({
             correlationId,
