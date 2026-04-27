@@ -954,6 +954,8 @@ class _FakeService:
         # Drift-persistence gate (gate 6): default at the firing threshold so
         # _maybe_auto_restore proceeds unless a test overrides it.
         self._drift_pending_tick_count = 2
+        self._drift_pending_key = None
+        self._last_auto_restore_success_key = None
         # _emit_display_event is invoked by both methods; mock so tests can
         # assert call_args_list against the real production-side payloads.
         self._emit_display_event = MagicMock()
@@ -980,9 +982,23 @@ class TestAutoRestoreCycle:
         svc._maybe_auto_restore = OwletteService._maybe_auto_restore.__get__(
             svc, OwletteService,
         )
+        svc._AUTO_RESTORE_DRIFT_FIELDS = OwletteService._AUTO_RESTORE_DRIFT_FIELDS
+        svc._AUTO_RESTORE_REFRESH_TOLERANCE_HZ = (
+            OwletteService._AUTO_RESTORE_REFRESH_TOLERANCE_HZ
+        )
+        svc._auto_restore_values_equal = OwletteService._auto_restore_values_equal
+        svc._auto_restore_field_is_enforceable = (
+            OwletteService._auto_restore_field_is_enforceable
+        )
+        svc._auto_restore_key_value = OwletteService._auto_restore_key_value
+        svc._auto_restore_apply_was_skip = OwletteService._auto_restore_apply_was_skip
+        svc._assigned_drift_details = (
+            OwletteService._assigned_drift_details.__get__(svc, OwletteService)
+        )
         svc._assigned_drift_hashes = OwletteService._assigned_drift_hashes.__get__(
             svc, OwletteService,
         )
+        svc._assigned_drift_key = OwletteService._assigned_drift_key
         svc._maybe_auto_restore_assigned_drift = (
             OwletteService._maybe_auto_restore_assigned_drift.__get__(
                 svc, OwletteService,
@@ -1258,3 +1274,243 @@ class TestAutoRestoreCycle:
         spawned[0].join(timeout=2.0)
         assert len(apply_calls) == 1
         assert apply_calls[0]['layout'] == assigned_layout
+        assert (
+            fake_service._last_auto_restore_success_key
+            == fake_service._drift_pending_key
+        )
+
+        # If Windows accepts the apply but the next live sample still reports
+        # the exact same drift, auto-restore must not keep re-applying the same
+        # layout every topology tick. That repeated SetDisplayConfig call is
+        # visible to users as a display flash.
+        fake_service._maybe_auto_restore_assigned_drift(live_profile)
+        assert len(spawned) == 1
+        assert len(apply_calls) == 1
+
+        matching_profile = {'monitors': assigned_layout['monitors']}
+        fake_service._maybe_auto_restore_assigned_drift(matching_profile)
+        assert fake_service._drift_pending_tick_count == 0
+        assert fake_service._last_auto_restore_success_key is None
+
+        # Once the drift actually converges, the same future drift is a new
+        # event and should get the normal two-tick persistence treatment.
+        fake_service._maybe_auto_restore_assigned_drift(live_profile)
+        assert len(spawned) == 1
+        fake_service._maybe_auto_restore_assigned_drift(live_profile)
+        assert len(spawned) == 2
+        spawned[1].join(timeout=2.0)
+        assert len(apply_calls) == 2
+
+    def test_drift_key_change_restarts_persistence_gate(
+        self, monkeypatch, fake_service, assigned_layout, reset_apply_state,
+    ):
+        """Two different one-tick drifts must not combine into persistence."""
+        import shared_utils
+        import display_manager as dm_mod
+
+        config_state = {
+            'displays': {
+                'enabled': True,
+                'autoRestore': {
+                    'enabled': True,
+                    'circuitBreaker': {'failures': 0, 'tripped': False},
+                },
+                'assigned': assigned_layout,
+            },
+        }
+        monkeypatch.setattr(
+            shared_utils, 'read_config', self._make_config_reader(config_state),
+        )
+
+        spawned = []
+        real_thread_cls = threading.Thread
+
+        def _capture_thread(target, args=(), daemon=False, name=None, **kw):
+            t = real_thread_cls(
+                target=target, args=args, daemon=daemon, name=name, **kw,
+            )
+            spawned.append(t)
+            return t
+
+        monkeypatch.setattr(threading, 'Thread', _capture_thread)
+        monkeypatch.setattr(
+            dm_mod, 'apply_topology',
+            lambda layout, **kw: {'success': True, 'changes': [], 'autoRestore': True},
+        )
+        fake_service._drift_pending_tick_count = 0
+
+        y_drift_profile = {
+            'monitors': [
+                {'edidHash': 'aaaaaaaa', 'primary': True,
+                 'position': {'x': 0, 'y': 0}},
+                {'edidHash': 'bbbbbbbb', 'primary': False,
+                 'position': {'x': 1920, 'y': 100}},
+            ],
+        }
+        x_drift_profile = {
+            'monitors': [
+                {'edidHash': 'aaaaaaaa', 'primary': True,
+                 'position': {'x': 0, 'y': 0}},
+                {'edidHash': 'bbbbbbbb', 'primary': False,
+                 'position': {'x': 2000, 'y': 0}},
+            ],
+        }
+
+        fake_service._maybe_auto_restore_assigned_drift(y_drift_profile)
+        assert fake_service._drift_pending_tick_count == 1
+        fake_service._maybe_auto_restore_assigned_drift(x_drift_profile)
+        assert fake_service._drift_pending_tick_count == 1
+        assert spawned == []
+
+        fake_service._maybe_auto_restore_assigned_drift(x_drift_profile)
+        assert fake_service._drift_pending_tick_count == 2
+        assert len(spawned) == 1
+        spawned[0].join(timeout=2.0)
+
+    def test_enumeration_failure_does_not_clear_success_suppression(
+        self, fake_service,
+    ):
+        fake_service._last_auto_restore_success_key = 'same-drift'
+        fake_service._drift_pending_key = 'pending'
+        fake_service._drift_pending_tick_count = 2
+
+        fake_service._maybe_auto_restore_assigned_drift({
+            'enumerationFailed': True,
+            'monitors': [],
+        })
+
+        assert fake_service._last_auto_restore_success_key == 'same-drift'
+        assert fake_service._drift_pending_key is None
+        assert fake_service._drift_pending_tick_count == 0
+
+    def test_scale_only_and_tiny_refresh_drift_do_not_auto_restore(
+        self, monkeypatch, fake_service, reset_apply_state,
+    ):
+        """Auto-restore ignores drift it cannot or should not apply.
+
+        DPI scale is not enforced by apply_topology(), and refresh-rate
+        readbacks can differ by harmless rounding. Neither should dispatch an
+        unattended SetDisplayConfig call.
+        """
+        import shared_utils
+        import display_manager as dm_mod
+
+        assigned_layout = {
+            'monitors': [
+                {'edidHash': 'aaaaaaaa', 'primary': True,
+                 'position': {'x': 0, 'y': 0},
+                 'resolution': {'width': 1920, 'height': 1080},
+                 'refreshHz': 60.0, 'rotation': 0, 'scalePct': 100},
+                {'edidHash': 'bbbbbbbb', 'primary': False,
+                 'position': {'x': 1920, 'y': 0},
+                 'resolution': {'width': 1920, 'height': 1080},
+                 'refreshHz': 60.0, 'rotation': 0, 'scalePct': 100},
+            ],
+        }
+        config_state = {
+            'displays': {
+                'enabled': True,
+                'autoRestore': {
+                    'enabled': True,
+                    'circuitBreaker': {'failures': 0, 'tripped': False},
+                },
+                'assigned': assigned_layout,
+            },
+        }
+        monkeypatch.setattr(
+            shared_utils, 'read_config', self._make_config_reader(config_state),
+        )
+
+        live_profile = {
+            'monitors': [
+                {'edidHash': 'aaaaaaaa', 'primary': True,
+                 'position': {'x': 0, 'y': 0},
+                 'resolution': {'width': 1920, 'height': 1080},
+                 'refreshHz': 60.0, 'rotation': 0, 'scalePct': 125},
+                {'edidHash': 'bbbbbbbb', 'primary': False,
+                 'position': {'x': 1920, 'y': 0},
+                 'resolution': {'width': 1920, 'height': 1080},
+                 'refreshHz': 59.995, 'rotation': 0, 'scalePct': 100},
+            ],
+        }
+
+        apply_calls = []
+
+        def _mock_apply_success(layout, **kw):
+            apply_calls.append({'layout': layout, 'kwargs': kw})
+            return {'success': True, 'changes': [], 'autoRestore': True}
+
+        monkeypatch.setattr(dm_mod, 'apply_topology', _mock_apply_success)
+
+        spawned = []
+        real_thread_cls = threading.Thread
+
+        def _capture_thread(target, args=(), daemon=False, name=None, **kw):
+            t = real_thread_cls(
+                target=target, args=args, daemon=daemon, name=name, **kw,
+            )
+            spawned.append(t)
+            return t
+
+        monkeypatch.setattr(threading, 'Thread', _capture_thread)
+
+        assert fake_service._assigned_drift_hashes(
+            live_profile, assigned_layout,
+        ) == []
+        fake_service._maybe_auto_restore_assigned_drift(live_profile)
+        fake_service._maybe_auto_restore_assigned_drift(live_profile)
+
+        assert fake_service._drift_pending_tick_count == 0
+        assert spawned == []
+        assert apply_calls == []
+
+    def test_auto_restore_transient_apply_skips_do_not_increment_breaker(
+        self, monkeypatch, fake_service, assigned_layout, reset_apply_state,
+    ):
+        import shared_utils
+        import display_manager as dm_mod
+
+        config_state = {
+            'displays': {
+                'autoRestore': {
+                    'circuitBreaker': {'failures': 0, 'tripped': False},
+                },
+            },
+        }
+        monkeypatch.setattr(
+            shared_utils, 'read_config', self._make_config_reader(config_state),
+        )
+
+        def _record_state_write(patch):
+            config_state['displays']['autoRestore']['circuitBreaker'].update(
+                patch,
+            )
+
+        fake_service.firebase_client.update_display_autorestore_state.side_effect = (
+            _record_state_write
+        )
+
+        apply_results = [
+            {'success': False, 'error': 'rate limited - 7s cooldown remaining'},
+            {'success': False, 'error': 'apply already in progress'},
+            {'success': False, 'error': 'ccd rejected layout',
+             'code': dm_mod.DisplayErrorCode.APPLY_FAILED},
+        ]
+        apply_calls = []
+
+        def _mock_apply_topology(layout, **kw):
+            apply_calls.append({'layout': layout, 'kwargs': kw})
+            return apply_results[len(apply_calls) - 1]
+
+        monkeypatch.setattr(dm_mod, 'apply_topology', _mock_apply_topology)
+
+        fake_service._run_auto_restore(assigned_layout, drift_key='same-drift')
+        fake_service._run_auto_restore(assigned_layout, drift_key='same-drift')
+
+        cb = config_state['displays']['autoRestore']['circuitBreaker']
+        assert cb['failures'] == 0
+        assert fake_service._last_auto_restore_success_key is None
+
+        fake_service._run_auto_restore(assigned_layout, drift_key='same-drift')
+        assert cb['failures'] == 1
+        assert fake_service._last_auto_restore_success_key is None

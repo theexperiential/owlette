@@ -276,6 +276,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # fire so a single-tick flap (cable wiggle for one heartbeat) doesn't
         # trigger an unattended re-apply.
         self._drift_pending_tick_count = 0
+        self._drift_pending_key = None
+        self._last_auto_restore_success_key = None
         # roost periodic on-disk scrub (wave 4b.7). Counter increments every
         # main-loop iteration; when it reaches ROOST_SCRUB_CHECK_ITERATIONS
         # the dispatcher considers running scrub_all_due() on a daemon thread.
@@ -3979,6 +3981,21 @@ class OwletteService(win32serviceutil.ServiceFramework):
         ('primary',           lambda m: m.get('primary')),
     )
 
+    # Auto-restore should only react to fields the CCD apply path can enforce.
+    # `scalePct` remains a dashboard/audit drift signal, but apply_topology()
+    # does not change DPI scale; repeatedly applying for scale-only drift
+    # causes visible display flashes without ever converging.
+    _AUTO_RESTORE_DRIFT_FIELDS = (
+        ('position.x',        lambda m: (m.get('position') or {}).get('x')),
+        ('position.y',        lambda m: (m.get('position') or {}).get('y')),
+        ('resolution.width',  lambda m: (m.get('resolution') or {}).get('width')),
+        ('resolution.height', lambda m: (m.get('resolution') or {}).get('height')),
+        ('refreshHz',         lambda m: m.get('refreshHz')),
+        ('rotation',          lambda m: m.get('rotation')),
+        ('primary',           lambda m: m.get('primary')),
+    )
+    _AUTO_RESTORE_REFRESH_TOLERANCE_HZ = 0.01
+
     @staticmethod
     def _display_monitor_summary(monitor: dict) -> dict:
         """Compact monitor descriptor embedded in each display_* event payload."""
@@ -4007,13 +4024,69 @@ class OwletteService(win32serviceutil.ServiceFramework):
             details=details,
         )
 
-    def _assigned_drift_hashes(self, profile: dict, assigned_layout: dict) -> list:
-        """Return edidHashes whose live monitor state differs from assigned.
+    @staticmethod
+    def _auto_restore_values_equal(label: str, live_value, assigned_value) -> bool:
+        if label == 'refreshHz':
+            try:
+                return (
+                    abs(float(live_value) - float(assigned_value))
+                    <= OwletteService._AUTO_RESTORE_REFRESH_TOLERANCE_HZ
+                )
+            except (TypeError, ValueError):
+                return live_value == assigned_value
+        return live_value == assigned_value
+
+    @staticmethod
+    def _auto_restore_field_is_enforceable(label: str, assigned_monitor: dict) -> bool:
+        if not isinstance(assigned_monitor, dict):
+            return False
+        if label.startswith('position.'):
+            position = assigned_monitor.get('position')
+            axis = label.split('.', 1)[1]
+            return (
+                isinstance(position, dict)
+                and isinstance(position.get(axis), (int, float))
+            )
+        if label.startswith('resolution.'):
+            resolution = assigned_monitor.get('resolution')
+            axis = label.split('.', 1)[1]
+            return (
+                isinstance(resolution, dict)
+                and isinstance(resolution.get(axis), (int, float))
+                and resolution.get(axis) > 0
+            )
+        if label == 'refreshHz':
+            refresh = assigned_monitor.get('refreshHz')
+            return isinstance(refresh, (int, float)) and refresh > 0
+        if label == 'rotation':
+            return assigned_monitor.get('rotation') is not None
+        if label == 'primary':
+            return isinstance(assigned_monitor.get('primary'), bool)
+        return False
+
+    @staticmethod
+    def _auto_restore_key_value(label: str, value):
+        try:
+            if label == 'refreshHz':
+                return round(float(value), 2)
+            if label in (
+                'position.x', 'position.y',
+                'resolution.width', 'resolution.height',
+                'rotation',
+            ):
+                return int(value)
+        except (TypeError, ValueError):
+            return value
+        return value
+
+    def _assigned_drift_details(self, profile: dict, assigned_layout: dict) -> list:
+        """Return restorable live-vs-assigned drift details keyed by edidHash.
 
         This mirrors the dashboard/heartbeat drift model: match physical
-        monitors by edidHash, compare the tracked display fields, and ignore
-        added/removed monitors because re-applying the stored layout cannot
-        safely fix topology membership changes.
+        monitors by edidHash and ignore added/removed monitors because
+        re-applying the stored layout cannot safely fix topology membership
+        changes. Unlike the dashboard, this intentionally ignores fields the
+        apply path cannot enforce.
         """
         live_monitors = (
             profile.get('monitors') if isinstance(profile, dict) else None
@@ -4037,12 +4110,61 @@ class OwletteService(win32serviceutil.ServiceFramework):
             assigned_monitor = assigned_by_hash.get(edid_hash)
             if not edid_hash or assigned_monitor is None:
                 continue
-            if any(
-                extract(live_monitor) != extract(assigned_monitor)
-                for _label, extract in self._DISPLAY_DRIFT_FIELDS
-            ):
-                drifted.append(edid_hash)
+            changes = []
+            for label, extract in self._AUTO_RESTORE_DRIFT_FIELDS:
+                if not self._auto_restore_field_is_enforceable(
+                    label, assigned_monitor,
+                ):
+                    continue
+                live_value = extract(live_monitor)
+                assigned_value = extract(assigned_monitor)
+                if not self._auto_restore_values_equal(
+                    label, live_value, assigned_value
+                ):
+                    changes.append({
+                        'field': label,
+                        'live': self._auto_restore_key_value(label, live_value),
+                        'assigned': self._auto_restore_key_value(
+                            label, assigned_value,
+                        ),
+                    })
+            if changes:
+                drifted.append({'edidHash': edid_hash, 'changes': changes})
         return drifted
+
+    def _assigned_drift_hashes(self, profile: dict, assigned_layout: dict) -> list:
+        """Return edidHashes whose live monitor state has restorable drift."""
+        return [
+            item.get('edidHash') for item in self._assigned_drift_details(
+                profile, assigned_layout,
+            )
+            if item.get('edidHash')
+        ]
+
+    @staticmethod
+    def _assigned_drift_key(drift_details: list) -> str:
+        """Stable key for a specific live-vs-assigned drift shape."""
+        normalized = []
+        for item in drift_details:
+            if not isinstance(item, dict) or not item.get('edidHash'):
+                continue
+            changes = item.get('changes') or []
+            normalized.append({
+                'edidHash': item.get('edidHash'),
+                'changes': sorted(
+                    [
+                        {
+                            'field': c.get('field'),
+                            'live': c.get('live'),
+                            'assigned': c.get('assigned'),
+                        }
+                        for c in changes if isinstance(c, dict)
+                    ],
+                    key=lambda c: str(c.get('field') or ''),
+                ),
+            })
+        normalized.sort(key=lambda item: str(item.get('edidHash') or ''))
+        return json.dumps(normalized, separators=(',', ':'), sort_keys=True)
 
     def _maybe_auto_restore_assigned_drift(self, profile: dict):
         """Evaluate live-vs-assigned drift every display-check tick.
@@ -4052,19 +4174,43 @@ class OwletteService(win32serviceutil.ServiceFramework):
         maintains the persistence counter from the current live profile
         against the stored layout and then enters the normal gate chain.
         """
+        if isinstance(profile, dict) and profile.get('enumerationFailed') is True:
+            self._drift_pending_tick_count = 0
+            self._drift_pending_key = None
+            return
+
         try:
             assigned_layout = shared_utils.read_config(['displays', 'assigned'])
         except Exception as e:
             logging.debug(f"auto-restore: read assigned layout failed: {e}")
             self._drift_pending_tick_count = 0
+            self._drift_pending_key = None
             return
 
-        drifted_hashes = self._assigned_drift_hashes(profile, assigned_layout)
-        if drifted_hashes:
-            self._drift_pending_tick_count += 1
-            self._maybe_auto_restore(profile, drifted_hashes)
-        else:
+        drift_details = self._assigned_drift_details(profile, assigned_layout)
+        if not drift_details:
             self._drift_pending_tick_count = 0
+            self._drift_pending_key = None
+            self._last_auto_restore_success_key = None
+            return
+
+        drift_key = self._assigned_drift_key(drift_details)
+        if drift_key != getattr(self, '_drift_pending_key', None):
+            self._drift_pending_key = drift_key
+            self._drift_pending_tick_count = 1
+        else:
+            self._drift_pending_tick_count += 1
+
+        if drift_key == getattr(self, '_last_auto_restore_success_key', None):
+            return
+
+        drifted_hashes = [
+            item.get('edidHash') for item in drift_details
+            if item.get('edidHash')
+        ]
+        self._maybe_auto_restore(
+            profile, drifted_hashes, drift_key, assigned_layout,
+        )
 
     def _emit_display_change_events(self, prev_profile: dict, new_profile: dict):
         """Diff two display profiles and emit one log event per distinct
@@ -4201,13 +4347,17 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'deviceId': device_id or '',
                 })
 
-    def _maybe_auto_restore(self, new_profile: dict, drifted_hashes: list):
+    def _maybe_auto_restore(
+        self, new_profile: dict, drifted_hashes: list, drift_key: str = None,
+        assigned_layout: dict = None,
+    ):
         """Gate chain + dispatch for unattended drift-correction apply (C2.1).
 
-        Called from ``_emit_display_change_events`` after drift events fire.
-        Walks 7 gates in order; on first failure, returns without spawning
-        the worker. On all-pass, spawns ``_run_auto_restore`` on a daemon
-        thread (off-loop so the apply call never stalls process monitoring).
+        Called from the assigned-drift checker after restorable drift has
+        persisted. Walks 7 gates in order; on first failure, returns without
+        spawning the worker. On all-pass, spawns ``_run_auto_restore`` on a
+        daemon thread (off-loop so the apply call never stalls process
+        monitoring).
         """
         # Gate 1: kill switch — displays feature must not be explicitly disabled.
         try:
@@ -4243,11 +4393,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Gate 5: drift must be fixable by re-applying the assigned layout.
         # If a drifted monitor isn't in assigned (probably a new monitor was
         # added), re-apply can't help — emit unfixable audit and return.
-        try:
-            assigned_layout = shared_utils.read_config(['displays', 'assigned'])
-        except Exception as e:
-            logging.debug(f"auto-restore: read assigned layout failed: {e}")
-            return
+        if assigned_layout is None:
+            try:
+                assigned_layout = shared_utils.read_config(['displays', 'assigned'])
+            except Exception as e:
+                logging.debug(f"auto-restore: read assigned layout failed: {e}")
+                return
         if not isinstance(assigned_layout, dict):
             return
         assigned_monitors = assigned_layout.get('monitors') or []
@@ -4276,13 +4427,27 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         t = threading.Thread(
             target=self._run_auto_restore,
-            args=(assigned_layout,),
+            args=(assigned_layout, drift_key),
             daemon=True,
             name='display-auto-restore',
         )
         t.start()
 
-    def _run_auto_restore(self, assigned_layout: dict):
+    @staticmethod
+    def _auto_restore_apply_was_skip(result: dict) -> bool:
+        code = result.get('code') if isinstance(result, dict) else None
+        if code in (
+            display_manager.DisplayErrorCode.AUTO_RESTORE_RATE_LIMITED,
+            display_manager.DisplayErrorCode.AUTO_RESTORE_SKIPPED_UNFIXABLE,
+        ):
+            return True
+        error_text = str((result or {}).get('error') or '').strip().lower()
+        return (
+            error_text == 'apply already in progress'
+            or error_text.startswith('rate limited')
+        )
+
+    def _run_auto_restore(self, assigned_layout: dict, drift_key: str = None):
         """Daemon worker: invoke apply_topology(auto_restore=True) and update
         circuit-breaker state in Firestore based on the result. Never raises
         — always logs + swallows so a stray exception can't kill the thread
@@ -4309,17 +4474,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'tripped': False,
                     'lastSuccessAt': now_iso,
                 })
+                if drift_key:
+                    self._last_auto_restore_success_key = drift_key
                 return
 
-            code = result.get('code')
             # Cooldown / unfixable returned by apply_topology itself — these
             # are pre-apply skips, not real failures, so don't increment.
             # AUTO_RESTORE_SKIPPED_UNFIXABLE is gated above and shouldn't
             # reach here, but defensive matching keeps the contract clear.
-            if code in (
-                display_manager.DisplayErrorCode.AUTO_RESTORE_RATE_LIMITED,
-                display_manager.DisplayErrorCode.AUTO_RESTORE_SKIPPED_UNFIXABLE,
-            ):
+            if self._auto_restore_apply_was_skip(result):
                 return
 
             # Real failure — increment breaker. Read current value from local
