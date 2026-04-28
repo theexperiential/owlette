@@ -59,22 +59,23 @@ class Chunks:
         *,
         site_id: str,
         page_size: int = 50,
+        page_token: str | None = None,
+        cursor: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Auto-paginating async generator over referrers."""
-        cursor: str | None = None
+        token: str | None = page_token if page_token is not None else cursor
         while True:
             resp = await self._client.request(
                 f"/api/chunks/{digest}/referrers",
-                query={"siteId": site_id, "limit": page_size, "cursor": cursor},
+                query={"siteId": site_id, "page_size": page_size, "page_token": token},
             )
             data = resp.data if isinstance(resp.data, dict) else {}
-            for entry in data.get("referrers", []):
+            for entry in data.get("referrers", []) or data.get("items", []):
                 if isinstance(entry, dict):
                     yield entry
-            next_token = str(data.get("nextPageToken") or "")
-            if not next_token:
+            token = str(data.get("nextPageToken") or data.get("next_page_token") or "")
+            if not token:
                 return
-            cursor = next_token
 
 
 __all__ = ["Chunks"]

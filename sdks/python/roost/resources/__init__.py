@@ -1,5 +1,12 @@
 """Resource classes exposed as attributes on the top-level ``Roost`` client."""
 
+from roost.resources.account import (
+    Account,
+    AccountApiKeys,
+    AccountKeyContext,
+    ApiVersionResponse,
+    WhoamiResponse,
+)
 from roost.resources.chat import Chat, ConversationSummary
 from roost.resources.chunks import Chunks
 from roost.resources.deployments import Deployments
@@ -40,9 +47,13 @@ from roost.resources.versions import Versions
 from roost.resources.webhooks import WebhookSubscription, Webhooks
 
 __all__ = [
+    "Account",
+    "AccountApiKeys",
+    "AccountKeyContext",
     "AddRole",
     "ApiKeyRecord",
     "ApiKeyScope",
+    "ApiVersionResponse",
     "Chat",
     "Chunks",
     "CommandStatus",
@@ -88,4 +99,5 @@ __all__ = [
     "Versions",
     "WebhookSubscription",
     "Webhooks",
+    "WhoamiResponse",
 ]

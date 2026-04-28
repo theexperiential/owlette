@@ -4,14 +4,35 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from roost.client import RoostClient
 
 
 Permission = Literal["read", "write", "deploy", "rollback", "admin"]
-Resource = Literal["roost", "site", "machine"]
+Resource = Literal[
+    "roost",
+    "site",
+    "machine",
+    "chat",
+    "deploy",
+    "process",
+    "user",
+    "installer",
+]
+Environment = Literal["live", "test"]
+VALID_RESOURCES: tuple[str, ...] = (
+    "roost",
+    "site",
+    "machine",
+    "chat",
+    "deploy",
+    "process",
+    "user",
+    "installer",
+)
+VALID_PERMISSIONS: tuple[str, ...] = ("read", "write", "deploy", "rollback", "admin")
 
 
 @dataclass(slots=True)
@@ -27,57 +48,82 @@ class ApiKeyScope:
             "permissions": list(self.permissions),
         }
 
+    @classmethod
+    def from_payload(cls, raw: dict[str, Any]) -> "ApiKeyScope":
+        raw_resource = raw.get("resource")
+        resource: Resource = (
+            cast(Resource, raw_resource) if raw_resource in VALID_RESOURCES else "site"
+        )
+        raw_permissions = raw.get("permissions")
+        permissions: list[Permission] = []
+        if isinstance(raw_permissions, list):
+            permissions = [
+                cast(Permission, p)
+                for p in raw_permissions
+                if p in VALID_PERMISSIONS
+            ]
+        return cls(
+            resource=resource,
+            id=str(raw.get("id", "")),
+            permissions=permissions,
+        )
+
 
 @dataclass(slots=True)
 class ApiKeyRecord:
     id: str
     name: str | None
     key_prefix: str | None
-    environment: Literal["live", "test"] | None
+    environment: Environment | None
     scopes: list[ApiKeyScope] | None
-    expires_at: int | None
-    last_used_at: int | None
-    rotated_at: int | None
-    retires_at: int | None
-    revoked_at: int | None
+    expires_at: int | str | None
+    created_at: int | str | dict[str, Any] | None
+    last_used_at: int | str | dict[str, Any] | None
+    last_used_ip: str | None
+    rotated_at: int | str | None
+    rotated_from_key_id: str | None
+    retires_at: int | str | None
+    revoked_at: int | str | None
     expired: bool
     retired: bool
 
+    @classmethod
+    def from_payload(cls, raw: dict[str, Any]) -> "ApiKeyRecord":
+        scopes_raw = raw.get("scopes")
+        scopes: list[ApiKeyScope] | None = None
+        if isinstance(scopes_raw, list):
+            scopes = [ApiKeyScope.from_payload(s) for s in scopes_raw if isinstance(s, dict)]
+        env_raw = raw.get("environment")
+        env: Environment | None = (
+            cast(Environment, env_raw) if env_raw in ("live", "test") else None
+        )
+        return cls(
+            id=str(raw.get("id", "")),
+            name=raw.get("name") if isinstance(raw.get("name"), str) else None,
+            key_prefix=raw.get("keyPrefix") if isinstance(raw.get("keyPrefix"), str) else None,
+            environment=env,
+            scopes=scopes,
+            expires_at=raw.get("expiresAt"),
+            created_at=raw.get("createdAt"),
+            last_used_at=raw.get("lastUsedAt"),
+            last_used_ip=raw.get("lastUsedIp") if isinstance(raw.get("lastUsedIp"), str) else None,
+            rotated_at=raw.get("rotatedAt"),
+            rotated_from_key_id=raw.get("rotatedFromKeyId")
+            if isinstance(raw.get("rotatedFromKeyId"), str)
+            else None,
+            retires_at=raw.get("retiresAt"),
+            revoked_at=raw.get("revokedAt"),
+            expired=bool(raw.get("expired", False)),
+            retired=bool(raw.get("retired", False)),
+        )
+
 
 def _parse_scope(raw: dict[str, Any]) -> ApiKeyScope:
-    resource = str(raw.get("resource", ""))
-    if resource not in ("roost", "site", "machine"):
-        resource = "site"
-    perms = raw.get("permissions") or []
-    return ApiKeyScope(
-        resource=resource,  # type: ignore[arg-type]
-        id=str(raw.get("id", "")),
-        permissions=[p for p in perms if p in ("read", "write", "deploy", "rollback", "admin")],
-    )
+    return ApiKeyScope.from_payload(raw)
 
 
 def _parse_record(raw: dict[str, Any]) -> ApiKeyRecord:
-    scopes_raw = raw.get("scopes")
-    scopes: list[ApiKeyScope] | None = None
-    if isinstance(scopes_raw, list):
-        scopes = [_parse_scope(s) for s in scopes_raw if isinstance(s, dict)]
-    env = raw.get("environment")
-    if env not in ("live", "test"):
-        env = None
-    return ApiKeyRecord(
-        id=str(raw.get("id", "")),
-        name=raw.get("name"),
-        key_prefix=raw.get("keyPrefix"),
-        environment=env,
-        scopes=scopes,
-        expires_at=raw.get("expiresAt"),
-        last_used_at=raw.get("lastUsedAt"),
-        rotated_at=raw.get("rotatedAt"),
-        retires_at=raw.get("retiresAt"),
-        revoked_at=raw.get("revokedAt"),
-        expired=bool(raw.get("expired", False)),
-        retired=bool(raw.get("retired", False)),
-    )
+    return ApiKeyRecord.from_payload(raw)
 
 
 class Keys:
@@ -90,7 +136,7 @@ class Keys:
         name: str,
         scopes: Sequence[ApiKeyScope],
         ttl_days: int = 90,
-        environment: Literal["live", "test"] = "live",
+        environment: Environment = "live",
     ) -> dict[str, Any]:
         resp = await self._client.request(
             "/api/keys",
@@ -124,4 +170,4 @@ class Keys:
         )
 
 
-__all__ = ["ApiKeyRecord", "ApiKeyScope", "Keys", "Permission", "Resource"]
+__all__ = ["ApiKeyRecord", "ApiKeyScope", "Environment", "Keys", "Permission", "Resource"]

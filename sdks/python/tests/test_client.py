@@ -7,7 +7,7 @@ import json
 import httpx
 import pytest
 
-from roost import Roost, RoostApiError
+from roost import SDK_VERSION, Roost, RoostApiError
 from roost.client import RetryPolicy
 
 
@@ -34,6 +34,7 @@ async def test_headers_injected_on_post() -> None:
     req = captured["req"]
     assert req.headers["Authorization"] == "Bearer owk_live_testtoken"
     assert req.headers["Roost-Version"]
+    assert req.headers["User-Agent"] == f"owlette-sdk-python/{SDK_VERSION}"
     assert req.headers["Idempotency-Key"].startswith("py-sdk-")
 
 
@@ -71,7 +72,8 @@ async def test_query_params_translated() -> None:
 
     url = str(captured["req"].url)
     assert "siteId=site-1" in url
-    assert "limit=5" in url
+    assert "page_size=5" in url
+    assert "limit=5" not in url
 
 
 @pytest.mark.asyncio

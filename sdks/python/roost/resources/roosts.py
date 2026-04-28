@@ -17,6 +17,7 @@ from roost._chunker import (
     chunk_directory,
     unique_hashes,
 )
+from roost._version import SDK_VERSION
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -24,7 +25,6 @@ if TYPE_CHECKING:
     from roost.client import RoostClient
 
 
-SDK_VERSION = "0.1.0"
 UPLOAD_CONCURRENCY = 8
 CHECK_BATCH_SIZE = 900
 PUSH_MAX_RETRIES = 5
@@ -183,23 +183,25 @@ class Roosts:
         *,
         site_id: str,
         page_size: int | None = None,
+        page_token: str | None = None,
         cursor: str | None = None,
         include_deleted: bool = False,
     ) -> tuple[list[RoostSummary], str]:
         """One page of roosts. Returns ``(rows, next_page_token)``."""
+        token = page_token if page_token is not None else cursor
         resp = await self._client.request(
             "/api/roosts",
             query={
                 "siteId": site_id,
-                "limit": page_size,
-                "cursor": cursor,
+                "page_size": page_size,
+                "page_token": token,
                 "includeDeleted": "true" if include_deleted else None,
             },
         )
         data = resp.data if isinstance(resp.data, dict) else {}
         rows_raw = data.get("roosts", [])
         rows = [_roost_summary(r) for r in rows_raw if isinstance(r, dict)]
-        return rows, str(data.get("nextPageToken") or "")
+        return rows, str(data.get("nextPageToken") or data.get("next_page_token") or "")
 
     async def list(
         self,
@@ -214,7 +216,7 @@ class Roosts:
             rows, next_token = await self.list_page(
                 site_id=site_id,
                 page_size=page_size,
-                cursor=cursor,
+                page_token=cursor,
                 include_deleted=include_deleted,
             )
             for r in rows:

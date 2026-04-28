@@ -1,9 +1,9 @@
 # sdk — python
 
-**Last updated**: 2026-04-24
+**Last updated**: 2026-04-28
 **Package**: [`owlette-sdk`](https://pypi.org/project/owlette-sdk/) · python ≥ 3.10 · single runtime dep on `httpx`
 
-the official async python sdk for the [roost api](./overview.md). `async`-first (built on `httpx.AsyncClient`), typed with dataclasses + `py.typed` marker, and behaviour-compatible with [`@owlette/sdk`](./sdk-node.md) — the resource tree, method names, progress events, error codes, and signature scheme are identical across the two. if the node docs say `roost.roosts.push(...)`, the python sdk calls it `await client.roosts.push(...)`.
+the official async python sdk for the [roost api](./overview.md). `async`-first (built on `httpx.AsyncClient`), typed with dataclasses + `py.typed` marker, and behaviour-compatible with [`@owlette/sdk`](./sdk-node.md): the resource tree, progress events, error codes, and signature scheme match, with pythonic `snake_case` method names.
 
 ---
 
@@ -27,9 +27,11 @@ from roost import Roost, PushOptions
 
 async def main():
     async with Roost(token=os.environ["ROOST_TOKEN"]) as client:
+        identity = await client.account.whoami()
+        site_id = identity.primary_site_id or "kiosk-fleet-01"
         result = await client.roosts.push(
             "./dist", "rst_abc",
-            PushOptions(site_id="kiosk-fleet-01", description="initial publish"),
+            PushOptions(site_id=site_id, description="initial publish"),
         )
         print(f"published v{result.version_number}", result.version_id, "—", result.stats.uploaded_chunks, "chunks uploaded")
 
@@ -38,11 +40,14 @@ asyncio.run(main())
 
 that's the whole flow: walk `./dist`, sha-256 chunk it, dedup-check against r2, upload what's missing, publish a version, return the new id + `version_number`.
 
+For a complete script that verifies identity, API version, site/roost access,
+publish, and optional deploy, run `sdks/python/examples/run_roost_workflow.py`.
+
 ---
 
 ## authentication
 
-every request needs an `owk_live_*` or `owk_test_*` key. mint one from the dashboard (`settings → api keys → new key`) or via [`POST /api/keys`](./authentication.md#creating-a-key). pass it to the constructor — the sdk never touches the filesystem.
+every request needs an `owk_live_*` or `owk_test_*` key. mint one from the dashboard (`settings -> api keys -> new key`) or via the account key route. pass it to the constructor; the sdk never touches the filesystem.
 
 ```python
 from roost import Roost, RetryPolicy
@@ -50,7 +55,7 @@ from roost import Roost, RetryPolicy
 async with Roost(
     token=os.environ["ROOST_TOKEN"],         # required — owk_live_* or owk_test_*
     api_url="https://owlette.app",           # default
-    environment="live",                      # optional — "live" | "test" (defaults from token prefix)
+    environment="live",                      # optional — "live" | "test" metadata
     roost_version="2026-04-22",              # default — sent as Roost-Version header
     retry=RetryPolicy(max_attempts=5),       # optional
     timeout=30.0,                            # httpx timeout seconds (default 30)
@@ -72,19 +77,41 @@ every top-level noun is a resource class hung off the client. all methods are `a
 
 | resource             | methods                                                                                            |
 |----------------------|----------------------------------------------------------------------------------------------------|
+| `client.account`     | `whoami`, `version`, `api_keys.list`, `api_keys.create`, `api_keys.revoke`                         |
 | `client.roosts`      | `list`, `list_page`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy`              |
 | `client.chunks`      | `check`, `upload_urls`, `download_urls`, `mount`, `referrers`                                      |
 | `client.versions`    | `list`, `list_page`, `get`, `patch`, `files`, `diff`                                               |
 | `client.deployments` | `list`, `list_page`, `get`                                                                         |
-| `client.keys`        | `create`, `list`, `rotate`, `revoke`                                                               |
+| `client.keys`        | legacy session/ID-token key admin: `create`, `list`, `rotate`, `revoke`                            |
 | `client.webhooks`    | `subscribe`, `list`, `get`, `update`, `remove`, `rotate_secret`, `probe`                           |
 | `client.sites`       | `list`, `get`                                                                                      |
 | `client.machines`    | `list`, `get`, `deployments`                                                                       |
+| `client.installer_deployments` | `list`, `get`, `create`, `retry`, `cancel`, `uninstall`, `delete`                         |
+| `client.installer`   | `list`, `latest`, `upload`, `set_latest`, `delete`                                                 |
+| `client.processes(site_id, machine_id)` | `list`, `create`, `update`, `start`, `stop`, `restart`, `schedule`, `remove`    |
 | `client.chat`        | `new`, `list`, `send`, `rename`, `delete`                                                          |
+| `client.users`       | `list`, `get`, `promote`, `demote`, `assign_sites`, `remove_sites`, `delete`                       |
+| `client.members(site_id)` | `list`, `add`, `remove`                                                                       |
 | `client.quotas`      | `current`, `history`                                                                               |
 | `client.http`        | raw low-level `RoostClient` — escape hatch for unmapped endpoints                                  |
 
-**paging idiom.** every `list()` method is an async generator that transparently follows `next_page_token`. when you need explicit control (a single page, a resumable offset) use the `list_page()` counterpart which returns `(rows, next_page_token)`.
+**paging idiom.** `client.roosts.list()`, `client.versions.list()`, `client.deployments.list()`, `client.versions.files()`, and `client.chunks.referrers()` are async generators that transparently follow `nextPageToken` / `next_page_token`. use `list_page()` on roosts, versions, and deployments when you need explicit control. other resources return a list or a page envelope matching their route.
+
+### account
+
+```python
+identity = await client.account.whoami()
+print(identity.email or identity.user_id, identity.key.key_prefix if identity.key else None)
+
+api_version = await client.account.version()
+print(api_version.current, api_version.supported)
+
+# API-key-compatible key management. New keys inherit the caller's allowed
+# scopes, so an API-key caller cannot widen its own privileges.
+created = await client.account.api_keys.create(name="preview publisher")
+keys = await client.account.api_keys.list()
+await client.account.api_keys.revoke(created["keyId"])
+```
 
 ### roosts
 
@@ -222,8 +249,10 @@ async for f in client.versions.files("rst_abc", 3, site_id="site-1"):
 
 # diff two versions — `against` is the baseline; both sides accept any versionRef form
 diff = await client.versions.diff(
-    "rst_abc", "current",
-    site_id="site-1", against="previous",
+    "rst_abc",
+    "current",
+    site_id="site-1",
+    against="previous",
 )
 ```
 
@@ -232,7 +261,8 @@ diff = await client.versions.diff(
 ```python
 from roost import ApiKeyScope
 
-# create (the raw key string is returned ONCE — store it now)
+# legacy scoped key creation requires a session or Firebase ID token.
+# API-key callers should prefer client.account.api_keys.
 created = await client.keys.create(
     name="ci publisher",
     environment="live",
@@ -246,7 +276,7 @@ print(created["key"])                         # owk_live_...  <-- once
 
 # list returns typed ApiKeyRecord values
 for k in await client.keys.list():
-    print(k.id, k.key_prefix, k.status)
+    print(k.id, k.key_prefix, k.environment)
 
 # rotate (24h grace) + revoke
 await client.keys.rotate(created["id"], ttl_days=90)
@@ -265,8 +295,8 @@ machines = await client.machines.list("site-1")
 for m in machines:
     print(m.id, m.online, m.last_heartbeat)
 
-machine = await client.machines.get("machine-a7f3", site_id="site-1")
-deploys = await client.machines.deployments("machine-a7f3", site_id="site-1")
+machine = await client.machines.get("site-1", "machine-a7f3")
+deploys = await client.machines.deployments("site-1", "machine-a7f3")
 
 quota = await client.quotas.current("site-1")
 print(quota.storage_bytes_used, "/", quota.storage_bytes_limit)
@@ -352,7 +382,7 @@ class PushOptions:
 
 pass either a sync or async `on_progress`; the sdk auto-detects and awaits the latter.
 
-**retry on concurrent publish (412).** if another writer publishes between your `push()` starting and the version post, the sdk re-reads the current version, re-diffs, and retries up to 3 times before raising `RoostApiError`. chunk uploads never re-run — they're content-addressed.
+**retry on concurrent publish (412).** if another writer publishes between your `push()` starting and the version post, the sdk retries the final publish with the server-reported current version before raising `RoostApiError`. chunk uploads never re-run; they're content-addressed.
 
 ---
 
@@ -453,13 +483,13 @@ for `push()`, raising any exception inside the `on_progress` callback stops the 
 
 ## typing
 
-the package ships a `py.typed` marker; mypy strict mode + pyright both resolve every public export. request/response shapes are typed dataclasses — no `dict[str, Any]` leaking out.
+the package ships a `py.typed` marker; mypy strict mode + pyright both resolve every public export. core workflow request/response shapes are typed dataclasses, while a few admin/debug endpoints intentionally return raw response envelopes.
 
 ```python
 from roost import (
-    RoostSummary, RoostDetail, VersionSummary, VersionDetail,
+    RoostSummary, RoostDetail, VersionSummary,
     PushOptions, PushProgressEvent, PushResult,
-    ApiKeyScope, WebhookSubscription, VersionRef,
+    ApiKeyScope, WebhookSubscription,
 )
 ```
 
@@ -503,4 +533,4 @@ async with Roost(token="owk_test_...", transport=httpx.MockTransport(handler)) a
 - **[examples/nightly-sync.md](./examples/nightly-sync.md)** — a realistic async batch job.
 - **[node sdk](./sdk-node.md)** — typescript, same resource tree, same error codes.
 
-the reference openapi spec is at [`web/openapi.yaml`](../../web/openapi.yaml) — whatever curl can do, this sdk can do.
+the reference openapi spec is at [`web/openapi.yaml`](../../web/openapi.yaml). for endpoints not yet wrapped by a high-level helper, use `client.http.request(...)`.

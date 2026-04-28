@@ -19,11 +19,14 @@ from roost import Roost, PushOptions
 
 async def main() -> None:
     async with Roost(token="owk_live_...") as client:
+        identity = await client.account.whoami()
+        site_id = identity.primary_site_id or "site-1"
+
         result = await client.roosts.push(
             "./dist",
             "rst_abc",
             PushOptions(
-                site_id="site-1",
+                site_id=site_id,
                 description="fixed broken video",
                 on_progress=lambda evt: print(evt),
             ),
@@ -51,18 +54,19 @@ Roost(
 
 | resource          | methods                                                                 |
 |-------------------|-------------------------------------------------------------------------|
+| `roost.account`   | `whoami`, `version`, `api_keys.list`, `api_keys.create`, `api_keys.revoke` |
 | `roost.roosts`    | `list`, `list_page`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy` |
 | `roost.chunks`    | `check`, `upload_urls`, `download_urls`, `mount`, `referrers`           |
-| `roost.versions`  | `list`, `get`, `files`, `diff`                                          |
-| `roost.deployments` | `list`, `get`                                                         |
-| `roost.keys`      | `create`, `list`, `rotate`, `revoke`                                    |
+| `roost.versions`  | `list`, `list_page`, `get`, `patch`, `files`, `diff`                    |
+| `roost.deployments` | `list`, `list_page`, `get`                                            |
+| `roost.keys`      | legacy session/ID-token key admin: `create`, `list`, `rotate`, `revoke` |
 | `roost.webhooks`  | `subscribe`, `list`, `get`, `update`, `remove`, `rotate_secret`, `probe` |
 | `roost.sites`     | `list`, `get`                                                           |
 | `roost.machines`  | `list`, `get`, `deployments`                                            |
 | `roost.quotas`    | `current`, `history`                                                    |
 
-Paginated lists are exposed as **async generators** that auto-walk the
-`nextPageToken` cursor:
+Roost, version, deployment, and chunk-referrer paginated lists expose
+**async generators** that auto-walk the `nextPageToken` cursor:
 
 ```python
 async with Roost(token=...) as client:
@@ -70,7 +74,28 @@ async with Roost(token=...) as client:
         print(r.roost_id, r.name)
 ```
 
-If you need explicit control of paging, use `list_page()` instead.
+If you need explicit control of roost/version/deployment paging, use
+`list_page()` instead. Some account/admin resources intentionally return a
+single list or page envelope because that matches their API route.
+
+## account
+
+```python
+identity = await client.account.whoami()
+print(identity.email or identity.user_id, identity.key.key_prefix if identity.key else None)
+
+version = await client.account.version()
+print(version.current, version.supported)
+
+# API-key-compatible key management. New keys inherit the caller's allowed
+# scopes, so an API-key caller cannot widen its own privileges.
+created = await client.account.api_keys.create(name="preview publisher")
+keys = await client.account.api_keys.list()
+await client.account.api_keys.revoke(created["keyId"])
+```
+
+For a complete runnable workflow, see
+`examples/run_roost_workflow.py`.
 
 ## push progress
 

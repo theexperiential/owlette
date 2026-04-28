@@ -41,9 +41,13 @@ from roost.client import (
     RoostClient,
 )
 from roost.resources import (
+    Account,
+    AccountApiKeys,
+    AccountKeyContext,
     AddRole,
     ApiKeyRecord,
     ApiKeyScope,
+    ApiVersionResponse,
     Chat,
     Chunks,
     CommandStatus,
@@ -89,6 +93,7 @@ from roost.resources import (
     Versions,
     WebhookSubscription,
     Webhooks,
+    WhoamiResponse,
 )
 from roost.signature import (
     DEFAULT_REPLAY_TOLERANCE_SECONDS,
@@ -147,6 +152,7 @@ class Roost:
         self._installer_deployments: InstallerDeployments | None = None
         self._chat: Chat | None = None
         self._users: Users | None = None
+        self._account: Account | None = None
 
     # ----- async context manager --------------------------------------------
 
@@ -170,6 +176,12 @@ class Roost:
     def http(self) -> RoostClient:
         """The raw low-level client for escape-hatch calls."""
         return self._client
+
+    @property
+    def account(self) -> Account:
+        if self._account is None:
+            self._account = Account(self._client)
+        return self._account
 
     @property
     def roosts(self) -> Roosts:
@@ -272,10 +284,14 @@ __all__ = [
     "DEFAULT_REPLAY_TOLERANCE_SECONDS",
     "DEFAULT_ROOST_VERSION",
     "SDK_VERSION",
+    "Account",
+    "AccountApiKeys",
+    "AccountKeyContext",
     "AddRole",
     "ApiKeyRecord",
     "ApiKeyScope",
     "ApiResponse",
+    "ApiVersionResponse",
     "Chat",
     "ChunkDescriptor",
     "ChunkProgressEvent",
@@ -333,6 +349,7 @@ __all__ = [
     "Versions",
     "WebhookSubscription",
     "Webhooks",
+    "WhoamiResponse",
     "__version__",
     "is_signature_valid",
     "sign_body",

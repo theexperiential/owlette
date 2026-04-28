@@ -15,12 +15,13 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 
+from roost._version import SDK_VERSION
+
 if TYPE_CHECKING:
     from types import TracebackType
 
 DEFAULT_API_URL = "https://owlette.app"
 DEFAULT_ROOST_VERSION = "2026-04-22"
-SDK_VERSION = "0.1.0"
 
 Environment = Literal["live", "test"]
 HttpMethod = Literal["GET", "POST", "PATCH", "PUT", "DELETE"]
