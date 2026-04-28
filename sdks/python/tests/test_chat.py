@@ -34,7 +34,7 @@ async def test_new_sends_idempotency_key_and_returns_payload() -> None:
 
     assert result["conversationId"] == "c1"
     req = captured[0]
-    assert req.url.path == "/api/chat/new"
+    assert req.url.path == "/api/cortex/conversations"
     assert req.method == "POST"
     body = json.loads(req.content)
     assert body == {"siteId": "s1", "title": "demo"}
@@ -147,9 +147,9 @@ async def test_rename_and_delete_emit_correct_methods() -> None:
         await client.chat.delete("c1")
 
     assert captured[0].method == "PATCH"
-    assert captured[0].url.path == "/api/chat/c1"
+    assert captured[0].url.path == "/api/cortex/conversations/c1"
     assert captured[1].method == "DELETE"
-    assert captured[1].url.path == "/api/chat/c1"
+    assert captured[1].url.path == "/api/cortex/conversations/c1"
     # Chat uses a resource-specific prefix even though the core client can
     # also auto-add idempotency keys on DELETE.
     assert captured[1].headers["Idempotency-Key"].startswith("py-sdk-chat-delete-")

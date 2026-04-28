@@ -3,13 +3,13 @@
 /**
  * api-sprint wave 3 — track 3A (cortex-api / chat noun).
  *
- * Http-shape coverage for the public chat-noun endpoints:
+ * Http-shape coverage for the public Cortex conversation endpoints:
  *
- *   GET    /api/chat
- *   POST   /api/chat/new
- *   POST   /api/chat/{conversationId}      (send + stream)
- *   PATCH  /api/chat/{conversationId}      (rename)
- *   DELETE /api/chat/{conversationId}      (soft-delete)
+ *   GET    /api/cortex/conversations
+ *   POST   /api/cortex/conversations
+ *   POST   /api/cortex/conversations/{conversationId}      (send + stream)
+ *   PATCH  /api/cortex/conversations/{conversationId}      (rename)
+ *   DELETE /api/cortex/conversations/{conversationId}      (soft-delete)
  *
  * Each verb is covered for scope-pass + scope-fail + verb-specific happy /
  * error paths (validation, 404, idempotency replay, sse smoke). Storage is
@@ -94,7 +94,7 @@ jest.mock('@/lib/cortexStream.server', () => {
   };
 });
 
-// User+site reads for the GET /api/chat list filter.
+// User+site reads for the GET /api/cortex/conversations list filter.
 const mockGetUserSiteIds = jest.fn();
 jest.mock('@/lib/apiHelpers.server', () => {
   const actual = jest.requireActual('@/lib/apiHelpers.server');
@@ -114,7 +114,7 @@ jest.mock('@/lib/apiAuth.server', () => {
 });
 
 // Firebase admin: the route only uses it for the owned-sites lookup on GET
-// /api/chat. Return an empty owner-query result by default.
+// /api/cortex/conversations. Return an empty owner-query result by default.
 const mockOwnedSitesGet = jest.fn().mockResolvedValue({ docs: [] });
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
@@ -129,13 +129,15 @@ jest.mock('@/lib/firebase-admin', () => ({
 
 import { Timestamp } from 'firebase-admin/firestore';
 
-import { GET as listGET } from '@/app/api/chat/route';
-import { POST as newPOST } from '@/app/api/chat/new/route';
+import {
+  GET as listGET,
+  POST as newPOST,
+} from '@/app/api/cortex/conversations/route';
 import {
   POST as sendPOST,
   PATCH as renamePATCH,
   DELETE as deleteDELETE,
-} from '@/app/api/chat/[conversationId]/route';
+} from '@/app/api/cortex/conversations/[conversationId]/route';
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
@@ -253,24 +255,25 @@ beforeEach(() => {
 });
 
 /* ========================================================================== */
-/*  GET /api/chat — list                                                      */
+/*  GET /api/cortex/conversations - list                                      */
 /* ========================================================================== */
 
-describe('GET /api/chat', () => {
+describe('GET /api/cortex/conversations', () => {
   it('200 with conversations + pagination shape', async () => {
-    const res = await listGET(jsonReq('http://localhost/api/chat', 'GET'));
+    const res = await listGET(jsonReq('http://localhost/api/cortex/conversations', 'GET'));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(Array.isArray(body.data.conversations)).toBe(true);
     expect(body.data.conversations[0].conversationId).toBe(CONV);
     expect(body.data).toHaveProperty('nextPageToken');
+    expect(body.data).toHaveProperty('next_page_token');
   });
 
   it('returns empty list when caller has zero accessible sites', async () => {
     mockGetUserSiteIds.mockResolvedValueOnce([]);
     mockOwnedSitesGet.mockResolvedValueOnce({ docs: [] });
-    const res = await listGET(jsonReq('http://localhost/api/chat', 'GET'));
+    const res = await listGET(jsonReq('http://localhost/api/cortex/conversations', 'GET'));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.data.conversations).toEqual([]);
@@ -289,32 +292,50 @@ describe('GET /api/chat', () => {
       },
     });
     mockGetUserSiteIds.mockResolvedValueOnce([SITE, 'other-site']);
-    await listGET(jsonReq('http://localhost/api/chat', 'GET'));
+    await listGET(jsonReq('http://localhost/api/cortex/conversations', 'GET'));
     const passed = mockListConversations.mock.calls[0][0];
     expect(passed.siteIds.sort()).toEqual([SITE]);
   });
 
+  it('filters by explicit siteId when provided', async () => {
+    mockGetUserSiteIds.mockResolvedValueOnce([SITE, 'other-site']);
+    await listGET(jsonReq(`http://localhost/api/cortex/conversations?siteId=${SITE}`, 'GET'));
+    const passed = mockListConversations.mock.calls[0][0];
+    expect(passed.siteIds).toEqual([SITE]);
+  });
+
+  it('returns an empty page for a siteId outside readable scope', async () => {
+    mockGetUserSiteIds.mockResolvedValueOnce([SITE]);
+    const res = await listGET(
+      jsonReq('http://localhost/api/cortex/conversations?siteId=other-site', 'GET'),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.conversations).toEqual([]);
+    expect(mockListConversations).not.toHaveBeenCalled();
+  });
+
   it('honors owner=me filter', async () => {
-    await listGET(jsonReq('http://localhost/api/chat?owner=me', 'GET'));
+    await listGET(jsonReq('http://localhost/api/cortex/conversations?owner=me', 'GET'));
     const passed = mockListConversations.mock.calls[0][0];
     expect(passed.ownerUid).toBe('user-1');
   });
 
   it('emits no audit on read', async () => {
-    await listGET(jsonReq('http://localhost/api/chat', 'GET'));
+    await listGET(jsonReq('http://localhost/api/cortex/conversations', 'GET'));
     expect(mockEmitMutation).not.toHaveBeenCalled();
   });
 });
 
 /* ========================================================================== */
-/*  POST /api/chat/new — create                                               */
+/*  POST /api/cortex/conversations - create                                   */
 /* ========================================================================== */
 
-describe('POST /api/chat/new', () => {
+describe('POST /api/cortex/conversations', () => {
   it('201 with full conversation payload', async () => {
     const res = await newPOST(
       jsonReq(
-        'http://localhost/api/chat/new',
+        'http://localhost/api/cortex/conversations',
         'POST',
         { siteId: SITE, title: 'first one' },
         { 'idempotency-key': 'k1' },
@@ -329,7 +350,7 @@ describe('POST /api/chat/new', () => {
 
   it('400 when siteId is missing', async () => {
     const res = await newPOST(
-      jsonReq('http://localhost/api/chat/new', 'POST', {}, { 'idempotency-key': 'k' }),
+      jsonReq('http://localhost/api/cortex/conversations', 'POST', {}, { 'idempotency-key': 'k' }),
     );
     expect(res.status).toBe(400);
   });
@@ -337,9 +358,21 @@ describe('POST /api/chat/new', () => {
   it('400 when initial_message has invalid role', async () => {
     const res = await newPOST(
       jsonReq(
-        'http://localhost/api/chat/new',
+        'http://localhost/api/cortex/conversations',
         'POST',
         { siteId: SITE, initial_message: { role: 'invalid', content: 'x' } },
+        { 'idempotency-key': 'k' },
+      ),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('400 when initial_message uses assistant or system role', async () => {
+    const res = await newPOST(
+      jsonReq(
+        'http://localhost/api/cortex/conversations',
+        'POST',
+        { siteId: SITE, initial_message: { role: 'system', content: 'x' } },
         { 'idempotency-key': 'k' },
       ),
     );
@@ -350,7 +383,7 @@ describe('POST /api/chat/new', () => {
     authForbidden();
     const res = await newPOST(
       jsonReq(
-        'http://localhost/api/chat/new',
+        'http://localhost/api/cortex/conversations',
         'POST',
         { siteId: SITE },
         { 'idempotency-key': 'k' },
@@ -362,7 +395,7 @@ describe('POST /api/chat/new', () => {
   it('emits chat_mutated audit on create', async () => {
     await newPOST(
       jsonReq(
-        'http://localhost/api/chat/new',
+        'http://localhost/api/cortex/conversations',
         'POST',
         { siteId: SITE },
         { 'idempotency-key': 'k' },
@@ -372,7 +405,12 @@ describe('POST /api/chat/new', () => {
       expect.objectContaining({
         kind: 'chat_mutated',
         targetId: CONV,
-        attributes: expect.objectContaining({ verb: 'create', method: 'POST', siteId: SITE }),
+        attributes: expect.objectContaining({
+          verb: 'create',
+          endpoint: '/api/cortex/conversations',
+          method: 'POST',
+          siteId: SITE,
+        }),
       }),
     );
   });
@@ -386,7 +424,7 @@ describe('POST /api/chat/new', () => {
     });
     const res = await newPOST(
       jsonReq(
-        'http://localhost/api/chat/new',
+        'http://localhost/api/cortex/conversations',
         'POST',
         { siteId: SITE },
         { 'idempotency-key': 'k' },
@@ -397,14 +435,14 @@ describe('POST /api/chat/new', () => {
 });
 
 /* ========================================================================== */
-/*  POST /api/chat/{conversationId} — send + stream                           */
+/*  POST /api/cortex/conversations/{conversationId} - send + stream           */
 /* ========================================================================== */
 
-describe('POST /api/chat/{conversationId}', () => {
+describe('POST /api/cortex/conversations/{conversationId}', () => {
   it('streams an SSE-style text/plain response on happy path', async () => {
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'hello' },
         { 'idempotency-key': 'sk1' },
@@ -425,7 +463,7 @@ describe('POST /api/chat/{conversationId}', () => {
   it('400 when role is invalid', async () => {
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'POST',
         { role: 'bogus', content: 'x' },
         { 'idempotency-key': 'sk2' },
@@ -435,10 +473,23 @@ describe('POST /api/chat/{conversationId}', () => {
     expect(res.status).toBe(400);
   });
 
+  it('400 when role is assistant or system', async () => {
+    const res = await sendPOST(
+      jsonReq(
+        `http://localhost/api/cortex/conversations/${CONV}`,
+        'POST',
+        { role: 'assistant', content: 'x' },
+        { 'idempotency-key': 'sk2b' },
+      ),
+      ctx(),
+    );
+    expect(res.status).toBe(400);
+  });
+
   it('400 when content is missing', async () => {
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'POST',
         { role: 'user' },
         { 'idempotency-key': 'sk3' },
@@ -448,11 +499,26 @@ describe('POST /api/chat/{conversationId}', () => {
     expect(res.status).toBe(400);
   });
 
+  it('400 when machine override is supplied', async () => {
+    const res = await sendPOST(
+      jsonReq(
+        `http://localhost/api/cortex/conversations/${CONV}`,
+        'POST',
+        { role: 'user', content: 'x', machineId: 'other-machine' },
+        { 'idempotency-key': 'sk3b' },
+      ),
+      ctx(),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('forbidden_field');
+  });
+
   it('404 when conversation does not exist', async () => {
     mockGetConversation.mockResolvedValueOnce(null);
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'x' },
         { 'idempotency-key': 'sk4' },
@@ -468,7 +534,7 @@ describe('POST /api/chat/{conversationId}', () => {
     );
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'x' },
         { 'idempotency-key': 'sk5' },
@@ -482,7 +548,7 @@ describe('POST /api/chat/{conversationId}', () => {
     authForbidden();
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'x' },
         { 'idempotency-key': 'sk6' },
@@ -500,7 +566,7 @@ describe('POST /api/chat/{conversationId}', () => {
     });
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'x' },
         { 'idempotency-key': 'sk7' },
@@ -513,7 +579,7 @@ describe('POST /api/chat/{conversationId}', () => {
   it('persists the user message and emits audit on send', async () => {
     await sendPOST(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'persistent' },
         { 'idempotency-key': 'sk8' },
@@ -531,21 +597,48 @@ describe('POST /api/chat/{conversationId}', () => {
       expect.objectContaining({
         kind: 'chat_mutated',
         targetId: CONV,
-        attributes: expect.objectContaining({ verb: 'send' }),
+        attributes: expect.objectContaining({
+          verb: 'send',
+          endpoint: `/api/cortex/conversations/${CONV}`,
+        }),
       }),
+    );
+  });
+
+  it('caps API-key callers to tier-1 Cortex tools', async () => {
+    mockRequireChatAuth.mockResolvedValueOnce({
+      ok: true,
+      userId: 'user-1',
+      auth: {
+        userId: 'user-1',
+        keyContext: { keyId: 'k1', environment: 'live' },
+      },
+      scopeCheck: { isLegacy: false },
+    });
+    await sendPOST(
+      jsonReq(
+        `http://localhost/api/cortex/conversations/${CONV}`,
+        'POST',
+        { role: 'user', content: 'x' },
+        { 'idempotency-key': 'sk9' },
+      ),
+      ctx(),
+    );
+    expect(mockRunCortexStream).toHaveBeenCalledWith(
+      expect.objectContaining({ maxToolTier: 1 }),
     );
   });
 });
 
 /* ========================================================================== */
-/*  PATCH /api/chat/{conversationId} — rename                                 */
+/*  PATCH /api/cortex/conversations/{conversationId} - rename                 */
 /* ========================================================================== */
 
-describe('PATCH /api/chat/{conversationId}', () => {
+describe('PATCH /api/cortex/conversations/{conversationId}', () => {
   it('200 on title-only update', async () => {
     const res = await renamePATCH(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'PATCH',
         { title: 'renamed' },
         { 'idempotency-key': 'pk1' },
@@ -560,7 +653,7 @@ describe('PATCH /api/chat/{conversationId}', () => {
   it('400 forbidden_field when other fields supplied', async () => {
     const res = await renamePATCH(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'PATCH',
         { title: 'ok', siteId: 'evil' },
         { 'idempotency-key': 'pk2' },
@@ -575,7 +668,7 @@ describe('PATCH /api/chat/{conversationId}', () => {
   it('400 when title missing', async () => {
     const res = await renamePATCH(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'PATCH',
         {},
         { 'idempotency-key': 'pk3' },
@@ -589,7 +682,7 @@ describe('PATCH /api/chat/{conversationId}', () => {
     mockGetConversation.mockResolvedValueOnce(null);
     const res = await renamePATCH(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'PATCH',
         { title: 'x' },
         { 'idempotency-key': 'pk4' },
@@ -602,7 +695,7 @@ describe('PATCH /api/chat/{conversationId}', () => {
   it('emits chat_mutated audit on rename', async () => {
     await renamePATCH(
       jsonReq(
-        `http://localhost/api/chat/${CONV}`,
+        `http://localhost/api/cortex/conversations/${CONV}`,
         'PATCH',
         { title: 'newer' },
         { 'idempotency-key': 'pk5' },
@@ -612,20 +705,24 @@ describe('PATCH /api/chat/{conversationId}', () => {
     expect(mockEmitMutation).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'chat_mutated',
-        attributes: expect.objectContaining({ verb: 'rename', newTitle: 'newer' }),
+        attributes: expect.objectContaining({
+          verb: 'rename',
+          endpoint: `/api/cortex/conversations/${CONV}`,
+          newTitle: 'newer',
+        }),
       }),
     );
   });
 });
 
 /* ========================================================================== */
-/*  DELETE /api/chat/{conversationId} — soft delete                           */
+/*  DELETE /api/cortex/conversations/{conversationId} - soft delete           */
 /* ========================================================================== */
 
-describe('DELETE /api/chat/{conversationId}', () => {
+describe('DELETE /api/cortex/conversations/{conversationId}', () => {
   it('200 with alreadyDeleted=false on first delete', async () => {
     const res = await deleteDELETE(
-      jsonReq(`http://localhost/api/chat/${CONV}`, 'DELETE'),
+      jsonReq(`http://localhost/api/cortex/conversations/${CONV}`, 'DELETE'),
       ctx(),
     );
     expect(res.status).toBe(200);
@@ -639,7 +736,7 @@ describe('DELETE /api/chat/{conversationId}', () => {
       deletedAt: Timestamp.now(),
     });
     const res = await deleteDELETE(
-      jsonReq(`http://localhost/api/chat/${CONV}`, 'DELETE'),
+      jsonReq(`http://localhost/api/cortex/conversations/${CONV}`, 'DELETE'),
       ctx(),
     );
     expect(res.status).toBe(200);
@@ -650,7 +747,7 @@ describe('DELETE /api/chat/{conversationId}', () => {
   it('404 when conversation never existed', async () => {
     mockGetConversation.mockResolvedValueOnce(null);
     const res = await deleteDELETE(
-      jsonReq(`http://localhost/api/chat/${CONV}`, 'DELETE'),
+      jsonReq(`http://localhost/api/cortex/conversations/${CONV}`, 'DELETE'),
       ctx(),
     );
     expect(res.status).toBe(404);
@@ -659,7 +756,7 @@ describe('DELETE /api/chat/{conversationId}', () => {
   it('403 when scope insufficient', async () => {
     authForbidden();
     const res = await deleteDELETE(
-      jsonReq(`http://localhost/api/chat/${CONV}`, 'DELETE'),
+      jsonReq(`http://localhost/api/cortex/conversations/${CONV}`, 'DELETE'),
       ctx(),
     );
     expect(res.status).toBe(403);
@@ -668,20 +765,24 @@ describe('DELETE /api/chat/{conversationId}', () => {
   it('401 when caller is unauthorized', async () => {
     authUnauthorized();
     const res = await deleteDELETE(
-      jsonReq(`http://localhost/api/chat/${CONV}`, 'DELETE'),
+      jsonReq(`http://localhost/api/cortex/conversations/${CONV}`, 'DELETE'),
       ctx(),
     );
     expect(res.status).toBe(401);
   });
 
   it('emits chat_mutated audit on delete', async () => {
-    await deleteDELETE(jsonReq(`http://localhost/api/chat/${CONV}`, 'DELETE'), ctx());
+    await deleteDELETE(
+      jsonReq(`http://localhost/api/cortex/conversations/${CONV}`, 'DELETE'),
+      ctx(),
+    );
     expect(mockEmitMutation).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'chat_mutated',
         targetId: CONV,
         attributes: expect.objectContaining({
           verb: 'delete',
+          endpoint: `/api/cortex/conversations/${CONV}`,
           method: 'DELETE',
           alreadyDeleted: false,
         }),

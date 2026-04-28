@@ -1,11 +1,11 @@
 /**
  * `roost.chat` — cortex chat noun (wave 3A).
  *
- *   POST   /api/chat/new                  — create a conversation
- *   GET    /api/chat                      — list conversations
- *   POST   /api/chat/{conversationId}     — append a message + stream the response
- *   PATCH  /api/chat/{conversationId}     — rename
- *   DELETE /api/chat/{conversationId}     — soft delete
+ *   POST   /api/cortex/conversations                  — create a conversation
+ *   GET    /api/cortex/conversations                  — list conversations
+ *   POST   /api/cortex/conversations/{conversationId} — append a message + stream the response
+ *   PATCH  /api/cortex/conversations/{conversationId} — rename
+ *   DELETE /api/cortex/conversations/{conversationId} — soft delete
  *
  * `send` consumes the AI-SDK v3 line-prefixed stream protocol the server
  * emits from `result.toUIMessageStreamResponse()`:
@@ -41,6 +41,7 @@ export interface ConversationSummary {
 }
 
 export interface ListConversationsOptions {
+  siteId?: string;
   pageSize?: number;
   pageToken?: string;
   includeDeleted?: boolean;
@@ -106,7 +107,7 @@ export class Chat {
     const res = await this.client.request<{
       ok: true;
       data: CreateConversationResult;
-    }>('/api/chat/new', {
+    }>('/api/cortex/conversations', {
       method: 'POST',
       body,
       idempotencyKey: opts.idempotencyKey ?? `sdk-chat-new-${randomUUID()}`,
@@ -119,6 +120,7 @@ export class Chat {
 
   async list(opts: ListConversationsOptions = {}): Promise<ListConversationsResult> {
     const query: Record<string, string | number | boolean | undefined> = {};
+    if (opts.siteId !== undefined) query.siteId = opts.siteId;
     if (opts.pageSize !== undefined) query.page_size = opts.pageSize;
     if (opts.pageToken !== undefined) query.page_token = opts.pageToken;
     if (opts.includeDeleted) query.includeDeleted = 'true';
@@ -127,7 +129,7 @@ export class Chat {
     const res = await this.client.request<{
       ok: true;
       data: ListConversationsResult;
-    }>('/api/chat', { query });
+    }>('/api/cortex/conversations', { query });
     return res.data.data ?? (res.data as unknown as ListConversationsResult);
   }
 
@@ -139,7 +141,7 @@ export class Chat {
     const res = await this.client.request<{
       ok: true;
       data: { conversationId: string; title: string };
-    }>(`/api/chat/${encodeURIComponent(conversationId)}`, {
+    }>(`/api/cortex/conversations/${encodeURIComponent(conversationId)}`, {
       method: 'PATCH',
       body: { title },
       idempotencyKey: opts.idempotencyKey ?? `sdk-chat-rename-${randomUUID()}`,
@@ -154,7 +156,7 @@ export class Chat {
     const res = await this.client.request<{
       ok: true;
       data: { conversationId: string; alreadyDeleted: boolean };
-    }>(`/api/chat/${encodeURIComponent(conversationId)}`, {
+    }>(`/api/cortex/conversations/${encodeURIComponent(conversationId)}`, {
       method: 'DELETE',
       idempotencyKey: opts.idempotencyKey ?? `sdk-chat-delete-${randomUUID()}`,
     });
@@ -192,7 +194,7 @@ export class Chat {
       'Idempotency-Key': opts.idempotencyKey ?? `sdk-chat-send-${randomUUID()}`,
     };
 
-    const url = `${this.client.apiUrl}/api/chat/${encodeURIComponent(conversationId)}`;
+    const url = `${this.client.apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`;
     const init: RequestInit = {
       method: 'POST',
       headers,

@@ -1,9 +1,9 @@
 /**
  * cortex streaming dispatcher (api-sprint wave 3 — track 3A).
  *
- * Extracted from `/api/cortex/route.ts` so both the legacy cortex endpoint
- * and the new `/api/chat/{conversationId}` send-message endpoint can drive
- * the same dual-path streaming flow without duplication.
+ * Extracted from `/api/cortex/route.ts` so both the legacy direct-stream
+ * endpoint and `/api/cortex/conversations/{conversationId}` can drive the
+ * same dual-path streaming flow without duplication.
  *
  * Three paths, mutually exclusive:
  *   - site mode (`SITE_TARGET_ID` machine): server-side llm + fan-out tools
@@ -21,7 +21,7 @@
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import { FieldValue } from 'firebase-admin/firestore';
 import { createModel, buildSystemPrompt, type ProcessSummary } from '@/lib/llm';
-import { getToolsByTier } from '@/lib/mcp-tools';
+import { getToolsByTier, type ToolTier } from '@/lib/mcp-tools';
 import {
   resolveLlmConfig,
   verifyUserSiteAccess,
@@ -30,7 +30,6 @@ import {
   isCortexEnabled,
   getOnlineMachines,
   buildExecutableTools,
-  type SiteAccessLevel,
 } from '@/lib/cortex-utils.server';
 
 export const SITE_TARGET_ID = '__site__';
@@ -47,6 +46,12 @@ export interface CortexStreamRequest {
   machineName: string;
   messages: ModelMessage[];
   chatId: string;
+  /**
+   * Optional public-API cap. API-key callers are currently capped to tier 1
+   * so a chat-scoped key cannot inherit the owner's admin role and dispatch
+   * destructive machine/process/deploy tools.
+   */
+  maxToolTier?: ToolTier;
   /**
    * Optional tap fired with the final accumulated assistant text once the
    * stream completes. Used by the chat-noun route to append the assistant
@@ -73,6 +78,7 @@ export async function runCortexStream(
 
   const isSiteMode = machineId === SITE_TARGET_ID;
   const access = await verifyUserSiteAccess(db, userId, siteId);
+  const maxToolTier = req.maxToolTier ?? resolveCortexMaxTier(access);
 
   if (isSiteMode) {
     const onlineMachines = await getOnlineMachines(db, siteId);
@@ -85,7 +91,7 @@ export async function runCortexStream(
     }
     return {
       ok: true,
-      response: handleSiteWideMode(db, userId, siteId, messages, chatId, access, onlineMachines, req.onAssistantText),
+      response: handleSiteWideMode(db, userId, siteId, messages, chatId, maxToolTier, onlineMachines, req.onAssistantText),
     };
   }
 
@@ -114,7 +120,7 @@ export async function runCortexStream(
   // Non-admins are forced through the server-side LLM path so the tier cap
   // (tier 1, read-only) is actually enforced. The local Cortex path runs
   // tools inside the agent and does not yet honor a per-user tier cap.
-  const cortexLocal = access.isSiteAdmin
+  const cortexLocal = access.isSiteAdmin && maxToolTier >= 3
     ? await isCortexLocal(db, siteId, machineId)
     : false;
 
@@ -127,7 +133,7 @@ export async function runCortexStream(
 
   return {
     ok: true,
-    response: handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, access, req.onAssistantText),
+    response: handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, maxToolTier, req.onAssistantText),
   };
 }
 
@@ -349,11 +355,11 @@ function handleServerSideLLM(
   machineName: string,
   messages: ModelMessage[],
   chatId: string,
-  access: SiteAccessLevel,
+  maxToolTier: ToolTier,
   onAssistantText?: (text: string) => Promise<void> | void,
 ): Response {
   return wrapWithAssistantTap(
-    runServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, access),
+    runServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, maxToolTier),
     onAssistantText,
   );
 }
@@ -366,14 +372,14 @@ async function runServerSideLLM(
   machineName: string,
   messages: ModelMessage[],
   chatId: string,
-  access: SiteAccessLevel,
+  maxToolTier: ToolTier,
 ): Promise<Response> {
   const [llmConfig, processes] = await Promise.all([
     resolveLlmConfig(db, userId, siteId),
     fetchProcessSummaries(db, siteId, machineId),
   ]);
 
-  const toolDefs = getToolsByTier(resolveCortexMaxTier(access));
+  const toolDefs = getToolsByTier(maxToolTier);
   const executableTools = buildExecutableTools(
     db,
     siteId,
@@ -403,12 +409,12 @@ function handleSiteWideMode(
   siteId: string,
   messages: ModelMessage[],
   chatId: string,
-  access: SiteAccessLevel,
+  maxToolTier: ToolTier,
   onlineMachines: string[],
   onAssistantText?: (text: string) => Promise<void> | void,
 ): Response {
   return wrapWithAssistantTap(
-    runSiteWideMode(db, userId, siteId, messages, chatId, access, onlineMachines),
+    runSiteWideMode(db, userId, siteId, messages, chatId, maxToolTier, onlineMachines),
     onAssistantText,
   );
 }
@@ -419,11 +425,11 @@ async function runSiteWideMode(
   siteId: string,
   messages: ModelMessage[],
   chatId: string,
-  access: SiteAccessLevel,
+  maxToolTier: ToolTier,
   onlineMachines: string[],
 ): Promise<Response> {
   const llmConfig = await resolveLlmConfig(db, userId, siteId);
-  const toolDefs = getToolsByTier(resolveCortexMaxTier(access));
+  const toolDefs = getToolsByTier(maxToolTier);
   const executableTools = buildExecutableTools(
     db,
     siteId,

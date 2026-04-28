@@ -148,7 +148,7 @@ every key carries a `scopes[]` array. a key without at least one scope cannot be
 
 each scope object has three fields:
 
-- **`resource`** — one of `roost`, `site`, `machine`.
+- **`resource`** — one of `roost`, `site`, `machine`, `chat`, `deploy`, `process`, `user`, `installer`.
 - **`id`** — a specific resource id, or `*` to grant the scope across every resource of that type the user owns.
 - **`permissions`** — a non-empty subset of `read`, `write`, `deploy`, `rollback`, `admin`.
 
@@ -161,6 +161,11 @@ a request passes authorization iff there is at least one scope entry whose resou
 | `roost` | a named versioned bundle (versions, chunks referenced by those versions, deploys/rollbacks targeting it) | scopes with `resource: "roost", id: "*"` grant access to every roost across every site the user owns. |
 | `site` | a tenant boundary (machines, quotas, audit log, webhooks, sites list entry) | scopes at the site level do **not** implicitly grant access to roosts inside that site — add an explicit `roost` scope if needed. |
 | `machine` | machine detail + deployment history for a single agent | used for read-only observability keys (e.g. a monitoring sidecar). |
+| `chat` | site-scoped Cortex conversations under `/api/cortex/conversations` | `chat=<siteId>:write` can send messages, but API-key callers are capped to read-only Cortex tools. |
+| `deploy` | classic installer deployment records | site-scoped classic deployment automation. |
+| `process` | configured processes on machines | process management endpoints are machine-scoped. |
+| `user` | platform user administration | superadmin-only at key minting. |
+| `installer` | platform installer binary management | superadmin-only at key minting. |
 
 ### permissions
 

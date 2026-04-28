@@ -3,11 +3,11 @@
  *
  * Drives the cortex chat-noun routes shipped in api-sprint wave 3A:
  *
- *   POST   /api/chat/new                       — start a conversation
- *   GET    /api/chat?siteId=&page_size=&...    — list conversations
- *   POST   /api/chat/{conversationId}          — append message + stream reply
- *   PATCH  /api/chat/{conversationId}          — rename
- *   DELETE /api/chat/{conversationId}          — soft delete
+ *   POST   /api/cortex/conversations                      — start a conversation
+ *   GET    /api/cortex/conversations?siteId=&page_size=... — list conversations
+ *   POST   /api/cortex/conversations/{conversationId}      — append message + stream reply
+ *   PATCH  /api/cortex/conversations/{conversationId}      — rename
+ *   DELETE /api/cortex/conversations/{conversationId}      — soft delete
  *
  * `send` consumes the AI-SDK v3 line-prefixed stream protocol the server
  * emits via `result.toUIMessageStreamResponse()`:
@@ -20,7 +20,7 @@
  * Mutations carry an auto-generated `Idempotency-Key` header so a network
  * retry doesn't double-create / double-delete. `chat send` sends the header
  * for replay safety even though the server skips the cache for streaming
- * responses (see `web/app/api/chat/[conversationId]/route.ts`).
+ * responses (see `web/app/api/cortex/conversations/[conversationId]/route.ts`).
  */
 
 import { Command } from 'commander';
@@ -99,7 +99,7 @@ export function registerChatCommands(program: Command): void {
       if (opts.machine) body.machineId = opts.machine;
       if (opts.title) body.title = opts.title;
 
-      const res = await fetch(`${apiUrl}/api/chat/new`, {
+      const res = await fetch(`${apiUrl}/api/cortex/conversations`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -118,7 +118,7 @@ export function registerChatCommands(program: Command): void {
       };
       if (!res.ok) {
         fatal(
-          `POST /api/chat/new failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
+          `POST /api/cortex/conversations failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
         );
         return;
       }
@@ -163,7 +163,7 @@ export function registerChatCommands(program: Command): void {
       }
       if (opts.cursor) params.set('page_token', String(opts.cursor));
 
-      const res = await fetch(`${apiUrl}/api/chat?${params.toString()}`, {
+      const res = await fetch(`${apiUrl}/api/cortex/conversations?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const raw = (await res.json().catch(() => ({}))) as {
@@ -174,7 +174,7 @@ export function registerChatCommands(program: Command): void {
       };
       if (!res.ok) {
         fatal(
-          `GET /api/chat failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
+          `GET /api/cortex/conversations failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
         );
         return;
       }
@@ -230,7 +230,7 @@ export function registerChatCommands(program: Command): void {
       if (!token) return;
 
       const res = await fetch(
-        `${apiUrl}/api/chat/${encodeURIComponent(conversationId)}`,
+        `${apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`,
         {
           method: 'POST',
           headers: {
@@ -253,14 +253,14 @@ export function registerChatCommands(program: Command): void {
           code?: string;
         };
         fatal(
-          `POST /api/chat/${conversationId} failed (${res.status}, ${data.code ?? 'unknown'}): ${data.detail ?? JSON.stringify(data)}`,
+          `POST /api/cortex/conversations/${conversationId} failed (${res.status}, ${data.code ?? 'unknown'}): ${data.detail ?? JSON.stringify(data)}`,
         );
         return;
       }
 
       const body = res.body;
       if (!body) {
-        fatal(`POST /api/chat/${conversationId} returned an empty body`);
+        fatal(`POST /api/cortex/conversations/${conversationId} returned an empty body`);
         return;
       }
 
@@ -354,7 +354,7 @@ export function registerChatCommands(program: Command): void {
       }
 
       const res = await fetch(
-        `${apiUrl}/api/chat/${encodeURIComponent(conversationId)}`,
+        `${apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`,
         {
           method: 'DELETE',
           headers: {
@@ -373,7 +373,7 @@ export function registerChatCommands(program: Command): void {
       };
       if (!res.ok) {
         fatal(
-          `DELETE /api/chat/${conversationId} failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
+          `DELETE /api/cortex/conversations/${conversationId} failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
         );
         return;
       }
@@ -406,7 +406,7 @@ export function registerChatCommands(program: Command): void {
       if (!token) return;
 
       const res = await fetch(
-        `${apiUrl}/api/chat/${encodeURIComponent(conversationId)}`,
+        `${apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`,
         {
           method: 'PATCH',
           headers: {
@@ -427,7 +427,7 @@ export function registerChatCommands(program: Command): void {
       };
       if (!res.ok) {
         fatal(
-          `PATCH /api/chat/${conversationId} failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
+          `PATCH /api/cortex/conversations/${conversationId} failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
         );
         return;
       }

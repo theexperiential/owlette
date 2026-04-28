@@ -1,7 +1,8 @@
 /**
- * GET /api/chat — list conversations the caller can access.
+ * GET /api/cortex/conversations — list conversations the caller can access.
  *
- * api-sprint wave 3 — track 3A (cortex-api / chat noun).
+ * `/api/chat` remains a compatibility alias; `/api/cortex/conversations`
+ * is the canonical public API path as of public-api Wave 2.9.
  *
  * Filters to conversations whose `siteId` is in the caller's effective access
  * set. For api-key callers, the access set is also intersected with the
@@ -16,6 +17,7 @@ import { NextResponse } from 'next/server';
 import {
   problemFromError,
   problemUnauthorized,
+  problemValidation,
 } from '@/lib/apiErrors';
 import {
   ApiAuthError,
@@ -30,6 +32,8 @@ import {
 } from '@/lib/chatStorage.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 
+const SITE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
 export async function GET(request: NextRequest) {
   try {
     let auth;
@@ -38,11 +42,6 @@ export async function GET(request: NextRequest) {
     } catch (err) {
       if (err instanceof ApiAuthError) return problemUnauthorized();
       throw err;
-    }
-
-    const accessibleSiteIds = await resolveReadableSiteIds(auth.userId, auth.keyContext);
-    if (accessibleSiteIds.length === 0) {
-      return NextResponse.json({ ok: true, data: { conversations: [], nextPageToken: '' } });
     }
 
     const pageSizeRaw = Number(
@@ -63,9 +62,32 @@ export async function GET(request: NextRequest) {
       '';
     const includeDeleted = request.nextUrl.searchParams.get('includeDeleted') === 'true';
     const ownerOnly = request.nextUrl.searchParams.get('owner') === 'me';
+    const siteIdRaw = request.nextUrl.searchParams.get('siteId');
+
+    let requestedSiteId: string | undefined;
+    if (siteIdRaw !== null) {
+      requestedSiteId = siteIdRaw.trim();
+      if (!SITE_ID_RE.test(requestedSiteId)) {
+        return problemValidation('invalid siteId format', {
+          'query.siteId': ['must be 1-128 chars: letters, digits, underscore, hyphen'],
+        });
+      }
+    }
+
+    const accessibleSiteIds = await resolveReadableSiteIds(auth.userId, auth.keyContext);
+    const effectiveSiteIds = requestedSiteId
+      ? accessibleSiteIds.filter((siteId) => siteId === requestedSiteId)
+      : accessibleSiteIds;
+
+    if (effectiveSiteIds.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        data: { conversations: [], next_page_token: '', nextPageToken: '' },
+      });
+    }
 
     const result = await listConversations({
-      siteIds: accessibleSiteIds,
+      siteIds: effectiveSiteIds,
       ownerUid: ownerOnly ? auth.userId : undefined,
       pageSize,
       pageToken,
@@ -76,6 +98,7 @@ export async function GET(request: NextRequest) {
       ok: true,
       data: {
         conversations: result.conversations.map(serializeConversationSummary),
+        next_page_token: result.nextPageToken,
         nextPageToken: result.nextPageToken,
       },
     });

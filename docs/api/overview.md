@@ -64,6 +64,7 @@ rate limits scale with tier; every response carries `RateLimit-Limit`, `RateLimi
 
 - **[quickstart](./quickstart.md)** — curl walkthrough: create a key, push a roost, verify, roll back. ~10 minutes.
 - **[authentication](./authentication.md)** — `owk_live_*` / `owk_test_*` keys, scoping, rotation, revocation, `Authorization: Bearer` header.
+- **[cortex](./cortex.md)** — natural-language site and machine diagnostics over `/api/cortex/conversations`.
 - **[errors](./errors.md)** — rfc 7807 problem+json envelope, stable error codes, `doc_url` resolution.
 
-from there, deep-dive into the [chunks](./chunks.md), [versions](./versions.md), and [webhooks](./webhooks.md) guides as you need them. the full endpoint reference lives in [openapi.yaml](../../web/openapi.yaml) and is machine-readable.
+from there, deep-dive into the [chunks](./chunks.md), [versions](./versions.md), [cortex](./cortex.md), and [webhooks](./webhooks.md) guides as you need them. the full endpoint reference lives in [openapi.yaml](../../web/openapi.yaml) and is machine-readable.

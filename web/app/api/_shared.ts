@@ -507,8 +507,8 @@ export async function requirePlatformAuthAndScope(
 }
 
 /**
- * site-scoped chat-conversation auth + scope check. used by `/api/chat/*`
- * routes (api-sprint wave 3 — track 3A).
+ * site-scoped Cortex conversation auth + scope check. used by
+ * `/api/cortex/conversations/*` plus `/api/chat/*` compatibility routes.
  *
  * - session/id-token callers: must have site access; scope check is bypassed.
  * - api-key callers: must satisfy `chat=<siteId>:<permission>`. wildcard id

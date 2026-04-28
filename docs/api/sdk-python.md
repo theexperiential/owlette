@@ -80,6 +80,7 @@ every top-level noun is a resource class hung off the client. all methods are `a
 | `client.webhooks`    | `subscribe`, `list`, `get`, `update`, `remove`, `rotate_secret`, `probe`                           |
 | `client.sites`       | `list`, `get`                                                                                      |
 | `client.machines`    | `list`, `get`, `deployments`                                                                       |
+| `client.chat`        | `new`, `list`, `send`, `rename`, `delete`                                                          |
 | `client.quotas`      | `current`, `history`                                                                               |
 | `client.http`        | raw low-level `RoostClient` — escape hatch for unmapped endpoints                                  |
 
@@ -150,6 +151,26 @@ deploy = await client.roosts.deploy(
     ),
 )
 ```
+
+### cortex
+
+```python
+conversation = await client.chat.new(
+    site_id="site-1",
+    machine_id="machine-a7f3",
+    title="diagnostics",
+)
+
+page = await client.chat.list(site_id="site-1", page_size=10)
+
+async for delta in client.chat.send(
+    conversation["conversationId"],
+    "summarize machine health",
+):
+    print(delta, end="", flush=True)
+```
+
+The SDK uses canonical `/api/cortex/conversations` routes. API-key callers are capped to read-only Cortex tools during streamed replies.
 
 ### chunks — low-level data plane
 

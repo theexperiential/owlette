@@ -71,6 +71,7 @@ every top-level noun is a resource class hung off the client.
 | `roost.webhooks`     | `subscribe`, `list`, `get`, `update`, `remove`, `rotateSecret`, `probe`                         |
 | `roost.sites`        | `list`, `get`                                                                                   |
 | `roost.machines`     | `list`, `get`, `deployments`                                                                    |
+| `roost.chat`         | `new`, `list`, `send`, `rename`, `delete`                                                       |
 | `roost.quotas`       | `current`, `history`                                                                            |
 | `roost.events`       | `verifySignature`, `isSignatureValid`, `signBody`                                               |
 | `roost.http`         | raw low-level client — escape hatch when you need headers/bodies the wrapper doesn't expose     |
@@ -131,6 +132,25 @@ const deploy = await roost.roosts.deploy('rst_abc', {
   dryRun: false,
 });
 ```
+
+### cortex
+
+```ts
+const conversation = await roost.chat.new({
+  siteId: 'site-1',
+  machineId: 'machine-a7f3',
+  title: 'diagnostics',
+});
+
+const page = await roost.chat.list({ siteId: 'site-1', pageSize: 10 });
+
+const stream = await roost.chat.send(conversation.conversationId, 'summarize machine health', {
+  onDelta: (text) => process.stdout.write(text),
+});
+await stream.complete;
+```
+
+The SDK uses canonical `/api/cortex/conversations` routes. API-key callers are capped to read-only Cortex tools during streamed replies.
 
 ### chunks — low-level data plane
 

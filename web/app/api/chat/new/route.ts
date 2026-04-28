@@ -1,7 +1,8 @@
 /**
- * POST /api/chat/new — create a new chat conversation.
+ * POST /api/cortex/conversations — create a Cortex conversation.
  *
- * api-sprint wave 3 — track 3A (cortex-api / chat noun).
+ * `/api/chat/new` remains a compatibility alias; `/api/cortex/conversations`
+ * is the canonical public API path as of public-api Wave 2.9.
  *
  * Required scope: `chat=<siteId>:write`. Idempotent via `Idempotency-Key`.
  * Body:
@@ -28,7 +29,7 @@ import {
   type ChatRole,
 } from '@/lib/chatStorage.server';
 
-const VALID_ROLES: ChatRole[] = ['user', 'assistant', 'system'];
+const VALID_ROLES: ChatRole[] = ['user'];
 
 interface CreateBody {
   siteId?: unknown;
@@ -72,7 +73,7 @@ export async function POST(request: NextRequest) {
       const content = im.content;
       if (typeof role !== 'string' || !VALID_ROLES.includes(role as ChatRole)) {
         return problemValidation(
-          `initial_message.role must be one of: ${VALID_ROLES.join(', ')}`,
+          'initial_message.role must be `user` for public Cortex conversations',
           { 'body.initial_message.role': ['invalid role'] },
         );
       }
@@ -112,7 +113,7 @@ export async function POST(request: NextRequest) {
           targetId: conversation.conversationId,
           attributes: {
             verb: 'create',
-            endpoint: '/api/chat/new',
+            endpoint: request.nextUrl.pathname,
             method: 'POST',
             siteId,
             ...(machineId ? { machineId } : {}),
@@ -124,6 +125,7 @@ export async function POST(request: NextRequest) {
           { status: 201 },
         );
       },
+      { requireKey: true },
     );
   } catch (err) {
     return problemFromError(err, 'chat/new:POST');

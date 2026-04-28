@@ -1030,11 +1030,12 @@ paths:
     post:
       operationId: cortexChat
       tags: [Cortex]
-      summary: Chat with Cortex
+      deprecated: true
+      summary: Legacy direct Cortex stream
       description: |
-        Streaming chat endpoint with AI-powered tool execution. Cortex can inspect
-        machines, run diagnostics, restart processes, and more — all through natural
-        language.
+        Legacy dashboard/direct streaming endpoint. Public integrations should use
+        `/api/cortex/conversations` and
+        `/api/cortex/conversations/{conversationId}` instead.
 
         **Modes:**
         - **Single-machine mode**: Set `machineId` to a specific machine ID. If a local
@@ -1042,8 +1043,12 @@ paths:
         - **Site-wide mode**: Set `machineId` to `__site__` to query across all machines
           in the site using server-side LLM.
 
-        The response is streamed via **Server-Sent Events (SSE)** using the Vercel AI SDK
-        protocol. Each event contains either text chunks or tool call/result data.
+        The response is streamed as AI-SDK line-prefixed frames using
+        `text/plain; charset=utf-8` and `X-Vercel-AI-Data-Stream: v1`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       requestBody:
         required: true
         content:
@@ -1085,12 +1090,12 @@ paths:
               chatId: chat-123
       responses:
         '200':
-          description: SSE stream with AI response
+          description: AI-SDK text stream with assistant response
           content:
-            text/event-stream:
+            text/plain:
               schema:
                 type: string
-                description: Server-Sent Events stream (Vercel AI SDK protocol)
+                description: AI-SDK line-prefixed text stream.
         '400':
           description: Missing required fields
           content:
@@ -1101,6 +1106,242 @@ paths:
   # ──────────────────────────────────────────────────────────────────────
   # Roost (project distribution v2) — content-addressed sync
   # ──────────────────────────────────────────────────────────────────────
+  /api/cortex/conversations:
+    get:
+      operationId: listCortexConversations
+      tags: [Cortex]
+      summary: List Cortex conversations
+      description: |
+        List Cortex conversations the caller can see. API-key callers are
+        filtered to sites where the key holds `chat=<siteId>:read` or
+        `chat=*:read`. Pass `siteId` to narrow the page to one site.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - name: siteId
+          in: query
+          required: false
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,128}$' }
+        - $ref: '#/components/parameters/PageSizeQuery'
+        - $ref: '#/components/parameters/PageTokenQuery'
+        - name: includeDeleted
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: owner
+          in: query
+          required: false
+          description: Set to `me` to filter to conversations owned by the caller.
+          schema: { type: string, enum: [me] }
+      responses:
+        '200':
+          description: Conversation page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      conversations:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/CortexConversationSummary'
+                      next_page_token: { type: string }
+                      nextPageToken:
+                        type: string
+                        deprecated: true
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '429': { $ref: '#/components/responses/Problem429' }
+    post:
+      operationId: createCortexConversation
+      tags: [Cortex]
+      summary: Create a Cortex conversation
+      description: |
+        Create a new Cortex conversation. Provide `machineId` to pin the
+        conversation to one machine, or omit it for site-wide mode. Requires
+        `chat=<siteId>:write` and `Idempotency-Key`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId]
+              properties:
+                siteId: { type: string }
+                machineId: { type: string }
+                title: { type: string, maxLength: 100 }
+                initial_message:
+                  type: object
+                  required: [role, content]
+                  properties:
+                    role: { type: string, enum: [user] }
+                    content: { type: string }
+      responses:
+        '201':
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/CortexConversation'
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+
+  /api/cortex/conversations/{conversationId}:
+    parameters:
+      - name: conversationId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: sendCortexConversationMessage
+      tags: [Cortex]
+      summary: Send a Cortex message and stream the reply
+      description: |
+        Append one user message and stream the assistant reply. The response is
+        `text/plain; charset=utf-8` with `X-Vercel-AI-Data-Stream: v1` and
+        AI-SDK line-prefixed frames (`0:"delta"`, `d:{...}`, `3:"err"`).
+
+        Public send accepts only `role` and `content`; create a new
+        conversation to change the target machine. API-key callers are capped
+        to read-only Cortex tools during streamed replies.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, content]
+              additionalProperties: false
+              properties:
+                role: { type: string, enum: [user] }
+                content: { type: string }
+      responses:
+        '200':
+          description: AI-SDK text stream
+          content:
+            text/plain:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '423':
+          description: Cortex disabled on target machine
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '429': { $ref: '#/components/responses/Problem429' }
+        '503':
+          description: Cortex or target machine unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    patch:
+      operationId: renameCortexConversation
+      tags: [Cortex]
+      summary: Rename a Cortex conversation
+      description: |
+        Update the conversation title. Other fields are rejected with
+        `forbidden_field`. Requires `chat=<siteId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              additionalProperties: false
+              properties:
+                title: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: Renamed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      conversationId: { type: string }
+                      title: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+    delete:
+      operationId: deleteCortexConversation
+      tags: [Cortex]
+      summary: Soft-delete a Cortex conversation
+      description: |
+        Soft-delete a conversation. A repeated delete returns 200 with
+        `alreadyDeleted: true`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      responses:
+        '200':
+          description: Soft-deleted or already deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      conversationId: { type: string }
+                      alreadyDeleted: { type: boolean }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+
   /api/chunks/check:
     post:
       operationId: checkChunks
@@ -5414,12 +5655,15 @@ paths:
   /api/chat:
     get:
       tags: [Chat]
-      summary: list conversations the caller can see
+      deprecated: true
+      summary: Deprecated alias for listing Cortex conversations
       description: |
-        List chat conversations the caller has access to. For api-key callers
-        the returned set is filtered to sites where the key holds
-        `chat=<siteId>:read` (or `chat=*:read`). Session/id-token callers
-        see every conversation in their site-membership list. Cursor-paginated.
+        Compatibility alias for `GET /api/cortex/conversations`.
+        New clients should use the canonical Cortex route.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - name: page_size
           in: query
@@ -5470,11 +5714,15 @@ paths:
   /api/chat/new:
     post:
       tags: [Chat]
-      summary: create a chat conversation
+      deprecated: true
+      summary: Deprecated alias for creating a Cortex conversation
       description: |
-        Create a new conversation. Pin to a single machine via `machineId`,
-        or omit it for site-wide mode (server-side LLM fans tools across
-        every online machine). Requires `chat=<siteId>:write`. Idempotent.
+        Compatibility alias for `POST /api/cortex/conversations`.
+        New clients should use the canonical Cortex route.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - name: Idempotency-Key
           in: header
@@ -5495,7 +5743,7 @@ paths:
                   type: object
                   required: [role, content]
                   properties:
-                    role: { type: string, enum: [user, assistant, system] }
+                    role: { type: string, enum: [user] }
                     content: { type: string }
       responses:
         '201':
@@ -5537,12 +5785,15 @@ paths:
         schema: { type: string }
     post:
       tags: [Chat]
-      summary: send a message and stream the response
+      deprecated: true
+      summary: Deprecated alias for sending a Cortex message
       description: |
-        Append a message to the conversation and stream the assistant's reply.
-        The response is `text/plain; charset=utf-8` carrying AI-SDK protocol
-        frames (`0:"delta"`, `d:{...}`, `3:"err"`) — same format as the
-        legacy `/api/cortex` endpoint. Requires `chat=<siteId>:write`. Idempotent.
+        Compatibility alias for `POST /api/cortex/conversations/{conversationId}`.
+        New clients should use the canonical Cortex route.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - name: Idempotency-Key
           in: header
@@ -5556,12 +5807,8 @@ paths:
               type: object
               required: [role, content]
               properties:
-                role: { type: string, enum: [user, assistant, system] }
+                role: { type: string, enum: [user] }
                 content: { type: string }
-                machineId:
-                  type: string
-                  description: Override the conversation's pinned machine for this turn.
-                machineName: { type: string }
       responses:
         '200':
           description: Streaming response (text/plain, AI-SDK frames)
@@ -5575,10 +5822,15 @@ paths:
         '503': { description: Cortex / target machine unavailable }
     patch:
       tags: [Chat]
-      summary: rename a conversation
+      deprecated: true
+      summary: Deprecated alias for renaming a Cortex conversation
       description: |
         Update the conversation title. Other fields are rejected with
         400 `forbidden_field`. Requires `chat=<siteId>:write`. Idempotent.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - name: Idempotency-Key
           in: header
@@ -5613,11 +5865,16 @@ paths:
         '404': { description: Conversation not found }
     delete:
       tags: [Chat]
-      summary: soft-delete a conversation
+      deprecated: true
+      summary: Deprecated alias for soft-deleting a Cortex conversation
       description: |
         True-idempotent: a second DELETE on the same conversationId returns
         200 with `alreadyDeleted: true` and the original deletedAt. Requires
         `chat=<siteId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: Soft-deleted (or already absent)
@@ -6482,6 +6739,33 @@ components:
           type: string
       example:
         error: Description of what went wrong
+
+    CortexConversationSummary:
+      type: object
+      properties:
+        conversationId: { type: string }
+        title: { type: string, nullable: true }
+        siteId: { type: string }
+        machineId: { type: string, nullable: true }
+        ownerUid: { type: string }
+        createdAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        deletedAt: { type: string, format: date-time, nullable: true }
+        messageCount: { type: integer }
+
+    CortexConversation:
+      allOf:
+        - $ref: '#/components/schemas/CortexConversationSummary'
+        - type: object
+          properties:
+            messages:
+              type: array
+              items:
+                type: object
+                properties:
+                  role: { type: string, enum: [user, assistant, system] }
+                  content: { type: string }
+                  timestamp: { type: string, format: date-time, nullable: true }
 
     Site:
       type: object

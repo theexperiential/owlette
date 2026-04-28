@@ -1,11 +1,12 @@
 /**
  * Per-conversation chat-noun routes.
  *
- *   POST   /api/chat/{conversationId}  — append a message + stream the response
- *   PATCH  /api/chat/{conversationId}  — rename (title-only)
- *   DELETE /api/chat/{conversationId}  — soft-delete (true-idempotent)
+ *   POST   /api/cortex/conversations/{conversationId}  — append a user message + stream
+ *   PATCH  /api/cortex/conversations/{conversationId}  — rename (title-only)
+ *   DELETE /api/cortex/conversations/{conversationId}  — soft-delete (true-idempotent)
  *
- * api-sprint wave 3 — track 3A (cortex-api / chat noun).
+ * `/api/chat/{conversationId}` remains a compatibility alias; the
+ * `/api/cortex/conversations/{conversationId}` path is canonical.
  *
  * All three verbs require `chat=<siteId>:write`. siteId is read from the
  * conversation document (the URL only carries the conversation id) and
@@ -42,7 +43,8 @@ interface RouteContext {
   params: Promise<{ conversationId: string }>;
 }
 
-const VALID_ROLES: ChatRole[] = ['user', 'assistant', 'system'];
+const VALID_ROLES: ChatRole[] = ['user'];
+const SEND_ALLOWED_FIELDS = new Set(['role', 'content']);
 
 /* -------------------------------------------------------------------------- */
 /*  POST — send message + stream response                                     */
@@ -51,13 +53,6 @@ const VALID_ROLES: ChatRole[] = ['user', 'assistant', 'system'];
 interface SendBody {
   role?: unknown;
   content?: unknown;
-  /**
-   * Optional override — when omitted we use the conversation's stored
-   * machineId (or `__site__` for site-wide). Callers that need to swap
-   * machines should create a new conversation rather than mutate this one.
-   */
-  machineId?: unknown;
-  machineName?: unknown;
 }
 
 export async function POST(request: NextRequest, { params }: RouteContext) {
@@ -68,10 +63,22 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     if (!parsed.ok) return parsed.response;
     const body = (parsed.body ?? {}) as SendBody;
 
+    const extraFields = Object.keys(body).filter((k) => !SEND_ALLOWED_FIELDS.has(k));
+    if (extraFields.length > 0) {
+      return problem({
+        type: ProblemType.ValidationFailed,
+        title: 'forbidden_field',
+        status: 400,
+        detail: 'public Cortex send accepts only `role` and `content`',
+        code: 'forbidden_field',
+        errors: { body: [`unexpected fields: ${extraFields.join(', ')}`] },
+      });
+    }
+
     const role = body.role;
     if (typeof role !== 'string' || !VALID_ROLES.includes(role as ChatRole)) {
       return problemValidation(
-        `field \`role\` must be one of: ${VALID_ROLES.join(', ')}`,
+        'field `role` must be `user` for public Cortex conversations',
         { 'body.role': ['invalid role'] },
       );
     }
@@ -123,13 +130,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         const refreshed = await getConversation(conversationId);
         if (!refreshed) return problemNotFound('conversation not found');
 
-        const machineId = resolveMachineId(refreshed, body.machineId);
-        const machineName =
-          typeof body.machineName === 'string' && body.machineName.length > 0
-            ? body.machineName
-            : machineId === SITE_TARGET_ID
-              ? 'site'
-              : machineId;
+        const machineId = resolveMachineId(refreshed);
+        const machineName = machineId === SITE_TARGET_ID ? 'site' : machineId;
 
         const modelMessages = refreshed.messages.map<ModelMessage>((m) => ({
           role: m.role,
@@ -144,6 +146,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
           machineName,
           messages: modelMessages,
           chatId: conversationId,
+          maxToolTier: auth.auth.keyContext ? 1 : undefined,
           onAssistantText: async (assistantText) => {
             if (!assistantText.trim()) return;
             try {
@@ -167,7 +170,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
           targetId: conversationId,
           attributes: {
             verb: 'send',
-            endpoint: `/api/chat/${conversationId}`,
+            endpoint: request.nextUrl.pathname,
             method: 'POST',
             siteId: refreshed.siteId,
             machineId,
@@ -194,6 +197,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         // same write).
         return streamResult.response as unknown as NextResponse;
       },
+      { requireKey: true },
     );
   } catch (err) {
     return problemFromError(err, `chat/[conversationId]:POST`);
@@ -282,7 +286,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           targetId: conversationId,
           attributes: {
             verb: 'rename',
-            endpoint: `/api/chat/${conversationId}`,
+            endpoint: request.nextUrl.pathname,
             method: 'PATCH',
             siteId: conversation.siteId,
             newTitle: renamed.title,
@@ -361,7 +365,7 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
           targetId: conversationId,
           attributes: {
             verb: 'delete',
-            endpoint: `/api/chat/${conversationId}`,
+            endpoint: request.nextUrl.pathname,
             method: 'DELETE',
             siteId: conversation.siteId,
             alreadyDeleted: result.alreadyDeleted,
@@ -388,11 +392,7 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
 
 function resolveMachineId(
   conversation: ChatConversation,
-  bodyOverride: unknown,
 ): string {
-  if (typeof bodyOverride === 'string' && bodyOverride.length > 0) {
-    return bodyOverride;
-  }
   if (conversation.machineId) return conversation.machineId;
   return SITE_TARGET_ID;
 }

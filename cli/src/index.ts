@@ -59,8 +59,9 @@ export function buildProgram(): Command {
   registerMachineCommands(program);
   registerAuditLogCommands(program);
 
-  // c-tier stubs (wave 3): chat / user / deploy / process / installer.
-  // top-level `deploy` is the classic-installer stub group; the real
+  // c-tier nouns (wave 3): chat is backed by canonical Cortex routes;
+  // user / deploy / process / installer are progressively filled in.
+  // top-level `deploy` is the classic-installer group; the real
   // content-addressed deploy lives at `roost deploy` above.
   registerChatCommands(program);
   registerUserCommands(program);

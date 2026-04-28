@@ -146,13 +146,18 @@ export async function POST(request: NextRequest) {
     const db = getAdminDb();
     const isSiteMode = machineId === SITE_TARGET_ID;
 
-    // Verify access and resolve tier ceiling. Members with site access only
-    // get read-only tools; destructive tools require site-admin privileges.
+    // Verify access and resolve tier ceiling. Session/id-token callers use
+    // their site role. API-key callers are capped to read-only tools so a
+    // chat-scoped key cannot inherit the owner's admin role and dispatch
+    // destructive machine/process/deploy tools.
     const access = await verifyUserSiteAccess(db, userId, siteId);
+    const effectiveAccess = auth.keyContext
+      ? { ...access, isSuperadmin: false, isSiteAdmin: false }
+      : access;
 
     // ─── Site-Wide Mode (unchanged — web-side LLM) ─────────────────────
     if (isSiteMode) {
-      return handleSiteWideMode(db, userId, siteId, messages, chatId, access);
+      return handleSiteWideMode(db, userId, siteId, messages, chatId, effectiveAccess);
     }
 
     // ─── Single Machine Mode ───────────────────────────────────────────
@@ -183,7 +188,7 @@ export async function POST(request: NextRequest) {
     // cap (tier 1, read-only) is actually enforced. The local Cortex path
     // runs tools inside the agent and does not yet honor a per-user tier
     // cap — routing members through it would reopen the tier-3 exposure.
-    const cortexLocal = access.isSiteAdmin
+    const cortexLocal = effectiveAccess.isSiteAdmin
       ? await isCortexLocal(db, siteId, machineId)
       : false;
 
@@ -192,7 +197,7 @@ export async function POST(request: NextRequest) {
       return handleLocalCortex(db, siteId, machineId, machineName, messages, chatId);
     } else {
       // ─── Fallback: Server-side LLM (existing approach) ────────────
-      return handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, access);
+      return handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, effectiveAccess);
     }
   } catch (error: unknown) {
     return apiError(error, 'cortex');

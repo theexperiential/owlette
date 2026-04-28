@@ -482,5 +482,6 @@ common errors you'll hit during the walkthrough, with resolution.
 - **automate the flow** — [workflows.md §1 ci/cd publish on git tag](../../dev/active/roost-public-api/reference/workflows.md) adapts this walkthrough to a github actions job.
 - **diff two versions** — before rolling out a big change, call `GET /api/roosts/{id}/versions/{versionRef}/diff?against=<prior>` to see exactly which files change.
 - **subscribe to events** — `POST /api/webhooks` delivers `version.published`, `deployment.failed`, `quota.warning`. see [api-surface.md §10](../../dev/active/roost-public-api/reference/api-surface.md#10-webhooks).
+- **ask Cortex** — `POST /api/cortex/conversations` starts a site or machine conversation; see [cortex.md](./cortex.md) for streaming message examples and scope notes.
 - **targeted rollouts** — `POST /api/roosts/{id}/deploy` supports canary strategy, scheduled rollouts, and dry-run. see [api-surface.md §5](../../dev/active/roost-public-api/reference/api-surface.md#5-deployments-targeted-rollout).
 - **audit compliance** — `GET /api/sites/{id}/audit-log` gives you a tamper-evident chain of every sensitive action.
