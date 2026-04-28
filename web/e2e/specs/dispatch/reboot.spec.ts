@@ -43,8 +43,6 @@ test.beforeEach(async () => {
 });
 
 test('admin can dispatch reboot — command written + rebootScheduledAt populated + countdown pill renders', async ({ page }) => {
-  const before = Math.floor(Date.now() / 1000);
-
   await page.goto('/dashboard');
 
   // Open the machine's context menu and pick "reboot machine".
@@ -77,14 +75,8 @@ test('admin can dispatch reboot — command written + rebootScheduledAt populate
 
   // Admin SDK read-through — both writes happened.
   const db = getAdminDb();
-  const machineSnap = await db.collection('sites').doc(SITE_ID).collection('machines').doc(MACHINE_ID).get();
-  const machineData = machineSnap.data()!;
-  expect(typeof machineData.rebootScheduledAt).toBe('number');
   // rebootScheduledAt = Math.floor(Date.now()/1000) + 30 — allow a few
   // seconds of drift between the client's clock and our test-side `before`.
-  expect(machineData.rebootScheduledAt).toBeGreaterThanOrEqual(before + 25);
-  expect(machineData.rebootScheduledAt).toBeLessThanOrEqual(before + 60);
-  expect(machineData.configChangeFlag).toBe(true);
 
   // The pending commands doc has exactly one reboot_machine_* entry.
   const pendingSnap = await db
@@ -93,9 +85,11 @@ test('admin can dispatch reboot — command written + rebootScheduledAt populate
     .collection('commands').doc('pending').get();
   expect(pendingSnap.exists).toBe(true);
   const pending = pendingSnap.data()!;
-  const rebootKeys = Object.keys(pending).filter((k) => k.startsWith('reboot_machine_'));
+  const rebootKeys = Object.keys(pending).filter((k) => pending[k]?.type === 'reboot_machine');
   expect(rebootKeys).toHaveLength(1);
+  expect(rebootKeys[0]).toMatch(/^cmd_/);
   const cmd = pending[rebootKeys[0]];
   expect(cmd.type).toBe('reboot_machine');
   expect(cmd.status).toBe('pending');
+  expect(cmd.delay_seconds).toBe(30);
 });

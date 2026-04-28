@@ -97,6 +97,31 @@ describe('updateProcess', () => {
     expect(captured!.autolaunch).toBe(true);
   });
 
+  it('rejects scheduled launch mode when no schedules exist', async () => {
+    mockWithProcessLock.mockImplementation(async (_s, _m, fn) => fn([row()]));
+    await expect(
+      updateProcess(CTX, patchInput({ launch_mode: 'scheduled' })),
+    ).rejects.toMatchObject({ code: 'missing_schedules' });
+  });
+
+  it('allows scheduled launch mode when schedules are provided', async () => {
+    let captured: MockProcRow | null = null;
+    mockWithProcessLock.mockImplementation(async (_s, _m, fn) => {
+      const out = fn([row()]);
+      captured = out.processes[0] as MockProcRow;
+      return out.result;
+    });
+    await updateProcess(
+      CTX,
+      patchInput({
+        launch_mode: 'scheduled',
+        schedules: [{ days: ['mon'], ranges: [{ start: '09:00', stop: '17:00' }] }],
+      }),
+    );
+    expect(captured!.launch_mode).toBe('scheduled');
+    expect(captured!.autolaunch).toBe(true);
+  });
+
   it('throws ActionInputError on empty patch', async () => {
     await expect(updateProcess(CTX, patchInput({}))).rejects.toThrow(ActionInputError);
   });

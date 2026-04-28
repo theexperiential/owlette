@@ -99,7 +99,7 @@ describe('createSchedulePreset', () => {
           name: 'block-a',
           colorIndex: 0,
           days: ['mon', 'tue'],
-          ranges: [{ start: '09:00', end: '17:00' }],
+          ranges: [{ start: '09:00', stop: '17:00' }],
         },
       ],
       isBuiltIn: false,
@@ -134,7 +134,7 @@ describe('createSchedulePreset', () => {
     await expect(
       createSchedulePreset(ctx, {
         name: 'Bad preset',
-        blocks: [{ days: ['mon'], ranges: [{ start: '25:00', end: '17:00' }] }],
+        blocks: [{ days: ['mon'], ranges: [{ start: '25:00', stop: '17:00' }] }],
         isBuiltIn: false,
         order: 0,
         createdBy: 'uid_alice',
@@ -146,7 +146,7 @@ describe('createSchedulePreset', () => {
     await expect(
       createSchedulePreset(ctx, {
         name: 'Bad preset',
-        blocks: [{ days: ['funday'], ranges: [{ start: '09:00', end: '17:00' }] }],
+        blocks: [{ days: ['funday'], ranges: [{ start: '09:00', stop: '17:00' }] }],
         isBuiltIn: false,
         order: 0,
         createdBy: 'uid_alice',

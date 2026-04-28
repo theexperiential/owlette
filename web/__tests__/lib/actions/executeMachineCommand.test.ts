@@ -267,6 +267,7 @@ describe('executeMachineCommand — allowlist', () => {
       'stop_live_view',
       'restart_process',
       'start_process',
+      'stop_process',
       'kill_process',
       'set_launch_mode',
       'apply_display_topology',
@@ -504,8 +505,8 @@ describe('executeMachineCommand — per-type payload pass-through', () => {
     expect(entry.deployment_id).toBe('dep_1');
   });
 
-  it('restart_process / start_process / kill_process forward process_id + process_name', async () => {
-    for (const type of ['restart_process', 'start_process', 'kill_process'] as const) {
+  it('restart_process / start_process / stop_process / kill_process forward process_id + process_name', async () => {
+    for (const type of ['restart_process', 'start_process', 'stop_process', 'kill_process'] as const) {
       const fake = buildFakeDb();
       await executeMachineCommand(
         ctxFor(),

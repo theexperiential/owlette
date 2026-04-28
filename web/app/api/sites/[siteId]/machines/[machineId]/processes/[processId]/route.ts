@@ -21,6 +21,8 @@ import { requireMachineAuthAndScope } from '@/app/api/_shared';
 import { ActionInputError } from '@/lib/actions/createProcess.server';
 import { updateProcess } from '@/lib/actions/updateProcess.server';
 import { deleteProcess } from '@/lib/actions/deleteProcess.server';
+import { validateUpdateProcessFields } from '@/lib/processPayloadValidation';
+import { lookupLiveProcessStatus } from '@/lib/processResponse.server';
 
 interface RouteContext {
   params: Promise<{ siteId: string; machineId: string; processId: string }>;
@@ -52,10 +54,11 @@ export const GET = withRateLimit(
         return problem(404, 'process_not_found', `Process ${processId} not found.`);
       }
 
-      const live =
-        ((statusSnap.exists ? statusSnap.data() : null)?.metrics?.processes?.[
-          processId
-        ] as Record<string, unknown>) || {};
+      const liveProcesses = ((statusSnap.exists ? statusSnap.data() : null)?.metrics?.processes || {}) as Record<
+        string,
+        Record<string, unknown>
+      >;
+      const live = lookupLiveProcessStatus(proc, liveProcesses);
 
       return NextResponse.json({
         ok: true,
@@ -94,14 +97,9 @@ const patchWrapped = authorizedSiteHandler<{
       return problem(400, 'invalid_body', 'Request body must be valid JSON.');
     }
 
-    // Strip server-managed fields. Returning 400 (vs silent strip) makes
-    // tampering attempts visible to clients.
-    if ('processId' in body || 'id' in body) {
-      return problem(400, 'forbidden_field', 'Cannot mutate `processId` or `id`.');
-    }
-
-    if (Object.keys(body).length === 0) {
-      return problem(400, 'no_fields', 'Request body must contain at least one field to update.');
+    const validation = validateUpdateProcessFields(body);
+    if (!validation.ok) {
+      return problem(validation.error.status, validation.error.code, validation.error.detail);
     }
 
     const auth = await resolveAuth(request);
@@ -125,7 +123,7 @@ const patchWrapped = authorizedSiteHandler<{
             {
               machineId,
               processId,
-              patch: body as Partial<PublicProcessConfig>,
+              patch: validation.value as Partial<PublicProcessConfig>,
             },
           );
           return NextResponse.json({ ok: true, data: { processId: result.processId } });

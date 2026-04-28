@@ -54,21 +54,22 @@ test('admin cancels an in-flight reboot — cancel command dispatched + agent cl
   await cancelPill.click();
 
   // Wait for the cancel_reboot command to land in pending.
-  let pendingIds: string[] = [];
+  const db = getAdminDb();
+  let pending: FirebaseFirestore.DocumentData = {};
   await expect.poll(async () => {
-    pendingIds = await getPendingCommandIds(SITE_ID, MACHINE_ID);
-    return pendingIds.filter((id) => id.startsWith('cancel_reboot_')).length;
+    const snap = await db
+      .collection('sites').doc(SITE_ID)
+      .collection('machines').doc(MACHINE_ID)
+      .collection('commands').doc('pending').get();
+    pending = snap.data() ?? {};
+    return Object.keys(pending).filter((id) => pending[id]?.type === 'cancel_reboot').length;
   }, { timeout: 5_000 }).toBe(1);
 
-  const cancelCmdId = pendingIds.find((id) => id.startsWith('cancel_reboot_'))!;
+  const cancelCmdId = Object.keys(pending).find((id) => pending[id]?.type === 'cancel_reboot')!;
 
   // Verify command shape.
-  const db = getAdminDb();
-  const pendingSnap = await db
-    .collection('sites').doc(SITE_ID)
-    .collection('machines').doc(MACHINE_ID)
-    .collection('commands').doc('pending').get();
-  const cmd = pendingSnap.data()![cancelCmdId];
+  expect(cancelCmdId).toMatch(/^cmd_/);
+  const cmd = pending[cancelCmdId];
   expect(cmd.type).toBe('cancel_reboot');
   expect(cmd.status).toBe('pending');
 

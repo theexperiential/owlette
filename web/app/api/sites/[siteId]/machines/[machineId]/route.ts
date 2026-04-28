@@ -1,6 +1,8 @@
 /**
- * GET /api/sites/{siteId}/machines/{machineId}
- *      → Machine detail: list fields + metrics + processes.
+ * GET    /api/sites/{siteId}/machines/{machineId}
+ *        Machine detail: list fields + metrics + processes.
+ * DELETE /api/sites/{siteId}/machines/{machineId}
+ *        Remove the machine and bounded associated data.
  *
  * roost public api wave 3.6.
  */
@@ -15,12 +17,19 @@ import {
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
   applyAuthDeprecations,
+  readAndParseJsonBody,
   requireSiteAuthAndScope,
 } from '../../../../_shared';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
+import { Capability } from '@/lib/capabilities';
+import { withIdempotency } from '@/lib/idempotency';
+import { removeMachine } from '@/lib/actions/removeMachine.server';
 
 interface RouteParams {
   params: Promise<{ siteId: string; machineId: string }>;
 }
+
+type PathParams = { siteId: string; machineId: string } & Record<string, string | undefined>;
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
@@ -77,6 +86,46 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     return problemFromError(err, 'v2/sites/[siteId]/machines/[machineId]:GET');
   }
 }
+
+export const DELETE = authorizedSiteHandler<PathParams>({
+  capability: Capability.MACHINE_REMOVE,
+  siteIdParam: 'path',
+  targetKind: 'machine',
+  targetIdParam: 'machineId',
+  apiKeyScope: { resource: 'machine', idParam: 'machineId', permission: 'write' },
+})(async (request: NextRequest, ctx, routeContext) => {
+  try {
+    const { machineId } = await routeContext.params;
+    const parsed = await readAndParseJsonBody(request);
+    if (!parsed.ok) return parsed.response;
+
+    return withIdempotency(
+      request,
+      {
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
+      },
+      parsed.raw,
+      async () => {
+        const result = await removeMachine({
+          siteId: ctx.siteId,
+          machineId,
+        });
+
+        return applyAuthDeprecations(
+          NextResponse.json({
+            ok: true,
+            data: result,
+          }),
+          ctx.scopeCheck,
+        );
+      },
+      { requireKey: true },
+    );
+  } catch (err) {
+    return problemFromError(err, 'v2/sites/[siteId]/machines/[machineId]:DELETE');
+  }
+});
 
 function heartbeatToIso(v: unknown): string | null {
   if (v === null || v === undefined) return null;

@@ -53,10 +53,10 @@ async function openDisplayPanel(page: Page): Promise<void> {
   // collapsible section.
   await page.getByTestId('view-toggle-list').click();
 
-  // Click the machine row's "view displays" button (Monitor icon). The
-  // list view renders one such button per row; we seed exactly one
-  // machine so there's no ambiguity.
-  await page.getByTestId('open-display-panel').click();
+  // Click the seeded machine row's "view displays" button (Monitor icon).
+  // Other specs may leave additional site-A machines in a full serial run.
+  const row = page.getByTestId('machine-row').filter({ hasText: MACHINE_ID });
+  await row.getByTestId('open-display-panel').click();
 
   // Panel slides open via a useLayoutEffect height animation; wait until
   // the Card itself is in the DOM before asserting on its children.

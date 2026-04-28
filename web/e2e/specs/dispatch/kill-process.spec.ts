@@ -114,23 +114,25 @@ test('admin kills a process — command dispatched + stubbed completion + proces
   // no toast on the happy path (only logger.debug). Wait for the command
   // doc to land via Admin SDK polling: the write happens fast but isn't
   // synchronously observable from page.click() returning.
-  let pendingIds: string[] = [];
+  const db = getAdminDb();
+  let pending: FirebaseFirestore.DocumentData = {};
   await expect.poll(async () => {
-    pendingIds = await getPendingCommandIds(SITE_ID, MACHINE_ID);
-    return pendingIds.filter((id) => id.startsWith('kill_')).length;
+    const snap = await db
+      .collection('sites').doc(SITE_ID)
+      .collection('machines').doc(MACHINE_ID)
+      .collection('commands').doc('pending').get();
+    pending = snap.data() ?? {};
+    return Object.keys(pending).filter((id) => pending[id]?.type === 'kill_process').length;
   }, { timeout: 5_000 }).toBe(1);
 
-  const killCmdId = pendingIds.find((id) => id.startsWith('kill_'))!;
+  const killCmdId = Object.keys(pending).find((id) => pending[id]?.type === 'kill_process')!;
 
   // Verify the command's shape.
-  const db = getAdminDb();
-  const pendingSnap = await db
-    .collection('sites').doc(SITE_ID)
-    .collection('machines').doc(MACHINE_ID)
-    .collection('commands').doc('pending').get();
-  const cmd = pendingSnap.data()![killCmdId];
+  expect(killCmdId).toMatch(/^cmd_/);
+  const cmd = pending[killCmdId];
   expect(cmd.type).toBe('kill_process');
   expect(cmd.process_name).toBe(PROCESS_NAME);
+  expect(cmd.process_id).toBe(PROCESS_ID);
   expect(cmd.status).toBe('pending');
 
   // Simulate the agent: mark the command completed, then push a metrics

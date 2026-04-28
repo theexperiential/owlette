@@ -19,6 +19,7 @@ import {
 import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
 import type { Actor } from '@/lib/capabilities';
+import { validateCreateProcessFields } from '@/lib/processPayloadValidation';
 
 export class ActionInputError extends Error {
   status: number;
@@ -43,6 +44,7 @@ export interface CreateProcessInput {
   relaunch_attempts?: string;
   launch_mode?: 'off' | 'always' | 'scheduled';
   schedules?: PublicProcessConfig['schedules'];
+  schedulePresetId?: string | null;
 }
 
 export interface CreateProcessResult {
@@ -60,32 +62,39 @@ export async function createProcess(
   ctx: ActionContext,
   input: CreateProcessInput,
 ): Promise<CreateProcessResult> {
-  if (!input.name || typeof input.name !== 'string') {
-    throw new ActionInputError(400, 'missing_field', 'Field `name` is required.');
+  const { machineId, ...fields } = input;
+  const validation = validateCreateProcessFields(fields as Record<string, unknown>);
+  if (!validation.ok) {
+    throw new ActionInputError(
+      validation.error.status,
+      validation.error.code,
+      validation.error.detail,
+    );
   }
-  if (!input.exe_path || typeof input.exe_path !== 'string') {
-    throw new ActionInputError(400, 'missing_field', 'Field `exe_path` is required.');
-  }
+  const processInput = validation.value;
 
   const newProcessId = generateProcessId();
-  const launchMode = input.launch_mode ?? 'off';
+  const launchMode = processInput.launch_mode ?? 'off';
 
-  await withProcessLock(ctx.siteId, input.machineId, (processes) => {
+  await withProcessLock(ctx.siteId, machineId, (processes) => {
     const newProcess: PublicProcessConfig = {
       id: newProcessId,
       processId: newProcessId,
-      name: input.name,
-      exe_path: input.exe_path,
-      file_path: input.file_path ?? '',
-      cwd: input.cwd ?? '',
-      priority: input.priority ?? 'Normal',
-      visibility: input.visibility ?? 'Show',
-      time_delay: input.time_delay ?? '0',
-      time_to_init: input.time_to_init ?? '10',
-      relaunch_attempts: input.relaunch_attempts ?? '3',
+      name: processInput.name,
+      exe_path: processInput.exe_path,
+      file_path: processInput.file_path ?? '',
+      cwd: processInput.cwd ?? '',
+      priority: processInput.priority ?? 'Normal',
+      visibility: processInput.visibility ?? 'Show',
+      time_delay: processInput.time_delay ?? '0',
+      time_to_init: processInput.time_to_init ?? '10',
+      relaunch_attempts: processInput.relaunch_attempts ?? '3',
       autolaunch: launchMode !== 'off',
       launch_mode: launchMode,
-      schedules: input.schedules ?? null,
+      schedules: processInput.schedules ?? null,
+      ...(processInput.schedulePresetId !== undefined
+        ? { schedulePresetId: processInput.schedulePresetId }
+        : {}),
     };
     return {
       processes: [...processes, newProcess],
@@ -102,11 +111,11 @@ export async function createProcess(
       verb: 'create',
       endpoint: 'processes',
       method: 'POST',
-      machineId: input.machineId,
+      machineId,
     },
   });
 
-  logger.info(`Process created: ${input.name} on ${input.machineId}`, {
+  logger.info(`Process created: ${processInput.name} on ${machineId}`, {
     context: 'actions/createProcess',
   });
 

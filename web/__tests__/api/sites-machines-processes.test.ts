@@ -65,7 +65,11 @@ jest.mock('@/lib/apiAuth.server', () => {
   };
 });
 
-function mockAuthorizedSiteHandler(options: { targetKind?: string }) {
+let mockAuthorizedSiteOptions: Array<Record<string, unknown>> | undefined;
+
+function mockAuthorizedSiteHandler(options: Record<string, unknown>) {
+  mockAuthorizedSiteOptions ??= [];
+  mockAuthorizedSiteOptions.push(options);
   return (
   handler: (
     request: NextRequest,
@@ -73,6 +77,8 @@ function mockAuthorizedSiteHandler(options: { targetKind?: string }) {
       actor: { type: 'user'; userId: string; role: 'admin'; sites: string[] };
       siteId: string;
       correlationId: string;
+      auth: { userId: string; keyContext: null };
+      scopeCheck: { isLegacy: boolean };
     },
     routeContext: { params: Promise<Record<string, string>> },
   ) => Promise<Response>,
@@ -87,13 +93,15 @@ function mockAuthorizedSiteHandler(options: { targetKind?: string }) {
   if (!auth.ok) return auth.response;
   return handler(
     request,
-    {
-      actor: { type: 'user', userId: auth.userId, role: 'admin', sites: [params.siteId] },
-      siteId: params.siteId,
-      correlationId: `corr-${options.targetKind ?? 'site'}`,
-    },
-    { params: Promise.resolve(params) },
-  );
+      {
+        actor: { type: 'user', userId: auth.userId, role: 'admin', sites: [params.siteId] },
+        siteId: params.siteId,
+        correlationId: `corr-${options.targetKind ?? 'site'}`,
+        auth: auth.auth,
+        scopeCheck: auth.scopeCheck,
+      },
+      { params: Promise.resolve(params) },
+    );
 };
 }
 jest.mock('@/lib/authorizedHandler.server', () => ({
@@ -115,6 +123,25 @@ const mockEmitMutation = jest.fn();
 jest.mock('@/lib/auditLogClient', () => ({
   emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
 }));
+
+const mockExecuteMachineCommand = jest.fn().mockResolvedValue({ commandId: 'cmd-process-1' });
+jest.mock('@/lib/actions/executeMachineCommand.server', () => {
+  class FakeExecuteMachineCommandError extends Error {
+    status: number;
+    code: string;
+    detail: string;
+    constructor(status: number, code: string, detail: string) {
+      super(detail);
+      this.status = status;
+      this.code = code;
+      this.detail = detail;
+    }
+  }
+  return {
+    executeMachineCommand: (...args: unknown[]) => mockExecuteMachineCommand(...args),
+    ExecuteMachineCommandError: FakeExecuteMachineCommandError,
+  };
+});
 
 // Process config helpers.
 interface MockProcRow {
@@ -195,6 +222,7 @@ import { POST as POST_KILL } from '@/app/api/sites/[siteId]/machines/[machineId]
 import { POST as POST_START } from '@/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/start/route';
 import { POST as POST_STOP } from '@/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/stop/route';
 import { POST as POST_SCHEDULE } from '@/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/schedule/route';
+import { PATCH as PATCH_LAUNCH_MODE } from '@/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/launch-mode/route';
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
@@ -256,6 +284,11 @@ function makeProblemResponse(status: number, code: string, title: string) {
   ) as unknown as import('next/server').NextResponse;
 }
 
+function lastIdempotencyOptions(): unknown {
+  const call = mockWithIdempotency.mock.calls[mockWithIdempotency.mock.calls.length - 1];
+  return call?.[4];
+}
+
 function authForbidden() {
   mockRequireMachineAuthAndScope.mockResolvedValueOnce({
     ok: false,
@@ -279,6 +312,7 @@ beforeEach(() => {
     scopeCheck: { isLegacy: false },
   });
   mockWithIdempotency.mockImplementation(async (_req, _ctx, _body, fn) => fn());
+  mockExecuteMachineCommand.mockResolvedValue({ commandId: 'cmd-process-1' });
 });
 
 /* -------------------------------------------------------------------------- */
@@ -345,6 +379,18 @@ describe('GET /api/sites/{siteId}/machines/{machineId}/processes', () => {
   });
 });
 
+describe('process route authorization wrappers', () => {
+  it('wraps process mutations with explicit role capabilities', () => {
+    expect(mockAuthorizedSiteOptions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ capability: 'MACHINE_CONFIG_WRITE', targetKind: 'machine' }),
+        expect.objectContaining({ capability: 'MACHINE_CONFIG_WRITE', targetKind: 'process' }),
+        expect.objectContaining({ capability: 'MACHINE_EXEC_COMMAND', targetKind: 'process' }),
+      ]),
+    );
+  });
+});
+
 /* -------------------------------------------------------------------------- */
 /*  POST create                                                               */
 /* -------------------------------------------------------------------------- */
@@ -366,6 +412,14 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/processes', () => {
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.data.processId).toBeTruthy();
+  });
+
+  it('requires idempotency at the route helper layer', async () => {
+    await POST_CREATE(
+      jsonReq(urlList(), 'POST', { name: 'New', exe_path: 'C:/x.exe' }, { 'idempotency-key': 'key-create-required' }),
+      ctx()
+    );
+    expect(lastIdempotencyOptions()).toEqual({ requireKey: true });
   });
 
   it('returns 400 when name is missing', async () => {
@@ -394,6 +448,36 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/processes', () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.code).toBe('forbidden_field');
+  });
+
+  it('returns 400 for unknown process config fields', async () => {
+    const res = await POST_CREATE(
+      jsonReq(urlList(), 'POST', { name: 'X', exe_path: 'a', injected: true }, { 'idempotency-key': 'k-unknown' }),
+      ctx()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('unknown_field');
+  });
+
+  it('returns 400 for invalid launch_mode', async () => {
+    const res = await POST_CREATE(
+      jsonReq(urlList(), 'POST', { name: 'X', exe_path: 'a', launch_mode: 'banana' }, { 'idempotency-key': 'k-mode' }),
+      ctx()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('invalid_field');
+  });
+
+  it('returns 400 for scheduled create without schedules', async () => {
+    const res = await POST_CREATE(
+      jsonReq(urlList(), 'POST', { name: 'X', exe_path: 'a', launch_mode: 'scheduled' }, { 'idempotency-key': 'k-sched' }),
+      ctx()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('missing_schedules');
   });
 
   it('returns 400 on invalid JSON body', async () => {
@@ -485,6 +569,38 @@ describe('GET /api/sites/{siteId}/machines/{machineId}/processes/{processId}', (
     expect(body.data.status).toBe('running');
   });
 
+  it('merges live detail status by legacy process name', async () => {
+    mockReadProcessList.mockResolvedValueOnce([
+      makeProcRow({ id: 'legacy-proc-id', processId: PID, name: 'LegacyName' }),
+    ]);
+    mockFsGet.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({ metrics: { processes: { LegacyName: { status: 'stopped', pid: 7 } } } }),
+    });
+
+    const res = await GET_DETAIL(jsonReq(urlDetail(), 'GET'), ctx());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.status).toBe('stopped');
+    expect(body.data.pid).toBe(7);
+  });
+
+  it('merges live detail status by legacy id', async () => {
+    mockReadProcessList.mockResolvedValueOnce([
+      makeProcRow({ id: 'legacy-proc-id', processId: PID, name: 'LegacyName' }),
+    ]);
+    mockFsGet.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({ metrics: { processes: { 'legacy-proc-id': { status: 'running', pid: 8 } } } }),
+    });
+
+    const res = await GET_DETAIL(jsonReq(urlDetail(), 'GET'), ctx());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.status).toBe('running');
+    expect(body.data.pid).toBe(8);
+  });
+
   it('returns 404 when process not found', async () => {
     mockReadProcessList.mockResolvedValueOnce([]);
     mockFsGet.mockResolvedValueOnce({ exists: false, data: () => null });
@@ -553,6 +669,36 @@ describe('PATCH /api/sites/{siteId}/machines/{machineId}/processes/{processId}',
       ctx()
     );
     expect(res.status).toBe(400);
+  });
+
+  it('rejects unknown fields on update', async () => {
+    const res = await PATCH_UPDATE(
+      jsonReq(urlDetail(), 'PATCH', { unreviewed: true }),
+      ctx()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('unknown_field');
+  });
+
+  it('rejects invalid update field types', async () => {
+    const res = await PATCH_UPDATE(
+      jsonReq(urlDetail(), 'PATCH', { autolaunch: 'yes' }),
+      ctx()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('invalid_field');
+  });
+
+  it('rejects scheduled launch mode without existing or provided schedules', async () => {
+    const res = await PATCH_UPDATE(
+      jsonReq(urlDetail(), 'PATCH', { launch_mode: 'scheduled' }),
+      ctx()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('missing_schedules');
   });
 
   it('returns 404 when process not found', async () => {
@@ -688,23 +834,34 @@ describe.each([
     expect(body.data.status).toBe('pending');
   });
 
-  it('writes a command-queue entry', async () => {
+  it('requires idempotency at the route helper layer', async () => {
+    await handler(
+      jsonReq(`${urlDetail()}/${verb}`, 'POST', {}, { 'idempotency-key': `${verb}-key-required` }),
+      ctx()
+    );
+    expect(lastIdempotencyOptions()).toEqual({ requireKey: true });
+  });
+
+  it('queues through the canonical machine command action', async () => {
     await handler(
       jsonReq(`${urlDetail()}/${verb}`, 'POST', {}, { 'idempotency-key': `${verb}-key` }),
       ctx()
     );
-    expect(mockFsSet).toHaveBeenCalledWith(
+    expect(mockExecuteMachineCommand).toHaveBeenCalledWith(
       expect.objectContaining({
-        // Single key (the commandId), pointing at an object including type.
+        siteId: SITE,
+        machineId: MACHINE,
+        correlationId: 'corr-process',
       }),
-      expect.objectContaining({ merge: true })
+      {
+        type: expectedCmdType,
+        payload: {
+          process_id: PID,
+          processId: PID,
+          process_name: 'TestProc',
+        },
+      },
     );
-    // Inspect the most recent set call
-    const lastCall = mockFsSet.mock.calls[mockFsSet.mock.calls.length - 1];
-    const payload = lastCall[0] as Record<string, { type: string; processId: string }>;
-    const cmdEntry = Object.values(payload)[0];
-    expect(cmdEntry.type).toBe(expectedCmdType);
-    expect(cmdEntry.processId).toBe(PID);
   });
 
   it('returns 404 when process not found', async () => {
@@ -751,6 +908,82 @@ describe.each([
 });
 
 /* -------------------------------------------------------------------------- */
+/*  PATCH launch-mode                                                        */
+/* -------------------------------------------------------------------------- */
+
+describe('PATCH /api/sites/{siteId}/machines/{machineId}/processes/{processId}/launch-mode', () => {
+  beforeEach(() => {
+    mockWithProcessLock.mockImplementation(async (_s, _m, fn) => {
+      fn([makeProcRow()]);
+      return undefined;
+    });
+  });
+
+  it('returns 200 when launch mode is updated', async () => {
+    const res = await PATCH_LAUNCH_MODE(
+      jsonReq(`${urlDetail()}/launch-mode`, 'PATCH', { mode: 'always' }, { 'idempotency-key': 'lm-1' }),
+      ctx()
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data).toEqual({ processId: PID, mode: 'always' });
+  });
+
+  it('requires idempotency at the route helper layer', async () => {
+    await PATCH_LAUNCH_MODE(
+      jsonReq(`${urlDetail()}/launch-mode`, 'PATCH', { mode: 'off' }, { 'idempotency-key': 'lm-2' }),
+      ctx()
+    );
+    expect(lastIdempotencyOptions()).toEqual({ requireKey: true });
+  });
+
+  it('returns 400 for invalid launch mode', async () => {
+    const res = await PATCH_LAUNCH_MODE(
+      jsonReq(`${urlDetail()}/launch-mode`, 'PATCH', { mode: 'bad' }, { 'idempotency-key': 'lm-3' }),
+      ctx()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('invalid_mode');
+  });
+
+  it('returns 400 when scheduled mode omits schedules', async () => {
+    const res = await PATCH_LAUNCH_MODE(
+      jsonReq(`${urlDetail()}/launch-mode`, 'PATCH', { mode: 'scheduled' }, { 'idempotency-key': 'lm-4' }),
+      ctx()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('missing_schedules');
+  });
+
+  it('returns 404 when process is not found', async () => {
+    mockWithProcessLock.mockRejectedValueOnce(
+      new FakeProcessConfigError(404, 'Process p not found', 'process_not_found')
+    );
+    const res = await PATCH_LAUNCH_MODE(
+      jsonReq(`${urlDetail()}/launch-mode`, 'PATCH', { mode: 'off' }, { 'idempotency-key': 'lm-5' }),
+      ctx()
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('emits process_mutated with verb=set_launch_mode', async () => {
+    await PATCH_LAUNCH_MODE(
+      jsonReq(`${urlDetail()}/launch-mode`, 'PATCH', { mode: 'always' }, { 'idempotency-key': 'lm-6' }),
+      ctx()
+    );
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        targetId: PID,
+        attributes: expect.objectContaining({ verb: 'set_launch_mode', mode: 'always' }),
+      })
+    );
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /*  POST schedule                                                             */
 /* -------------------------------------------------------------------------- */
 
@@ -770,6 +1003,14 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/sc
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.data.mode).toBe('off');
+  });
+
+  it('requires idempotency at the route helper layer', async () => {
+    await POST_SCHEDULE(
+      jsonReq(`${urlDetail()}/schedule`, 'POST', { mode: 'off' }, { 'idempotency-key': 'sk-required' }),
+      ctx()
+    );
+    expect(lastIdempotencyOptions()).toEqual({ requireKey: true });
   });
 
   it('returns 200 for mode=always', async () => {
@@ -809,6 +1050,21 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/sc
       ctx()
     );
     expect(res.status).toBe(400);
+  });
+
+  it('returns 400 for malformed schedule blocks', async () => {
+    const res = await POST_SCHEDULE(
+      jsonReq(
+        `${urlDetail()}/schedule`,
+        'POST',
+        { mode: 'scheduled', blocks: [{ days: 'mon', ranges: [] }] },
+        { 'idempotency-key': 'sk-malformed' }
+      ),
+      ctx()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('invalid_field');
   });
 
   it('returns 404 when process not found', async () => {

@@ -103,7 +103,12 @@ export function useDisplayActions(siteId: string, machineId: string): UseDisplay
 
     setApplying(true);
     try {
-      const response = await fetch(displayLayoutUrl(siteId, machineId), { method: 'DELETE' });
+      const response = await fetch(displayLayoutUrl(siteId, machineId), {
+        method: 'DELETE',
+        headers: {
+          'Idempotency-Key': makeIdempotencyKey(`display-layout-clear-${machineId}`),
+        },
+      });
       if (!response.ok) throw new Error(await readApiError(response, 'Failed to clear display layout'));
     } finally {
       setApplying(false);
@@ -287,7 +292,10 @@ async function putDisplayLayout(
 ): Promise<void> {
   const response = await fetch(displayLayoutUrl(siteId, machineId), {
     method: 'PUT',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'Idempotency-Key': makeIdempotencyKey(`display-layout-${body.op ?? 'update'}-${machineId}`),
+    },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(await readApiError(response, 'Failed to update display layout'));
@@ -301,12 +309,22 @@ async function postMachineCommand(
 ): Promise<string> {
   const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/commands`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'Idempotency-Key': makeIdempotencyKey(`display-command-${type}-${machineId}`),
+    },
     body: JSON.stringify({ type, params }),
   });
   if (!response.ok) throw new Error(await readApiError(response, 'Failed to dispatch display command'));
   const body = await response.json();
   return body.data?.commandId ?? body.commandId;
+}
+
+function makeIdempotencyKey(prefix: string): string {
+  const id = typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${id}`;
 }
 
 async function readApiError(response: Response, fallback: string): Promise<string> {

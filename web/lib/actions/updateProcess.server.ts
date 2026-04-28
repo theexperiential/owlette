@@ -13,6 +13,7 @@ import {
 import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
 import { ActionInputError, type ActionContext } from './createProcess.server';
+import { validateUpdateProcessFields } from '@/lib/processPayloadValidation';
 
 export interface UpdateProcessInput {
   machineId: string;
@@ -38,13 +39,15 @@ export async function updateProcess(
   if ('processId' in patch || 'id' in patch) {
     throw new ActionInputError(400, 'forbidden_field', 'Cannot mutate `processId` or `id`.');
   }
-  if (Object.keys(patch).length === 0) {
+  const validation = validateUpdateProcessFields(patch as Record<string, unknown>);
+  if (!validation.ok) {
     throw new ActionInputError(
-      400,
-      'no_fields',
-      'Request body must contain at least one field to update.',
+      validation.error.status,
+      validation.error.code,
+      validation.error.detail,
     );
   }
+  const safePatch = validation.value;
 
   await withProcessLock(ctx.siteId, machineId, (processes) => {
     const idx = findProcessIndex(processes, processId);
@@ -52,15 +55,25 @@ export async function updateProcess(
       throw new ProcessConfigError(404, `Process ${processId} not found`, 'process_not_found');
     }
     const updated = [...processes];
+    if (safePatch.launch_mode === 'scheduled') {
+      const schedules = safePatch.schedules ?? updated[idx].schedules;
+      if (!Array.isArray(schedules) || schedules.length === 0) {
+        throw new ActionInputError(
+          400,
+          'missing_schedules',
+          'Schedules array is required when launch_mode is "scheduled".',
+        );
+      }
+    }
     const merged: PublicProcessConfig = {
       ...updated[idx],
-      ...patch,
+      ...safePatch,
       // Re-pin id fields so a malicious body can't override them.
       id: processId,
       processId,
     };
-    if (typeof patch.launch_mode === 'string') {
-      merged.autolaunch = patch.launch_mode !== 'off';
+    if (typeof safePatch.launch_mode === 'string') {
+      merged.autolaunch = safePatch.launch_mode !== 'off';
     }
     updated[idx] = merged;
     return { processes: updated, result: undefined };

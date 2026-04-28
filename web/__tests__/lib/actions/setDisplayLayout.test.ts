@@ -194,3 +194,33 @@ describe('setDisplayLayout — reset_breaker', () => {
     );
   });
 });
+
+describe('setDisplayLayout - set_remote_apply', () => {
+  it('writes displays.remoteApplyEnabled', async () => {
+    await setDisplayLayout(CTX, {
+      machineId: MACHINE,
+      op: 'set_remote_apply',
+      enabled: true,
+    });
+    const [payload, opts] = mockSet.mock.calls[0];
+    expect(payload).toEqual({
+      displays: {
+        remoteApplyEnabled: true,
+      },
+    });
+    expect(opts).toEqual({ merge: true });
+  });
+
+  it('emits an audit with verb=set_remote_apply', async () => {
+    await setDisplayLayout(CTX, {
+      machineId: MACHINE,
+      op: 'set_remote_apply',
+      enabled: false,
+    });
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attributes: expect.objectContaining({ verb: 'set_remote_apply' }),
+      }),
+    );
+  });
+});

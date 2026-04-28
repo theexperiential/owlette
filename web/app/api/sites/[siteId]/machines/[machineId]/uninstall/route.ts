@@ -22,6 +22,7 @@ import {
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import { readAndParseJsonBody } from '../../../../../_shared';
 import { emitMutation } from '@/lib/auditLogClient';
+import { withIdempotency } from '@/lib/idempotency';
 import {
   triggerUninstall,
   parseTriggerUninstallInput,
@@ -67,54 +68,65 @@ export const POST = authorizedSiteHandler<RouteParams>({
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 
-    let input;
-    try {
-      input = parseTriggerUninstallInput(parsed.body ?? {});
-    } catch (err) {
-      if (err instanceof TriggerUninstallError && err.code === 'validation_failed') {
-        return problemValidation(err.message, err.fieldErrors);
-      }
-      throw err;
-    }
-
-    let result;
-    try {
-      result = await triggerUninstall(ctx.siteId, machineId, input, {
-        auditCorrelationId: ctx.correlationId,
-      });
-    } catch (err) {
-      if (err instanceof TriggerUninstallError) {
-        return triggerUninstallErrorToResponse(err, ctx.siteId, machineId);
-      }
-      throw err;
-    }
-
-    emitMutation({
-      kind: 'machine_command_dispatched',
-      siteId: ctx.siteId,
-      actor: actorString(ctx.actor),
-      targetId: result.commandId,
-      attributes: {
-        commandType: 'uninstall_software',
-        endpoint: `/api/sites/${ctx.siteId}/machines/${machineId}/uninstall`,
-        method: 'POST',
-        machineId,
-        software_name: result.software_name,
-      },
-    });
-
-    return NextResponse.json(
+    return withIdempotency(
+      request,
       {
-        ok: true,
-        data: {
-          siteId: result.siteId,
-          machineId: result.machineId,
-          software_name: result.software_name,
-          commandId: result.commandId,
-          status: result.status,
-        },
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
-      { status: 202 },
+      parsed.raw,
+      async () => {
+        let input;
+        try {
+          input = parseTriggerUninstallInput(parsed.body ?? {});
+        } catch (err) {
+          if (err instanceof TriggerUninstallError && err.code === 'validation_failed') {
+            return problemValidation(err.message, err.fieldErrors);
+          }
+          throw err;
+        }
+
+        let result;
+        try {
+          result = await triggerUninstall(ctx.siteId, machineId, input, {
+            auditCorrelationId: ctx.correlationId,
+          });
+        } catch (err) {
+          if (err instanceof TriggerUninstallError) {
+            return triggerUninstallErrorToResponse(err, ctx.siteId, machineId);
+          }
+          throw err;
+        }
+
+        emitMutation({
+          kind: 'machine_command_dispatched',
+          siteId: ctx.siteId,
+          actor: actorString(ctx.actor),
+          targetId: result.commandId,
+          attributes: {
+            commandType: 'uninstall_software',
+            endpoint: `/api/sites/${ctx.siteId}/machines/${machineId}/uninstall`,
+            method: 'POST',
+            machineId,
+            software_name: result.software_name,
+          },
+        });
+
+        return NextResponse.json(
+          {
+            ok: true,
+            data: {
+              siteId: result.siteId,
+              machineId: result.machineId,
+              software_name: result.software_name,
+              commandId: result.commandId,
+              status: result.status,
+            },
+          },
+          { status: 202 },
+        );
+      },
+      { requireKey: true },
     );
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/machines/[machineId]/uninstall:POST');
@@ -155,54 +167,65 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
         ? { software_name: queryName }
         : bodyObj;
 
-    let input;
-    try {
-      input = parseCancelUninstallInput(rawInput);
-    } catch (err) {
-      if (err instanceof CancelUninstallError && err.code === 'validation_failed') {
-        return problemValidation(err.message, err.fieldErrors);
-      }
-      throw err;
-    }
-
-    let result;
-    try {
-      result = await cancelUninstall(ctx.siteId, machineId, input, {
-        auditCorrelationId: ctx.correlationId,
-      });
-    } catch (err) {
-      if (err instanceof CancelUninstallError) {
-        return cancelUninstallErrorToResponse(err, ctx.siteId, machineId);
-      }
-      throw err;
-    }
-
-    emitMutation({
-      kind: 'machine_command_dispatched',
-      siteId: ctx.siteId,
-      actor: actorString(ctx.actor),
-      targetId: result.commandId,
-      attributes: {
-        commandType: 'cancel_uninstall',
-        endpoint: `/api/sites/${ctx.siteId}/machines/${machineId}/uninstall`,
-        method: 'DELETE',
-        machineId,
-        software_name: result.software_name,
-      },
-    });
-
-    return NextResponse.json(
+    return withIdempotency(
+      request,
       {
-        ok: true,
-        data: {
-          siteId: result.siteId,
-          machineId: result.machineId,
-          software_name: result.software_name,
-          commandId: result.commandId,
-          status: result.status,
-        },
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
-      { status: 202 },
+      parsed.raw,
+      async () => {
+        let input;
+        try {
+          input = parseCancelUninstallInput(rawInput);
+        } catch (err) {
+          if (err instanceof CancelUninstallError && err.code === 'validation_failed') {
+            return problemValidation(err.message, err.fieldErrors);
+          }
+          throw err;
+        }
+
+        let result;
+        try {
+          result = await cancelUninstall(ctx.siteId, machineId, input, {
+            auditCorrelationId: ctx.correlationId,
+          });
+        } catch (err) {
+          if (err instanceof CancelUninstallError) {
+            return cancelUninstallErrorToResponse(err, ctx.siteId, machineId);
+          }
+          throw err;
+        }
+
+        emitMutation({
+          kind: 'machine_command_dispatched',
+          siteId: ctx.siteId,
+          actor: actorString(ctx.actor),
+          targetId: result.commandId,
+          attributes: {
+            commandType: 'cancel_uninstall',
+            endpoint: `/api/sites/${ctx.siteId}/machines/${machineId}/uninstall`,
+            method: 'DELETE',
+            machineId,
+            software_name: result.software_name,
+          },
+        });
+
+        return NextResponse.json(
+          {
+            ok: true,
+            data: {
+              siteId: result.siteId,
+              machineId: result.machineId,
+              software_name: result.software_name,
+              commandId: result.commandId,
+              status: result.status,
+            },
+          },
+          { status: 202 },
+        );
+      },
+      { requireKey: true },
     );
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/machines/[machineId]/uninstall:DELETE');

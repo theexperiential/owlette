@@ -97,6 +97,7 @@ const wrapped = authorizedSiteHandler<{
           return mapActionError(e);
         }
       },
+      { requireKey: true },
     );
   } catch (error: unknown) {
     if (error instanceof ActionInputError) {

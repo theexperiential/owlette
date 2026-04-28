@@ -183,28 +183,117 @@ function normalizeCommandBody(body: CommandBody): NormalizedCommand {
       const error = copyOptionalPositiveInteger(inputParams, payload, key, 1);
       if (error) return { ok: false, response: error };
     }
-  } else if (cmdType === 'apply_display_topology') {
-    if (inputParams.layout !== undefined) {
-      if (!isPlainObject(inputParams.layout)) {
-        return {
-          ok: false,
-          response: problemValidation('params.layout must be an object when provided', {
-            'body.params.layout': ['must be an object'],
-          }),
-        };
-      }
-      payload.layout = inputParams.layout;
-    }
-    const error = copyOptionalString(inputParams, payload, 'applyId');
-    if (error) return { ok: false, response: error };
-  } else if (cmdType === 'ack_display_topology') {
-    const error = copyOptionalString(inputParams, payload, 'applyId');
-    if (error) return { ok: false, response: error };
-  } else if (cmdType === 'kill_process') {
+  } else if (
+    cmdType === 'restart_process' ||
+    cmdType === 'start_process' ||
+    cmdType === 'stop_process' ||
+    cmdType === 'kill_process'
+  ) {
     for (const key of ['process_name', 'process_id']) {
       const error = copyOptionalString(inputParams, payload, key);
       if (error) return { ok: false, response: error };
     }
+    if (payload.process_name === undefined && payload.process_id === undefined) {
+      return {
+        ok: false,
+        response: problemValidation(
+          'params.process_name or params.process_id is required for process commands',
+          {
+            'body.params.process_name': ['required when process_id is omitted'],
+            'body.params.process_id': ['required when process_name is omitted'],
+          },
+        ),
+      };
+    }
+  } else if (cmdType === 'set_launch_mode') {
+    const processNameError = copyOptionalString(inputParams, payload, 'process_name');
+    if (processNameError) return { ok: false, response: processNameError };
+    if (payload.process_name === undefined) {
+      return {
+        ok: false,
+        response: problemValidation('params.process_name is required for set_launch_mode', {
+          'body.params.process_name': ['required'],
+        }),
+      };
+    }
+    const modeError = copyOptionalString(inputParams, payload, 'mode');
+    if (modeError) return { ok: false, response: modeError };
+    if (payload.mode === undefined) {
+      return {
+        ok: false,
+        response: problemValidation('params.mode is required for set_launch_mode', {
+          'body.params.mode': ['required'],
+        }),
+      };
+    }
+    if (inputParams.schedules !== undefined) {
+      if (!Array.isArray(inputParams.schedules)) {
+        return {
+          ok: false,
+          response: problemValidation('params.schedules must be an array when provided', {
+            'body.params.schedules': ['must be an array'],
+          }),
+        };
+      }
+      payload.schedules = inputParams.schedules;
+    }
+    const presetError = copyOptionalString(inputParams, payload, 'schedulePresetId');
+    if (presetError) return { ok: false, response: presetError };
+  } else if (cmdType === 'apply_display_topology') {
+    if (!isPlainObject(inputParams.layout)) {
+      return {
+        ok: false,
+        response: problemValidation('params.layout is required and must be an object', {
+          'body.params.layout': ['required object'],
+        }),
+      };
+    }
+    payload.layout = inputParams.layout;
+    const error = copyOptionalString(inputParams, payload, 'applyId');
+    if (error) return { ok: false, response: error };
+    if (payload.applyId === undefined) {
+      return {
+        ok: false,
+        response: problemValidation('params.applyId is required for apply_display_topology', {
+          'body.params.applyId': ['required'],
+        }),
+      };
+    }
+  } else if (cmdType === 'ack_display_topology') {
+    const error = copyOptionalString(inputParams, payload, 'applyId');
+    if (error) return { ok: false, response: error };
+    if (payload.applyId === undefined) {
+      return {
+        ok: false,
+        response: problemValidation('params.applyId is required for ack_display_topology', {
+          'body.params.applyId': ['required'],
+        }),
+      };
+    }
+  } else if (cmdType === 'mcp_tool_call') {
+    const toolNameError = copyOptionalString(inputParams, payload, 'tool_name');
+    if (toolNameError) return { ok: false, response: toolNameError };
+    if (payload.tool_name === undefined) {
+      return {
+        ok: false,
+        response: problemValidation('params.tool_name is required for mcp_tool_call', {
+          'body.params.tool_name': ['required'],
+        }),
+      };
+    }
+    if (inputParams.tool_params !== undefined) {
+      if (!isPlainObject(inputParams.tool_params)) {
+        return {
+          ok: false,
+          response: problemValidation('params.tool_params must be an object when provided', {
+            'body.params.tool_params': ['must be an object'],
+          }),
+        };
+      }
+      payload.tool_params = inputParams.tool_params;
+    }
+    const chatIdError = copyOptionalString(inputParams, payload, 'chat_id');
+    if (chatIdError) return { ok: false, response: chatIdError };
   } else if (cmdType === 'update_owlette') {
     for (const key of ['installer_url', 'deployment_id', 'target_version', 'checksum_sha256']) {
       const error = copyOptionalString(inputParams, payload, key);
@@ -305,6 +394,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
           throw err;
         }
       },
+      { requireKey: true },
     );
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/machines/[machineId]/commands:POST');

@@ -215,3 +215,15 @@ def test_no_kwarg_unpacking_in_dispatch_files(filename):
         f"{filename} contains forbidden `**cmd_data` / `**command_data` "
         f"unpacking on lines: {matches}"
     )
+
+
+def test_public_process_command_types_are_agent_dispatchable():
+    """
+    Public process routes queue these Firebase command types. The legacy
+    dispatch chain must recognize every one before falling through to
+    ``Unknown command type``.
+    """
+    service_text = (_AGENT_SRC / "owlette_service.py").read_text(encoding="utf-8")
+
+    assert "('restart_process', 'start_process')" in service_text
+    assert "('kill_process', 'stop_process')" in service_text

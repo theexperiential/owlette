@@ -114,6 +114,10 @@ async function apiJson<T>(
   return body as T;
 }
 
+function makeIdempotencyKey(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export type LaunchMode = 'off' | 'always' | 'scheduled';
 
 export interface TimeRange {
@@ -1499,7 +1503,10 @@ export function useMachines(siteId: string) {
       `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/commands`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': makeIdempotencyKey(`machine-command-${commandType}-${machineId}`),
+        },
         body: JSON.stringify({
           type: commandType,
           params: extraData,

@@ -25,8 +25,9 @@ import { requireMachineAuthAndScope } from '@/app/api/_shared';
 import {
   createProcess,
   ActionInputError,
-  type CreateProcessInput,
 } from '@/lib/actions/createProcess.server';
+import { validateCreateProcessFields } from '@/lib/processPayloadValidation';
+import { lookupLiveProcessStatus } from '@/lib/processResponse.server';
 
 interface RouteContext {
   params: Promise<{ siteId: string; machineId: string }>;
@@ -64,12 +65,7 @@ export const GET = withRateLimit(
       >;
 
       const merged = configProcesses.map((p) => {
-        // Live status keyed by processId (preferred) OR legacy id OR name.
-        const live =
-          liveProcesses[p.processId] ||
-          liveProcesses[p.id] ||
-          liveProcesses[p.name] ||
-          {};
+        const live = lookupLiveProcessStatus(p, liveProcesses);
         return shapeProcessForResponse(p, live);
       });
 
@@ -106,17 +102,9 @@ const postWrapped = authorizedSiteHandler<{ siteId: string; machineId: string }>
       return problem(400, 'invalid_body', 'Request body must be valid JSON.');
     }
 
-    const name = typeof body.name === 'string' ? body.name : '';
-    const exePath = typeof body.exe_path === 'string' ? body.exe_path : '';
-
-    if (!name) {
-      return problem(400, 'missing_field', 'Field `name` is required.');
-    }
-    if (!exePath) {
-      return problem(400, 'missing_field', 'Field `exe_path` is required.');
-    }
-    if ('processId' in body) {
-      return problem(400, 'forbidden_field', 'Field `processId` is server-generated; do not include it.');
+    const validation = validateCreateProcessFields(body);
+    if (!validation.ok) {
+      return problem(validation.error.status, validation.error.code, validation.error.detail);
     }
 
     const auth = await resolveAuth(request);
@@ -135,7 +123,7 @@ const postWrapped = authorizedSiteHandler<{ siteId: string; machineId: string }>
         try {
           const result = await createProcess(
             { siteId: ctx.siteId, actor: ctx.actor, auditActor },
-            bodyToCreateInput(machineId, body, name, exePath),
+            { machineId, ...validation.value },
           );
           return NextResponse.json(
             { ok: true, data: { processId: result.processId } },
@@ -146,7 +134,8 @@ const postWrapped = authorizedSiteHandler<{ siteId: string; machineId: string }>
           if (mapped) return mapped;
           throw e;
         }
-      }
+      },
+      { requireKey: true },
     );
   } catch (error: unknown) {
     return errorResponse(error, 'sites/machines/processes POST');
@@ -195,28 +184,6 @@ function problem(status: number, code: string, detail: string): NextResponse {
     { type: 'about:blank', title: code, status, code, detail },
     { status, headers: { 'Content-Type': 'application/problem+json' } }
   );
-}
-
-function bodyToCreateInput(
-  machineId: string,
-  body: Record<string, unknown>,
-  name: string,
-  exePath: string,
-): CreateProcessInput {
-  return {
-    machineId,
-    name,
-    exe_path: exePath,
-    file_path: (body.file_path as string) || '',
-    cwd: (body.cwd as string) || '',
-    priority: (body.priority as string) || 'Normal',
-    visibility: (body.visibility as string) || 'Show',
-    time_delay: (body.time_delay as string) || '0',
-    time_to_init: (body.time_to_init as string) || '10',
-    relaunch_attempts: (body.relaunch_attempts as string) || '3',
-    launch_mode: ((body.launch_mode as CreateProcessInput['launch_mode']) || 'off'),
-    schedules: (body.schedules as PublicProcessConfig['schedules']) ?? null,
-  };
 }
 
 function mapActionError(error: unknown): NextResponse | null {

@@ -18,8 +18,7 @@
  * The allowlist is intentionally narrow — every supported `type` maps
  * to one of the known agent command handlers. Anything outside the list
  * is rejected with a 400 (`unsupported_command_type`) so api-key
- * callers can't spawn arbitrary commands. Live-view types are
- * deliberately absent and remain a separate wave-4 surface.
+ * callers can't spawn arbitrary commands.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
@@ -41,7 +40,8 @@ import { FieldValue } from 'firebase-admin/firestore';
  * - `apply_display_topology` / `ack_display_topology` /
  *   `enumerate_display_modes` / `test_display_apply` — display editor
  *   command surface (used by `useDisplayActions`).
- * - `kill_process` - process-control command emitted by `useFirestore`.
+ * - `restart_process` / `start_process` / `stop_process` /
+ *   `kill_process` - process-control commands emitted by the public API.
  * - `update_owlette` — agent self-update command issued by
  *   `lib/firebase.ts:sendOwletteUpdateCommand`.
  */
@@ -55,6 +55,7 @@ export const ALLOWED_COMMAND_TYPES: ReadonlySet<string> = new Set<string>([
   'stop_live_view',
   'restart_process',
   'start_process',
+  'stop_process',
   'kill_process',
   'set_launch_mode',
   'apply_display_topology',

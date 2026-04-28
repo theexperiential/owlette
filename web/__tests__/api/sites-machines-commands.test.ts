@@ -56,6 +56,26 @@ jest.mock('@/lib/auditLogClient', () => ({
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
 
+jest.mock('@/lib/auditLog.server', () => ({
+  generateCorrelationId: jest.fn(() => 'corr-test'),
+  writeAuditEntry: jest.fn(),
+  writeAuditEntryBlocking: jest.fn(async () => undefined),
+}));
+
+jest.mock('@/lib/rateLimit.server', () => ({
+  checkRateLimit: jest.fn(async () => ({ ok: true })),
+  rateLimitHeaders: jest.fn(() => ({})),
+}));
+
+jest.mock('@/lib/securityConfig.server', () => ({
+  securityConfig: {
+    read: jest.fn(async () => ({
+      capability_enforcement: true,
+      rate_limit_enforcement: true,
+    })),
+  },
+}));
+
 const mockResolveAuth = jest.fn();
 const mockAssertSite = jest.fn();
 
@@ -126,25 +146,25 @@ beforeEach(() => {
 /* ========================================================================== */
 /*  POST .../commands — dispatch                                              */
 /* ========================================================================== */
-// TODO(security-boundary-migration wave 3.1): commit 1863220 migrated this route
-// from `requireMachineAuthAndScope` to `authorizedSiteHandler` + the
-// `executeMachineCommand` server action. The test mocks below were designed for
-// the prior path (single firestore read per call, auth-only gate); the new path
-// reads kill-switch config + runs capability + rate-limit checks + writes an
-// audit row, which the existing `mocks.get` mock can't satisfy. Skipping until
-// we rewrite to mock @/lib/securityConfig.server, @/lib/auditLog.server,
-// @/lib/rateLimit.server, and align the firestore-read counts with the action.
-describe.skip('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
+describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
+  const USER_DOC = { role: 'superadmin', sites: [SITE] };
+
+  function queueUserDoc(): void {
+    mocks.get.mockResolvedValueOnce(docSnapshot('user-1', USER_DOC));
+  }
+
   /**
-   * Queue idempotency-cache lookup (always miss → null) + machine doc in
-   * that order. `clearAllMocks` does NOT clear `mockResolvedValueOnce`
-   * queues, so we hard-reset and re-prime per test to avoid bleed-through.
+   * Queue actor load + idempotency-cache lookup (always miss -> null) +
+   * machine doc in that order. `clearAllMocks` does NOT clear
+   * `mockResolvedValueOnce` queues, so we hard-reset and re-prime per test
+   * to avoid bleed-through.
    */
   function queueIdemAndMachine(
     machineDoc: Record<string, unknown> | null,
     extraGets: number = 0,
   ): void {
     mocks.get.mockReset();
+    queueUserDoc();
     mocks.get.mockResolvedValueOnce(docSnapshot('idem', null));
     mocks.get.mockResolvedValueOnce(docSnapshot(MACHINE, machineDoc));
     for (let i = 0; i < extraGets; i++) {
@@ -156,13 +176,15 @@ describe.skip('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
   }
 
   /**
-   * Idempotency-only queue for paths that short-circuit before the machine
-   * lookup (validation failures, idempotency cache hit/miss replays).
+   * Actor-load + idempotency-only queue for paths that short-circuit before
+   * the machine lookup (validation failures, idempotency cache hit/miss
+   * replays).
    */
   function queueIdemOnly(
     cached: Record<string, unknown> | null = null,
   ): void {
     mocks.get.mockReset();
+    queueUserDoc();
     if (cached) {
       mocks.get.mockResolvedValueOnce({
         exists: true,
@@ -174,6 +196,22 @@ describe.skip('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
     mocks.get.mockImplementation(() => {
       throw new Error('unexpected extra firestore read on commands POST');
     });
+  }
+
+  function queueActorOnly(): void {
+    mocks.get.mockReset();
+    queueUserDoc();
+    mocks.get.mockImplementation(() => {
+      throw new Error('unexpected extra firestore read on commands POST');
+    });
+  }
+
+  function lastMergedCommand(): Record<string, unknown> {
+    const mergeCalls = mocks.set.mock.calls.filter(
+      (c: unknown[]) => (c[1] as { merge?: boolean })?.merge === true,
+    );
+    const env = mergeCalls[mergeCalls.length - 1][0] as Record<string, Record<string, unknown>>;
+    return env[Object.keys(env)[0]];
   }
 
   it('202 happy path: reboot_machine writes pending entry + emits audit', async () => {
@@ -287,7 +325,7 @@ describe.skip('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
       {
         method: 'POST',
         headers: { 'Idempotency-Key': 'idem-bogus' },
-        body: { type: 'kill_process', params: { process_name: 'notepad.exe' } },
+        body: { type: 'format_c_drive', params: { force: true } },
       },
     );
     const res = await commandsPOST(req, {
@@ -298,14 +336,38 @@ describe.skip('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
     expect(body.code).toBe('unsupported_command_type');
   });
 
-  it('400 unsupported_command_type rejects start_live_view (deferred to wave 4)', async () => {
-    queueIdemOnly();
+  it('202 happy path: start_live_view accepts interval and duration', async () => {
+    queueIdemAndMachine({ online: true });
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
       {
         method: 'POST',
         headers: { 'Idempotency-Key': 'idem-lv' },
-        body: { type: 'start_live_view' },
+        body: { type: 'start_live_view', params: { interval: 2, duration: 30 } },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(202);
+
+    const mergeCalls = mocks.set.mock.calls.filter(
+      (c: unknown[]) => (c[1] as { merge?: boolean })?.merge === true,
+    );
+    const env = mergeCalls[0][0] as Record<string, Record<string, unknown>>;
+    const cid = Object.keys(env)[0];
+    expect(env[cid].type).toBe('start_live_view');
+    expect(env[cid].interval).toBe(2);
+    expect(env[cid].duration).toBe(30);
+  });
+
+  it('400 idempotency_key_required when Idempotency-Key is missing', async () => {
+    queueActorOnly();
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        body: { type: 'reboot_machine' },
       },
     );
     const res = await commandsPOST(req, {
@@ -313,7 +375,220 @@ describe.skip('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
     });
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.code).toBe('unsupported_command_type');
+    expect(body.code).toBe('idempotency_key_required');
+    expect(mocks.set).not.toHaveBeenCalled();
+  });
+
+  it('202 happy path: restart_process forwards process identifiers', async () => {
+    queueIdemAndMachine({ online: true });
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-restart-proc' },
+        body: {
+          type: 'restart_process',
+          params: { process_name: 'TouchDesigner.exe', process_id: 'proc-1' },
+        },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(202);
+    const cmd = lastMergedCommand();
+    expect(cmd.type).toBe('restart_process');
+    expect(cmd.process_name).toBe('TouchDesigner.exe');
+    expect(cmd.process_id).toBe('proc-1');
+  });
+
+  it('202 happy path: stop_process forwards process identifiers', async () => {
+    queueIdemAndMachine({ online: true });
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-stop-proc' },
+        body: {
+          type: 'stop_process',
+          params: { process_name: 'TouchDesigner.exe', process_id: 'proc-1' },
+        },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(202);
+    const cmd = lastMergedCommand();
+    expect(cmd.type).toBe('stop_process');
+    expect(cmd.process_name).toBe('TouchDesigner.exe');
+    expect(cmd.process_id).toBe('proc-1');
+  });
+
+  it('202 happy path: set_launch_mode forwards mode and schedules', async () => {
+    queueIdemAndMachine({ online: true });
+    const schedules = [{ days: ['mon'], ranges: [{ start: '09:00', stop: '17:00' }] }];
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-launch-mode' },
+        body: {
+          type: 'set_launch_mode',
+          params: {
+            process_name: 'TouchDesigner.exe',
+            mode: 'scheduled',
+            schedules,
+            schedulePresetId: 'preset-1',
+          },
+        },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(202);
+    const cmd = lastMergedCommand();
+    expect(cmd.type).toBe('set_launch_mode');
+    expect(cmd.mode).toBe('scheduled');
+    expect(cmd.schedules).toEqual(schedules);
+    expect(cmd.schedulePresetId).toBe('preset-1');
+  });
+
+  it('202 happy path: apply_display_topology forwards layout and applyId', async () => {
+    queueIdemAndMachine({ online: true });
+    const layout = { monitors: [{ id: 'primary', position: { x: 0, y: 0 } }] };
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-apply-display' },
+        body: {
+          type: 'apply_display_topology',
+          params: { layout, applyId: 'apply-1' },
+        },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(202);
+    const cmd = lastMergedCommand();
+    expect(cmd.type).toBe('apply_display_topology');
+    expect(cmd.layout).toEqual(layout);
+    expect(cmd.applyId).toBe('apply-1');
+  });
+
+  it('400 when apply_display_topology is missing layout', async () => {
+    queueIdemOnly();
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-apply-missing-layout' },
+        body: {
+          type: 'apply_display_topology',
+          params: { applyId: 'apply-1' },
+        },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe('validation_failed');
+  });
+
+  it('202 happy path: ack_display_topology forwards applyId', async () => {
+    queueIdemAndMachine({ online: true });
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-ack-display' },
+        body: {
+          type: 'ack_display_topology',
+          params: { applyId: 'apply-1' },
+        },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(202);
+    const cmd = lastMergedCommand();
+    expect(cmd.type).toBe('ack_display_topology');
+    expect(cmd.applyId).toBe('apply-1');
+  });
+
+  it('400 when ack_display_topology is missing applyId', async () => {
+    queueIdemOnly();
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-ack-missing-apply' },
+        body: {
+          type: 'ack_display_topology',
+          params: {},
+        },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe('validation_failed');
+  });
+
+  it.each(['enumerate_display_modes', 'test_display_apply'] as const)(
+    '202 happy path: %s queues without extra params',
+    async (type) => {
+      queueIdemAndMachine({ online: true });
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+        {
+          method: 'POST',
+          headers: { 'Idempotency-Key': `idem-${type}` },
+          body: { type },
+        },
+      );
+      const res = await commandsPOST(req, {
+        params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+      });
+      expect(res.status).toBe(202);
+      const cmd = lastMergedCommand();
+      expect(cmd.type).toBe(type);
+      expect(cmd.timeout_seconds).toBe(60);
+    },
+  );
+
+  it('202 happy path: mcp_tool_call forwards tool envelope', async () => {
+    queueIdemAndMachine({ online: true });
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-mcp-tool' },
+        body: {
+          type: 'mcp_tool_call',
+          params: {
+            tool_name: 'get_system_info',
+            tool_params: { verbose: true },
+            chat_id: 'chat-1',
+          },
+        },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(202);
+    const cmd = lastMergedCommand();
+    expect(cmd.type).toBe('mcp_tool_call');
+    expect(cmd.tool_name).toBe('get_system_info');
+    expect(cmd.tool_params).toEqual({ verbose: true });
+    expect(cmd.chat_id).toBe('chat-1');
   });
 
   it('400 when type field missing', async () => {

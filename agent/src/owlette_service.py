@@ -2847,12 +2847,17 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if self._command_router.has_handler(cmd_type):
                 return self._command_router.dispatch(cmd_type, cmd_data, cmd_id, self)
 
-            if cmd_type == 'restart_process':
-                # Restart a specific process by name
+            if cmd_type in ('restart_process', 'start_process'):
+                # Restart or start a specific process by public id or name.
                 process_name = cmd_data.get('process_name')
+                process_id = cmd_data.get('process_id') or cmd_data.get('processId')
                 processes = shared_utils.read_config(['processes'])
                 for process in processes:
-                    if process.get('name') == process_name:
+                    if (
+                        (process_id and process.get('id') == process_id)
+                        or (process_name and process.get('name') == process_name)
+                    ):
+                        process_name = process.get('name') or process_name
                         process_list_id = process['id']
                         # Track manual override for scheduled processes started outside window
                         mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
@@ -2861,6 +2866,20 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             logging.info(f"Manual override set for '{process_name}' (started outside schedule window)")
                         last_info = self.last_started.get(process_list_id, {})
                         last_pid = last_info.get('pid')
+                        if cmd_type == 'start_process':
+                            self.last_started.pop(process_list_id, None)
+                            if last_pid and Util.is_pid_running(last_pid):
+                                return f"Process {process_name} is already running with PID {last_pid}"
+                            new_pid = self.handle_process_launch(process)
+                            # Log command execution
+                            if self.firebase_client and self.firebase_client.is_connected():
+                                self.firebase_client.log_event(
+                                    action='command_executed',
+                                    level='info',
+                                    process_name=process_name,
+                                    details=f'Start process command - PID: {new_pid}'
+                                )
+                            return f"Process {process_name} started with PID {new_pid}"
                         if last_pid and Util.is_pid_running(last_pid):
                             new_pid = self.kill_and_relaunch_process(last_pid, process)
                             # Log command execution
@@ -2883,38 +2902,52 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                     details=f'Start process command - PID: {new_pid}'
                                 )
                             return f"Process {process_name} started with PID {new_pid}"
-                return f"Process {process_name} not found in configuration"
+                target = process_id or process_name
+                return f"Process {target} not found in configuration"
 
-            elif cmd_type == 'kill_process':
-                # Kill a specific process by name
+            elif cmd_type in ('kill_process', 'stop_process'):
+                # Kill or gracefully stop a specific process by public id or name.
                 process_name = cmd_data.get('process_name')
+                process_id = cmd_data.get('process_id') or cmd_data.get('processId')
                 processes = shared_utils.read_config(['processes'])
                 for process in processes:
-                    if process.get('name') == process_name:
+                    if (
+                        (process_id and process.get('id') == process_id)
+                        or (process_name and process.get('name') == process_name)
+                    ):
+                        process_name = process.get('name') or process_name
                         process_list_id = process['id']
                         last_info = self.last_started.get(process_list_id, {})
                         last_pid = last_info.get('pid')
                         if last_pid and Util.is_pid_running(last_pid):
                             shared_utils.graceful_terminate(last_pid)
+                            status = 'STOPPED' if cmd_type == 'stop_process' else 'KILLED'
+                            action = 'process_stopped' if cmd_type == 'stop_process' else 'process_killed'
+                            details = (
+                                f'Manual stop via dashboard - PID: {last_pid}'
+                                if cmd_type == 'stop_process'
+                                else f'Manual kill via dashboard - PID: {last_pid}'
+                            )
                             # Update status and sync to Firebase immediately
-                            shared_utils.update_process_status_in_json(last_pid, 'KILLED', self.firebase_client, process_id=process_list_id)
+                            shared_utils.update_process_status_in_json(last_pid, status, self.firebase_client, process_id=process_list_id)
                             # Mark as killed (not deleted!) so handle_process() won't
                             # treat an empty last_started as "untracked → needs launch".
-                            # This prevents the race where kill runs before the mode=off
+                            # This prevents the race where control runs before the mode=off
                             # config change has synced to local config.json.
                             self.last_started[process_list_id] = {'killed': True, 'time': datetime.datetime.now()}
-                            # Log process kill event (manual kill from dashboard)
+                            # Log process control event (manual kill/stop from dashboard)
                             if self.firebase_client and self.firebase_client.is_connected():
                                 self.firebase_client.log_event(
-                                    action='process_killed',
+                                    action=action,
                                     level='warning',
                                     process_name=process_name,
-                                    details=f'Manual kill via dashboard - PID: {last_pid}'
+                                    details=details
                                 )
                             return f"Process {process_name} (PID {last_pid}) terminated"
                         else:
                             return f"Process {process_name} is not running"
-                return f"Process {process_name} not found in configuration"
+                target = process_id or process_name
+                return f"Process {target} not found in configuration"
 
             elif cmd_type in ('toggle_autolaunch', 'set_launch_mode'):
                 # Set launch mode for a specific process (also handles legacy toggle_autolaunch)
