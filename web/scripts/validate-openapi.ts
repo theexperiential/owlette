@@ -11,6 +11,13 @@
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
 import yaml from 'js-yaml';
+import {
+  getOpenApiOperations,
+  operationHasAuthScopeNote,
+  operationHasExplicitSecurity,
+  operationHasReferenceExample,
+  renderOpenApiReference,
+} from '../lib/openapiReference';
 
 const ROOT = join(__dirname, '..');
 const SPEC_PATH = join(ROOT, 'openapi.yaml');
@@ -142,11 +149,21 @@ function pathIsStub(pathItem: unknown): boolean {
   return false;
 }
 
+function routeFileExportsMethod(routeFile: string, method: string): boolean {
+  const source = readFileSync(routeFile, 'utf-8');
+  const upperMethod = method.toUpperCase();
+  return new RegExp(
+    `export\\s+(?:async\\s+)?function\\s+${upperMethod}\\b|export\\s+const\\s+${upperMethod}\\b|export\\s*\\{[^}]*\\b${upperMethod}\\b[^}]*\\}`,
+  ).test(source);
+}
+
 function main() {
   const spec = loadSpec();
   const paths = (spec.paths || {}) as Record<string, unknown>;
   const specPaths = Object.keys(paths);
   const routePaths = discoverRoutes();
+  const renderedSpec = renderOpenApiReference(spec);
+  const renderedOperations = getOpenApiOperations(renderedSpec);
 
   let errors = 0;
   let warnings = 0;
@@ -191,12 +208,51 @@ function main() {
     }
   }
 
+  // Check 3: Documented methods should also exist on the matched route
+  // module. Next.js collapses HTTP methods into one route.ts file, so path
+  // presence alone can miss a stale method in the OpenAPI contract.
+  for (const { path, method } of getOpenApiOperations(spec)) {
+    const pathItem = paths[path];
+    const routeFile = specPathToRoutePath(path);
+    if (!existsSync(routeFile) || pathIsStub(pathItem)) continue;
+    if (!routeFileExportsMethod(routeFile, method)) {
+      console.error(`ERROR: ${method.toUpperCase()} ${path} is documented but not exported by ${relative(ROOT, routeFile)}`);
+      errors++;
+    }
+  }
+
+  // Check 4: Every source operation should declare its auth model
+  // explicitly. Scalar renders operation-level security most clearly, so
+  // protected endpoints should not rely on the global security fallback.
+  for (const { path, method, operation } of getOpenApiOperations(spec)) {
+    if (!operationHasExplicitSecurity(operation)) {
+      console.error(`ERROR: ${method.toUpperCase()} ${path} is missing operation-level security`);
+      errors++;
+    }
+  }
+
+  // Check 5: Validate the actual reference input served by /api/openapi.
+  // The renderer enriches the YAML with examples and consistent auth/scope
+  // notes, and this gate prevents the interactive docs from regressing to
+  // a shape-only shell.
+  for (const { path, method, operation } of renderedOperations) {
+    if (!operationHasReferenceExample(operation)) {
+      console.error(`ERROR: ${method.toUpperCase()} ${path} is missing rendered examples`);
+      errors++;
+    }
+    if (!operationHasAuthScopeNote(operation)) {
+      console.error(`ERROR: ${method.toUpperCase()} ${path} is missing rendered auth/scope notes`);
+      errors++;
+    }
+  }
+
   // Summary
   console.log('');
   if (errors === 0 && warnings === 0 && stubs === 0) {
     console.log('All documented paths match route files. No undocumented public routes found.');
+    console.log(`Rendered API reference includes examples and auth/scope notes for ${renderedOperations.length} operations.`);
   } else {
-    if (errors > 0) console.error(`${errors} error(s) — documented paths with no route file`);
+    if (errors > 0) console.error(`${errors} error(s) - OpenAPI route, auth, example, or scope validation`);
     if (warnings > 0) console.warn(`${warnings} warning(s) — undocumented routes`);
     if (stubs > 0) console.log(`${stubs} stub(s) — docs-first paths awaiting implementation (x-stub: true)`);
   }

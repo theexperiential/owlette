@@ -107,12 +107,25 @@ nav:
       - email alerts: dashboard/admin/email-alerts.md
       - webhooks: dashboard/admin/webhooks.md
   - api:
-    - reference/index.md
-    - rest api: reference/api.md
-    - webhooks: dashboard/admin/webhooks.md
-    - authentication: reference/authentication.md
-    - cortex tools: reference/cortex-tools.md
-    - agent commands: reference/agent-commands.md
+    - overview: api/overview.md
+    - api reference links: api/reference.md
+    - quickstart: api/quickstart.md
+    - authentication: api/authentication.md
+    - errors: api/errors.md
+    - rate limits: api/rate-limits.md
+    - chunks: api/chunks.md
+    - versions: api/versions.md
+    - cortex: api/cortex.md
+    - webhooks: api/webhooks.md
+    - sdks:
+      - node: api/sdk-node.md
+      - python: api/sdk-python.md
+    - examples:
+      - sdk workflows: api/examples/sdk-workflows.md
+      - ci/cd github actions: api/examples/ci-cd-github-actions.md
+      - nightly sync: api/examples/nightly-sync.md
+      - bulk create: api/examples/bulk-create.md
+      - auto rollback: api/examples/auto-rollback.md
   - architecture: architecture.md
   - troubleshooting: troubleshooting.md
   - changelog: changelog.md

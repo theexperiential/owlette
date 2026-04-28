@@ -9,32 +9,40 @@ info:
 
     ## Authentication
 
-    All API requests require authentication via an **API key**. You can create API keys
-    from the Owlette dashboard under **Settings → API Keys**, or via the
-    [Create API Key](#tag/API-Keys/operation/createApiKey) endpoint.
+    Protected API requests use scoped credentials. New public integrations
+    should send `Authorization: Bearer owk_live_...` or
+    `Authorization: Bearer owk_test_...`.
+    Create API keys from the Owlette dashboard under Settings > API Keys, or via the
+    [Create API Key](#tag/api-keys/operation/createUserApiKey) endpoint.
 
-    Include your API key in every request using one of these methods:
+    Include your API key using one of these methods:
 
-    - **Header** (recommended): `x-api-key: owk_your_key_here`
-    - **Query parameter**: `?api_key=owk_your_key_here`
+    - **Header** (recommended): `Authorization: Bearer owk_your_key_here`
+    - **Legacy header**: `x-api-key: owk_your_key_here`
+    - **Compatibility query parameter**: `?api_key=owk_your_key_here`
 
-    API keys are scoped to your user account and inherit your site access permissions.
+    Every protected operation includes an Authentication and scopes note. API-key
+    callers must hold at least one listed scope and must also satisfy resource
+    ownership, site membership, role, and capability checks.
+
+    ## Versioning
+
+    Owlette does not require a new global API-version header for the
+    developer-preview MVP. Roost/project-distribution routes may accept the
+    existing advisory `Roost-Version: YYYY-MM-DD` header; missing headers can
+    emit `X-Roost-Version-Missing: true`.
 
     ## Rate Limiting
 
-    All endpoints are rate-limited. When you exceed the limit, you'll receive a `429 Too Many Requests`
-    response with a `Retry-After` header indicating how long to wait.
-
-    Default limit: **300 requests/hour** per API key.
-
-    Response headers on every request:
-    - `X-RateLimit-Limit` — Maximum requests per window
-    - `X-RateLimit-Remaining` — Requests remaining in current window
-    - `X-RateLimit-Reset` — Unix timestamp when the window resets
+    Responses may include `RateLimit-Limit`, `RateLimit-Remaining`,
+    `RateLimit-Reset`, and `Retry-After`. API-key traffic is bucketed by key id
+    where available.
 
     ## Errors
 
-    All errors return a JSON object with an `error` field:
+    Public errors use `application/problem+json` with stable `code`,
+    `requestId`, and `docsUrl` fields. Some dashboard compatibility routes may
+    retain a temporary `error` alias during the preview window:
 
     ```json
     { "error": "Description of what went wrong" }
@@ -43,11 +51,11 @@ info:
     Common HTTP status codes:
     | Code | Meaning |
     |------|---------|
-    | 400  | Bad request — missing or invalid parameters |
-    | 401  | Unauthorized — missing or invalid API key |
-    | 403  | Forbidden — no access to this site or resource |
+    | 400  | Bad request - missing or invalid parameters |
+    | 401  | Unauthorized - missing or invalid API key |
+    | 403  | Forbidden - no access to this site or resource |
     | 404  | Not found |
-    | 409  | Conflict — resource is in an incompatible state |
+    | 409  | Conflict - resource is in an incompatible state |
     | 429  | Rate limit exceeded |
     | 500  | Internal server error |
 
@@ -71,6 +79,8 @@ servers:
 
 security:
   - apiKey: []
+  - bearerApiKey: []
+  - firebaseIdToken: []
 
 tags:
   - name: Sites
@@ -117,7 +127,7 @@ tags:
     description: |
       Self-service api key management. Scoped, expiring bearer tokens
       (`owk_live_*` / `owk_test_*`) used to authenticate every public
-      roost request. See [authentication.md](../docs/api/authentication.md).
+      roost request. See [authentication.md](/docs/api/authentication).
   - name: roosts
     description: |
       Roosts — named, versioned, content-addressed bundles of files
@@ -125,11 +135,11 @@ tags:
   - name: versions
     description: |
       Immutable oci-style versions. Every publish creates a new
-      version; rollback is a pointer flip. See [versions.md](../docs/api/versions.md).
+      version; rollback is a pointer flip. See [versions.md](/docs/api/versions).
   - name: chunks
     description: |
       Content-addressed blob layer. Dedup lookup, signed upload/download
-      urls, cross-roost mount. See [chunks.md](../docs/api/chunks.md).
+      urls, cross-roost mount. See [chunks.md](/docs/api/chunks).
   - name: deployments
     description: |
       Targeted rollouts — canary, scheduled, dry-run. Publishing a
@@ -148,7 +158,7 @@ tags:
   - name: webhooks
     description: |
       HTTP-callback subscriptions for roost events (publish, rollback,
-      deploy, quota, etc.). See [webhooks.md](../docs/api/webhooks.md).
+      deploy, quota, etc.). See [webhooks.md](/docs/api/webhooks).
   - name: utility
     description: Identity, version, and live event-stream endpoints.
 
@@ -449,7 +459,11 @@ paths:
       operationId: setSiteAlertRules
       tags: [Alerts]
       summary: Set site alert rules
-      description: Replaces the alert rules array at `sites/{siteId}/settings/alerts`.
+      description: Replaces the alert rules array at `sites/{siteId}/settings/alerts`. Requires `site=<siteId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: Alert rules saved
@@ -672,6 +686,10 @@ paths:
         existing clients.
         Responses include canonical `next_page_token`; `nextPageToken` is
         retained as a deprecated compatibility alias.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - name: page_size
           in: query
@@ -726,6 +744,10 @@ paths:
         dashboard and CLI. Superadmin-only; API-key callers must hold
         `installer=*:read`. The unauthenticated download permalink remains
         `GET /download`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: Latest active installer
@@ -757,6 +779,10 @@ paths:
         `uploadId` to pass to step 2 (`PUT /api/installer/upload`).
         Superadmin-only; API-key callers need `installer=*:write`.
         Honors `Idempotency-Key` for safe retry.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - name: Idempotency-Key
           in: header
@@ -832,6 +858,10 @@ paths:
         `checksum_sha256` mismatch, and writes version metadata plus the
         `latest` pointer when `setAsLatest` was true at step 1. Superadmin-only;
         API-key callers need `installer=*:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - name: Idempotency-Key
           in: header
@@ -917,6 +947,10 @@ paths:
         `min_versions_violated` if it would. Idempotent: deleting an
         already-soft-deleted version returns 200 with `alreadyDeleted: true`.
         Superadmin-only; API-key callers need `installer=*:admin`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - name: version
           in: path
@@ -961,6 +995,10 @@ paths:
         the given version. Refuses if the version is missing or
         soft-deleted. Superadmin-only; API-key callers need
         `installer=*:admin`. Honors `Idempotency-Key`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - name: version
           in: path
@@ -1754,7 +1792,7 @@ paths:
         Lists the caller's own api keys (raw `key` is never included).
         Requires a user session or Firebase ID token; api keys cannot
         list other api keys. This route is currently unpaginated.
-        See [authentication.md](../docs/api/authentication.md#listing-keys).
+        See [authentication.md](/docs/api/authentication#listing-keys).
       security:
         - firebaseIdToken: []
       responses:
@@ -1789,7 +1827,7 @@ paths:
         Requires a user session or Firebase ID token. Non-superadmin
         callers cannot create `user` or `installer` scopes; those
         platform resources must use `id: "*"`.
-        See [authentication.md](../docs/api/authentication.md#creating-an-api-key).
+        See [authentication.md](/docs/api/authentication#creating-an-api-key).
       security:
         - firebaseIdToken: []
       requestBody:
@@ -2362,7 +2400,7 @@ paths:
         into `toRoostId` (target roost). No bytes moved — R2 key stays
         the same; only the referrer set is updated. This is the dedup
         moat: cross-roost reuse without re-upload.
-        See [chunks.md](../docs/api/chunks.md#cross-roost-mount).
+        See [chunks.md](/docs/api/chunks#cross-roost-mount).
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -3662,7 +3700,7 @@ paths:
       description: |
         Returns current storage + bandwidth usage against plan limits
         and any fired alarm thresholds. See
-        [rate-limits.md](../docs/api/rate-limits.md).
+        [rate-limits.md](/docs/api/rate-limits).
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -3856,7 +3894,7 @@ paths:
         Lists webhook subscriptions on a site.
         Use `page_size` and `page_token`; legacy `limit` and `cursor`
         are accepted for existing clients.
-        See [webhooks.md](../docs/api/webhooks.md).
+        See [webhooks.md](/docs/api/webhooks).
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -4297,7 +4335,7 @@ paths:
             text/event-stream:
               schema:
                 type: string
-                description: Server-Sent Events stream (see [webhooks.md](../docs/api/webhooks.md) for event payloads).
+                description: Server-Sent Events stream (see [webhooks.md](/docs/api/webhooks) for event payloads).
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
@@ -6404,7 +6442,7 @@ components:
         Preferred auth mechanism for the public roost api. Send the
         scoped api key as `Authorization: Bearer owk_live_<secret>`
         (production) or `Authorization: Bearer owk_test_<secret>`
-        (sandbox). See [authentication.md](../docs/api/authentication.md).
+        (sandbox). See [authentication.md](/docs/api/authentication).
     firebaseIdToken:
       type: http
       scheme: bearer
@@ -7414,7 +7452,7 @@ components:
       type: object
       description: |
         OCI Image v1.1 derivation — owlette surfaces this as "version". See
-        [version-format.md](../docs/internal/version-format.md) for the
+        [version-format.md](/docs/internal/version-format) for the
         full schema. This OpenAPI description captures the shape required
         by the finalize endpoint; the authoritative JSON schema lives in
         the internal docs.
@@ -7715,7 +7753,7 @@ components:
       description: |
         Full oci-style version body. Roost emits schemaVersion 2,
         mediaType `application/vnd.owlette.version.v1+json`. See
-        [versions.md](../docs/api/versions.md).
+        [versions.md](/docs/api/versions).
       type: object
       required: [schemaVersion, mediaType, config, layers]
       properties:

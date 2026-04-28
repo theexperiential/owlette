@@ -67,4 +67,4 @@ rate limits scale with tier; every response carries `RateLimit-Limit`, `RateLimi
 - **[cortex](./cortex.md)** — natural-language site and machine diagnostics over `/api/cortex/conversations`.
 - **[errors](./errors.md)** — rfc 7807 problem+json envelope, stable error codes, `doc_url` resolution.
 
-from there, deep-dive into the [chunks](./chunks.md), [versions](./versions.md), [cortex](./cortex.md), and [webhooks](./webhooks.md) guides as you need them. the full endpoint reference lives in [openapi.yaml](../../web/openapi.yaml) and is machine-readable.
+from there, deep-dive into the [chunks](./chunks.md), [versions](./versions.md), [cortex](./cortex.md), and [webhooks](./webhooks.md) guides as you need them. the full endpoint reference is rendered at <https://owlette.app/docs/api>, with raw json available from `/api/openapi`.
