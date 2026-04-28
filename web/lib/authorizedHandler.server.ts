@@ -78,6 +78,7 @@ import {
 import { securityConfig } from '@/lib/securityConfig.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import logger from '@/lib/logger';
+import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
 
 /* -------------------------------------------------------------------------- */
 /*  public types                                                              */
@@ -255,6 +256,20 @@ async function writePlatformAuditBlocking(entry: AuditEntryInput): Promise<void>
         metadata: entry.metadata,
       },
     });
+    emitSecurityBoundaryMetric('authorization_enforcement_bypass_total', 1, {
+      severity: 'warning',
+      labels: {
+        site: '__platform__',
+        capability: entry.capability,
+        outcome: entry.outcome,
+        role: auditActorRoleLabel(entry.actor),
+        bypass: String(entry.metadata?.enforcement_bypassed ?? 'unknown'),
+      },
+      fields: {
+        correlationId: entry.correlationId,
+        target: entry.target,
+      },
+    });
   }
   const payload: Record<string, unknown> = {
     correlationId: entry.correlationId,
@@ -270,7 +285,39 @@ async function writePlatformAuditBlocking(entry: AuditEntryInput): Promise<void>
   if (entry.enforcementBypassed !== undefined) {
     payload.enforcementBypassed = entry.enforcementBypassed;
   }
-  await docRef.set(payload);
+  try {
+    await docRef.set(payload);
+  } catch (err) {
+    emitSecurityBoundaryMetric('audit_write_failures_total', 1, {
+      severity: 'error',
+      labels: {
+        site: '__platform__',
+        capability: entry.capability,
+        outcome: entry.outcome,
+        role: auditActorRoleLabel(entry.actor),
+      },
+      fields: {
+        correlationId: entry.correlationId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    });
+    throw err;
+  }
+  emitSecurityBoundaryMetric('capability_decision_total', 1, {
+    labels: {
+      outcome: entry.outcome,
+      capability: entry.capability,
+      role: auditActorRoleLabel(entry.actor),
+      site: '__platform__',
+    },
+    fields: {
+      correlationId: entry.correlationId,
+      target: entry.target,
+      denyReason: entry.denyReason,
+      errorCode: entry.errorCode,
+      enforcementBypassed: entry.enforcementBypassed,
+    },
+  });
 }
 
 function platformDenyAudit(entry: AuditEntryInput): void {
@@ -290,6 +337,11 @@ function platformDenyAudit(entry: AuditEntryInput): void {
 // Firestore reserves document ids matching `__.*__`; platform routes still
 // need a stable bucket for rate-limit counters, so use a non-reserved id.
 const PLATFORM_RATE_LIMIT_SITE_ID = 'platform_global';
+
+function auditActorRoleLabel(actor: AuditEntryInput['actor']): string {
+  if (actor.type === 'system') return `system:${actor.name}`;
+  return actor.apiKeyId ? `api-key:${actor.role}` : actor.role;
+}
 
 function headersForRateLimit(result: RateLimitResult): Record<string, string> {
   return typeof rateLimitHeaders === 'function' ? rateLimitHeaders(result) : {};

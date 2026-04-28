@@ -52,6 +52,7 @@ import {
 } from '@/lib/capabilities';
 import type { RateLimitedReason } from '@/lib/rateLimit';
 import { FieldValue } from 'firebase-admin/firestore';
+import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
 
 /* -------------------------------------------------------------------------- */
 /*  default per-minute limits                                                 */
@@ -553,6 +554,7 @@ export async function checkRateLimit(
       resetAtMs,
       rateLimitReason,
     };
+    emitRateLimitHit(actor, bucket, capability, siteId, 'in_memory', result);
     if (observeOnly) {
       await recordRateLimitObservation({
         actor,
@@ -580,6 +582,7 @@ export async function checkRateLimit(
     },
   );
   if (!result.ok && observeOnly) {
+    emitRateLimitHit(actor, bucket, capability, siteId, 'firestore', result);
     await recordRateLimitObservation({
       actor,
       bucket,
@@ -592,5 +595,36 @@ export async function checkRateLimit(
     return { ok: true };
   }
 
+  if (!result.ok) {
+    emitRateLimitHit(actor, bucket, capability, siteId, 'firestore', result);
+  }
+
   return result;
+}
+
+function emitRateLimitHit(
+  actor: Actor,
+  bucket: Bucket,
+  capability: Capability,
+  siteId: string,
+  source: RateLimitObservationSource,
+  result: Extract<RateLimitResult, { ok: false }>,
+): void {
+  emitSecurityBoundaryMetric('rate_limit_hits_total', 1, {
+    severity: bucket === 'system' ? 'warning' : 'info',
+    labels: {
+      bucket,
+      capability,
+      site: siteId,
+      actorType: actor.type,
+      source,
+    },
+    fields: {
+      retryAfterSec: result.retryAfterSec,
+      limit: result.limit,
+      resetAtMs: result.resetAtMs,
+      rateLimitReason: result.rateLimitReason,
+      actorId: actorIdentifier(actor),
+    },
+  });
 }

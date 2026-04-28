@@ -1,0 +1,129 @@
+version: 1
+owner: security-boundary
+environment: dev
+
+sources:
+  security_boundary_logs:
+    type: railway-log-drain
+    match: "[security-boundary-metric]"
+    parser: json-payload
+  sentry:
+    type: sentry-issues
+    project: owlette-web
+    message_prefix: "security_boundary."
+  railway:
+    type: railway-service-metrics
+    service: owlette-dev
+  firestore:
+    type: cloud-monitoring-firestore
+    project: owlette-dev-3838a
+
+metrics:
+  - name: capability_decision_total
+    source: security_boundary_logs
+    unit: count
+    labels: [outcome, capability, role, site]
+    description: Authorization decisions emitted after audit writes commit.
+  - name: audit_write_failures_total
+    source: sentry
+    unit: count
+    labels: [capability, outcome, role, site]
+    description: Audit writes failed. Privileged allow paths fail closed on this.
+  - name: authorization_enforcement_bypass_total
+    source: sentry
+    unit: count
+    labels: [capability, outcome, role, site, bypass]
+    description: A kill switch allowed a request while enforcement was bypassed.
+  - name: rate_limit_hits_total
+    source: security_boundary_logs
+    unit: count
+    labels: [bucket, capability, site, actorType, source]
+    description: Rate-limit reject events, including observe-only rejects.
+  - name: kill_switch_state
+    source: security_boundary_logs
+    unit: gauge
+    labels: [flag, enabled, changed]
+    description: 1 means the named enforcement flag is enabled, 0 means disabled.
+  - name: system_invoker_unexpected_caller_total
+    source: sentry
+    unit: count
+    labels: [actorName, capability, site]
+    description: Runtime defense-in-depth alert for systemInvoker import-boundary bypass.
+  - name: request_duration_seconds
+    source: sentry
+    unit: seconds
+    labels: [route, method]
+    description: Sentry transaction duration for privileged routes.
+  - name: railway_memory_bytes
+    source: railway
+    unit: bytes
+    labels: [service, deployment]
+  - name: railway_cpu_seconds
+    source: railway
+    unit: seconds
+    labels: [service, deployment]
+  - name: railway_restart_total
+    source: railway
+    unit: count
+    labels: [service]
+  - name: firestore_qps
+    source: firestore
+    unit: count_per_second
+    labels: [collection, op]
+  - name: cortex_events_processed_total
+    source: security_boundary_logs
+    unit: count
+    labels: [site]
+    description: Heartbeat metric for autonomous Cortex event processing.
+  - name: cortex_events_incoming_total
+    source: security_boundary_logs
+    unit: count
+    labels: [site]
+    description: Autonomous Cortex events accepted for processing.
+
+alerts:
+  - id: capability-denial-rate
+    severity: page
+    query: "sum(rate(capability_decision_total{outcome='deny'}[5m])) / sum(rate(capability_decision_total[5m])) > 0.01"
+    for: 5m
+    runbook: docs/ops/security-boundary-monitoring.md#capability-denial-rate
+  - id: audit-write-failures
+    severity: page
+    query: "sum(rate(audit_write_failures_total[5m])) / sum(rate(capability_decision_total[5m])) > 0.005"
+    for: 5m
+    runbook: docs/ops/security-boundary-monitoring.md#audit-write-failures
+  - id: system-rate-limit-exhaustion
+    severity: page
+    query: "sum(rate(rate_limit_hits_total{bucket='system'}[5m])) > 0"
+    for: 5m
+    runbook: docs/ops/security-boundary-monitoring.md#system-rate-limit-exhaustion
+  - id: kill-switch-flipped
+    severity: page
+    query: "sum(increase(kill_switch_state{changed='true'}[5m])) > 0"
+    for: 1m
+    runbook: docs/ops/security-boundary-monitoring.md#kill-switch-flipped
+  - id: privileged-route-latency
+    severity: ticket
+    query: "histogram_quantile(0.95, sum(rate(request_duration_seconds_bucket[5m])) by (route, method, le)) > 2"
+    for: 10m
+    runbook: docs/ops/security-boundary-monitoring.md#privileged-route-latency
+  - id: railway-restarts
+    severity: page
+    query: "increase(railway_restart_total{service='owlette-dev'}[10m]) > 0"
+    for: 1m
+    runbook: docs/ops/security-boundary-monitoring.md#railway-restarts
+  - id: firestore-audit-qps-drop
+    severity: ticket
+    query: "sum(rate(firestore_qps{collection='audit_log', op='write'}[15m])) == 0 and sum(rate(capability_decision_total[15m])) > 0"
+    for: 15m
+    runbook: docs/ops/security-boundary-monitoring.md#firestore-audit-qps-drop
+  - id: cortex-events-stalled
+    severity: page
+    query: "sum(rate(cortex_events_processed_total[15m])) == 0 and sum(rate(cortex_events_incoming_total[15m])) > 0"
+    for: 15m
+    runbook: docs/ops/security-boundary-monitoring.md#cortex-events-stalled
+  - id: synthetic-probe-5xx
+    severity: page
+    query: "probe_success{probe='security-boundary-privileged-read'} == 0"
+    for: 2m
+    runbook: docs/ops/security-boundary-monitoring.md#synthetic-probe-5xx

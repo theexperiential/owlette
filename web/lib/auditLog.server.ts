@@ -31,6 +31,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import type { Capability } from '@/lib/capabilities';
 import { getAdminDb } from '@/lib/firebase-admin';
 import logger from '@/lib/logger';
+import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
 
 /* -------------------------------------------------------------------------- */
 /*  capability + actor types                                                  */
@@ -132,6 +133,7 @@ export function generateCorrelationId(): string {
  */
 export function writeAuditEntry(siteId: string, entry: AuditEntryInput): void {
   void writeAuditEntryInternal(siteId, entry).catch((err) => {
+    emitAuditWriteFailure(siteId, entry, err);
     logger.error('audit log write failed (fire-and-forget)', {
       context: 'auditLog',
       data: {
@@ -155,7 +157,12 @@ export async function writeAuditEntryBlocking(
   siteId: string,
   entry: AuditEntryInput,
 ): Promise<void> {
-  await writeAuditEntryInternal(siteId, entry);
+  try {
+    await writeAuditEntryInternal(siteId, entry);
+  } catch (err) {
+    emitAuditWriteFailure(siteId, entry, err);
+    throw err;
+  }
 }
 
 async function writeAuditEntryInternal(
@@ -179,6 +186,20 @@ async function writeAuditEntryInternal(
         outcome: entry.outcome,
         target: entry.target,
         metadata: entry.metadata,
+      },
+    });
+    emitSecurityBoundaryMetric('authorization_enforcement_bypass_total', 1, {
+      severity: 'warning',
+      labels: {
+        site: siteId,
+        capability: entry.capability,
+        outcome: entry.outcome,
+        role: actorRoleLabel(entry.actor),
+        bypass: String(entry.metadata?.enforcement_bypassed ?? 'unknown'),
+      },
+      fields: {
+        correlationId: entry.correlationId,
+        target: entry.target,
       },
     });
   }
@@ -210,6 +231,21 @@ async function writeAuditEntryInternal(
   }
 
   await docRef.set(payload);
+  emitSecurityBoundaryMetric('capability_decision_total', 1, {
+    labels: {
+      outcome: entry.outcome,
+      capability: entry.capability,
+      role: actorRoleLabel(entry.actor),
+      site: siteId,
+    },
+    fields: {
+      correlationId: entry.correlationId,
+      target: entry.target,
+      denyReason: entry.denyReason,
+      errorCode: entry.errorCode,
+      enforcementBypassed: entry.enforcementBypassed,
+    },
+  });
 }
 
 /** Drop `undefined`-valued keys — firestore admin sdk rejects them. */
@@ -236,6 +272,27 @@ function redactActorForLog(actor: AuditActor): Record<string, unknown> {
     };
   }
   return { type: 'system', name: actor.name };
+}
+
+function actorRoleLabel(actor: AuditActor): string {
+  if (actor.type === 'system') return `system:${actor.name}`;
+  return actor.apiKeyId ? `api-key:${actor.role}` : actor.role;
+}
+
+function emitAuditWriteFailure(siteId: string, entry: AuditEntryInput, err: unknown): void {
+  emitSecurityBoundaryMetric('audit_write_failures_total', 1, {
+    severity: 'error',
+    labels: {
+      site: siteId,
+      capability: entry.capability,
+      outcome: entry.outcome,
+      role: actorRoleLabel(entry.actor),
+    },
+    fields: {
+      correlationId: entry.correlationId,
+      error: err instanceof Error ? err.message : String(err),
+    },
+  });
 }
 
 /* -------------------------------------------------------------------------- */

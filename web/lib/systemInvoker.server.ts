@@ -65,6 +65,7 @@ import {
 import { checkRateLimit, bucketForActor } from '@/lib/rateLimit.server';
 import { securityConfig } from '@/lib/securityConfig.server';
 import logger from '@/lib/logger';
+import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
 
 /* -------------------------------------------------------------------------- */
 /*  types                                                                     */
@@ -299,6 +300,17 @@ export async function invokeAsSystem<T>(
         actorName: actor.name,
         capability,
         siteId,
+      },
+    });
+    emitSecurityBoundaryMetric('system_invoker_unexpected_caller_total', 1, {
+      severity: 'error',
+      labels: {
+        actorName: actor.name,
+        capability,
+        site: siteId,
+      },
+      fields: {
+        callerModule,
       },
     });
   }

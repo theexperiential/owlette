@@ -36,6 +36,7 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import logger from '@/lib/logger';
+import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
 
 /* -------------------------------------------------------------------------- */
 /*  types                                                                     */
@@ -142,6 +143,34 @@ function applyExpiry(stored: boolean | undefined, expiresAt: number | null, nowM
 }
 
 function emitFlipMetric(prev: { capability_enforcement: boolean; rate_limit_enforcement: boolean } | null, next: SecurityConfig): void {
+  const capabilityChanged = prev ? prev.capability_enforcement !== next.capability_enforcement : false;
+  const rateLimitChanged = prev ? prev.rate_limit_enforcement !== next.rate_limit_enforcement : false;
+
+  emitSecurityBoundaryMetric('kill_switch_state', next.capability_enforcement ? 1 : 0, {
+    severity: capabilityChanged ? 'warning' : 'info',
+    labels: {
+      flag: 'capability_enforcement',
+      enabled: next.capability_enforcement,
+      changed: capabilityChanged,
+    },
+    fields: {
+      lastUpdated: next.lastUpdated,
+      expiresAt: next.expiresAt,
+    },
+  });
+  emitSecurityBoundaryMetric('kill_switch_state', next.rate_limit_enforcement ? 1 : 0, {
+    severity: rateLimitChanged ? 'warning' : 'info',
+    labels: {
+      flag: 'rate_limit_enforcement',
+      enabled: next.rate_limit_enforcement,
+      changed: rateLimitChanged,
+    },
+    fields: {
+      lastUpdated: next.lastUpdated,
+      expiresAt: next.expiresAt,
+    },
+  });
+
   if (!prev) {
     lastObservedFlags = {
       capability_enforcement: next.capability_enforcement,

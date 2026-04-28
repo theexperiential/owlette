@@ -37,6 +37,7 @@ import {
   dispatchExistingCommandAsSystem,
 } from '@/lib/cortex/dispatch.server';
 import { escalate } from '@/lib/cortex-escalation.server';
+import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
 
 const MAX_STEPS = 15;
 const MAX_CONCURRENT_SESSIONS = 3;
@@ -61,6 +62,31 @@ interface CortexSettings {
   maxEventsPerHour?: number;
   cooldownMinutes?: number;
   escalationEmail?: boolean;
+}
+
+function emitCortexEventMetric(
+  name: 'cortex_events_incoming_total' | 'cortex_events_processed_total',
+  params: {
+    siteId: string;
+    machineId: string;
+    eventId?: string;
+    status?: string;
+    eventType?: string;
+    durationMs?: number;
+  },
+): void {
+  emitSecurityBoundaryMetric(name, 1, {
+    labels: {
+      site: params.siteId,
+      status: params.status,
+      eventType: params.eventType,
+    },
+    fields: {
+      machineId: params.machineId,
+      eventId: params.eventId,
+      durationMs: params.durationMs,
+    },
+  });
 }
 
 /**
@@ -207,6 +233,13 @@ export async function POST(request: NextRequest) {
       summary: '',
       actions: [],
     });
+    emitCortexEventMetric('cortex_events_incoming_total', {
+      siteId,
+      machineId,
+      eventId,
+      status: 'investigating',
+      eventType,
+    });
 
     console.log(`[cortex/autonomous] Accepted: ${eventId} — ${processName} ${eventType} on ${machineName}`);
 
@@ -273,6 +306,14 @@ async function runAutonomousInvestigation(
       }
 
       console.log(`[cortex/autonomous] ${eventId}: escalated (machine offline)`);
+      emitCortexEventMetric('cortex_events_processed_total', {
+        siteId,
+        machineId,
+        eventId,
+        status: 'escalated',
+        eventType,
+        durationMs: Date.now() - startTime,
+      });
       return;
     }
 
@@ -295,6 +336,14 @@ async function runAutonomousInvestigation(
       }
 
       console.log(`[cortex/autonomous] ${eventId}: escalated (cortex disabled)`);
+      emitCortexEventMetric('cortex_events_processed_total', {
+        siteId,
+        machineId,
+        eventId,
+        status: 'escalated',
+        eventType,
+        durationMs: Date.now() - startTime,
+      });
       return;
     }
 
@@ -384,6 +433,14 @@ async function runAutonomousInvestigation(
     }
 
     console.log(`[cortex/autonomous] ${eventId}: ${status} in ${Date.now() - startTime}ms (${actions.length} tool calls)`);
+    emitCortexEventMetric('cortex_events_processed_total', {
+      siteId,
+      machineId,
+      eventId,
+      status,
+      eventType,
+      durationMs: Date.now() - startTime,
+    });
 
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : 'Unknown error';
@@ -395,6 +452,14 @@ async function runAutonomousInvestigation(
       resolvedAt: Timestamp.now(),
       durationMs: Date.now() - startTime,
     }).catch(() => {});
+    emitCortexEventMetric('cortex_events_processed_total', {
+      siteId,
+      machineId,
+      eventId,
+      status: 'failed',
+      eventType,
+      durationMs: Date.now() - startTime,
+    });
 
   } finally {
     // Always decrement the active session counter (retry once on failure)
