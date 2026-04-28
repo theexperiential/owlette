@@ -62,7 +62,7 @@ rate limits scale with tier; every response carries `RateLimit-Limit`, `RateLimi
 
 ## next steps
 
-- **[quickstart](./quickstart.md)** — curl walkthrough: create a key, push a roost, verify, roll back. ~10 minutes.
+- **[quickstart](./quickstart.md)** - curl walkthrough: create a key, verify auth, list inventory, and poll a safe machine command. ~10 minutes.
 - **[authentication](./authentication.md)** — `owk_live_*` / `owk_test_*` keys, scoping, rotation, revocation, `Authorization: Bearer` header.
 - **[cortex](./cortex.md)** — natural-language site and machine diagnostics over `/api/cortex/conversations`.
 - **[errors](./errors.md)** — rfc 7807 problem+json envelope, stable error codes, `doc_url` resolution.

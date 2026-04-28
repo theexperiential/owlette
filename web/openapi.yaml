@@ -8677,47 +8677,80 @@ components:
     # utility
     WhoAmIResponse:
       type: object
-      required: [scopes]
+      required: [userId, email, role, key, rateLimit, quota, primarySiteId]
       properties:
         userId:
           type: string
+          description: Authenticated Owlette user id.
+        email:
+          type: string
+          format: email
           nullable: true
-          description: Present when authenticated with a user session.
-        keyId:
+        role:
           type: string
           nullable: true
-          description: Present when authenticated with an api key.
-        keyPrefix:
-          type: string
+        key:
+          type: object
           nullable: true
-        environment:
-          type: string
-          enum: [live, test]
-          nullable: true
-        scopes:
-          type: array
-          items: { $ref: '#/components/schemas/Scope' }
+          description: Populated when the request authenticated with an API key.
+          required: [keyId, name, keyPrefix, scopes, environment, expiresAt, lastUsedAt, isLegacy]
+          properties:
+            keyId:
+              type: string
+              nullable: true
+            name:
+              type: string
+              nullable: true
+            keyPrefix:
+              type: string
+              nullable: true
+            scopes:
+              type: array
+              nullable: true
+              items: { $ref: '#/components/schemas/Scope' }
+            environment:
+              type: string
+              enum: [live, test]
+              nullable: true
+            expiresAt:
+              type: integer
+              nullable: true
+              description: Unix timestamp in milliseconds.
+            lastUsedAt:
+              type: integer
+              nullable: true
+              description: Unix timestamp in milliseconds.
+            isLegacy:
+              type: boolean
         rateLimit:
           type: object
-          required: [limit, remaining, resetAt]
+          required: [tier, limitPerMinute, note]
           properties:
-            limit:     { type: integer }
-            remaining: { type: integer }
-            resetAt:
-              type: string
-              format: date-time
+            tier: { type: string }
+            limitPerMinute: { type: integer }
+            note: { type: string }
         quota:
           type: object
+          nullable: true
           properties:
+            siteId:
+              type: string
             tier:
               type: string
               enum: [free, starter, pro, enterprise]
             usedBytes:
               type: integer
               format: int64
+            pendingBytes:
+              type: integer
+              format: int64
             limitBytes:
               type: integer
               format: int64
+              nullable: true
+        primarySiteId:
+          type: string
+          nullable: true
     VersionResponse:
       type: object
       required: [current, supported, deprecated, retired]

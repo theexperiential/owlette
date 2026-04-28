@@ -461,7 +461,7 @@ const roost = new Roost({
 
 ## next steps
 
-- **[quickstart](./quickstart.md)** — the same flow in `curl`, useful for debugging or shell pipelines.
+- **[quickstart](./quickstart.md)** - REST auth and machine-command smoke flow, useful before wiring SDK automation.
 - **[authentication](./authentication.md)** — scope grammar, presets, rotation, revocation.
 - **[webhooks](./webhooks.md)** — event catalog, retry model, signing secret lifecycle.
 - **[sdk workflow examples](./examples/sdk-workflows.md)** — executable Node/Python samples and dev fixture env.
