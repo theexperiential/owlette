@@ -21,7 +21,7 @@ All HTTP endpoints exposed by the owlette web dashboard. 51 route files under `w
 - [commands](#commands) (2 endpoints)
 - [software inventory](#software-inventory) (1 endpoint)
 - [processes](#processes) (5 endpoints)
-- [deployments](#deployments) (5 endpoints)
+- [deployments](#deployments) (7 endpoints)
 - [installers](#installers) (4 endpoints)
 - [sites](#sites) (1 endpoint)
 - [tokens](#tokens) (2 endpoints)
@@ -844,14 +844,14 @@ Returns deployments for a site, ordered by creation date.
 | | |
 |---|---|
 | **Method** | `GET` |
-| **URL** | `/api/admin/deployments?siteId=xxx&limit=20` |
-| **Auth** | Session cookie (admin) |
+| **URL** | `/api/sites/{siteId}/deployments?page_size=20` |
+| **Auth** | API key/session with `site=<siteId>:read` |
 
 **Response (200):**
 
 ```json
 {
-  "deployments": [
+  "items": [
     {
       "id": "deploy-1699564800000",
       "name": "TouchDesigner 2023",
@@ -859,7 +859,8 @@ Returns deployments for a site, ordered by creation date.
       "status": "completed",
       "createdAt": 1699564800000
     }
-  ]
+  ],
+  "next_page_token": ""
 }
 ```
 
@@ -872,32 +873,35 @@ Creates a new deployment targeting specified machines.
 | | |
 |---|---|
 | **Method** | `POST` |
-| **URL** | `/api/admin/deployments` |
-| **Auth** | Session cookie (admin) |
+| **URL** | `/api/sites/{siteId}/deployments` |
+| **Auth** | API key/session with `site=<siteId>:write` plus `Idempotency-Key` |
 
 **Request Body:**
 
 ```json
 {
-  "siteId": "nyc-office",
   "name": "TouchDesigner 2023",
   "installer_name": "TouchDesigner_099_2023.exe",
   "installer_url": "https://storage.googleapis.com/.../TouchDesigner_099_2023.exe",
   "silent_flags": "/VERYSILENT /NORESTART",
   "verify_path": "C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe",
-  "machineIds": ["DESKTOP-ABC123", "DESKTOP-DEF456"]
+  "machines": ["DESKTOP-ABC123", "DESKTOP-DEF456"]
 }
 ```
 
 !!! note
     `installer_url` must be a valid HTTPS URL. HTTP, `file://`, and other protocols are rejected.
 
-**Response (200):**
+**Response (201):**
 
 ```json
 {
-  "success": true,
-  "deploymentId": "deploy-1699564800000"
+  "deploymentId": "deploy-1699564800000",
+  "siteId": "nyc-office",
+  "status": "in_progress",
+  "targets": [
+    { "machineId": "DESKTOP-ABC123", "status": "pending" }
+  ]
 }
 ```
 
@@ -905,7 +909,8 @@ Creates a new deployment targeting specified machines.
 
 ```json
 {
-  "error": "installer_url must use HTTPS protocol"
+  "code": "validation_failed",
+  "detail": "installer_url must use HTTPS protocol"
 }
 ```
 
@@ -918,28 +923,65 @@ Returns full deployment details including per-machine status.
 | | |
 |---|---|
 | **Method** | `GET` |
-| **URL** | `/api/admin/deployments/{deploymentId}?siteId=xxx` |
-| **Auth** | Session cookie (admin) |
+| **URL** | `/api/sites/{siteId}/deployments/{deploymentId}` |
+| **Auth** | API key/session with `site=<siteId>:read` |
 
 **Response (200):**
 
 ```json
 {
-  "success": true,
-  "deployment": {
-    "id": "deploy-1699564800000",
-    "name": "TouchDesigner 2023",
-    "installer_name": "TouchDesigner_099_2023.exe",
-    "installer_url": "https://storage.googleapis.com/.../TouchDesigner_099_2023.exe",
-    "silent_flags": "/VERYSILENT /NORESTART",
-    "verify_path": "C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe",
-    "status": "in_progress",
-    "createdAt": 1699564800000,
-    "targets": [
-      { "machineId": "DESKTOP-ABC123", "status": "completed", "completedAt": 1699564850000 },
-      { "machineId": "DESKTOP-DEF456", "status": "downloading", "progress": 45 }
-    ]
-  }
+  "id": "deploy-1699564800000",
+  "siteId": "nyc-office",
+  "name": "TouchDesigner 2023",
+  "installer_name": "TouchDesigner_099_2023.exe",
+  "installer_url": "https://storage.googleapis.com/.../TouchDesigner_099_2023.exe",
+  "silent_flags": "/VERYSILENT /NORESTART",
+  "verify_path": "C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe",
+  "status": "in_progress",
+  "createdAt": "2026-04-27T12:00:00.000Z",
+  "targets": [
+    { "machineId": "DESKTOP-ABC123", "status": "completed" },
+    { "machineId": "DESKTOP-DEF456", "status": "downloading", "progress": 45 }
+  ]
+}
+```
+
+---
+
+### retry deployment
+
+Re-queues install commands for targets in `failed` state.
+
+| | |
+|---|---|
+| **Method** | `POST` |
+| **URL** | `/api/sites/{siteId}/deployments/{deploymentId}/retry` |
+| **Auth** | API key/session with `site=<siteId>:write` plus `Idempotency-Key` |
+
+**Request Body:**
+
+```json
+{}
+```
+
+**Response (200):**
+
+```json
+{
+  "deploymentId": "deploy-1699564800000",
+  "siteId": "nyc-office",
+  "status": "in_progress",
+  "retried": 2,
+  "machine_ids": ["DESKTOP-ABC123", "DESKTOP-DEF456"]
+}
+```
+
+**Error (409) - No failed targets:**
+
+```json
+{
+  "code": "no_failed_targets",
+  "detail": "no targets in `failed` state to retry"
 }
 ```
 
@@ -947,19 +989,21 @@ Returns full deployment details including per-machine status.
 
 ### delete deployment
 
-Deletes a deployment record. Only allowed for deployments in terminal states (completed, failed, partial, cancelled, uninstalled).
+Deletes a deployment record. Only allowed for deployments in terminal states (`completed`, `failed`, `partial`, `partial_failed`, `cancelled`, `uninstalled`) when no target is still in-flight.
 
 | | |
 |---|---|
 | **Method** | `DELETE` |
-| **URL** | `/api/admin/deployments/{deploymentId}?siteId=xxx` |
-| **Auth** | Session cookie (admin) |
+| **URL** | `/api/sites/{siteId}/deployments/{deploymentId}` |
+| **Auth** | API key/session with `site=<siteId>:write` plus `Idempotency-Key` |
 
 **Response (200):**
 
 ```json
 {
-  "success": true
+  "deploymentId": "deploy-1699564800000",
+  "siteId": "nyc-office",
+  "deleted": true
 }
 ```
 
@@ -967,46 +1011,86 @@ Deletes a deployment record. Only allowed for deployments in terminal states (co
 
 ### cancel deployment
 
-Cancels a running deployment for a specific machine. The target must exist in the deployment and be in a cancellable state (`pending`, `downloading`, or `installing`).
+Cancels every target that is still in a pre-flight state (`pending`, `closing_processes`, or `downloading`) and removes matching queued install commands.
 
 | | |
 |---|---|
 | **Method** | `POST` |
-| **URL** | `/api/admin/deployments/{deploymentId}/cancel` |
-| **Auth** | Session cookie (admin) |
+| **URL** | `/api/sites/{siteId}/deployments/{deploymentId}/cancel` |
+| **Auth** | API key/session with `site=<siteId>:write` plus `Idempotency-Key` |
 
 **Request Body:**
 
 ```json
-{
-  "siteId": "nyc-office",
-  "machineId": "DESKTOP-ABC123",
-  "installer_name": "TouchDesigner_099_2023.exe"
-}
+{}
 ```
 
 **Response (200):**
 
 ```json
 {
-  "success": true,
-  "commandId": "cancel_1699564850000_DESKTOP_ABC123"
+  "deploymentId": "deploy-1699564800000",
+  "siteId": "nyc-office",
+  "status": "in_progress",
+  "cancelled": 1,
+  "machine_ids": ["DESKTOP-ABC123"]
 }
 ```
 
-**Error (400) — Machine not a target:**
+**Error (404) — Deployment not found:**
 
 ```json
 {
-  "error": "Machine DESKTOP-XYZ is not a target of this deployment"
+  "code": "not_found",
+  "detail": "deployment deploy-1699564800000 not found on site nyc-office"
 }
 ```
 
-**Error (409) — Target already in terminal state:**
+**Error (409) — No cancellable targets:**
 
 ```json
 {
-  "error": "Cannot cancel target in \"completed\" state"
+  "code": "no_cancellable_targets",
+  "detail": "every target is already past the queued phase or terminal"
+}
+```
+
+---
+
+### uninstall deployment
+
+Queues uninstall commands for every target in a deployment. This is an asynchronous operation; poll the deployment detail endpoint for status changes.
+
+| | |
+|---|---|
+| **Method** | `POST` |
+| **URL** | `/api/sites/{siteId}/deployments/{deploymentId}/uninstall` |
+| **Auth** | API key/session with `site=<siteId>:admin` plus `Idempotency-Key` |
+
+**Request Body:**
+
+```json
+{}
+```
+
+**Response (200):**
+
+```json
+{
+  "deploymentId": "deploy-1699564800000",
+  "siteId": "nyc-office",
+  "status": "uninstalling",
+  "queued": 2,
+  "machine_ids": ["DESKTOP-ABC123", "DESKTOP-DEF456"]
+}
+```
+
+**Error (409) - No targets:**
+
+```json
+{
+  "code": "no_targets",
+  "detail": "deployment has no target machines to uninstall from"
 }
 ```
 

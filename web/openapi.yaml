@@ -156,20 +156,50 @@ paths:
   /api/account/api-keys:
     get:
       operationId: listAccountApiKeys
-      tags: [API Keys]
+      tags: [api-keys]
       summary: List account API keys
       description: Lists API key metadata for the authenticated superadmin account. Raw keys and hashes are never returned.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: API keys
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, keys]
+                properties:
+                  success: { type: boolean }
+                  keys:
+                    type: array
+                    items: { $ref: '#/components/schemas/ApiKey' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '500': { $ref: '#/components/responses/Problem500' }
     post:
       operationId: createAccountApiKey
-      tags: [API Keys]
+      tags: [api-keys]
       summary: Create account API key
-      description: Creates a superadmin account API key and returns the raw key once.
+      description: |
+        Creates a superadmin account API key and returns the raw key once.
+        New account keys use modern scoped metadata; scoped API-key callers
+        carry their existing scopes forward rather than widening them.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: API key created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKeyCreateResponse' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   /api/account/api-keys/{keyId}:
     parameters:
@@ -179,14 +209,28 @@ paths:
         schema: { type: string }
     delete:
       operationId: revokeAccountApiKey
-      tags: [API Keys]
+      tags: [api-keys]
       summary: Revoke account API key
       description: Deletes an API key owned by the authenticated superadmin account.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: API key revoked
-        '404':
-          description: API key not found
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success]
+                properties:
+                  success: { type: boolean }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   /api/platform/email/config:
     get:
@@ -276,10 +320,42 @@ paths:
       operationId: listSiteAgentTokens
       tags: [Sites]
       summary: List site agent refresh tokens
-      description: Lists agent refresh token metadata for a site. Superadmin only.
+      description: |
+        Lists agent refresh token metadata for a site. Superadmin-only via
+        `GLOBAL_SETTINGS_WRITE`; API-key callers need site read scope and a
+        superadmin owning user.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
-          description: Agent tokens
+          description: Agent tokens.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tokens, count]
+                properties:
+                  tokens:
+                    type: array
+                    items:
+                      type: object
+                      required: [id]
+                      properties:
+                        id: { type: string }
+                        machineId: { type: string, nullable: true }
+                        version: { type: string, nullable: true }
+                        createdBy: { type: string, nullable: true }
+                        createdAt: { type: string, format: date-time, nullable: true }
+                        lastUsed: { type: string, format: date-time, nullable: true }
+                        expiresAt: { type: string, format: date-time, nullable: true }
+                        agentUid: { type: string, nullable: true }
+                  count: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}/agent-tokens/revoke:
     parameters:
@@ -291,10 +367,45 @@ paths:
       operationId: revokeSiteAgentTokens
       tags: [Sites]
       summary: Revoke site agent refresh tokens
-      description: Revokes one token, all tokens for a machine, or all tokens for a site.
+      description: |
+        Revokes one token, all tokens for a machine, or all tokens for a site.
+        Superadmin-only via `GLOBAL_SETTINGS_WRITE`; API-key callers need site
+        write scope and a superadmin owning user.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tokenId: { type: string }
+                machineId: { type: string }
+                all: { type: boolean }
+              anyOf:
+                - required: [tokenId]
+                - required: [machineId]
+                - required: [all]
       responses:
         '200':
-          description: Tokens revoked
+          description: Tokens revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, revokedCount, message]
+                properties:
+                  success: { type: boolean }
+                  revokedCount: { type: integer, minimum: 0 }
+                  message: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}/alerts:
     parameters:
@@ -329,10 +440,31 @@ paths:
       operationId: deleteSiteMachineScreenshots
       tags: [Screenshots]
       summary: Delete machine screenshots
-      description: Deletes one screenshot by id, or all screenshot history for the machine when omitted.
+      description: |
+        Deletes one screenshot by id, or all screenshot history for the machine
+        when omitted. Requires `machine=<machineId>:write`. Response shape is
+        transitional JSON (`{ success, deleted }`) for dashboard compatibility.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
-          description: Screenshots deleted
+          description: Screenshots deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, deleted]
+                properties:
+                  success: { type: boolean }
+                  deleted: { type: integer, minimum: 0 }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   # ──────────────────────────────────────────────────────────────────────
   # Sites
@@ -432,7 +564,11 @@ paths:
       summary: List installer versions (public, superadmin)
       description: |
         Returns paginated installer versions, newest-first. Superadmin-only.
-        API-key callers must hold `installer=*:read`.
+        API-key callers must hold `installer=*:read`. Use `page_size`
+        and `page_token`; legacy `limit` and `cursor` are accepted for
+        existing clients.
+        Responses include canonical `next_page_token`; `nextPageToken` is
+        retained as a deprecated compatibility alias.
       parameters:
         - name: page_size
           in: query
@@ -459,13 +595,17 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [versions, next_page_token]
                 properties:
                   versions:
                     type: array
                     items:
                       $ref: '#/components/schemas/InstallerVersion'
+                  next_page_token:
+                    type: string
                   nextPageToken:
                     type: string
+                    deprecated: true
         '403':
           description: Forbidden — caller is not a superadmin or the API key lacks `installer=*:read`.
           content:
@@ -487,7 +627,7 @@ paths:
       parameters:
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           schema:
             type: string
       requestBody:
@@ -543,6 +683,12 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Idempotency-Key reused with a different request body
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
     put:
       operationId: finalizeInstallerUpload
       tags: [Installer]
@@ -556,7 +702,7 @@ paths:
       parameters:
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           schema:
             type: string
       requestBody:
@@ -589,6 +735,12 @@ paths:
                     type: string
                   file_size:
                     type: integer
+        '400':
+          description: Validation error or missing Idempotency-Key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '404':
           description: Upload record or file not found
           content:
@@ -603,6 +755,13 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         '410':
           description: Upload window expired — restart the flow
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+        '422':
+          description: Idempotency-Key reused with a different request body
           content:
             application/problem+json:
               schema:
@@ -672,7 +831,7 @@ paths:
             pattern: '^\d+\.\d+\.\d+$'
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           schema:
             type: string
       requestBody:
@@ -693,6 +852,12 @@ paths:
                     type: string
                   latest:
                     $ref: '#/components/schemas/InstallerVersion'
+        '400':
+          description: Validation error or missing Idempotency-Key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '404':
           description: Version not found
           content:
@@ -707,6 +872,13 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
 
   # ──────────────────────────────────────────────────────────────────────
+        '422':
+          description: Idempotency-Key reused with a different request body
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   # Tools
   # ──────────────────────────────────────────────────────────────────────
   /api/cortex:
@@ -963,18 +1135,8 @@ paths:
           required: true
           schema:
             type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: cursor
-          in: query
-          description: Opaque pagination cursor from the previous response.
-          schema:
-            type: string
+        - $ref: '#/components/parameters/PageSizeQuery'
+        - $ref: '#/components/parameters/PageTokenQuery'
       responses:
         '200':
           description: Paginated version history.
@@ -982,14 +1144,21 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [versions, next_page_token]
                 properties:
                   versions:
                     type: array
                     items:
                       $ref: '#/components/schemas/VersionSummary'
+                  next_page_token:
+                    type: string
+                  nextPageToken:
+                    type: string
+                    deprecated: true
                   nextCursor:
                     type: string
                     nullable: true
+                    deprecated: true
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
@@ -1056,7 +1225,7 @@ paths:
                 properties:
                   versionId:
                     type: string
-                    description: Stable content-addressed id (`vrs_*`).
+                    description: Stable content-addressed id (64-char sha-256 hex).
                   versionNumber:
                     type: integer
                     description: Monotonic 1-indexed version number, per-roost.
@@ -1197,31 +1366,20 @@ paths:
   # 1. api keys (public surface)
   # ──────────────────────────────────────────────────────────────────────
   /api/keys:
-    x-stub: true
     get:
       operationId: listUserApiKeys
       tags: [api-keys]
       summary: list api keys
       description: |
         Lists the caller's own api keys (raw `key` is never included).
-        Requires a user session — api keys cannot list other api keys.
+        Requires a user session or Firebase ID token; api keys cannot
+        list other api keys. This route is currently unpaginated.
         See [authentication.md](../docs/api/authentication.md#listing-keys).
       security:
         - firebaseIdToken: []
-      parameters:
-        - $ref: '#/components/parameters/RoostVersionHeader'
-        - name: environment
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [live, test]
-          description: Filter by environment.
-        - $ref: '#/components/parameters/PageSizeQuery'
-        - $ref: '#/components/parameters/PageTokenQuery'
       responses:
         '200':
-          description: Paginated list of api key summaries.
+          description: List of api key summaries.
           headers:
             RateLimit-Limit:    { $ref: '#/components/headers/RateLimitLimit' }
             RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
@@ -1230,13 +1388,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, next_page_token]
+                required: [success, keys]
                 properties:
-                  items:
+                  success: { type: boolean }
+                  keys:
                     type: array
                     items: { $ref: '#/components/schemas/ApiKey' }
-                  next_page_token:
-                    type: string
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
@@ -1249,20 +1406,19 @@ paths:
       description: |
         Creates a scoped api key. The raw `key` value is returned
         **exactly once** — store it in a secrets manager immediately.
-        Requires a user session.
+        Requires a user session or Firebase ID token. Non-superadmin
+        callers cannot create `user` or `installer` scopes; those
+        platform resources must use `id: "*"`.
         See [authentication.md](../docs/api/authentication.md#creating-an-api-key).
       security:
         - firebaseIdToken: []
-      parameters:
-        - $ref: '#/components/parameters/RoostVersionHeader'
-        - $ref: '#/components/parameters/IdempotencyKeyHeader'
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateApiKeyRequest' }
       responses:
-        '201':
+        '200':
           description: Api key created; raw `key` present on this response only.
           headers:
             RateLimit-Limit:    { $ref: '#/components/headers/RateLimitLimit' }
@@ -1270,76 +1426,16 @@ paths:
             RateLimit-Reset:    { $ref: '#/components/headers/RateLimitReset' }
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ApiKeyWithSecret' }
+              schema: { $ref: '#/components/schemas/ApiKeyCreateResponse' }
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
-        '402': { $ref: '#/components/responses/Problem402' }
         '403': { $ref: '#/components/responses/Problem403' }
-        '409': { $ref: '#/components/responses/Problem409' }
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/keys/{keyId}:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/KeyIdPath'
-      - $ref: '#/components/parameters/RoostVersionHeader'
-    get:
-      operationId: getUserApiKey
-      tags: [api-keys]
-      summary: fetch api key detail
-      description: |
-        Returns full metadata for one key (never the raw `key`). 404
-        if the key belongs to another user or does not exist.
-      security:
-        - firebaseIdToken: []
-      responses:
-        '200':
-          description: Api key detail.
-          headers:
-            RateLimit-Limit:    { $ref: '#/components/headers/RateLimitLimit' }
-            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
-            RateLimit-Reset:    { $ref: '#/components/headers/RateLimitReset' }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ApiKey' }
-        '401': { $ref: '#/components/responses/Problem401' }
-        '403': { $ref: '#/components/responses/Problem403' }
-        '404': { $ref: '#/components/responses/Problem404' }
-        '429': { $ref: '#/components/responses/Problem429' }
-        '500': { $ref: '#/components/responses/Problem500' }
-    patch:
-      operationId: patchUserApiKey
-      tags: [api-keys]
-      summary: rename or narrow scopes on an api key
-      description: |
-        Updates the key's name or narrows its scopes. Scopes may only
-        be **narrowed** (remove permissions / ids); broadening returns
-        400 `validation_failed`.
-      security:
-        - firebaseIdToken: []
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKeyHeader'
-        - $ref: '#/components/parameters/IfMatchHeader'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PatchApiKeyRequest' }
-      responses:
-        '200':
-          description: Api key updated.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ApiKey' }
-        '400': { $ref: '#/components/responses/Problem400' }
-        '401': { $ref: '#/components/responses/Problem401' }
-        '403': { $ref: '#/components/responses/Problem403' }
-        '404': { $ref: '#/components/responses/Problem404' }
-        '409': { $ref: '#/components/responses/Problem409' }
-        '412': { $ref: '#/components/responses/Problem412' }
-        '429': { $ref: '#/components/responses/Problem429' }
-        '500': { $ref: '#/components/responses/Problem500' }
     delete:
       operationId: revokeUserApiKey
       tags: [api-keys]
@@ -1350,8 +1446,16 @@ paths:
       security:
         - firebaseIdToken: []
       responses:
-        '204':
-          description: Key revoked (no body).
+        '200':
+          description: Key revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success]
+                properties:
+                  success: { type: boolean }
+        '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
@@ -1359,22 +1463,19 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/keys/{keyId}/rotate:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/KeyIdPath'
-      - $ref: '#/components/parameters/RoostVersionHeader'
     post:
       operationId: rotateUserApiKey
       tags: [api-keys]
       summary: rotate api key
       description: |
         Mints a new raw key value; the old key remains valid for a
-        grace window (default 24h, max 72h) so running jobs can pick
-        up the new value without downtime.
+        fixed 24-hour grace window so running jobs can pick up the new
+        value without downtime. The new key keeps the old key's scopes
+        and environment.
       security:
         - firebaseIdToken: []
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKeyHeader'
       requestBody:
         required: false
         content:
@@ -1385,13 +1486,12 @@ paths:
           description: Rotation complete; new raw `key` present on this response only.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ApiKeyWithSecret' }
+              schema: { $ref: '#/components/schemas/ApiKeyRotateResponse' }
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
         '409': { $ref: '#/components/responses/Problem409' }
-        '412': { $ref: '#/components/responses/Problem412' }
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
@@ -1409,7 +1509,9 @@ paths:
       summary: list roosts in a site
       description: |
         Lists roosts the caller has access to within a site.
-        Cursor-paginated; `siteId` query is required.
+        Cursor-paginated; `siteId` query is required. Use `page_size`
+        and `page_token`; legacy `limit` and `cursor` are accepted for
+        existing clients.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -1419,6 +1521,13 @@ paths:
         - $ref: '#/components/parameters/SiteIdQuery'
         - $ref: '#/components/parameters/PageSizeQuery'
         - $ref: '#/components/parameters/PageTokenQuery'
+        - name: includeDeleted
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: Include soft-deleted roosts.
       responses:
         '200':
           description: Paginated roost list.
@@ -1430,13 +1539,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, next_page_token]
+                required: [roosts, next_page_token]
                 properties:
-                  items:
+                  roosts:
                     type: array
                     items: { $ref: '#/components/schemas/RoostSummary' }
                   next_page_token:
                     type: string
+                  nextPageToken:
+                    type: string
+                    deprecated: true
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
@@ -1600,7 +1712,7 @@ paths:
         `targetVersion` accepts every form supported by the version-ref
         resolver:
           - alias: `current` | `previous` | `first`
-          - stable id: `vrs_<hex>`
+          - stable id: 64-char sha-256 hex, or legacy `vrs_<hex>`
           - number: `3` / `"3"` / `"#3"` / `"v3"`
         Defaults to `previous` when omitted, matching one-click
         "undo last publish".
@@ -1632,7 +1744,7 @@ paths:
                   description: |
                     Version to roll back to. Accepts an alias
                     (`current` | `previous` | `first`), a stable id
-                    (`vrs_<hex>`), or a number (`3` / `"v3"` / `"#3"`).
+                    (64-char sha-256 hex, or legacy `vrs_<hex>`), or a number (`3` / `"v3"` / `"#3"`).
                     Defaults to `previous` when omitted.
       responses:
         '200':
@@ -1682,11 +1794,9 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   # ──────────────────────────────────────────────────────────────────────
-  # 3. versions — list + publish (POST) are live above. detail, files,
-  # diff endpoints are proposed.
+  # 3. versions — list, publish, detail, files, and diff are live.
   # ──────────────────────────────────────────────────────────────────────
   /api/roosts/{roostId}/versions/{versionRef}:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/RoostIdPath'
       - $ref: '#/components/parameters/VersionRefPath'
@@ -1769,7 +1879,6 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/roosts/{roostId}/versions/{versionRef}/files:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/RoostIdPath'
       - $ref: '#/components/parameters/VersionRefPath'
@@ -1817,7 +1926,6 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/roosts/{roostId}/versions/{versionRef}/diff:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/RoostIdPath'
       - $ref: '#/components/parameters/VersionRefPath'
@@ -1841,7 +1949,7 @@ paths:
           required: true
           schema:
             type: string
-            pattern: '^sha256:[0-9a-f]{64}$'
+            pattern: '^([0-9a-f]{64}|vrs_[0-9a-f]{64}|[1-9][0-9]*|[#vV][1-9][0-9]*|current|previous|first)$'
           description: The "from" versionRef to diff against.
       responses:
         '200':
@@ -1858,10 +1966,9 @@ paths:
 
   # ──────────────────────────────────────────────────────────────────────
   # 4. chunks — check/upload-urls/download-urls are live above.
-  # mount + referrers are proposed.
+  # mount + referrers are live.
   # ──────────────────────────────────────────────────────────────────────
   /api/chunks/{digest}/mount:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/DigestPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
@@ -1899,17 +2006,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [digest, fromRoostId, toRoostId, mountedAt, referrerCount]
+                required: [digest, siteId, from, to, mounted, zeroByte]
                 properties:
                   digest:
                     type: string
-                    pattern: '^sha256:[0-9a-f]{64}$'
-                  fromRoostId: { type: string }
-                  toRoostId:   { type: string }
-                  mountedAt:
-                    type: string
-                    format: date-time
-                  referrerCount: { type: integer, minimum: 1 }
+                    pattern: '^[0-9a-f]{64}$'
+                  siteId: { type: string }
+                  from: { type: string }
+                  to:   { type: string }
+                  mounted: { type: boolean }
+                  zeroByte: { type: boolean }
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '402': { $ref: '#/components/responses/Problem402' }
@@ -1920,7 +2026,6 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/chunks/{digest}/referrers:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/DigestPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
@@ -1961,11 +2066,9 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   # ──────────────────────────────────────────────────────────────────────
-  # 5. deployments (rollouts) — rollback is live above.
-  # deploy + history + detail are proposed.
+  # 5. deployments (rollouts) — rollback, deploy, history, and detail are live.
   # ──────────────────────────────────────────────────────────────────────
   /api/roosts/{roostId}/deploy:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/RoostIdPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
@@ -2007,7 +2110,6 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/roosts/{roostId}/deployments:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/RoostIdPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
@@ -2026,13 +2128,13 @@ paths:
         - $ref: '#/components/parameters/SiteIdQuery'
         - $ref: '#/components/parameters/PageSizeQuery'
         - $ref: '#/components/parameters/PageTokenQuery'
-        - name: state
+        - name: stage
           in: query
           required: false
           schema:
             type: string
-            enum: [queued, in_progress, succeeded, failed, cancelled]
-          description: Filter by rollout state.
+            enum: [scheduled, canary, complete, aborted]
+          description: Filter by rollout stage.
       responses:
         '200':
           description: Paginated deployments.
@@ -2055,7 +2157,6 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/roosts/{roostId}/deployments/{rolloutId}:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/RoostIdPath'
       - $ref: '#/components/parameters/RolloutIdPath'
@@ -2086,56 +2187,94 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   # ──────────────────────────────────────────────────────────────────────
-  # 6. sites (public read-only surface)
+  # 6. sites (public management surface)
   # ──────────────────────────────────────────────────────────────────────
   /api/sites:
-    x-stub: true
     get:
       operationId: listAccessibleSites
       tags: [sites]
       summary: list sites accessible to the caller
       description: |
-        Lists every site the caller has any scope on. Any valid key
-        or user session qualifies.
+        Lists sites visible to the caller. Session and Firebase ID-token
+        callers see the account sites they can access. Scoped API keys
+        must carry explicit `site` scopes; scoped keys with only
+        roost/machine/chat/user/installer scopes return an empty list.
+        Legacy unscoped keys retain the account view and receive the
+        legacy-scope deprecation header.
+
+        This endpoint is intentionally unpaginated for the MVP.
       security:
         - apiKey: []
         - bearerApiKey: []
         - firebaseIdToken: []
-      parameters:
-        - $ref: '#/components/parameters/RoostVersionHeader'
-        - $ref: '#/components/parameters/PageSizeQuery'
-        - $ref: '#/components/parameters/PageTokenQuery'
       responses:
         '200':
-          description: Paginated list of accessible sites.
+          description: Accessible sites.
           content:
             application/json:
               schema:
                 type: object
-                required: [items, next_page_token]
+                required: [sites]
                 properties:
-                  items:
+                  sites:
                     type: array
                     items: { $ref: '#/components/schemas/SiteSummary' }
-                  next_page_token:
-                    type: string
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
+    post:
+      operationId: createSite
+      tags: [sites]
+      summary: create a site
+      description: |
+        Creates a top-level site owned by the caller. Requires a
+        superadmin caller; API-key callers must hold `site=*:admin`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId, name]
+              properties:
+                siteId: { type: string }
+                name: { type: string, maxLength: 200 }
+                timezone: { type: string, nullable: true }
+      responses:
+        '201':
+          description: Site created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [siteId, name, timezone, owner, createdAt]
+                properties:
+                  siteId: { type: string }
+                  name: { type: string }
+                  timezone: { type: string }
+                  owner: { type: string }
+                  createdAt: { type: integer, format: int64 }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
-      - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: getSite
       tags: [sites]
       summary: fetch site detail
       description: |
-        Returns full site metadata. Site mgmt (create/update/delete)
-        stays in the dashboard for v2.
+        Returns site metadata. Requires `site=<siteId>:read`.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -2151,49 +2290,110 @@ paths:
         '404': { $ref: '#/components/responses/Problem404' }
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
-
-  # ──────────────────────────────────────────────────────────────────────
-  # 7. machines
-  # ──────────────────────────────────────────────────────────────────────
-  /api/sites/{siteId}/machines:
-    x-stub: true
-    parameters:
-      - $ref: '#/components/parameters/SiteIdPath'
-      - $ref: '#/components/parameters/RoostVersionHeader'
-    get:
-      operationId: listSiteMachines
-      tags: [machines]
-      summary: list machines in a site
+    patch:
+      operationId: updateSite
+      tags: [sites]
+      summary: update site settings
       description: |
-        Paginated machine inventory with online state + currently
-        installed roosts.
+        Updates mutable site settings. Requires `site=<siteId>:admin`.
       security:
         - apiKey: []
         - bearerApiKey: []
         - firebaseIdToken: []
       parameters:
-        - $ref: '#/components/parameters/PageSizeQuery'
-        - $ref: '#/components/parameters/PageTokenQuery'
-        - name: online
-          in: query
-          required: false
-          schema:
-            type: boolean
-          description: Filter by current online state.
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 200 }
+                timezone: { type: string }
+                timeFormat: { type: string, enum: [12h, 24h] }
       responses:
         '200':
-          description: Paginated machine list.
+          description: Site updated, or no mutable fields were supplied.
           content:
             application/json:
               schema:
                 type: object
-                required: [items, next_page_token]
+                required: [siteId, changed, updated]
                 properties:
-                  items:
+                  siteId: { type: string }
+                  changed: { type: boolean }
+                  updated:
+                    type: object
+                    additionalProperties: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    delete:
+      operationId: deleteSite
+      tags: [sites]
+      summary: delete a site
+      description: |
+        Deletes the top-level site document. Requires
+        `site=<siteId>:admin`. Subcollection cascade cleanup is deferred
+        from the MVP surface.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      responses:
+        '200':
+          description: Site deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [siteId, deleted]
+                properties:
+                  siteId: { type: string }
+                  deleted: { type: boolean }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  # ──────────────────────────────────────────────────────────────────────
+  # 7. machines
+  # ──────────────────────────────────────────────────────────────────────
+  /api/sites/{siteId}/machines:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: listSiteMachines
+      tags: [machines]
+      summary: list machines in a site
+      description: |
+        Machine inventory with online state and current roost summaries.
+        The MVP route is intentionally unpaginated and returns all machines
+        visible in the site.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Unpaginated machine list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [machines]
+                properties:
+                  machines:
                     type: array
                     items: { $ref: '#/components/schemas/MachineSummary' }
-                  next_page_token:
-                    type: string
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
@@ -2201,18 +2401,16 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}/machines/{machineId}:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
       - $ref: '#/components/parameters/MachineIdSitePath'
-      - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: getSiteMachine
       tags: [machines]
       summary: fetch machine detail
       description: |
-        Full detail for a single machine: last heartbeat, telemetry
-        snapshot, current roosts, pending rollouts.
+        Full detail for a single machine: inventory fields, heartbeat,
+        telemetry metrics, and reported process snapshots.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -2228,41 +2426,69 @@ paths:
         '404': { $ref: '#/components/responses/Problem404' }
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
-
-  /api/sites/{siteId}/machines/{machineId}/deployments:
-    x-stub: true
-    parameters:
-      - $ref: '#/components/parameters/SiteIdPath'
-      - $ref: '#/components/parameters/MachineIdSitePath'
-      - $ref: '#/components/parameters/RoostVersionHeader'
-    get:
-      operationId: listMachineDeployments
+    delete:
+      operationId: deleteSiteMachine
       tags: [machines]
-      summary: per-machine deployment history
+      summary: remove a machine from a site
       description: |
-        Lists which roosts + versions have been installed on a
-        machine, including pending rollouts.
+        Hard-deletes the machine document, its config document, and the
+        fixed pending/completed command-map documents. Requires
+        `MACHINE_REMOVE`; in the current role matrix this is superadmin-only.
+        API-key callers also need `machine=<machineId>:write`.
       security:
         - apiKey: []
         - bearerApiKey: []
         - firebaseIdToken: []
       parameters:
-        - $ref: '#/components/parameters/PageSizeQuery'
-        - $ref: '#/components/parameters/PageTokenQuery'
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       responses:
         '200':
-          description: Paginated per-machine deployment history.
+          description: Machine removal completed.
           content:
             application/json:
               schema:
                 type: object
-                required: [items, next_page_token]
+                required: [ok, data]
                 properties:
-                  items:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/RemoveMachineResult' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/machines/{machineId}/deployments:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+    get:
+      operationId: listMachineDeployments
+      tags: [machines]
+      summary: per-machine deployment history
+      description: |
+        Lists the current per-roost deployment state for roosts that target
+        the machine. The MVP route is intentionally unpaginated.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Current per-roost deployment state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [siteId, machineId, deployments]
+                properties:
+                  siteId: { type: string }
+                  machineId: { type: string }
+                  deployments:
                     type: array
                     items: { $ref: '#/components/schemas/MachineDeployment' }
-                  next_page_token:
-                    type: string
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
@@ -2302,7 +2528,7 @@ paths:
                 properties:
                   items:
                     type: array
-                    items: { type: object }
+                    items: { $ref: '#/components/schemas/InstallerDeploymentSummary' }
                   next_page_token:
                     type: string
         '400': { $ref: '#/components/responses/Problem400' }
@@ -2329,7 +2555,7 @@ paths:
         - bearerApiKey: []
         - firebaseIdToken: []
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       requestBody:
         required: true
         content:
@@ -2353,6 +2579,14 @@ paths:
                   pattern: '^[a-f0-9]{64}$'
                   nullable: true
                 parallel_install: { type: boolean }
+                close_processes:
+                  type: array
+                  items: { type: string }
+                  description: Process executable names agents should close before install.
+                suppress_projects:
+                  type: array
+                  items: { type: string }
+                  description: Project names or paths agents should suppress before install.
                 machines:
                   type: array
                   items: { type: string }
@@ -2402,10 +2636,50 @@ paths:
           description: Deployment detail.
           content:
             application/json:
-              schema: { type: object }
+              schema: { $ref: '#/components/schemas/InstallerDeploymentDetail' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    delete:
+      operationId: deleteSiteDeployment
+      tags: [Deployments]
+      summary: delete a terminal deployment record
+      description: |
+        Deletes the deployment history record only. It does not uninstall
+        software from target machines. The deployment and every target must
+        already be terminal. Requires `site=<siteId>:write` and an
+        `Idempotency-Key` header.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Deployment record deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deploymentId, siteId, deleted]
+                properties:
+                  deploymentId: { type: string }
+                  siteId: { type: string }
+                  deleted: { type: boolean }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
@@ -2428,7 +2702,7 @@ paths:
         - bearerApiKey: []
         - firebaseIdToken: []
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       requestBody:
         required: false
         content:
@@ -2450,6 +2724,7 @@ paths:
                   machine_ids:
                     type: array
                     items: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
@@ -2479,7 +2754,7 @@ paths:
         - bearerApiKey: []
         - firebaseIdToken: []
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       requestBody:
         required: false
         content:
@@ -2501,6 +2776,7 @@ paths:
                   machine_ids:
                     type: array
                     items: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
@@ -2529,7 +2805,7 @@ paths:
         - bearerApiKey: []
         - firebaseIdToken: []
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       requestBody:
         required: false
         content:
@@ -2551,6 +2827,7 @@ paths:
                   machine_ids:
                     type: array
                     items: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
@@ -3073,7 +3350,6 @@ paths:
   # 9. audit log (tamper-evident hash chain)
   # ──────────────────────────────────────────────────────────────────────
   /api/sites/{siteId}/audit-log:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
@@ -3082,18 +3358,34 @@ paths:
       tags: [audit-log]
       summary: list audit records for a site
       description: |
-        Paginated hash-chained audit log. Requires `site:X:admin`
-        scope. Record kinds: `signed_url_issued`,
-        `distribution_started`, `version_pointer_changed`,
-        `api_key_used`, `gc_run`, `chunk_verify_failed`,
-        `webhook_delivered`.
+        Paginated hash-chained audit log. Requires `site:X:read`
+        scope. Record kinds match the audit sink taxonomy:
+        `signed_url_issued`, `distribution_started`,
+        `version_pointer_changed`, `api_key_used`, `gc_run`,
+        `api_key_mutated`, `chunk_mutated`, `deployment_mutated`,
+        `distribution_mutated`, `process_mutated`, `roost_mutated`,
+        `machine_command_dispatched`, `user_mutated`, `site_mutated`,
+        `site_member_mutated`, `installer_mutated`, `webhook_mutated`,
+        and `chat_mutated`.
       security:
         - apiKey: []
         - bearerApiKey: []
         - firebaseIdToken: []
       parameters:
-        - $ref: '#/components/parameters/PageSizeQuery'
-        - $ref: '#/components/parameters/PageTokenQuery'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Legacy page size for this route.
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+          description: Previous `nextPageToken` value.
         - name: kind
           in: query
           required: false
@@ -3110,7 +3402,7 @@ paths:
           schema:
             type: string
             format: date-time
-          description: ISO 8601 lower bound on `createdAt`.
+          description: ISO 8601 or unix-ms lower bound on `recordedAt`.
       responses:
         '200':
           description: Paginated audit records.
@@ -3118,12 +3410,13 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, next_page_token]
+                required: [siteId, records, nextPageToken]
                 properties:
-                  items:
+                  siteId: { type: string }
+                  records:
                     type: array
                     items: { $ref: '#/components/schemas/AuditRecord' }
-                  next_page_token:
+                  nextPageToken:
                     type: string
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
@@ -3133,7 +3426,6 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}/audit-log/{recordHash}:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
       - $ref: '#/components/parameters/RecordHashPath'
@@ -3155,6 +3447,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AuditRecordDetail' }
+        '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
@@ -3173,6 +3466,8 @@ paths:
       summary: list webhook subscriptions
       description: |
         Lists webhook subscriptions on a site.
+        Use `page_size` and `page_token`; legacy `limit` and `cursor`
+        are accepted for existing clients.
         See [webhooks.md](../docs/api/webhooks.md).
       security:
         - apiKey: []
@@ -3190,13 +3485,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, next_page_token]
+                required: [webhooks, next_page_token]
                 properties:
-                  items:
+                  webhooks:
                     type: array
                     items: { $ref: '#/components/schemas/WebhookDetail' }
                   next_page_token:
                     type: string
+                  nextPageToken:
+                    type: string
+                    deprecated: true
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
@@ -3368,21 +3666,17 @@ paths:
       tags: [webhooks]
       summary: list webhook delivery history
       description: |
-        Paginated delivery history (success + failure), newest first.
+        Paginated delivery history, newest first. Use `page_size` and
+        `page_token`; legacy `limit` and `cursor` are accepted for
+        existing clients.
       security:
         - apiKey: []
         - bearerApiKey: []
         - firebaseIdToken: []
       parameters:
+        - $ref: '#/components/parameters/SiteIdQuery'
         - $ref: '#/components/parameters/PageSizeQuery'
         - $ref: '#/components/parameters/PageTokenQuery'
-        - name: status
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [success, failed]
-          description: Filter by delivery status.
       responses:
         '200':
           description: Paginated delivery list.
@@ -3390,13 +3684,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, next_page_token]
+                required: [deliveries, next_page_token]
                 properties:
-                  items:
+                  deliveries:
                     type: array
                     items: { $ref: '#/components/schemas/WebhookDelivery' }
                   next_page_token:
                     type: string
+                  nextPageToken:
+                    type: string
+                    deprecated: true
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
@@ -3627,8 +3924,8 @@ paths:
         operator-safe allowlist covering machine power, screenshots,
         live view, display topology, process commands, cortex MCP tool
         calls, and Owlette updates. Requires `machine=<machineId>:write`
-        for api-key callers; session/id-token callers fall through to
-        site membership.
+        for api-key callers and an idempotency key for all callers;
+        session/id-token callers fall through to site membership.
 
         Returns 409 `machine_offline` if `machines/{machineId}.online`
         is `false` — the command is NOT queued.
@@ -3637,7 +3934,7 @@ paths:
         - bearerApiKey: []
         - firebaseIdToken: []
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       requestBody:
         required: true
         content:
@@ -3655,8 +3952,16 @@ paths:
                     Per-type parameters. `reboot_machine` /
                     `shutdown_machine` accept `delay_seconds` (>=0).
                     `capture_screenshot` accepts `monitor` ('all' |
-                    'primary' | non-negative integer). Other command
-                    types accept their command-specific allowlisted fields.
+                    'primary' | non-negative integer). Process commands
+                    accept `process_name` / `process_id`; `set_launch_mode`
+                    accepts `process_name`, `mode`, optional `schedules`, and
+                    optional `schedulePresetId`; `apply_display_topology`
+                    requires `layout` and `applyId`; `ack_display_topology`
+                    requires `applyId`; `enumerate_display_modes` and
+                    `test_display_apply` do not require params; `mcp_tool_call`
+                    accepts `tool_name`, optional `tool_params`, and optional
+                    `chat_id`. Other command types accept their
+                    command-specific allowlisted fields.
                   properties:
                     delay_seconds: { type: integer, minimum: 0 }
                     monitor:
@@ -3665,6 +3970,23 @@ paths:
                           enum: [all, primary]
                         - type: integer
                           minimum: 0
+                    process_name: { type: string }
+                    process_id: { type: string }
+                    mode: { type: string }
+                    schedules:
+                      type: array
+                      items: { type: object }
+                    schedulePresetId: { type: string }
+                    layout:
+                      type: object
+                      additionalProperties: true
+                      description: Desired display topology for `apply_display_topology`.
+                    applyId: { type: string }
+                    tool_name: { type: string }
+                    tool_params:
+                      type: object
+                      additionalProperties: true
+                    chat_id: { type: string }
                 timeout_seconds:
                   type: integer
                   minimum: 1
@@ -3829,26 +4151,712 @@ paths:
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
+  # Public API Wave 1.1 coverage additions.
+
+  /api/cli/device-code:
+    post:
+      operationId: createCliDeviceCode
+      tags: [api-keys]
+      summary: start CLI device-code login
+      description: |
+        Starts a short-lived CLI pairing flow. The CLI displays the
+        pairing phrase and polls `/api/cli/device-code/poll` with the
+        opaque device code until a signed-in user authorizes it.
+      security: []
+      responses:
+        '200':
+          description: Device-code login started.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - pairPhrase
+                  - deviceCode
+                  - verificationUri
+                  - pairingUrl
+                  - expiresIn
+                  - interval
+                properties:
+                  pairPhrase: { type: string }
+                  deviceCode: { type: string }
+                  verificationUri: { type: string, format: uri }
+                  pairingUrl: { type: string, format: uri }
+                  expiresIn: { type: integer, example: 600 }
+                  interval: { type: integer, example: 5 }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/cli/device-code/authorize:
+    post:
+      operationId: authorizeCliDeviceCode
+      tags: [api-keys]
+      summary: authorize CLI device-code login
+      description: |
+        Browser-side approval step for CLI pairing. Requires a signed-in
+        user or Firebase ID token, validates site access for requested
+        scopes, then mints an `owk_*` API key for the waiting CLI.
+      security:
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name, scopes]
+              properties:
+                code: { type: string }
+                name: { type: string, minLength: 1, maxLength: 100 }
+                ttlDays: { type: integer, minimum: 1, maximum: 365, default: 90 }
+                environment:
+                  type: string
+                  enum: [live, test]
+                  default: live
+                scopes:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [resource, id, permissions]
+                    properties:
+                      resource: { type: string }
+                      id: { type: string }
+                      permissions:
+                        type: array
+                        minItems: 1
+                        items: { type: string }
+      responses:
+        '200': { description: Device code authorized and key minted. }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403':
+          description: Forbidden - superadmin required for `user` or `installer` scopes.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '410': { description: Pairing phrase expired. }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/cli/device-code/poll:
+    post:
+      operationId: pollCliDeviceCode
+      tags: [api-keys]
+      summary: poll CLI device-code login
+      description: |
+        CLI polling endpoint for the device-code flow. The device code is
+        the polling credential; once authorized, the raw API key is returned
+        exactly once and the pairing record is deleted.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceCode]
+              properties:
+                deviceCode: { type: string }
+      responses:
+        '200':
+          description: Authorized API key returned once.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apiKey: { type: string }
+                  keyId: { type: string, nullable: true }
+                  name: { type: string, nullable: true }
+                  scopes:
+                    type: array
+                    nullable: true
+                    items: { type: object }
+                  environment: { type: string, nullable: true }
+                  expiresAt:
+                    oneOf:
+                      - { type: integer }
+                      - { type: 'null' }
+                  siteId: { type: string, nullable: true }
+        '202': { description: Authorization still pending. }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '410': { description: Device code expired. }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/machines/{machineId}/cortex-enabled:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+    patch:
+      operationId: setMachineCortexEnabled
+      tags: [machines]
+      summary: toggle Cortex tool dispatch for a machine
+      description: Requires `machine=<machineId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200': { description: Cortex flag updated. }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+  /api/sites/{siteId}/machines/{machineId}/display-layout:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+    put:
+      operationId: setMachineDisplayLayout
+      tags: [machines]
+      summary: capture or configure a machine display layout
+      description: |
+        Machine-level display configuration surface. This stores the
+        assigned layout, toggles auto-restore, resets its circuit breaker,
+        or toggles the remote-apply kill switch. Requires
+        `machine=<machineId>:write` and an idempotency key.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [op, monitors, capturedBy]
+                  properties:
+                    op: { type: string, const: capture }
+                    monitors:
+                      type: array
+                      minItems: 1
+                      items: { $ref: '#/components/schemas/DisplayMonitor' }
+                    capturedBy: { type: string, minLength: 1 }
+                - type: object
+                  required: [op, enabled]
+                  properties:
+                    op: { type: string, const: set_auto_restore }
+                    enabled: { type: boolean }
+                    enabledBy:
+                      type: string
+                      description: Required when `enabled` is true.
+                - type: object
+                  required: [op]
+                  properties:
+                    op: { type: string, const: reset_breaker }
+                - type: object
+                  required: [op, enabled]
+                  properties:
+                    op: { type: string, const: set_remote_apply }
+                    enabled: { type: boolean }
+      responses:
+        '200':
+          description: Display layout operation completed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/DisplayLayoutOperationResult' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    delete:
+      operationId: clearMachineDisplayLayout
+      tags: [machines]
+      summary: clear the assigned display layout
+      description: |
+        Clears `displays.assigned` while preserving sibling display
+        settings such as auto-restore and remote-apply. Requires
+        `machine=<machineId>:write` and an idempotency key.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      responses:
+        '200':
+          description: Display layout cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    required: [machineId]
+                    properties:
+                      machineId: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/machines/{machineId}/processes/{processId}/launch-mode:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+      - $ref: '#/components/parameters/ProcessIdPath'
+    patch:
+      operationId: setProcessLaunchMode
+      tags: [Processes]
+      summary: update process launch mode
+      description: Requires `machine=<machineId>:write` and an idempotency key.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode: { type: string, enum: [off, always, scheduled] }
+                schedules:
+                  type: array
+                  items: { $ref: '#/components/schemas/ProcessScheduleBlock' }
+                schedulePresetId: { type: string, nullable: true }
+      responses:
+        '200':
+          description: Process launch mode updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    required: [processId, mode]
+                    properties:
+                      processId: { type: string }
+                      mode: { type: string, enum: [off, always, scheduled] }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/machines/{machineId}/reboot-schedule:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+    put:
+      operationId: setMachineRebootSchedule
+      tags: [machines]
+      summary: update a machine reboot schedule
+      description: Requires `machine=<machineId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [schedule]
+              properties:
+                schedule:
+                  type: object
+                  required: [enabled]
+                  properties:
+                    enabled: { type: boolean }
+                    entries:
+                      type: array
+                      items: { type: object }
+      responses:
+        '200': { description: Reboot schedule updated. }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/machines/{machineId}/uninstall:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+    post:
+      operationId: triggerMachineUninstall
+      tags: [machines]
+      summary: queue software uninstall on a machine
+      description: Requires `UNINSTALL_TRIGGER` and site write scope.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [software_name]
+              properties:
+                software_name: { type: string }
+      responses:
+        '202': { description: Uninstall command queued. }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    delete:
+      operationId: cancelMachineUninstall
+      tags: [machines]
+      summary: queue cancellation for an in-flight software uninstall
+      description: Requires `UNINSTALL_TRIGGER` and site write scope.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+        - name: software_name
+          in: query
+          required: false
+          schema: { type: string }
+          description: Software name to cancel; may also be sent in the JSON body.
+      responses:
+        '202': { description: Cancel-uninstall command queued. }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/presets/distribution:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: listDistributionPresets
+      tags: [Presets]
+      summary: list distribution presets
+      description: Requires site read scope.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200': { description: Distribution presets. }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    post:
+      operationId: createDistributionPreset
+      tags: [Presets]
+      summary: create a distribution preset
+      description: Requires site write scope.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '201': { description: Distribution preset created. }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/presets/distribution/{presetId}:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/PresetIdPath'
+    get:
+      operationId: getDistributionPreset
+      tags: [Presets]
+      summary: get a distribution preset
+      description: Requires site read scope.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200': { description: Distribution preset. }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    patch:
+      operationId: updateDistributionPreset
+      tags: [Presets]
+      summary: update a distribution preset
+      description: Requires site write scope.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200': { description: Distribution preset updated. }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    delete:
+      operationId: deleteDistributionPreset
+      tags: [Presets]
+      summary: delete a distribution preset
+      description: Requires site write scope.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200': { description: Distribution preset deleted. }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/project-distributions:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: listProjectDistributions
+      tags: [Deployments]
+      summary: list project distributions
+      description: Requires `site=<siteId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/PageSizeQuery'
+        - $ref: '#/components/parameters/PageTokenQuery'
+      responses:
+        '200': { description: Project distributions. }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    post:
+      operationId: createProjectDistribution
+      tags: [Deployments]
+      summary: create a project distribution
+      description: Requires `site=<siteId>:write` and an idempotency key.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, file_name, project_url, machines]
+              properties:
+                name: { type: string }
+                file_name: { type: string }
+                project_url: { type: string, format: uri }
+                extract_path: { type: string, nullable: true }
+                verify_files:
+                  type: array
+                  items: { type: string }
+                machines:
+                  type: array
+                  items: { type: string }
+      responses:
+        '201': { description: Project distribution created. }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '413': { $ref: '#/components/responses/Problem413' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/project-distributions/{distId}:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - name: distId
+        in: path
+        required: true
+        schema: { type: string }
+        description: The project distribution ID.
+    get:
+      operationId: getProjectDistribution
+      tags: [Deployments]
+      summary: get project distribution details
+      description: Requires `site=<siteId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200': { description: Project distribution detail. }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    delete:
+      operationId: deleteProjectDistribution
+      tags: [Deployments]
+      summary: delete a terminal project distribution
+      description: Requires `site=<siteId>:write` and an idempotency key.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      responses:
+        '200': { description: Project distribution deleted. }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/project-distributions/{distId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - name: distId
+        in: path
+        required: true
+        schema: { type: string }
+        description: The project distribution ID.
+    post:
+      operationId: cancelProjectDistribution
+      tags: [Deployments]
+      summary: cancel pending project distribution targets
+      description: Requires `site=<siteId>:write` and an idempotency key.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      responses:
+        '200': { description: Project distribution cancellation result. }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/users/me:
+    delete:
+      operationId: deleteCurrentUser
+      tags: [users]
+      summary: delete the authenticated user's own account
+      description: |
+        Self-delete cascade for the current user. Requires a session or
+        Firebase ID token and rejects API-key authentication.
+      security:
+        - firebaseIdToken: []
+      parameters:
+        - name: dryRun
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ['1', 'true', 'yes']
+      responses:
+        '200': { description: Account deletion result. }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
 # ════════════════════════════════════════════════════════════════════════
 # Components
 # ════════════════════════════════════════════════════════════════════════
   /api/sites/{siteId}/machines/{machineId}/processes:
     parameters:
-      - name: siteId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: machineId
-        in: path
-        required: true
-        schema: { type: string }
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
     get:
+      operationId: listMachineProcesses
       tags: [Processes]
       summary: list processes on a machine
       description: |
         List all processes configured on a machine, merged with their live
         runtime status (pid, responsiveness, last update). Requires
         `machine=<machineId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: List of processes
@@ -3856,31 +4864,38 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [ok, data]
                 properties:
                   ok: { type: boolean }
                   data:
                     type: object
+                    required: [processes, nextPageToken]
                     properties:
                       processes:
                         type: array
-                        items: { type: object }
+                        items: { $ref: '#/components/schemas/Process' }
                       nextPageToken:
                         type: string
                         nullable: true
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
+                        description: Always null in the current process-list contract.
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
     post:
+      operationId: createMachineProcess
       tags: [Processes]
       summary: create a process
       description: |
         Create a new process configuration. `processId` is server-generated.
         Duplicate `name` per machine is rejected with 409 `duplicate_process_name`.
         Requires `machine=<machineId>:write` and `Idempotency-Key`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema: { type: string }
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       requestBody:
         required: true
         content:
@@ -3901,7 +4916,10 @@ paths:
                 launch_mode:
                   type: string
                   enum: [off, always, scheduled]
-                schedules: { type: array, items: { type: object } }
+                schedulePresetId: { type: string, nullable: true }
+                schedules:
+                  type: array
+                  items: { $ref: '#/components/schemas/ProcessScheduleBlock' }
       responses:
         '201':
           description: Process created
@@ -3909,77 +4927,130 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [ok, data]
                 properties:
                   ok: { type: boolean }
                   data:
                     type: object
+                    required: [processId]
                     properties:
                       processId: { type: string }
-        '400': { description: Invalid request }
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
-        '409':
-          description: Duplicate process name
-          content:
-            application/problem+json:
-              schema:
-                type: object
-                properties:
-                  code: { type: string, example: duplicate_process_name }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}/machines/{machineId}/processes/{processId}:
     parameters:
-      - name: siteId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: machineId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: processId
-        in: path
-        required: true
-        schema: { type: string }
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+      - $ref: '#/components/parameters/ProcessIdPath'
     get:
+      operationId: getMachineProcess
       tags: [Processes]
       summary: get a single process detail
       description: Requires `machine=<machineId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
-        '200': { description: Process detail }
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
-        '404': { description: Process not found }
+        '200':
+          description: Process detail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/Process' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
     patch:
+      operationId: updateMachineProcess
       tags: [Processes]
       summary: partial update a process
       description: |
         Update one or more process fields. `processId` and `id` cannot be
-        mutated. Duplicate-name attempts return 409. Requires `machine=<id>:write`.
+        mutated. Duplicate-name attempts return 409. Requires `machine=<machineId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema: { type: string }
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       requestBody:
         required: true
         content:
           application/json:
-            schema: { type: object }
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string }
+                exe_path: { type: string }
+                file_path: { type: string }
+                cwd: { type: string }
+                priority: { type: string }
+                visibility: { type: string }
+                time_delay: { type: string }
+                time_to_init: { type: string }
+                relaunch_attempts: { type: string }
+                autolaunch: { type: boolean }
+                launch_mode:
+                  type: string
+                  enum: [off, always, scheduled]
+                schedulePresetId: { type: string, nullable: true }
+                schedules:
+                  type: array
+                  nullable: true
+                  items: { $ref: '#/components/schemas/ProcessScheduleBlock' }
+                schedule:
+                  type: object
+                  nullable: true
+                  additionalProperties: true
       responses:
-        '200': { description: Updated }
-        '400': { description: Invalid request }
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
-        '404': { description: Process not found }
-        '409': { description: Duplicate process name }
+        '200':
+          description: Process updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    required: [processId]
+                    properties:
+                      processId: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
     delete:
+      operationId: deleteMachineProcess
       tags: [Processes]
       summary: delete a process
       description: |
         True-idempotent: returns 200 with `alreadyDeleted: true` when the
         process is already missing. Does NOT kill a running pid — issue
-        `/kill` first if needed. Requires `machine=<id>:write`.
+        `/kill` first if needed. Requires `machine=<machineId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: Removed (or already absent)
@@ -3987,40 +5058,38 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [ok, data]
                 properties:
                   ok: { type: boolean }
                   data:
                     type: object
+                    required: [processId, alreadyDeleted]
                     properties:
                       processId: { type: string }
                       alreadyDeleted: { type: boolean }
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/kill:
     parameters:
-      - name: siteId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: machineId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: processId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: Idempotency-Key
-        in: header
-        required: true
-        schema: { type: string }
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+      - $ref: '#/components/parameters/ProcessIdPath'
     post:
+      operationId: killMachineProcess
       tags: [Processes]
       summary: kill a running process (queued command)
       description: |
-        Queue a `kill_process` command on the machine. Requires `machine=<id>:write`.
+        Queue a `kill_process` command on the machine. Requires `machine=<machineId>:write`.
         Returns 202 with the queued `commandId`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       responses:
         '202':
           description: Command queued
@@ -4028,98 +5097,122 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [ok, data]
                 properties:
                   ok: { type: boolean }
                   data:
                     type: object
+                    required: [commandId, status]
                     properties:
                       commandId: { type: string }
                       status: { type: string, example: pending }
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
-        '404': { description: Process not found }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/start:
     parameters:
-      - name: siteId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: machineId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: processId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: Idempotency-Key
-        in: header
-        required: true
-        schema: { type: string }
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+      - $ref: '#/components/parameters/ProcessIdPath'
     post:
+      operationId: startMachineProcess
       tags: [Processes]
       summary: start a process (queued command)
-      description: Queue a `start_process` command. Requires `machine=<id>:write`.
+      description: Queue a `start_process` command. Requires `machine=<machineId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       responses:
-        '202': { description: Command queued }
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
-        '404': { description: Process not found }
+        '202':
+          description: Command queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    required: [commandId, status]
+                    properties:
+                      commandId: { type: string }
+                      status: { type: string, example: pending }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/stop:
     parameters:
-      - name: siteId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: machineId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: processId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: Idempotency-Key
-        in: header
-        required: true
-        schema: { type: string }
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+      - $ref: '#/components/parameters/ProcessIdPath'
     post:
+      operationId: stopMachineProcess
       tags: [Processes]
       summary: stop a process gracefully (queued command)
-      description: Queue a `stop_process` command. Requires `machine=<id>:write`.
+      description: Queue a `stop_process` command. Requires `machine=<machineId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       responses:
-        '202': { description: Command queued }
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
-        '404': { description: Process not found }
+        '202':
+          description: Command queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    required: [commandId, status]
+                    properties:
+                      commandId: { type: string }
+                      status: { type: string, example: pending }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/schedule:
     parameters:
-      - name: siteId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: machineId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: processId
-        in: path
-        required: true
-        schema: { type: string }
-      - name: Idempotency-Key
-        in: header
-        required: true
-        schema: { type: string }
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+      - $ref: '#/components/parameters/ProcessIdPath'
     post:
+      operationId: scheduleMachineProcess
       tags: [Processes]
       summary: update a process schedule (no command queue)
       description: |
         Update the schedule on a process. Does NOT queue a command — the
         agent picks up the new schedule on its next monitoring cycle.
-        Requires `machine=<id>:write`.
+        Requires `machine=<machineId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       requestBody:
         required: true
         content:
@@ -4134,23 +5227,32 @@ paths:
                 blocks:
                   type: array
                   description: required when mode=scheduled
-                  items:
-                    type: object
-                    properties:
-                      days: { type: array, items: { type: string } }
-                      ranges:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            start: { type: string }
-                            stop: { type: string }
+                  items: { $ref: '#/components/schemas/ProcessScheduleBlock' }
       responses:
-        '200': { description: Schedule updated }
-        '400': { description: Invalid mode or missing blocks }
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
-        '404': { description: Process not found }
+        '200':
+          description: Schedule updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    required: [processId, mode]
+                    properties:
+                      processId: { type: string }
+                      mode:
+                        type: string
+                        enum: [off, always, scheduled]
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   # ──────────────────────────────────────────────────────────────────────
   # Chat (cortex-api / api-sprint wave 3 — track 3A)
@@ -4392,7 +5494,15 @@ paths:
       description: |
         Cursor-paginated per AIP-158. Soft-deleted users are excluded by
         default. Requires `user=*:read` scope (superadmin-only at minting)
-        or a session/id-token from a superadmin user.
+        or a session/id-token from a superadmin user. Use `page_size`
+        and `page_token`; legacy `limit` and `cursor` are accepted for
+        existing clients. Responses include
+        canonical `next_page_token`; `nextPageToken` is retained as a
+        deprecated compatibility alias.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - name: page_size
           in: query
@@ -4422,6 +5532,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [users, next_page_token]
                 properties:
                   users:
                     type: array
@@ -4433,7 +5544,10 @@ paths:
                         role: { type: string, enum: [member, admin, superadmin] }
                         sites: { type: array, items: { type: string } }
                         deletedAt: { type: integer, nullable: true }
-                  nextPageToken: { type: string }
+                  next_page_token: { type: string }
+                  nextPageToken:
+                    type: string
+                    deprecated: true
         '400': { description: Invalid filter }
         '401': { description: Unauthorized }
         '403': { description: Forbidden (not superadmin) }
@@ -4502,6 +5616,10 @@ paths:
       description: |
         Returns the user's role, site assignments, and metadata. Requires
         `user=*:read` scope or session/id-token from a superadmin user.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200': { description: User detail }
         '401': { description: Unauthorized }
@@ -4520,6 +5638,10 @@ paths:
         returns 200 with `alreadyDeleted: true`.
 
         Requires `user=*:admin` scope or session/id-token from a superadmin.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - name: successorUid
           in: query
@@ -4572,6 +5694,10 @@ paths:
       description: |
         Atomic role update via Firestore transaction. Requires `user=*:write`
         scope or session/id-token from a superadmin user.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       requestBody:
         required: true
         content:
@@ -4607,6 +5733,10 @@ paths:
         Atomic role update via Firestore transaction. Refuses to demote the
         last active superadmin (409 `last_superadmin`). Requires
         `user=*:write` scope or session/id-token from a superadmin user.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200': { description: Demoted (or noop if already member) }
         '400': { description: Soft-deleted target }
@@ -4633,6 +5763,10 @@ paths:
         at the field level). Validates each siteId exists; rejects the
         whole batch if any are unknown. Requires `user=*:write` scope or
         session/id-token from a superadmin user.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       requestBody:
         required: true
         content:
@@ -4671,6 +5805,10 @@ paths:
         effort cancels pending commands the user issued on those sites
         (failure does not block the response). Requires `user=*:write`
         scope or session/id-token from a superadmin user.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       requestBody:
         required: true
         content:
@@ -4714,6 +5852,10 @@ paths:
 
         Requires `site=<siteId>:admin` scope or session/id-token from an
         admin of this site.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: Members
@@ -4752,6 +5894,10 @@ paths:
 
         Requires `site=<siteId>:admin` scope or session/id-token from an
         admin of this site.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - name: Idempotency-Key
           in: header
@@ -4802,6 +5948,10 @@ paths:
 
         Requires `site=<siteId>:admin` scope or session/id-token from an
         admin of this site.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: Member removed (or was not a member)
@@ -4915,11 +6065,24 @@ components:
       required: false
       schema:
         type: string
-        maxLength: 128
+        maxLength: 255
       description: |
         Client-generated idempotency key. If the server has seen the same
-        key on a request with the same body within the replay window, it
-        returns the original response instead of re-executing.
+        key on this method, path, query, and request body within the replay
+        window, it returns the original response instead of re-executing.
+
+    RequiredIdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        maxLength: 255
+      description: |
+        Required client-generated idempotency key. If the server has seen
+        the same key on this method, path, query, and request body within
+        the replay window, it returns the original response instead of
+        re-executing.
 
     RoostVersionHeader:
       name: Roost-Version
@@ -5025,7 +6188,8 @@ components:
         type: string
       description: |
         Addresses a version on the roost. Accepts any of:
-          - a stable content-addressed id: `vrs_<hex>`
+          - a stable content-addressed id: 64-char sha-256 hex
+          - a legacy stable id alias: `vrs_<hex>`
           - a version number: `3`, `#3`, `v3`, or `V3`
           - a roost-relative alias: `current`, `previous`, `first`
         Malformed refs return 400 `version_ref_malformed`;
@@ -5037,8 +6201,8 @@ components:
       required: true
       schema:
         type: string
-        pattern: '^sha256:[0-9a-f]{64}$'
-      description: Chunk digest (`sha256:` prefixed lowercase hex).
+        pattern: '^[0-9a-f]{64}$'
+      description: Chunk digest as lowercase sha-256 hex, without `sha256:`.
 
     RecordHashPath:
       name: recordHash
@@ -5046,8 +6210,8 @@ components:
       required: true
       schema:
         type: string
-        pattern: '^sha256:[0-9a-f]{64}$'
-      description: Audit record hash (`sha256:` prefixed lowercase hex).
+        pattern: '^[0-9a-f]{64}$'
+      description: Audit record hash as raw lowercase sha-256 hex.
 
   headers:
     RateLimitLimit:
@@ -5195,18 +6359,80 @@ components:
 
     Process:
       type: object
+      required: [processId, name, exe_path, launch_mode, status]
       properties:
+        processId:
+          type: string
         id:
           type: string
+          nullable: true
+          deprecated: true
         name:
           type: string
         exe_path:
           type: string
+        file_path:
+          type: string
+        cwd:
+          type: string
+        priority:
+          type: string
+        visibility:
+          type: string
+        time_delay:
+          type: string
+        time_to_init:
+          type: string
+        relaunch_attempts:
+          type: string
+        autolaunch:
+          type: boolean
         launch_mode:
           type: string
           enum: [off, always, scheduled]
+        schedules:
+          type: array
+          nullable: true
+          items: { $ref: '#/components/schemas/ProcessScheduleBlock' }
+        schedule:
+          type: object
+          nullable: true
+          additionalProperties: true
+        schedulePresetId:
+          type: string
+          nullable: true
         status:
           type: string
+        pid:
+          type: integer
+          nullable: true
+        responsive:
+          type: boolean
+        last_updated:
+          nullable: true
+          oneOf:
+            - type: string
+            - type: number
+
+    ProcessScheduleBlock:
+      type: object
+      required: [days, ranges]
+      properties:
+        name:
+          type: string
+        colorIndex:
+          type: number
+        days:
+          type: array
+          items: { type: string }
+        ranges:
+          type: array
+          items:
+            type: object
+            required: [start, stop]
+            properties:
+              start: { type: string }
+              stop: { type: string }
 
     Schedule:
       type: object
@@ -5425,7 +6651,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, in_progress, completed, failed, partial, cancelled, uninstalled]
+          enum: [pending, in_progress, completed, failed, partial, partial_failed, cancelled, uninstalled]
         createdAt:
           type: integer
           description: Unix timestamp in milliseconds
@@ -5448,7 +6674,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, in_progress, completed, failed, partial, cancelled, uninstalled]
+          enum: [pending, in_progress, completed, failed, partial, partial_failed, cancelled, uninstalled]
         createdAt:
           type: integer
           description: Unix timestamp in milliseconds
@@ -5602,13 +6828,44 @@ components:
           description: JSON Schema for tool parameters
 
     # ── roost (project distribution v2) ─────────────────────────────
+    DisplayMonitor:
+      type: object
+      description: |
+        Monitor topology record reported by the agent and stored as a
+        machine-level assigned layout. The agent remains the source of
+        truth for vendor-specific fields; public callers should preserve
+        unknown properties returned by display state tooling.
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        deviceName: { type: string }
+        primary: { type: boolean }
+        position:
+          type: object
+          properties:
+            x: { type: number }
+            y: { type: number }
+        width: { type: integer, minimum: 0 }
+        height: { type: integer, minimum: 0 }
+        scale: { type: number }
+        orientation: { type: string }
+
+    DisplayLayoutOperationResult:
+      type: object
+      required: [machineId, op]
+      properties:
+        machineId: { type: string }
+        op:
+          type: string
+          enum: [capture, set_auto_restore, reset_breaker, set_remote_apply]
+
     ProblemDetails:
       type: object
       description: |
-        RFC 7807 problem+json envelope returned by all roost endpoints on
-        error. Unlike the legacy `ErrorResponse`, this carries a stable
-        machine-readable `type` URI, a correlation `requestId`, and
-        optional field-level `errors`.
+        RFC 7807 problem+json envelope returned by public API endpoints on
+        error. This carries a stable machine-readable `type` URI, `code`,
+        docs link, correlation `requestId`, and optional field-level
+        `errors`.
       required: [type, title, status]
       properties:
         type:
@@ -5633,6 +6890,15 @@ components:
         requestId:
           type: string
           description: Correlation ID for trace lookup; quote in support tickets.
+        code:
+          type: string
+          description: Stable machine-readable code for client branching.
+          example: validation_failed
+        docsUrl:
+          type: string
+          format: uri
+          description: Documentation anchor for the error code.
+          example: https://owlette.app/docs/api/errors#validation_failed
         errors:
           type: object
           additionalProperties:
@@ -5757,13 +7023,14 @@ components:
       properties:
         resource:
           type: string
-          enum: [site, roost, machine]
+          enum: [roost, site, machine, chat, deploy, process, user, installer]
           description: Resource type this entry grants against.
         id:
           type: string
           description: |
             Specific resource id or `*` to match any resource of the
-            given type within the caller's own access.
+            given type within the caller's own access. Platform resources
+            `user` and `installer` must use `*`.
         permissions:
           type: array
           minItems: 1
@@ -5832,14 +7099,52 @@ components:
               format: date-time
               nullable: true
               description: Timestamp of the rotation (rotate only; null on create).
+    ApiKeyCreateResponse:
+      type: object
+      required: [success, key, keyId, name, environment, scopes, expiresAt, keyPrefix]
+      properties:
+        success: { type: boolean }
+        key:
+          type: string
+          description: Raw api key (`owk_live_*` or `owk_test_*`). Store immediately.
+        keyId: { type: string }
+        name: { type: string }
+        environment:
+          type: string
+          enum: [live, test]
+        scopes:
+          type: array
+          items: { $ref: '#/components/schemas/Scope' }
+        expiresAt:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds.
+        keyPrefix: { type: string }
+    ApiKeyRotateResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiKeyCreateResponse'
+        - type: object
+          required: [rotatedFromKeyId, previousKey]
+          properties:
+            rotatedFromKeyId: { type: string }
+            previousKey:
+              type: object
+              required: [keyId, retiresAt]
+              properties:
+                keyId: { type: string }
+                retiresAt:
+                  type: integer
+                  format: int64
+                  description: Unix timestamp in milliseconds when the old key stops working.
     CreateApiKeyRequest:
       type: object
-      required: [name, environment, scopes]
+      required: [name, scopes]
       properties:
         name:          { type: string, maxLength: 128 }
         environment:
           type: string
           enum: [live, test]
+          default: live
         scopes:
           type: array
           minItems: 1
@@ -5862,11 +7167,11 @@ components:
     RotateApiKeyRequest:
       type: object
       properties:
-        graceHours:
+        ttlDays:
           type: integer
-          minimum: 0
-          maximum: 72
-          default: 24
+          minimum: 1
+          maximum: 365
+          default: 90
 
     # roosts
     RoostSummary:
@@ -5882,11 +7187,11 @@ components:
         currentVersionId:
           type: string
           nullable: true
-          pattern: '^sha256:[0-9a-f]{64}$'
+          pattern: '^[0-9a-f]{64}$'
         previousVersionId:
           type: string
           nullable: true
-          pattern: '^sha256:[0-9a-f]{64}$'
+          pattern: '^[0-9a-f]{64}$'
         totalSize:
           type: integer
           format: int64
@@ -5991,7 +7296,7 @@ components:
       properties:
         id:
           type: string
-          description: Stable content-addressed id (`vrs_*`).
+          description: Stable content-addressed id (64-char sha-256 hex).
         versionNumber:
           type: integer
           description: Monotonic 1-indexed version number, per-roost.
@@ -6021,10 +7326,10 @@ components:
       properties:
         from:
           type: string
-          pattern: '^sha256:[0-9a-f]{64}$'
+          pattern: '^[0-9a-f]{64}$'
         to:
           type: string
-          pattern: '^sha256:[0-9a-f]{64}$'
+          pattern: '^[0-9a-f]{64}$'
         added:
           type: array
           items: { $ref: '#/components/schemas/VersionFile' }
@@ -6054,16 +7359,37 @@ components:
     # chunks
     ChunkReferrer:
       type: object
-      required: [roostId, versionId, fileCount]
+      required: [entryId, source]
       properties:
-        roostId: { type: string }
+        entryId: { type: string }
+        source:
+          type: string
+          enum: [version, mount]
+        roostId:
+          type: string
+          nullable: true
+        fromRoostId:
+          type: string
+          nullable: true
+        toRoostId:
+          type: string
+          nullable: true
         versionId:
           type: string
-          pattern: '^sha256:[0-9a-f]{64}$'
+          nullable: true
+          pattern: '^[0-9a-f]{64}$'
+        versionNumber:
+          type: integer
+          nullable: true
         fileCount:
           type: integer
+          nullable: true
           minimum: 1
           description: How many files in that version reference this chunk.
+        referencedAt:
+          type: string
+          format: date-time
+          nullable: true
     MountChunkRequest:
       type: object
       required: [siteId, toRoostId]
@@ -6195,6 +7521,99 @@ components:
         sdk code-gen clarity.
       allOf:
         - $ref: '#/components/schemas/DeploymentPlan'
+    InstallerDeploymentTarget:
+      type: object
+      required: [machineId, status]
+      properties:
+        machineId: { type: string }
+        status:
+          type: string
+          enum:
+            - pending
+            - closing_processes
+            - downloading
+            - installing
+            - completed
+            - failed
+            - cancelled
+            - uninstalled
+        error:
+          type: string
+          nullable: true
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+        retriedAt:
+          type: string
+          format: date-time
+          nullable: true
+      additionalProperties: true
+    InstallerDeploymentSummary:
+      type: object
+      required:
+        - id
+        - name
+        - installer_name
+        - installer_url
+        - silent_flags
+        - verify_path
+        - sha256_checksum
+        - parallel_install
+        - targets
+        - status
+        - createdAt
+        - completedAt
+        - updatedAt
+      properties:
+        id: { type: string }
+        name: { type: string }
+        installer_name: { type: string }
+        installer_url:
+          type: string
+          format: uri
+        silent_flags: { type: string }
+        verify_path:
+          type: string
+          nullable: true
+        sha256_checksum:
+          type: string
+          nullable: true
+        parallel_install: { type: boolean }
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/InstallerDeploymentTarget' }
+        status:
+          type: string
+          enum:
+            - pending
+            - in_progress
+            - completed
+            - failed
+            - partial
+            - partial_failed
+            - cancelled
+            - uninstalling
+            - uninstalled
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+    InstallerDeploymentDetail:
+      allOf:
+        - $ref: '#/components/schemas/InstallerDeploymentSummary'
+        - type: object
+          required: [siteId]
+          properties:
+            siteId: { type: string }
 
     # sites
     SiteSummary:
@@ -6206,26 +7625,23 @@ components:
         plan:
           type: string
           enum: [free, starter, pro, enterprise]
-        timezone: { type: string, description: IANA tz name. }
+          nullable: true
+        timezone:
+          type: string
+          nullable: true
+          description: IANA tz name.
+        owner:
+          type: string
+          nullable: true
+          description: User id that owns the site.
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
     SiteDetail:
-      description: Full site detail; extends `SiteSummary`.
+      description: Site detail currently shares the live `SiteSummary` shape.
       allOf:
         - $ref: '#/components/schemas/SiteSummary'
-        - type: object
-          required: [owner, createdAt, machineCount, roostCount]
-          properties:
-            owner:
-              type: string
-              description: User id that owns the site.
-            createdAt:
-              type: string
-              format: date-time
-            machineCount:
-              type: integer
-              minimum: 0
-            roostCount:
-              type: integer
-              minimum: 0
 
     # machines
     MachineSummary:
@@ -6242,16 +7658,23 @@ components:
         agentVersion:
           type: string
           nullable: true
+        os:
+          type: string
+          nullable: true
         currentRoosts:
           type: array
           items:
             type: object
-            required: [roostId, versionId]
+            required: [roostId, name, currentVersionId, versionCounter]
             properties:
               roostId: { type: string }
-              versionId:
+              name: { type: string }
+              currentVersionId:
                 type: string
-                pattern: '^sha256:[0-9a-f]{64}$'
+                nullable: true
+              versionCounter:
+                type: integer
+                minimum: 0
     MachineDetail:
       description: Full machine detail; extends `MachineSummary` with telemetry.
       allOf:
@@ -6259,54 +7682,61 @@ components:
         - type: object
           properties:
             siteId: { type: string }
-            os:
+            hostname:
               type: string
               nullable: true
-            cpuUsage:
-              type: number
-              format: float
-              minimum: 0
-              maximum: 1
+            metrics:
+              type: object
               nullable: true
-            memoryUsage:
-              type: number
-              format: float
-              minimum: 0
-              maximum: 1
-              nullable: true
-            diskFreeBytes:
-              type: integer
-              format: int64
-              minimum: 0
-              nullable: true
-            pendingRollouts:
+              additionalProperties: true
+            processes:
               type: array
-              items: { $ref: '#/components/schemas/DeploymentStatus' }
+              items:
+                type: object
+                additionalProperties: true
     MachineDeployment:
-      description: One entry in a machine's deployment history.
+      description: Current state for one roost that targets a machine.
       type: object
-      required: [rolloutId, roostId, versionId, state]
+      required: [roostId, name, currentVersionId, previousVersionId, versionCounter, extractPath, reportedVersionId, reportedStatus, reportedAt]
       properties:
-        rolloutId: { type: string }
-        roostId:   { type: string }
-        versionId:
+        roostId: { type: string }
+        name: { type: string }
+        currentVersionId:
           type: string
-          pattern: '^sha256:[0-9a-f]{64}$'
-        state:
-          type: string
-          enum: [queued, in_progress, succeeded, failed, cancelled]
-        syncStartedAt:
-          type: string
-          format: date-time
           nullable: true
-        syncCompletedAt:
+        previousVersionId:
           type: string
-          format: date-time
           nullable: true
-        bytesTransferred:
+        versionCounter:
           type: integer
-          format: int64
           minimum: 0
+        extractPath:
+          type: string
+          nullable: true
+        reportedVersionId:
+          type: string
+          nullable: true
+        reportedStatus:
+          type: string
+          nullable: true
+        reportedAt:
+          type: string
+          format: date-time
+          nullable: true
+    RemoveMachineResult:
+      type: object
+      required: [siteId, machineId, deleted]
+      properties:
+        siteId: { type: string }
+        machineId: { type: string }
+        deleted:
+          type: object
+          required: [machine, config, pendingCommands, completedCommands]
+          properties:
+            machine: { type: string }
+            config: { type: string }
+            pendingCommands: { type: string }
+            completedCommands: { type: string }
 
     # quotas
     Quota:
@@ -6375,16 +7805,11 @@ components:
     # audit log
     AuditRecord:
       type: object
-      required: [recordHash, kind, actor, resource, createdAt]
+      required: [hash, kind, actor, siteId, target, occurredAt, recordedAt, attributes]
       properties:
-        recordHash:
+        hash:
           type: string
-          pattern: '^sha256:[0-9a-f]{64}$'
-        previousRecordHash:
-          type: string
-          pattern: '^sha256:[0-9a-f]{64}$'
-          nullable: true
-          description: Null only for the site's genesis record.
+          pattern: '^[0-9a-f]{64}$'
         kind:
           type: string
           enum:
@@ -6393,58 +7818,105 @@ components:
             - version_pointer_changed
             - api_key_used
             - gc_run
-            - chunk_verify_failed
-            - webhook_delivered
+            - api_key_mutated
+            - chunk_mutated
+            - deployment_mutated
+            - distribution_mutated
+            - process_mutated
+            - roost_mutated
+            - machine_command_dispatched
+            - user_mutated
+            - site_mutated
+            - site_member_mutated
+            - installer_mutated
+            - webhook_mutated
+            - chat_mutated
         actor:
-          type: object
-          required: [type, id]
-          properties:
-            type:
-              type: string
-              enum: [user, api_key, system]
-            id: { type: string }
-            scopeFingerprint:
-              type: string
-              description: Compact summary of the actor's effective scope at the time of the action.
-        resource:
-          type: object
-          required: [type, id]
-          properties:
-            type:
-              type: string
-              enum: [site, roost, version, chunk, machine, rollout, webhook, api_key]
-            id: { type: string }
-        payload:
+          type: string
+          description: Actor identifier such as `user:<uid>` or `apiKey:<keyId>`.
+        siteId: { type: string }
+        target:
+          type: string
+          nullable: true
+          description: Optional mutated resource id for mutation audit records.
+        occurredAt:
+          type: integer
+          format: int64
+          nullable: true
+        recordedAt:
+          type: integer
+          format: int64
+          nullable: true
+        attributes:
           type: object
           description: |
             Kind-specific structured detail. Additional properties
             depend on `kind`; treat unknown keys as forward-compatible.
           additionalProperties: true
-        ip:
-          type: string
-          nullable: true
-        userAgent:
-          type: string
-          nullable: true
-        createdAt:
-          type: string
-          format: date-time
     AuditRecordDetail:
       type: object
-      required: [record, chain]
+      required: [siteId, hash, previousHash, recordedAt, event, verification]
       properties:
-        record: { $ref: '#/components/schemas/AuditRecord' }
-        chain:
+        siteId: { type: string }
+        hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        previousHash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        recordedAt:
+          type: integer
+          format: int64
+        event:
           type: object
-          required: [verified, genesisHash, chainLength]
+          required: [kind, siteId, actor, occurredAt, attributes]
           properties:
-            verified: { type: boolean }
-            genesisHash:
+            kind:
               type: string
-              pattern: '^sha256:[0-9a-f]{64}$'
-            chainLength:
+              enum:
+                - signed_url_issued
+                - distribution_started
+                - version_pointer_changed
+                - api_key_used
+                - gc_run
+                - api_key_mutated
+                - chunk_mutated
+                - deployment_mutated
+                - distribution_mutated
+                - process_mutated
+                - roost_mutated
+                - machine_command_dispatched
+                - user_mutated
+                - site_mutated
+                - site_member_mutated
+                - installer_mutated
+                - webhook_mutated
+                - chat_mutated
+            siteId: { type: string }
+            actor: { type: string }
+            target:
+              type: string
+              description: Optional mutated resource id for mutation audit records.
+            occurredAt:
               type: integer
-              minimum: 1
+              format: int64
+            attributes:
+              type: object
+              additionalProperties: true
+        verification:
+          type: object
+          required: [ok, hashValid, linkageValid, isGenesis, predecessorPresent, reason]
+          properties:
+            ok: { type: boolean }
+            hashValid: { type: boolean }
+            linkageValid:
+              type: boolean
+              nullable: true
+            isGenesis: { type: boolean }
+            predecessorPresent: { type: boolean }
+            reason:
+              type: string
+              nullable: true
 
     # webhooks
     WebhookDeliveryStatus:
