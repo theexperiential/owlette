@@ -8,9 +8,11 @@ const isDev = process.env.NODE_ENV === 'development';
 // Firebase Auth + Firestore + Storage emulators can reach the browser. Never
 // true in prod builds.
 const isEmulatorBuild = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
+const e2eDistDir = process.env.OWLETTE_NEXT_DIST_DIR;
 
 const nextConfig: NextConfig = {
   reactStrictMode: false,
+  ...(e2eDistDir ? { distDir: e2eDistDir } : {}),
   env: {
     NEXT_PUBLIC_APP_VERSION: version,
   },

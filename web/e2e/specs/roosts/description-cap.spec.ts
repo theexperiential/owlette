@@ -102,7 +102,9 @@ test('exactly 500 chars accepted — PATCH fires, UI updates', async ({ page }) 
   expect(body).toMatchObject({ siteId: SITE_ID, description: exactCap });
 
   // UI re-renders with the saved value once the editor closes.
-  await expect(page.getByText(exactCap, { exact: true })).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByRole('button', { name: 'edit description' })).toContainText(exactCap, {
+    timeout: 5_000,
+  });
 
   expect(pageErrors, `pageerror events: ${pageErrors.map((e) => e.message).join(' | ')}`).toHaveLength(0);
 });

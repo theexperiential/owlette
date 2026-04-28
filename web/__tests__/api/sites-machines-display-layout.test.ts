@@ -3,7 +3,9 @@
 import { NextRequest } from 'next/server';
 import { createMockRequest } from './helpers/utils';
 
-let mockAuthorizedOptions: unknown[];
+// Jest hoists mock factories above lexical initializers; `var` keeps this
+// backing store available when route modules invoke authorizedSiteHandler.
+var mockAuthorizedOptions: unknown[] | undefined;
 let mockRouteAuthContext: {
   userId: string;
   keyContext: { keyId: string; environment: 'live' | 'test' } | null;

@@ -15,7 +15,8 @@ for (let i = 2; i < process.argv.length; i += 1) {
 
 const port = Number(args.get('port') || process.env.PORT || 3100);
 const hostname = args.get('hostname') || process.env.HOSTNAME || '127.0.0.1';
-const staticRoot = path.resolve(process.cwd(), '.next', 'static');
+const distDir = process.env.OWLETTE_NEXT_DIST_DIR || '.next';
+const staticRoot = path.resolve(process.cwd(), distDir, 'static');
 const staticPrefix = '/_next/static/';
 
 const contentTypes = new Map([
@@ -87,7 +88,15 @@ async function serveNextStatic(req, res) {
     'last-modified': stats.mtime.toUTCString(),
   });
 
-  createReadStream(filePath).pipe(res);
+  const stream = createReadStream(filePath);
+  stream.on('error', (error) => {
+    console.error(`Failed to serve ${filePath}`, error);
+    if (!res.headersSent) {
+      res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+    }
+    res.end('Internal server error');
+  });
+  stream.pipe(res);
   return true;
 }
 

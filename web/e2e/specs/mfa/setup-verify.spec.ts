@@ -15,6 +15,14 @@ async function signIn(page: import('@playwright/test').Page, email: string, pass
   await page.getByRole('button', { name: /sign in with email/i }).click();
 }
 
+async function fillFreshTotp(page: import('@playwright/test').Page, secret: string) {
+  const secondsUntilNextCode = authenticator.timeRemaining();
+  if (secondsUntilNextCode <= 5) {
+    await page.waitForTimeout((secondsUntilNextCode + 1) * 1000);
+  }
+  await page.getByPlaceholder('000000').fill(authenticator.generate(secret));
+}
+
 test('setup-2fa generates a manual secret, verifies TOTP, and shows backup codes', async ({ page }) => {
   const user = await seedDedicatedUser(dedicatedUser('member', `mfa-setup-${Date.now()}`));
 
@@ -28,7 +36,7 @@ test('setup-2fa generates a manual secret, verifies TOTP, and shows backup codes
   expect(secret.length).toBeGreaterThan(10);
 
   await page.getByRole('button', { name: /continue to verification/i }).click();
-  await page.getByPlaceholder('000000').fill(authenticator.generate(secret));
+  await fillFreshTotp(page, secret);
   await page.getByRole('button', { name: /verify & enable 2FA/i }).click();
 
   await expect(page.getByText(/save backup codes/i)).toBeVisible();
@@ -55,7 +63,7 @@ test('verify-2fa accepts enrolled-user TOTP with trust-device option', async ({ 
 
   await expect(page.getByText(/two-factor authentication/i).first()).toBeVisible();
   await page.getByLabel(/trust this device/i).click();
-  await page.getByPlaceholder('000000').fill(authenticator.generate(secret));
+  await fillFreshTotp(page, secret);
   await page.getByRole('button', { name: /^verify$/i }).click();
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
 });

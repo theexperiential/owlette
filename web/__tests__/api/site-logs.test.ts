@@ -10,6 +10,8 @@ import {
 
 const mockRequireSiteAuthAndScope = jest.fn();
 const mockClearLogs = jest.fn();
+// Jest hoists mock factories above lexical initializers; `var` keeps this
+// backing store available when route modules invoke authorizedSiteHandler.
 var mockAuthorizedOptions: unknown[] | undefined;
 
 jest.mock('@sentry/nextjs', () => ({

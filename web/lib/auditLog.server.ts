@@ -28,6 +28,7 @@
 
 import crypto from 'crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import type { Capability } from '@/lib/capabilities';
 import { getAdminDb } from '@/lib/firebase-admin';
 import logger from '@/lib/logger';
 
@@ -35,26 +36,7 @@ import logger from '@/lib/logger';
 /*  capability + actor types                                                  */
 /* -------------------------------------------------------------------------- */
 
-// NOTE: imports from `@/lib/capabilities` will replace these once wave 1.2 lands.
-// The placeholder shapes match the schema specified in plan.md exactly so the
-// swap is a no-op for callers; only the import statement changes.
-export type Capability =
-  | 'MACHINE_EXEC_COMMAND'
-  | 'MACHINE_CONFIG_WRITE'
-  | 'MACHINE_REMOVE'
-  | 'DEPLOYMENT_MANAGE'
-  | 'DISTRIBUTION_MANAGE'
-  | 'UNINSTALL_TRIGGER'
-  | 'PRESET_MANAGE'
-  | 'SITE_MEMBER_MANAGE'
-  | 'WEBHOOK_MANAGE'
-  | 'USER_ROLE_MANAGE'
-  | 'USER_DELETE'
-  | 'SYSTEM_PRESET_MANAGE'
-  | 'INSTALLER_MANAGE'
-  | 'GLOBAL_SETTINGS_WRITE'
-  | 'USER_SELF_PREFS'
-  | 'USER_SELF_DELETE';
+export type { Capability };
 
 export type Role = 'member' | 'admin' | 'superadmin';
 

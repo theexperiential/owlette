@@ -65,7 +65,9 @@ jest.mock('@/lib/apiAuth.server', () => {
   };
 });
 
-let mockAuthorizedSiteOptions: Array<Record<string, unknown>> | undefined;
+// Jest hoists mock factories above lexical initializers; `var` keeps this
+// backing store available when route modules invoke authorizedSiteHandler.
+var mockAuthorizedSiteOptions: Array<Record<string, unknown>> | undefined;
 
 function mockAuthorizedSiteHandler(options: Record<string, unknown>) {
   mockAuthorizedSiteOptions ??= [];

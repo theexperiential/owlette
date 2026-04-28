@@ -9,7 +9,31 @@ import {
   seedSystemPreset,
 } from '../../helpers/coverageSeed';
 
+test.use({ reducedMotion: 'reduce' });
+
+async function stabilizeForA11y(page: Page) {
+  await page.addStyleTag({
+    content: `
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+
+      .hero-enter,
+      .hero-enter-nav,
+      .hero-enter-delay-1,
+      .hero-enter-delay-2,
+      .hero-enter-delay-3 {
+        opacity: 1 !important;
+        transform: none !important;
+      }
+    `,
+  });
+  await page.evaluate(() => document.fonts?.ready);
+}
+
 async function expectNoSeriousA11yViolations(page: Page) {
+  await stabilizeForA11y(page);
   const results = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa'])
     .analyze();
@@ -20,7 +44,16 @@ async function expectNoSeriousA11yViolations(page: Page) {
     blocking.map((violation) => ({
       id: violation.id,
       impact: violation.impact,
-      nodes: violation.nodes.map((node) => node.target),
+      nodes: violation.nodes.map((node) => ({
+        target: node.target,
+        html: node.html,
+        failureSummary: node.failureSummary,
+        checks: [...node.any, ...node.all, ...node.none].map((check) => ({
+          id: check.id,
+          message: check.message,
+          data: check.data,
+        })),
+      })),
     })),
   ).toEqual([]);
 }
