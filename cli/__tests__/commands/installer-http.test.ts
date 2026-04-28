@@ -148,6 +148,28 @@ describe('owlette installer list', () => {
 });
 
 /* --------------------------------------------------------------------- */
+/*  latest                                                               */
+/* --------------------------------------------------------------------- */
+
+describe('owlette installer latest', () => {
+  it('GETs /api/installer/latest with Bearer auth', async () => {
+    const calls = installFetchStub({
+      version: '2.11.0',
+      download_url: 'https://cdn.example/Owlette-Installer-v2.11.0.exe',
+      checksum_sha256: 'a'.repeat(64),
+      file_size: 1234,
+      release_date: '2026-04-28T00:00:00.000Z',
+    });
+    const program = buildProgram();
+    await program.parseAsync(['--json', 'installer', 'latest'], { from: 'user' });
+    expect(calls[0]!.url).toBe('https://dev.test/api/installer/latest');
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer owk_live_testtoken');
+    expect(headers['Idempotency-Key']).toBeUndefined();
+  });
+});
+
+/* --------------------------------------------------------------------- */
 /*  upload (3-step)                                                      */
 /* --------------------------------------------------------------------- */
 

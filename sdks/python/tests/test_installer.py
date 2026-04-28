@@ -32,10 +32,13 @@ async def test_list_parses_versions() -> None:
                         "file_size": 1234,
                         "uploaded_at": 1700000000,
                         "uploaded_by": "u1",
+                        "release_date": "2026-04-28T00:00:00.000Z",
                         "deletedAt": None,
+                        "promoted_at": 1700000100,
+                        "promoted_by": "u2",
                     }
                 ],
-                "nextPageToken": "",
+                "next_page_token": "",
             },
         )
 
@@ -47,6 +50,43 @@ async def test_list_parses_versions() -> None:
     v = page["versions"][0]
     assert v.version == "2.10.0"
     assert v.file_size == 1234
+    assert v.release_date == "2026-04-28T00:00:00.000Z"
+    assert v.promoted_at == 1700000100
+    assert v.promoted_by == "u2"
+
+
+@pytest.mark.asyncio
+async def test_latest_parses_version() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "version": "2.10.0",
+                "download_url": "https://r2/x.exe",
+                "checksum_sha256": "a" * 64,
+                "release_notes": None,
+                "file_size": 1234,
+                "uploaded_at": 1700000000,
+                "uploaded_by": "u1",
+                "release_date": "2026-04-28T00:00:00.000Z",
+                "deletedAt": None,
+                "promoted_at": 1700000100,
+                "promoted_by": "u2",
+            },
+        )
+
+    async with Roost(token="owk_live_x", transport=_transport(handler)) as client:
+        latest = await client.installer.latest()
+
+    assert captured[0].method == "GET"
+    assert captured[0].url.path == "/api/installer/latest"
+    assert latest.version == "2.10.0"
+    assert latest.release_date == "2026-04-28T00:00:00.000Z"
+    assert latest.promoted_at == 1700000100
+    assert latest.promoted_by == "u2"
 
 
 @pytest.mark.asyncio

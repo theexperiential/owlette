@@ -9,6 +9,7 @@
  */
 
 import { createMockRequest } from './helpers/utils';
+import { createHash } from 'crypto';
 
 jest.mock('@sentry/nextjs', () => ({
   captureException: jest.fn(),
@@ -21,6 +22,9 @@ jest.mock('@/lib/auditLogClient', () => ({
   emitMutation: (...a: unknown[]) => mockEmitMutation(...a),
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
+
+const STORAGE_BYTES = Buffer.from('fake-installer-content');
+const STORAGE_SHA256 = createHash('sha256').update(STORAGE_BYTES).digest('hex');
 
 /* -------------------------------------------------------------------------- */
 /*  Auth mock                                                                 */
@@ -155,9 +159,7 @@ jest.mock('@/lib/firebase-admin', () => ({
           .mockResolvedValue(['https://storage.example.com/signed']),
         exists: jest.fn().mockResolvedValue([true]),
         getMetadata: jest.fn().mockResolvedValue([{ size: '1048576' }]),
-        download: jest
-          .fn()
-          .mockResolvedValue([Buffer.from('fake-installer-content')]),
+        download: jest.fn().mockResolvedValue([STORAGE_BYTES]),
       }),
     }),
   }),
@@ -168,6 +170,7 @@ jest.mock('@/lib/firebase-admin', () => ({
 /* -------------------------------------------------------------------------- */
 
 import { GET as listGET } from '@/app/api/installer/route';
+import { GET as latestGET } from '@/app/api/installer/latest/route';
 import { POST as uploadPOST, PUT as uploadPUT } from '@/app/api/installer/upload/route';
 import { DELETE as versionDELETE } from '@/app/api/installer/[version]/route';
 import { POST as setLatestPOST } from '@/app/api/installer/[version]/set-latest/route';
@@ -253,6 +256,22 @@ function seedVersion(version: string, data: Partial<Record<string, unknown>> = {
   }
 }
 
+function seedLatest(version: string, data: Partial<Record<string, unknown>> = {}): void {
+  docStore['installer_metadata/latest'] = {
+    data: {
+      version,
+      download_url: `https://storage.example.com/${version}.exe`,
+      checksum_sha256: 'a'.repeat(64),
+      release_notes: null,
+      file_size: 1024,
+      uploaded_at: 1700000000000,
+      uploaded_by: 'admin',
+      release_date: '2026-04-28T00:00:00.000Z',
+      ...data,
+    },
+  };
+}
+
 function seedUpload(uploadId: string, overrides: Partial<Record<string, unknown>> = {}): void {
   docStore[`installer_uploads/${uploadId}`] = {
     data: {
@@ -322,6 +341,17 @@ describe('GET /api/installer', () => {
     expect(res.status).toBe(403);
   });
 
+  it('rejects superadmin key without installer read scope', async () => {
+    authedAsKeyMissingScope('write');
+
+    const req = createMockRequest('http://localhost/api/installer');
+    const res = await listGET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.code).toBe('scope_insufficient');
+  });
+
   it('accepts session/id-token superadmin (scope check bypassed)', async () => {
     authedAsSuperadminSession();
     seedVersion('2.0.0');
@@ -364,6 +394,88 @@ describe('GET /api/installer', () => {
     expect(body.versions).toHaveLength(1);
     expect(body.versions[0].version).toBe('3.0.0');
     expect(body.next_page_token).toBe('3.0.0');
+  });
+});
+
+/* ========================================================================== */
+/*  GET /api/installer/latest                                                 */
+/* ========================================================================== */
+
+describe('GET /api/installer/latest', () => {
+  it('returns current latest installer metadata from the active version record', async () => {
+    authedAsSuperadminWithKey('read');
+    seedVersion('3.0.0', { uploaded_at: 3, release_date: { toDate: () => new Date('2026-04-28T00:00:00.000Z') } });
+    seedLatest('3.0.0', { promoted_at: 456, promoted_by: 'admin-2' });
+
+    const req = createMockRequest('http://localhost/api/installer/latest');
+    const res = await latestGET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.version).toBe('3.0.0');
+    expect(body.download_url).toBe('https://storage.example.com/3.0.0.exe');
+    expect(body.release_date).toBe('2026-04-28T00:00:00.000Z');
+    expect(body.promoted_at).toBe(456);
+  });
+
+  it('returns 404 when latest pointer is missing', async () => {
+    authedAsSuperadminWithKey('read');
+
+    const req = createMockRequest('http://localhost/api/installer/latest');
+    const res = await latestGET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(body.code).toBe('latest_installer_not_found');
+  });
+
+  it('returns 404 when latest points at a missing version doc', async () => {
+    authedAsSuperadminWithKey('read');
+    seedLatest('3.0.0');
+
+    const req = createMockRequest('http://localhost/api/installer/latest');
+    const res = await latestGET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(body.code).toBe('latest_installer_not_found');
+  });
+
+  it('returns 404 when latest points at a deleted version', async () => {
+    authedAsSuperadminWithKey('read');
+    seedVersion('3.0.0', { deletedAt: 1234 });
+    seedLatest('3.0.0');
+
+    const req = createMockRequest('http://localhost/api/installer/latest');
+    const res = await latestGET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(body.code).toBe('latest_installer_not_found');
+  });
+
+  it('rejects non-superadmin api key with 403 forbidden', async () => {
+    authedAsNonSuperadminWithKey('read');
+    seedVersion('3.0.0');
+    seedLatest('3.0.0');
+
+    const req = createMockRequest('http://localhost/api/installer/latest');
+    const res = await latestGET(req);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects superadmin key without installer read scope', async () => {
+    authedAsKeyMissingScope('write');
+    seedVersion('3.0.0');
+    seedLatest('3.0.0');
+
+    const req = createMockRequest('http://localhost/api/installer/latest');
+    const res = await latestGET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.code).toBe('scope_insufficient');
   });
 });
 
@@ -477,14 +589,14 @@ describe('PUT /api/installer/upload', () => {
     const req = createMockRequest('http://localhost/api/installer/upload', {
       method: 'PUT',
       headers: { 'Idempotency-Key': 'installer-finalize-happy' },
-      body: { uploadId: 'upload-1', checksum_sha256: 'a'.repeat(64) },
+      body: { uploadId: 'upload-1', checksum_sha256: STORAGE_SHA256 },
     });
     const res = await uploadPUT(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
     expect(body.version).toBe('3.0.0');
-    expect(body.checksum_sha256).toBe('a'.repeat(64));
+    expect(body.checksum_sha256).toBe(STORAGE_SHA256);
     expect(docStore['installer_metadata/data/versions/3.0.0']).toBeDefined();
     expect(mockEmitMutation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -499,7 +611,7 @@ describe('PUT /api/installer/upload', () => {
 
     const req = createMockRequest('http://localhost/api/installer/upload', {
       method: 'PUT',
-      body: { uploadId: 'upload-1', checksum_sha256: 'a'.repeat(64) },
+      body: { uploadId: 'upload-1', checksum_sha256: STORAGE_SHA256 },
     });
     const res = await uploadPUT(req);
     const body = await res.json();
@@ -519,6 +631,40 @@ describe('PUT /api/installer/upload', () => {
     const res = await uploadPUT(req);
 
     expect(res.status).toBe(404);
+  });
+
+  it('computes checksum when finalize omits checksum_sha256', async () => {
+    authedAsSuperadminWithKey('write');
+    seedUpload('upload-1', { setAsLatest: false });
+
+    const req = createMockRequest('http://localhost/api/installer/upload', {
+      method: 'PUT',
+      headers: { 'Idempotency-Key': 'installer-finalize-computed-checksum' },
+      body: { uploadId: 'upload-1' },
+    });
+    const res = await uploadPUT(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.checksum_sha256).toBe(STORAGE_SHA256);
+    expect(docStore['installer_metadata/data/versions/3.0.0']?.data?.checksum_sha256).toBe(STORAGE_SHA256);
+  });
+
+  it('rejects finalize when checksum does not match the uploaded object', async () => {
+    authedAsSuperadminWithKey('write');
+    seedUpload('upload-1');
+
+    const req = createMockRequest('http://localhost/api/installer/upload', {
+      method: 'PUT',
+      headers: { 'Idempotency-Key': 'installer-finalize-checksum-mismatch' },
+      body: { uploadId: 'upload-1', checksum_sha256: 'a'.repeat(64) },
+    });
+    const res = await uploadPUT(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(412);
+    expect(body.code).toBe('checksum_mismatch');
+    expect(docStore['installer_metadata/data/versions/3.0.0']).toBeUndefined();
   });
 });
 
@@ -549,6 +695,27 @@ describe('DELETE /api/installer/{version}', () => {
         attributes: expect.objectContaining({ verb: 'soft_deleted' }),
       }),
     );
+  });
+
+  it('refuses to delete the current latest version', async () => {
+    authedAsSuperadminWithKey('admin');
+    seedVersion('2.0.0');
+    seedVersion('2.1.0');
+    seedVersion('2.2.0');
+    seedLatest('2.1.0');
+
+    const req = createMockRequest('http://localhost/api/installer/2.1.0', {
+      method: 'DELETE',
+    });
+    const res = await versionDELETE(req, {
+      params: Promise.resolve({ version: '2.1.0' }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe('latest_version_protected');
+    expect(docStore['installer_metadata/data/versions/2.1.0']?.data?.deletedAt).toBeUndefined();
+    expect(mockEmitMutation).not.toHaveBeenCalled();
   });
 
   it('refuses delete that would drop active count below 2 (409 min_versions_violated)', async () => {
@@ -621,6 +788,24 @@ describe('DELETE /api/installer/{version}', () => {
     });
 
     expect(res.status).toBe(403);
+  });
+
+  it('rejects superadmin key with write but not admin scope', async () => {
+    authedAsKeyMissingScope('write');
+    seedVersion('2.0.0');
+    seedVersion('2.1.0');
+    seedVersion('2.2.0');
+
+    const req = createMockRequest('http://localhost/api/installer/2.0.0', {
+      method: 'DELETE',
+    });
+    const res = await versionDELETE(req, {
+      params: Promise.resolve({ version: '2.0.0' }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.code).toBe('scope_insufficient');
   });
 
   it('rejects malformed version path with 400 validation', async () => {
@@ -733,6 +918,24 @@ describe('POST /api/installer/{version}/set-latest', () => {
     expect(res.status).toBe(403);
   });
 
+  it('rejects superadmin key with write but not admin scope', async () => {
+    authedAsKeyMissingScope('write');
+    seedVersion('3.0.0');
+
+    const req = createMockRequest('http://localhost/api/installer/3.0.0/set-latest', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': 'installer-set-latest-write-scope' },
+      body: {},
+    });
+    const res = await setLatestPOST(req, {
+      params: Promise.resolve({ version: '3.0.0' }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.code).toBe('scope_insufficient');
+  });
+
   it('replays cached response on duplicate Idempotency-Key', async () => {
     authedAsSuperadminWithKey('admin');
     seedVersion('3.0.0');
@@ -760,5 +963,28 @@ describe('POST /api/installer/{version}/set-latest', () => {
     expect(res2.status).toBe(200);
     expect(res2.headers.get('Idempotent-Replayed')).toBe('true');
     expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  it('normalizes Firestore timestamp release_date in latest response', async () => {
+    authedAsSuperadminWithKey('admin');
+    seedVersion('3.0.0', {
+      release_date: { toDate: () => new Date('2026-04-28T00:00:00.000Z') },
+    });
+
+    const req = createMockRequest('http://localhost/api/installer/3.0.0/set-latest', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': 'installer-set-latest-timestamp' },
+      body: {},
+    });
+    const res = await setLatestPOST(req, {
+      params: Promise.resolve({ version: '3.0.0' }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.latest.release_date).toBe('2026-04-28T00:00:00.000Z');
+    expect(docStore['installer_metadata/latest']?.data?.release_date).toBe(
+      '2026-04-28T00:00:00.000Z',
+    );
   });
 });

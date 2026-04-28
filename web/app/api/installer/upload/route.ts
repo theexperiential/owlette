@@ -7,7 +7,7 @@
  * PUT  /api/installer/upload
  *
  * Step 2 (finalize): server verifies the file is in Storage, computes
- * checksum if the client didn't provide one, writes
+ * checksum, rejects a caller-supplied checksum mismatch, writes
  * `installer_metadata/data/versions/{version}` (and optionally the
  * `installer_metadata/latest` pointer).
  *
@@ -305,11 +305,22 @@ export async function PUT(request: NextRequest) {
         const [metadata] = await file.getMetadata();
         const fileSize = parseInt(metadata.size as string, 10) || 0;
 
-        let finalChecksum = providedChecksum;
-        if (!finalChecksum) {
-          const [fileBuffer] = await file.download();
-          finalChecksum = createHash('sha256').update(fileBuffer).digest('hex');
+        const [fileBuffer] = await file.download();
+        const computedChecksum = createHash('sha256')
+          .update(fileBuffer)
+          .digest('hex');
+        if (providedChecksum && providedChecksum !== computedChecksum) {
+          return problem({
+            type: ProblemType.PreconditionFailed,
+            title: 'checksum mismatch',
+            status: 412,
+            detail:
+              'checksum_sha256 does not match the uploaded binary; upload the file again before finalizing',
+            instance: '/api/installer/upload',
+            code: 'checksum_mismatch',
+          });
         }
+        const finalChecksum = computedChecksum;
 
         const downloadExpiry = new Date('2030-01-01');
         const [downloadUrl] = await file.getSignedUrl({
@@ -329,6 +340,7 @@ export async function PUT(request: NextRequest) {
           uploaded_at: now,
           release_date: Timestamp.fromMillis(now),
           uploaded_by: uploadData.userId,
+          deletedAt: null,
         };
 
         await db

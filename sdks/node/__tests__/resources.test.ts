@@ -5,6 +5,9 @@
  */
 
 import { Roost } from '../src/index';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 interface Call {
   url: string;
@@ -393,6 +396,74 @@ describe('roost.installer', () => {
     expect(calls[0]!.url).toContain('includeDeleted=true');
   });
 
+  it('latest -> GET /api/installer/latest', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          version: '2.10.0',
+          download_url: 'https://cdn.example/x.exe',
+          checksum_sha256: 'a'.repeat(64),
+          release_notes: null,
+          file_size: 123,
+          uploaded_at: 1,
+          uploaded_by: 'u1',
+          release_date: '2026-04-28T00:00:00.000Z',
+          deletedAt: null,
+        },
+      },
+    ]);
+    const latest = await roost.installer.latest();
+    expect(calls[0]!.url).toBe('https://dev.test/api/installer/latest');
+    expect(latest.version).toBe('2.10.0');
+  });
+
+  it('upload -> POST, signed-url PUT, finalize with one idempotency key', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'owlette-node-installer-test-'));
+    const filePath = join(tempDir, 'Owlette-Installer-v2.11.0.exe');
+    writeFileSync(filePath, Buffer.from('fake installer bytes'));
+    try {
+      const { roost, calls } = makeRoost([
+        {
+          status: 200,
+          body: {
+            uploadUrl: 'https://signed.example/upload',
+            uploadId: 'upload-1',
+            storagePath: 'agent-installers/versions/2.11.0/Owlette-Installer-v2.11.0.exe',
+            expiresAt: '2026-04-28T00:15:00.000Z',
+          },
+        },
+        { status: 200, body: '' },
+        {
+          status: 200,
+          body: {
+            version: '2.11.0',
+            download_url: 'https://cdn.example/Owlette-Installer-v2.11.0.exe',
+            checksum_sha256: 'a'.repeat(64),
+            file_size: 20,
+          },
+        },
+      ]);
+
+      await roost.installer.upload({ filePath, version: '2.11.0' });
+
+      expect(calls).toHaveLength(3);
+      expect(calls[0]!.url).toBe('https://dev.test/api/installer/upload');
+      expect(calls[0]!.init.method).toBe('POST');
+      expect(calls[1]!.url).toBe('https://signed.example/upload');
+      expect(calls[1]!.init.method).toBe('PUT');
+      expect(calls[2]!.url).toBe('https://dev.test/api/installer/upload');
+      expect(calls[2]!.init.method).toBe('PUT');
+      const startHeaders = calls[0]!.init.headers as Record<string, string>;
+      const finalizeHeaders = calls[2]!.init.headers as Record<string, string>;
+      expect(startHeaders['Idempotency-Key']).toMatch(/^sdk-installer-upload-/);
+      expect(finalizeHeaders['Idempotency-Key']).toBe(startHeaders['Idempotency-Key']);
+      expect(JSON.parse(String(calls[2]!.init.body)).checksum_sha256).toMatch(/^[a-f0-9]{64}$/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('setLatest → POST /api/installer/{version}/set-latest with auto idempotency-key', async () => {
     const { roost, calls } = makeRoost([
       {
@@ -415,6 +486,8 @@ describe('roost.installer', () => {
     const result = await roost.installer.delete('2.5.0');
     expect(calls[0]!.init.method).toBe('DELETE');
     expect(calls[0]!.url).toBe('https://dev.test/api/installer/2.5.0');
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^sdk-installer-delete-/);
     expect(result.alreadyDeleted).toBe(false);
   });
 });

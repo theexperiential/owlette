@@ -3,6 +3,7 @@
 Drives the wave-1B routes:
 
   GET    /api/installer
+  GET    /api/installer/latest
   POST   /api/installer/upload          — request signed upload url
   PUT    /api/installer/upload          — finalize upload (verify + write metadata)
   POST   /api/installer/{version}/set-latest
@@ -10,8 +11,9 @@ Drives the wave-1B routes:
 
 ``upload()`` is the canonical 3-step flow: it asks the server for a
 signed PUT url, streams the binary up to that url, then PUTs back the
-finalize call. The same ``Idempotency-Key`` is used on both POSTs and
-the finalize PUT so a network retry replays cleanly.
+finalize call. The same ``Idempotency-Key`` is used on both server API
+calls so request/finalize retries replay cleanly while the signed upload URL
+is still valid.
 """
 
 from __future__ import annotations
@@ -39,6 +41,9 @@ class InstallerVersion:
     uploaded_at: int | None
     uploaded_by: str | None
     deleted_at: int | None
+    release_date: str | None = None
+    promoted_at: int | None = None
+    promoted_by: str | None = None
 
 
 def _parse_version(raw: dict[str, Any]) -> InstallerVersion:
@@ -51,6 +56,9 @@ def _parse_version(raw: dict[str, Any]) -> InstallerVersion:
         uploaded_at=raw.get("uploaded_at"),
         uploaded_by=raw.get("uploaded_by"),
         deleted_at=raw.get("deletedAt"),
+        release_date=raw.get("release_date"),
+        promoted_at=raw.get("promoted_at"),
+        promoted_by=raw.get("promoted_by"),
     )
 
 
@@ -91,8 +99,14 @@ class Installer:
         ]
         return {
             "versions": versions,
-            "next_page_token": str(data.get("nextPageToken") or ""),
+            "next_page_token": str(data.get("next_page_token") or data.get("nextPageToken") or ""),
         }
+
+    async def latest(self) -> InstallerVersion:
+        """Return the current latest installer version metadata."""
+        resp = await self._client.request("/api/installer/latest")
+        data = resp.data if isinstance(resp.data, dict) else {}
+        return _parse_version(data)
 
     async def upload(
         self,
@@ -109,8 +123,8 @@ class Installer:
         2. PUT  <signed url>           → binary bytes
         3. PUT  /api/installer/upload  → finalize (server verifies + writes metadata)
 
-        Same ``Idempotency-Key`` is used on the POST + finalize PUT so a
-        retry of the whole flow replays cached responses on both ends.
+        Same ``Idempotency-Key`` is used on the POST + finalize PUT so
+        server-side retries replay while the signed upload URL is still valid.
         """
         path = Path(file_path)
         binary = path.read_bytes()

@@ -3,13 +3,14 @@
  *
  * Drives:
  *   list        GET    /api/installer
+ *   latest      GET    /api/installer/latest
  *   upload      POST   /api/installer/upload  → PUT <signedUrl> → PUT /api/installer/upload (finalize)
  *   set-latest  POST   /api/installer/{version}/set-latest
  *   delete      DELETE /api/installer/{version}
  *
  * Mutations carry an auto-generated `Idempotency-Key`. For `upload` the
  * SAME key is used on both the POST (request signed url) and the PUT
- * (finalize) so a retry of the whole sequence replays cleanly.
+ * (finalize) so API-call retries replay while the signed URL is still valid.
  *
  * api-sprint wave 5 — track 5.1 batch B (cli http handlers).
  */
@@ -29,6 +30,7 @@ interface InstallerVersion {
   file_size: number | null;
   uploaded_at: number | null;
   uploaded_by: string | null;
+  release_date?: string | null;
   deletedAt: number | null;
 }
 
@@ -44,7 +46,7 @@ export function registerInstallerCommands(program: Command): void {
   installer.description('agent installer binary management (superadmin)');
 
   // Drop any stub verbs left from earlier file-load ordering.
-  for (const verb of ['list', 'upload', 'set-latest', 'delete'] as const) {
+  for (const verb of ['list', 'latest', 'upload', 'set-latest', 'delete'] as const) {
     const existing = installer.commands.find((c) => c.name() === verb);
     if (existing) {
       const list = installer.commands as Command[];
@@ -83,6 +85,7 @@ export function registerInstallerCommands(program: Command): void {
       });
       const data = (await res.json().catch(() => ({}))) as {
         versions?: InstallerVersion[];
+        next_page_token?: string;
         nextPageToken?: string;
         detail?: string;
         code?: string;
@@ -123,9 +126,65 @@ export function registerInstallerCommands(program: Command): void {
       process.stdout.write(
         renderTable(['version', 'size', 'uploaded', 'status', 'sha256 (12)'], rows),
       );
-      if (data.nextPageToken) {
-        process.stdout.write(`\nnext page: --cursor ${data.nextPageToken}\n`);
+      const nextPageToken = data.next_page_token ?? data.nextPageToken ?? '';
+      if (nextPageToken) {
+        process.stdout.write(`\nnext page: --cursor ${nextPageToken}\n`);
       }
+    });
+
+  /* -------------------- latest -------------------- */
+
+  installer
+    .command('latest')
+    .description('show the current latest installer version (superadmin)')
+    .action(async (_opts, cmd) => {
+      const { apiUrl, token, json } = resolveAuth(cmd);
+      if (!token) return;
+
+      const res = await fetch(`${apiUrl}/api/installer/latest`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = (await res.json().catch(() => ({}))) as InstallerVersion & {
+        detail?: string;
+        code?: string;
+      };
+
+      if (!res.ok) {
+        if (res.status === 403 && data.code === 'scope_insufficient') {
+          fatal(
+            `GET /api/installer/latest failed (403, scope_insufficient): ${data.detail ?? 'superadmin scope required'}` +
+              `\n  hint: installer latest requires an installer=*:read api key (superadmin-only at minting) or a superadmin user session`,
+          );
+          return;
+        }
+        fatal(
+          `GET /api/installer/latest failed (${res.status}, ${data.code ?? 'unknown'}): ${data.detail ?? JSON.stringify(data)}`,
+        );
+        return;
+      }
+
+      if (json) {
+        process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+        return;
+      }
+
+      process.stdout.write(
+        renderTable(
+          ['version', 'size', 'uploaded', 'sha256 (12)'],
+          [
+            [
+              data.version,
+              data.file_size != null ? humanBytes(data.file_size) : '',
+              data.release_date
+                ? String(data.release_date).slice(0, 10)
+                : data.uploaded_at
+                  ? new Date(data.uploaded_at).toISOString().slice(0, 10)
+                  : '',
+              (data.checksum_sha256 ?? '').slice(0, 12),
+            ],
+          ],
+        ),
+      );
     });
 
   /* -------------------- upload -------------------- */
@@ -163,8 +222,8 @@ export function registerInstallerCommands(program: Command): void {
       const fileName = basename(file);
       const checksum = createHash('sha256').update(buffer).digest('hex');
 
-      // Same idempotency key on both POST + finalize PUT so a retry of the
-      // entire sequence replays the cached responses on both ends.
+      // Same idempotency key on both POST + finalize PUT so API-call
+      // retries replay while the signed URL is still valid.
       const idempotencyKey = opts.idempotencyKey
         ? String(opts.idempotencyKey)
         : `cli-installer-upload-${randomUUID()}`;
@@ -328,7 +387,7 @@ export function registerInstallerCommands(program: Command): void {
         if (res.status === 403 && data.code === 'scope_insufficient') {
           fatal(
             `POST /api/installer/${version}/set-latest failed (403, scope_insufficient): ${data.detail ?? 'superadmin scope required'}` +
-              `\n  hint: set-latest requires an installer=*:write api key (superadmin-only at minting) or a superadmin user session`,
+              `\n  hint: set-latest requires an installer=*:admin api key (superadmin-only at minting) or a superadmin user session`,
           );
           return;
         }
@@ -406,7 +465,7 @@ export function registerInstallerCommands(program: Command): void {
         if (res.status === 403 && data.code === 'scope_insufficient') {
           fatal(
             `DELETE /api/installer/${version} failed (403, scope_insufficient): ${data.detail ?? 'superadmin scope required'}` +
-              `\n  hint: installer delete requires an installer=*:write api key (superadmin-only at minting) or a superadmin user session`,
+              `\n  hint: installer delete requires an installer=*:admin api key (superadmin-only at minting) or a superadmin user session`,
           );
           return;
         }

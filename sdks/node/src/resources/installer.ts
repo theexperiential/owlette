@@ -4,6 +4,7 @@
  * Wraps the wave-1B installer-api routes:
  *
  *   GET    /api/installer
+ *   GET    /api/installer/latest
  *   POST   /api/installer/upload                 — request signed upload URL
  *   PUT    /api/installer/upload                 — finalize the upload
  *   POST   /api/installer/{version}/set-latest
@@ -12,7 +13,7 @@
  * The `upload` flow is a 3-step convenience: POST → PUT to the signed URL
  * with the binary → PUT (finalize). The sha-256 of the binary is computed
  * client-side via `crypto.createHash` and passed to the finalize call so
- * the server doesn't have to re-download the object.
+ * the server can reject a corrupted upload.
  *
  * Mutations auto-generate `Idempotency-Key` headers when the caller omits
  * one. Errors surface as `RoostApiError`.
@@ -34,7 +35,10 @@ export interface InstallerVersion {
   file_size: number | null;
   uploaded_at: number | null;
   uploaded_by: string | null;
+  release_date?: string | null;
   deletedAt: number | null;
+  promoted_at?: number | null;
+  promoted_by?: string | null;
 }
 
 export interface ListInstallerOptions {
@@ -59,9 +63,11 @@ export interface UploadRequestOptions {
   releaseNotes?: string | null;
   /** Whether to promote this version to `latest` on finalize. Default true. */
   setAsLatest?: boolean;
-  /** Override the auto-generated idempotency key for the start step. */
+  /** Override the auto-generated idempotency key used on both API calls. */
+  idempotencyKey?: string;
+  /** @deprecated Use idempotencyKey; retained for compatibility. */
   startIdempotencyKey?: string;
-  /** Override the auto-generated idempotency key for the finalize step. */
+  /** @deprecated Use idempotencyKey; retained for compatibility. */
   finalizeIdempotencyKey?: string;
   /**
    * Optional override of the upload PUT. Defaults to `client._fetch` so that
@@ -92,8 +98,17 @@ export class Installer {
 
     const res = await this.client.request<{
       versions: InstallerVersion[];
-      nextPageToken: string;
+      next_page_token?: string;
+      nextPageToken?: string;
     }>('/api/installer', { query });
+    return {
+      versions: res.data.versions ?? [],
+      nextPageToken: res.data.next_page_token ?? res.data.nextPageToken ?? '',
+    };
+  }
+
+  async latest(): Promise<InstallerVersion> {
+    const res = await this.client.request<InstallerVersion>('/api/installer/latest');
     return res.data;
   }
 
@@ -116,6 +131,11 @@ export class Installer {
     };
     if (opts.releaseNotes !== undefined) startBody.releaseNotes = opts.releaseNotes;
     if (opts.setAsLatest !== undefined) startBody.setAsLatest = opts.setAsLatest;
+    const idempotencyKey =
+      opts.idempotencyKey ??
+      opts.startIdempotencyKey ??
+      opts.finalizeIdempotencyKey ??
+      `sdk-installer-upload-${randomUUID()}`;
 
     const startRes = await this.client.request<{
       uploadUrl: string;
@@ -125,8 +145,7 @@ export class Installer {
     }>('/api/installer/upload', {
       method: 'POST',
       body: startBody,
-      idempotencyKey:
-        opts.startIdempotencyKey ?? `sdk-installer-upload-start-${randomUUID()}`,
+      idempotencyKey: opts.startIdempotencyKey ?? idempotencyKey,
     });
     const { uploadUrl, uploadId } = startRes.data;
 
@@ -155,9 +174,7 @@ export class Installer {
       {
         method: 'PUT',
         body: { uploadId, checksum_sha256: sha256 },
-        idempotencyKey:
-          opts.finalizeIdempotencyKey ??
-          `sdk-installer-upload-finalize-${randomUUID()}`,
+        idempotencyKey: opts.finalizeIdempotencyKey ?? idempotencyKey,
       },
     );
     return finalizeRes.data;
@@ -180,6 +197,7 @@ export class Installer {
 
   async delete(
     version: string,
+    opts: { idempotencyKey?: string } = {},
   ): Promise<{ version: string; deletedAt: number; alreadyDeleted: boolean }> {
     const res = await this.client.request<{
       version: string;
@@ -187,6 +205,7 @@ export class Installer {
       alreadyDeleted: boolean;
     }>(`/api/installer/${encodeURIComponent(version)}`, {
       method: 'DELETE',
+      idempotencyKey: opts.idempotencyKey ?? `sdk-installer-delete-${randomUUID()}`,
     });
     return res.data;
   }

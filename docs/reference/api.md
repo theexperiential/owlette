@@ -1098,101 +1098,92 @@ Queues uninstall commands for every target in a deployment. This is an asynchron
 
 ## installers
 
-### get latest installer
+Installer management uses the canonical `/api/installer/*` public API. All routes are superadmin-only; API keys need `installer=*:read`, `installer=*:write`, or `installer=*:admin` as noted below.
 
-Returns metadata for the latest available agent installer.
+### get latest installer
 
 | | |
 |---|---|
 | **Method** | `GET` |
-| **URL** | `/api/admin/installer/latest` |
-| **Auth** | Session cookie (admin) or Firebase ID token |
-
-**Response (200):**
+| **URL** | `/api/installer/latest` |
+| **Auth** | `installer=*:read` or superadmin session |
 
 ```json
 {
-  "version": "2.1.8",
-  "fileName": "OwletteSetup-2.1.8.exe",
-  "downloadUrl": "https://storage.googleapis.com/...",
-  "releaseNotes": "Bug fixes and performance improvements",
-  "uploadedAt": "2026-03-20T10:00:00Z"
+  "version": "2.11.0",
+  "download_url": "https://storage.googleapis.com/...",
+  "checksum_sha256": "a1b2c3...",
+  "release_notes": "Bug fixes",
+  "file_size": 52428800,
+  "uploaded_at": 1777363200000,
+  "uploaded_by": "uid_123",
+  "release_date": "2026-04-28T00:00:00.000Z",
+  "deletedAt": null
 }
 ```
 
----
-
 ### list installer versions
-
-Returns all available installer versions.
 
 | | |
 |---|---|
 | **Method** | `GET` |
-| **URL** | `/api/admin/installer/versions?limit=20` |
-| **Auth** | Session cookie (admin) or Firebase ID token |
-
-**Response (200):**
+| **URL** | `/api/installer?page_size=20&page_token=...` |
+| **Auth** | `installer=*:read` or superadmin session |
 
 ```json
 {
   "versions": [
     {
-      "version": "2.1.8",
-      "fileName": "OwletteSetup-2.1.8.exe",
-      "isLatest": true,
-      "uploadedAt": "2026-03-20T10:00:00Z"
+      "version": "2.11.0",
+      "download_url": "https://storage.googleapis.com/...",
+      "checksum_sha256": "a1b2c3...",
+      "file_size": 52428800,
+      "uploaded_at": 1777363200000,
+      "release_date": "2026-04-28T00:00:00.000Z",
+      "deletedAt": null
     }
-  ]
+  ],
+  "next_page_token": ""
 }
 ```
 
----
+### upload installer
 
-### upload installer (initiate)
-
-Initiates an installer upload and returns a signed upload URL.
+Step 1 requests a signed URL.
 
 | | |
 |---|---|
 | **Method** | `POST` |
-| **URL** | `/api/admin/installer/upload` |
-| **Auth** | Session cookie (admin) |
-
-**Request Body:**
+| **URL** | `/api/installer/upload` |
+| **Auth** | `installer=*:write` or superadmin session |
+| **Required Header** | `Idempotency-Key` |
 
 ```json
 {
-  "version": "2.1.9",
-  "fileName": "OwletteSetup-2.1.9.exe",
-  "releaseNotes": "New features and bug fixes",
+  "version": "2.11.0",
+  "fileName": "Owlette-Installer-v2.11.0.exe",
+  "releaseNotes": "Bug fixes",
   "setAsLatest": true
 }
 ```
 
-**Response (200):**
-
 ```json
 {
+  "uploadUrl": "https://storage.googleapis.com/...?X-Goog-Signature=...",
   "uploadId": "upl_abc123",
-  "signedUrl": "https://storage.googleapis.com/...?X-Goog-Signature=...",
-  "expiresAt": "2026-03-22T12:30:00Z"
+  "storagePath": "agent-installers/versions/2.11.0/Owlette-Installer-v2.11.0.exe",
+  "expiresAt": "2026-04-28T00:15:00.000Z"
 }
 ```
 
----
-
-### upload installer (finalize)
-
-Finalizes an installer upload after the binary has been uploaded to the signed URL.
+Step 2 uploads the binary to `uploadUrl`. Step 3 finalizes the upload.
 
 | | |
 |---|---|
 | **Method** | `PUT` |
-| **URL** | `/api/admin/installer/upload` |
-| **Auth** | Session cookie (admin) |
-
-**Request Body:**
+| **URL** | `/api/installer/upload` |
+| **Auth** | `installer=*:write` or superadmin session |
+| **Required Header** | `Idempotency-Key` |
 
 ```json
 {
@@ -1201,14 +1192,33 @@ Finalizes an installer upload after the binary has been uploaded to the signed U
 }
 ```
 
-**Response (200):**
-
 ```json
 {
-  "success": true,
-  "version": "2.1.9"
+  "version": "2.11.0",
+  "download_url": "https://storage.googleapis.com/...",
+  "checksum_sha256": "a1b2c3d4...",
+  "file_size": 52428800
 }
 ```
+
+### set latest
+
+| | |
+|---|---|
+| **Method** | `POST` |
+| **URL** | `/api/installer/{version}/set-latest` |
+| **Auth** | `installer=*:admin` or superadmin session |
+| **Required Header** | `Idempotency-Key` |
+
+### delete installer
+
+| | |
+|---|---|
+| **Method** | `DELETE` |
+| **URL** | `/api/installer/{version}` |
+| **Auth** | `installer=*:admin` or superadmin session |
+
+Delete soft-deletes metadata. It rejects the current latest version (`409 latest_version_protected`) and rejects deletes that would drop below two active versions (`409 min_versions_violated`).
 
 ---
 

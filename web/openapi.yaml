@@ -613,6 +613,36 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/installer/latest:
+    get:
+      operationId: getLatestInstaller
+      tags: [Installer]
+      summary: Get latest installer metadata (public, superadmin)
+      description: |
+        Returns the active latest installer metadata used by the admin
+        dashboard and CLI. Superadmin-only; API-key callers must hold
+        `installer=*:read`. The unauthenticated download permalink remains
+        `GET /download`.
+      responses:
+        '200':
+          description: Latest active installer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallerVersion'
+        '403':
+          description: Forbidden; caller is not a superadmin or the API key lacks `installer=*:read`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: No active latest installer is available
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/installer/upload:
     post:
       operationId: requestInstallerUpload
@@ -695,9 +725,9 @@ paths:
       summary: Finalize installer upload (step 2)
       description: |
         Step 2 of the two-step installer upload. Verifies the binary is in
-        Storage, computes the SHA-256 if `checksum_sha256` is omitted, and
-        writes `installer_metadata/{version}` (and the `latest` pointer if
-        `setAsLatest` was true at step 1). Superadmin-only;
+        Storage, computes SHA-256 from the stored object, rejects a supplied
+        `checksum_sha256` mismatch, and writes version metadata plus the
+        `latest` pointer when `setAsLatest` was true at step 1. Superadmin-only;
         API-key callers need `installer=*:write`.
       parameters:
         - name: Idempotency-Key
@@ -760,6 +790,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+        '412':
+          description: Uploaded object checksum does not match `checksum_sha256`
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '422':
           description: Idempotency-Key reused with a different request body
           content:
@@ -806,7 +842,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
         '409':
-          description: Min active version count would be violated
+          description: Current latest version is protected or min active version count would be violated
           content:
             application/problem+json:
               schema:
@@ -6796,21 +6832,42 @@ components:
 
     InstallerVersion:
       type: object
+      required: [version, download_url, checksum_sha256, file_size, uploaded_at, uploaded_by, release_date, deletedAt]
       properties:
         version:
           type: string
-        fileName:
-          type: string
-        downloadUrl:
+        download_url:
           type: string
           format: uri
-        releaseNotes:
+          nullable: true
+        checksum_sha256:
           type: string
-        isLatest:
-          type: boolean
-        uploadedAt:
+          nullable: true
+        release_notes:
+          type: string
+          nullable: true
+        file_size:
+          type: integer
+          nullable: true
+        uploaded_at:
+          type: integer
+          nullable: true
+        uploaded_by:
+          type: string
+          nullable: true
+        release_date:
           type: string
           format: date-time
+          nullable: true
+        deletedAt:
+          type: integer
+          nullable: true
+        promoted_at:
+          type: integer
+          nullable: true
+        promoted_by:
+          type: string
+          nullable: true
 
     McpTool:
       type: object

@@ -1,43 +1,38 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import {
-  collection,
-  query,
-  onSnapshot,
-  doc,
-  orderBy,
-  Timestamp,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
 import { useAuth } from '@/contexts/AuthContext';
+import type { FirestoreTs } from '@/hooks/useFirestore';
 
 export interface InstallerVersion {
-  id: string; // Version number (e.g., "2.0.0")
+  id: string;
   version: string;
   download_url: string;
   file_size: number;
-  release_date: Timestamp;
+  release_date: FirestoreTs;
   checksum_sha256: string;
   release_notes?: string;
   uploaded_by: string;
   is_latest?: boolean;
 }
 
+interface InstallerVersionApi {
+  version?: string;
+  download_url?: string | null;
+  file_size?: number | null;
+  release_date?: FirestoreTs;
+  uploaded_at?: number | null;
+  checksum_sha256?: string | null;
+  release_notes?: string | null;
+  uploaded_by?: string | null;
+}
+
 /**
  * useInstallerManagement Hook
  *
- * Provides functionality for admin users to manage agent installer versions.
- *
- * Features:
- * - Real-time list of all versions
- * - Upload new versions
- * - Set version as latest
- * - Delete versions
- *
- * Usage:
- * const { versions, loading, uploadVersion, setAsLatest, deleteVersion } = useInstallerManagement();
+ * Provides functionality for admin users to manage agent installer versions
+ * through the documented /api/installer public API surface.
  */
 export function useInstallerManagement() {
   const { user } = useAuth();
@@ -46,110 +41,70 @@ export function useInstallerManagement() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch all versions with real-time updates
-  useEffect(() => {
-    if (!db) {
-      setError('Firebase is not configured');
-      setLoading(false);
-      return;
-    }
-
+  const refreshInstallerState = useCallback(async () => {
+    setLoading(true);
     try {
-      const versionsRef = collection(db, 'installer_metadata', 'data', 'versions');
-      const q = query(versionsRef, orderBy('release_date', 'desc'));
+      const versionsResponse = await fetch('/api/installer?page_size=100', {
+        cache: 'no-store',
+      });
+      if (!versionsResponse.ok) {
+        throw new Error(await readApiError(versionsResponse, 'Failed to fetch installer versions'));
+      }
+      const versionsBody = (await versionsResponse.json()) as { versions?: InstallerVersionApi[] };
+      const versionRows: InstallerVersion[] = Array.isArray(versionsBody.versions)
+        ? versionsBody.versions.map(normalizeVersion)
+        : [];
 
-      const unsubscribe = onSnapshot(
-        q,
-        (snapshot) => {
-          const versionsData: InstallerVersion[] = [];
+      const latestResponse = await fetch('/api/installer/latest', {
+        cache: 'no-store',
+      });
+      let latest: InstallerVersion | null = null;
+      if (latestResponse.ok) {
+        latest = normalizeVersion(await latestResponse.json());
+      } else if (latestResponse.status !== 404) {
+        throw new Error(await readApiError(latestResponse, 'Failed to fetch latest installer'));
+      }
 
-          snapshot.forEach((doc) => {
-            versionsData.push({
-              id: doc.id,
-              ...doc.data(),
-            } as InstallerVersion);
-          });
-
-          setVersions(versionsData);
-          setLoading(false);
-          setError(null);
-        },
-        (err) => {
-          console.error('Error fetching versions:', err);
-          const friendlyMessage = handleError(err);
-          setError(friendlyMessage);
-          setLoading(false);
-        }
+      setLatestVersion(latest);
+      setVersions(
+        versionRows.map((version) => ({
+          ...version,
+          is_latest: latest?.version === version.version,
+        })),
       );
-
-      return () => unsubscribe();
+      setError(null);
     } catch (err) {
-      console.error('Error setting up versions listener:', err);
-      const friendlyMessage = handleError(err);
-      setError(friendlyMessage);
+      console.error('Error fetching installer versions:', err);
+      setError(handleError(err));
+    } finally {
       setLoading(false);
     }
   }, []);
 
-  // Fetch latest version metadata
   useEffect(() => {
-    if (!db) return;
+    void refreshInstallerState();
+  }, [refreshInstallerState]);
 
-    try {
-      const latestRef = doc(db, 'installer_metadata', 'latest');
-
-      const unsubscribe = onSnapshot(
-        latestRef,
-        (doc) => {
-          if (doc.exists()) {
-            setLatestVersion({
-              id: 'latest',
-              ...doc.data(),
-            } as InstallerVersion);
-          }
-        },
-        (err) => {
-          console.error('Error fetching latest version:', err);
-        }
-      );
-
-      return () => unsubscribe();
-    } catch (err) {
-      console.error('Error setting up latest version listener:', err);
-    }
-  }, []);
-
-  /**
-   * Upload a new installer version
-   *
-   * @param file - The installer .exe file
-   * @param version - Version number (e.g., "2.0.0")
-   * @param releaseNotes - Optional release notes
-   * @param setAsLatest - Whether to set this as the latest version
-   * @param onProgress - Progress callback (0-100)
-   */
   const uploadVersion = useCallback(
     async (
       file: File,
       version: string,
       releaseNotes: string | undefined,
       setAsLatest: boolean,
-      onProgress?: (progress: number) => void
+      onProgress?: (progress: number) => void,
     ): Promise<void> => {
-      if (!db) {
-        throw new Error('Firebase is not configured');
-      }
-
       if (!user) {
         throw new Error('You must be logged in to upload');
       }
 
       try {
+        const checksum = await sha256File(file);
+        const idempotencyKey = createIdempotencyKey(`installer-upload-${version}`);
         const uploadInit = await fetch('/api/installer/upload', {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
-            'Idempotency-Key': createIdempotencyKey(`installer-upload-start-${version}`),
+            'Idempotency-Key': idempotencyKey,
           },
           body: JSON.stringify({
             version,
@@ -168,30 +123,25 @@ export function useInstallerManagement() {
           method: 'PUT',
           headers: {
             'content-type': 'application/json',
-            'Idempotency-Key': createIdempotencyKey(`installer-upload-finalize-${uploadBody.uploadId}`),
+            'Idempotency-Key': idempotencyKey,
           },
-          body: JSON.stringify({ uploadId: uploadBody.uploadId }),
+          body: JSON.stringify({
+            uploadId: uploadBody.uploadId,
+            ...(checksum ? { checksum_sha256: checksum } : {}),
+          }),
         });
         if (!finalize.ok) throw new Error(await readApiError(finalize, 'Failed to finalize upload'));
+        await refreshInstallerState();
       } catch (err) {
         console.error('Error uploading version:', err);
         throw new Error(handleError(err));
       }
     },
-    [user]
+    [refreshInstallerState, user],
   );
 
-  /**
-   * Set a version as the latest
-   *
-   * @param version - The version to set as latest
-   */
   const setAsLatest = useCallback(
     async (version: string): Promise<void> => {
-      if (!db) {
-        throw new Error('Firebase is not configured');
-      }
-
       try {
         const response = await fetch(`/api/installer/${encodeURIComponent(version)}/set-latest`, {
           method: 'POST',
@@ -202,39 +152,34 @@ export function useInstallerManagement() {
           body: JSON.stringify({}),
         });
         if (!response.ok) throw new Error(await readApiError(response, 'Failed to set latest version'));
+        await refreshInstallerState();
       } catch (err) {
         console.error('Error setting latest version:', err);
         throw new Error(handleError(err));
       }
     },
-    []
+    [refreshInstallerState],
   );
 
-  /**
-   * Delete an installer version
-   *
-   * @param version - The version to delete
-   */
-  const deleteVersion = useCallback(async (version: string): Promise<void> => {
-    if (!db) {
-      throw new Error('Firebase is not configured');
-    }
+  const deleteVersion = useCallback(
+    async (version: string): Promise<void> => {
+      try {
+        const response = await fetch(`/api/installer/${encodeURIComponent(version)}`, {
+          method: 'DELETE',
+          headers: {
+            'Idempotency-Key': createIdempotencyKey(`installer-delete-${version}`),
+          },
+        });
+        if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete installer version'));
+        await refreshInstallerState();
+      } catch (err) {
+        console.error('Error deleting version:', err);
+        throw new Error(handleError(err));
+      }
+    },
+    [refreshInstallerState],
+  );
 
-    try {
-      const response = await fetch(`/api/installer/${encodeURIComponent(version)}`, {
-        method: 'DELETE',
-      });
-      if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete installer version'));
-    } catch (err) {
-      console.error('Error deleting version:', err);
-      throw new Error(handleError(err));
-    }
-  }, []);
-
-  /**
-   * Identify versions eligible for cleanup.
-   * Keeps: latest patch per minor series, anything uploaded within retentionDays, and the current latest.
-   */
   const getCleanupCandidates = useCallback(
     (retentionDays: number = 30): InstallerVersion[] => {
       if (!latestVersion) return [];
@@ -242,7 +187,6 @@ export function useInstallerManagement() {
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - retentionDays);
 
-      // Group versions by major.minor
       const groups = new Map<string, InstallerVersion[]>();
       for (const v of versions) {
         const parts = v.version.split('.');
@@ -252,12 +196,13 @@ export function useInstallerManagement() {
         groups.get(key)!.push(v);
       }
 
-      // Find the highest patch per minor group
       const keepVersions = new Set<string>();
       keepVersions.add(latestVersion.version);
 
       for (const [, group] of groups) {
-        let highest = group[0];
+        const first = group[0];
+        if (!first) continue;
+        let highest = first;
         for (const v of group) {
           const patchA = parseInt(v.version.split('.')[2], 10);
           const patchB = parseInt(highest.version.split('.')[2], 10);
@@ -268,16 +213,7 @@ export function useInstallerManagement() {
 
       return versions.filter((v) => {
         if (keepVersions.has(v.version)) return false;
-        // Keep if uploaded within retention window. release_date is typed as
-        // Timestamp but can arrive as other shapes from cache rehydration /
-        // legacy writes — narrow structurally and fall through to new Date().
-        const rd = v.release_date as
-          | { toDate?: () => Date }
-          | number
-          | string
-          | Date
-          | null
-          | undefined;
+        const rd = v.release_date;
         const uploadDate = rd && typeof (rd as { toDate?: () => Date }).toDate === 'function'
           ? (rd as { toDate: () => Date }).toDate()
           : new Date(rd as number | string | Date);
@@ -285,12 +221,9 @@ export function useInstallerManagement() {
         return true;
       });
     },
-    [versions, latestVersion]
+    [versions, latestVersion],
   );
 
-  /**
-   * Delete all cleanup candidate versions
-   */
   const cleanupVersions = useCallback(
     async (candidates: InstallerVersion[]): Promise<number> => {
       let deleted = 0;
@@ -300,7 +233,7 @@ export function useInstallerManagement() {
       }
       return deleted;
     },
-    [deleteVersion]
+    [deleteVersion],
   );
 
   return {
@@ -313,6 +246,20 @@ export function useInstallerManagement() {
     deleteVersion,
     getCleanupCandidates,
     cleanupVersions,
+  };
+}
+
+function normalizeVersion(raw: InstallerVersionApi): InstallerVersion {
+  const version = raw.version ?? '';
+  return {
+    id: version,
+    version,
+    download_url: raw.download_url ?? '',
+    file_size: raw.file_size ?? 0,
+    release_date: raw.release_date ?? raw.uploaded_at ?? null,
+    checksum_sha256: raw.checksum_sha256 ?? '',
+    release_notes: raw.release_notes ?? undefined,
+    uploaded_by: raw.uploaded_by ?? '',
   };
 }
 
@@ -341,6 +288,14 @@ function uploadFileToSignedUrl(
     xhr.onerror = () => reject(new Error('Upload failed'));
     xhr.send(file);
   });
+}
+
+async function sha256File(file: File): Promise<string | null> {
+  if (!globalThis.crypto?.subtle) return null;
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 async function readApiError(response: Response, fallback: string): Promise<string> {

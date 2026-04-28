@@ -55,6 +55,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       .doc('data')
       .collection('versions');
     const targetRef = versionsCol.doc(version);
+    const latestRef = db.collection('installer_metadata').doc('latest');
 
     const result = await db.runTransaction(async (tx) => {
       const targetSnap = await tx.get(targetRef);
@@ -70,6 +71,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
           kind: 'already_deleted' as const,
           deletedAt: targetData.deletedAt as number,
         };
+      }
+
+      const latestSnap = await tx.get(latestRef);
+      const latestData = latestSnap.exists ? latestSnap.data() : null;
+      if (latestData?.version === version) {
+        return { kind: 'latest_protected' as const };
       }
 
       // Count active (non-deleted) versions inside the transaction so a
@@ -102,6 +109,18 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         status: 404,
         detail: `installer version ${version} does not exist`,
         instance: `/api/installer/${version}`,
+      });
+    }
+
+    if (result.kind === 'latest_protected') {
+      return problem({
+        type: ProblemType.Conflict,
+        title: 'latest version protected',
+        status: 409,
+        detail:
+          'cannot delete the current latest installer; promote another active version first',
+        instance: `/api/installer/${version}`,
+        code: 'latest_version_protected',
       });
     }
 

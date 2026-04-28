@@ -26,6 +26,10 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { withIdempotency } from '@/lib/idempotency';
 import { emitMutation } from '@/lib/auditLogClient';
 import {
+  installerVersionResponse,
+  type InstallerVersionRecord,
+} from '@/lib/installerVersionResponse.server';
+import {
   applyAuthDeprecations,
   readAndParseJsonBody,
   requirePlatformAuthAndScope,
@@ -81,18 +85,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           }
 
           const now = Date.now();
-          const latestData = {
-            version: data.version || version,
-            download_url: data.download_url ?? null,
-            checksum_sha256: data.checksum_sha256 ?? null,
-            release_notes: data.release_notes ?? null,
-            file_size: data.file_size ?? null,
-            uploaded_at: data.uploaded_at ?? null,
-            uploaded_by: data.uploaded_by ?? null,
-            release_date: new Date(now).toISOString(),
+          const latestData = installerVersionResponse(version, {
+            ...(data as InstallerVersionRecord),
+            version: typeof data.version === 'string' ? data.version : version,
+            deletedAt: null,
             promoted_at: now,
             promoted_by: auth.userId,
-          };
+          });
           tx.set(latestRef, latestData);
           return { kind: 'set' as const, latestData };
         });
