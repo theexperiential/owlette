@@ -27,6 +27,10 @@ import {
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import {
+  nextPageTokenFromDocs,
+  parsePagination,
+} from '@/lib/pagination';
+import {
   createDeployment,
   type CreateDeploymentInput,
   type CreateDeploymentResult,
@@ -52,14 +56,12 @@ export const GET = authorizedSiteHandler<RouteParams>({
     const auth = await requireSiteAuthAndScope(request, siteId, 'read');
     if (!auth.ok) return auth.response;
 
-    const pageSizeRaw = Number(
-      request.nextUrl.searchParams.get('page_size') ?? DEFAULT_PAGE_SIZE,
-    );
-    const pageSize = Math.min(
-      Math.max(1, Number.isFinite(pageSizeRaw) ? Math.floor(pageSizeRaw) : DEFAULT_PAGE_SIZE),
-      MAX_PAGE_SIZE,
-    );
-    const pageToken = request.nextUrl.searchParams.get('page_token') ?? '';
+    const parsedPagination = parsePagination(request.nextUrl.searchParams, {
+      defaultPageSize: DEFAULT_PAGE_SIZE,
+      maxPageSize: MAX_PAGE_SIZE,
+    });
+    if (!parsedPagination.ok) return parsedPagination.response;
+    const { pageSize, pageToken } = parsedPagination.pagination;
 
     const db = getAdminDb();
     const deploymentsCol = db
@@ -75,7 +77,7 @@ export const GET = authorizedSiteHandler<RouteParams>({
 
     const snap = await query.get();
     const docs = snap.docs.slice(0, pageSize);
-    const nextPageToken = snap.docs.length > pageSize ? snap.docs[pageSize].id : '';
+    const nextPageToken = nextPageTokenFromDocs(snap.docs, pageSize);
 
     const items = docs.map((d) => serializeDeployment(d.id, d.data() ?? {}));
 
@@ -139,6 +141,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
           auth.scopeCheck,
         );
       },
+      { requireKey: true },
     );
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/deployments:POST');

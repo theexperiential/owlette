@@ -150,6 +150,6 @@ async def test_rename_and_delete_emit_correct_methods() -> None:
     assert captured[0].url.path == "/api/chat/c1"
     assert captured[1].method == "DELETE"
     assert captured[1].url.path == "/api/chat/c1"
-    # DELETE explicitly carries an Idempotency-Key (the core client only
-    # auto-adds it on POST/PATCH/PUT).
+    # Chat uses a resource-specific prefix even though the core client can
+    # also auto-add idempotency keys on DELETE.
     assert captured[1].headers["Idempotency-Key"].startswith("py-sdk-chat-delete-")

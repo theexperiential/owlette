@@ -23,16 +23,19 @@ import {
   requireSiteAuthAndScope,
 } from '../../../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import { emitMutation } from '@/lib/auditLogClient';
 import type { DeploymentTarget } from '@/hooks/useDeployments';
 
-interface RouteParams {
-  params: Promise<{ siteId: string; deploymentId: string }>;
-}
+type RouteParams = { siteId: string; deploymentId: string };
 
-export async function POST(request: NextRequest, { params }: RouteParams) {
+export const POST = authorizedSiteHandler<RouteParams>({
+  capability: 'DEPLOYMENT_MANAGE',
+  siteIdParam: 'path',
+  targetKind: 'deployment',
+})(async (request: NextRequest, ctx, routeContext) => {
   try {
-    const { siteId, deploymentId } = await params;
+    const { siteId, deploymentId } = await routeContext.params;
 
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
@@ -178,6 +181,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             verb: 'retry',
             retried_count: failed.length,
             machine_ids: failed.map((t) => t.machineId),
+            correlationId: ctx.correlationId,
           },
         });
 
@@ -192,8 +196,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           auth.scopeCheck,
         );
       },
+      { requireKey: true },
     );
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/deployments/[deploymentId]/retry:POST');
   }
-}
+});

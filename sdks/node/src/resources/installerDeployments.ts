@@ -1,5 +1,5 @@
 /**
- * `roost.installerDeployments` — public counterpart of `/api/admin/deployments`.
+ * `roost.installerDeployments` - classic installer deployment lifecycle.
  *
  * Wraps the wave-1A installer-deployments routes:
  *
@@ -9,6 +9,7 @@
  *   POST   /api/sites/{siteId}/deployments/{deploymentId}/retry
  *   POST   /api/sites/{siteId}/deployments/{deploymentId}/cancel
  *   POST   /api/sites/{siteId}/deployments/{deploymentId}/uninstall
+ *   DELETE /api/sites/{siteId}/deployments/{deploymentId}
  *
  * Every mutation auto-generates an `Idempotency-Key` of the form
  * `sdk-installer-deployments-<verb>-${randomUUID()}` if the caller does
@@ -90,6 +91,8 @@ export interface CreateInstallerDeploymentOptions {
   machines: readonly string[];
   verify_path?: string;
   sha256_checksum?: string;
+  close_processes?: readonly string[];
+  suppress_projects?: readonly string[];
   parallel_install?: boolean;
   idempotencyKey?: string;
 }
@@ -110,6 +113,12 @@ export interface InstallerDeploymentMutationResult {
   cancelled?: number;
   queued?: number;
   machine_ids?: string[];
+}
+
+export interface InstallerDeploymentDeleteResult {
+  deploymentId: string;
+  siteId: string;
+  deleted: boolean;
 }
 
 /* --------------------------------------------------------------------- */
@@ -158,6 +167,8 @@ export class InstallerDeployments {
     };
     if (opts.verify_path !== undefined) body.verify_path = opts.verify_path;
     if (opts.sha256_checksum !== undefined) body.sha256_checksum = opts.sha256_checksum;
+    if (opts.close_processes !== undefined) body.close_processes = [...opts.close_processes];
+    if (opts.suppress_projects !== undefined) body.suppress_projects = [...opts.suppress_projects];
     if (opts.parallel_install) body.parallel_install = true;
 
     const res = await this.client.request<CreateInstallerDeploymentResult>(
@@ -218,6 +229,23 @@ export class InstallerDeployments {
         body: {},
         idempotencyKey:
           opts.idempotencyKey ?? `sdk-installer-deployments-uninstall-${randomUUID()}`,
+      },
+    );
+    return res.data;
+  }
+
+  async delete(
+    siteId: string,
+    deploymentId: string,
+    opts: { idempotencyKey?: string } = {},
+  ): Promise<InstallerDeploymentDeleteResult> {
+    const res = await this.client.request<InstallerDeploymentDeleteResult>(
+      `/api/sites/${encodeURIComponent(siteId)}/deployments/${encodeURIComponent(deploymentId)}`,
+      {
+        method: 'DELETE',
+        body: {},
+        idempotencyKey:
+          opts.idempotencyKey ?? `sdk-installer-deployments-delete-${randomUUID()}`,
       },
     );
     return res.data;

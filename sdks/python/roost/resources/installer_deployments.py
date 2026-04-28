@@ -8,6 +8,7 @@ Drives the wave-1A site-scoped routes:
   POST   /api/sites/{siteId}/deployments/{deploymentId}/retry
   POST   /api/sites/{siteId}/deployments/{deploymentId}/cancel
   POST   /api/sites/{siteId}/deployments/{deploymentId}/uninstall
+  DELETE /api/sites/{siteId}/deployments/{deploymentId}
 
 Note: this is the *classic installer* deploy noun, distinct from the
 content-addressed atomic roost deploy (``roost.roosts.deploy``). The
@@ -173,6 +174,8 @@ class InstallerDeployments:
         machines: Sequence[str],
         verify_path: str | None = None,
         sha256_checksum: str | None = None,
+        close_processes: Sequence[str] | None = None,
+        suppress_projects: Sequence[str] | None = None,
         parallel_install: bool = False,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
@@ -187,6 +190,10 @@ class InstallerDeployments:
             body["verify_path"] = verify_path
         if sha256_checksum is not None:
             body["sha256_checksum"] = sha256_checksum
+        if close_processes is not None:
+            body["close_processes"] = list(close_processes)
+        if suppress_projects is not None:
+            body["suppress_projects"] = list(suppress_projects)
         if parallel_install:
             body["parallel_install"] = True
 
@@ -194,6 +201,21 @@ class InstallerDeployments:
             f"/api/sites/{site_id}/deployments",
             method="POST",
             body=body,
+            idempotency_key=idempotency_key,
+        )
+        return resp.data if isinstance(resp.data, dict) else {}
+
+    async def delete(
+        self,
+        site_id: str,
+        deployment_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        resp = await self._client.request(
+            f"/api/sites/{site_id}/deployments/{deployment_id}",
+            method="DELETE",
+            body={},
             idempotency_key=idempotency_key,
         )
         return resp.data if isinstance(resp.data, dict) else {}

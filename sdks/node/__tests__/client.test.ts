@@ -51,6 +51,17 @@ describe('RoostClient headers', () => {
     expect(headers['Idempotency-Key']).toBeUndefined();
   });
 
+  it('injects Idempotency-Key on DELETE', async () => {
+    const { fetch, calls } = makeFakeFetch(async () => ({ status: 200, body: { ok: true } }));
+    const client = new RoostClient({ token: 'owk_live_x', fetch });
+    await client.request('/api/sites/site-1/deployments/deploy-1', {
+      method: 'DELETE',
+      body: {},
+    });
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^node-sdk-/);
+  });
+
   it('honors an explicit Idempotency-Key', async () => {
     const { fetch, calls } = makeFakeFetch(async () => ({ status: 200, body: {} }));
     const client = new RoostClient({ token: 'owk_live_x', fetch });

@@ -314,6 +314,8 @@ describe('roost.installerDeployments', () => {
       installer_name: 'x.exe',
       silent_flags: '/SILENT',
       machines: ['m-1', 'm-2'],
+      close_processes: ['TouchDesigner.exe'],
+      suppress_projects: ['show-a'],
     });
     const call = calls[0]!;
     expect(call.url).toBe('https://dev.test/api/sites/site-1/deployments');
@@ -323,6 +325,8 @@ describe('roost.installerDeployments', () => {
     const body = JSON.parse(String(call.init.body));
     expect(body.machines).toEqual(['m-1', 'm-2']);
     expect(body.name).toBe('rollout');
+    expect(body.close_processes).toEqual(['TouchDesigner.exe']);
+    expect(body.suppress_projects).toEqual(['show-a']);
   });
 
   it('cancel → POST /cancel surfaces RoostApiError on 409', async () => {
@@ -358,6 +362,23 @@ describe('roost.installerDeployments', () => {
     expect(calls[0]!.url).toBe(
       'https://dev.test/api/sites/site-1/deployments/deploy-1/uninstall',
     );
+  });
+
+  it('delete -> DELETE with Idempotency-Key and empty body', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: { deploymentId: 'deploy-1', siteId: 'site-1', deleted: true },
+      },
+    ]);
+    await roost.installerDeployments.delete('site-1', 'deploy-1', {
+      idempotencyKey: 'delete-key',
+    });
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/deployments/deploy-1');
+    expect(calls[0]!.init.method).toBe('DELETE');
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toBe('delete-key');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({});
   });
 });
 

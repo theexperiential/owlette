@@ -44,7 +44,7 @@ export interface RequestOptions {
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
   /**
-   * Opt-in idempotency key. When omitted on POST/PATCH/PUT, the client
+     * Opt-in idempotency key. When omitted on POST/PATCH/PUT/DELETE, the client
    * auto-generates one of the form `node-sdk-<uuid>` so transparent retries
    * remain safe.
    */
@@ -123,7 +123,8 @@ export class RoostClient {
       ...(options.headers ?? {}),
     };
 
-    const isMutating = method === 'POST' || method === 'PATCH' || method === 'PUT';
+    const isMutating =
+      method === 'POST' || method === 'PATCH' || method === 'PUT' || method === 'DELETE';
     if (isMutating && !headers['Idempotency-Key'] && options.idempotencyKey !== '') {
       headers['Idempotency-Key'] = options.idempotencyKey ?? `node-sdk-${randomUUID()}`;
     }

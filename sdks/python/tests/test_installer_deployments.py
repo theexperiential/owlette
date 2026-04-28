@@ -36,6 +36,8 @@ async def test_create_sends_body_and_idempotency_key() -> None:
             machines=("m1", "m2"),
             verify_path="C:/Program Files/Owlette",
             sha256_checksum="a" * 64,
+            close_processes=("TouchDesigner.exe",),
+            suppress_projects=("show-a", "C:/Shows/show-b"),
             parallel_install=True,
         )
 
@@ -48,6 +50,8 @@ async def test_create_sends_body_and_idempotency_key() -> None:
     assert body["machines"] == ["m1", "m2"]
     assert body["parallel_install"] is True
     assert body["verify_path"] == "C:/Program Files/Owlette"
+    assert body["close_processes"] == ["TouchDesigner.exe"]
+    assert body["suppress_projects"] == ["show-a", "C:/Shows/show-b"]
 
 
 @pytest.mark.asyncio
@@ -122,3 +126,25 @@ async def test_retry_and_cancel_use_post_with_empty_body() -> None:
         assert req.method == "POST"
         assert req.headers["Idempotency-Key"].startswith("py-sdk-")
         assert json.loads(req.content) == {}
+
+
+@pytest.mark.asyncio
+async def test_delete_uses_delete_with_empty_body_and_idempotency_key() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json={"deploymentId": "dep_1", "siteId": "s1", "deleted": True},
+        )
+
+    async with Roost(token="owk_live_x", transport=_transport(handler)) as client:
+        out = await client.installer_deployments.delete("s1", "dep_1")
+
+    assert out["deleted"] is True
+    req = captured[0]
+    assert req.method == "DELETE"
+    assert req.url.path == "/api/sites/s1/deployments/dep_1"
+    assert req.headers["Idempotency-Key"].startswith("py-sdk-")
+    assert json.loads(req.content) == {}

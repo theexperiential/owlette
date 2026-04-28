@@ -194,9 +194,8 @@ class Installer:
         *,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        # DELETE doesn't auto-generate Idempotency-Key in the core client
-        # (only POST/PATCH/PUT do), but the server caches DELETE replies on
-        # this header so we wire it through explicitly to match the CLI.
+        # Preserve a resource-specific prefix rather than the core client's
+        # generic py-sdk DELETE key.
         idem = idempotency_key or f"py-sdk-installer-delete-{uuid.uuid4()}"
         resp = await self._client.request(
             f"/api/installer/{version}",

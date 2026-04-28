@@ -132,6 +132,7 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
           auth.scopeCheck,
         );
       },
+      { requireKey: true },
     );
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/deployments/[deploymentId]:DELETE');

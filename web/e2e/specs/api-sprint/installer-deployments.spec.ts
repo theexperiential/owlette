@@ -12,6 +12,7 @@
  *   - POST   /api/sites/{siteId}/deployments/{id}/retry
  *   - POST   /api/sites/{siteId}/deployments/{id}/cancel
  *   - POST   /api/sites/{siteId}/deployments/{id}/uninstall
+ *   - DELETE /api/sites/{siteId}/deployments/{id}
  *
  * Negative paths:
  *   - 403 scope_insufficient when the api key is missing the `site:write` scope
@@ -284,11 +285,10 @@ test('POST /api/sites/{s}/deployments/{id}/cancel — cancels pending targets', 
     headers: authHeaders(writeKey),
     data: {},
   });
-  // Either 200 (cancel happened) or 409 if the route considers the target
-  // set non-cancellable. We accept both as long as the response shape is JSON.
-  expect([200, 409]).toContain(res.status());
+  expect(res.status()).toBe(200);
   const body = await res.json();
-  expect(body).toBeDefined();
+  expect(body.cancelled).toBe(1);
+  expect(body.machine_ids).toEqual([MACHINE_ID_A]);
 });
 
 test('POST /api/sites/{s}/deployments/{id}/uninstall — site:admin queues uninstall', async ({ request }) => {
@@ -314,8 +314,46 @@ test('POST /api/sites/{s}/deployments/{id}/uninstall — site:admin queues unins
     headers: authHeaders(writeKey),
     data: {},
   });
-  // 200 or 202 depending on the handler's status convention; accept both.
-  expect([200, 202]).toContain(res.status());
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(body.queued).toBe(1);
+  expect(body.machine_ids).toEqual([MACHINE_ID_A]);
+});
+
+test('DELETE /api/sites/{s}/deployments/{id} - deletes terminal deployment record', async ({ request }) => {
+  const db = getAdminDb();
+  const id = `deploy-${Date.now()}`;
+  await db
+    .collection('sites')
+    .doc(SITE_ID)
+    .collection('deployments')
+    .doc(id)
+    .set({
+      name: 'delete-test',
+      installer_name: 'delete.exe',
+      installer_url: 'https://example.com/delete.exe',
+      silent_flags: '/S',
+      targets: [{ machineId: MACHINE_ID_A, status: 'completed' }],
+      status: 'completed',
+      createdAt: new Date(),
+      createdBy: 'admin-uid',
+    });
+
+  const res = await request.delete(`/api/sites/${SITE_ID}/deployments/${id}`, {
+    headers: authHeaders(writeKey),
+    data: {},
+  });
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(body).toEqual({ deploymentId: id, siteId: SITE_ID, deleted: true });
+
+  const deleted = await db
+    .collection('sites')
+    .doc(SITE_ID)
+    .collection('deployments')
+    .doc(id)
+    .get();
+  expect(deleted.exists).toBe(false);
 });
 
 test('POST /api/sites/{s}/deployments — read-only key gets 403 scope_insufficient', async ({ request }) => {

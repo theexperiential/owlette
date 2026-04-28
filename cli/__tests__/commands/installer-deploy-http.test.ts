@@ -1,5 +1,5 @@
 /**
- * HTTP-shape tests for `owlette deploy {create,list,get,retry,cancel,uninstall}`
+ * HTTP-shape tests for `owlette deploy {create,list,get,retry,cancel,uninstall,delete}`
  * — the **classic** installer-deploy noun (NOT to be confused with
  * `owlette roost deploy`, whose tests live in `deploy-http.test.ts`).
  *
@@ -104,6 +104,10 @@ describe('owlette deploy create', () => {
         'm-1,m-2',
         '--verify-path',
         'C:/ProgramData/Owlette',
+        '--close-processes',
+        'TouchDesigner.exe, chrome.exe',
+        '--suppress-projects',
+        'show-a, C:/Shows/show-b',
         '--parallel',
       ],
       { from: 'user' },
@@ -125,6 +129,8 @@ describe('owlette deploy create', () => {
       silent_flags: '/S',
       machines: ['m-1', 'm-2'],
       verify_path: 'C:/ProgramData/Owlette',
+      close_processes: ['TouchDesigner.exe', 'chrome.exe'],
+      suppress_projects: ['show-a', 'C:/Shows/show-b'],
       parallel_install: true,
     });
   });
@@ -454,6 +460,47 @@ describe('owlette deploy uninstall', () => {
     try {
       const program = buildProgram();
       await program.parseAsync(['deploy', 'uninstall', 'deploy-1', '--site', 'site-1'], {
+        from: 'user',
+      });
+      expect(calls).toHaveLength(0);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      if (isTTY) Object.defineProperty(process.stdin, 'isTTY', isTTY);
+    }
+  });
+});
+
+/* --------------------------------------------------------------------- */
+/*  delete                                                               */
+/* --------------------------------------------------------------------- */
+
+describe('owlette deploy delete', () => {
+  it('DELETEs /api/sites/:siteId/deployments/:id when --yes is supplied', async () => {
+    const calls = installFetchStub({
+      deploymentId: 'deploy-1',
+      siteId: 'site-1',
+      deleted: true,
+    });
+    const program = buildProgram();
+    await program.parseAsync(
+      ['--json', 'deploy', 'delete', 'deploy-1', '--site', 'site-1', '--yes'],
+      { from: 'user' },
+    );
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/deployments/deploy-1');
+    expect(calls[0]!.init.method).toBe('DELETE');
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^cli-deploy-delete-/);
+    expect(headers['Content-Type']).toBe('application/json');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({});
+  });
+
+  it('refuses to run silently without --yes when stdin is not a tty', async () => {
+    const calls = installFetchStub({}, 200);
+    const isTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false });
+    try {
+      const program = buildProgram();
+      await program.parseAsync(['deploy', 'delete', 'deploy-1', '--site', 'site-1'], {
         from: 'user',
       });
       expect(calls).toHaveLength(0);

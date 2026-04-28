@@ -118,6 +118,7 @@ function authedKey(scopes: ApiKeyScope[] | null): ResolvedAuth {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mocks.siteDocs.clear();
   mockResolveAuth.mockResolvedValue(authedSession());
   mockAssertSite.mockResolvedValue({ siteId: SITE, siteData: {} });
   mocks.set.mockResolvedValue(undefined);
@@ -134,6 +135,14 @@ const validCreateBody = {
   silent_flags: '/S',
   machines: ['machine-1', 'machine-2'],
 };
+
+function idempotencyHeaders(key: string): Record<string, string> {
+  return { 'Idempotency-Key': key };
+}
+
+function queueIdempotencyMiss(): void {
+  mocks.get.mockResolvedValueOnce(docSnapshot('idempotency-cache', null));
+}
 
 /* ========================================================================== */
 /*  GET /api/sites/{siteId}/deployments — list                                */
@@ -182,16 +191,28 @@ describe('GET /api/sites/{siteId}/deployments', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.items).toHaveLength(25);
-    expect(body.next_page_token).toBe('deploy-25');
+    expect(body.next_page_token).toBe('deploy-24');
   });
 
-  it('clamps page_size above MAX', async () => {
+  it('400 when page_size is above MAX', async () => {
     mocks.collectionGet.mockResolvedValueOnce(querySnapshot([]));
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments?page_size=999`,
     );
-    await listGET(req, { params: Promise.resolve({ siteId: SITE }) });
-    expect(mocks.limit).toHaveBeenCalledWith(101); // MAX_PAGE_SIZE (100) + 1 lookahead
+    const res = await listGET(req, { params: Promise.resolve({ siteId: SITE }) });
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts legacy limit/cursor aliases', async () => {
+    mocks.get.mockResolvedValueOnce(docSnapshot('deploy-prev', { createdAt: 1 }));
+    mocks.collectionGet.mockResolvedValueOnce(querySnapshot([]));
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments?limit=10&cursor=deploy-prev`,
+    );
+    const res = await listGET(req, { params: Promise.resolve({ siteId: SITE }) });
+    expect(res.status).toBe(200);
+    expect(mocks.limit).toHaveBeenCalledWith(11);
+    expect(mocks.startAfter).toHaveBeenCalled();
   });
 
   it('200 — scope-pass: site=<id>:read on api key', async () => {
@@ -224,6 +245,7 @@ describe('POST /api/sites/{siteId}/deployments', () => {
     mocks.get.mockResolvedValue(docSnapshot(SITE, {})); // site doc, no quota override
     const req = createMockRequest(`http://localhost/api/sites/${SITE}/deployments`, {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'idem-create-happy' },
       body: validCreateBody,
     });
     const res = await createPOST(req, { params: Promise.resolve({ siteId: SITE }) });
@@ -252,10 +274,22 @@ describe('POST /api/sites/{siteId}/deployments', () => {
     );
   });
 
+  it('400 when Idempotency-Key is missing', async () => {
+    const req = createMockRequest(`http://localhost/api/sites/${SITE}/deployments`, {
+      method: 'POST',
+      body: validCreateBody,
+    });
+    const res = await createPOST(req, { params: Promise.resolve({ siteId: SITE }) });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('idempotency_key_required');
+  });
+
   it('400 when name missing', async () => {
     mocks.get.mockResolvedValue(docSnapshot(SITE, {}));
     const req = createMockRequest(`http://localhost/api/sites/${SITE}/deployments`, {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'idem-create-missing-name' },
       body: { ...validCreateBody, name: '' },
     });
     const res = await createPOST(req, { params: Promise.resolve({ siteId: SITE }) });
@@ -266,6 +300,7 @@ describe('POST /api/sites/{siteId}/deployments', () => {
     mocks.get.mockResolvedValue(docSnapshot(SITE, {}));
     const req = createMockRequest(`http://localhost/api/sites/${SITE}/deployments`, {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'idem-create-http-installer' },
       body: { ...validCreateBody, installer_url: 'http://example.com/setup.exe' },
     });
     const res = await createPOST(req, { params: Promise.resolve({ siteId: SITE }) });
@@ -276,6 +311,7 @@ describe('POST /api/sites/{siteId}/deployments', () => {
     mocks.get.mockResolvedValue(docSnapshot(SITE, {}));
     const req = createMockRequest(`http://localhost/api/sites/${SITE}/deployments`, {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'idem-create-empty-machines' },
       body: { ...validCreateBody, machines: [] },
     });
     const res = await createPOST(req, { params: Promise.resolve({ siteId: SITE }) });
@@ -286,6 +322,7 @@ describe('POST /api/sites/{siteId}/deployments', () => {
     mocks.get.mockResolvedValue(docSnapshot(SITE, {}));
     const req = createMockRequest(`http://localhost/api/sites/${SITE}/deployments`, {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'idem-create-bad-checksum' },
       body: { ...validCreateBody, sha256_checksum: 'deadbeef' },
     });
     const res = await createPOST(req, { params: Promise.resolve({ siteId: SITE }) });
@@ -296,6 +333,7 @@ describe('POST /api/sites/{siteId}/deployments', () => {
     mocks.get.mockResolvedValue(docSnapshot(SITE, {})); // no override
     const req = createMockRequest(`http://localhost/api/sites/${SITE}/deployments`, {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'idem-create-default-quota' },
       body: {
         ...validCreateBody,
         machines: Array.from({ length: 101 }, (_, i) => `m-${i}`),
@@ -309,9 +347,10 @@ describe('POST /api/sites/{siteId}/deployments', () => {
   });
 
   it('413 over_quota honors per-site deployQuota override', async () => {
-    mocks.get.mockResolvedValue(docSnapshot(SITE, { deployQuota: 5 }));
+    mocks.siteDocs.set(SITE, { deployQuota: 5 });
     const req = createMockRequest(`http://localhost/api/sites/${SITE}/deployments`, {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'idem-create-site-quota' },
       body: {
         ...validCreateBody,
         machines: Array.from({ length: 6 }, (_, i) => `m-${i}`),
@@ -330,6 +369,7 @@ describe('POST /api/sites/{siteId}/deployments', () => {
     mocks.get.mockResolvedValue(docSnapshot(SITE, {}));
     const req = createMockRequest(`http://localhost/api/sites/${SITE}/deployments`, {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'idem-create-scope-pass' },
       body: validCreateBody,
     });
     const res = await createPOST(req, { params: Promise.resolve({ siteId: SITE }) });
@@ -472,6 +512,7 @@ describe('GET /api/sites/{siteId}/deployments/{deploymentId}', () => {
 /* ========================================================================== */
 describe('DELETE /api/sites/{siteId}/deployments/{deploymentId}', () => {
   it('200 - deletes terminal deployment', async () => {
+    queueIdempotencyMiss();
     mocks.get.mockResolvedValueOnce(
       docSnapshot(DEPLOYMENT, {
         status: 'completed',
@@ -480,7 +521,7 @@ describe('DELETE /api/sites/{siteId}/deployments/{deploymentId}', () => {
     );
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}`,
-      { method: 'DELETE', body: {} },
+      { method: 'DELETE', headers: idempotencyHeaders('idem-delete-happy'), body: {} },
     );
     const res = await detailDELETE(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -495,11 +536,40 @@ describe('DELETE /api/sites/{siteId}/deployments/{deploymentId}', () => {
     expect(mocks.del).toHaveBeenCalledTimes(1);
   });
 
+  it('200 - deletes partial_failed deployment when targets are terminal', async () => {
+    queueIdempotencyMiss();
+    mocks.get.mockResolvedValueOnce(
+      docSnapshot(DEPLOYMENT, {
+        status: 'partial_failed',
+        targets: [
+          { machineId: 'm1', status: 'completed' },
+          { machineId: 'm2', status: 'failed' },
+        ],
+      }),
+    );
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}`,
+      {
+        method: 'DELETE',
+        headers: idempotencyHeaders('idem-delete-partial-failed'),
+        body: {},
+      },
+    );
+    const res = await detailDELETE(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.deleted).toBe(true);
+    expect(mocks.del).toHaveBeenCalledTimes(1);
+  });
+
   it('404 when deployment not found', async () => {
+    queueIdempotencyMiss();
     mocks.get.mockResolvedValueOnce(docSnapshot(DEPLOYMENT, null));
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}`,
-      { method: 'DELETE', body: {} },
+      { method: 'DELETE', headers: idempotencyHeaders('idem-delete-not-found'), body: {} },
     );
     const res = await detailDELETE(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -508,6 +578,7 @@ describe('DELETE /api/sites/{siteId}/deployments/{deploymentId}', () => {
   });
 
   it('409 when deployment status is not terminal', async () => {
+    queueIdempotencyMiss();
     mocks.get.mockResolvedValueOnce(
       docSnapshot(DEPLOYMENT, {
         status: 'in_progress',
@@ -516,7 +587,7 @@ describe('DELETE /api/sites/{siteId}/deployments/{deploymentId}', () => {
     );
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}`,
-      { method: 'DELETE', body: {} },
+      { method: 'DELETE', headers: idempotencyHeaders('idem-delete-conflict'), body: {} },
     );
     const res = await detailDELETE(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -524,6 +595,19 @@ describe('DELETE /api/sites/{siteId}/deployments/{deploymentId}', () => {
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.code).toBe('deployment_in_flight');
+  });
+
+  it('400 when Idempotency-Key is missing', async () => {
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}`,
+      { method: 'DELETE', body: {} },
+    );
+    const res = await detailDELETE(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('idempotency_key_required');
   });
 
   it('403 scope_insufficient when key lacks site:write', async () => {
@@ -548,6 +632,7 @@ describe('DELETE /api/sites/{siteId}/deployments/{deploymentId}', () => {
 /* ========================================================================== */
 describe('POST /api/sites/{siteId}/deployments/{deploymentId}/retry', () => {
   it('200 — re-queues install for failed targets only', async () => {
+    queueIdempotencyMiss();
     mocks.get.mockResolvedValueOnce(
       docSnapshot(DEPLOYMENT, {
         installer_name: 'vlc.exe',
@@ -563,7 +648,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/retry', () => {
     );
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/retry`,
-      { method: 'POST', body: {} },
+      { method: 'POST', headers: idempotencyHeaders('idem-retry-happy'), body: {} },
     );
     const res = await retryPOST(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -599,10 +684,11 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/retry', () => {
   });
 
   it('404 when deployment not found', async () => {
+    queueIdempotencyMiss();
     mocks.get.mockResolvedValueOnce(docSnapshot(DEPLOYMENT, null));
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/retry`,
-      { method: 'POST', body: {} },
+      { method: 'POST', headers: idempotencyHeaders('idem-retry-not-found'), body: {} },
     );
     const res = await retryPOST(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -611,6 +697,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/retry', () => {
   });
 
   it('409 when no targets are in failed state', async () => {
+    queueIdempotencyMiss();
     mocks.get.mockResolvedValueOnce(
       docSnapshot(DEPLOYMENT, {
         installer_name: 'vlc.exe',
@@ -622,7 +709,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/retry', () => {
     );
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/retry`,
-      { method: 'POST', body: {} },
+      { method: 'POST', headers: idempotencyHeaders('idem-retry-conflict'), body: {} },
     );
     const res = await retryPOST(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -630,6 +717,19 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/retry', () => {
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.code).toBe('no_failed_targets');
+  });
+
+  it('400 when Idempotency-Key is missing', async () => {
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/retry`,
+      { method: 'POST', body: {} },
+    );
+    const res = await retryPOST(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('idempotency_key_required');
   });
 
   it('403 scope_insufficient when key lacks site:write', async () => {
@@ -656,6 +756,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
   it('200 — cancels pending targets, leaves installing/completed alone', async () => {
     // 1st get: deployment doc. Subsequent gets: pending command docs per
     // cancellable target. We have one cancellable (`pending`) target.
+    queueIdempotencyMiss();
     mocks.get
       .mockResolvedValueOnce(
         docSnapshot(DEPLOYMENT, {
@@ -680,7 +781,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
       });
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/cancel`,
-      { method: 'POST', body: {} },
+      { method: 'POST', headers: idempotencyHeaders('idem-cancel-happy'), body: {} },
     );
     const res = await cancelPOST(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -712,6 +813,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
   });
 
   it('200 — flips deployment status to cancelled when every target terminal-cancelled', async () => {
+    queueIdempotencyMiss();
     mocks.get
       .mockResolvedValueOnce(
         docSnapshot(DEPLOYMENT, {
@@ -723,7 +825,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
       .mockResolvedValueOnce({ exists: false });
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/cancel`,
-      { method: 'POST', body: {} },
+      { method: 'POST', headers: idempotencyHeaders('idem-cancel-terminal'), body: {} },
     );
     const res = await cancelPOST(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -734,10 +836,11 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
   });
 
   it('404 when deployment not found', async () => {
+    queueIdempotencyMiss();
     mocks.get.mockResolvedValueOnce(docSnapshot(DEPLOYMENT, null));
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/cancel`,
-      { method: 'POST', body: {} },
+      { method: 'POST', headers: idempotencyHeaders('idem-cancel-not-found'), body: {} },
     );
     const res = await cancelPOST(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -746,6 +849,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
   });
 
   it('409 when nothing is cancellable', async () => {
+    queueIdempotencyMiss();
     mocks.get.mockResolvedValueOnce(
       docSnapshot(DEPLOYMENT, {
         installer_name: 'vlc.exe',
@@ -755,7 +859,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
     );
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/cancel`,
-      { method: 'POST', body: {} },
+      { method: 'POST', headers: idempotencyHeaders('idem-cancel-conflict'), body: {} },
     );
     const res = await cancelPOST(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -763,6 +867,19 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.code).toBe('no_cancellable_targets');
+  });
+
+  it('400 when Idempotency-Key is missing', async () => {
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/cancel`,
+      { method: 'POST', body: {} },
+    );
+    const res = await cancelPOST(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('idempotency_key_required');
   });
 
   it('403 scope_insufficient when key lacks site:write', async () => {
@@ -790,6 +907,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall', () => 
     mockResolveAuth.mockResolvedValue(
       authedKey([{ resource: 'site', id: SITE, permissions: ['admin'] }]),
     );
+    queueIdempotencyMiss();
     mocks.get.mockResolvedValueOnce(
       docSnapshot(DEPLOYMENT, {
         installer_name: 'vlc.exe',
@@ -802,7 +920,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall', () => 
     );
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/uninstall`,
-      { method: 'POST', body: {} },
+      { method: 'POST', headers: idempotencyHeaders('idem-uninstall-happy'), body: {} },
     );
     const res = await uninstallPOST(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -836,10 +954,11 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall', () => 
     mockResolveAuth.mockResolvedValue(
       authedKey([{ resource: 'site', id: SITE, permissions: ['admin'] }]),
     );
+    queueIdempotencyMiss();
     mocks.get.mockResolvedValueOnce(docSnapshot(DEPLOYMENT, null));
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/uninstall`,
-      { method: 'POST', body: {} },
+      { method: 'POST', headers: idempotencyHeaders('idem-uninstall-not-found'), body: {} },
     );
     const res = await uninstallPOST(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -851,6 +970,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall', () => 
     mockResolveAuth.mockResolvedValue(
       authedKey([{ resource: 'site', id: SITE, permissions: ['admin'] }]),
     );
+    queueIdempotencyMiss();
     mocks.get.mockResolvedValueOnce(
       docSnapshot(DEPLOYMENT, {
         installer_name: 'vlc.exe',
@@ -860,7 +980,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall', () => 
     );
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/uninstall`,
-      { method: 'POST', body: {} },
+      { method: 'POST', headers: idempotencyHeaders('idem-uninstall-conflict'), body: {} },
     );
     const res = await uninstallPOST(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
@@ -868,6 +988,22 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall', () => 
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.code).toBe('no_targets');
+  });
+
+  it('400 when Idempotency-Key is missing', async () => {
+    mockResolveAuth.mockResolvedValue(
+      authedKey([{ resource: 'site', id: SITE, permissions: ['admin'] }]),
+    );
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/uninstall`,
+      { method: 'POST', body: {} },
+    );
+    const res = await uninstallPOST(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('idempotency_key_required');
   });
 
   it('403 scope_insufficient when key has site:write but not admin', async () => {
@@ -891,6 +1027,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall', () => 
     mockResolveAuth.mockResolvedValue(
       authedKey([{ resource: 'site', id: SITE, permissions: ['admin'] }]),
     );
+    queueIdempotencyMiss();
     mocks.get.mockResolvedValueOnce(
       docSnapshot(DEPLOYMENT, {
         installer_name: 'vlc.exe',
@@ -900,7 +1037,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall', () => 
     );
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/uninstall`,
-      { method: 'POST', body: {} },
+      { method: 'POST', headers: idempotencyHeaders('idem-uninstall-scope-pass'), body: {} },
     );
     const res = await uninstallPOST(req, {
       params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),

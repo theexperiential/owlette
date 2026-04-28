@@ -7,9 +7,9 @@ hide:
 
 > ⚠️ **disambiguation — read this first.** `owlette deploy …` is the **classic agent-installer** deploy noun: it pushes a silent installer exe (with `/SILENT`-style flags) at a list of machines and tracks per-target install status. it is **NOT** [`owlette roost deploy`](roost.md), which is the content-addressed atomic-deploy surface for roost versions. same word, different surfaces. if you want the new content-addressed flow, jump to [roost deploy](roost.md).
 
-classic-installer deployment management — create new fan-outs, list / inspect them, requeue failed targets, cancel queued targets, or queue an uninstall on every target. every verb is **site-scoped** (`--site <siteId>` is required) and **tier A — ready** (real http surface, no stubs). all mutations carry an auto-generated `Idempotency-Key`; pass `--idempotency-key <key>` to pin one yourself for cross-tool replay.
+classic-installer deployment management — create new fan-outs, list / inspect them, requeue failed targets, cancel queued targets, queue an uninstall on every target, or delete terminal history records. every verb is **site-scoped** (`--site <siteId>` is required) and **tier A — ready** (real http surface, no stubs). all mutations carry an auto-generated `Idempotency-Key`; pass `--idempotency-key <key>` to pin one yourself for cross-tool replay.
 
-quota: each site has a `deployQuota.maxTargetsPerDeploy` ceiling (default 100). exceeding it is a `413 over_quota` problem+json with `quota.max_targets` + `quota.requested` and a hint to either raise the quota on the site doc or shrink `--machines`.
+quota: each site has a `sites/{siteId}.deployQuota` ceiling (default 100). exceeding it is a `413 over_quota` problem+json with `quota.max_targets` + `quota.requested` and a hint to either raise the quota on the site doc or shrink `--machines`.
 
 ---
 
@@ -17,7 +17,7 @@ quota: each site has a `deployQuota.maxTargetsPerDeploy` ceiling (default 100). 
 
 create a new classic-installer deployment that fans an installer binary out at one or more machines.
 
-**synopsis** — `owlette deploy create --site <siteId> --name <name> --installer-url <url> --installer-name <name> --silent-flags <flags> --machines <csv> [--verify-path <path>] [--sha256 <hex>] [--parallel] [--idempotency-key <key>]`
+**synopsis** — `owlette deploy create --site <siteId> --name <name> --installer-url <url> --installer-name <name> --silent-flags <flags> --machines <csv> [--verify-path <path>] [--sha256 <hex>] [--close-processes <csv>] [--suppress-projects <csv>] [--parallel] [--idempotency-key <key>]`
 
 | flag | required | purpose |
 |---|---|---|
@@ -29,6 +29,8 @@ create a new classic-installer deployment that fans an installer binary out at o
 | `--machines <csv>` | yes | comma-separated machine ids (must be non-empty) |
 | `--verify-path <path>` | no | path that must exist after install to mark success |
 | `--sha256 <hex>` | no | 64-char sha256 digest of the installer for verification |
+| `--close-processes <csv>` | no | process exe names agents should close before install |
+| `--suppress-projects <csv>` | no | project names/paths agents should suppress before install |
 | `--parallel` | no | run the install on all targets concurrently (default: serial) |
 | `--idempotency-key <key>` | no | pin an `Idempotency-Key` (auto-generated if omitted) |
 
@@ -157,6 +159,28 @@ a 403 with `code=scope_insufficient` is returned if the key only carries `:write
 
 ---
 
+## delete
+
+delete a terminal deployment history record. this does **not** uninstall software; use `uninstall` first if targets still need removal.
+
+**synopsis** — `owlette deploy delete <deploymentId> --site <siteId> [--yes] [--idempotency-key <key>]`
+
+| flag | required | purpose |
+|---|---|---|
+| `--site <siteId>` | yes | site id that owns the deployment |
+| `--yes` | no | skip the confirmation prompt (required for non-tty / scripted use) |
+| `--idempotency-key <key>` | no | pin an `Idempotency-Key` (auto-generated if omitted) |
+
+```bash
+owlette deploy delete dep_abc123 --site site-1 --yes
+```
+
+**backing endpoint**: `DELETE /api/sites/{siteId}/deployments/{deploymentId}`
+
+the server rejects non-terminal deployments with `409 deployment_in_flight`.
+
+---
+
 ## exit codes
 
 - `0` — success
@@ -169,8 +193,8 @@ stable problem+json codes surfaced with hints: `over_quota`, `scope_insufficient
 
 ## notes
 
-- **scope**: site-scoped. `create` / `list` / `get` / `retry` / `cancel` need `site=<id>:write`. `uninstall` needs `site=<id>:admin`.
-- **tier**: A — every verb hits a real public api (api-sprint W1A → W5.1 batch B).
+- **scope**: site-scoped. `list` / `get` need `site=<id>:read`; `create` / `retry` / `cancel` / `delete` need `site=<id>:write`. `uninstall` needs `site=<id>:admin`.
+- **tier**: A — every verb hits a real public api (api-sprint W1A → W5.1 batch B; delete finalized in public-api Wave 2.6).
 - **idempotency**: every mutation auto-generates an `Idempotency-Key`. pin one with `--idempotency-key <key>` so a tool replaying the same request hits the cached response instead of issuing a second deployment.
 - **related**: [`owlette roost deploy`](roost.md) for the content-addressed atomic-deploy surface; [`owlette installer`](installer.md) for managing the installer binaries this command consumes.
 - see [overview](../overview.md) for global flags (`--profile`, `--json`, `--api-url`) and config precedence.

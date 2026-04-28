@@ -2,7 +2,7 @@
 
 Mirrors `sdks/node/src/lib/client.ts` so users reading between both SDKs
 see the same concepts (retry on 429+5xx only, auto-idempotency-key on
-mutating calls, problem+json → typed exception).
+POST/PATCH/PUT/DELETE calls, problem+json → typed exception).
 """
 
 from __future__ import annotations
@@ -148,7 +148,7 @@ class RoostClient:
         clean_query = {k: _coerce_query(v) for k, v in (query or {}).items() if v is not None}
 
         request_headers = dict(headers or {})
-        is_mutating = method in ("POST", "PATCH", "PUT")
+        is_mutating = method in ("POST", "PATCH", "PUT", "DELETE")
         if is_mutating and idempotency_key != "" and "Idempotency-Key" not in request_headers:
             request_headers["Idempotency-Key"] = idempotency_key or f"py-sdk-{uuid.uuid4()}"
 

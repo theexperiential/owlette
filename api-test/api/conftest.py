@@ -5,7 +5,26 @@ Provides the api_client fixture and cleanup registries for created resources.
 """
 
 import pytest
+from typing import Optional
 from helpers.api_client import ApiClient
+
+
+def deployment_path(
+    site_id: str,
+    deployment_id: Optional[str] = None,
+    action: Optional[str] = None,
+) -> str:
+    path = f"/api/sites/{site_id}/deployments"
+    if deployment_id:
+        path = f"{path}/{deployment_id}"
+    if action:
+        path = f"{path}/{action}"
+    return path
+
+
+def idempotency_headers(label: str) -> dict[str, str]:
+    import time
+    return {"Idempotency-Key": f"api-test-{label}-{time.time_ns()}"}
 
 
 @pytest.fixture(scope="session")
@@ -51,34 +70,30 @@ def deployment_cleanup(api_client, site_id, machine_id):
     for did, machine_ids in reversed(created):
         try:
             # Check current deployment state before touching it
-            resp = api_client.get(
-                f"/api/admin/deployments/{did}",
-                params={"siteId": site_id},
-            )
+            resp = api_client.get(deployment_path(site_id, did))
             if resp.status_code == 404:
                 continue  # Already deleted (e.g. by the test itself)
 
             if resp.status_code == 200:
-                targets = resp.json().get("deployment", {}).get("targets", [])
+                targets = resp.json().get("targets", [])
                 # Only cancel targets that are still in-flight
                 for t in targets:
                     if t.get("status") not in target_terminal:
                         try:
                             api_client.post(
-                                f"/api/admin/deployments/{did}/cancel",
-                                json={
-                                    "siteId": site_id,
-                                    "machineId": t["machineId"],
-                                    "installer_name": "__cleanup__",
-                                },
+                                deployment_path(site_id, did, "cancel"),
+                                json={},
+                                headers=idempotency_headers(f"cleanup-cancel-{did}"),
                             )
+                            break
                         except Exception:
                             pass
 
             # Now delete the deployment record
             resp = api_client.delete(
-                f"/api/admin/deployments/{did}",
-                params={"siteId": site_id},
+                deployment_path(site_id, did),
+                json={},
+                headers=idempotency_headers(f"cleanup-delete-{did}"),
             )
             if resp.status_code == 409:
                 log.warning(f"Could not delete deployment {did}: still non-terminal")

@@ -1,5 +1,5 @@
 /**
- * `owlette deploy create | list | get | retry | cancel | uninstall` —
+ * `owlette deploy create | list | get | retry | cancel | uninstall | delete` —
  * classic agent-installer deploys.
  *
  * NOT to be confused with `owlette roost deploy`, which is the
@@ -12,6 +12,7 @@
  *   retry      POST   /api/sites/{siteId}/deployments/{deploymentId}/retry
  *   cancel     POST   /api/sites/{siteId}/deployments/{deploymentId}/cancel
  *   uninstall  POST   /api/sites/{siteId}/deployments/{deploymentId}/uninstall
+ *   delete     DELETE /api/sites/{siteId}/deployments/{deploymentId}
  *
  * Mutations carry an auto-generated `Idempotency-Key` so a retry on a
  * network blip replays the cached server response instead of double-
@@ -69,7 +70,7 @@ export function registerDeployCommands(program: Command): void {
   );
 
   // Drop any stub verbs left from earlier file-load ordering.
-  for (const verb of ['create', 'list', 'get', 'retry', 'cancel', 'uninstall'] as const) {
+  for (const verb of ['create', 'list', 'get', 'retry', 'cancel', 'uninstall', 'delete'] as const) {
     const existing = deploy.commands.find((c) => c.name() === verb);
     if (existing) {
       const list = deploy.commands as Command[];
@@ -91,6 +92,8 @@ export function registerDeployCommands(program: Command): void {
     .requiredOption('--machines <csv>', 'comma-separated machine ids')
     .option('--verify-path <path>', 'path that must exist after install to mark success')
     .option('--sha256 <hex>', '64-char sha256 digest of the installer for verification')
+    .option('--close-processes <csv>', 'comma-separated process exe names agents should close first')
+    .option('--suppress-projects <csv>', 'comma-separated project names/paths agents should suppress first')
     .option('--parallel', 'run install on all targets concurrently (default: serial)')
     .option(
       '--idempotency-key <key>',
@@ -100,12 +103,19 @@ export function registerDeployCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const machines = String(opts.machines)
-        .split(',')
-        .map((m: string) => m.trim())
-        .filter(Boolean);
+      const machines = parseCsv(opts.machines);
       if (machines.length === 0) {
         fatal('--machines must contain at least one non-empty id');
+        return;
+      }
+      const closeProcesses = parseCsv(opts.closeProcesses);
+      if (opts.closeProcesses !== undefined && closeProcesses.length === 0) {
+        fatal('--close-processes must contain at least one non-empty value when supplied');
+        return;
+      }
+      const suppressProjects = parseCsv(opts.suppressProjects);
+      if (opts.suppressProjects !== undefined && suppressProjects.length === 0) {
+        fatal('--suppress-projects must contain at least one non-empty value when supplied');
         return;
       }
 
@@ -118,6 +128,8 @@ export function registerDeployCommands(program: Command): void {
       };
       if (opts.verifyPath) body.verify_path = opts.verifyPath;
       if (opts.sha256) body.sha256_checksum = opts.sha256;
+      if (closeProcesses.length > 0) body.close_processes = closeProcesses;
+      if (suppressProjects.length > 0) body.suppress_projects = suppressProjects;
       if (opts.parallel) body.parallel_install = true;
 
       const headers: Record<string, string> = {
@@ -475,6 +487,73 @@ export function registerDeployCommands(program: Command): void {
         `owlette: queued uninstall on ${data.queued ?? 0} target(s) for ${deploymentId} — status ${data.status}\n`,
       );
     });
+
+  /* -------------------- delete -------------------- */
+
+  deploy
+    .command('delete <deploymentId>')
+    .description('delete a terminal deployment record (does not uninstall software)')
+    .requiredOption('--site <siteId>', 'site id that owns the deployment')
+    .option('--yes', 'skip the confirmation prompt')
+    .option(
+      '--idempotency-key <key>',
+      'optional Idempotency-Key header (auto-generated if omitted)',
+    )
+    .action(async (deploymentId: string, opts, cmd) => {
+      const { apiUrl, token, json } = resolveAuth(cmd);
+      if (!token) return;
+
+      if (!opts.yes && process.stdin.isTTY) {
+        const ok = await promptYesNo(
+          `delete deployment record ${deploymentId}? this does not uninstall software. [y/N] `,
+        );
+        if (!ok) {
+          process.stdout.write('delete aborted\n');
+          return;
+        }
+      } else if (!opts.yes && !process.stdin.isTTY) {
+        fatal('stdin is not a tty and --yes was not supplied; refusing to delete silently');
+        return;
+      }
+
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': opts.idempotencyKey
+          ? String(opts.idempotencyKey)
+          : `cli-deploy-delete-${randomUUID()}`,
+      };
+
+      const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/deployments/${encodeURIComponent(deploymentId)}`;
+      const res = await fetch(url, {
+        method: 'DELETE',
+        headers,
+        body: JSON.stringify({}),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        deploymentId?: string;
+        siteId?: string;
+        deleted?: boolean;
+        detail?: string;
+        code?: string;
+      };
+
+      if (!res.ok) {
+        fatal(
+          `DELETE /api/sites/${opts.site}/deployments/${deploymentId} failed (${res.status}, ${data.code ?? 'unknown'}): ${data.detail ?? JSON.stringify(data)}`,
+        );
+        return;
+      }
+
+      if (json) {
+        process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+        return;
+      }
+
+      process.stdout.write(
+        `owlette: deployment ${data.deploymentId ?? deploymentId} deleted on ${data.siteId ?? opts.site}\n`,
+      );
+    });
 }
 
 /* --------------------------------------------------------------------- */
@@ -509,6 +588,14 @@ function formatDeploymentDetail(d: DeploymentDetail): string {
 /* --------------------------------------------------------------------- */
 /*  util                                                                 */
 /* --------------------------------------------------------------------- */
+
+function parseCsv(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  return String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 
 function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json: boolean } {
   const { apiUrl, token } = loadConfig({ profile: cmd.optsWithGlobals().profile });

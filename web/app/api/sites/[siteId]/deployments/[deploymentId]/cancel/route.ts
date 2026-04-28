@@ -68,6 +68,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
           auth.scopeCheck,
         );
       },
+      { requireKey: true },
     );
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/deployments/[deploymentId]/cancel:POST');

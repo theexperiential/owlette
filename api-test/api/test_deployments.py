@@ -81,6 +81,33 @@ TARGET_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "uninstalled"}
 #  Helpers
 # ---------------------------------------------------------------------------
 
+def deployment_path(site_id, deployment_id=None, action=None):
+    path = f"/api/sites/{site_id}/deployments"
+    if deployment_id:
+        path = f"{path}/{deployment_id}"
+    if action:
+        path = f"{path}/{action}"
+    return path
+
+
+def idempotency_headers(label):
+    return {"Idempotency-Key": f"api-test-{label}-{time.time_ns()}"}
+
+
+def deployment_payload(installer, machine_ids, **overrides):
+    payload = {
+        "name": installer["name"],
+        "installer_name": installer["installer_name"],
+        "installer_url": installer["installer_url"],
+        "silent_flags": installer["silent_flags"],
+        "machines": machine_ids,
+    }
+    if installer.get("verify_path"):
+        payload["verify_path"] = installer["verify_path"]
+    payload.update(overrides)
+    return payload
+
+
 def poll_deployment_target(
     api_client, site_id, deployment_id, machine_id, timeout=600, interval=10,
     expected_statuses=None,
@@ -98,13 +125,10 @@ def poll_deployment_target(
     last_status = None
 
     while time.time() < deadline:
-        resp = api_client.get(
-            f"/api/admin/deployments/{deployment_id}",
-            params={"siteId": site_id},
-        )
+        resp = api_client.get(deployment_path(site_id, deployment_id))
         assert resp.status_code == 200, f"Poll failed: {resp.status_code} {resp.text}"
 
-        deployment = resp.json()["deployment"]
+        deployment = resp.json()
         target = next(
             (t for t in deployment["targets"] if t["machineId"] == machine_id),
             None,
@@ -196,19 +220,14 @@ class TestDeploymentLifecycle:
     def test_01_create_deployment(self, api_client, site_id, machine_id, deployment_cleanup):
         """POST creates a deployment with correct structure."""
         installer = INSTALLERS["nsis"]
-        resp = api_client.post("/api/admin/deployments", json={
-            "siteId": site_id,
-            "name": installer["name"],
-            "installer_name": installer["installer_name"],
-            "installer_url": installer["installer_url"],
-            "silent_flags": installer["silent_flags"],
-            "verify_path": installer["verify_path"],
-            "machineIds": [machine_id],
-        })
-        assert resp.status_code == 200, f"Create failed: {resp.text}"
+        resp = api_client.post(
+            deployment_path(site_id),
+            json=deployment_payload(installer, [machine_id]),
+            headers=idempotency_headers("lifecycle-create"),
+        )
+        assert resp.status_code == 201, f"Create failed: {resp.text}"
 
         data = resp.json()
-        assert data["success"] is True
         assert data["deploymentId"].startswith("deploy-")
 
         TestDeploymentLifecycle.deployment_id = data["deploymentId"]
@@ -217,28 +236,24 @@ class TestDeploymentLifecycle:
     def test_02_list_deployments(self, api_client, site_id):
         """GET lists deployments and includes the one we just created."""
         assert self.deployment_id is not None, "Depends on test_01"
-        resp = api_client.get("/api/admin/deployments", params={"siteId": site_id})
+        resp = api_client.get(deployment_path(site_id))
         assert resp.status_code == 200
 
         data = resp.json()
-        assert data["success"] is True
-        ids = [d["id"] for d in data["deployments"]]
+        ids = [d["id"] for d in data["items"]]
         assert self.deployment_id in ids
 
-        deployment = next(d for d in data["deployments"] if d["id"] == self.deployment_id)
+        deployment = next(d for d in data["items"] if d["id"] == self.deployment_id)
         assert deployment["installer_name"] == INSTALLERS["nsis"]["installer_name"]
         assert deployment["status"] in ("pending", "in_progress")
 
     def test_03_get_deployment_detail(self, api_client, site_id, machine_id):
         """GET /{id} returns full deployment with targets array."""
         assert self.deployment_id is not None, "Depends on test_01"
-        resp = api_client.get(
-            f"/api/admin/deployments/{self.deployment_id}",
-            params={"siteId": site_id},
-        )
+        resp = api_client.get(deployment_path(site_id, self.deployment_id))
         assert resp.status_code == 200
 
-        deployment = resp.json()["deployment"]
+        deployment = resp.json()
         assert deployment["id"] == self.deployment_id
         assert deployment["name"] == INSTALLERS["nsis"]["name"]
         assert deployment["installer_url"] == INSTALLERS["nsis"]["installer_url"]
@@ -247,33 +262,26 @@ class TestDeploymentLifecycle:
         assert deployment["targets"][0]["machineId"] == machine_id
 
     def test_04_cancel_deployment(self, api_client, site_id, machine_id):
-        """POST cancel sends cancel command and marks target as cancelled."""
+        """POST cancel cancels queued targets and marks them as cancelled."""
         assert self.deployment_id is not None, "Depends on test_01"
         resp = api_client.post(
-            f"/api/admin/deployments/{self.deployment_id}/cancel",
-            json={
-                "siteId": site_id,
-                "machineId": machine_id,
-                "installer_name": INSTALLERS["nsis"]["installer_name"],
-            },
+            deployment_path(site_id, self.deployment_id, "cancel"),
+            json={},
+            headers=idempotency_headers("lifecycle-cancel"),
         )
         assert resp.status_code == 200
 
         data = resp.json()
-        assert data["success"] is True
-        assert "commandId" in data
-        assert data["commandId"].startswith("cancel_")
+        assert data["deploymentId"] == self.deployment_id
+        assert machine_id in data["machine_ids"]
 
     def test_05_verify_cancelled_status(self, api_client, site_id, machine_id):
         """GET detail confirms the target status is now 'cancelled'."""
         assert self.deployment_id is not None, "Depends on test_01"
-        resp = api_client.get(
-            f"/api/admin/deployments/{self.deployment_id}",
-            params={"siteId": site_id},
-        )
+        resp = api_client.get(deployment_path(site_id, self.deployment_id))
         assert resp.status_code == 200
 
-        deployment = resp.json()["deployment"]
+        deployment = resp.json()
         target = next(
             (t for t in deployment["targets"] if t["machineId"] == machine_id),
             None,
@@ -286,19 +294,17 @@ class TestDeploymentLifecycle:
         """DELETE removes deployment once all targets are terminal."""
         assert self.deployment_id is not None, "Depends on test_01"
         resp = api_client.delete(
-            f"/api/admin/deployments/{self.deployment_id}",
-            params={"siteId": site_id},
+            deployment_path(site_id, self.deployment_id),
+            json={},
+            headers=idempotency_headers("lifecycle-delete"),
         )
         assert resp.status_code == 200, f"Delete failed ({resp.status_code}): {resp.text}"
-        assert resp.json()["success"] is True
+        assert resp.json()["deleted"] is True
 
     def test_07_verify_deleted(self, api_client, site_id):
         """GET returns 404 after deletion."""
         assert self.deployment_id is not None, "Depends on test_01"
-        resp = api_client.get(
-            f"/api/admin/deployments/{self.deployment_id}",
-            params={"siteId": site_id},
-        )
+        resp = api_client.get(deployment_path(site_id, self.deployment_id))
         assert resp.status_code == 404
 
 
@@ -328,16 +334,12 @@ class TestDeploymentE2E:
     ):
         """Install {installer_key}, verify, then uninstall."""
         # --- Phase 1: Install ---
-        resp = api_client.post("/api/admin/deployments", json={
-            "siteId": site_id,
-            "name": installer["name"],
-            "installer_name": installer["installer_name"],
-            "installer_url": installer["installer_url"],
-            "silent_flags": installer["silent_flags"],
-            "verify_path": installer.get("verify_path"),
-            "machineIds": [machine_id],
-        })
-        assert resp.status_code == 200, (
+        resp = api_client.post(
+            deployment_path(site_id),
+            json=deployment_payload(installer, [machine_id]),
+            headers=idempotency_headers(f"{installer_key}-create"),
+        )
+        assert resp.status_code == 201, (
             f"Failed to create {installer_key} deployment: {resp.text}"
         )
 
@@ -423,16 +425,19 @@ class TestTouchDesignerDeployment:
             installer_name = f"TouchDesigner.2025.{build}.exe"
 
         # --- Create deployment ---
-        resp = api_client.post("/api/admin/deployments", json={
-            "siteId": site_id,
-            "name": name,
-            "installer_name": installer_name,
-            "installer_url": url,
-            "silent_flags": TD_SILENT_FLAGS,
-            "verify_path": TD_VERIFY_PATH,
-            "machineIds": [machine_id],
-        })
-        assert resp.status_code == 200, (
+        resp = api_client.post(
+            deployment_path(site_id),
+            json={
+                "name": name,
+                "installer_name": installer_name,
+                "installer_url": url,
+                "silent_flags": TD_SILENT_FLAGS,
+                "verify_path": TD_VERIFY_PATH,
+                "machines": [machine_id],
+            },
+            headers=idempotency_headers(f"touchdesigner-{build}-{installer_type}"),
+        )
+        assert resp.status_code == 201, (
             f"Failed to create TD {build} ({installer_type}) deployment: {resp.text}"
         )
 
@@ -462,7 +467,7 @@ class TestTouchDesignerDeployment:
 class TestMultiMachineDeployment:
     """Test deployment targeting multiple machines.
 
-    Verifies that cancelling one target does not affect the others.
+    Verifies that the public cancel route updates all queued targets.
 
     NOTE: Requires OWLETTE_MACHINE_ID_2 env var for a second machine.
     If not set, the test is skipped.
@@ -482,15 +487,12 @@ class TestMultiMachineDeployment:
     def test_01_create_multi_target(self, api_client, site_id, machine_id, machine_id_2, deployment_cleanup):
         """Create deployment targeting two machines."""
         installer = INSTALLERS["inno_setup"]
-        resp = api_client.post("/api/admin/deployments", json={
-            "siteId": site_id,
-            "name": installer["name"],
-            "installer_name": installer["installer_name"],
-            "installer_url": installer["installer_url"],
-            "silent_flags": installer["silent_flags"],
-            "machineIds": [machine_id, machine_id_2],
-        })
-        assert resp.status_code == 200
+        resp = api_client.post(
+            deployment_path(site_id),
+            json=deployment_payload(installer, [machine_id, machine_id_2]),
+            headers=idempotency_headers("multi-create"),
+        )
+        assert resp.status_code == 201
         data = resp.json()
         TestMultiMachineDeployment.deployment_id = data["deploymentId"]
         deployment_cleanup.append((data["deploymentId"], [machine_id, machine_id_2]))
@@ -498,43 +500,34 @@ class TestMultiMachineDeployment:
     def test_02_verify_both_targets(self, api_client, site_id, machine_id, machine_id_2):
         """Both machines appear as targets."""
         assert self.deployment_id is not None
-        resp = api_client.get(
-            f"/api/admin/deployments/{self.deployment_id}",
-            params={"siteId": site_id},
-        )
+        resp = api_client.get(deployment_path(site_id, self.deployment_id))
         assert resp.status_code == 200
-        targets = resp.json()["deployment"]["targets"]
+        targets = resp.json()["targets"]
         target_ids = [t["machineId"] for t in targets]
         assert machine_id in target_ids
         assert machine_id_2 in target_ids
 
-    def test_03_cancel_one_target(self, api_client, site_id, machine_id):
-        """Cancel only the first machine."""
+    def test_03_cancel_deployment(self, api_client, site_id, machine_id):
+        """Cancel queued deployment targets."""
         assert self.deployment_id is not None
         resp = api_client.post(
-            f"/api/admin/deployments/{self.deployment_id}/cancel",
-            json={
-                "siteId": site_id,
-                "machineId": machine_id,
-                "installer_name": INSTALLERS["inno_setup"]["installer_name"],
-            },
+            deployment_path(site_id, self.deployment_id, "cancel"),
+            json={},
+            headers=idempotency_headers("multi-cancel"),
         )
         assert resp.status_code == 200
 
-    def test_04_verify_partial_cancel(self, api_client, site_id, machine_id, machine_id_2):
-        """First machine is cancelled, second is unchanged."""
+    def test_04_verify_cancelled_targets(self, api_client, site_id, machine_id, machine_id_2):
+        """Cancellable targets are marked cancelled."""
         assert self.deployment_id is not None
-        resp = api_client.get(
-            f"/api/admin/deployments/{self.deployment_id}",
-            params={"siteId": site_id},
-        )
+        resp = api_client.get(deployment_path(site_id, self.deployment_id))
         assert resp.status_code == 200
-        targets = resp.json()["deployment"]["targets"]
+        targets = resp.json()["targets"]
 
         t1 = next(t for t in targets if t["machineId"] == machine_id)
         t2 = next(t for t in targets if t["machineId"] == machine_id_2)
         assert t1["status"] == "cancelled"
-        assert t2["status"] != "cancelled"  # still pending/in_progress
+        assert t2["status"] == "cancelled"
 
 
 # ---------------------------------------------------------------------------
@@ -548,79 +541,80 @@ class TestDeploymentValidation:
 
     def test_create_missing_fields(self, api_client, site_id):
         """POST with missing required fields returns 400."""
-        resp = api_client.post("/api/admin/deployments", json={
-            "siteId": site_id,
-            "name": "Incomplete",
-        })
+        resp = api_client.post(
+            deployment_path(site_id),
+            json={"name": "Incomplete"},
+            headers=idempotency_headers("validation-missing-fields"),
+        )
         assert resp.status_code == 400
 
     def test_create_empty_machine_ids(self, api_client, site_id):
-        """POST with empty machineIds array returns 400."""
-        resp = api_client.post("/api/admin/deployments", json={
-            "siteId": site_id,
-            "name": "No targets",
-            "installer_name": "test.exe",
-            "installer_url": "https://example.com/test.exe",
-            "silent_flags": "/S",
-            "machineIds": [],
-        })
+        """POST with empty machines array returns 400."""
+        resp = api_client.post(
+            deployment_path(site_id),
+            json={
+                "name": "No targets",
+                "installer_name": "test.exe",
+                "installer_url": "https://example.com/test.exe",
+                "silent_flags": "/S",
+                "machines": [],
+            },
+            headers=idempotency_headers("validation-empty-machines"),
+        )
         assert resp.status_code == 400
 
     def test_create_machine_ids_not_array(self, api_client, site_id):
-        """POST with non-array machineIds returns 400."""
-        resp = api_client.post("/api/admin/deployments", json={
-            "siteId": site_id,
-            "name": "Bad type",
-            "installer_name": "test.exe",
-            "installer_url": "https://example.com/test.exe",
-            "silent_flags": "/S",
-            "machineIds": "not-an-array",
-        })
+        """POST with non-array machines returns 400."""
+        resp = api_client.post(
+            deployment_path(site_id),
+            json={
+                "name": "Bad type",
+                "installer_name": "test.exe",
+                "installer_url": "https://example.com/test.exe",
+                "silent_flags": "/S",
+                "machines": "not-an-array",
+            },
+            headers=idempotency_headers("validation-machines-type"),
+        )
         assert resp.status_code == 400
 
     def test_get_nonexistent_deployment(self, api_client, site_id):
         """GET for a nonexistent deployment ID returns 404."""
-        resp = api_client.get(
-            "/api/admin/deployments/deploy-nonexistent-99999",
-            params={"siteId": site_id},
-        )
+        resp = api_client.get(deployment_path(site_id, "deploy-nonexistent-99999"))
         assert resp.status_code == 404
 
-    def test_delete_missing_site_id(self, api_client):
-        """DELETE without siteId returns 400."""
-        resp = api_client.delete("/api/admin/deployments/deploy-123")
+    def test_delete_missing_idempotency_key(self, api_client, site_id):
+        """DELETE without Idempotency-Key returns 400."""
+        resp = api_client.delete(deployment_path(site_id, "deploy-123"), json={})
         assert resp.status_code == 400
 
-    def test_cancel_missing_fields(self, api_client):
-        """POST cancel without required body fields returns 400."""
+    def test_cancel_missing_idempotency_key(self, api_client, site_id):
+        """POST cancel without Idempotency-Key returns 400."""
         resp = api_client.post(
-            "/api/admin/deployments/deploy-123/cancel",
-            json={"siteId": "site1"},
+            deployment_path(site_id, "deploy-123", "cancel"),
+            json={},
         )
         assert resp.status_code == 400
 
     def test_cancel_nonexistent_deployment(self, api_client, site_id, machine_id):
         """POST cancel for a nonexistent deployment returns 404."""
         resp = api_client.post(
-            "/api/admin/deployments/deploy-nonexistent-99999/cancel",
-            json={
-                "siteId": site_id,
-                "machineId": machine_id,
-                "installer_name": "fake.exe",
-            },
+            deployment_path(site_id, "deploy-nonexistent-99999", "cancel"),
+            json={},
+            headers=idempotency_headers("validation-cancel-missing"),
         )
         assert resp.status_code == 404
 
     def test_list_with_limit(self, api_client, site_id):
         """GET with limit param returns at most that many deployments."""
         resp = api_client.get(
-            "/api/admin/deployments",
-            params={"siteId": site_id, "limit": "2"},
+            deployment_path(site_id),
+            params={"limit": "2"},
         )
         assert resp.status_code == 200
-        assert len(resp.json()["deployments"]) <= 2
+        assert len(resp.json()["items"]) <= 2
 
-    def test_list_missing_site_id(self, api_client):
-        """GET without siteId returns 400."""
-        resp = api_client.get("/api/admin/deployments")
+    def test_list_invalid_page_size(self, api_client, site_id):
+        """GET with invalid page_size returns 400."""
+        resp = api_client.get(deployment_path(site_id), params={"page_size": "0"})
         assert resp.status_code == 400

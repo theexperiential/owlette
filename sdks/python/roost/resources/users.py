@@ -185,9 +185,8 @@ class Users:
         If the target owns any sites, pass ``successor_uid`` to transfer
         them; otherwise the server returns 409 ``orphan_sites``.
         """
-        # DELETE doesn't auto-generate Idempotency-Key in the core client
-        # (only POST/PATCH/PUT do), but the server caches DELETE replies on
-        # this header so we wire it through explicitly.
+        # Preserve a resource-specific prefix rather than the core client's
+        # generic py-sdk DELETE key.
         idem = idempotency_key or f"py-sdk-users-delete-{uuid.uuid4()}"
         query: dict[str, Any] = {}
         if successor_uid is not None:

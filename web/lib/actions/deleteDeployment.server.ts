@@ -14,6 +14,7 @@ export const TERMINAL_DEPLOYMENT_STATUSES_FOR_DELETE = new Set<string>([
   'completed',
   'failed',
   'partial',
+  'partial_failed',
   'cancelled',
   'uninstalled',
 ]);
