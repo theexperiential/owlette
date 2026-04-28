@@ -19,8 +19,13 @@
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { problemFromError, problemValidation } from '@/lib/apiErrors';
+import { problemFromError } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import {
+  collectFilteredPage,
+  parsePagination,
+  withPaginationFields,
+} from '@/lib/pagination';
 import { applyAuthDeprecations, requirePlatformAuthAndScope } from '../_shared';
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -44,18 +49,12 @@ export async function GET(request: NextRequest) {
 
     const sp = request.nextUrl.searchParams;
 
-    const pageSizeRaw = Number(sp.get('page_size') ?? DEFAULT_PAGE_SIZE);
-    if (sp.has('page_size') && !Number.isFinite(pageSizeRaw)) {
-      return problemValidation('page_size must be a positive integer', {
-        'query.page_size': ['must be a finite number'],
-      });
-    }
-    const pageSize = Math.min(
-      Math.max(1, Number.isFinite(pageSizeRaw) ? Math.floor(pageSizeRaw) : DEFAULT_PAGE_SIZE),
-      MAX_PAGE_SIZE,
-    );
-
-    const pageToken = sp.get('page_token');
+    const parsedPagination = parsePagination(sp, {
+      defaultPageSize: DEFAULT_PAGE_SIZE,
+      maxPageSize: MAX_PAGE_SIZE,
+    });
+    if (!parsedPagination.ok) return parsedPagination.response;
+    const { pageSize, pageToken } = parsedPagination.pagination;
     const includeDeleted = sp.get('includeDeleted') === 'true';
 
     const db = getAdminDb();
@@ -64,22 +63,31 @@ export async function GET(request: NextRequest) {
       .doc('data')
       .collection('versions');
 
-    let query = versionsCol.orderBy('uploaded_at', 'desc').limit(pageSize + 1);
-    if (pageToken) {
-      const cursorSnap = await versionsCol.doc(pageToken).get();
-      if (cursorSnap.exists) query = query.startAfter(cursorSnap);
-    }
+    const page = await collectFilteredPage({
+      pageSize,
+      pageToken,
+      fetchPage: async (cursor, limit) => {
+        let query = versionsCol.orderBy('uploaded_at', 'desc').limit(limit);
+        if (cursor) {
+          const cursorSnap = await versionsCol.doc(cursor).get();
+          if (cursorSnap.exists) query = query.startAfter(cursorSnap);
+        }
+        const snap = await query.get();
+        return snap.docs;
+      },
+      include: (doc) => {
+        const data = doc.data() as VersionDoc;
+        const deletedAt =
+          typeof data.deletedAt === 'number' ? data.deletedAt : null;
+        return includeDeleted || deletedAt === null;
+      },
+    });
 
-    const snap = await query.get();
-    const docs = snap.docs.slice(0, pageSize);
-    const nextPageToken = snap.docs.length > pageSize ? snap.docs[pageSize].id : '';
-
-    const versions = docs
+    const versions = page.docs
       .map((d) => {
         const data = d.data() as VersionDoc;
         const deletedAt =
           typeof data.deletedAt === 'number' ? data.deletedAt : null;
-        if (!includeDeleted && deletedAt !== null) return null;
         return {
           version: data.version || d.id,
           download_url: data.download_url ?? null,
@@ -91,10 +99,9 @@ export async function GET(request: NextRequest) {
           deletedAt,
         };
       })
-      .filter((v): v is NonNullable<typeof v> => v !== null);
 
     return applyAuthDeprecations(
-      NextResponse.json({ versions, nextPageToken }),
+      NextResponse.json(withPaginationFields({ versions }, page.nextPageToken)),
       auth.scopeCheck,
     );
   } catch (err) {

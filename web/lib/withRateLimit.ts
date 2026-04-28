@@ -19,7 +19,7 @@
  * ```
  */
 
-import { NextRequest, NextResponse } from 'next/server';
+import type { NextRequest, NextResponse } from 'next/server';
 import {
   authRateLimit,
   tokenExchangeRateLimit,
@@ -33,6 +33,7 @@ import {
   getRateLimitHeaders,
   type RateLimitedReason,
 } from './rateLimit';
+import { problem, ProblemType } from './apiErrors';
 
 type RateLimitStrategy = 'auth' | 'tokenExchange' | 'tokenRefresh' | 'user' | 'agentAlert' | 'upload' | 'api';
 type IdentifierType = 'ip' | 'user';
@@ -56,6 +57,29 @@ function reasonFor(strategy: RateLimitStrategy, identifier: IdentifierType): Rat
     return 'endpoint-rate';
   }
   return 'global-rate';
+}
+
+function requestHasApiKeyCredential(request: NextRequest): boolean {
+  const queryOrHeader =
+    request.nextUrl.searchParams.get('api_key') ||
+    request.headers.get('x-api-key') ||
+    null;
+  if (queryOrHeader?.startsWith('owk_')) return true;
+
+  const auth = request.headers.get('authorization') || '';
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  return Boolean(match?.[1]?.startsWith('owk_'));
+}
+
+async function getApiKeyRateLimitIdentifier(request: NextRequest): Promise<string | null> {
+  if (!requestHasApiKeyCredential(request)) return null;
+
+  try {
+    const { resolveApiKeyRateLimitIdentity } = await import('@/lib/apiAuth.server');
+    return await resolveApiKeyRateLimitIdentity(request);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -87,9 +111,14 @@ export function withRateLimit<TArgs extends unknown[]>(
 
     // Determine identifier (IP or user ID)
     let identifier: string;
+    let usedApiKeyIdentifier = false;
 
     if (options.identifier === 'ip') {
-      identifier = getClientIp(request);
+      const apiKeyIdentifier = options.strategy === 'api'
+        ? await getApiKeyRateLimitIdentifier(request)
+        : null;
+      usedApiKeyIdentifier = !!apiKeyIdentifier;
+      identifier = apiKeyIdentifier || getClientIp(request);
     } else if (options.identifier === 'user') {
       if (!options.getUserId) {
         console.error('[RateLimit] getUserId function required for user-based rate limiting');
@@ -104,7 +133,7 @@ export function withRateLimit<TArgs extends unknown[]>(
 
     // Check rate limit
     const result = await checkRateLimit(ratelimiter, identifier);
-    const reason = options.reason ?? reasonFor(options.strategy, options.identifier);
+    const reason = options.reason ?? (usedApiKeyIdentifier ? 'key-rate' : reasonFor(options.strategy, options.identifier));
 
     // If rate limit exceeded, return 429 response
     if (!result.success) {
@@ -112,16 +141,20 @@ export function withRateLimit<TArgs extends unknown[]>(
 
       const headers = getRateLimitHeaders({ ...result, reason });
 
-      return NextResponse.json(
+      const retryAfter = result.retryAfter ?? 1;
+      const message = `Too many requests. Please try again in ${retryAfter} seconds.`;
+
+      return problem(
         {
-          error: 'Rate limit exceeded',
-          retryAfter: result.retryAfter,
-          message: `Too many requests. Please try again in ${result.retryAfter} seconds.`,
-        },
-        {
+          type: ProblemType.RateLimited,
+          title: 'rate limited',
           status: 429,
-          headers,
-        }
+          detail: message,
+          retryAfter,
+          error: 'Rate limit exceeded',
+          message,
+        },
+        headers,
       );
     }
 

@@ -48,6 +48,20 @@ describe('checkIdempotency', () => {
     expect(result.mode).toBe('disabled');
   });
 
+  it('returns missing when header is required but absent', async () => {
+    const result = await checkIdempotency(reqWithKey(null), CTX, '{}', {
+      requireKey: true,
+    });
+    expect(result.mode).toBe('missing');
+    if (result.mode === 'missing') {
+      expect(result.response.status).toBe(400);
+      const body = await result.response.json();
+      expect(body.code).toBe('idempotency_key_required');
+      expect(body.param).toBe(IDEMPOTENCY_HEADER);
+    }
+    expect(mocks.get).not.toHaveBeenCalled();
+  });
+
   it('returns disabled when header is empty', async () => {
     const result = await checkIdempotency(reqWithKey(''), CTX, '{}');
     expect(result.mode).toBe('disabled');
@@ -76,7 +90,49 @@ describe('checkIdempotency', () => {
       expect(result.token.key).toBe('idem-abc');
       expect(result.token.userId).toBe('user-1');
       expect(result.token.environment).toBe('live');
+      expect(result.token.method).toBe('POST');
+      expect(result.token.path).toBe('/api/test');
+      expect(result.token.query).toBe('');
       expect(result.token.bodyHash).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it('scopes cache document ids by method, path, and query', async () => {
+    mocks.get.mockResolvedValue({ exists: false });
+    const sameRoute = await checkIdempotency(
+      reqWithKey('same-key'),
+      CTX,
+      '{"a":1}',
+    );
+    const differentPath = await checkIdempotency(
+      createMockRequest('http://localhost/api/other', {
+        method: 'POST',
+        headers: { [IDEMPOTENCY_HEADER]: 'same-key' },
+        body: { a: 1 },
+      }),
+      CTX,
+      '{"a":1}',
+    );
+    const differentQuery = await checkIdempotency(
+      createMockRequest('http://localhost/api/test?mode=fast', {
+        method: 'POST',
+        headers: { [IDEMPOTENCY_HEADER]: 'same-key' },
+        body: { a: 1 },
+      }),
+      CTX,
+      '{"a":1}',
+    );
+
+    expect(sameRoute.mode).toBe('proceed');
+    expect(differentPath.mode).toBe('proceed');
+    expect(differentQuery.mode).toBe('proceed');
+    if (
+      sameRoute.mode === 'proceed' &&
+      differentPath.mode === 'proceed' &&
+      differentQuery.mode === 'proceed'
+    ) {
+      expect(differentPath.token.cacheDocId).not.toBe(sameRoute.token.cacheDocId);
+      expect(differentQuery.token.cacheDocId).not.toBe(sameRoute.token.cacheDocId);
     }
   });
 
@@ -153,6 +209,9 @@ describe('saveIdempotency', () => {
     cacheDocId: 'doc-id',
     key: 'idem-abc',
     bodyHash: 'abc'.repeat(21) + 'd',
+    method: 'POST',
+    path: '/api/test',
+    query: '',
     userId: 'user-1',
     environment: 'live',
   };
@@ -286,6 +345,26 @@ describe('withIdempotency wrapper', () => {
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(response.status).toBe(200);
+    expect(mocks.set).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing Idempotency-Key when requireKey is set', async () => {
+    const handler = jest.fn(async () =>
+      NextResponse.json({ ok: true }, { status: 200 }),
+    );
+
+    const response = await withIdempotency(
+      reqWithKey(null),
+      CTX,
+      '{"a":1}',
+      handler,
+      { requireKey: true },
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.code).toBe('idempotency_key_required');
     expect(mocks.set).not.toHaveBeenCalled();
   });
 

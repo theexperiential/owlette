@@ -5,12 +5,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  AUDIT_EVENT_KINDS,
   AUDIT_RETENTION_DAYS,
   buildAuditRecord,
   canonicaliseEvent,
   canonicalJson,
   computeChainHash,
   GENESIS_HASH,
+  PLATFORM_AUDIT_SITE_ID,
   verifyChain,
   type AuditEvent,
   type AuditRecord,
@@ -55,7 +57,7 @@ describe('canonicaliseEvent', () => {
   });
 
   it('rejects missing siteId', () => {
-    const r = canonicaliseEvent({ ...sampleEvent(), siteId: '' });
+    const r = canonicaliseEvent({ ...sampleEvent(), siteId: undefined });
     assert.equal(r.ok, false);
   });
 
@@ -81,6 +83,50 @@ describe('canonicaliseEvent', () => {
     const r = canonicaliseEvent({ ...sampleEvent(), attributes: undefined });
     assert.equal(r.ok, true);
     if (r.ok) assert.deepEqual(r.event.attributes, {});
+  });
+
+  it('accepts every public mutation audit kind', () => {
+    for (const kind of AUDIT_EVENT_KINDS) {
+      const r = canonicaliseEvent(sampleEvent({ kind }));
+      assert.equal(r.ok, true, `expected ${kind} to be accepted`);
+    }
+  });
+
+  it('normalizes empty platform siteId to the platform audit tenant', () => {
+    const r = canonicaliseEvent(sampleEvent({
+      kind: 'api_key_mutated',
+      siteId: '',
+      target: 'key-1',
+    }));
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.event.siteId, PLATFORM_AUDIT_SITE_ID);
+  });
+
+  it('preserves mutation target outside attributes', () => {
+    const r = canonicaliseEvent(sampleEvent({
+      kind: 'webhook_mutated',
+      target: 'wh_12345678',
+    }));
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.event.target, 'wh_12345678');
+  });
+
+  it('preserves empty string target when explicitly supplied', () => {
+    const r = canonicaliseEvent(sampleEvent({
+      kind: 'api_key_mutated',
+      target: '',
+    }));
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.event.target, '');
+  });
+
+  it('rejects non-string target', () => {
+    const r = canonicaliseEvent({
+      ...sampleEvent(),
+      target: 123 as unknown as string,
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.ok ? null : r.reason, 'target_must_be_string');
   });
 });
 

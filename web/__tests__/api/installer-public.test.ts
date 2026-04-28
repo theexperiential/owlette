@@ -294,6 +294,7 @@ describe('GET /api/installer', () => {
     expect(body.versions).toHaveLength(2);
     expect(body.versions[0].version).toBe('2.1.0');
     expect(body.versions[1].version).toBe('2.0.0');
+    expect(body.next_page_token).toBe('');
     expect(body.nextPageToken).toBe('');
   });
 
@@ -345,7 +346,24 @@ describe('GET /api/installer', () => {
 
     expect(res.status).toBe(200);
     expect(body.versions).toHaveLength(2);
+    expect(body.next_page_token).toBe(body.nextPageToken);
     expect(body.nextPageToken).not.toBe('');
+  });
+
+  it('uses the last emitted version as page token when deleted docs are skipped', async () => {
+    authedAsSuperadminWithKey('read');
+    seedVersion('3.0.0', { uploaded_at: 3 });
+    seedVersion('2.9.0', { uploaded_at: 2, deletedAt: 1234 });
+    seedVersion('2.8.0', { uploaded_at: 1 });
+
+    const req = createMockRequest('http://localhost/api/installer?page_size=1');
+    const res = await listGET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.versions).toHaveLength(1);
+    expect(body.versions[0].version).toBe('3.0.0');
+    expect(body.next_page_token).toBe('3.0.0');
   });
 });
 
@@ -359,6 +377,7 @@ describe('POST /api/installer/upload', () => {
 
     const req = createMockRequest('http://localhost/api/installer/upload', {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'installer-upload-happy' },
       body: { version: '3.0.0', fileName: 'Owlette-Installer-v3.0.0.exe' },
     });
     const res = await uploadPOST(req);
@@ -378,11 +397,26 @@ describe('POST /api/installer/upload', () => {
     );
   });
 
+  it('requires Idempotency-Key', async () => {
+    authedAsSuperadminWithKey('write');
+
+    const req = createMockRequest('http://localhost/api/installer/upload', {
+      method: 'POST',
+      body: { version: '3.0.0', fileName: 'Owlette-Installer-v3.0.0.exe' },
+    });
+    const res = await uploadPOST(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe('idempotency_key_required');
+  });
+
   it('rejects invalid version with 400', async () => {
     authedAsSuperadminWithKey('write');
 
     const req = createMockRequest('http://localhost/api/installer/upload', {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'installer-upload-invalid-version' },
       body: { version: 'not-semver', fileName: 'x.exe' },
     });
     const res = await uploadPOST(req);
@@ -442,6 +476,7 @@ describe('PUT /api/installer/upload', () => {
 
     const req = createMockRequest('http://localhost/api/installer/upload', {
       method: 'PUT',
+      headers: { 'Idempotency-Key': 'installer-finalize-happy' },
       body: { uploadId: 'upload-1', checksum_sha256: 'a'.repeat(64) },
     });
     const res = await uploadPUT(req);
@@ -458,11 +493,27 @@ describe('PUT /api/installer/upload', () => {
     );
   });
 
+  it('requires Idempotency-Key', async () => {
+    authedAsSuperadminWithKey('write');
+    seedUpload('upload-1');
+
+    const req = createMockRequest('http://localhost/api/installer/upload', {
+      method: 'PUT',
+      body: { uploadId: 'upload-1', checksum_sha256: 'a'.repeat(64) },
+    });
+    const res = await uploadPUT(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe('idempotency_key_required');
+  });
+
   it('returns 404 when upload record does not exist', async () => {
     authedAsSuperadminWithKey('write');
 
     const req = createMockRequest('http://localhost/api/installer/upload', {
       method: 'PUT',
+      headers: { 'Idempotency-Key': 'installer-finalize-missing-upload' },
       body: { uploadId: 'nonexistent' },
     });
     const res = await uploadPUT(req);
@@ -597,6 +648,7 @@ describe('POST /api/installer/{version}/set-latest', () => {
 
     const req = createMockRequest('http://localhost/api/installer/3.0.0/set-latest', {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'installer-set-latest-happy' },
       body: {},
     });
     const res = await setLatestPOST(req, {
@@ -614,12 +666,30 @@ describe('POST /api/installer/{version}/set-latest', () => {
     );
   });
 
+  it('requires Idempotency-Key', async () => {
+    authedAsSuperadminWithKey('admin');
+    seedVersion('3.0.0');
+
+    const req = createMockRequest('http://localhost/api/installer/3.0.0/set-latest', {
+      method: 'POST',
+      body: {},
+    });
+    const res = await setLatestPOST(req, {
+      params: Promise.resolve({ version: '3.0.0' }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe('idempotency_key_required');
+  });
+
   it('refuses to promote a soft-deleted version (409 version_deleted)', async () => {
     authedAsSuperadminWithKey('admin');
     seedVersion('3.0.0', { deletedAt: 1234 });
 
     const req = createMockRequest('http://localhost/api/installer/3.0.0/set-latest', {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'installer-set-latest-deleted' },
       body: {},
     });
     const res = await setLatestPOST(req, {
@@ -637,6 +707,7 @@ describe('POST /api/installer/{version}/set-latest', () => {
 
     const req = createMockRequest('http://localhost/api/installer/9.9.9/set-latest', {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'installer-set-latest-missing' },
       body: {},
     });
     const res = await setLatestPOST(req, {
@@ -652,6 +723,7 @@ describe('POST /api/installer/{version}/set-latest', () => {
 
     const req = createMockRequest('http://localhost/api/installer/3.0.0/set-latest', {
       method: 'POST',
+      headers: { 'Idempotency-Key': 'installer-set-latest-forbidden' },
       body: {},
     });
     const res = await setLatestPOST(req, {

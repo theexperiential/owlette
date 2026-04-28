@@ -173,19 +173,25 @@ function checkCalibrationReport() {
 
   const body = readFileSync(CALIBRATION_PATH, 'utf8');
   const hasCompleteStatus = /^status:\s*complete\b/im.test(body);
+  const hasW7LowTrafficWaiver =
+    /^status:\s*risk accepted\b/im.test(body) &&
+    /\bw7_rules_lockdown waiver:\s*accepted\b/im.test(body) &&
+    /\brate-limit enforcement remains blocked\b/im.test(body);
   const hasSevenDays = /(?:7\+|>=?7|seven)\s+days?/i.test(body);
   const hasP99 = /\bp99\b/i.test(body);
   const hasPostCalibration = /post[- ]calibration|calibrated limit|updated default/i.test(body);
-  const ok = hasCompleteStatus && hasSevenDays && hasP99 && hasPostCalibration;
+  const ok = hasW7LowTrafficWaiver || (hasCompleteStatus && hasSevenDays && hasP99 && hasPostCalibration);
   return {
     id: 'rate-limit-calibration',
     title: 'Wave 8.0 calibration data captured',
     status: ok ? 'pass' : 'fail',
-    summary: ok
+    summary: hasW7LowTrafficWaiver
+      ? 'low-traffic calibration risk accepted for W7 rules lockdown only'
+      : ok
       ? 'calibration report includes duration, p99s, and calibrated limits'
       : 'calibration report is present but incomplete',
     details:
-      `status=${hasCompleteStatus ? 'ok' : 'missing'}, ` +
+      `status=${hasCompleteStatus ? 'complete' : hasW7LowTrafficWaiver ? 'risk_accepted' : 'missing'}, ` +
       `duration=${hasSevenDays ? 'ok' : 'missing'}, ` +
       `p99=${hasP99 ? 'ok' : 'missing'}, ` +
       `post_calibration_limits=${hasPostCalibration ? 'ok' : 'missing'}`,

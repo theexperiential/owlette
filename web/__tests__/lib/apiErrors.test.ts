@@ -111,6 +111,32 @@ describe('apiErrors (rfc 7807 problem+json)', () => {
       expect(body.usedBytes).toBe(5_000_000_000);
     });
 
+    it('adds a stable code and docsUrl for known problem types', async () => {
+      const res = problem({
+        type: ProblemType.ValidationFailed,
+        title: 'validation failed',
+        status: 400,
+      });
+      const { body } = await readResponse(res);
+      expect(body.code).toBe('validation_failed');
+      expect(body.docsUrl).toBe(
+        'https://owlette.app/docs/api/errors#validation_failed',
+      );
+    });
+
+    it('preserves caller-provided code and docsUrl', async () => {
+      const res = problem({
+        type: ProblemType.Conflict,
+        title: 'duplicate',
+        status: 409,
+        code: 'duplicate_name',
+        docsUrl: 'https://owlette.app/docs/api/errors#duplicate_name',
+      });
+      const { body } = await readResponse(res);
+      expect(body.code).toBe('duplicate_name');
+      expect(body.docsUrl).toBe('https://owlette.app/docs/api/errors#duplicate_name');
+    });
+
     it('respects custom headers', () => {
       const res = problem(
         { type: ProblemType.RateLimited, title: 'slow down', status: 429 },

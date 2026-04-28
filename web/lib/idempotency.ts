@@ -7,10 +7,10 @@
  * byte-identical, we replay the cached response instead of executing
  * the handler. If the body differs, we reject 422 `idempotency_key_mismatch`.
  *
- * Cache key: `{userId, environment, idempotencyKey}` — hashed to a short
- * firestore doc id. The `bodyHash` is stored on the doc for mismatch
- * detection, so different-body retries on the same key don't silently
- * cache-hit.
+ * Cache key: `{userId, environment, idempotencyKey, method, path, query}` —
+ * hashed to a short Firestore doc id. The `bodyHash` is stored on the doc
+ * for mismatch detection, so different-body retries on the same route don't
+ * silently cache-hit.
  *
  * Retention is handled by `sweepExpiredIdempotencyCache` (functions/),
  * which runs daily and deletes entries past `expiresAt`.
@@ -41,9 +41,15 @@ export interface IdempotencyContext {
   environment: 'live' | 'test' | 'unknown';
 }
 
+export interface IdempotencyOptions {
+  /** Reject the request when Idempotency-Key is missing or blank. */
+  requireKey?: boolean;
+}
+
 /** What the caller should do after checkIdempotency(). */
 export type IdempotencyCheckResult =
   | { mode: 'disabled' } // no idempotency-key header present — proceed without recording
+  | { mode: 'missing'; response: NextResponse } // 400 — required header was not supplied
   | { mode: 'invalid'; response: NextResponse } // 400 — bad key format
   | { mode: 'replay'; response: NextResponse } // cached hit — return the replayed response
   | { mode: 'mismatch'; response: NextResponse } // 422 — key reused with different body
@@ -57,6 +63,9 @@ export interface IdempotencyToken {
   cacheDocId: string;
   key: string;
   bodyHash: string;
+  method: string;
+  path: string;
+  query: string;
   userId: string;
   environment: IdempotencyContext['environment'];
 }
@@ -66,6 +75,9 @@ interface CachedDoc {
   environment: string;
   key: string;
   bodyHash: string;
+  method: string;
+  path: string;
+  query: string;
   status: number;
   headers: Record<string, string>;
   body: string;
@@ -84,9 +96,24 @@ export async function checkIdempotency(
   request: NextRequest,
   ctx: IdempotencyContext,
   rawBody: string,
+  options: IdempotencyOptions = {},
 ): Promise<IdempotencyCheckResult> {
   const rawKey = request.headers.get(IDEMPOTENCY_HEADER);
   if (!rawKey || rawKey.trim().length === 0) {
+    if (options.requireKey) {
+      return {
+        mode: 'missing',
+        response: problem({
+          type: ProblemType.ValidationFailed,
+          title: 'idempotency key required',
+          status: 400,
+          detail: `${IDEMPOTENCY_HEADER} is required for this mutation`,
+          code: 'idempotency_key_required',
+          param: IDEMPOTENCY_HEADER,
+          errors: { [IDEMPOTENCY_HEADER]: ['required'] },
+        }),
+      };
+    }
     return { mode: 'disabled' };
   }
 
@@ -104,7 +131,8 @@ export async function checkIdempotency(
     };
   }
 
-  const cacheDocId = hashCacheKey(ctx.userId, ctx.environment, key);
+  const routeScope = routeScopeForRequest(request);
+  const cacheDocId = hashCacheKey(ctx.userId, ctx.environment, key, routeScope);
   const bodyHash = crypto.createHash('sha256').update(rawBody).digest('hex');
 
   const db = getAdminDb();
@@ -142,6 +170,9 @@ export async function checkIdempotency(
       cacheDocId,
       key,
       bodyHash,
+      method: routeScope.method,
+      path: routeScope.path,
+      query: routeScope.query,
       userId: ctx.userId,
       environment: ctx.environment,
     },
@@ -176,6 +207,9 @@ export async function saveIdempotency(
       environment: token.environment,
       key: token.key,
       bodyHash: token.bodyHash,
+      method: token.method,
+      path: token.path,
+      query: token.query,
       status: response.status,
       headers,
       body: bodyText,
@@ -192,15 +226,31 @@ export async function saveIdempotency(
   }
 }
 
-/** Deterministic short doc id for the `{userId, env, key}` tuple. */
+interface IdempotencyRouteScope {
+  method: string;
+  path: string;
+  query: string;
+}
+
+function routeScopeForRequest(request: NextRequest): IdempotencyRouteScope {
+  const url = request.nextUrl ?? new URL(request.url);
+  return {
+    method: request.method.toUpperCase(),
+    path: url.pathname,
+    query: url.search,
+  };
+}
+
+/** Deterministic short doc id for the `{userId, env, key, route}` tuple. */
 function hashCacheKey(
   userId: string,
   environment: string,
   key: string,
+  routeScope: IdempotencyRouteScope,
 ): string {
   return crypto
     .createHash('sha256')
-    .update(`${userId}|${environment}|${key}`)
+    .update(`${userId}|${environment}|${key}|${routeScope.method}|${routeScope.path}|${routeScope.query}`)
     .digest('hex');
 }
 
@@ -244,9 +294,15 @@ export async function withIdempotency(
   ctx: IdempotencyContext,
   rawBody: string,
   handler: () => Promise<NextResponse>,
+  options: IdempotencyOptions = {},
 ): Promise<NextResponse> {
-  const idem = await checkIdempotency(request, ctx, rawBody);
-  if (idem.mode === 'invalid' || idem.mode === 'replay' || idem.mode === 'mismatch') {
+  const idem = await checkIdempotency(request, ctx, rawBody, options);
+  if (
+    idem.mode === 'missing' ||
+    idem.mode === 'invalid' ||
+    idem.mode === 'replay' ||
+    idem.mode === 'mismatch'
+  ) {
     return idem.response;
   }
 

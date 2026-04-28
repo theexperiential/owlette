@@ -8,8 +8,10 @@
  *
  *   layer 1 — in-memory token bucket (best-effort optimization only)
  *   --------------------------------------------------------------
- *   Per-process Map keyed by `${actor.type}:${actorId}:${capability}`. We
- *   refill tokens at `limit / 60s` and reject when the bucket is empty.
+ *   Per-process Map keyed by `{bucket}:{subject}:{capability}`, where
+ *   subject is `user:<uid>` for sessions, `apiKey:<keyId>` for API-key
+ *   calls, and `system:<name>` for system actors. We refill tokens at
+ *   `limit / 60s` and reject when the bucket is empty.
  *   This layer absorbs the trivial bursts of one client hammering one
  *   replica, so we don't pay a firestore round-trip for every call. It is
  *   NOT authoritative — railway runs multiple replicas and each replica
@@ -19,9 +21,10 @@
  *   layer 2 — firestore sharded counter (authoritative)
  *   ---------------------------------------------------
  *   10-shard fixed-window counter at
- *     `sites/{siteId}/rate_limits/{bucket}/{capability}/shards/{0..9}`
- *   where `bucket` is `'user'` or `'system'`. Each request increments one
- *   randomly-selected shard inside a transaction; the limit check sums all
+ *     `sites/{siteId}/rate_limits/{bucket}/subjects/{subjectHash}/capabilities/{capability}/shards/{0..9}`
+ *   where `bucket` is `'user'` or `'system'` and `subjectHash` derives from
+ *   the stable subject string above. Each request increments one randomly
+ *   selected shard inside a transaction; the limit check sums all
  *   10 shards. Using shards instead of a single counter avoids the 1
  *   write/sec/document firestore contention ceiling — 10 shards lift the
  *   ceiling to ~10 writes/sec/(siteId × capability × bucket), which is
@@ -35,9 +38,11 @@
  * which fails fast on the in-memory layer (so a hot loop on one replica
  * never hits firestore) and otherwise consults the appropriate bucket in
  * firestore. A rejection always returns `{ ok: false, reason: 'rate_limited',
- * retryAfterSec }`; a pass returns `{ ok: true }`.
+ * retryAfterSec, limit, remaining, resetAtMs }`; a metered pass returns the
+ * same counter metadata with `{ ok: true }`.
  */
 
+import crypto from 'crypto';
 import { getAdminDb } from '@/lib/firebase-admin';
 import logger from '@/lib/logger';
 import {
@@ -45,6 +50,7 @@ import {
   type Capability,
   Capability as CapabilityEnum,
 } from '@/lib/capabilities';
+import type { RateLimitedReason } from '@/lib/rateLimit';
 import { FieldValue } from 'firebase-admin/firestore';
 
 /* -------------------------------------------------------------------------- */
@@ -115,9 +121,16 @@ export type Bucket = 'user' | 'system';
 export const SHARD_COUNT = 10;
 export const WINDOW_SEC = 60;
 
+export interface RateLimitMetadata {
+  limit: number;
+  remaining: number;
+  resetAtMs: number;
+  rateLimitReason: RateLimitedReason;
+}
+
 export type RateLimitResult =
-  | { ok: true }
-  | { ok: false; reason: 'rate_limited'; retryAfterSec: number };
+  | ({ ok: true } & Partial<RateLimitMetadata>)
+  | ({ ok: false; reason: 'rate_limited'; retryAfterSec: number } & RateLimitMetadata);
 
 type RateLimitObservationSource = 'in_memory' | 'firestore';
 
@@ -130,11 +143,53 @@ export function bucketForActor(actor: Actor): Bucket {
 }
 
 /**
- * Stable identifier for an actor inside its bucket. Distinct user ids and
- * distinct system actor names get distinct in-memory keys.
+ * Stable display identifier for an actor inside its bucket.
  */
 export function actorIdentifier(actor: Actor): string {
-  return actor.type === 'system' ? actor.name : actor.userId;
+  if (actor.type === 'system') return actor.name;
+  return actor.apiKeyId ?? actor.userId;
+}
+
+/**
+ * Authoritative rate-limit subject. Sessions are bucketed by user id; API-key
+ * mediated requests are bucketed by key id; system actors stay bucketed by
+ * actor name.
+ */
+export function rateLimitSubjectKey(actor: Actor): string {
+  if (actor.type === 'system') return `system:${actor.name}`;
+  if (actor.apiKeyId) return `apiKey:${actor.apiKeyId}`;
+  return `user:${actor.userId}`;
+}
+
+export function rateLimitSubjectDocId(subjectKey: string): string {
+  return crypto.createHash('sha256').update(subjectKey).digest('hex').slice(0, 32);
+}
+
+function rateLimitedReasonForActor(actor: Actor): RateLimitedReason {
+  return actor.type === 'user' && actor.apiKeyId ? 'key-rate' : 'endpoint-rate';
+}
+
+export function rateLimitHeaders(result: RateLimitResult): Record<string, string> {
+  if (result.limit === undefined || result.remaining === undefined || result.resetAtMs === undefined) {
+    return {};
+  }
+
+  const resetDeltaSec = Math.max(0, Math.ceil((result.resetAtMs - Date.now()) / 1000));
+  const headers: Record<string, string> = {
+    'RateLimit-Limit': String(result.limit),
+    'RateLimit-Remaining': String(result.remaining),
+    'RateLimit-Reset': String(resetDeltaSec),
+    'X-RateLimit-Limit': String(result.limit),
+    'X-RateLimit-Remaining': String(result.remaining),
+    'X-RateLimit-Reset': String(result.resetAtMs),
+  };
+
+  if (!result.ok) {
+    headers['Retry-After'] = String(result.retryAfterSec);
+    headers['Roost-Rate-Limited-Reason'] = result.rateLimitReason;
+  }
+
+  return headers;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -147,10 +202,9 @@ interface TokenBucket {
 }
 
 /**
- * Per-process token-bucket map. SEPARATE buckets for `'user'` and
- * `'system'` are guaranteed by including `actor.type` in the key prefix;
- * the same userId could (in principle) collide with the same system-actor
- * name, but the type prefix makes those keys disjoint.
+ * Per-process token-bucket map. SEPARATE buckets for sessions, API keys,
+ * and system actors are guaranteed by including the bucket and stable
+ * subject in the key prefix.
  *
  * NOT shared across replicas — railway spins up N processes and each has
  * its own Map. Use `__resetInMemoryBucketsForTests()` in tests; in
@@ -159,7 +213,7 @@ interface TokenBucket {
 const inMemoryBuckets = new Map<string, TokenBucket>();
 
 function inMemoryKey(actor: Actor, capability: Capability): string {
-  return `${actor.type}:${actorIdentifier(actor)}:${capability}`;
+  return `${bucketForActor(actor)}:${rateLimitSubjectKey(actor)}:${capability}`;
 }
 
 /**
@@ -233,6 +287,7 @@ async function recordRateLimitObservation(params: {
       capability: params.capability,
       actorType: params.actor.type,
       actorId: actorIdentifier(params.actor),
+      rateLimitSubject: rateLimitSubjectKey(params.actor),
       source: params.source,
       configuredLimitPerMinute: params.configuredLimitPerMinute,
       windowSec: WINDOW_SEC,
@@ -270,14 +325,21 @@ export function pickShardIndex(): number {
   return Math.floor(Math.random() * SHARD_COUNT);
 }
 
-function shardsCollection(siteId: string, bucket: Bucket, capability: Capability) {
+function shardsCollection(
+  siteId: string,
+  bucket: Bucket,
+  subjectKey: string,
+  capability: Capability,
+) {
   return getAdminDb()
     .collection('sites')
     .doc(siteId)
     .collection('rate_limits')
     .doc(bucket)
-    .collection(capability)
-    .doc('shards')
+    .collection('subjects')
+    .doc(rateLimitSubjectDocId(subjectKey))
+    .collection('capabilities')
+    .doc(capability)
     .collection('shards');
 }
 
@@ -303,21 +365,32 @@ export async function checkFirestoreLimit(
   bucket: Bucket,
   capability: Capability,
   limit: number,
-  windowSec: number = WINDOW_SEC
+  windowSec: number = WINDOW_SEC,
+  options: {
+    subjectKey?: string;
+    rateLimitReason?: RateLimitedReason;
+  } = {},
 ): Promise<RateLimitResult> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const resetAtMs = (nowSec + windowSec) * 1000;
+  const rateLimitReason = options.rateLimitReason ?? 'endpoint-rate';
+
   if (limit <= 0) {
     return {
       ok: false,
       reason: 'rate_limited',
       retryAfterSec: windowSec,
+      limit,
+      remaining: 0,
+      resetAtMs,
+      rateLimitReason,
     };
   }
 
   const db = getAdminDb();
   const shardIndex = pickShardIndex();
-  const col = shardsCollection(siteId, bucket, capability);
+  const col = shardsCollection(siteId, bucket, options.subjectKey ?? bucket, capability);
   const targetRef = col.doc(String(shardIndex));
-  const nowSec = Math.floor(Date.now() / 1000);
 
   // 1. Increment the chosen shard transactionally, rolling the window
   //    forward if this shard's stored windowStart is stale.
@@ -349,7 +422,13 @@ export async function checkFirestoreLimit(
         capability,
       },
     });
-    return { ok: true };
+    return {
+      ok: true,
+      limit,
+      remaining: limit,
+      resetAtMs,
+      rateLimitReason,
+    };
   }
 
   // 2. Read all 10 shards and sum counts that belong to the window we
@@ -379,16 +458,37 @@ export async function checkFirestoreLimit(
         capability,
       },
     });
-    return { ok: true };
+    return {
+      ok: true,
+      limit,
+      remaining: limit,
+      resetAtMs,
+      rateLimitReason,
+    };
   }
 
+  const windowResetAtMs = (chosenWindowStart + windowSec) * 1000;
   if (total > limit) {
     const elapsed = nowSec - chosenWindowStart;
     const retryAfterSec = Math.max(1, Math.min(windowSec, windowSec - elapsed));
-    return { ok: false, reason: 'rate_limited', retryAfterSec };
+    return {
+      ok: false,
+      reason: 'rate_limited',
+      retryAfterSec,
+      limit,
+      remaining: 0,
+      resetAtMs: windowResetAtMs,
+      rateLimitReason,
+    };
   }
 
-  return { ok: true };
+  return {
+    ok: true,
+    limit,
+    remaining: Math.max(0, limit - total),
+    resetAtMs: windowResetAtMs,
+    rateLimitReason,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -438,12 +538,18 @@ export async function checkRateLimit(
   }
 
   const observeOnly = isObserveOnly();
+  const rateLimitReason = rateLimitedReasonForActor(actor);
+  const resetAtMs = Date.now() + WINDOW_SEC * 1000;
 
   if (!checkInMemoryBurst(actor, capability)) {
     const result: RateLimitResult = {
       ok: false,
       reason: 'rate_limited',
       retryAfterSec: WINDOW_SEC,
+      limit: limit.perMinute,
+      remaining: 0,
+      resetAtMs,
+      rateLimitReason,
     };
     if (observeOnly) {
       await recordRateLimitObservation({
@@ -460,7 +566,17 @@ export async function checkRateLimit(
     return result;
   }
 
-  const result = await checkFirestoreLimit(siteId, bucket, capability, limit.perMinute);
+  const result = await checkFirestoreLimit(
+    siteId,
+    bucket,
+    capability,
+    limit.perMinute,
+    WINDOW_SEC,
+    {
+      subjectKey: rateLimitSubjectKey(actor),
+      rateLimitReason,
+    },
+  );
   if (!result.ok && observeOnly) {
     await recordRateLimitObservation({
       actor,

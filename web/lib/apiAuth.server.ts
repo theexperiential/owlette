@@ -121,7 +121,8 @@ function extractApiKey(request: NextRequest): string | null {
  * lastUsedAt update on the user subcollection entry.
  */
 async function resolveApiKeyContext(
-  rawKey: string
+  rawKey: string,
+  options: { updateLastUsed?: boolean } = {},
 ): Promise<{ userId: string; keyContext: ApiKeyContext }> {
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
   const db = getAdminDb();
@@ -170,14 +171,30 @@ async function resolveApiKeyContext(
     ...(typeof data.retiresAt === 'number' ? { retiresAt: data.retiresAt } : {}),
   };
 
-  db.collection('users')
-    .doc(data.userId)
-    .collection('api_keys')
-    .doc(data.keyId)
-    .update({ lastUsedAt: Date.now() })
-    .catch(() => {});
+  if (options.updateLastUsed !== false) {
+    db.collection('users')
+      .doc(data.userId)
+      .collection('api_keys')
+      .doc(data.keyId)
+      .update({ lastUsedAt: Date.now() })
+      .catch(() => {});
+  }
 
   return { userId: data.userId, keyContext };
+}
+
+export async function resolveApiKeyRateLimitIdentity(
+  request: NextRequest,
+): Promise<string | null> {
+  const apiKey = extractApiKey(request);
+  if (!apiKey) return null;
+
+  try {
+    const { keyContext } = await resolveApiKeyContext(apiKey, { updateLastUsed: false });
+    return `apiKey:${keyContext.keyId}`;
+  } catch {
+    return null;
+  }
 }
 
 async function resolveApiKey(rawKey: string): Promise<string> {

@@ -107,14 +107,18 @@ export function emitApiKeyUsed(event: ApiKeyUsedEvent): void {
  * here (and in the cloud function's recogniser) when a new track lands.
  */
 export type MutationKind =
-  | 'deployment_mutated' // installer-deploys-api: create / retry / cancel / uninstall
+  | 'api_key_mutated' // api-key lifecycle: create / rotate / revoke
+  | 'chunk_mutated' // chunk metadata lifecycle: cross-roost mount / referrer changes
+  | 'deployment_mutated' // installer-deploys-api: create / retry / cancel / uninstall / delete
   | 'distribution_mutated' // project-distribution-api: create / cancel / delete
   | 'process_mutated' // process-api: create / update / delete / kill / start / stop / schedule
+  | 'roost_mutated' // roost-api: create / update / delete / publish / rollback / deploy / resync
   | 'machine_command_dispatched' // machine-api: reboot / shutdown / capture_screenshot
   | 'user_mutated' // users-api: promote / demote / assign-sites / remove-sites / delete / bootstrap
   | 'site_mutated' // sites-api: create / update / delete (security-boundary-migration wave 3.9)
   | 'site_member_mutated' // /api/sites/{siteId}/members
   | 'installer_mutated' // installer-api: upload / set-latest / delete
+  | 'webhook_mutated' // webhook-api: create / update / delete / rotate-secret / delivery retry
   | 'chat_mutated'; // cortex-api: new conversation / rename / soft-delete
 
 export interface MutationEvent {

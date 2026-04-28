@@ -140,6 +140,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           auth.scopeCheck,
         );
       },
+      { requireKey: true },
     );
   } catch (err) {
     return problemFromError(err, 'installer/[version]/set-latest:POST');

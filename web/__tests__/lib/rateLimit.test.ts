@@ -36,6 +36,9 @@ describe('checkRateLimit', () => {
   it('returns success when ratelimiter is null (in-memory allows first request)', async () => {
     const result = await checkRateLimit(null, 'null-first-request');
     expect(result.success).toBe(true);
+    expect(result.limit).toBe(15);
+    expect(result.remaining).toBe(14);
+    expect(result.reset).toBeDefined();
   });
 
   it('returns failure after exceeding in-memory limit (15/min)', async () => {
@@ -46,6 +49,9 @@ describe('checkRateLimit', () => {
     }
     const denied = await checkRateLimit(null, id);
     expect(denied.success).toBe(false);
+    expect(denied.limit).toBe(15);
+    expect(denied.remaining).toBe(0);
+    expect(denied.retryAfter).toBeGreaterThan(0);
   });
 
   it('returns success with metadata when Redis limiter succeeds', async () => {

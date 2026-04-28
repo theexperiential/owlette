@@ -23,12 +23,30 @@ import { createHash } from 'crypto';
  * requires extending both this union AND the shape validator — the
  * two live together on purpose.
  */
-export type AuditEventKind =
-  | 'signed_url_issued'
-  | 'distribution_started'
-  | 'version_pointer_changed'
-  | 'api_key_used'
-  | 'gc_run';
+export const AUDIT_EVENT_KINDS = [
+  'signed_url_issued',
+  'distribution_started',
+  'version_pointer_changed',
+  'api_key_used',
+  'gc_run',
+  'api_key_mutated',
+  'chunk_mutated',
+  'deployment_mutated',
+  'distribution_mutated',
+  'process_mutated',
+  'roost_mutated',
+  'machine_command_dispatched',
+  'user_mutated',
+  'site_mutated',
+  'site_member_mutated',
+  'installer_mutated',
+  'webhook_mutated',
+  'chat_mutated',
+] as const;
+
+export type AuditEventKind = (typeof AUDIT_EVENT_KINDS)[number];
+
+export const PLATFORM_AUDIT_SITE_ID = '__platform__';
 
 export interface AuditEvent {
   kind: AuditEventKind;
@@ -40,6 +58,8 @@ export interface AuditEvent {
   actor: string;
   /** unix ms when the audited operation happened, NOT when recorded. */
   occurredAt: number;
+  /** Optional mutated resource id, sent by the web mutation audit client. */
+  target?: string;
   /**
    * Kind-specific attributes — intentionally open-ended as long as the
    * entire payload is JSON-serialisable. Nested structure is fine;
@@ -66,7 +86,7 @@ export function canonicaliseEvent(
   if (!isAuditEventKind(raw.kind)) {
     return { ok: false, reason: 'invalid_kind' };
   }
-  if (!raw.siteId || typeof raw.siteId !== 'string') {
+  if (typeof raw.siteId !== 'string') {
     return { ok: false, reason: 'siteId_required' };
   }
   if (!raw.actor || typeof raw.actor !== 'string') {
@@ -83,27 +103,25 @@ export function canonicaliseEvent(
   if (typeof attributes !== 'object' || attributes === null || Array.isArray(attributes)) {
     return { ok: false, reason: 'attributes_must_be_object' };
   }
+  if (raw.target !== undefined && typeof raw.target !== 'string') {
+    return { ok: false, reason: 'target_must_be_string' };
+  }
 
   return {
     ok: true,
     event: {
       kind: raw.kind,
-      siteId: raw.siteId,
+      siteId: raw.siteId || PLATFORM_AUDIT_SITE_ID,
       actor: raw.actor,
       occurredAt: raw.occurredAt,
+      ...(raw.target !== undefined ? { target: raw.target } : {}),
       attributes,
     },
   };
 }
 
 function isAuditEventKind(x: unknown): x is AuditEventKind {
-  return (
-    x === 'signed_url_issued' ||
-    x === 'distribution_started' ||
-    x === 'version_pointer_changed' ||
-    x === 'api_key_used' ||
-    x === 'gc_run'
-  );
+  return AUDIT_EVENT_KINDS.includes(x as AuditEventKind);
 }
 
 /**

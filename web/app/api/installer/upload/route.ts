@@ -188,6 +188,7 @@ export async function POST(request: NextRequest) {
           auth.scopeCheck,
         );
       },
+      { requireKey: true },
     );
   } catch (err) {
     return problemFromError(err, 'installer/upload:POST');
@@ -383,6 +384,7 @@ export async function PUT(request: NextRequest) {
           auth.scopeCheck,
         );
       },
+      { requireKey: true },
     );
   } catch (err) {
     return problemFromError(err, 'installer/upload:PUT');

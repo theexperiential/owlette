@@ -197,12 +197,18 @@ describe('emitMutation', () => {
   });
 
   it.each<MutationKind>([
+    'api_key_mutated',
+    'chunk_mutated',
     'deployment_mutated',
+    'distribution_mutated',
     'process_mutated',
+    'roost_mutated',
     'machine_command_dispatched',
     'user_mutated',
+    'site_mutated',
     'site_member_mutated',
     'installer_mutated',
+    'webhook_mutated',
     'chat_mutated',
   ])('posts a %s event with kind, actor, target, and attributes', (kind, done) => {
     emitMutation({

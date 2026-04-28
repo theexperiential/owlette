@@ -131,6 +131,9 @@ import {
   SHARD_COUNT,
   bucketForActor,
   actorIdentifier,
+  rateLimitSubjectKey,
+  rateLimitSubjectDocId,
+  rateLimitHeaders,
   checkInMemoryBurst,
   checkFirestoreLimit,
   checkRateLimit,
@@ -156,11 +159,48 @@ const otherUserActor: Actor = {
   sites: ['site-1'],
 };
 
+const apiKeyActorA: Actor = {
+  type: 'user',
+  userId: 'user-1',
+  apiKeyId: 'key-a',
+  role: 'admin',
+  sites: ['site-1'],
+};
+
+const apiKeyActorB: Actor = {
+  type: 'user',
+  userId: 'user-1',
+  apiKeyId: 'key-b',
+  role: 'admin',
+  sites: ['site-1'],
+};
+
 const systemActor: Actor = {
   type: 'system',
   name: 'cortex_autonomous',
   siteId: 'site-1',
 };
+
+function shardPath(
+  siteId: string,
+  bucket: 'user' | 'system',
+  subjectKey: string,
+  capability: Capability,
+  shard = '0',
+): string {
+  return `sites/${siteId}/rate_limits/${bucket}/subjects/${rateLimitSubjectDocId(subjectKey)}/capabilities/${capability}/shards/${shard}`;
+}
+
+function hasRateLimitPath(
+  keys: string[],
+  bucket: 'user' | 'system',
+  capability: Capability,
+): boolean {
+  return keys.some((key) =>
+    key.includes(`/rate_limits/${bucket}/subjects/`) &&
+    key.includes(`/capabilities/${capability}/shards/`)
+  );
+}
 
 beforeEach(() => {
   fakeStore.clear();
@@ -231,8 +271,26 @@ describe('actorIdentifier', () => {
     expect(actorIdentifier(userActor)).toBe('user-1');
   });
 
+  it('uses apiKeyId for API-key-mediated user actors', () => {
+    expect(actorIdentifier(apiKeyActorA)).toBe('key-a');
+  });
+
   it('uses name for system actors', () => {
     expect(actorIdentifier(systemActor)).toBe('cortex_autonomous');
+  });
+});
+
+describe('rateLimitSubjectKey', () => {
+  it('distinguishes sessions and API keys owned by the same user', () => {
+    expect(rateLimitSubjectKey(userActor)).toBe('user:user-1');
+    expect(rateLimitSubjectKey(apiKeyActorA)).toBe('apiKey:key-a');
+    expect(rateLimitSubjectKey(apiKeyActorB)).toBe('apiKey:key-b');
+  });
+
+  it('produces a stable Firestore-safe subject doc id', () => {
+    expect(rateLimitSubjectDocId('apiKey:key-a')).toMatch(/^[0-9a-f]{32}$/);
+    expect(rateLimitSubjectDocId('apiKey:key-a')).toBe(rateLimitSubjectDocId('apiKey:key-a'));
+    expect(rateLimitSubjectDocId('apiKey:key-a')).not.toBe(rateLimitSubjectDocId('apiKey:key-b'));
   });
 });
 
@@ -261,6 +319,15 @@ describe('checkInMemoryBurst', () => {
     // user-1 is now empty; user-2 starts fresh.
     expect(checkInMemoryBurst(userActor, Capability.USER_DELETE)).toBe(false);
     expect(checkInMemoryBurst(otherUserActor, Capability.USER_DELETE)).toBe(true);
+  });
+
+  it('keys separately by apiKeyId for two keys owned by one user', () => {
+    const limit = USER_LIMITS[Capability.USER_SELF_DELETE].perMinute; // 1
+    for (let i = 0; i < limit; i++) {
+      expect(checkInMemoryBurst(apiKeyActorA, Capability.USER_SELF_DELETE)).toBe(true);
+    }
+    expect(checkInMemoryBurst(apiKeyActorA, Capability.USER_SELF_DELETE)).toBe(false);
+    expect(checkInMemoryBurst(apiKeyActorB, Capability.USER_SELF_DELETE)).toBe(true);
   });
 
   it('keys separately by capability — exhausting one does not affect another', () => {
@@ -313,13 +380,14 @@ describe('checkFirestoreLimit', () => {
       Capability.MACHINE_EXEC_COMMAND,
       60
     );
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({ ok: true });
     expect(transactionSpy).toHaveBeenCalledTimes(1);
 
     // The store should have exactly one shard recorded.
     const storedKeys = [...fakeStore.keys()];
     expect(storedKeys).toHaveLength(1);
-    expect(storedKeys[0]).toContain('/user/MACHINE_EXEC_COMMAND/');
+    expect(storedKeys[0]).toContain('/rate_limits/user/subjects/');
+    expect(storedKeys[0]).toContain('/capabilities/MACHINE_EXEC_COMMAND/shards/');
     expect(storedKeys[0]).toMatch(/\/0$/); // shard index 0
     const stored = fakeStore.get(storedKeys[0])!;
     expect(stored.count).toBe(1);
@@ -330,7 +398,7 @@ describe('checkFirestoreLimit', () => {
     // the increment we perform pushes total past `limit`.
     const limit = 3;
     const nowSec = Math.floor(Date.now() / 1000);
-    const path = `sites/site-1/rate_limits/user/MACHINE_REMOVE/shards/shards/0`;
+    const path = shardPath('site-1', 'user', 'user', Capability.MACHINE_REMOVE);
     fakeStore.set(path, { count: limit, windowStart: nowSec });
 
     jest.spyOn(Math, 'random').mockReturnValue(0);
@@ -351,7 +419,7 @@ describe('checkFirestoreLimit', () => {
   it('rolls a stale window forward when the existing windowStart is older than windowSec', async () => {
     // Existing shard has count=999 but its window expired.
     const oldStart = Math.floor(Date.now() / 1000) - (WINDOW_SEC + 5);
-    const path = `sites/site-1/rate_limits/user/MACHINE_REMOVE/shards/shards/0`;
+    const path = shardPath('site-1', 'user', 'user', Capability.MACHINE_REMOVE);
     fakeStore.set(path, { count: 999, windowStart: oldStart });
 
     jest.spyOn(Math, 'random').mockReturnValue(0);
@@ -361,7 +429,7 @@ describe('checkFirestoreLimit', () => {
       Capability.MACHINE_REMOVE,
       5
     );
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({ ok: true });
 
     // Window should have rolled — count=1, windowStart is fresh.
     const stored = fakeStore.get(path)!;
@@ -376,8 +444,8 @@ describe('checkFirestoreLimit', () => {
 
     const keys = [...fakeStore.keys()];
     expect(keys).toHaveLength(2);
-    expect(keys.some((k) => k.includes('/rate_limits/user/MACHINE_EXEC_COMMAND/'))).toBe(true);
-    expect(keys.some((k) => k.includes('/rate_limits/system/MACHINE_EXEC_COMMAND/'))).toBe(true);
+    expect(hasRateLimitPath(keys, 'user', Capability.MACHINE_EXEC_COMMAND)).toBe(true);
+    expect(hasRateLimitPath(keys, 'system', Capability.MACHINE_EXEC_COMMAND)).toBe(true);
   });
 
   it('distributes increments across all shards when Math.random varies', async () => {
@@ -394,7 +462,8 @@ describe('checkFirestoreLimit', () => {
     }
     // We should have written into each of the 10 shard slots exactly once.
     const shardKeys = [...fakeStore.keys()].filter((k) =>
-      k.includes('/rate_limits/user/MACHINE_EXEC_COMMAND/shards/shards/')
+      k.includes('/rate_limits/user/subjects/') &&
+      k.includes('/capabilities/MACHINE_EXEC_COMMAND/shards/')
     );
     expect(shardKeys).toHaveLength(SHARD_COUNT);
     expect(seen.size).toBe(SHARD_COUNT);
@@ -408,7 +477,7 @@ describe('checkFirestoreLimit', () => {
       Capability.MACHINE_EXEC_COMMAND,
       60
     );
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({ ok: true });
   });
 
   it('fails open when the shard read throws after a successful increment', async () => {
@@ -421,7 +490,7 @@ describe('checkFirestoreLimit', () => {
       Capability.MACHINE_EXEC_COMMAND,
       60
     );
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({ ok: true });
   });
 
   it('rejects immediately when limit is zero or negative', async () => {
@@ -462,9 +531,9 @@ describe('checkRateLimit (combined)', () => {
       Capability.MACHINE_EXEC_COMMAND,
       'site-1'
     );
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({ ok: true });
     const keys = [...fakeStore.keys()];
-    expect(keys.some((k) => k.includes('/rate_limits/user/MACHINE_EXEC_COMMAND/'))).toBe(true);
+    expect(hasRateLimitPath(keys, 'user', Capability.MACHINE_EXEC_COMMAND)).toBe(true);
   });
 
   it('routes system actors to the system bucket — never the user bucket', async () => {
@@ -473,16 +542,21 @@ describe('checkRateLimit (combined)', () => {
       Capability.MACHINE_EXEC_COMMAND,
       'site-1'
     );
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({ ok: true });
     const keys = [...fakeStore.keys()];
-    expect(keys.some((k) => k.includes('/rate_limits/system/MACHINE_EXEC_COMMAND/'))).toBe(true);
-    expect(keys.some((k) => k.includes('/rate_limits/user/MACHINE_EXEC_COMMAND/'))).toBe(false);
+    expect(hasRateLimitPath(keys, 'system', Capability.MACHINE_EXEC_COMMAND)).toBe(true);
+    expect(hasRateLimitPath(keys, 'user', Capability.MACHINE_EXEC_COMMAND)).toBe(false);
   });
 
   it('user-bucket exhaustion does NOT block a system actor on the same capability+site', async () => {
     // Saturate the user bucket on shard 0.
     const userLimit = USER_LIMITS[Capability.MACHINE_REMOVE].perMinute;
-    const path = `sites/site-1/rate_limits/user/MACHINE_REMOVE/shards/shards/0`;
+    const path = shardPath(
+      'site-1',
+      'user',
+      rateLimitSubjectKey(userActor),
+      Capability.MACHINE_REMOVE,
+    );
     fakeStore.set(path, {
       count: userLimit,
       windowStart: Math.floor(Date.now() / 1000),
@@ -504,12 +578,17 @@ describe('checkRateLimit (combined)', () => {
       Capability.MACHINE_REMOVE,
       'site-1'
     );
-    expect(systemResult).toEqual({ ok: true });
+    expect(systemResult).toMatchObject({ ok: true });
   });
 
   it('system-bucket exhaustion does NOT block a user actor on the same capability+site', async () => {
     const systemLimit = SYSTEM_LIMITS[Capability.MACHINE_REMOVE].perMinute;
-    const path = `sites/site-1/rate_limits/system/MACHINE_REMOVE/shards/shards/0`;
+    const path = shardPath(
+      'site-1',
+      'system',
+      rateLimitSubjectKey(systemActor),
+      Capability.MACHINE_REMOVE,
+    );
     fakeStore.set(path, {
       count: systemLimit,
       windowStart: Math.floor(Date.now() / 1000),
@@ -528,7 +607,7 @@ describe('checkRateLimit (combined)', () => {
       Capability.MACHINE_REMOVE,
       'site-1'
     );
-    expect(userResult).toEqual({ ok: true });
+    expect(userResult).toMatchObject({ ok: true });
   });
 
   it('short-circuits on in-memory layer without ever hitting firestore', async () => {
@@ -551,7 +630,7 @@ describe('checkRateLimit (combined)', () => {
   it('returns the structured rate_limited envelope verbatim on rejection', async () => {
     // USER_SELF_DELETE has a per-minute limit of 1; second call rejects.
     const ok = await checkRateLimit(userActor, Capability.USER_SELF_DELETE, 'site-1');
-    expect(ok).toEqual({ ok: true });
+    expect(ok).toMatchObject({ ok: true });
     const denied = await checkRateLimit(userActor, Capability.USER_SELF_DELETE, 'site-1');
     expect(denied.ok).toBe(false);
     if (denied.ok) throw new Error('unreachable');
@@ -560,11 +639,60 @@ describe('checkRateLimit (combined)', () => {
     expect(denied.retryAfterSec).toBeGreaterThanOrEqual(1);
   });
 
+  it('gives two API keys owned by the same user independent buckets', async () => {
+    const keyAOk = await checkRateLimit(apiKeyActorA, Capability.USER_SELF_DELETE, 'site-1');
+    const keyADenied = await checkRateLimit(apiKeyActorA, Capability.USER_SELF_DELETE, 'site-1');
+    const keyBOk = await checkRateLimit(apiKeyActorB, Capability.USER_SELF_DELETE, 'site-1');
+
+    expect(keyAOk).toMatchObject({
+      ok: true,
+      limit: 1,
+      remaining: 0,
+      rateLimitReason: 'key-rate',
+    });
+    expect(keyADenied).toMatchObject({
+      ok: false,
+      reason: 'rate_limited',
+      limit: 1,
+      remaining: 0,
+      rateLimitReason: 'key-rate',
+    });
+    expect(keyBOk).toMatchObject({
+      ok: true,
+      limit: 1,
+      remaining: 0,
+      rateLimitReason: 'key-rate',
+    });
+
+    const keys = [...fakeStore.keys()];
+    expect(keys.some((key) => key.includes(rateLimitSubjectDocId('apiKey:key-a')))).toBe(true);
+    expect(keys.some((key) => key.includes(rateLimitSubjectDocId('apiKey:key-b')))).toBe(true);
+  });
+
+  it('formats capability rate-limit headers for allowed and rejected requests', async () => {
+    const ok = await checkRateLimit(apiKeyActorA, Capability.USER_SELF_DELETE, 'site-1');
+    expect(rateLimitHeaders(ok)).toMatchObject({
+      'RateLimit-Limit': '1',
+      'RateLimit-Remaining': '0',
+      'X-RateLimit-Limit': '1',
+      'X-RateLimit-Remaining': '0',
+    });
+    expect(rateLimitHeaders(ok)).not.toHaveProperty('Retry-After');
+
+    const denied = await checkRateLimit(apiKeyActorA, Capability.USER_SELF_DELETE, 'site-1');
+    expect(rateLimitHeaders(denied)).toMatchObject({
+      'RateLimit-Limit': '1',
+      'RateLimit-Remaining': '0',
+      'Retry-After': String(WINDOW_SEC),
+      'Roost-Rate-Limited-Reason': 'key-rate',
+    });
+  });
+
   it('observe-only mode records in-memory rejections and allows the request', async () => {
     process.env.RATE_LIMIT_OBSERVE_ONLY = 'true';
 
     const ok = await checkRateLimit(userActor, Capability.USER_SELF_DELETE, 'site-1');
-    expect(ok).toEqual({ ok: true });
+    expect(ok).toMatchObject({ ok: true });
     transactionSpy.mockClear();
 
     const observed = await checkRateLimit(userActor, Capability.USER_SELF_DELETE, 'site-1');
@@ -591,7 +719,12 @@ describe('checkRateLimit (combined)', () => {
     process.env.RATE_LIMIT_OBSERVE_ONLY = 'true';
 
     const userLimit = USER_LIMITS[Capability.MACHINE_REMOVE].perMinute;
-    const path = `sites/site-1/rate_limits/user/MACHINE_REMOVE/shards/shards/0`;
+    const path = shardPath(
+      'site-1',
+      'user',
+      rateLimitSubjectKey(userActor),
+      Capability.MACHINE_REMOVE,
+    );
     fakeStore.set(path, {
       count: userLimit,
       windowStart: Math.floor(Date.now() / 1000),

@@ -83,10 +83,41 @@ jest.mock('@/lib/securityConfig.server', () => ({
   securityConfig: { read: () => securityConfigReadSpy() },
 }));
 
-let rateLimitResult: { ok: boolean; reason?: 'rate_limited'; retryAfterSec?: number } = { ok: true };
+let rateLimitResult: {
+  ok: boolean;
+  reason?: 'rate_limited';
+  retryAfterSec?: number;
+  limit?: number;
+  remaining?: number;
+  resetAtMs?: number;
+  rateLimitReason?: string;
+} = { ok: true };
 const checkRateLimitSpy = jest.fn(async () => rateLimitResult);
 jest.mock('@/lib/rateLimit.server', () => ({
-  checkRateLimit: () => checkRateLimitSpy(),
+  checkRateLimit: (...args: unknown[]) => checkRateLimitSpy(...args),
+  rateLimitHeaders: (result: {
+    ok: boolean;
+    limit?: number;
+    remaining?: number;
+    resetAtMs?: number;
+    retryAfterSec?: number;
+    rateLimitReason?: string;
+  }) => {
+    if (result.limit === undefined) return {};
+    const headers: Record<string, string> = {
+      'RateLimit-Limit': String(result.limit),
+      'RateLimit-Remaining': String(result.remaining ?? 0),
+      'RateLimit-Reset': '60',
+      'X-RateLimit-Limit': String(result.limit),
+      'X-RateLimit-Remaining': String(result.remaining ?? 0),
+      'X-RateLimit-Reset': String(result.resetAtMs ?? 0),
+    };
+    if (!result.ok) {
+      headers['Retry-After'] = String(result.retryAfterSec ?? 1);
+      headers['Roost-Rate-Limited-Reason'] = result.rateLimitReason ?? 'endpoint-rate';
+    }
+    return headers;
+  },
 }));
 
 let resolveAuthResult: { userId: string; keyContext: unknown } = { userId: 'uid_alice', keyContext: null };
@@ -221,6 +252,25 @@ describe('authorizedSiteHandler — happy path', () => {
     expect(ctx.correlationId).toMatch(/^[0-9a-f]{22}$/);
   });
 
+  it('passes API-key identity into the capability rate-limit actor', async () => {
+    resolveAuthResult = {
+      userId: 'uid_alice',
+      keyContext: { keyId: 'key-a' },
+    };
+    const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedSiteHandler({ capability: 'MACHINE_EXEC_COMMAND', siteIdParam: 'path' })(handler);
+
+    const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
+
+    expect(res.status).toBe(200);
+    expect(checkRateLimitSpy).toHaveBeenCalledTimes(1);
+    expect(checkRateLimitSpy.mock.calls[0][0]).toMatchObject({
+      type: 'user',
+      userId: 'uid_alice',
+      apiKeyId: 'key-a',
+    });
+  });
+
   it('writes a blocking allow audit before invoking the handler', async () => {
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'MACHINE_EXEC_COMMAND', siteIdParam: 'path' })(handler);
@@ -230,6 +280,25 @@ describe('authorizedSiteHandler — happy path', () => {
     expect(allow).toBeDefined();
     expect(allow!.path.startsWith('sites/site-a/audit_log/')).toBe(true);
     expect(allow!.payload.capability).toBe('MACHINE_EXEC_COMMAND');
+  });
+
+  it('adds rate-limit counter headers to allowed responses when available', async () => {
+    rateLimitResult = {
+      ok: true,
+      limit: 60,
+      remaining: 59,
+      resetAtMs: Date.now() + 60_000,
+      rateLimitReason: 'endpoint-rate',
+    };
+    const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedSiteHandler({ capability: 'MACHINE_EXEC_COMMAND', siteIdParam: 'path' })(handler);
+
+    const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('RateLimit-Limit')).toBe('60');
+    expect(res.headers.get('RateLimit-Remaining')).toBe('59');
+    expect(res.headers.get('Retry-After')).toBeNull();
   });
 
   it('reads siteId from query when configured', async () => {
@@ -330,11 +399,28 @@ describe('authorizedSiteHandler — denials', () => {
   });
 
   it('returns 429 + deny audit when rate limited', async () => {
-    rateLimitResult = { ok: false, reason: 'rate_limited', retryAfterSec: 12 };
+    rateLimitResult = {
+      ok: false,
+      reason: 'rate_limited',
+      retryAfterSec: 12,
+      limit: 60,
+      remaining: 0,
+      resetAtMs: Date.now() + 60_000,
+      rateLimitReason: 'key-rate',
+    };
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'MACHINE_EXEC_COMMAND', siteIdParam: 'path' })(handler);
     const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
+    const body = await res.json();
     expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('12');
+    expect(res.headers.get('RateLimit-Limit')).toBe('60');
+    expect(res.headers.get('RateLimit-Remaining')).toBe('0');
+    expect(res.headers.get('Roost-Rate-Limited-Reason')).toBe('key-rate');
+    expect(body).toMatchObject({
+      code: 'rate_limited',
+      retryAfter: 12,
+    });
     expect(handler).not.toHaveBeenCalled();
     const deny = setCalls.find((c) => (c.payload as { outcome?: string }).outcome === 'deny');
     expect((deny!.payload as { denyReason?: string }).denyReason).toBe('rate_limited');

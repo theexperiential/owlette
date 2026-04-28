@@ -15,6 +15,7 @@ export interface AuditRecord {
     kind: string;
     siteId: string;
     actor: string;
+    target?: string;
     occurredAt: number;
     attributes: Record<string, unknown>;
   };

@@ -70,7 +70,11 @@ import {
   type AuditTargetKind,
 } from '@/lib/auditLog.server';
 import type { ApiKeyPermission, ApiKeyResource } from '@/lib/apiKeyTypes';
-import { checkRateLimit } from '@/lib/rateLimit.server';
+import {
+  checkRateLimit,
+  rateLimitHeaders,
+  type RateLimitResult,
+} from '@/lib/rateLimit.server';
 import { securityConfig } from '@/lib/securityConfig.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import logger from '@/lib/logger';
@@ -169,6 +173,7 @@ function authToActor(auth: ResolvedAuth, role: Role, sites: string[]): UserActor
   return {
     type: 'user',
     userId: auth.userId,
+    ...(auth.keyContext ? { apiKeyId: auth.keyContext.keyId } : {}),
     role,
     sites,
   };
@@ -285,6 +290,10 @@ function platformDenyAudit(entry: AuditEntryInput): void {
 // Firestore reserves document ids matching `__.*__`; platform routes still
 // need a stable bucket for rate-limit counters, so use a non-reserved id.
 const PLATFORM_RATE_LIMIT_SITE_ID = 'platform_global';
+
+function headersForRateLimit(result: RateLimitResult): Record<string, string> {
+  return typeof rateLimitHeaders === 'function' ? rateLimitHeaders(result) : {};
+}
 
 /* -------------------------------------------------------------------------- */
 /*  site-scoped wrapper                                                       */
@@ -483,8 +492,10 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
 
       // 8. Rate-limit check — bypassable.
       let rateLimitBypassed = false;
+      let rateLimitResult: RateLimitResult | null = null;
       if (config.rate_limit_enforcement) {
         const rl = await checkRateLimit(actor as Actor, options.capability, siteId);
+        rateLimitResult = rl;
         if (!rl.ok) {
           denyAudit(siteId, {
             correlationId,
@@ -499,7 +510,11 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
               retryAfterSec: rl.retryAfterSec,
             },
           });
-          return problemRateLimited(rl.retryAfterSec);
+          return problemRateLimited(
+            rl.retryAfterSec,
+            undefined,
+            headersForRateLimit(rl),
+          );
         }
       } else {
         rateLimitBypassed = true;
@@ -536,6 +551,11 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
       try {
         const ctx: SiteHandlerContext = { actor, siteId, correlationId, auth, scopeCheck };
         const response = await handler(request, ctx, { params: routeParamsPromise as Promise<TParams> });
+        if (rateLimitResult) {
+          Object.entries(headersForRateLimit(rateLimitResult)).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+        }
         return response;
       } catch (err) {
         // Best-effort error audit; then re-throw so the framework's
@@ -658,6 +678,7 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
       }
 
       let rateLimitBypassed = false;
+      let rateLimitResult: RateLimitResult | null = null;
       if (config.rate_limit_enforcement) {
         // Platform endpoints have no siteId; use a synthetic identifier
         // so the firestore counter still partitions per-capability.
@@ -666,6 +687,7 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
           options.capability,
           PLATFORM_RATE_LIMIT_SITE_ID,
         );
+        rateLimitResult = rl;
         if (!rl.ok) {
           platformDenyAudit({
             correlationId,
@@ -680,7 +702,11 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
               retryAfterSec: rl.retryAfterSec,
             },
           });
-          return problemRateLimited(rl.retryAfterSec);
+          return problemRateLimited(
+            rl.retryAfterSec,
+            undefined,
+            headersForRateLimit(rl),
+          );
         }
       } else {
         rateLimitBypassed = true;
@@ -713,6 +739,11 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
 
       try {
         const response = await handler(request, { actor, correlationId, auth, scopeCheck }, routeContext);
+        if (rateLimitResult) {
+          Object.entries(headersForRateLimit(rateLimitResult)).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+        }
         return response;
       } catch (err) {
         platformDenyAudit({

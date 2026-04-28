@@ -249,6 +249,10 @@ export type ScopedAuthResult =
   | ScopedAuthSuccess
   | { ok: false; response: NextResponse };
 
+export function auditActorIdentifier(auth: ResolvedAuth): string {
+  return auth.keyContext ? `apiKey:${auth.keyContext.keyId}` : `user:${auth.userId}`;
+}
+
 async function resolveAuthOrProblem(
   req: NextRequest,
 ): Promise<{ ok: true; auth: ResolvedAuth } | { ok: false; response: NextResponse }> {

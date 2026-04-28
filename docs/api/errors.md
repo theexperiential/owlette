@@ -1,6 +1,6 @@
-# roost api — errors
+# Owlette API Errors
 
-every non-2xx response from the roost api is a structured problem document — never a plain-text string, never a bespoke `{error: "..."}` envelope, never html. clients switch on the stable `code` field; humans follow the `doc_url` back here for remediation; support engineers trace issues by `requestId`.
+Every non-2xx response from the public API should be a structured problem document: never a plain-text string, never a bespoke `{error: "..."}` envelope, never HTML. Clients switch on the stable `code` field; humans follow the `docsUrl` back here for remediation; support engineers trace issues by `requestId`.
 
 this page is the authoritative catalog. every error code the api emits is listed with its http status, what triggers it, and how to remediate.
 
@@ -12,13 +12,13 @@ every non-2xx response has `Content-Type: application/problem+json` and follows 
 
 ```json
 {
-  "type": "https://roost.dev/errors/quota-exceeded",
+  "type": "https://owlette.app/problems/quota-exceeded",
   "title": "Quota exceeded",
   "status": 402,
   "detail": "site kiosk-fleet-01 has used 5.2 gb of its 5 gb plan",
   "code": "quota_exceeded",
   "param": "siteId",
-  "doc_url": "https://owlette.app/docs/api/errors#quota_exceeded",
+  "docsUrl": "https://owlette.app/docs/api/errors#quota_exceeded",
   "request_log_url": "https://owlette.app/admin/requests/req_01HY…",
   "requestId": "req_01HY…"
 }
@@ -32,7 +32,7 @@ every non-2xx response has `Content-Type: application/problem+json` and follows 
 | `detail` | human-readable explanation for this specific occurrence. wording may change between versions — do not regex-match it. |
 | `code` | stable machine-readable identifier. **this is the contract.** switch on this in client code. |
 | `param` | dotted json path to the offending field (validation + precondition errors only). |
-| `doc_url` | deep link to the `#<code>` anchor on this page. safe to surface in client ui. |
+| `docsUrl` | deep link to the `#<code>` anchor on this page. safe to surface in client ui. |
 | `request_log_url` | dashboard link to the full request/response transcript for this call. only populated for authenticated requests. |
 | `requestId` | correlation id. mirrored in the `X-Request-Id` response header. include it in any support ticket. |
 
@@ -40,12 +40,12 @@ additional implementation-specific fields may appear alongside the above for spe
 
 ---
 
-## stable type urls
+## Stable Type URLs
 
-every `type` field is a permanent url at `https://roost.dev/errors/{code}`. visiting one redirects to the `#<code>` anchor on this page. the redirect is guaranteed stable across api versions — urls already emitted in logs, support tickets, and error reports will keep resolving after future releases.
+Every `type` field is a permanent URL at `https://owlette.app/problems/{code}`. Visiting one redirects to the `#<code>` anchor on this page. The redirect is guaranteed stable across API versions; URLs already emitted in logs, support tickets, and error reports will keep resolving after future releases.
 
-- `https://roost.dev/errors/quota-exceeded` → [#quota_exceeded](#quota_exceeded)
-- `https://roost.dev/errors/validation-failed` → [#validation_failed](#validation_failed)
+- `https://owlette.app/problems/quota-exceeded` → [#quota_exceeded](#quota_exceeded)
+- `https://owlette.app/problems/validation-failed` → [#validation_failed](#validation_failed)
 - (one url per code below)
 
 the convention: the url path is the `code` with underscores rewritten as hyphens (`quota_exceeded` → `quota-exceeded`). code switches should match on the `code` field, not the `type` url — but the url is what you click or paste into a chat window.
@@ -65,12 +65,12 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 ```json
 {
-  "type": "https://roost.dev/errors/auth-required",
+  "type": "https://owlette.app/problems/auth-required",
   "title": "Authentication required",
   "status": 401,
   "detail": "missing or malformed Authorization header",
   "code": "auth_required",
-  "doc_url": "https://owlette.app/docs/api/errors#auth_required",
+  "docsUrl": "https://owlette.app/docs/api/errors#auth_required",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -86,13 +86,13 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 ```json
 {
-  "type": "https://roost.dev/errors/chunk-not-found",
+  "type": "https://owlette.app/problems/chunk-not-found",
   "title": "Chunk not found",
   "status": 400,
   "detail": "version references chunk sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce which is not in storage for site kiosk-fleet-01",
   "code": "chunk_not_found",
   "param": "version.layers[2].digest",
-  "doc_url": "https://owlette.app/docs/api/errors#chunk_not_found",
+  "docsUrl": "https://owlette.app/docs/api/errors#chunk_not_found",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -108,12 +108,76 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 ```json
 {
-  "type": "https://roost.dev/errors/conflict",
+  "type": "https://owlette.app/problems/conflict",
   "title": "Conflict",
   "status": 409,
   "detail": "roost roost_lobby_td has no previous version to roll back to; specify targetVersion explicitly",
   "code": "conflict",
-  "doc_url": "https://owlette.app/docs/api/errors#conflict",
+  "docsUrl": "https://owlette.app/docs/api/errors#conflict",
+  "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
+}
+```
+
+---
+
+### `forbidden`
+
+- **http status**: 403 Forbidden
+- **meaning**: the caller is authenticated, but the requested operation is not allowed for this actor or resource.
+- **triggers**: role/capability checks fail, platform-only routes are called by non-platform actors, or a session user lacks access to the requested resource.
+- **remediate**: confirm the signed-in user or API key has the required role, capability, and resource access. for scoped API-key failures, prefer the more specific `scope_insufficient` response when present.
+
+```json
+{
+  "type": "https://owlette.app/problems/forbidden",
+  "title": "forbidden",
+  "status": 403,
+  "detail": "access denied",
+  "code": "forbidden",
+  "docsUrl": "https://owlette.app/docs/api/errors#forbidden",
+  "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
+}
+```
+
+---
+
+### `idempotency_key_required`
+
+- **http status**: 400 Bad Request
+- **meaning**: the endpoint requires an `Idempotency-Key` header before it will run the mutation.
+- **triggers**: omitting the header, or sending a blank value, on a mutation whose public contract requires replay protection.
+- **remediate**: generate a stable key for this exact request body and retry the same request with `Idempotency-Key: <key>`.
+
+```json
+{
+  "type": "https://owlette.app/problems/validation-failed",
+  "title": "idempotency key required",
+  "status": 400,
+  "detail": "Idempotency-Key is required for this mutation",
+  "code": "idempotency_key_required",
+  "param": "Idempotency-Key",
+  "docsUrl": "https://owlette.app/docs/api/errors#idempotency_key_required",
+  "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
+}
+```
+
+---
+
+### `idempotency_key_invalid`
+
+- **http status**: 400 Bad Request
+- **meaning**: the supplied `Idempotency-Key` header is syntactically invalid.
+- **triggers**: currently, keys longer than 255 characters are rejected.
+- **remediate**: generate a shorter opaque key. UUIDv4, ULID, or a deterministic hash-based key for the exact request are all valid.
+
+```json
+{
+  "type": "https://owlette.app/problems/validation-failed",
+  "title": "idempotency key too long",
+  "status": 400,
+  "detail": "Idempotency-Key must be <= 255 chars",
+  "code": "idempotency_key_invalid",
+  "docsUrl": "https://owlette.app/docs/api/errors#idempotency_key_invalid",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -122,20 +186,19 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 ### `idempotency_key_mismatch`
 
-- **http status**: 409 Conflict
+- **http status**: 422 Unprocessable Content
 - **meaning**: the same `Idempotency-Key` was presented with a request body whose hash differs from the original.
-- **triggers**: reusing an `Idempotency-Key` value within the 24h cache window with a different payload. per-tenant cache is keyed on `{userId, environment, idempotencyKey, sha256(requestBody)}`.
+- **triggers**: reusing an `Idempotency-Key` value within the 24h cache window with a different payload. per-tenant cache is keyed on `{userId, environment, idempotencyKey, method, path, query, sha256(requestBody)}`.
 - **remediate**: generate a fresh uuid for the retry if the payload has genuinely changed. if the payload is supposed to be identical, diff the two bodies — usually it's a dynamic field (timestamp, nonce) a client inadvertently regenerated on retry.
 
 ```json
 {
-  "type": "https://roost.dev/errors/idempotency-key-mismatch",
-  "title": "Idempotency key reused with different body",
-  "status": 409,
-  "detail": "Idempotency-Key 3f7b9c2a-8e14-4f1c-9d6e-2c8a5b0e9f4d was previously used with a different request body hash",
+  "type": "https://owlette.app/problems/validation-failed",
+  "title": "idempotency key mismatch",
+  "status": 422,
+  "detail": "Idempotency-Key '3f7b9c2a-8e14-4f1c-9d6e-2c8a5b0e9f4d' was previously used with a different request body; reuse requires the identical body",
   "code": "idempotency_key_mismatch",
-  "param": "Idempotency-Key",
-  "doc_url": "https://owlette.app/docs/api/errors#idempotency_key_mismatch",
+  "docsUrl": "https://owlette.app/docs/api/errors#idempotency_key_mismatch",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -151,12 +214,12 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 ```json
 {
-  "type": "https://roost.dev/errors/internal-error",
+  "type": "https://owlette.app/problems/internal-error",
   "title": "Internal error",
   "status": 500,
   "detail": "an internal error occurred. quote the requestId when contacting support.",
   "code": "internal_error",
-  "doc_url": "https://owlette.app/docs/api/errors#internal_error",
+  "docsUrl": "https://owlette.app/docs/api/errors#internal_error",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -172,13 +235,13 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 ```json
 {
-  "type": "https://roost.dev/errors/not-found",
+  "type": "https://owlette.app/problems/not-found",
   "title": "Not found",
   "status": 404,
   "detail": "roost roost_lobby_td not found",
   "code": "not_found",
   "param": "roostId",
-  "doc_url": "https://owlette.app/docs/api/errors#not_found",
+  "docsUrl": "https://owlette.app/docs/api/errors#not_found",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -194,12 +257,12 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 ```json
 {
-  "type": "https://roost.dev/errors/not-implemented",
+  "type": "https://owlette.app/problems/not-implemented",
   "title": "Not implemented",
   "status": 501,
   "detail": "POST /api/roosts/{roostId}/deploy is scheduled but not yet implemented in the current release",
   "code": "not_implemented",
-  "doc_url": "https://owlette.app/docs/api/errors#not_implemented",
+  "docsUrl": "https://owlette.app/docs/api/errors#not_implemented",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -215,12 +278,12 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 ```json
 {
-  "type": "https://roost.dev/errors/payload-too-large",
+  "type": "https://owlette.app/problems/payload-too-large",
   "title": "Payload too large",
   "status": 413,
   "detail": "version body of 12.4 mib exceeds the 8 mib cap",
   "code": "payload_too_large",
-  "doc_url": "https://owlette.app/docs/api/errors#payload_too_large",
+  "docsUrl": "https://owlette.app/docs/api/errors#payload_too_large",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -236,7 +299,7 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 ```json
 {
-  "type": "https://roost.dev/errors/precondition-failed",
+  "type": "https://owlette.app/problems/precondition-failed",
   "title": "Precondition failed",
   "status": 412,
   "detail": "current version id is vrs_cc33dd44, not vrs_aa11bb22",
@@ -244,7 +307,7 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
   "param": "If-Match",
   "expected": "vrs_aa11bb22",
   "actual": "vrs_cc33dd44",
-  "doc_url": "https://owlette.app/docs/api/errors#precondition_failed",
+  "docsUrl": "https://owlette.app/docs/api/errors#precondition_failed",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -260,14 +323,14 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 ```json
 {
-  "type": "https://roost.dev/errors/quota-exceeded",
+  "type": "https://owlette.app/problems/quota-exceeded",
   "title": "Quota exceeded",
   "status": 402,
   "detail": "site kiosk-fleet-01 has used 5.2 gb of its 5 gb plan",
   "code": "quota_exceeded",
   "param": "siteId",
   "upgradeUrl": "https://owlette.app/billing?site=kiosk-fleet-01",
-  "doc_url": "https://owlette.app/docs/api/errors#quota_exceeded",
+  "docsUrl": "https://owlette.app/docs/api/errors#quota_exceeded",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -283,13 +346,13 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 
 ```json
 {
-  "type": "https://roost.dev/errors/rate-limited",
+  "type": "https://owlette.app/problems/rate-limited",
   "title": "Rate limited",
   "status": 429,
   "detail": "per-key quota of 100 requests/minute exhausted; retry in 47s",
   "code": "rate_limited",
   "retryAfter": 47,
-  "doc_url": "https://owlette.app/docs/api/errors#rate_limited",
+  "docsUrl": "https://owlette.app/docs/api/errors#rate_limited",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -314,13 +377,34 @@ Roost-Rate-Limited-Reason: per_key
 
 ```json
 {
-  "type": "https://roost.dev/errors/scope-insufficient",
+  "type": "https://owlette.app/problems/scope-insufficient",
   "title": "Scope insufficient",
   "status": 403,
   "detail": "this key carries roost:roost_lobby_td:read; roost:roost_lobby_td:deploy is required to trigger a rollout",
   "code": "scope_insufficient",
   "required": "roost:roost_lobby_td:deploy",
-  "doc_url": "https://owlette.app/docs/api/errors#scope_insufficient",
+  "docsUrl": "https://owlette.app/docs/api/errors#scope_insufficient",
+  "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
+}
+```
+
+---
+
+### `service_unavailable`
+
+- **http status**: 503 Service Unavailable
+- **meaning**: a required service dependency is temporarily unavailable.
+- **triggers**: upstream provider outage, maintenance window, or a protective circuit breaker.
+- **remediate**: retry with exponential backoff and jitter. if the response includes `Retry-After`, honor it.
+
+```json
+{
+  "type": "https://owlette.app/problems/service-unavailable",
+  "title": "service unavailable",
+  "status": 503,
+  "detail": "service temporarily unavailable",
+  "code": "service_unavailable",
+  "docsUrl": "https://owlette.app/docs/api/errors#service_unavailable",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -336,13 +420,13 @@ Roost-Rate-Limited-Reason: per_key
 
 ```json
 {
-  "type": "https://roost.dev/errors/site-isolation-violation",
+  "type": "https://owlette.app/problems/site-isolation-violation",
   "title": "Site isolation violation",
   "status": 403,
   "detail": "chunk sha256:2e7d2c03... belongs to site lobby-nyc; cannot mount into roost roost_kiosk_v2 which belongs to site kiosk-fleet-01",
   "code": "site_isolation_violation",
   "param": "siteId",
-  "doc_url": "https://owlette.app/docs/api/errors#site_isolation_violation",
+  "docsUrl": "https://owlette.app/docs/api/errors#site_isolation_violation",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -358,12 +442,33 @@ Roost-Rate-Limited-Reason: per_key
 
 ```json
 {
-  "type": "https://roost.dev/errors/token-expired",
+  "type": "https://owlette.app/problems/token-expired",
   "title": "Token expired",
   "status": 401,
   "detail": "api key key_01HXYZA7F3B2C1D0E9F8G7H6J5 expired at 2026-04-20T15:30:00Z",
   "code": "token_expired",
-  "doc_url": "https://owlette.app/docs/api/errors#token_expired",
+  "docsUrl": "https://owlette.app/docs/api/errors#token_expired",
+  "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
+}
+```
+
+---
+
+### `unauthorized`
+
+- **http status**: 401 Unauthorized
+- **meaning**: the request did not carry a usable credential, or the credential could not be resolved.
+- **triggers**: missing session, malformed bearer token, unknown API key, expired login state, or a route that rejects the supplied credential type.
+- **remediate**: authenticate again and send a supported credential. for API keys, prefer `Authorization: Bearer owk_live_...` or `Authorization: Bearer owk_test_...`.
+
+```json
+{
+  "type": "https://owlette.app/problems/unauthorized",
+  "title": "unauthorized",
+  "status": 401,
+  "detail": "authentication required",
+  "code": "unauthorized",
+  "docsUrl": "https://owlette.app/docs/api/errors#unauthorized",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -379,13 +484,13 @@ Roost-Rate-Limited-Reason: per_key
 
 ```json
 {
-  "type": "https://roost.dev/errors/unsupported-version",
+  "type": "https://owlette.app/problems/unsupported-version",
   "title": "Unsupported version",
   "status": 400,
   "detail": "Roost-Version 2024-01-01 is not a recognized api version; supported: [2026-04-22]",
   "code": "unsupported_version",
   "param": "Roost-Version",
-  "doc_url": "https://owlette.app/docs/api/errors#unsupported_version",
+  "docsUrl": "https://owlette.app/docs/api/errors#unsupported_version",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -401,13 +506,13 @@ Roost-Rate-Limited-Reason: per_key
 
 ```json
 {
-  "type": "https://roost.dev/errors/version-not-found",
+  "type": "https://owlette.app/problems/version-not-found",
   "title": "Version not found",
   "status": 404,
   "detail": "roost roost_lobby_td has no version with ref 'v9'; highest versionNumber is 7",
   "code": "version_not_found",
   "param": "targetVersion",
-  "doc_url": "https://owlette.app/docs/api/errors#version_not_found",
+  "docsUrl": "https://owlette.app/docs/api/errors#version_not_found",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -423,7 +528,7 @@ Roost-Rate-Limited-Reason: per_key
 
 ```json
 {
-  "type": "https://roost.dev/errors/version-stale",
+  "type": "https://owlette.app/problems/version-stale",
   "title": "Version stale",
   "status": 412,
   "detail": "current version is vrs_cc33dd44 (versionNumber 8); expected vrs_aa11bb22 (versionNumber 7)",
@@ -431,7 +536,7 @@ Roost-Rate-Limited-Reason: per_key
   "param": "expectedCurrentVersionId",
   "expected": "vrs_aa11bb22",
   "actual": "vrs_cc33dd44",
-  "doc_url": "https://owlette.app/docs/api/errors#version_stale",
+  "docsUrl": "https://owlette.app/docs/api/errors#version_stale",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -447,7 +552,7 @@ Roost-Rate-Limited-Reason: per_key
 
 ```json
 {
-  "type": "https://roost.dev/errors/validation-failed",
+  "type": "https://owlette.app/problems/validation-failed",
   "title": "Validation failed",
   "status": 400,
   "detail": "ttlDays must be between 1 and 365",
@@ -457,7 +562,7 @@ Roost-Rate-Limited-Reason: per_key
     "ttlDays": ["ttlDays must be between 1 and 365"],
     "scopes[0].permissions": ["permissions array cannot be empty"]
   },
-  "doc_url": "https://owlette.app/docs/api/errors#validation_failed",
+  "docsUrl": "https://owlette.app/docs/api/errors#validation_failed",
   "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
 }
 ```
@@ -477,7 +582,7 @@ not every error is retryable. retrying a non-retryable error wastes calls agains
 - every other `4xx` is a client-side problem. retrying will return the same error. fix the payload, the scope, the `If-Match` value, or the credential before retrying.
 
 **use `Idempotency-Key` for safe post retries.**
-for any `POST`, `PATCH`, or `DELETE` you retry (whether after a 5xx, a network failure, or a client timeout), attach an `Idempotency-Key: <uuid>` header. the server caches the full response for 24h keyed on `{userId, environment, key, sha256(body)}` — so the retry either returns the cached response (safe) or, if the body has changed, surfaces `idempotency_key_mismatch` (loud failure instead of silent double-effect). without an idempotency key, retrying `POST /api/roosts/{roostId}/deploy` after a timeout can double-trigger a fan-out.
+for any `POST`, `PATCH`, or `DELETE` you retry (whether after a 5xx, a network failure, or a client timeout), attach an `Idempotency-Key: <uuid>` header. the server caches the full response for 24h keyed on `{userId, environment, key, method, path, query, sha256(body)}` — so the retry either returns the cached response (safe) or, if the body has changed, surfaces `idempotency_key_mismatch` (loud failure instead of silent double-effect). without an idempotency key, retrying `POST /api/roosts/{roostId}/deploy` after a timeout can double-trigger a fan-out.
 
 rule of thumb: **always send an `Idempotency-Key` on mutating requests**, not just on retries. the overhead is zero; the upside is retry-safety for free.
 

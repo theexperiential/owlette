@@ -1,12 +1,10 @@
 /**
- * RFC 7807 problem+json error envelope for roost routes (project distribution v2):
- * /api/chunks/*, /api/roosts/*, and the agent-facing sync endpoints.
+ * RFC 7807 problem+json error envelope for public API routes.
  *
  * https://datatracker.ietf.org/doc/html/rfc7807
  *
- * Differs from the legacy /lib/apiErrorResponse.ts envelope (`{error: string}`).
- * v2 routes adopt this for consistent machine-readable errors with type URIs,
- * stable codes, and request IDs for trace correlation.
+ * Public API routes use this for consistent machine-readable errors with
+ * type URIs, stable codes, docs links, and request IDs for trace correlation.
  *
  * Usage:
  *
@@ -50,6 +48,30 @@ export const ProblemType = {
 
 export type ProblemTypeUri = typeof ProblemType[keyof typeof ProblemType];
 
+const PROBLEM_CODES: Record<ProblemTypeUri, string> = {
+  [ProblemType.ValidationFailed]: 'validation_failed',
+  [ProblemType.Unauthorized]: 'unauthorized',
+  [ProblemType.Forbidden]: 'forbidden',
+  [ProblemType.ScopeInsufficient]: 'scope_insufficient',
+  [ProblemType.TokenExpired]: 'token_expired',
+  [ProblemType.NotFound]: 'not_found',
+  [ProblemType.Conflict]: 'conflict',
+  [ProblemType.PreconditionFailed]: 'precondition_failed',
+  [ProblemType.PayloadTooLarge]: 'payload_too_large',
+  [ProblemType.RateLimited]: 'rate_limited',
+  [ProblemType.QuotaExceeded]: 'quota_exceeded',
+  [ProblemType.Internal]: 'internal_error',
+  [ProblemType.ServiceUnavailable]: 'service_unavailable',
+};
+
+function isKnownProblemType(type: string): type is ProblemTypeUri {
+  return Object.prototype.hasOwnProperty.call(PROBLEM_CODES, type);
+}
+
+function docsUrlForCode(code: string): string {
+  return `https://owlette.app/docs/api/errors#${code}`;
+}
+
 export interface ProblemDetails {
   /** absolute URI identifying the problem type. SHOULD be dereferenceable to docs. */
   type: ProblemTypeUri | string;
@@ -63,6 +85,10 @@ export interface ProblemDetails {
   instance?: string;
   /** correlation id for log/trace lookup. */
   requestId?: string;
+  /** stable machine-readable code for client branching. */
+  code?: string;
+  /** public documentation anchor for this error code. */
+  docsUrl?: string;
   /** field-level errors when status=400/422; key is dotted JSON path. */
   errors?: Record<string, string[]>;
   /** any additional implementation-specific fields. */
@@ -82,7 +108,17 @@ export function problem(details: ProblemDetails, headers?: HeadersInit): NextRes
     ? details.requestId
     : undefined;
   const requestId = callerRid ?? crypto.randomUUID();
-  const body = { ...details, requestId };
+  const code = typeof details.code === 'string' && details.code.length > 0
+    ? details.code
+    : isKnownProblemType(details.type)
+      ? PROBLEM_CODES[details.type]
+      : undefined;
+  const docsUrl = typeof details.docsUrl === 'string' && details.docsUrl.length > 0
+    ? details.docsUrl
+    : code
+      ? docsUrlForCode(code)
+      : undefined;
+  const body = { ...details, ...(code ? { code } : {}), ...(docsUrl ? { docsUrl } : {}), requestId };
 
   const responseHeaders = new Headers(headers);
   responseHeaders.set('Content-Type', 'application/problem+json; charset=utf-8');
@@ -171,11 +207,17 @@ export function problemNotFound(detail = 'resource not found'): NextResponse {
   });
 }
 
-export function problemRateLimited(retryAfterSeconds: number, detail?: string): NextResponse {
+export function problemRateLimited(
+  retryAfterSeconds: number,
+  detail?: string,
+  headers?: HeadersInit,
+): NextResponse {
   // clamp non-positive to 1 (semantically "retry immediately"); cap to 1h
   // (arbitrary upper bound to surface bugs vs. let through obvious
   // garbage like Number.MAX_SAFE_INTEGER).
   const safe = Math.max(1, Math.min(3600, Math.floor(retryAfterSeconds || 0)));
+  const responseHeaders = new Headers(headers);
+  responseHeaders.set('Retry-After', String(safe));
   return problem(
     {
       type: ProblemType.RateLimited,
@@ -184,7 +226,7 @@ export function problemRateLimited(retryAfterSeconds: number, detail?: string): 
       detail: detail ?? `try again in ${safe} seconds`,
       retryAfter: safe,
     },
-    { 'Retry-After': String(safe) },
+    responseHeaders,
   );
 }
 

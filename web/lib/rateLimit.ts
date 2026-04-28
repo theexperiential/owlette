@@ -223,20 +223,44 @@ const inMemoryStore = new Map<string, { count: number; resetAt: number }>();
 const IN_MEMORY_WINDOW_MS = 60_000; // 1 minute
 const IN_MEMORY_MAX_REQUESTS = 15; // per window per identifier
 
-function checkInMemoryRateLimit(identifier: string): { success: boolean } {
+function checkInMemoryRateLimit(identifier: string): {
+  success: boolean;
+  limit: number;
+  remaining: number;
+  reset: number;
+  retryAfter?: number;
+} {
   const now = Date.now();
   const entry = inMemoryStore.get(identifier);
 
   if (!entry || now >= entry.resetAt) {
-    inMemoryStore.set(identifier, { count: 1, resetAt: now + IN_MEMORY_WINDOW_MS });
-    return { success: true };
+    const resetAt = now + IN_MEMORY_WINDOW_MS;
+    inMemoryStore.set(identifier, { count: 1, resetAt });
+    return {
+      success: true,
+      limit: IN_MEMORY_MAX_REQUESTS,
+      remaining: IN_MEMORY_MAX_REQUESTS - 1,
+      reset: resetAt,
+    };
   }
 
   entry.count++;
+  const remaining = Math.max(0, IN_MEMORY_MAX_REQUESTS - entry.count);
   if (entry.count > IN_MEMORY_MAX_REQUESTS) {
-    return { success: false };
+    return {
+      success: false,
+      limit: IN_MEMORY_MAX_REQUESTS,
+      remaining: 0,
+      reset: entry.resetAt,
+      retryAfter: Math.max(1, Math.ceil((entry.resetAt - now) / 1000)),
+    };
   }
-  return { success: true };
+  return {
+    success: true,
+    limit: IN_MEMORY_MAX_REQUESTS,
+    remaining,
+    reset: entry.resetAt,
+  };
 }
 
 // Periodically clean up expired entries to prevent memory leaks

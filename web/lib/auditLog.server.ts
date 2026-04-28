@@ -66,6 +66,7 @@ export type SystemActorName =
 export type UserActor = {
   type: 'user';
   userId: string;
+  apiKeyId?: string;
   role: Role;
 };
 
@@ -249,6 +250,7 @@ function redactActorForLog(actor: AuditActor): Record<string, unknown> {
       type: 'user',
       role: actor.role,
       userIdPrefix: actor.userId.slice(0, 6),
+      ...(actor.apiKeyId ? { apiKeyIdPrefix: actor.apiKeyId.slice(0, 8) } : {}),
     };
   }
   return { type: 'system', name: actor.name };

@@ -29,6 +29,8 @@ export type SystemActorName =
 export type UserActor = {
   type: 'user';
   userId: string;
+  /** Present when the user is acting through an API key. */
+  apiKeyId?: string;
   role: Role;
   sites: string[];
 };

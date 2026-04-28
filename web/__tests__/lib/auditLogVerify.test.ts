@@ -74,6 +74,19 @@ describe('verifyRecord', () => {
     expect(result.reason).toBe('hash_mismatch');
   });
 
+  it('includes optional event target in hash verification', () => {
+    const record = buildRecord(makeEvent({ target: 'roost-1' }), GENESIS_HASH, 1700000001000);
+    expect(verifyRecord(record).ok).toBe(true);
+
+    const tampered: AuditRecord = {
+      ...record,
+      event: { ...record.event, target: 'roost-2' },
+    };
+    const result = verifyRecord(tampered);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('hash_mismatch');
+  });
+
   it('detects recordedAt tampering', () => {
     const record = buildRecord(makeEvent(), GENESIS_HASH, 1700000001000);
     const tampered: AuditRecord = { ...record, recordedAt: record.recordedAt + 1 };
