@@ -43,14 +43,24 @@ export const mocks = {
   update: jest.fn().mockResolvedValue(undefined),
   /** doc().delete() */
   del: jest.fn().mockResolvedValue(undefined),
+  /** db.batch().set() */
+  batchSet: jest.fn(),
+  /** db.batch().delete() */
+  batchDelete: jest.fn(),
+  /** db.batch().commit() */
+  batchCommit: jest.fn().mockResolvedValue(undefined),
   /** collection().orderBy() — chainable */
   orderBy: jest.fn().mockReturnThis(),
   /** collection().limit() — chainable */
   limit: jest.fn().mockReturnThis(),
+  /** collection().startAfter() — chainable */
+  startAfter: jest.fn().mockReturnThis(),
   /** collection().where() — chainable */
   where: jest.fn().mockReturnThis(),
   /** terminal .get() on a query chain */
   collectionGet: jest.fn(),
+  /** explicit data for top-level sites/{siteId} document reads */
+  siteDocs: new Map<string, Record<string, unknown> | null>(),
   /** requireAdminOrIdToken */
   requireAdmin: jest.fn().mockResolvedValue({ userId: 'test-admin' }),
 };
@@ -64,6 +74,7 @@ function buildCollection(path = ''): Record<string, unknown> {
     doc: (_id?: string) => buildDoc(`${path}/${_id ?? 'auto'}`),
     orderBy: mocks.orderBy,
     limit: mocks.limit,
+    startAfter: mocks.startAfter,
     where: mocks.where,
     get: mocks.collectionGet,
   };
@@ -74,6 +85,9 @@ function buildDoc(path: string): Record<string, unknown> {
     get: () => {
       const parts = path.split('/').filter(Boolean);
       if (parts.length === 2 && parts[0] === 'sites') {
+        if (mocks.siteDocs.has(parts[1])) {
+          return Promise.resolve(docSnapshot(parts[1], mocks.siteDocs.get(parts[1]) ?? null));
+        }
         return Promise.resolve(docSnapshot(parts[1], {}));
       }
       return mocks.get();
@@ -96,6 +110,7 @@ function buildLegacyCollection(): Record<string, unknown> {
     }),
     orderBy: mocks.orderBy,
     limit: mocks.limit,
+    startAfter: mocks.startAfter,
     where: mocks.where,
     get: mocks.collectionGet,
   };
@@ -107,6 +122,11 @@ export function mockDbFactory(): Record<string, unknown> {
     collection: (name: string) => (
       name.includes('/') ? buildLegacyCollection() : buildCollection(name)
     ),
+    batch: () => ({
+      set: mocks.batchSet,
+      delete: mocks.batchDelete,
+      commit: mocks.batchCommit,
+    }),
   };
 }
 

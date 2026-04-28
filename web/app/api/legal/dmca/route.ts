@@ -113,9 +113,9 @@ export async function POST(request: NextRequest) {
       complainant: {
         name: String(body.complainant?.name ?? '').trim(),
         email: complainantEmail,
-        phone: body.complainant?.phone
-          ? String(body.complainant.phone).trim()
-          : undefined,
+        ...(body.complainant?.phone
+          ? { phone: String(body.complainant.phone).trim() }
+          : {}),
         address: String(body.complainant?.address ?? '').trim(),
       },
       goodFaithBelief: body.goodFaithBelief === true,
