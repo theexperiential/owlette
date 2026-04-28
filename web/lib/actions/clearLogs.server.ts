@@ -7,16 +7,10 @@
  * (action / machine / level) so a user clearing a *filtered view*
  * deletes only the matching entries, not the whole collection.
  *
- * Capability mis-classification (flagged in route-audit.md §3.11):
- *   The action is *site-scoped* — it operates on a single site's log
- *   collection. The audit currently classifies it as
- *   `GLOBAL_SETTINGS_WRITE` because there is no per-site
- *   `SITE_LOGS_MANAGE` capability defined yet. For wave 3.11 we use
- *   `authorizedSiteHandler({ capability: 'GLOBAL_SETTINGS_WRITE',
- *   siteIdParam: 'path' })` — a superadmin gate per the role matrix in
- *   `web/lib/capabilities.ts`. Wave 1.2 follow-up should add a
- *   `SITE_LOGS_MANAGE` capability so site admins (not just superadmins)
- *   can clear their own logs without the platform-wide bit.
+ * Public API Wave 2.8:
+ *   Destructive log clearing is gated by the site-scoped `SITE_LOGS_MANAGE`
+ *   capability, requires an idempotency key at the route boundary, and
+ *   requires `all: true` for unfiltered whole-site clears.
  *
  * firestore path: `sites/{siteId}/logs/*`
  */

@@ -13,12 +13,13 @@ inspect a site's tamper-evident audit log from the cli. records form a hash chai
 
 list audit log records on a site, auto-paginating through the server's cursor pagination until exhausted or `--limit` is hit.
 
-**synopsis** — `owlette audit-log list --site <siteId> [--kind <csv>] [--since <when>] [--until <when>] [--limit <n>] [--cursor <token>] [--page-size <n>]`
+**synopsis** — `owlette audit-log list --site <siteId> [--kind <csv>] [--actor <actor>] [--since <when>] [--until <when>] [--limit <n>] [--cursor <token>] [--page-size <n>]`
 
 | flag | required | purpose |
 |---|---|---|
 | `--site <siteId>` | yes | site id to list audit records for |
 | `--kind <csv>` | no | comma-separated event kinds (e.g. `api_key_used,signed_url_issued`) |
+| `--actor <actor>` | no | exact actor string (e.g. `apiKey:<keyId>` or `user:<uid>`) |
 | `--since <when>` | no | iso 8601 timestamp **or** relative duration (`30s`, `15m`, `24h`, `7d`) |
 | `--until <when>` | no | iso 8601 or relative duration; **always client-side** filter |
 | `--limit <n>` | no | stop after fetching this many records in total |
@@ -31,7 +32,7 @@ list audit log records on a site, auto-paginating through the server's cursor pa
 - `--until` is **always client-side** — there is no server `until` parameter. for very wide windows, prefer narrowing with `--since` to keep the server load reasonable.
 - `--since` accepts both iso 8601 (`2026-04-25T00:00:00Z`) and relative durations like `24h`, `7d`, `30m`, `5s`. relative durations are converted to iso client-side before being sent.
 
-**cursor field name**: the server returns `nextPageToken` (note: **not** `nextCursor` — different from roost-side pagination). the cli prints it on the last line of human output as `next cursor: <token>` so you can resume.
+**cursor field name**: the server returns canonical `next_page_token` plus deprecated `nextPageToken`. the cli prints it on the last line of human output as `next cursor: <token>` so you can resume.
 
 ```bash
 # all events from the last 24 hours
@@ -40,6 +41,9 @@ owlette audit-log list --site site-1 --since 24h
 # api-key usage in the last week, capped at 100 records
 owlette audit-log list --site site-1 --kind api_key_used --since 7d --limit 100
 
+# calls made by one api key
+owlette audit-log list --site site-1 --actor apiKey:key_123 --since 24h
+
 # multiple kinds — falls back to client-side filtering
 owlette audit-log list --site site-1 --kind api_key_used,signed_url_issued --since 24h
 
@@ -47,7 +51,7 @@ owlette audit-log list --site site-1 --kind api_key_used,signed_url_issued --sin
 owlette audit-log list --site site-1 --cursor eyJsYXN0SWQiOi... --json | jq '.records | length'
 ```
 
-**backing endpoint**: `GET /api/sites/{siteId}/audit-log?kind=&since=&limit=&cursor=`
+**backing endpoint**: `GET /api/sites/{siteId}/audit-log?kind=&actor=&since=&page_size=&page_token=`
 
 ---
 

@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 describe('owlette audit-log list', () => {
-  it('GETs /api/sites/:siteId/audit-log with siteId + limit + Bearer auth', async () => {
+  it('GETs /api/sites/:siteId/audit-log with page_size + Bearer auth', async () => {
     const calls = installFetchStub({ siteId: 'site-1', records: [], nextPageToken: '' });
     const program = buildProgram();
 
@@ -70,8 +70,7 @@ describe('owlette audit-log list', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toContain('https://dev.test/api/sites/site-1/audit-log?');
-    expect(calls[0]!.url).toContain('siteId=site-1');
-    expect(calls[0]!.url).toContain('limit=50');
+    expect(calls[0]!.url).toContain('page_size=50');
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer owk_live_testtoken');
   });
@@ -86,6 +85,18 @@ describe('owlette audit-log list', () => {
     );
 
     expect(calls[0]!.url).toContain('kind=api_key_used');
+  });
+
+  it('pushes --actor to the server as actor=', async () => {
+    const calls = installFetchStub({ siteId: 'site-1', records: [], next_page_token: '' });
+    const program = buildProgram();
+
+    await program.parseAsync(
+      ['--json', 'audit-log', 'list', '--site', 'site-1', '--actor', 'apiKey:key_1'],
+      { from: 'user' },
+    );
+
+    expect(calls[0]!.url).toContain('actor=apiKey%3Akey_1');
   });
 
   it('does NOT push a multi-value --kind to the server (client-side filter only)', async () => {
@@ -149,7 +160,7 @@ describe('owlette audit-log list', () => {
   });
 
   it('converts --since 24h to an ISO 8601 query param', async () => {
-    const calls = installFetchStub({ siteId: 'site-1', records: [], nextPageToken: '' });
+    const calls = installFetchStub({ siteId: 'site-1', records: [], next_page_token: '' });
     const program = buildProgram();
 
     await program.parseAsync(
@@ -169,7 +180,7 @@ describe('owlette audit-log list', () => {
       { from: 'user' },
     );
 
-    expect(calls[0]!.url).toContain('cursor=tok_42');
+    expect(calls[0]!.url).toContain('page_token=tok_42');
   });
 });
 

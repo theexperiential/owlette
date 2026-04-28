@@ -170,7 +170,7 @@ a request passes authorization iff there is at least one scope entry whose resou
 | `write` | create/rename/delete roosts, publish versions, upload chunks |
 | `deploy` | trigger `POST /api/roosts/{id}/deploy` (targeted fan-out, canary, scheduled rollout) |
 | `rollback` | trigger `POST /api/roosts/{id}/rollback` (pointer flip) |
-| `admin` | webhook management, audit-log access, key-level settings on the resource |
+| `admin` | webhook management, operational log clearing, key-level settings on the resource |
 
 permissions are additive and do not imply one another. `deploy` does not imply `write`; `write` does not imply `deploy`. a publisher key that also needs to roll back must list both `deploy` and `rollback` explicitly.
 
@@ -292,7 +292,7 @@ revoked keys remain in `GET /api/keys` with `revokedAt` set for audit purposes. 
 - **separate keys per environment.** never reuse a key across live and test — the prefix already enforces this at the api, but the same applies to staging vs production pipelines.
 - **prefer short ttls.** 30-day keys for ci/cd, 7-day keys for incident-response break-glass scenarios, 90-day default only when rotation tooling exists. the harder it is to rotate, the shorter the ttl should be — this forces you to build the rotation tooling.
 - **monitor `api_key.used` webhooks.** subscribe to the `api_key.used` event to detect unexpected callers (new ip ranges, new user agents, off-hours activity).
-- **rely on the audit log.** every call made with a key appears in the site audit log with the key's `id` and a `scopeFingerprint` — use `GET /api/sites/{siteId}/audit-log?actor=<keyId>` after any suspected incident.
+- **rely on the audit log.** every call made with a key appears in the site audit log with the key's `id` and a `scopeFingerprint` — use `GET /api/sites/{siteId}/audit-log?actor=apiKey:<keyId>` after any suspected incident.
 
 ---
 

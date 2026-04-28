@@ -224,7 +224,7 @@ response (`200 OK`):
 
 only `description` is accepted in the patch body. attempts to patch other fields return `validation_failed`. **version content — `files`, `chunks`, `config`, `annotations`, `versionNumber` — is immutable.** the patch exists purely so operators can fix a typo in the description or add context retroactively, not to rewrite history.
 
-the patch writes an entry to the audit log under `version.description_edited` capturing the old + new description and the actor, so even "fixed" descriptions leave a trail.
+the patch writes an audit-log entry with `kind=roost_mutated` and `attributes.verb=version_description_update`, capturing the old + new description and the actor, so even "fixed" descriptions leave a trail.
 
 ---
 
@@ -416,7 +416,7 @@ response (`200 OK`):
 }
 ```
 
-audit trail: every rollback writes an audit record capturing `rolledBackAt`, `rolledBackBy` (the api key or user that performed it), and `rolledBackFrom` (the version id that was current at the moment of the flip). see [`GET /api/sites/{siteId}/audit-log`](../../dev/active/roost-public-api/reference/api-surface.md) — filter on `kind=version_pointer_changed` to see the full history of pointer flips for a roost.
+audit trail: every rollback writes an audit record capturing `rolledBackAt`, `rolledBackBy` (the api key or user that performed it), and `rolledBackFrom` (the version id that was current at the moment of the flip). use `GET /api/sites/{siteId}/audit-log?kind=roost_mutated` and filter for `attributes.verb=rollback` to see pointer flips for a roost.
 
 after rollback, the former-current version stays available at `GET /api/roosts/{roostId}/versions/{versionRef}` and can be rolled forward to with another rollback call. the pointer is reversible; the versions are not deleted, and their numbers do not change.
 

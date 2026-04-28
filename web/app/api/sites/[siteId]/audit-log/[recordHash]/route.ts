@@ -73,14 +73,27 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     // Predecessor lookup: by stored previousHash. Skip when this is the
     // genesis record (no predecessor exists by definition).
     let predecessorRecord: AuditRecord | null = null;
+    let predecessorPresent = false;
     if (record.previousHash !== GENESIS_HASH) {
       const prevSnap = await col.doc(record.previousHash).get();
+      predecessorPresent = prevSnap.exists;
       if (prevSnap.exists) {
         predecessorRecord = normalise(prevSnap.data() ?? {}, record.previousHash);
       }
     }
 
-    const verification = verifyRecord(record, predecessorRecord);
+    const baseVerification = verifyRecord(record, predecessorRecord);
+    const verification =
+      baseVerification.hashValid &&
+      !baseVerification.isGenesis &&
+      predecessorRecord === null
+        ? {
+            ...baseVerification,
+            ok: false,
+            linkageValid: false,
+            reason: predecessorPresent ? 'predecessor_malformed' : 'predecessor_missing',
+          }
+        : baseVerification;
 
     return applyAuthDeprecations(
       NextResponse.json({
@@ -94,7 +107,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           hashValid: verification.hashValid,
           linkageValid: verification.linkageValid ?? null,
           isGenesis: verification.isGenesis,
-          predecessorPresent: predecessorRecord !== null,
+          predecessorPresent,
           reason: verification.reason ?? null,
         },
       }),

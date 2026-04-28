@@ -533,13 +533,25 @@ export default function LogsPage() {
     setIsClearing(true);
 
     try {
+      const hasFilters =
+        filterAction !== 'all' ||
+        filterMachine !== 'all' ||
+        filterLevel !== 'all';
+      const idempotencySuffix =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const res = await fetch(`/api/sites/${encodeURIComponent(currentSiteId)}/logs`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `dashboard-clear-logs-${idempotencySuffix}`,
+        },
         body: JSON.stringify({
           ...(filterAction !== 'all' ? { action: filterAction } : {}),
           ...(filterMachine !== 'all' ? { machineId: filterMachine } : {}),
           ...(filterLevel !== 'all' ? { level: filterLevel } : {}),
+          ...(!hasFilters ? { all: true } : {}),
         }),
       });
       const body = await res.json().catch(() => null);

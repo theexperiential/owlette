@@ -513,22 +513,102 @@ paths:
   /api/sites/{siteId}/logs:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: listSiteLogs
+      tags: [Logs]
+      summary: List operational site logs
+      description: |
+        Lists entries from `sites/{siteId}/logs`, newest first. This is
+        the operational log surface used for agent/process/deployment
+        events, distinct from the tamper-evident audit log.
+        Use `page_size` and `page_token`; legacy `limit` and `cursor`
+        are accepted for existing callers.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: page_token
+          in: query
+          schema: { type: string }
+          description: Previous response `next_page_token`.
+        - name: action
+          in: query
+          schema: { type: string }
+          description: Exact action filter, e.g. `process_crash`.
+        - name: machineId
+          in: query
+          schema: { type: string }
+          description: Exact machine id filter.
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum: [debug, info, warning, error, critical]
+        - name: since
+          in: query
+          schema: { type: string }
+          description: ISO 8601 or unix-ms lower timestamp bound.
+        - name: until
+          in: query
+          schema: { type: string }
+          description: ISO 8601 or unix-ms upper timestamp bound.
+      responses:
+        '200':
+          description: Paginated operational logs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [siteId, logs, next_page_token, nextPageToken]
+                properties:
+                  siteId: { type: string }
+                  logs:
+                    type: array
+                    items: { $ref: '#/components/schemas/SiteLogEntry' }
+                  next_page_token: { type: string }
+                  nextPageToken:
+                    type: string
+                    deprecated: true
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
     delete:
       operationId: clearSiteLogs
       tags: [Logs]
       summary: Clear site logs
       description: |
         Deletes log entries from `sites/{siteId}/logs`. Optional filters
-        match the current logs view: action, machineId, and level.
-        Capability is currently `GLOBAL_SETTINGS_WRITE` pending a narrower
-        site-log capability.
+        match the current logs view: action, machineId, and level. Whole-site
+        clearing requires explicit `all: true`. API-key callers must hold
+        `site=<siteId>:admin`; session callers need the site-log management
+        capability.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
               properties:
+                all:
+                  type: boolean
+                  description: Required and true when clearing all logs without filters.
                 action:
                   type: string
                 machineId:
@@ -550,12 +630,41 @@ paths:
                     type: integer
                   filters:
                     type: object
-        '400':
-          description: Validation error
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/logs/{logId}:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - name: logId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^[A-Za-z0-9_.:-]{1,256}$'
+    get:
+      operationId: getSiteLog
+      tags: [Logs]
+      summary: Get one operational site log
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Operational log entry
           content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
+            application/json:
+              schema: { $ref: '#/components/schemas/SiteLogEntry' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   /api/installer:
     get:
@@ -3403,12 +3512,15 @@ paths:
         `machine_command_dispatched`, `user_mutated`, `site_mutated`,
         `site_member_mutated`, `installer_mutated`, `webhook_mutated`,
         and `chat_mutated`.
+        Use `page_size` and `page_token`; legacy `limit` and `cursor`
+        are accepted for existing callers. `actor` matches the full actor
+        string, for example `apiKey:<keyId>` or `user:<uid>`.
       security:
         - apiKey: []
         - bearerApiKey: []
         - firebaseIdToken: []
       parameters:
-        - name: limit
+        - name: page_size
           in: query
           required: false
           schema:
@@ -3416,12 +3528,12 @@ paths:
             minimum: 1
             maximum: 200
             default: 50
-          description: Legacy page size for this route.
-        - name: cursor
+          description: Maximum records per page.
+        - name: page_token
           in: query
           required: false
           schema: { type: string }
-          description: Previous `nextPageToken` value.
+          description: Previous `next_page_token` value.
         - name: kind
           in: query
           required: false
@@ -3431,7 +3543,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: Filter by actor id (user or key).
+          description: Exact actor string, e.g. `apiKey:<keyId>` or `user:<uid>`.
         - name: since
           in: query
           required: false
@@ -3446,14 +3558,17 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [siteId, records, nextPageToken]
+                required: [siteId, records, next_page_token, nextPageToken]
                 properties:
                   siteId: { type: string }
                   records:
                     type: array
                     items: { $ref: '#/components/schemas/AuditRecord' }
+                  next_page_token:
+                    type: string
                   nextPageToken:
                     type: string
+                    deprecated: true
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
@@ -3472,7 +3587,9 @@ paths:
       summary: fetch single audit record + verify chain
       description: |
         Returns a single audit record and the hash-chain verification
-        result (from this record back to genesis).
+        result for the record hash plus its immediate predecessor link.
+        Non-genesis records report `ok: false` if the predecessor is
+        missing or malformed.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -7858,6 +7975,46 @@ components:
           type: integer
           format: int64
           minimum: 0
+
+    # operational logs
+    SiteLogEntry:
+      type: object
+      required: [id, siteId, timestamp, action, level, machineId, machineName, processName, details, userId, screenshotUrl]
+      properties:
+        id: { type: string }
+        siteId: { type: string }
+        timestamp:
+          type: string
+          format: date-time
+          nullable: true
+        action:
+          type: string
+          description: Event action, e.g. `process_crash` or `agent_started`.
+        level:
+          type: string
+          enum: [debug, info, warning, error, critical]
+        machineId:
+          type: string
+          nullable: true
+        machineName:
+          type: string
+          nullable: true
+        processName:
+          type: string
+          nullable: true
+        details:
+          oneOf:
+            - type: string
+            - type: object
+              additionalProperties: true
+          nullable: true
+        userId:
+          type: string
+          nullable: true
+        screenshotUrl:
+          type: string
+          format: uri
+          nullable: true
 
     # audit log
     AuditRecord:

@@ -2,7 +2,7 @@
  * `owlette audit-log list | get`.
  *
  * Drives:
- *   GET /api/sites/{siteId}/audit-log?kind=&since=&limit=&cursor=
+ *   GET /api/sites/{siteId}/audit-log?kind=&actor=&since=&page_size=&page_token=
  *   GET /api/sites/{siteId}/audit-log/{recordHash}
  *
  * `list` walks the server's cursor pagination until exhausted or the
@@ -40,6 +40,7 @@ interface AuditLogRecord {
 interface AuditLogListResponse {
   siteId: string;
   records: AuditLogRecord[];
+  next_page_token?: string;
   nextPageToken: string;
 }
 
@@ -93,6 +94,7 @@ export function registerAuditLogCommands(program: Command): void {
     .description('list audit log records on a site (auto-paginates)')
     .requiredOption('--site <siteId>', 'site id to list audit records for')
     .option('--kind <csv>', 'comma-separated event kinds to filter by (e.g. api_key_used,signed_url_issued)')
+    .option('--actor <actor>', 'exact actor filter (e.g. apiKey:<keyId> or user:<uid>)')
     .option('--since <when>', 'iso 8601 timestamp or relative duration (e.g. 24h, 7d, 30m)')
     .option('--until <when>', 'iso 8601 timestamp or relative duration; filters client-side')
     .option('--limit <n>', 'stop after fetching this many records in total')
@@ -124,11 +126,11 @@ export function registerAuditLogCommands(program: Command): void {
 
       for (;;) {
         const qs = new URLSearchParams({
-          siteId: opts.site,
-          limit: String(pageSize),
+          page_size: String(pageSize),
         });
-        if (cursor) qs.set('cursor', cursor);
+        if (cursor) qs.set('page_token', cursor);
         if (serverKind) qs.set('kind', serverKind);
+        if (typeof opts.actor === 'string' && opts.actor.length > 0) qs.set('actor', opts.actor);
         if (sinceIso) qs.set('since', sinceIso);
 
         const res = await fetch(
@@ -151,7 +153,7 @@ export function registerAuditLogCommands(program: Command): void {
           collected.push(r);
           if (Number.isFinite(limit) && collected.length >= limit) break;
         }
-        nextPageToken = data.nextPageToken ?? '';
+        nextPageToken = data.next_page_token ?? data.nextPageToken ?? '';
         if (!nextPageToken) break;
         if (Number.isFinite(limit) && collected.length >= limit) break;
         cursor = nextPageToken;

@@ -8,6 +8,7 @@ export const Capability = {
   PRESET_MANAGE: 'PRESET_MANAGE',
   SITE_MEMBER_MANAGE: 'SITE_MEMBER_MANAGE',
   WEBHOOK_MANAGE: 'WEBHOOK_MANAGE',
+  SITE_LOGS_MANAGE: 'SITE_LOGS_MANAGE',
   USER_ROLE_MANAGE: 'USER_ROLE_MANAGE',
   USER_DELETE: 'USER_DELETE',
   SYSTEM_PRESET_MANAGE: 'SYSTEM_PRESET_MANAGE',
@@ -57,6 +58,7 @@ const SITE_ADMIN_CAPABILITIES: readonly Capability[] = [
   Capability.UNINSTALL_TRIGGER,
   Capability.PRESET_MANAGE,
   Capability.WEBHOOK_MANAGE,
+  Capability.SITE_LOGS_MANAGE,
   Capability.SITE_MEMBER_MANAGE,
 ];
 
@@ -72,6 +74,7 @@ const SITE_SCOPED_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   Capability.PRESET_MANAGE,
   Capability.SITE_MEMBER_MANAGE,
   Capability.WEBHOOK_MANAGE,
+  Capability.SITE_LOGS_MANAGE,
 ]);
 
 export const RoleCapabilityMatrix: Readonly<Record<Role, readonly Capability[]>> = {

@@ -26,6 +26,7 @@ const SITE_SCOPED: Capability[] = [
   Capability.PRESET_MANAGE,
   Capability.SITE_MEMBER_MANAGE,
   Capability.WEBHOOK_MANAGE,
+  Capability.SITE_LOGS_MANAGE,
 ];
 
 const GLOBAL_CAPABILITIES: Capability[] = ALL_CAPABILITIES.filter(
@@ -64,6 +65,7 @@ describe('Capability enum', () => {
         'PRESET_MANAGE',
         'SITE_MEMBER_MANAGE',
         'WEBHOOK_MANAGE',
+        'SITE_LOGS_MANAGE',
         'USER_ROLE_MANAGE',
         'USER_DELETE',
         'SYSTEM_PRESET_MANAGE',
@@ -83,7 +85,7 @@ describe('RoleCapabilityMatrix', () => {
     );
   });
 
-  it('admin gets member caps plus the eight site-scoped admin caps', () => {
+  it('admin gets member caps plus the site-scoped admin caps', () => {
     expect([...RoleCapabilityMatrix.admin].sort()).toEqual(
       [
         'USER_SELF_PREFS',
@@ -95,6 +97,7 @@ describe('RoleCapabilityMatrix', () => {
         'UNINSTALL_TRIGGER',
         'PRESET_MANAGE',
         'WEBHOOK_MANAGE',
+        'SITE_LOGS_MANAGE',
         'SITE_MEMBER_MANAGE',
       ].sort()
     );

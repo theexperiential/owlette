@@ -1,28 +1,24 @@
 /**
- * GET /api/sites/{siteId}/audit-log?kind=&actor=&since=&limit=50&cursor=
- *     → List audit records for a site, newest first. Cursor-paginated.
+ * GET /api/sites/{siteId}/audit-log?kind=&actor=&since=&page_size=50&page_token=
  *
- * Filters:
- *   kind    — event kind (signed_url_issued, api_key_used, etc.)
- *   actor   — actor string (e.g. `apiKey:<keyId>` or a uid)
- *   since   — iso8601 or unix-ms. Records with recordedAt >= since.
- *
- * kind + actor are applied client-side after the range + order query so
- * we don't require composite firestore indexes per-filter. For tight
- * paginated use cases this means callers may see fewer than `limit`
- * rows per page when filters match rarely.
- *
- * roost public api wave 3.8.
+ * List hash-chained audit records for a site, newest first. Legacy
+ * `limit` and `cursor` aliases are accepted for existing callers.
  */
+
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { Timestamp } from 'firebase-admin/firestore';
+import { Timestamp, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import { timestampToMs } from '@/lib/firestoreTime.server';
 import {
   problemFromError,
   problemValidation,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import {
+  collectFilteredPage,
+  parsePagination,
+  withPaginationFields,
+} from '@/lib/pagination';
 import {
   applyAuthDeprecations,
   requireSiteAuthAndScope,
@@ -35,6 +31,17 @@ interface RouteParams {
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
+type Row = {
+  hash: string;
+  kind: string;
+  actor: string;
+  siteId: string;
+  target: string | null;
+  occurredAt: number | null;
+  recordedAt: number | null;
+  attributes: Record<string, unknown>;
+};
+
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { siteId } = await params;
@@ -45,16 +52,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const kindFilter = qp.get('kind');
     const actorFilter = qp.get('actor');
     const sinceRaw = qp.get('since');
-    const limitRaw = Number(qp.get('limit') ?? DEFAULT_LIMIT);
-    const limit = Math.min(
-      Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_LIMIT),
-      MAX_LIMIT,
-    );
-    const cursor = qp.get('cursor');
+    const parsedPagination = parsePagination(qp, {
+      defaultPageSize: DEFAULT_LIMIT,
+      maxPageSize: MAX_LIMIT,
+    });
+    if (!parsedPagination.ok) return parsedPagination.response;
+    const { pageSize, pageToken } = parsedPagination.pagination;
 
     let sinceMs: number | undefined;
     if (sinceRaw) {
-      // Accept unix-ms OR iso8601
       const asNumber = Number(sinceRaw);
       if (Number.isFinite(asNumber) && asNumber > 0) {
         sinceMs = asNumber;
@@ -75,37 +81,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       .doc(siteId)
       .collection('audit_log');
 
-    // Client-side filter step may drop rows — over-fetch by 3x when filters
-    // are supplied so the page has a reasonable chance of filling to `limit`.
-    const hasClientFilter = !!(kindFilter || actorFilter);
-    const fetchLimit = hasClientFilter ? limit * 3 + 1 : limit + 1;
-
-    let query = col.orderBy('recordedAt', 'desc').limit(fetchLimit);
-    if (typeof sinceMs === 'number') {
-      query = col
-        .where('recordedAt', '>=', sinceMs)
-        .orderBy('recordedAt', 'desc')
-        .limit(fetchLimit);
-    }
-    if (cursor) {
-      const cursorSnap = await col.doc(cursor).get();
-      if (cursorSnap.exists) query = query.startAfter(cursorSnap);
-    }
-
-    const snap = await query.get();
-
-    type Row = {
-      hash: string;
-      kind: string;
-      actor: string;
-      siteId: string;
-      target: string | null;
-      occurredAt: number | null;
-      recordedAt: number | null;
-      attributes: Record<string, unknown>;
-    };
-
-    const allRows: Row[] = snap.docs.map((d) => {
+    const rowForDoc = (d: QueryDocumentSnapshot): Row => {
       const data = d.data() as {
         event?: {
           kind?: string;
@@ -128,28 +104,39 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         recordedAt: timestampToMs(data.recordedAt),
         attributes: evt.attributes && typeof evt.attributes === 'object' ? evt.attributes : {},
       };
+    };
+
+    const page = await collectFilteredPage({
+      pageSize,
+      pageToken,
+      batchLimit: Math.min(MAX_LIMIT + 1, Math.max(pageSize + 1, pageSize * 3 + 1)),
+      fetchPage: async (cursor, limit) => {
+        let query = col.orderBy('recordedAt', 'desc').limit(limit);
+        if (typeof sinceMs === 'number') {
+          query = col
+            .where('recordedAt', '>=', sinceMs)
+            .orderBy('recordedAt', 'desc')
+            .limit(limit);
+        }
+        if (cursor) {
+          const cursorSnap = await col.doc(cursor).get();
+          if (cursorSnap.exists) query = query.startAfter(cursorSnap);
+        }
+        const snap = await query.get();
+        return snap.docs;
+      },
+      include: (doc) => {
+        const row = rowForDoc(doc);
+        if (kindFilter && row.kind !== kindFilter) return false;
+        if (actorFilter && row.actor !== actorFilter) return false;
+        return true;
+      },
     });
 
-    const filtered = allRows.filter((r) => {
-      if (kindFilter && r.kind !== kindFilter) return false;
-      if (actorFilter && r.actor !== actorFilter) return false;
-      return true;
-    });
-
-    const page = filtered.slice(0, limit);
-    // nextPageToken: if we hit the over-fetch cap (last raw row exists
-    // beyond the filtered page), carry forward the last raw row's hash as
-    // the cursor. This keeps pagination correct when filters drop rows.
-    const sawMoreRaw = snap.docs.length === fetchLimit;
-    const lastRawHash = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1].id : '';
-    const nextPageToken = sawMoreRaw ? lastRawHash : filtered.length > limit ? page[page.length - 1].hash : '';
+    const records = page.docs.map(rowForDoc);
 
     return applyAuthDeprecations(
-      NextResponse.json({
-        siteId,
-        records: page,
-        nextPageToken,
-      }),
+      NextResponse.json(withPaginationFields({ siteId, records }, page.nextPageToken)),
       auth.scopeCheck,
     );
   } catch (err) {
