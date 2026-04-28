@@ -3,18 +3,16 @@
  *
  * Fires a synthetic webhook for local testing. Two modes:
  *
- *   1. server probe (default)
- *      POSTs to /api/webhooks/probe with { kind, siteId, payload? }.
- *      The server re-signs with the caller's own signing key (whoever
- *      owns the webhook subscription being probed) and dispatches it
- *      through the same pipeline as a real event — so `owlette listen`
- *      will pick it up just like production traffic.
- *
- *   2. direct (`--to <url>`)
+ *   1. direct (`--to <url>`)
  *      bypasses the server. builds the event body, signs with
  *      --signing-secret (stripe-style t=<unix>,v1=<hmac>), and POSTs
- *      to the supplied url directly. useful before the server probe
- *      endpoint ships, and for fully-offline local test loops.
+ *      to the supplied url directly. useful for local receiver loops.
+ *
+ *   2. server probe (`--to <url> --via-api`)
+ *      POSTs to /api/webhooks/probe?siteId=... with { url, event,
+ *      payload?, signingSecret? }. The server signs and sends one probe
+ *      delivery to that URL. It does not create a subscription or feed
+ *      `/api/events/stream`.
  *
  * A small canned library of payload templates gives sensible defaults
  * per event kind; --payload / --payload-file overrides anything.
@@ -35,7 +33,7 @@ const CANNED_PAYLOADS: Record<string, Record<string, unknown>> = {
     totalFiles: 3,
     createdBy: 'roost-cli-trigger',
   },
-  'deploy.completed': {
+  'deployment.completed': {
     roostId: 'rst_synthetic_01',
     rolloutId: 'vrs_synthetic_01',
     siteId: null,
@@ -43,7 +41,7 @@ const CANNED_PAYLOADS: Record<string, Record<string, unknown>> = {
     succeeded: 10,
     failed: 0,
   },
-  'deploy.failed': {
+  'deployment.failed': {
     roostId: 'rst_synthetic_01',
     rolloutId: 'vrs_synthetic_01',
     siteId: null,
@@ -52,16 +50,22 @@ const CANNED_PAYLOADS: Record<string, Record<string, unknown>> = {
     succeeded: 3,
     failed: 7,
   },
-  'rollback.triggered': {
+  'version.rolled_back': {
     roostId: 'rst_synthetic_01',
     siteId: null,
     fromVersion: 'vrs_synthetic_02',
     toVersion: 'vrs_synthetic_01',
     triggeredBy: 'roost-cli-trigger',
   },
-  'chunk.uploaded': {
+  'chunk.garbage_collected': {
     hash: 'a'.repeat(64),
-    size: 4 * 1024 * 1024,
+    sizeBytes: 4 * 1024 * 1024,
+    siteId: null,
+  },
+  'chunk.verify_failed': {
+    hash: 'a'.repeat(64),
+    expectedDigest: 'a'.repeat(64),
+    actualDigest: 'b'.repeat(64),
     siteId: null,
   },
   'quota.warning': {
@@ -98,10 +102,14 @@ export function registerTriggerCommand(program: Command): void {
     .description(
       `fire a synthetic webhook for local testing (events: ${KNOWN_EVENTS.join(', ')})`,
     )
-    .option('--site <siteId>', 'site id for the probe (required when not using --to)')
+    .option('--site <siteId>', 'site id for the probe payload / API probe')
     .option(
       '--to <url>',
       'bypass the server probe and POST directly to this url (--signing-secret pairs with it)',
+    )
+    .option(
+      '--via-api',
+      'send through /api/webhooks/probe instead of posting directly from the CLI',
     )
     .option(
       '--signing-secret <secret>',
@@ -163,7 +171,7 @@ export function registerTriggerCommand(program: Command): void {
 
       const deliveryId = String(opts.id ?? randomUUID());
 
-      if (opts.to) {
+      if (opts.to && !opts.viaApi) {
         // Direct mode — bypass the server.
         await fireDirect({
           to: String(opts.to),
@@ -177,6 +185,12 @@ export function registerTriggerCommand(program: Command): void {
       }
 
       // Server-probe mode — requires auth + siteId.
+      if (!opts.to) {
+        process.stderr.write('owlette: --to <url> is required\n');
+        process.exitCode = 2;
+        return;
+      }
+
       if (!token) {
         process.stderr.write(
           'owlette: no token configured. run `owlette auth login` or set OWLETTE_TOKEN.\n',
@@ -194,9 +208,11 @@ export function registerTriggerCommand(program: Command): void {
         apiUrl,
         token,
         siteId: String(opts.site),
+        url: String(opts.to),
         event,
         deliveryId,
         payload,
+        signingSecret: typeof opts.signingSecret === 'string' ? opts.signingSecret : undefined,
         json,
       });
     });
@@ -266,18 +282,20 @@ interface FireProbeOpts {
   apiUrl: string;
   token: string;
   siteId: string;
+  url: string;
   event: string;
   deliveryId: string;
   payload: Record<string, unknown>;
+  signingSecret?: string;
   json: boolean;
 }
 
 async function fireServerProbe(opts: FireProbeOpts): Promise<void> {
   const body = {
-    kind: opts.event,
-    siteId: opts.siteId,
-    deliveryId: opts.deliveryId,
+    url: opts.url,
+    event: opts.event,
     payload: opts.payload,
+    signingSecret: opts.signingSecret,
   };
 
   process.stderr.write(
@@ -285,7 +303,9 @@ async function fireServerProbe(opts: FireProbeOpts): Promise<void> {
   );
 
   try {
-    const res = await fetch(`${opts.apiUrl}/api/webhooks/probe`, {
+    const probeUrl = new URL(`${opts.apiUrl}/api/webhooks/probe`);
+    probeUrl.searchParams.set('siteId', opts.siteId);
+    const res = await fetch(probeUrl.toString(), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${opts.token}`,
@@ -297,8 +317,8 @@ async function fireServerProbe(opts: FireProbeOpts): Promise<void> {
 
     if (res.status === 404) {
       process.stderr.write(
-        `owlette: /api/webhooks/probe not available yet (ships in wave 6.8). ` +
-          `use --to <url> to fire the probe directly at a local listener.\n`,
+        `owlette: /api/webhooks/probe is not available on this API host. ` +
+          `omit --via-api to fire the probe directly at a local listener.\n`,
       );
       process.exitCode = 1;
       return;

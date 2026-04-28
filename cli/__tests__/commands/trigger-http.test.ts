@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 describe('owlette trigger (server-probe mode)', () => {
-  it('POSTs /api/webhooks/probe with {kind, siteId, deliveryId, payload}', async () => {
+  it('POSTs /api/webhooks/probe?siteId=... with url, event, and payload', async () => {
     const calls = installFetchStub({ success: true });
     const program = buildProgram();
     await program.parseAsync(
@@ -66,17 +66,20 @@ describe('owlette trigger (server-probe mode)', () => {
         'version.published',
         '--site',
         'site-1',
+        '--to',
+        'https://hooks.example/roost',
+        '--via-api',
         '--id',
         'delivery-abc',
       ],
       { from: 'user' },
     );
-    expect(calls[0]!.url).toBe('https://dev.test/api/webhooks/probe');
+    expect(calls[0]!.url).toBe('https://dev.test/api/webhooks/probe?siteId=site-1');
     expect(calls[0]!.init.method).toBe('POST');
     const body = JSON.parse(String(calls[0]!.init.body));
-    expect(body.kind).toBe('version.published');
-    expect(body.siteId).toBe('site-1');
-    expect(body.deliveryId).toBe('delivery-abc');
+    expect(body.event).toBe('version.published');
+    expect(body.url).toBe('https://hooks.example/roost');
+    expect(body.deliveryId).toBeUndefined();
     expect(body.payload.roostId).toBeDefined();
     expect(body.payload.siteId).toBe('site-1'); // placeholder filled at runtime
   });

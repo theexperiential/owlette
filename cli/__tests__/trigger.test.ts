@@ -6,10 +6,11 @@ describe('trigger canned payloads', () => {
   it('covers the documented event taxonomy from docs/api/webhooks.md', () => {
     const expected = [
       'version.published',
-      'deploy.completed',
-      'deploy.failed',
-      'rollback.triggered',
-      'chunk.uploaded',
+      'deployment.completed',
+      'deployment.failed',
+      'version.rolled_back',
+      'chunk.garbage_collected',
+      'chunk.verify_failed',
       'quota.warning',
       'machine.online',
       'machine.offline',
@@ -18,7 +19,7 @@ describe('trigger canned payloads', () => {
   });
 
   it('leaves siteId as null in the template so the trigger fills it at runtime', () => {
-    for (const kind of ['version.published', 'deploy.completed', 'quota.warning']) {
+    for (const kind of ['version.published', 'deployment.completed', 'quota.warning']) {
       expect(CANNED_PAYLOADS[kind]?.siteId).toBeNull();
     }
   });
@@ -32,18 +33,19 @@ describe('trigger canned payloads', () => {
     expect(typeof p.totalFiles).toBe('number');
   });
 
-  it('deploy.failed carries an abortReason', () => {
-    expect(CANNED_PAYLOADS['deploy.failed']?.abortReason).toBeDefined();
+  it('deployment.failed carries an abortReason', () => {
+    expect(CANNED_PAYLOADS['deployment.failed']?.abortReason).toBeDefined();
   });
 
-  it('rollback.triggered carries from/to version ids', () => {
-    const p = CANNED_PAYLOADS['rollback.triggered']!;
+  it('version.rolled_back carries from/to version ids', () => {
+    const p = CANNED_PAYLOADS['version.rolled_back']!;
     expect(p.fromVersion).toBeDefined();
     expect(p.toVersion).toBeDefined();
   });
 
-  it('chunk.uploaded carries a 64-char hex hash', () => {
-    expect(CANNED_PAYLOADS['chunk.uploaded']?.hash).toMatch(/^[0-9a-f]{64}$/);
+  it('chunk.garbage_collected carries a 64-char hex hash and byte size', () => {
+    expect(CANNED_PAYLOADS['chunk.garbage_collected']?.hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(CANNED_PAYLOADS['chunk.garbage_collected']?.sizeBytes).toBeGreaterThan(0);
   });
 
   it('quota.warning carries used/limit/threshold', () => {

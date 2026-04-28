@@ -5,11 +5,9 @@ hide:
 
 # webhook
 
-> **not yet implemented in the cli.** webhook subscriptions are managed via the dashboard today (settings → webhooks). the cli verbs documented below are a forward-looking spec — they ship in waves 5 and 7 of [`dev/active/roost-public-api/`](../../../dev/active/roost-public-api/), alongside the public webhook routes. this page exists so callers can plan integrations against the eventual surface. tier: **planned**.
->
-> until the noun group lands, the only webhook-adjacent verbs in the cli today are the legacy top-level `owlette listen` and `owlette trigger <event>` (see [migration](#migration-from-top-level-verbs) below).
+> **CLI noun group planned for Wave 3.** The public webhook API routes are live for developer preview. Full `owlette webhook ...` management commands remain planned; today the shipped top-level helpers are `owlette listen` and `owlette trigger <event>`.
 
-`owlette webhook` will be a top-level operator noun for cross-product event subscriptions — promoted from `roost webhook` because webhooks fan out events from every product surface (roost, machine, deploy, audit-log, chat), not just roost lifecycle. site-scoped: every verb requires `--site` or a site-scoped api key.
+`owlette webhook` will be a top-level operator noun for cross-product event subscriptions. Site-scoped commands require `--site` or a site-scoped API key.
 
 ---
 
@@ -21,7 +19,7 @@ hide:
 owlette webhook create --site <s> --url <url> --events <csv> [--description <text>]
 ```
 
-new subscription. **secret is shown ONCE in the response** — capture it now or rotate later. backing endpoint: `POST /api/webhooks`.
+New subscription. The signing secret is shown once in the response. Backing endpoint: `POST /api/webhooks?siteId=<s>`.
 
 ### list (planned)
 
@@ -29,7 +27,7 @@ new subscription. **secret is shown ONCE in the response** — capture it now or
 owlette webhook list --site <s>
 ```
 
-list subscriptions on a site. backing endpoint: `GET /api/webhooks`.
+List subscriptions on a site. Backing endpoint: `GET /api/webhooks?siteId=<s>`.
 
 ### get (planned)
 
@@ -37,7 +35,7 @@ list subscriptions on a site. backing endpoint: `GET /api/webhooks`.
 owlette webhook get <id> --site <s>
 ```
 
-subscription detail. response never includes the secret. backing endpoint: `GET /api/webhooks/{id}`.
+Subscription detail. Response never includes the secret. Backing endpoint: `GET /api/webhooks/{id}?siteId=<s>`.
 
 ### update (planned)
 
@@ -45,7 +43,7 @@ subscription detail. response never includes the secret. backing endpoint: `GET 
 owlette webhook update <id> --site <s> [--url <url>] [--events <csv>] [--paused]
 ```
 
-partial update. idempotency-key supported. backing endpoint: `PATCH /api/webhooks/{id}`.
+Partial update. Backing endpoint: `PATCH /api/webhooks/{id}?siteId=<s>`.
 
 ### delete (planned)
 
@@ -53,7 +51,7 @@ partial update. idempotency-key supported. backing endpoint: `PATCH /api/webhook
 owlette webhook delete <id> --site <s> [--yes]
 ```
 
-soft-delete with a 30-day tombstone. backing endpoint: `DELETE /api/webhooks/{id}`.
+Soft-delete with a 30-day tombstone. Backing endpoint: `DELETE /api/webhooks/{id}?siteId=<s>`.
 
 ### rotate-secret (planned)
 
@@ -61,7 +59,7 @@ soft-delete with a 30-day tombstone. backing endpoint: `DELETE /api/webhooks/{id
 owlette webhook rotate-secret <id> --site <s>
 ```
 
-issue a new signing secret with a 24-hour grace window on the old one. backing endpoint: `POST /api/webhooks/{id}/rotate-secret`.
+Issue a new signing secret with a 24-hour grace window on the old one. Backing endpoint: `POST /api/webhooks/{id}/rotate-secret?siteId=<s>`.
 
 ### deliveries (planned)
 
@@ -69,7 +67,7 @@ issue a new signing secret with a 24-hour grace window on the old one. backing e
 owlette webhook deliveries <id> --site <s> [--limit <n>] [--cursor <token>]
 ```
 
-30-day delivery history. backing endpoint: `GET /api/webhooks/{id}/deliveries`.
+30-day delivery history. Backing endpoint: `GET /api/webhooks/{id}/deliveries?siteId=<s>`.
 
 ### delivery get (planned)
 
@@ -77,7 +75,7 @@ owlette webhook deliveries <id> --site <s> [--limit <n>] [--cursor <token>]
 owlette webhook delivery get <id> <deliveryId> --site <s>
 ```
 
-full request/response transcript for one delivery. backing endpoint: `GET /api/webhooks/{id}/deliveries/{did}`.
+Full request/response transcript for one delivery. Backing endpoint: `GET /api/webhooks/{id}/deliveries/{deliveryId}?siteId=<s>`.
 
 ### retry (planned)
 
@@ -85,66 +83,65 @@ full request/response transcript for one delivery. backing endpoint: `GET /api/w
 owlette webhook retry <id> <deliveryId> --site <s>
 ```
 
-re-enqueue a single delivery. backing endpoint: `POST /api/webhooks/{id}/deliveries/{did}/retry`.
+Re-enqueue a single delivery. Backing endpoint: `POST /api/webhooks/{id}/deliveries/{deliveryId}/retry?siteId=<s>`.
 
-### probe (planned)
+### probe (planned noun)
 
 ```bash
 owlette webhook probe --site <s> --url <url> --event <name> [--payload <json>]
 ```
 
-fire a synthetic event at an arbitrary url **without** creating a subscription — useful for url validation and ngrok smoke tests. backing endpoint: `POST /api/webhooks/probe`.
+Fire a signed synthetic event at an arbitrary URL without creating a subscription. Backing endpoint: `POST /api/webhooks/probe?siteId=<s>`.
 
-### listen (planned)
-
-```bash
-owlette webhook listen --site <s> --forward-to <url> [--events <csv>]
-```
-
-dev tunnel: subscribe to the live event stream and forward to a local url. backing endpoint: `GET /api/events/stream` (sse).
-
-### trigger (planned)
+### listen
 
 ```bash
-owlette webhook trigger <event> --site <s> [--to <url>] [--payload <json>]
+owlette listen --site <s> --forward-to <url> [--events <csv>]
 ```
 
-fire a synthetic event for local testing. backing endpoint: `POST /api/webhooks/probe` (or direct to `--to`).
+Shipped top-level helper. It opens `GET /api/events/stream?siteId=<s>` and forwards received SSE events. In the current developer preview the stream emits `connected` and `keepalive` liveness events only; production event fanout is deferred.
+
+### trigger
+
+```bash
+owlette trigger <event> --site <s> --to <url> [--payload <json>] [--via-api]
+```
+
+Shipped top-level helper. Without `--via-api`, it posts a canned payload directly to `--to`. With `--via-api`, it calls `POST /api/webhooks/probe?siteId=<s>`.
 
 ---
 
 ## migration from top-level verbs
 
-`listen` and `trigger` exist in the cli **today** as top-level commands:
+Current:
 
 ```bash
-owlette listen --forward-to http://localhost:3000/hooks
-owlette trigger roost.deployed --payload '{"roostId":"rst_abc"}'
+owlette listen --site site-1 --forward-to http://localhost:3000/hooks
+owlette trigger version.published --site site-1 --to http://localhost:3000/hooks
 ```
 
-when the `webhook` noun group ships (roost-public-api wave 5), they move under it:
+When the `webhook` noun group ships, these move under it:
 
 ```bash
-owlette webhook listen --site site-1 --forward-to http://localhost:3000/hooks    # planned
-owlette webhook trigger roost.deployed --site site-1 --payload '{...}'            # planned
+owlette webhook listen --site site-1 --forward-to http://localhost:3000/hooks
+owlette webhook trigger version.published --site site-1 --to http://localhost:3000/hooks
 ```
 
-the top-level forms will keep working as deprecation aliases through the standard 2026-10-01 sunset, with a one-line stderr notice. update scripts at the seams.
+The top-level forms will remain compatibility aliases through the standard 2026-10-01 sunset.
 
 ---
 
-## planned exit codes
+## exit codes
 
-- `0` — success
-- `1` — generic error (network, 5xx, signature verification failure on probe)
-- `2` — usage error (missing `--site`, malformed `--events` csv, bad `--payload` json)
+- `0` - success
+- `1` - generic error (network, 5xx, signature verification failure on probe)
+- `2` - usage error (missing `--site`, malformed `--events` csv, bad `--payload` json)
 
 ---
 
 ## notes
 
-- **scope**: site-scoped. dashboard editing remains available indefinitely; the cli is additive.
-- **tier**: planned. shipping in roost-public-api waves 5 (core verbs) and 7 (`probe`/`listen`/`trigger` polish).
-- **secret handling**: `create` and `rotate-secret` are the only places the secret is returned. it is never readable again — copy it into your secrets store immediately.
-- **signing**: every delivery is hmac-sha256 signed with the subscription secret in the `X-Owlette-Signature` header. signature format and verification snippets land alongside the cli.
-- **see also**: planning docs at [`dev/active/roost-public-api/`](../../../dev/active/roost-public-api/); dashboard at owlette.app/settings/webhooks.
+- **scope**: list/detail/deliveries use `site:<siteId>:read`; create/update/delete/rotate/probe/retry use `site:<siteId>:write`.
+- **secret handling**: `create` and `rotate-secret` are the only places the secret is returned. it is never readable again.
+- **signing**: deliveries use `Roost-Signature: t=<unix>,v1=<hmac_sha256_hex>`.
+- **contract**: `web/openapi.yaml` is authoritative for request/response shapes.

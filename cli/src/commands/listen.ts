@@ -2,11 +2,9 @@
  * `owlette listen --forward-to <url>`.
  *
  * Opens a persistent SSE connection to `/api/events/stream` on the
- * owlette api, parses each incoming event, and replays it as an HTTP
- * POST to the user's local url with the original headers (including
- * `Roost-Signature`) preserved. The practical shape of this loop
- * mirrors `stripe listen` — the cli becomes a development webhook
- * tunnel without needing a public URL.
+ * owlette API, parses each incoming event, and replays it as an HTTP
+ * POST to the user's local URL. Today this is a scoped liveness stream;
+ * production event fanout is a follow-up server task.
  *
  * Auth: passes `?api_key=<token>` as a query param (EventSource-style)
  * because the native Node streaming `fetch` for SSE honors the
@@ -20,10 +18,11 @@
  *   \n
  *
  * The server today emits `connected` on open and `keepalive` every
- * ~15s as a liveness signal (wave 3.9). Real-event plumbing is
- * deferred to a follow-up server wave; the cli is already ready to
- * relay whatever events arrive — no further cli changes needed when
- * the server starts emitting `roost.version.published` / etc.
+ * ~15s as a scoped liveness signal. Real-event fanout is
+ * deferred to a follow-up server wave; the CLI is already ready to
+ * relay whatever events arrive when
+ * the server starts emitting canonical events such as
+ * `version.published` and `deployment.completed`.
  *
  * Exit codes:
  *   0 — clean shutdown via SIGINT
@@ -49,6 +48,7 @@ export function registerListenCommand(program: Command): void {
   program
     .command('listen')
     .description('tunnel webhook events from the owlette api to a local url')
+    .requiredOption('--site <siteId>', 'site id to read the event stream for')
     .requiredOption('--forward-to <url>', 'local http endpoint that receives each event')
     .option(
       '--events <names>',
@@ -94,9 +94,12 @@ export function registerListenCommand(program: Command): void {
 
       const streamUrl = new URL(`${apiUrl}/api/events/stream`);
       streamUrl.searchParams.set('api_key', token);
+      streamUrl.searchParams.set('siteId', String(opts.site));
+      if (opts.events) streamUrl.searchParams.set('events', String(opts.events));
 
       process.stderr.write(
         `owlette: listening on ${apiUrl}/api/events/stream\n` +
+          `       site: ${opts.site}\n` +
           `       forwarding to ${forwardUrl}\n` +
           (allowedEvents
             ? `       events: ${[...allowedEvents].join(', ')}\n`

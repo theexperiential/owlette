@@ -247,22 +247,30 @@ const history = await roost.quotas.history('site-1', '30d');  // '7d' | '14d' | 
 const hook = await roost.webhooks.subscribe(
   'site-1',
   'https://example.com/hooks/roost',
-  ['version.published', 'deploy.failed'],
+  ['version.published', 'deployment.failed'],
 );
 console.log(hook.signingSecret);
 
-// crud + send a test event
+// crud + delivery debugging
 await roost.webhooks.list('site-1');
 await roost.webhooks.get(hook.id, 'site-1');
 await roost.webhooks.update(hook.id, 'site-1', { events: ['version.published'] });
 await roost.webhooks.rotateSecret(hook.id, 'site-1');
+const deliveries = await roost.webhooks.deliveries(hook.id, 'site-1');
+if (deliveries.deliveries[0]) {
+  await roost.webhooks.delivery(hook.id, deliveries.deliveries[0].id, 'site-1');
+  await roost.webhooks.retryDelivery(hook.id, deliveries.deliveries[0].id, 'site-1');
+}
 await roost.webhooks.remove(hook.id, 'site-1');
 
-// probe fires a signed test delivery — `kind` must be a known event name
+// probe fires a signed test delivery
 await roost.webhooks.probe('site-1', 'version.published', {
-  roostId: 'rst_abc',
-  versionId: 'vrs_xyz',
-  versionNumber: 7,
+  url: 'https://example.com/hooks/roost',
+  payload: {
+    roostId: 'rst_abc',
+    versionId: 'vrs_xyz',
+    versionNumber: 7,
+  },
 });
 ```
 

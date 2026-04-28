@@ -195,7 +195,12 @@ export type {
   CaptureScreenshotResult,
 } from './resources/machines';
 export type { QuotaSnapshot, QuotaHistoryDay } from './resources/quotas';
-export type { WebhookSubscription } from './resources/webhooks';
+export type {
+  ListWebhookDeliveriesResult,
+  ProbeWebhookOptions,
+  WebhookDelivery,
+  WebhookSubscription,
+} from './resources/webhooks';
 export type { VersionDetail, VersionFilesPage, VersionDiff } from './resources/versions';
 export type { ChunkedFileEntry, ChunkProgressEvent } from './lib/chunker';
 export type {

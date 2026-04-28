@@ -2,7 +2,7 @@
 
 **Last updated**: 2026-04-22
 
-end-to-end walkthrough for publishing a new roost from scratch using nothing but `curl`, `sha256sum`, and `jq`. if you get stuck, every step references the matching section of [api-surface.md](../../dev/active/roost-public-api/reference/api-surface.md).
+end-to-end walkthrough for publishing a new roost from scratch using nothing but `curl`, `sha256sum`, and `jq`. the authoritative endpoint contract is `web/openapi.yaml`; this guide links to the current API docs where a topic has a dedicated page.
 
 **what you'll do** — in about 30 minutes you'll:
 1. mint an api key
@@ -87,7 +87,7 @@ from here on every request uses `Authorization: Bearer $ROOST_TOKEN` plus `Roost
 AUTH=(-H "Authorization: Bearer $ROOST_TOKEN" -H "Roost-Version: $ROOST_VERSION" -H "Content-Type: application/json")
 ```
 
-see [api-surface.md §1](../../dev/active/roost-public-api/reference/api-surface.md#1-api-keys-developer-auth) for the full key lifecycle (rotate, revoke, patch).
+see [authentication.md](./authentication.md) for API key auth and scope behavior.
 
 ---
 
@@ -262,7 +262,7 @@ each `PUT` returns `200 OK` with an empty body and an `ETag` header. if any uplo
 
 ## step 7: build the version
 
-a roost version is an oci-shaped json document: `config` (arbitrary roost metadata) + `layers` (one per file). it's the immutable snapshot the fleet downloads.
+a roost version is an oci-shaped json document: `config` (arbitrary roost metadata) + `files` (one per file). it's the immutable snapshot the fleet downloads.
 
 ```bash
 # config blob — describes the roost itself
@@ -271,8 +271,8 @@ CONFIG_JSON=$(jq -n --arg site "$SITE_ID" --arg roost "$ROOST_ID" \
 CONFIG_BYTES=${#CONFIG_JSON}
 CONFIG_DIGEST="sha256:$(printf '%s' "$CONFIG_JSON" | sha256sum | awk '{print $1}')"
 
-# layers — one entry per file, in canonical path order
-LAYERS=$(jq '[.[] | {mediaType: "application/vnd.owlette.file.v1", path: .path, digest: .hash, size: .size}] | sort_by(.path)' chunks.json)
+# files - one entry per file, in canonical path order
+FILES=$(jq '[.[] | {path: .path, chunks: [{hash: .hash, size: .size}], size: .size}] | sort_by(.path)' chunks.json)
 
 # assemble
 cat > version-body.json <<EOF
@@ -286,13 +286,13 @@ cat > version-body.json <<EOF
       "digest": "$CONFIG_DIGEST",
       "size": $CONFIG_BYTES
     },
-    "layers": $LAYERS
+    "files": $FILES
   },
   "description": "initial publish from quickstart"
 }
 EOF
 
-jq '.version.layers | length' version-body.json   # sanity check
+jq '.version.files | length' version-body.json   # sanity check
 ```
 
 notes:
@@ -479,9 +479,9 @@ common errors you'll hit during the walkthrough, with resolution.
 
 ## next steps
 
-- **automate the flow** — [workflows.md §1 ci/cd publish on git tag](../../dev/active/roost-public-api/reference/workflows.md) adapts this walkthrough to a github actions job.
+- **automate the flow** - adapt the curl steps above into your CI runner with a scoped API key and per-publish `Idempotency-Key`.
 - **diff two versions** — before rolling out a big change, call `GET /api/roosts/{id}/versions/{versionRef}/diff?against=<prior>` to see exactly which files change.
-- **subscribe to events** — `POST /api/webhooks` delivers `version.published`, `deployment.failed`, `quota.warning`. see [api-surface.md §10](../../dev/active/roost-public-api/reference/api-surface.md#10-webhooks).
+- **subscribe to events** - `POST /api/webhooks?siteId=<id>` delivers `version.published`, `deployment.failed`, `quota.warning`. see [webhooks.md](./webhooks.md).
 - **ask Cortex** — `POST /api/cortex/conversations` starts a site or machine conversation; see [cortex.md](./cortex.md) for streaming message examples and scope notes.
-- **targeted rollouts** — `POST /api/roosts/{id}/deploy` supports canary strategy, scheduled rollouts, and dry-run. see [api-surface.md §5](../../dev/active/roost-public-api/reference/api-surface.md#5-deployments-targeted-rollout).
+- **targeted rollouts** - `POST /api/roosts/{id}/deploy` supports canary strategy, scheduled rollouts, and dry-run.
 - **audit compliance** — `GET /api/sites/{id}/audit-log` gives you a tamper-evident chain of every sensitive action.

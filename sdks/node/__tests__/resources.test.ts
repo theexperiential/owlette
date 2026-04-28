@@ -289,6 +289,135 @@ describe('roost.keys', () => {
   });
 });
 
+describe('roost.quotas', () => {
+  it('current -> GET /api/sites/{siteId}/quota', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          siteId: 'site-1',
+          tier: 'pro',
+          usedBytes: 100,
+          pendingBytes: 25,
+          committedBytes: 125,
+          limitBytes: 1000,
+          fractionUsed: 0.125,
+          unlimited: false,
+          lastAlarmLevel: 0,
+          lastAlarmAt: null,
+          lastReconciledAt: null,
+          alarms: [],
+        },
+      },
+    ]);
+    const result = await roost.quotas.current('site-1');
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/quota');
+    expect(result.committedBytes).toBe(125);
+  });
+
+  it('history -> GET /api/sites/{siteId}/quota/history?period=...', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          siteId: 'site-1',
+          period: '7d',
+          days: 7,
+          daily: [],
+        },
+      },
+    ]);
+    const result = await roost.quotas.history('site-1', '7d');
+    expect(calls[0]!.url).toBe(
+      'https://dev.test/api/sites/site-1/quota/history?period=7d',
+    );
+    expect(result.days).toBe(7);
+  });
+});
+
+describe('roost.webhooks', () => {
+  it('subscribe -> POST /api/webhooks?siteId=...', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 201, body: { id: 'wh_1', signingSecret: 'whsec_1' } },
+    ]);
+    await roost.webhooks.subscribe('site-1', 'https://hooks.example/roost', [
+      'version.published',
+    ]);
+    expect(calls[0]!.url).toBe('https://dev.test/api/webhooks?siteId=site-1');
+    expect(calls[0]!.init.method).toBe('POST');
+    const body = JSON.parse(String(calls[0]!.init.body));
+    expect(body.url).toBe('https://hooks.example/roost');
+    expect(body.events).toEqual(['version.published']);
+  });
+
+  it('deliveries -> GET with canonical pagination query', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: { deliveries: [], next_page_token: '', nextPageToken: '' },
+      },
+    ]);
+    await roost.webhooks.deliveries('wh_1', 'site-1', { pageSize: 5, pageToken: 'd0' });
+    expect(calls[0]!.url).toBe(
+      'https://dev.test/api/webhooks/wh_1/deliveries?siteId=site-1&page_size=5&page_token=d0',
+    );
+  });
+
+  it('delivery -> GET detail and retryDelivery -> POST retry', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          id: 'del_1',
+          webhookId: 'wh_1',
+          siteId: 'site-1',
+          event: 'version.published',
+          state: 'failed',
+          attempt: 3,
+          nextAttemptAt: null,
+          createdAt: null,
+        },
+      },
+      {
+        status: 202,
+        body: {
+          id: 'del_2',
+          webhookId: 'wh_1',
+          siteId: 'site-1',
+          retryOf: 'del_1',
+          state: 'pending',
+          nextAttemptAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    ]);
+    await roost.webhooks.delivery('wh_1', 'del_1', 'site-1');
+    await roost.webhooks.retryDelivery('wh_1', 'del_1', 'site-1');
+    expect(calls[0]!.url).toBe(
+      'https://dev.test/api/webhooks/wh_1/deliveries/del_1?siteId=site-1',
+    );
+    expect(calls[1]!.url).toBe(
+      'https://dev.test/api/webhooks/wh_1/deliveries/del_1/retry?siteId=site-1',
+    );
+    expect(calls[1]!.init.method).toBe('POST');
+    const headers = calls[1]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^node-sdk-/);
+  });
+
+  it('probe -> POST /api/webhooks/probe?siteId=... with url and event', async () => {
+    const { roost, calls } = makeRoost([{ status: 200, body: { status: 200 } }]);
+    await roost.webhooks.probe('site-1', 'version.published', {
+      url: 'https://hooks.example/roost',
+      payload: { roostId: 'rst_1' },
+      signingSecret: 'whsec_local_test_secret_000000000000',
+    });
+    expect(calls[0]!.url).toBe('https://dev.test/api/webhooks/probe?siteId=site-1');
+    const body = JSON.parse(String(calls[0]!.init.body));
+    expect(body.event).toBe('version.published');
+    expect(body.url).toBe('https://hooks.example/roost');
+    expect(body.payload).toEqual({ roostId: 'rst_1' });
+  });
+});
+
 describe('roost.installerDeployments', () => {
   it('list → GET /api/sites/{siteId}/deployments?page_size=…', async () => {
     const { roost, calls } = makeRoost([

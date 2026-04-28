@@ -477,53 +477,52 @@ every webhook `POST` includes:
 
 ## subscription management
 
-every operation on a webhook subscription — create, list, detail, update, delete, rotate-secret, delivery history, manual retry, and url probe — is a public api endpoint. see the corresponding sections in [`api-surface.md` §10](../../dev/active/roost-public-api/reference/api-surface.md#10-webhooks) for full request/response shapes:
+every operation on a webhook subscription - create, list, detail, update, delete, rotate-secret, delivery history, manual retry, and url probe - is a public api endpoint. the authoritative contract is `web/openapi.yaml`.
 
-- `POST /api/webhooks` — create a subscription (returns `signingSecret` once).
-- `GET /api/webhooks` / `GET /api/webhooks/{id}` — list / detail.
-- `PATCH /api/webhooks/{id}` — update url, events, description, or paused state.
-- `DELETE /api/webhooks/{id}` — permanently delete.
-- `POST /api/webhooks/{id}/rotate-secret` — mint a new signing secret with a 24h grace window.
-- `GET /api/webhooks/{id}/deliveries` / `GET /api/webhooks/{id}/deliveries/{deliveryId}` — delivery history + single delivery detail.
-- `POST /api/webhooks/{id}/deliveries/{deliveryId}/retry` — manually redeliver a past event.
-- `POST /api/webhooks/probe` — fire a synthetic event at a url without creating a subscription (smoke-test signature verification).
+- `POST /api/webhooks?siteId=<id>` - create a subscription (returns `signingSecret` once).
+- `GET /api/webhooks?siteId=<id>` / `GET /api/webhooks/{id}?siteId=<id>` - list / detail.
+- `PATCH /api/webhooks/{id}?siteId=<id>` - update url, events, description, or paused state.
+- `DELETE /api/webhooks/{id}?siteId=<id>` - soft-delete and retain a 30-day tombstone.
+- `POST /api/webhooks/{id}/rotate-secret?siteId=<id>` - mint a new signing secret with a 24h grace window.
+- `GET /api/webhooks/{id}/deliveries?siteId=<id>` / `GET /api/webhooks/{id}/deliveries/{deliveryId}?siteId=<id>` - delivery history + single delivery detail.
+- `POST /api/webhooks/{id}/deliveries/{deliveryId}/retry?siteId=<id>` - manually redeliver a past event.
+- `POST /api/webhooks/probe?siteId=<id>` - fire a signed synthetic event at a url without creating a subscription.
 
-scopes: every webhook endpoint requires `site:<siteId>:admin`. keys with narrower scopes cannot manage subscriptions.
+scopes: list/detail/deliveries require `site:<siteId>:read`; create/update/delete/rotate/probe/retry require `site:<siteId>:write`.
 
 ---
 
 ## local development
 
-the `roost` cli ships an event-tunnel so you can receive live webhooks on your laptop without opening a port to the public internet. it connects to the server-sent-events stream at `GET /api/events/stream`, re-signs each event with a **local** test secret, and POSTs to your local receiver. the production subscription (with its real secret) is never touched — this is a dev-side mirror, not a real delivery.
+`owlette listen` opens the scoped server-sent-events transport at `GET /api/events/stream?siteId=<id>`. in the current developer preview the stream is a liveness channel: it emits `connected` and `keepalive` events so clients can validate auth, filters, and forwarding plumbing. production event fanout is deferred to a follow-up wave; do not rely on the stream for live webhook delivery yet.
 
 ```bash
-# 1. log in once per machine (stores an api token in ~/.config/roost/config.toml)
-roost auth login
+# 1. log in once per machine (stores an api token in ~/.config/owlette/config.toml)
+owlette auth login
 
 # 2. start your receiver on :8080, using a throwaway test secret
 export ROOST_WEBHOOK_SECRET=whsec_local_dev_0000000000000000000000000000000000
 node my-receiver.js &
 
-# 3. tunnel prod events into it
-roost listen \
+# 3. open the scoped SSE transport
+owlette listen \
   --site kiosk-fleet-01 \
   --forward-to http://localhost:8080/webhooks/roost \
   --signing-secret "$ROOST_WEBHOOK_SECRET" \
   --events version.published,deployment.failed
 
-# → every matching event is re-signed with your local secret and POSTed
-#   to localhost. Ctrl-C to stop. the tunnel leaves no trace on the server.
+# currently emits connected/keepalive only. Ctrl-C to stop.
 ```
 
-a matching event looks like:
+a stream open currently looks like:
 
 ```
-event version.published → http://localhost:8080/webhooks/roost  200 OK  (34 ms)
-event deployment.failed → http://localhost:8080/webhooks/roost  200 OK  (28 ms)
+event connected -> http://localhost:8080/webhooks/roost  200 OK  (34 ms)
+event keepalive -> http://localhost:8080/webhooks/roost  200 OK  (28 ms)
 ```
 
 common local-dev patterns:
 
-- **verifying a new integration without touching prod.** `roost trigger version.published --to http://localhost:8080/webhooks/roost --signing-secret "$ROOST_WEBHOOK_SECRET"` fires a single canned event locally. no tunnel, no subscription, no network.
-- **smoke-testing a public receiver before subscribing.** `POST /api/webhooks/probe` (or `roost trigger <event> --site <id>`) fires a one-shot signed payload at any https url + returns the request body + signature so you can confirm your receiver accepts the signature before you create a real subscription.
+- **verifying a new integration without touching prod.** `owlette trigger version.published --site kiosk-fleet-01 --to http://localhost:8080/webhooks/roost --signing-secret "$ROOST_WEBHOOK_SECRET"` fires a single canned event locally. no tunnel, no subscription, no network.
+- **smoke-testing a public receiver before subscribing.** `POST /api/webhooks/probe?siteId=<id>` (or `owlette trigger <event> --site <id> --to <url> --via-api`) fires a one-shot signed payload at any https url and returns the request body + signature so you can confirm your receiver accepts the signature before you create a real subscription.
 - **debugging a stuck delivery.** `GET /api/webhooks/{id}/deliveries` lists the last 30 days of attempts with full request/response transcripts; `POST /api/webhooks/{id}/deliveries/{deliveryId}/retry` queues the same payload for redelivery with a fresh `Roost-Signature` timestamp so it slides back inside the 5-minute tolerance window.

@@ -238,6 +238,10 @@ paths:
       tags: [utility]
       summary: Get platform email configuration
       description: Returns platform email provider configuration for superadmin diagnostics.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: Email configuration
@@ -248,6 +252,10 @@ paths:
       tags: [utility]
       summary: Update security migration kill switch
       description: Flips capability or rate-limit enforcement for a bounded period. Superadmin only.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: Kill switch updated
@@ -260,6 +268,10 @@ paths:
       tags: [Installer]
       summary: List platform system presets
       description: Lists global system presets shared across sites.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: System presets
@@ -268,6 +280,10 @@ paths:
       tags: [Installer]
       summary: Create platform system preset
       description: Creates a global system preset. Superadmin only.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '201':
           description: Preset created
@@ -282,6 +298,10 @@ paths:
       operationId: getPlatformSystemPreset
       tags: [Installer]
       summary: Get platform system preset
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: System preset
@@ -289,6 +309,10 @@ paths:
       operationId: updatePlatformSystemPreset
       tags: [Installer]
       summary: Update platform system preset
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: Preset updated
@@ -296,6 +320,10 @@ paths:
       operationId: deletePlatformSystemPreset
       tags: [Installer]
       summary: Delete platform system preset
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '204':
           description: Preset deleted
@@ -306,6 +334,10 @@ paths:
       tags: [Installer]
       summary: List TouchDesigner builds
       description: Fetches recent TouchDesigner installer builds from Derivative's archive page. Superadmin only.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       responses:
         '200':
           description: TouchDesigner builds
@@ -469,44 +501,6 @@ paths:
   # ──────────────────────────────────────────────────────────────────────
   # Sites
   # ──────────────────────────────────────────────────────────────────────
-  /api/webhooks/test:
-    post:
-      operationId: testWebhook
-      tags: [Webhooks]
-      summary: Test webhook
-      description: Sends a test payload to a configured webhook to verify connectivity.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [webhookId, siteId]
-              properties:
-                webhookId:
-                  type: string
-                siteId:
-                  type: string
-            example:
-              webhookId: wh_abc123
-              siteId: nyc-office
-      responses:
-        '200':
-          description: Test payload sent
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  status:
-                    type: integer
-                    description: HTTP status code returned by the webhook endpoint
-              example:
-                success: true
-                status: 200
-
   # ──────────────────────────────────────────────────────────────────────
   # API Keys
   # ──────────────────────────────────────────────────────────────────────
@@ -1953,6 +1947,7 @@ paths:
         - firebaseIdToken: []
       parameters:
         - $ref: '#/components/parameters/RoostVersionHeader'
+        - $ref: '#/components/parameters/SiteIdQuery'
         - $ref: '#/components/parameters/IdempotencyKeyHeader'
       requestBody:
         required: true
@@ -3657,7 +3652,6 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}/quota:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
@@ -3686,7 +3680,6 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}/quota/history:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
@@ -3706,7 +3699,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: ['30d', '90d', '365d']
+            enum: ['7d', '14d', '30d', '60d', '90d']
             default: '30d'
           description: Range length.
       responses:
@@ -3716,13 +3709,15 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [siteId, period, points]
+                required: [siteId, period, days, daily]
                 properties:
                   siteId: { type: string }
                   period:
                     type: string
-                    enum: ['30d', '90d', '365d']
-                  points:
+                    enum: ['7d', '14d', '30d', '60d', '90d']
+                  days:
+                    type: integer
+                  daily:
                     type: array
                     items: { $ref: '#/components/schemas/QuotaHistoryEntry' }
         '400': { $ref: '#/components/responses/Problem400' }
@@ -3853,7 +3848,6 @@ paths:
   # 10. webhooks (public surface)
   # ──────────────────────────────────────────────────────────────────────
   /api/webhooks:
-    x-stub: true
     get:
       operationId: listWebhookSubscriptions
       tags: [webhooks]
@@ -3907,6 +3901,7 @@ paths:
         - firebaseIdToken: []
       parameters:
         - $ref: '#/components/parameters/RoostVersionHeader'
+        - $ref: '#/components/parameters/SiteIdQuery'
         - $ref: '#/components/parameters/IdempotencyKeyHeader'
       requestBody:
         required: true
@@ -3928,10 +3923,10 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/webhooks/{webhookId}:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/WebhookIdPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
+      - $ref: '#/components/parameters/SiteIdQuery'
     get:
       operationId: getWebhookSubscription
       tags: [webhooks]
@@ -3991,15 +3986,27 @@ paths:
       tags: [webhooks]
       summary: delete webhook subscription
       description: |
-        Permanently deletes a subscription. In-flight deliveries
-        continue to completion.
+        Soft-deletes a subscription and pauses future delivery. Delivery
+        history remains available for the 30-day retention window.
       security:
         - apiKey: []
         - bearerApiKey: []
         - firebaseIdToken: []
       responses:
-        '204':
-          description: Subscription deleted (no body).
+        '200':
+          description: Subscription soft-deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, siteId, softDeleted, tombstoneExpiresAt]
+                properties:
+                  id: { type: string }
+                  siteId: { type: string }
+                  softDeleted: { type: boolean }
+                  tombstoneExpiresAt:
+                    type: string
+                    format: date-time
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
@@ -4007,36 +4014,24 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/webhooks/{webhookId}/rotate-secret:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/WebhookIdPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
+      - $ref: '#/components/parameters/SiteIdQuery'
     post:
       operationId: rotateWebhookSecret
       tags: [webhooks]
       summary: rotate webhook hmac signing secret
       description: |
-        Mints a new hmac signing secret. Both old and new secrets are
-        accepted on inbound delivery verification for a grace window
-        (default 24h, max 72h).
+        Mints a new hmac signing secret. The previous secret is retained
+        for a fixed 24-hour verifier grace window. The new secret is
+        returned once.
       security:
         - apiKey: []
         - bearerApiKey: []
         - firebaseIdToken: []
       parameters:
         - $ref: '#/components/parameters/IdempotencyKeyHeader'
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                graceHours:
-                  type: integer
-                  minimum: 0
-                  maximum: 72
-                  default: 24
       responses:
         '200':
           description: New secret issued.
@@ -4051,7 +4046,6 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/webhooks/{webhookId}/deliveries:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/WebhookIdPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
@@ -4096,11 +4090,11 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/webhooks/{webhookId}/deliveries/{deliveryId}:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/WebhookIdPath'
       - $ref: '#/components/parameters/DeliveryIdPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
+      - $ref: '#/components/parameters/SiteIdQuery'
     get:
       operationId: getWebhookDelivery
       tags: [webhooks]
@@ -4125,11 +4119,11 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry:
-    x-stub: true
     parameters:
       - $ref: '#/components/parameters/WebhookIdPath'
       - $ref: '#/components/parameters/DeliveryIdPath'
       - $ref: '#/components/parameters/RoostVersionHeader'
+      - $ref: '#/components/parameters/SiteIdQuery'
     post:
       operationId: retryWebhookDelivery
       tags: [webhooks]
@@ -4150,11 +4144,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [originalDeliveryId, newDeliveryId, queuedAt]
+                required: [id, webhookId, siteId, retryOf, state, nextAttemptAt]
                 properties:
-                  originalDeliveryId: { type: string }
-                  newDeliveryId:      { type: string }
-                  queuedAt:
+                  id: { type: string }
+                  webhookId: { type: string }
+                  siteId: { type: string }
+                  retryOf: { type: string }
+                  state:
+                    type: string
+                    enum: [pending]
+                  nextAttemptAt:
                     type: string
                     format: date-time
         '401': { $ref: '#/components/responses/Problem401' }
@@ -4166,21 +4165,21 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/webhooks/probe:
-    x-stub: true
     post:
       operationId: probeWebhookUrl
       tags: [webhooks]
       summary: synthetic webhook probe
       description: |
-        Fires a synthetic `webhook.probe` event at `url` to verify
-        signature verification + reachability. No subscription is
-        created.
+        Fires a signed synthetic payload for a chosen webhook event at
+        `url` to verify signature verification + reachability. No
+        subscription is created.
       security:
         - apiKey: []
         - bearerApiKey: []
         - firebaseIdToken: []
       parameters:
         - $ref: '#/components/parameters/RoostVersionHeader'
+        - $ref: '#/components/parameters/SiteIdQuery'
         - $ref: '#/components/parameters/IdempotencyKeyHeader'
       requestBody:
         required: true
@@ -4189,17 +4188,26 @@ paths:
             schema: { $ref: '#/components/schemas/WebhookProbeRequest' }
       responses:
         '200':
-          description: Probe succeeded; target responded with 2xx.
+          description: Probe completed; inspect `status` for target response status.
           content:
             application/json:
               schema:
                 type: object
-                required: [probeId, responseStatus, durationMs, signatureHeader]
+                required: [status, durationMs, deliveryId, event, requestBody, signature, signingSecret]
                 properties:
-                  probeId:        { type: string }
-                  responseStatus: { type: integer }
-                  durationMs:     { type: integer, minimum: 0 }
-                  signatureHeader: { type: string }
+                  status:
+                    type: integer
+                    nullable: true
+                  durationMs: { type: integer, minimum: 0 }
+                  deliveryId: { type: string }
+                  event: { type: string }
+                  requestBody: { type: string }
+                  signature: { type: string }
+                  signingSecret: { type: string }
+                  responseBody:
+                    type: string
+                  networkError:
+                    type: string
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
@@ -4256,19 +4264,20 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   /api/events/stream:
-    x-stub: true
     get:
       operationId: streamEvents
       tags: [utility]
-      summary: server-sent-events live event feed
+      summary: server-sent-events scoped event transport
       description: |
-        Streams the same events webhook subscribers receive. Powers
-        `roost listen` and local-dev tooling. SSE clients cannot send
-        headers, so auth is delivered via a one-time `token` query
-        param minted through a separate flow. 30-min connection
-        lifetime; 15-s keepalive; `Last-Event-ID` resume supported
-        within a 5-min buffer.
-      security: []
+        Scoped SSE transport for local-dev tooling. The MVP stream emits
+        `connected` and `keepalive` liveness events only; production event
+        fanout and resume buffers are Wave 3 work. Auth may be supplied as
+        bearer/API-key headers or `api_key` query param for EventSource-style
+        clients. 30-min connection lifetime; 15-s keepalive.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
       parameters:
         - $ref: '#/components/parameters/SiteIdQuery'
         - name: events
@@ -4276,16 +4285,11 @@ paths:
           required: false
           schema: { type: string }
           description: Comma-separated event type filter.
-        - name: token
+        - name: api_key
           in: query
-          required: true
-          schema: { type: string }
-          description: One-time sse token.
-        - name: Last-Event-ID
-          in: header
           required: false
           schema: { type: string }
-          description: Resume from this event id (within the 5-min buffer).
+          description: API key query-param auth for EventSource clients that cannot set headers.
       responses:
         '200':
           description: SSE stream.
@@ -4295,8 +4299,9 @@ paths:
                 type: string
                 description: Server-Sent Events stream (see [webhooks.md](../docs/api/webhooks.md) for event payloads).
         '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
-        '412': { $ref: '#/components/responses/Problem412' }
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
@@ -6553,8 +6558,8 @@ components:
       required: true
       schema:
         type: string
-        pattern: '^whk_[A-Z0-9]+$'
-      description: Webhook subscription id (ulid-encoded).
+        pattern: '^[A-Za-z0-9_-]{8,64}$'
+      description: Webhook subscription id.
 
     DeliveryIdPath:
       name: deliveryId
@@ -6562,8 +6567,8 @@ components:
       required: true
       schema:
         type: string
-        pattern: '^whd_[A-Z0-9]+$'
-      description: Webhook delivery id (ulid-encoded).
+        pattern: '^[A-Za-z0-9_.-]{1,256}$'
+      description: Webhook delivery id.
 
     RolloutIdPath:
       name: rolloutId
@@ -8199,7 +8204,7 @@ components:
     # quotas
     Quota:
       type: object
-      required: [siteId, tier, limitBytes, usedBytes]
+      required: [siteId, tier, usedBytes, pendingBytes, committedBytes, limitBytes, fractionUsed, unlimited, lastAlarmLevel, alarms]
       properties:
         siteId: { type: string }
         tier:
@@ -8209,6 +8214,7 @@ components:
           type: integer
           format: int64
           minimum: 0
+          nullable: true
         usedBytes:
           type: integer
           format: int64
@@ -8218,44 +8224,65 @@ components:
           format: int64
           minimum: 0
           description: Bytes reserved by in-flight uploads but not yet persisted.
-        bandwidthLimitBytesPerMonth:
+        committedBytes:
           type: integer
           format: int64
           minimum: 0
-        bandwidthUsedBytesThisMonth:
-          type: integer
-          format: int64
+          description: "`usedBytes + pendingBytes`."
+        fractionUsed:
+          type: number
+          nullable: true
           minimum: 0
+          maximum: 1
+        unlimited:
+          type: boolean
+        lastAlarmLevel:
+          type: number
+        lastAlarmAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastReconciledAt:
+          type: string
+          format: date-time
+          nullable: true
         alarms:
           type: array
           items:
             type: object
-            required: [threshold, firedAt]
+            required: [id, threshold, firedAt]
             properties:
+              id: { type: string }
               threshold:
                 type: number
+                nullable: true
                 minimum: 0
                 maximum: 1
                 description: Fraction of `limitBytes` at which this alarm fired.
               firedAt:
                 type: string
                 format: date-time
-        periodResetsAt:
-          type: string
-          format: date-time
+                nullable: true
     QuotaHistoryEntry:
       type: object
-      required: [date, usedBytes, bandwidthBytes]
+      required: [date, storageBytesAvg, classAOps, classBOps, egressBytes]
       properties:
         date:
           type: string
           format: date
           description: UTC calendar date (YYYY-MM-DD).
-        usedBytes:
+        storageBytesAvg:
           type: integer
           format: int64
           minimum: 0
-        bandwidthBytes:
+          nullable: true
+        classAOps:
+          type: integer
+          minimum: 0
+        classBOps:
+          type: integer
+          minimum: 0
+        egressBytes:
           type: integer
           format: int64
           minimum: 0
@@ -8419,14 +8446,14 @@ components:
     # webhooks
     WebhookDeliveryStatus:
       type: string
-      enum: [pending, success, failed]
+      enum: [pending, succeeded, failed]
     WebhookSubscription:
       description: |
         Base webhook subscription fields. Most reads return the
         `Webhook` wrapper which extends this with activity pointers;
         `WebhookWithSecret` extends with the one-time raw secret.
       type: object
-      required: [id, siteId, url, events, paused, createdAt]
+      required: [id, url, events, paused, createdAt]
       properties:
         id:          { type: string }
         siteId:      { type: string }
@@ -8444,12 +8471,14 @@ components:
         paused:
           type: boolean
           default: false
-        secretPrefix:
-          type: string
-          description: First few chars of the signing secret for identification.
         createdAt:
           type: string
           format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
     WebhookDetail:
       description: |
         Webhook subscription wrapper with activity pointers. Returned
@@ -8463,9 +8492,17 @@ components:
               format: date-time
               nullable: true
             lastDeliveryOk:
-              type: boolean
+              type: string
+              nullable: true
+              deprecated: true
+            lastDeliveryStatus:
+              type: string
               nullable: true
             consecutiveFailures:
+              type: integer
+              minimum: 0
+              deprecated: true
+            failureCount:
               type: integer
               minimum: 0
     WebhookWithSecret:
@@ -8484,15 +8521,21 @@ components:
               type: string
               format: date-time
               nullable: true
+              deprecated: true
+            previousSecretValidUntil:
+              type: string
+              format: date-time
+              nullable: true
+            gracePeriodHours:
+              type: integer
             rotatedAt:
               type: string
               format: date-time
               nullable: true
     CreateWebhookRequest:
       type: object
-      required: [siteId, url, events]
+      required: [url, events]
       properties:
-        siteId: { type: string }
         url:
           type: string
           format: uri
@@ -8503,7 +8546,7 @@ components:
           items: { type: string }
         description:
           type: string
-          maxLength: 256
+          maxLength: 500
     PatchWebhookRequest:
       type: object
       properties:
@@ -8515,36 +8558,44 @@ components:
           items: { type: string }
         description:
           type: string
-          maxLength: 256
+          maxLength: 500
           nullable: true
         paused:
           type: boolean
     WebhookDelivery:
       type: object
-      required: [deliveryId, event, status, attemptCount, deliveredAt]
+      required: [id, event, state, attempt, createdAt, nextAttemptAt]
       properties:
-        deliveryId: { type: string }
+        id: { type: string }
         webhookId:  { type: string }
+        siteId: { type: string }
         event:      { type: string }
-        status:     { $ref: '#/components/schemas/WebhookDeliveryStatus' }
-        responseStatus:
+        state:      { $ref: '#/components/schemas/WebhookDeliveryStatus' }
+        lastStatus:
           type: integer
           nullable: true
           description: HTTP status the target returned. Null if the attempt never connected.
-        attemptCount:
+        attempt:
           type: integer
-          minimum: 1
-        deliveredAt:
+          minimum: 0
+        createdAt:
           type: string
           format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
         nextRetryAt:
           type: string
           format: date-time
           nullable: true
-        durationMs:
-          type: integer
-          minimum: 0
-        error:
+          deprecated: true
+        nextAttemptAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastError:
           type: string
           nullable: true
         request:
@@ -8556,8 +8607,8 @@ components:
               type: object
               additionalProperties: { type: string }
             body:
-              description: Raw event payload; json object.
-              additionalProperties: true
+              type: string
+              description: Raw canonical event payload.
         response:
           type: object
           description: Populated on detail responses only; body truncated to 4 KiB.
@@ -8570,15 +8621,20 @@ components:
             durationMs: { type: integer, minimum: 0 }
     WebhookProbeRequest:
       type: object
-      required: [siteId, url, signingSecret]
+      required: [url, event]
       properties:
-        siteId: { type: string }
         url:
           type: string
           format: uri
+        event:
+          type: string
+          description: Known webhook event name.
+        payload:
+          type: object
+          additionalProperties: true
         signingSecret:
           type: string
-          description: Secret to hmac-sign the synthetic probe payload with.
+          description: Optional secret to hmac-sign the synthetic probe payload with. If omitted, the server returns a generated test secret.
 
     # utility
     WhoAmIResponse:

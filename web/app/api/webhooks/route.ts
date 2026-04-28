@@ -37,6 +37,7 @@ import {
   ProblemType,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { checkIdempotency, saveIdempotency } from '@/lib/idempotency';
 import {
   collectFilteredPage,
   parsePagination,
@@ -89,6 +90,18 @@ export async function POST(request: NextRequest) {
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
     const body = (parsed.body ?? {}) as CreateWebhookBody;
+
+    const idem = await checkIdempotency(
+      request,
+      {
+        userId: auth.userId,
+        environment: auth.auth.keyContext?.environment ?? 'unknown',
+      },
+      parsed.raw,
+    );
+    if (idem.mode === 'invalid' || idem.mode === 'mismatch' || idem.mode === 'replay') {
+      return idem.response;
+    }
 
     // URL validation (scheme, port, literal ips, dns-resolved ips).
     const urlValidation = await validateWebhookUrl(body.url);
@@ -195,10 +208,12 @@ export async function POST(request: NextRequest) {
     };
     if (description !== undefined) responseBody.description = description;
 
-    return applyAuthDeprecations(
+    const response = applyAuthDeprecations(
       NextResponse.json(responseBody, { status: 201 }),
       auth.scopeCheck,
     );
+    if (idem.mode === 'proceed') await saveIdempotency(idem.token, response);
+    return response;
   } catch (err) {
     return problemFromError(err, 'webhooks:POST');
   }

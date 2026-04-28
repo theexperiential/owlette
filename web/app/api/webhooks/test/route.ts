@@ -37,7 +37,9 @@ export async function POST(request: NextRequest) {
     }
 
     const webhook = webhookDoc.data()!;
-    const result = await testWebhook(webhook.url, webhook.secret);
+    const signingSecret =
+      typeof webhook.signingSecret === 'string' ? webhook.signingSecret : webhook.secret;
+    const result = await testWebhook(webhook.url, signingSecret);
 
     // Update last triggered
     await webhookDoc.ref.update({

@@ -281,7 +281,7 @@ history = await client.quotas.history("site-1", days=30)
 hook = await client.webhooks.subscribe(
     site_id="site-1",
     url="https://example.com/hooks/roost",
-    events=["version.published", "deploy.failed"],
+    events=["version.published", "deployment.failed"],
 )
 print(hook["signingSecret"])
 
@@ -291,12 +291,18 @@ for h in await client.webhooks.list(site_id="site-1"):
 
 await client.webhooks.update(hook["id"], site_id="site-1", events=["version.published"])
 await client.webhooks.rotate_secret(hook["id"], site_id="site-1")
+deliveries = await client.webhooks.deliveries(hook["id"], "site-1")
+if deliveries["deliveries"]:
+    first = deliveries["deliveries"][0]
+    await client.webhooks.delivery(hook["id"], first["id"], "site-1")
+    await client.webhooks.retry_delivery(hook["id"], first["id"], "site-1")
 await client.webhooks.remove(hook["id"], site_id="site-1")
 
-# probe fires a signed test delivery — `kind` must be a known event name
+# probe fires a signed test delivery
 await client.webhooks.probe(
-    site_id="site-1",
-    kind="version.published",
+    "site-1",
+    "version.published",
+    url="https://example.com/hooks/roost",
     payload={"roostId": "rst_abc", "versionId": "vrs_xyz", "versionNumber": 7},
 )
 ```

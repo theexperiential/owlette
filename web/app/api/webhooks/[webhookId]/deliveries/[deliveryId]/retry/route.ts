@@ -36,6 +36,7 @@ import {
   ProblemType,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { checkIdempotency, saveIdempotency } from '@/lib/idempotency';
 
 import {
   auditActorIdentifier,
@@ -79,6 +80,19 @@ export async function POST(
 
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
     if (!auth.ok) return auth.response;
+
+    const rawBody = await request.text().catch(() => '');
+    const idem = await checkIdempotency(
+      request,
+      {
+        userId: auth.userId,
+        environment: auth.auth.keyContext?.environment ?? 'unknown',
+      },
+      rawBody,
+    );
+    if (idem.mode === 'invalid' || idem.mode === 'mismatch' || idem.mode === 'replay') {
+      return idem.response;
+    }
 
     const db = getAdminDb();
 
@@ -198,7 +212,7 @@ export async function POST(
       },
     });
 
-    return applyAuthDeprecations(
+    const response = applyAuthDeprecations(
       NextResponse.json(
         {
           id: newRecordId,
@@ -212,6 +226,8 @@ export async function POST(
       ),
       auth.scopeCheck,
     );
+    if (idem.mode === 'proceed') await saveIdempotency(idem.token, response);
+    return response;
   } catch (err) {
     return problemFromError(err, 'webhooks/[webhookId]/deliveries/[deliveryId]/retry:POST');
   }

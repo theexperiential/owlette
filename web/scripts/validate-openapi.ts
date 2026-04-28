@@ -52,6 +52,7 @@ const INTERNAL_ROUTES = new Set([
   '/api/setup/generate-token',
   '/api/test-email',
   '/api/unsubscribe',
+  '/api/webhooks/test',
   '/api/webhooks/user-created',
   '/api/openapi',
 ]);
