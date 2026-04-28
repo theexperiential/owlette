@@ -1,8 +1,8 @@
 rules_version = '2';
 
 // Owlette Firestore Security Rules
-// Version: 2.2.0 - Multi-User Site Access Control
-// Last Updated: 2025-11-05
+// Version: 2.3.0 - Control-Plane API Boundary Lockdown
+// Last Updated: 2026-04-28
 //
 // Security Model:
 // - Role-based access control (RBAC): user | admin | agent
@@ -10,7 +10,7 @@ rules_version = '2';
 // - Admins can access ALL sites regardless of assignment
 // - Agents use custom tokens (OAuth) with site-scoped permissions
 // - Agents can ONLY access their assigned site and machine (strict isolation)
-// - Admins can manage users, assign sites, and upload installer versions
+// - Trusted server APIs manage control-plane writes
 // - Unauthenticated users can read installer_metadata (for public downloads)
 //
 // Key Features:
@@ -50,11 +50,11 @@ service cloud.firestore {
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin';
     }
 
-    // Check if request is from service account (Python agent)
-    // Service accounts have the 'admin' claim set to true
-    // DEPRECATED: Use isAgent() for OAuth-authenticated agents
+    // Check if request is from a trusted server/admin token.
+    // Admin SDK bypasses rules; this supports custom-token admin clients.
     function isServiceAccount() {
       return request.auth != null &&
+             ('admin' in request.auth.token) &&
              request.auth.token.admin == true;
     }
 
@@ -62,6 +62,9 @@ service cloud.firestore {
     // Agents have custom token with claims: {role: 'agent', site_id: 'xxx', machine_id: 'yyy'}
     function isAgent() {
       return request.auth != null &&
+             ('role' in request.auth.token) &&
+             ('site_id' in request.auth.token) &&
+             ('machine_id' in request.auth.token) &&
              request.auth.token.role == 'agent' &&
              request.auth.token.site_id is string &&
              request.auth.token.machine_id is string;
@@ -129,10 +132,9 @@ service cloud.firestore {
     match /sites/{siteId} {
       // Site document access
       // READ: Allow any authenticated user to check if site exists (for availability checking during creation)
-      // UPDATE/DELETE: Only users with access to the site
+      // WRITE: trusted server APIs only
       allow read: if canAccessSite(siteId);
-      allow create: if isAuthenticated() && request.resource.data.owner == request.auth.uid;
-      allow update, delete: if canAccessSite(siteId);
+      allow create, update, delete: if isServiceAccount();
 
       // ----------------------------------------
       // Machines Subcollection
@@ -141,39 +143,37 @@ service cloud.firestore {
       match /machines/{machineId} {
         // Machine status document
         // Agents write heartbeats, metrics, and process status
-        // Web dashboard reads machine status and can set configChangeFlag
+        // Web dashboard reads machine status; control-plane writes go through API routes
         // OAuth agents can ONLY access their own machine (strict isolation)
         allow read: if canAccessSite(siteId) ||
                        isServiceAccount() ||
                        agentCanAccessMachine(siteId, machineId);
 
-        // Allow web dashboard to update configChangeFlag and mirror launch_mode/schedules
-        // to metrics.processes for real-time UI responsiveness, or toggle cortexEnabled
-        // to block LLM tool-call delivery without stopping the agent.
-        // At least one user-writable key must be included to distinguish from fake metrics writes.
-        // Agent-only fields (online, lastHeartbeat) remain protected.
-        allow update: if canAccessSite(siteId) &&
-                         request.resource.data.diff(resource.data).affectedKeys().hasAny(['configChangeFlag', 'cortexEnabled']) &&
-                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['online', 'lastHeartbeat']);
+        // Allow agents full write access for metrics, heartbeats, processes.
+        // Control-plane toggles (configChangeFlag, cortexEnabled, commands)
+        // are server-mediated through API routes.
+        allow update: if isServiceAccount() ||
+                         agentCanAccessMachine(siteId, machineId);
 
         // Allow agents full write access for metrics, heartbeats, processes
         allow write: if isServiceAccount() ||
                         agentCanAccessMachine(siteId, machineId);
 
-        allow delete: if canAccessSite(siteId); // Authenticated users can remove machines from sites
+        allow delete: if isServiceAccount() ||
+                         agentCanAccessMachine(siteId, machineId);
 
         // Commands documents (pending/completed)
-        // Web dashboard writes pending commands
+        // Server APIs write pending commands
         // Agents read pending and write completed
         // OAuth agents can ONLY access commands for their own machine
         match /commands/{commandDoc} {
           allow read: if canAccessSite(siteId) ||
                          isServiceAccount() ||
                          agentCanAccessMachine(siteId, machineId);
-          allow write: if canAccessSite(siteId) ||
-                          isServiceAccount() ||
+          allow write: if isServiceAccount() ||
                           agentCanAccessMachine(siteId, machineId);
-          allow delete: if canAccessSite(siteId); // Authenticated users can delete commands
+          allow delete: if isServiceAccount() ||
+                           agentCanAccessMachine(siteId, machineId);
         }
 
         // Screenshot History Subcollection
@@ -245,12 +245,9 @@ service cloud.firestore {
 
       match /deployments/{deploymentId} {
         // Software installation deployments
-        // Web dashboard creates and manages deployments
+        // Server APIs create and manage deployments
         allow read: if canAccessSite(siteId);
-        allow create: if canAccessSite(siteId) &&
-                         hasRequiredFields(['name', 'installer_name', 'targets', 'status', 'createdAt']);
-        allow update: if canAccessSite(siteId);
-        allow delete: if canAccessSite(siteId);
+        allow create, update, delete: if isServiceAccount();
       }
 
       // ----------------------------------------
@@ -259,11 +256,9 @@ service cloud.firestore {
 
       match /installer_templates/{templateId} {
         // Reusable installer templates
-        // Web dashboard manages templates
+        // Server APIs manage templates
         allow read: if canAccessSite(siteId);
-        allow create: if canAccessSite(siteId) &&
-                         hasRequiredFields(['name', 'installer_name', 'createdAt']);
-        allow update, delete: if canAccessSite(siteId);
+        allow create, update, delete: if isServiceAccount();
       }
 
       // ----------------------------------------
@@ -272,11 +267,9 @@ service cloud.firestore {
 
       match /project_templates/{templateId} {
         // Reusable project distribution templates
-        // Web dashboard manages templates
+        // Server APIs manage templates
         allow read: if canAccessSite(siteId);
-        allow create: if canAccessSite(siteId) &&
-                         hasRequiredFields(['name', 'file_name', 'createdAt']);
-        allow update, delete: if canAccessSite(siteId);
+        allow create, update, delete: if isServiceAccount();
       }
 
       // ----------------------------------------
@@ -285,13 +278,10 @@ service cloud.firestore {
 
       match /project_distributions/{distributionId} {
         // Project file distributions (v1, legacy)
-        // Web dashboard creates and manages distributions
+        // Server APIs create and manage distributions
         // Coexists with roosts/ (v2 / roost) during migration
         allow read: if canAccessSite(siteId);
-        allow create: if canAccessSite(siteId) &&
-                         hasRequiredFields(['name', 'file_name', 'targets', 'status', 'createdAt']);
-        allow update: if canAccessSite(siteId);
-        allow delete: if canAccessSite(siteId);
+        allow create, update, delete: if isServiceAccount();
       }
 
       // ----------------------------------------
@@ -389,9 +379,9 @@ service cloud.firestore {
       match /webhooks/{webhookId} {
         // Webhook notification endpoints
         // READ: any user with site access (superadmins fall through via canAccessSite)
-        // WRITE: site admins + superadmins only
+        // WRITE: trusted server APIs only
         allow read: if canAccessSite(siteId);
-        allow write: if isSiteAdmin(siteId);
+        allow write: if isServiceAccount();
       }
 
       // ----------------------------------------
@@ -402,16 +392,27 @@ service cloud.firestore {
         // Event logs (process starts, crashes, kills, commands)
         // Agents write logs when events occur
         // Web dashboard reads logs for monitoring
-        // Users can read logs for their sites, delete old logs
+        // Users can read logs for their sites. Agents and trusted server APIs
+        // write logs; clearing logs is server-mediated.
         allow read: if canAccessSite(siteId) ||
                        isServiceAccount() ||
                        agentCanAccessSite(siteId);
-        allow create: if (canAccessSite(siteId) ||
-                          isServiceAccount() ||
+        allow create: if (isServiceAccount() ||
                           agentCanAccessSite(siteId)) &&
                          hasRequiredFields(['timestamp', 'action', 'level', 'machineId']) &&
                          (!isAgent() || request.resource.data.machineId == request.auth.token.machine_id);
-        allow delete: if canAccessSite(siteId); // Users can delete old logs
+        allow delete: if isServiceAccount();
+      }
+
+      // ----------------------------------------
+      // Audit Log Subcollection
+      // ----------------------------------------
+
+      match /audit_log/{entryId} {
+        // Audit entries are written by server APIs. Site admins can inspect
+        // their site's audit trail; superadmins pass through isSiteAdmin().
+        allow read: if isSiteAdmin(siteId);
+        allow write: if false;
       }
     }
 
@@ -421,40 +422,37 @@ service cloud.firestore {
 
     match /config/{siteId}/machines/{machineId} {
       // Machine configuration (process lists, settings)
-      // Web dashboard writes config updates
+      // Server APIs write config updates
       // Agents read config and write initial config on first startup
       // OAuth agents can ONLY access config for their own machine
       allow read: if canAccessSite(siteId) ||
                      isServiceAccount() ||
                      agentCanAccessMachine(siteId, machineId);
-      allow write: if canAccessSite(siteId) ||
-                      isServiceAccount() ||
+      allow write: if isServiceAccount() ||
                       agentCanAccessMachine(siteId, machineId);
-      allow delete: if canAccessSite(siteId); // Authenticated users can delete machine config
+      allow delete: if isServiceAccount() ||
+                       agentCanAccessMachine(siteId, machineId);
     }
 
     match /config/{siteId}/schedule_presets/{presetId} {
       // Schedule presets for process scheduling
-      // Users with site access can read and manage presets
+      // Users with site access can read presets; server APIs manage them
       allow read: if canAccessSite(siteId);
-      allow write: if canAccessSite(siteId);
-      allow delete: if canAccessSite(siteId);
+      allow write, delete: if isServiceAccount();
     }
 
     match /config/{siteId}/reboot_presets/{presetId} {
       // Reboot schedule presets shared across machines in a site
-      // Users with site access can read and manage presets
+      // Users with site access can read presets; server APIs manage them
       allow read: if canAccessSite(siteId);
-      allow write: if canAccessSite(siteId);
-      allow delete: if canAccessSite(siteId);
+      allow write, delete: if isServiceAccount();
     }
 
     match /config/{siteId}/project_distribution_presets/{presetId} {
       // Project distribution presets shared across a site
-      // Users with site access can read and manage presets
+      // Users with site access can read presets; server APIs manage them
       allow read: if canAccessSite(siteId);
-      allow write: if canAccessSite(siteId);
-      allow delete: if canAccessSite(siteId);
+      allow write, delete: if isServiceAccount();
     }
 
     // ============================================
@@ -464,11 +462,16 @@ service cloud.firestore {
     match /users/{userId} {
       // User profiles with role and site access
       // Users can read their own document
-      // Superadmins can read and write all user documents (platform-level role management)
+      // Superadmins can read all user documents; writes are server-mediated
       allow read: if isAuthenticated() && (request.auth.uid == userId || isSuperadmin());
 
-      // Users can create their own document (on first login)
-      allow create: if request.auth.uid == userId;
+      // Users can create their own document (on first login).
+      // Role is pinned to 'member' on self-create — privilege elevation must go
+      // through a trusted server path (isServiceAccount). Without this guard, a
+      // newly-signed-up user could write `role: 'superadmin'` and own the platform.
+      allow create: if request.auth.uid == userId &&
+                       (!('role' in request.resource.data) ||
+                        request.resource.data.role == 'member');
 
       // Users can update their own sites array (when creating sites)
       // Users can update MFA fields (mfaEnrolled, mfaSecret, backupCodes, requiresMfaSetup)
@@ -478,8 +481,8 @@ service cloud.firestore {
                        request.resource.data.email == resource.data.email &&
                        request.resource.data.sites == resource.data.sites;
 
-      // Only superadmins can delete users or update other users (platform-level role management)
-      allow write: if isSuperadmin();
+      // Trusted server APIs manage user roles, site assignments, and deletion.
+      allow write: if isServiceAccount();
     }
 
     // ============================================
@@ -489,9 +492,9 @@ service cloud.firestore {
     match /installer_metadata/{document=**} {
       // Agent installer versions and metadata
       // PUBLIC READ: Anyone can download installers (unauthenticated allowed)
-      // ADMIN WRITE: Only admins can upload/modify installer versions
+      // ADMIN WRITE: trusted server APIs upload/modify installer versions
       allow read: if true;  // Public read for download button
-      allow write: if isSuperadmin();  // Only superadmins can manage installer versions (platform-level)
+      allow write: if isServiceAccount();
     }
 
     // ============================================
@@ -501,16 +504,14 @@ service cloud.firestore {
     match /system_presets/{presetId} {
       // Global software deployment presets (Owlette Agent, TouchDesigner, etc.)
       // READ: All authenticated users can see presets
-      // WRITE: Only admins can create/update/delete presets
+      // WRITE: trusted server APIs create/update/delete presets
       allow read: if isAuthenticated();
 
-      // Create requires all essential fields — platform-level presets shared across sites
-      allow create: if isSuperadmin() &&
-                       hasRequiredFields(['name', 'software_name', 'category',
-                                         'installer_name', 'silent_flags', 'order', 'createdAt']);
+      // Platform-level presets are managed through server routes.
+      allow create: if isServiceAccount();
 
-      // Update and delete: superadmin only (platform-level)
-      allow update, delete: if isSuperadmin();
+      // Update and delete: trusted server APIs only
+      allow update, delete: if isServiceAccount();
     }
 
     // ============================================
@@ -555,10 +556,10 @@ service cloud.firestore {
 
     match /sites/{siteId}/settings/{settingId} {
       // Site-level settings (e.g., shared LLM API keys)
-      // Only admins can manage site-level settings
+      // Trusted server APIs manage site-level settings
       // Regular users can read (to check if site key exists)
       allow read: if canAccessSite(siteId);
-      allow write: if isSiteAdmin(siteId);
+      allow write: if isServiceAccount();
     }
 
     // ============================================

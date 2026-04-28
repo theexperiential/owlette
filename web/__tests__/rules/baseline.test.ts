@@ -3,18 +3,13 @@
  *
  * Firestore rules baseline test suite.
  *
- * Establishes the GREEN baseline against the current `firestore.rules`
- * before the security-boundary-migration tightens specific paths in
- * waves 6 + 7. Every assertion in this file is currently allowed and
- * MUST stay green so we know the harness + rules are wired up correctly.
- *
- * Denial tests (currently-disallowed operations) live in
- * `denials.test.ts` (wave 6). Tightened-rules tests (operations that
- * become disallowed after the migration) also live in wave 6 / 7.
+ * Establishes the GREEN baseline for paths that remain allowed after
+ * security-boundary-migration wave 7: reads, agent writes, and user-owned
+ * preference writes. Browser control-plane writes live in `denials.test.ts`.
  */
 
 import { assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import {
   initRulesHarness,
   cleanupRulesHarness,
@@ -67,6 +62,14 @@ beforeEach(async () => {
     await setDoc(doc(db, 'installer_metadata', 'latest'), {
       version: '2.11.0',
     });
+    await setDoc(doc(db, 'sites', SITE_A, 'audit_log', 'entry-1'), {
+      correlationId: 'corr-1',
+      actor: { type: 'user', userId: ADMIN_UID, role: 'admin' },
+      capability: 'MACHINE_CONFIG_WRITE',
+      target: { kind: 'machine', id: MACHINE_X },
+      outcome: 'allow',
+      timestamp: Date.now(),
+    });
   });
 });
 
@@ -103,87 +106,18 @@ describe('user reads', () => {
       getDoc(doc(db, 'config', SITE_A, 'machines', MACHINE_X)),
     );
   });
-});
 
-// ------------------------------------------------------------
-// User writes on currently-permissive paths
-// (deployments, machine config, configChangeFlag, presets)
-// ------------------------------------------------------------
-
-describe('user writes (currently permissive)', () => {
-  test('member creates a deployment in their site', async () => {
-    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
-    await assertSucceeds(
-      setDoc(doc(db, 'sites', SITE_A, 'deployments', 'dep-1'), {
-        name: 'Test Deployment',
-        installer_name: 'TouchDesigner.exe',
-        targets: [MACHINE_X],
-        status: 'pending',
-        createdAt: serverTimestamp(),
-      }),
-    );
-  });
-
-  test('member writes machine config (config/{siteId}/machines/{machineId})', async () => {
-    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
-    await assertSucceeds(
-      setDoc(doc(db, 'config', SITE_A, 'machines', MACHINE_X), {
-        processes: [{ name: 'TouchDesigner', path: 'C:\\TD.exe' }],
-      }),
-    );
-  });
-
-  test('member toggles configChangeFlag on a machine', async () => {
-    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
-    await assertSucceeds(
-      updateDoc(doc(db, 'sites', SITE_A, 'machines', MACHINE_X), {
-        configChangeFlag: true,
-      }),
-    );
-  });
-
-  test('member writes a pending command for a machine', async () => {
-    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
-    await assertSucceeds(
-      setDoc(
-        doc(db, 'sites', SITE_A, 'machines', MACHINE_X, 'commands', 'pending'),
-        {
-          'cmd-1': {
-            type: 'restart_process',
-            status: 'pending',
-            createdAt: Date.now(),
-          },
-        },
-      ),
-    );
-  });
-
-  test('member creates a schedule preset in their site', async () => {
-    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
-    await assertSucceeds(
-      setDoc(doc(db, 'config', SITE_A, 'schedule_presets', 'preset-1'), {
-        name: 'Daily 9am',
-        cron: '0 9 * * *',
-      }),
-    );
-  });
-
-  test('site admin writes a webhook on their site', async () => {
+  test('site admin reads audit log in their site', async () => {
     const db = await asUser(ADMIN_UID, 'admin', [SITE_A]);
     await assertSucceeds(
-      setDoc(doc(db, 'sites', SITE_A, 'webhooks', 'wh-1'), {
-        url: 'https://example.com/hook',
-        events: ['process.crashed'],
-      }),
+      getDoc(doc(db, 'sites', SITE_A, 'audit_log', 'entry-1')),
     );
   });
 
-  test('site admin writes site settings on their site', async () => {
-    const db = await asUser(ADMIN_UID, 'admin', [SITE_A]);
+  test('superadmin reads audit log globally', async () => {
+    const db = await asUser(SUPER_UID, 'superadmin', []);
     await assertSucceeds(
-      setDoc(doc(db, 'sites', SITE_A, 'settings', 'llm'), {
-        provider: 'anthropic',
-      }),
+      getDoc(doc(db, 'sites', SITE_A, 'audit_log', 'entry-1')),
     );
   });
 });
@@ -347,28 +281,6 @@ describe('user self-writes', () => {
       setDoc(doc(db, 'users', MEMBER_UID, 'settings', 'llm'), {
         provider: 'anthropic',
       }),
-    );
-  });
-});
-
-// ------------------------------------------------------------
-// Site members can delete things they own (cleanup paths)
-// ------------------------------------------------------------
-
-describe('site member deletes', () => {
-  test('member deletes a deployment in their site', async () => {
-    await seedAsAdmin(async (db) => {
-      await setDoc(doc(db, 'sites', SITE_A, 'deployments', 'dep-old'), {
-        name: 'Old Deployment',
-        installer_name: 'foo.exe',
-        targets: [],
-        status: 'completed',
-        createdAt: Date.now(),
-      });
-    });
-    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
-    await assertSucceeds(
-      deleteDoc(doc(db, 'sites', SITE_A, 'deployments', 'dep-old')),
     );
   });
 });

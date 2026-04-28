@@ -1,13 +1,10 @@
 /**
  * @jest-environment node
  *
- * Firestore rules denial scaffolding for security-boundary-migration wave 6.
+ * Firestore rules denial suite for security-boundary-migration wave 7.
  *
- * Wave 7 flips these to `test()` when rules lock down.
- *
- * Each test describes a browser-client control-plane write that currently
- * succeeds under the permissive rules. The body asserts it should fail; the
- * `test.failing()` wrapper keeps CI green until wave 7 tightens the rules.
+ * Each test describes a browser-client control-plane write that must fail
+ * after the rules lockdown.
  */
 
 import { assertFails } from '@firebase/rules-unit-testing';
@@ -143,7 +140,7 @@ beforeEach(async () => {
 });
 
 describe('site-scoped control-plane writes', () => {
-  test.failing('member cannot create sites directly', async () => {
+  test('member cannot create sites directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -154,7 +151,7 @@ describe('site-scoped control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot update site metadata directly', async () => {
+  test('member cannot update site metadata directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -164,13 +161,13 @@ describe('site-scoped control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot delete a site directly', async () => {
+  test('member cannot delete a site directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(deleteDoc(doc(db, 'sites', SITE_A)));
   });
 
-  test.failing('member cannot create deployments directly', async () => {
+  test('member cannot create deployments directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -184,7 +181,7 @@ describe('site-scoped control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot update deployments directly', async () => {
+  test('member cannot update deployments directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -194,13 +191,13 @@ describe('site-scoped control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot delete deployments directly', async () => {
+  test('member cannot delete deployments directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(deleteDoc(doc(db, 'sites', SITE_A, 'deployments', 'dep-1')));
   });
 
-  test.failing('member cannot create project distributions directly', async () => {
+  test('member cannot create project distributions directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -214,7 +211,7 @@ describe('site-scoped control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot update project distributions directly', async () => {
+  test('member cannot update project distributions directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -224,7 +221,7 @@ describe('site-scoped control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot delete project distributions directly', async () => {
+  test('member cannot delete project distributions directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -232,7 +229,7 @@ describe('site-scoped control-plane writes', () => {
     );
   });
 
-  test.failing('site admin cannot write alert settings directly', async () => {
+  test('site admin cannot write alert settings directly', async () => {
     const db = await asUser(ADMIN_UID, 'admin', [SITE_A]);
 
     await assertFails(
@@ -242,7 +239,7 @@ describe('site-scoped control-plane writes', () => {
     );
   });
 
-  test.failing('site admin cannot create webhooks directly', async () => {
+  test('site admin cannot create webhooks directly', async () => {
     const db = await asUser(ADMIN_UID, 'admin', [SITE_A]);
 
     await assertFails(
@@ -255,7 +252,7 @@ describe('site-scoped control-plane writes', () => {
     );
   });
 
-  test.failing('site admin cannot update webhooks directly', async () => {
+  test('site admin cannot update webhooks directly', async () => {
     const db = await asUser(ADMIN_UID, 'admin', [SITE_A]);
 
     await assertFails(
@@ -265,13 +262,13 @@ describe('site-scoped control-plane writes', () => {
     );
   });
 
-  test.failing('site admin cannot delete webhooks directly', async () => {
+  test('site admin cannot delete webhooks directly', async () => {
     const db = await asUser(ADMIN_UID, 'admin', [SITE_A]);
 
     await assertFails(deleteDoc(doc(db, 'sites', SITE_A, 'webhooks', 'webhook-1')));
   });
 
-  test.failing('member cannot delete logs directly', async () => {
+  test('member cannot delete logs directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(deleteDoc(doc(db, 'sites', SITE_A, 'logs', 'log-1')));
@@ -279,7 +276,7 @@ describe('site-scoped control-plane writes', () => {
 });
 
 describe('machine control-plane writes', () => {
-  test.failing('member cannot write pending commands directly', async () => {
+  test('member cannot write pending commands directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -297,7 +294,7 @@ describe('machine control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot write completed commands directly', async () => {
+  test('member cannot write completed commands directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -315,7 +312,7 @@ describe('machine control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot toggle configChangeFlag directly', async () => {
+  test('member cannot toggle configChangeFlag directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -325,7 +322,7 @@ describe('machine control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot toggle cortexEnabled directly', async () => {
+  test('member cannot toggle cortexEnabled directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -335,13 +332,13 @@ describe('machine control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot delete machines directly', async () => {
+  test('member cannot delete machines directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(deleteDoc(doc(db, 'sites', SITE_A, 'machines', MACHINE_X)));
   });
 
-  test.failing('member cannot write machine config directly', async () => {
+  test('member cannot write machine config directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -362,7 +359,7 @@ describe('machine control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot delete machine config directly', async () => {
+  test('member cannot delete machine config directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(deleteDoc(doc(db, 'config', SITE_A, 'machines', MACHINE_X)));
@@ -370,7 +367,7 @@ describe('machine control-plane writes', () => {
 });
 
 describe('preset and template control-plane writes', () => {
-  test.failing('member cannot create installer templates directly', async () => {
+  test('member cannot create installer templates directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -382,7 +379,7 @@ describe('preset and template control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot update installer templates directly', async () => {
+  test('member cannot update installer templates directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -392,7 +389,7 @@ describe('preset and template control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot delete installer templates directly', async () => {
+  test('member cannot delete installer templates directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -400,7 +397,7 @@ describe('preset and template control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot create project templates directly', async () => {
+  test('member cannot create project templates directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -412,7 +409,7 @@ describe('preset and template control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot update project templates directly', async () => {
+  test('member cannot update project templates directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -422,7 +419,7 @@ describe('preset and template control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot delete project templates directly', async () => {
+  test('member cannot delete project templates directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -430,7 +427,7 @@ describe('preset and template control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot write schedule presets directly', async () => {
+  test('member cannot write schedule presets directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -441,7 +438,7 @@ describe('preset and template control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot write reboot presets directly', async () => {
+  test('member cannot write reboot presets directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -453,7 +450,7 @@ describe('preset and template control-plane writes', () => {
     );
   });
 
-  test.failing('member cannot write distribution presets directly', async () => {
+  test('member cannot write distribution presets directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
 
     await assertFails(
@@ -467,7 +464,7 @@ describe('preset and template control-plane writes', () => {
     );
   });
 
-  test.failing('superadmin cannot create system presets directly', async () => {
+  test('superadmin cannot create system presets directly', async () => {
     const db = await asUser(SUPER_UID, 'superadmin', []);
 
     await assertFails(
@@ -483,7 +480,7 @@ describe('preset and template control-plane writes', () => {
     );
   });
 
-  test.failing('superadmin cannot update system presets directly', async () => {
+  test('superadmin cannot update system presets directly', async () => {
     const db = await asUser(SUPER_UID, 'superadmin', []);
 
     await assertFails(
@@ -493,7 +490,7 @@ describe('preset and template control-plane writes', () => {
     );
   });
 
-  test.failing('superadmin cannot delete system presets directly', async () => {
+  test('superadmin cannot delete system presets directly', async () => {
     const db = await asUser(SUPER_UID, 'superadmin', []);
 
     await assertFails(deleteDoc(doc(db, 'system_presets', 'system-preset-1')));
@@ -501,7 +498,7 @@ describe('preset and template control-plane writes', () => {
 });
 
 describe('platform control-plane writes', () => {
-  test.failing('superadmin cannot change user roles directly', async () => {
+  test('superadmin cannot change user roles directly', async () => {
     const db = await asUser(SUPER_UID, 'superadmin', []);
 
     await assertFails(
@@ -511,7 +508,7 @@ describe('platform control-plane writes', () => {
     );
   });
 
-  test.failing('superadmin cannot assign sites on user docs directly', async () => {
+  test('superadmin cannot assign sites on user docs directly', async () => {
     const db = await asUser(SUPER_UID, 'superadmin', []);
 
     await assertFails(
@@ -521,13 +518,13 @@ describe('platform control-plane writes', () => {
     );
   });
 
-  test.failing('superadmin cannot delete users directly', async () => {
+  test('superadmin cannot delete users directly', async () => {
     const db = await asUser(SUPER_UID, 'superadmin', []);
 
     await assertFails(deleteDoc(doc(db, 'users', TARGET_UID)));
   });
 
-  test.failing('superadmin cannot write installer metadata directly', async () => {
+  test('superadmin cannot write installer metadata directly', async () => {
     const db = await asUser(SUPER_UID, 'superadmin', []);
 
     await assertFails(
