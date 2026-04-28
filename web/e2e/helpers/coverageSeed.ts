@@ -283,9 +283,22 @@ export async function clearSystemPreset(presetId = 'e2e-system-preset'): Promise
 export async function seedInstallerLatest(
   downloadUrl = 'https://example.test/downloads/owlette-e2e.exe',
 ): Promise<void> {
-  await getAdminDb().collection('installer_metadata').doc('latest').set({
-    version: 'e2e-latest',
+  const db = getAdminDb();
+  const version = 'e2e-latest';
+  const uploadedAt = Date.now();
+  const data = {
+    version,
     download_url: downloadUrl,
+    file_size: 1_024,
+    checksum_sha256: 'e2e'.repeat(22),
+    uploaded_at: uploadedAt,
+    uploaded_by: 'e2e-public-static',
+    release_date: Timestamp.fromMillis(uploadedAt),
+    deletedAt: null,
+  };
+  await db.collection('installer_metadata').doc('data').collection('versions').doc(version).set(data);
+  await db.collection('installer_metadata').doc('latest').set({
+    ...data,
     updatedAt: FieldValue.serverTimestamp(),
   });
 }

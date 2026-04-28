@@ -22,6 +22,9 @@ const REPORT_DIR = process.env.E2E_REPORT_DIR || './e2e/.output/report';
 
 export default defineConfig({
   testDir: './e2e/specs',
+  // Live-dev security boundary probes have their own opt-in config and need
+  // real dev Firebase credentials. Keep the regular E2E suite emulator-only.
+  testIgnore: ['**/security-boundary/**'],
   // Cluster ephemeral output under e2e/.output/ instead of Playwright's
   // default web/test-results + web/playwright-report paths, which polluted
   // the top of web/ with two separate build-output dirs. Both are

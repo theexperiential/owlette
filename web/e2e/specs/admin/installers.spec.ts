@@ -65,8 +65,10 @@ function makeVersionData(spec: SeededInstaller) {
     download_url: `https://storage.emulator/installers/${spec.version}/Owlette.exe`,
     file_size: spec.file_size,
     release_date: Timestamp.fromDate(d),
+    uploaded_at: d.getTime(),
     checksum_sha256: 'deadbeef'.repeat(8),
     uploaded_by: 'super@e2e.test',
+    deletedAt: null,
     ...(spec.release_notes ? { release_notes: spec.release_notes } : {}),
   };
 }
