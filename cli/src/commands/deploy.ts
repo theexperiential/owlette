@@ -18,7 +18,7 @@
  * network blip replays the cached server response instead of double-
  * issuing commands. `--idempotency-key` lets the caller pin one.
  *
- * api-sprint wave 5 — track 5.1 batch B (cli http handlers).
+ * Public API Wave 2.6 CLI route handlers.
  */
 
 import { Command } from 'commander';

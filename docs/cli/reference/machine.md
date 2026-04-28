@@ -5,7 +5,7 @@ hide:
 
 # machine
 
-manage windows machines from the cli — list + inspect health and per-roost deployment state, and queue remote-control commands (reboot, shutdown, screenshot). every verb is **site-scoped** and requires `--site <siteId>`. six verbs are **tier A — ready** and hit a public api today; one verb (`live-view`) is a **tier C stub** reserving the namespace until streaming ships.
+manage windows machines from the cli — list + inspect health and per-roost deployment state, and queue remote-control commands (reboot, shutdown, screenshot). every verb is **site-scoped** and requires `--site <siteId>`. six verbs are **tier A — ready** and hit a public api today; one verb (`live-view`) is a **tier C stub** reserving the namespace until the WebRTC-native stream is prioritized.
 
 cross-reference: `owlette machine deployments` shows the per-roost intended-vs-reported state from the **machine's** perspective. `owlette roost get` shows the same data from the **roost's** perspective — same source-of-truth, different lens.
 
@@ -134,7 +134,7 @@ owlette machine screenshot m_abc123 --site site-1 --monitor 0 --json
 
 ## live-view
 
-> 🚧 **stub — reframed as `dev/active/live-view-webrtc/`**. exits 3 with a json envelope pointing at the dashboard. the namespace is reserved here so scripts can detect "not yet" with a stable exit code (3, not 1).
+> 🚧 **stub — deferred as `live-view-webrtc` outside the public API MVP**. exits 3 with a json envelope pointing at the dashboard. the namespace is reserved here so scripts can detect "not yet" with a stable exit code (3, not 1).
 
 streaming desktop feed. when shipped, this will open a live thumbnail / video stream from the agent. today, run it in the dashboard instead.
 
@@ -147,13 +147,13 @@ streaming desktop feed. when shipped, this will open a live thumbnail / video st
 ```bash
 owlette machine live-view m_abc123 --site site-1
 # → exit 3, json envelope:
-#   { "ok": false, "stub": true, "noun": "machine.live-view",
+#   { "ok": false, "stub": true, "noun": "machine",
 #     "reason": "live-view streaming is being reframed as a webrtc-native feature; resume when prioritized",
 #     "dashboard_url": "https://owlette.app/dashboard",
-#     "future_plan": "dev/active/live-view-webrtc/" }
+#     "future_plan": "public-api deferred: live-view-webrtc" }
 ```
 
-**backing endpoint**: none yet. future plan: `dev/active/live-view-webrtc/` (deferred — resume when prioritized).
+**backing endpoint**: none yet. future plan: `public-api deferred: live-view-webrtc` (deferred — resume when prioritized).
 
 ---
 

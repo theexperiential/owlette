@@ -7,8 +7,8 @@
  * Output contract:
  *   - `--json` mode: a single canonical envelope on stdout
  *       { ok: false, stub: true, noun, reason, dashboard_url, future_plan }
- *     (snake_case keys match the documented json envelope schema —
- *     see dev/active/owlette-cli/reference/command-surface.md)
+ *     (snake_case keys match the documented json envelope schema in
+ *     docs/cli/overview.md#json-envelope-schema)
  *   - human mode: a multi-line block on stderr explaining the stub,
  *     pointing at the dashboard, and naming the future plan doc.
  *

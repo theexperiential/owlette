@@ -194,7 +194,7 @@ stable problem+json codes surfaced with hints: `over_quota`, `scope_insufficient
 ## notes
 
 - **scope**: site-scoped. `list` / `get` need `site=<id>:read`; `create` / `retry` / `cancel` / `delete` need `site=<id>:write`. `uninstall` needs `site=<id>:admin`.
-- **tier**: A — every verb hits a real public api (api-sprint W1A → W5.1 batch B; delete finalized in public-api Wave 2.6).
+- **tier**: A — every verb hits a real public api (finalized in public-api Wave 2.6).
 - **idempotency**: every mutation auto-generates an `Idempotency-Key`. pin one with `--idempotency-key <key>` so a tool replaying the same request hits the cached response instead of issuing a second deployment.
 - **related**: [`owlette roost deploy`](roost.md) for the content-addressed atomic-deploy surface; [`owlette installer`](installer.md) for managing the installer binaries this command consumes.
 - see [overview](../overview.md) for global flags (`--profile`, `--json`, `--api-url`) and config precedence.

@@ -12,7 +12,7 @@
  * SAME key is used on both the POST (request signed url) and the PUT
  * (finalize) so API-call retries replay while the signed URL is still valid.
  *
- * api-sprint wave 5 — track 5.1 batch B (cli http handlers).
+ * Public API Wave 2.7 CLI route handlers.
  */
 
 import { Command } from 'commander';

@@ -7,7 +7,7 @@
  * three in sequence). Asserts urls + methods + headers + body shape +
  * response parsing.
  *
- * api-sprint wave 5 — track 5.1 batch B.
+ * Public API installer CLI route handlers.
  */
 
 import { Command } from 'commander';

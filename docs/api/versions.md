@@ -331,7 +331,7 @@ response (`201 Created`):
 
 the `versionId` is the digest the server computed from your body — you should compare it against the digest you computed locally before sending. if they differ, something mutated the body in transit (encoding, reserialisation) and the publish should be considered unsafe.
 
-`Idempotency-Key` is recommended on every publish. a retry with the same key and identical body replays the cached response for up to 24 hours. the same key with a different body returns `idempotency_key_mismatch` — see [design-principles.md principle 4](../../dev/active/roost-public-api/reference/design-principles.md).
+`Idempotency-Key` is recommended on every publish. a retry with the same key and identical body replays the cached response for up to 24 hours. the same key with a different body returns `idempotency_key_mismatch`; see [errors.md](./errors.md#idempotency_key_mismatch) for remediation.
 
 ---
 
@@ -372,7 +372,7 @@ the recovery loop is always the same:
 3. decide: rebase (recompute your version against the new parent) or abort (some other deploy intentionally ran — you may not want to overwrite it).
 4. retry with the updated `expectedCurrentVersionId`.
 
-the same `If-Match` discipline applies to rollback and to `POST /api/roosts/{roostId}/deploy`. see [design-principles.md principle 5](../../dev/active/roost-public-api/reference/design-principles.md) for the full rationale.
+the same `If-Match` discipline applies to rollback and to `POST /api/roosts/{roostId}/deploy`.
 
 ---
 
@@ -459,7 +459,7 @@ what you should **not** rely on:
 
 - versions are not content-signed in v1. integrity rests on tls, firebase auth, and signed r2 urls. v3 will add tuf-style signing.
 - the roost itself can be soft-deleted (`DELETE /api/roosts/{roostId}`), which starts a 30-day tombstone clock on its versions and chunks. purge is irreversible after that window.
-- there is no way to force-delete a specific version or chunk. if you need the bytes gone — e.g. dmca takedown — the path is roost deletion plus site-admin action, not a version-scoped delete. see [design-principles.md principle 15](../../dev/active/roost-public-api/reference/design-principles.md).
+- there is no way to force-delete a specific version or chunk. if you need the bytes gone — e.g. dmca takedown — the path is roost deletion plus site-admin action, not a version-scoped delete.
 
 ---
 
@@ -491,7 +491,7 @@ returns versions in reverse chronological order (newest first) with denormalised
 }
 ```
 
-cursor-paginated per [design-principles.md principle 9](../../dev/active/roost-public-api/reference/design-principles.md). `page_size` max 100, default 25. `next_page_token` is an opaque server-signed blob — do not parse it. an empty string means no more pages.
+cursor-paginated with `page_size` max 100, default 25. `next_page_token` is an opaque server-signed blob — do not parse it. an empty string means no more pages.
 
 ### fetch one version
 
@@ -542,7 +542,7 @@ a file is "modified" when the same `path` maps to a different chunk hash set bet
 
 ## 12. error codes
 
-all version errors use rfc 7807 `application/problem+json` with stable `code` identifiers. see [design-principles.md principle 8](../../dev/active/roost-public-api/reference/design-principles.md) for the envelope shape, and [errors.md](./errors.md) for the global error catalog.
+all version errors use rfc 7807 `application/problem+json` with stable `code` identifiers. see [errors.md](./errors.md) for the envelope shape and global error catalog.
 
 | code | http | meaning | typical cause |
 |---|---|---|---|
@@ -555,7 +555,7 @@ all version errors use rfc 7807 `application/problem+json` with stable `code` id
 | `idempotency_key_mismatch` | 409 | the same `Idempotency-Key` was reused with a different request body hash. | regenerate the uuid when you change the payload. |
 | `quota_exceeded` | 402 | publishing this version would push the site over its storage limit. | the `missing` chunks you were about to upload would exceed your plan cap. check `GET /api/sites/{siteId}/quota`. |
 
-every response — success or error — carries `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` headers ([principle 10](../../dev/active/roost-public-api/reference/design-principles.md)). on 429 use `Retry-After`, not arbitrary backoff.
+every response — success or error — carries `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` headers. on 429 use `Retry-After`, not arbitrary backoff.
 
 ---
 

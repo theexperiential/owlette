@@ -31,7 +31,13 @@ const CANNED_PAYLOADS: Record<string, Record<string, unknown>> = {
     siteId: null, // filled in per-run
     totalSize: 123456,
     totalFiles: 3,
-    createdBy: 'roost-cli-trigger',
+    createdBy: 'owlette-trigger',
+  },
+  'deployment.started': {
+    roostId: 'rst_synthetic_01',
+    rolloutId: 'vrs_synthetic_01',
+    siteId: null,
+    stage: 'started',
   },
   'deployment.completed': {
     roostId: 'rst_synthetic_01',
@@ -55,7 +61,7 @@ const CANNED_PAYLOADS: Record<string, Record<string, unknown>> = {
     siteId: null,
     fromVersion: 'vrs_synthetic_02',
     toVersion: 'vrs_synthetic_01',
-    triggeredBy: 'roost-cli-trigger',
+    triggeredBy: 'owlette-trigger',
   },
   'chunk.garbage_collected': {
     hash: 'a'.repeat(64),
@@ -74,6 +80,28 @@ const CANNED_PAYLOADS: Record<string, Record<string, unknown>> = {
     usedBytes: 80 * 1024 * 1024 * 1024,
     limitBytes: 100 * 1024 * 1024 * 1024,
     threshold: 0.8,
+  },
+  'quota.exceeded': {
+    siteId: null,
+    tier: 'pro',
+    usedBytes: 100 * 1024 * 1024 * 1024,
+    limitBytes: 100 * 1024 * 1024 * 1024,
+    blockedAt: null,
+  },
+  'api_key.used': {
+    siteId: null,
+    keyId: 'key_synthetic_01',
+    keyPrefix: 'owk_live_abc',
+    ip: '203.0.113.42',
+    userAgent: 'owlette-trigger',
+    firstUseFromIp: true,
+  },
+  'api_key.expired': {
+    siteId: null,
+    keyId: 'key_synthetic_01',
+    keyPrefix: 'owk_live_abc',
+    name: 'synthetic-trigger-key',
+    expiresAt: null,
   },
   'machine.online': {
     siteId: null,
@@ -167,6 +195,12 @@ export function registerTriggerCommand(program: Command): void {
         if (payload.lastHeartbeat === null) {
           payload.lastHeartbeat = new Date().toISOString();
         }
+      }
+      if (event === 'quota.exceeded' && payload.blockedAt === null) {
+        payload.blockedAt = new Date().toISOString();
+      }
+      if (event === 'api_key.expired' && payload.expiresAt === null) {
+        payload.expiresAt = new Date().toISOString();
       }
 
       const deliveryId = String(opts.id ?? randomUUID());

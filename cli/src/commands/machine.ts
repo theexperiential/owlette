@@ -19,8 +19,7 @@
  * `--output <path>` (default: `screenshot-<machineId>-<timestamp>.png`).
  *
  * `live-view` remains the only c-tier `stubExit()` shim. Reframed as a
- * WebRTC-native feature in `dev/active/live-view-webrtc/`; resume when
- * prioritized.
+ * WebRTC-native feature and deferred outside the public API MVP.
  */
 
 import { Command } from 'commander';
@@ -383,7 +382,7 @@ export function registerMachineCommands(program: Command): void {
 
       if (!final) {
         return fatal(
-          `screenshot timed out after ${SCREENSHOT_POLL_MAX_ATTEMPTS * SCREENSHOT_POLL_INTERVAL_MS / 1000}s — the command is still pending. inspect with \`owlette machine screenshot status\` or check the dashboard`,
+          `screenshot timed out after ${SCREENSHOT_POLL_MAX_ATTEMPTS * SCREENSHOT_POLL_INTERVAL_MS / 1000}s — the command is still pending. check the dashboard or retry the screenshot command later`,
         );
       }
 
@@ -436,7 +435,7 @@ export function registerMachineCommands(program: Command): void {
         reason:
           'live-view streaming is being reframed as a webrtc-native feature; resume when prioritized',
         dashboardUrl: `${apiUrl}/dashboard`,
-        futurePlan: 'dev/active/live-view-webrtc/',
+        futurePlan: 'public-api deferred: live-view-webrtc',
         cmd,
       });
     });

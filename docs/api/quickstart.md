@@ -331,7 +331,7 @@ export VERSION_NUMBER=$(echo "$VERSION_RESP" | jq -r '.versionNumber')
 
 the `Idempotency-Key` makes it safe to rerun this exact call — same key + same body replays the cached response for 24 hours. same key + different body returns `409 idempotency_key_mismatch`.
 
-fan-out to every machine in `roost.targets` starts automatically. if you need targeted rollout (canary, subset of targets, scheduled time), call `POST /api/roosts/{id}/deploy` instead — see [api-surface.md §5](../../dev/active/roost-public-api/reference/api-surface.md#5-deployments-targeted-rollout).
+fan-out to every machine in `roost.targets` starts automatically. if you need targeted rollout (canary, subset of targets, or dry-run), call `POST /api/roosts/{id}/deploy` instead; the authoritative route contract is `web/openapi.yaml`.
 
 the api returns a `rolloutId` via the implicit deployment triggered by the publish — fetch it with:
 
@@ -429,7 +429,7 @@ common errors you'll hit during the walkthrough, with resolution.
   ```json
   { "code": "scope_insufficient", "detail": "key lacks roost:roost_lobby_td:write", "requiredScope": "roost:roost_lobby_td:write" }
   ```
-- **fix** — mint a new key with the scope from `requiredScope`, or patch an existing one via `POST /api/keys/{id}/rotate` after narrowing its scopes. see the scope matrix in each `§` of [api-surface.md](../../dev/active/roost-public-api/reference/api-surface.md).
+- **fix** — mint a new key with the scope from `requiredScope`, or patch an existing one via `POST /api/keys/{id}/rotate` after narrowing its scopes. see the auth and scope notes in `web/openapi.yaml`.
 
 ### `412 precondition_failed` (publish or rollback)
 
@@ -481,7 +481,7 @@ common errors you'll hit during the walkthrough, with resolution.
 
 - **automate the flow** - adapt the curl steps above into your CI runner with a scoped API key and per-publish `Idempotency-Key`.
 - **diff two versions** — before rolling out a big change, call `GET /api/roosts/{id}/versions/{versionRef}/diff?against=<prior>` to see exactly which files change.
-- **subscribe to events** - `POST /api/webhooks?siteId=<id>` delivers `version.published`, `deployment.failed`, `quota.warning`. see [webhooks.md](./webhooks.md).
+- **subscribe to events** - `POST /api/webhooks?siteId=<id>` manages subscriptions; use `POST /api/webhooks/probe?siteId=<id>` while production dispatch is deferred. see [webhooks.md](./webhooks.md).
 - **ask Cortex** — `POST /api/cortex/conversations` starts a site or machine conversation; see [cortex.md](./cortex.md) for streaming message examples and scope notes.
 - **targeted rollouts** - `POST /api/roosts/{id}/deploy` supports canary strategy, scheduled rollouts, and dry-run.
 - **audit compliance** — `GET /api/sites/{id}/audit-log` gives you a tamper-evident chain of every sensitive action.

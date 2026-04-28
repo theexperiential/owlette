@@ -93,7 +93,7 @@ backing endpoint: `PATCH /api/cortex/conversations/{conversationId}` with body `
 ## notes
 
 - **scope**: site-scoped on every verb; `new` accepts an optional `--machine` for single-machine cortex sessions.
-- **tier**: ready (api-sprint wave 3A).
+- **tier**: ready (public-api Wave 2.9).
 - **streaming**: only `send` streams. `new`/`list`/`delete`/`rename` are simple json round-trips.
 - **idempotency**: every mutation auto-generates a unique key; pass `--idempotency-key` to deduplicate across script-level retries.
 - **soft-delete**: `delete` is reversible for 30 days via the dashboard. there is no hard-delete verb on the cli.

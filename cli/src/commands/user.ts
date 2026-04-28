@@ -1,7 +1,7 @@
 /**
  * `owlette user list | get | promote | demote | assign-sites | remove-sites | delete`.
  *
- * Drives the platform-user routes shipped in api-sprint wave 3B:
+ * Drives the public platform-user routes:
  *
  *   GET    /api/users
  *   GET    /api/users/{uid}

@@ -66,5 +66,4 @@ users on multiple package managers.
 
 The deprecation wrappers (`bin/roost`, `ROOST_*` env reading,
 `~/.config/roost/` migration) are scheduled for removal on **2026-10-01**.
-Track progress + final removal at
-`dev/active/owlette-cli/` and the cleanup-PR routine.
+Track progress through the public API CLI readiness docs and the cleanup-PR routine.

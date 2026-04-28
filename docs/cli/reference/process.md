@@ -192,7 +192,7 @@ stable problem+json codes surfaced with hints: `duplicate_process_name`, `proces
 ## notes
 
 - **scope**: machine-scoped. mutations require an api key with `machine=<id>:write` (or `site=<id>:write`).
-- **tier**: A — every verb hits a real public api (api-sprint W2B).
+- **tier**: A — every verb hits a real public api (public-api Wave 2.4).
 - **idempotency**: every mutation auto-generates an `Idempotency-Key`. control verbs (`kill` / `start` / `stop`) send an empty body so the server can hash + cache the request.
 - **race-safe creates**: the server uses `withProcessLock` (firestore transaction) so two concurrent `create` calls with the same `--name` resolve cleanly — one wins, the other gets `409 duplicate_process_name`.
 - **related**: [`owlette machine`](machine.md) for machine-level inspection (`get` shows the live process list inline) and reboot / shutdown.

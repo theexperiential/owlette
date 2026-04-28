@@ -253,7 +253,7 @@ one subsection per code, alphabetical. every code emitted by the api is listed h
 - **http status**: 501 Not Implemented
 - **meaning**: the endpoint exists in the public api surface document but the current release does not implement it yet. used for scaffolded routes during rollout waves.
 - **triggers**: calling a `proposed` endpoint before its implementation wave has shipped.
-- **remediate**: consult [api-surface.md](../../dev/active/roost-public-api/reference/api-surface.md) for the `status` column — `live` endpoints are safe to use, `proposed` ones return 501 until implemented. track the rollout schedule in the changelog.
+- **remediate**: consult `web/openapi.yaml` and the changelog. endpoints missing from OpenAPI are not part of the current public contract.
 
 ```json
 {
@@ -373,7 +373,7 @@ Roost-Rate-Limited-Reason: per_key
 - **http status**: 403 Forbidden
 - **meaning**: the credential is valid but does not carry a scope granting the requested action on the requested resource.
 - **triggers**: calling a `write`/`deploy`/`rollback`/`admin` endpoint with a read-only key; acting on a resource the key is not scoped to (e.g. a site-scoped key touching a sibling site); attempting to broaden a key's scopes via `PATCH /api/keys/{keyId}` (scopes can only be narrowed).
-- **remediate**: check the required scope on the endpoint's row in [api-surface.md](../../dev/active/roost-public-api/reference/api-surface.md). mint a key with the needed scope (`POST /api/keys`) — never broaden an existing one. call `GET /api/whoami` to see what the current key carries.
+- **remediate**: check the required scope in `web/openapi.yaml`. mint a key with the needed scope (`POST /api/keys`) — never broaden an existing one. call `GET /api/whoami` to see what the current key carries.
 
 ```json
 {

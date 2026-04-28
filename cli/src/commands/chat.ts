@@ -1,7 +1,7 @@
 /**
  * `owlette chat new | list | send | delete | rename`.
  *
- * Drives the cortex chat-noun routes shipped in api-sprint wave 3A:
+ * Drives the canonical public Cortex conversation routes:
  *
  *   POST   /api/cortex/conversations                      — start a conversation
  *   GET    /api/cortex/conversations?siteId=&page_size=... — list conversations

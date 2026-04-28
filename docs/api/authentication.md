@@ -342,4 +342,4 @@ creating many new keys in one migration burst is fine — the per-user active-ke
 - `docs/api/errors.md` — full error envelope + code reference.
 - `docs/api/rate-limits.md` — `RateLimit-*` headers + per-tier limits.
 - `docs/api/webhooks.md` — `Roost-Signature` verification for webhook receivers.
-- `dev/active/roost-public-api/reference/design-principles.md` — principle 7 (scoped prefixed tokens) and the full principle catalog.
+- [`docs/api/overview.md`](overview.md) and `web/openapi.yaml` — public API conventions, auth schemes, and route-level scope notes.

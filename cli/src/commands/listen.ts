@@ -47,7 +47,7 @@ export function registerListenCommand(program: Command): void {
 
   program
     .command('listen')
-    .description('tunnel webhook events from the owlette api to a local url')
+    .description('forward the scoped SSE liveness stream from the owlette api to a local url')
     .requiredOption('--site <siteId>', 'site id to read the event stream for')
     .requiredOption('--forward-to <url>', 'local http endpoint that receives each event')
     .option(

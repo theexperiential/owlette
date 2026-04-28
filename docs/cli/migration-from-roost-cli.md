@@ -145,7 +145,7 @@ owlette is more than roost — the dashboard manages machines, processes, classi
 
 ## removal date
 
-The deprecation wrappers (`bin/roost`, `ROOST_*` env reading, `~/.config/roost/` migration) are scheduled for removal on **2026-10-01**. Track progress + the final removal pr at `dev/active/owlette-cli/`.
+The deprecation wrappers (`bin/roost`, `ROOST_*` env reading, `~/.config/roost/` migration) are scheduled for removal on **2026-10-01**. Track progress through the public API CLI readiness docs and the final cleanup PR.
 
 A scheduled cleanup agent will open the removal pr ~2 weeks before the cutoff so the deletion lands with a clear changelog entry, not as a surprise.
 

@@ -8,7 +8,7 @@
  * body shape + response parsing. `--json` mode emits raw server response
  * verbatim.
  *
- * api-sprint wave 5 — track 5.1 batch B.
+ * Public API classic deployment CLI route handlers.
  */
 
 import { Command } from 'commander';

@@ -1,9 +1,9 @@
 /**
  * Stub-command coverage tests.
  *
- * After api-sprint W5.1 batch C, the only remaining wave-deferred stub
- * the CLI ships is `machine live-view` — that surface is wave-4 of the
- * api-sprint and intentionally NOT promoted in this batch.
+ * The only remaining public-api deferred stub the CLI ships is
+ * `machine live-view`. That surface is intentionally outside the MVP
+ * until the WebRTC-native implementation is prioritized.
  *
  * For that verb we assert the same three properties every other promoted
  * verb used to satisfy:
@@ -12,7 +12,7 @@
  *      + the verb name in the header line
  *   3. `--json` mode emits the canonical envelope on stdout:
  *        { ok: false, stub: true, noun, reason, dashboard_url, future_plan }
- *      (snake_case keys per command-surface.md)
+ *      (snake_case keys per docs/cli/overview.md#json-envelope-schema)
  *
  * Earlier batches' verbs (chat / user / deploy / installer / process /
  * the other 3 machine mutations) are now real http handlers — their

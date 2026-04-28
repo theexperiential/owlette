@@ -16,7 +16,7 @@ verbs:
 - [`roost versions`](#roost-versions) — list all versions published on a roost
 - [`roost deploy`](#roost-deploy) — trigger a targeted fan-out (canary then fleet)
 
-> **disambiguation**: `owlette roost deploy` is the **content-addressed** fan-out documented here. `owlette deploy` is the **classic agent-installer** stub group (silent exe / msi pushes) — see [deploy.md](deploy.md). same word, different surfaces.
+> **disambiguation**: `owlette roost deploy` is the **content-addressed** fan-out documented here. `owlette deploy` is the **classic agent-installer** deploy group (silent exe / msi pushes) — see [deploy.md](deploy.md). same word, different surfaces.
 
 ---
 
@@ -245,7 +245,7 @@ backing: `POST /api/roosts/{roostId}/deploy` with body `{ siteId, versionId?, ma
 
 - **scope**: every verb is site-scoped; `--site <siteId>` is required on all six
 - **tier**: `[ready]` — every endpoint is fully public
-- **rollback**: `owlette rollback <roostId> --site <siteId>` is a top-level shortcut that diffs the current version against the rollback target, prompts for confirmation, then flips the head pointer. see [rollback.md](rollback.md)
+- **rollback**: `owlette rollback <roostId> --site <siteId>` is a top-level helper that diffs the current version against the rollback target, prompts for confirmation, then flips the head pointer. see [rollback.md](rollback.md)
 - **chunk size**: 4 MiB content-addressed via sha-256; dedupe is global per site
 - **legacy `roost` binary**: the standalone `roost` exe forwards to `owlette` until 2026-10-01 — switch your scripts to `owlette` now
 - **related**: [overview](../overview.md) (config precedence, json envelope, exit codes), [site](site.md) (resolve site ids), [quota](quota.md) (storage usage)

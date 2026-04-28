@@ -5,7 +5,7 @@ hide:
 
 # webhook
 
-> **CLI noun group planned for Wave 3.** The public webhook API routes are live for developer preview. Full `owlette webhook ...` management commands remain planned; today the shipped top-level helpers are `owlette listen` and `owlette trigger <event>`.
+> **CLI noun group planned for Wave 3.** The public webhook API routes are live for developer preview. Full `owlette webhook ...` management commands remain planned; today the shipped top-level helpers are `owlette listen` and `owlette trigger <event>`. See the [readiness matrix](../readiness.md#webhook-noun) for the route mapping.
 
 `owlette webhook` will be a top-level operator noun for cross-product event subscriptions. Site-scoped commands require `--site` or a site-scoped API key.
 

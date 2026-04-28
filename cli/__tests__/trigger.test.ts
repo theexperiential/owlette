@@ -3,19 +3,24 @@ import { _internals } from '../src/commands/trigger';
 const { CANNED_PAYLOADS, KNOWN_EVENTS } = _internals;
 
 describe('trigger canned payloads', () => {
-  it('covers the documented event taxonomy from docs/api/webhooks.md', () => {
+  it('covers the canonical webhook event taxonomy', () => {
     const expected = [
       'version.published',
+      'version.rolled_back',
+      'deployment.started',
       'deployment.completed',
       'deployment.failed',
-      'version.rolled_back',
+      'machine.online',
+      'machine.offline',
       'chunk.garbage_collected',
       'chunk.verify_failed',
       'quota.warning',
-      'machine.online',
-      'machine.offline',
+      'quota.exceeded',
+      'api_key.used',
+      'api_key.expired',
     ];
     for (const e of expected) expect(KNOWN_EVENTS).toContain(e);
+    expect(KNOWN_EVENTS).toHaveLength(expected.length);
   });
 
   it('leaves siteId as null in the template so the trigger fills it at runtime', () => {
@@ -53,5 +58,10 @@ describe('trigger canned payloads', () => {
     expect(typeof p.usedBytes).toBe('number');
     expect(typeof p.limitBytes).toBe('number');
     expect(typeof p.threshold).toBe('number');
+  });
+
+  it('api key events carry key metadata', () => {
+    expect(CANNED_PAYLOADS['api_key.used']?.keyId).toBeDefined();
+    expect(CANNED_PAYLOADS['api_key.expired']?.expiresAt).toBeNull();
   });
 });

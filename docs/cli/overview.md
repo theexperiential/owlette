@@ -7,7 +7,7 @@ hide:
 
 `owlette` is the command-line client for the [owlette.app](https://owlette.app) api. It runs on macOS, linux, and windows and lets you authenticate, push roosts, manage sites and machines, mint api keys, and inspect audit logs from your terminal or ci pipeline.
 
-This page is the 15-minute onboarding: install → log in → push your first roost. For per-noun reference (every flag, every example), jump to [docs/cli/reference/](reference/).
+This page is the 15-minute onboarding: install → log in → push your first roost. For per-noun reference (every flag, every example), jump to [docs/cli/reference/](reference/). For route/stub/deferred status across the whole CLI, see the [readiness matrix](readiness.md).
 
 ---
 
@@ -93,7 +93,7 @@ owlette roost deploy rst_my_project_id --site site-1
 # real deploy — auto idempotency-keyed so a network blip can be retried safely
 ```
 
-That's the loop. `owlette roost diff <roostId> --against <versionRef>` shows what changed between any two versions; `owlette roost rollback <roostId>` reverts to the previous version.
+That's the loop. `owlette roost diff <roostId> --against <versionRef>` shows what changed between any two versions; top-level `owlette rollback <roostId>` reverts to the previous version.
 
 ---
 
@@ -167,12 +167,12 @@ Every command lives under one of these top-level groups. **`[ready]`** verbs hit
 |---|---|---|---|
 | [`roost`](reference/roost.md) | ready | `push` `list` `get` `diff` `versions` `deploy` | content-addressed project distribution |
 | [`machine`](reference/machine.md) | ready | `list` `get` `deployments` `reboot` `shutdown` `screenshot` | manage windows machines |
-| [`machine live-view`](reference/machine.md) | stub | — | streaming desktop feed (dev/active/live-view-webrtc/) |
+| [`machine live-view`](reference/machine.md) | stub | — | streaming desktop feed; deferred as `live-view-webrtc` outside the MVP |
 | [`audit-log`](reference/audit-log.md) | ready | `list` `get` | site audit log + hash-chain verification |
 | [`quota`](reference/quota.md) | ready | `show` `history` | site storage + bandwidth usage |
 | [`chat`](reference/chat.md) | ready | `new` `list` `send` `delete` `rename` | cortex ai chat |
-| [`webhook`](reference/webhook.md) | planned | (12 verbs — coming in roost-public-api W5/W7) | event subscriptions + deliveries |
-| [`deploy`](reference/deploy.md) | ready | `create` `list` `get` `retry` `cancel` `uninstall` | classic agent-installer deploys (NOT `roost deploy`) |
+| [`webhook`](reference/webhook.md) | planned | `create` `list` `get` `update` `delete` `rotate-secret` `deliveries` `delivery get` `retry` `probe` | public routes exist; CLI noun group remains deferred |
+| [`deploy`](reference/deploy.md) | ready | `create` `list` `get` `retry` `cancel` `uninstall` `delete` | classic agent-installer deploys (NOT `roost deploy`) |
 | [`process`](reference/process.md) | ready | `list` `get` `create` `update` `delete` `kill` `start` `stop` `schedule` | process lifecycle on machines |
 
 ### user nouns
@@ -187,17 +187,17 @@ Every command lives under one of these top-level groups. **`[ready]`** verbs hit
 | noun | tier | verbs | what it does |
 |---|---|---|---|
 | [`user`](reference/user.md) | ready | `list` `get` `promote` `demote` `assign-sites` `remove-sites` `delete` | platform user management |
-| [`installer`](reference/installer.md) | ready | `list` `upload` `set-latest` `delete` | agent installer binary management |
+| [`installer`](reference/installer.md) | ready | `list` `latest` `upload` `set-latest` `delete` | agent installer binary management |
 
 ### legacy top-level verbs (kept for muscle memory)
 
 | command | description |
 |---|---|
-| `owlette rollback <roostId>` | shortcut for `owlette roost rollback <roostId>` |
-| `owlette listen` | tunnel webhook events from the api to a local url |
+| `owlette rollback <roostId>` | top-level rollback helper for roost versions |
+| `owlette listen` | open the scoped SSE liveness stream and forward received events to a local url |
 | `owlette trigger <event>` | fire a synthetic webhook for local testing |
 
-> **disambiguation**: `owlette deploy …` is the **classic installer** stub group (silent exe pushes). `owlette roost deploy <roostId>` is the **content-addressed** deploy that ships per-version diffs to a fleet. Same word, different surfaces — the help text disambiguates.
+> **disambiguation**: `owlette deploy …` is the **classic installer** deploy group (silent exe pushes). `owlette roost deploy <roostId>` is the **content-addressed** deploy that ships per-version diffs to a fleet. Same word, different surfaces — the help text disambiguates.
 
 ---
 
@@ -236,7 +236,7 @@ stable `code` values match the api's problem+json codes (`scope_insufficient`, `
 
 **stub (exit 3 only)**
 ```json
-{ "ok": false, "stub": true, "noun": "machine", "reason": "live-view streaming is being reframed as a webrtc-native feature; resume when prioritized", "dashboard_url": "https://owlette.app/dashboard", "future_plan": "dev/active/live-view-webrtc/" }
+{ "ok": false, "stub": true, "noun": "machine", "reason": "live-view streaming is being reframed as a webrtc-native feature; resume when prioritized", "dashboard_url": "https://owlette.app/dashboard", "future_plan": "public-api deferred: live-view-webrtc" }
 ```
 
 ---

@@ -253,7 +253,7 @@ use this to build usage charts or to predict when you will cross an alarm thresh
 
 ## 8. quota alarms
 
-subscribe to webhook events for proactive alerting — polling `GET /api/sites/{id}/quota` on a timer works, but webhooks fire the moment a threshold trips.
+subscribe to webhook events for proactive alerting once production event dispatch is enabled. Until then, polling `GET /api/sites/{id}/quota` on a timer is the live MVP path and `POST /api/webhooks/probe` can validate receiver/signature handling.
 
 | event | fires at | payload highlights |
 |---|---|---|
@@ -271,7 +271,7 @@ create a subscription via `POST /api/webhooks`:
 }
 ```
 
-events are delivered with the standard `Roost-Signature` hmac header; see `docs/api/webhooks.md` for verification. each threshold fires **once per period** — you will not be paged hourly for staying at 81% all month.
+events use the standard `Roost-Signature` hmac header when dispatched; see `docs/api/webhooks.md` for verification. each threshold fires **once per period** once dispatch is enabled — you will not be paged hourly for staying at 81% all month.
 
 ---
 
@@ -312,4 +312,4 @@ downgrades take effect at the **end of the current billing period** to avoid mid
 - `docs/api/errors.md` — all error codes including `rate_limited` and `quota_exceeded`
 - `docs/api/webhooks.md` — subscribing to `quota.*` events and signature verification
 - `docs/api/idempotency.md` — `Idempotency-Key` is required for safe retries after 429
-- `dev/active/roost-public-api/reference/design-principles.md` — principle 10 (rate-limit headers) and tier rationale
+- `web/openapi.yaml` — route-level public contract and response headers

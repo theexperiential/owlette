@@ -7,8 +7,8 @@ chunks are the atomic unit of storage in roost. every file in a version is a lis
 
 related:
 - [`/docs/internal/version-format.md`](../internal/version-format.md) — version schema (chunks embed into `files[].chunks[]`).
-- [`dev/active/roost-public-api/reference/api-surface.md`](../../dev/active/roost-public-api/reference/api-surface.md) — full endpoint reference.
-- [`dev/active/roost-public-api/reference/design-principles.md`](../../dev/active/roost-public-api/reference/design-principles.md) — principles 1 (content-addressed), 2 (cross-resource mount), 3 (signed puts, not tus).
+- `web/openapi.yaml` — authoritative route reference.
+- [`docs/api/quickstart.md`](quickstart.md) — end-to-end publish workflow using the chunk routes.
 
 ---
 

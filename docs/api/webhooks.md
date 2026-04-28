@@ -1,12 +1,14 @@
 # roost api — webhooks
 
-webhooks are how roost tells your systems that something happened — a new version published, a deploy failed, a machine dropped offline, a quota alarm tripped. instead of polling the api on a timer, you subscribe a url once and roost posts a signed json event to it every time a matching event occurs.
+webhooks are how roost tells your systems that something happened — a new version published, a deploy failed, a machine dropped offline, a quota alarm tripped. instead of polling the api on a timer, you subscribe a url once and roost posts a signed json event to it when a matching event is dispatched.
+
+**developer preview status**: subscription management, delivery history, manual retry, and `POST /api/webhooks/probe` are public. automatic production event dispatch and SSE event fanout are still deferred; `owlette listen` is a scoped liveness stream for now. Receiver signature verification and probe flows are stable.
 
 ---
 
 ## what webhooks are
 
-a webhook is an http `POST` that roost sends to a url you control whenever a subscribed event fires in your site. the request body is a json envelope describing the event; the headers carry a signature you verify before trusting the payload. your endpoint returns any `2xx` status to acknowledge receipt — anything else (or a timeout) counts as a failed delivery and is retried.
+a webhook is an http `POST` that roost sends to a url you control whenever a subscribed event is dispatched for your site. the request body is a json envelope describing the event; the headers carry a signature you verify before trusting the payload. your endpoint returns any `2xx` status to acknowledge receipt — anything else (or a timeout) counts as a failed delivery and is retried once production dispatch is enabled, or when a manual/probe delivery is fired.
 
 the model is stripe/github shaped: one subscription per url, each scoped to a site and to an explicit list of event types. secrets are per-subscription, shown once at creation, and rotatable with a grace window.
 
@@ -28,6 +30,8 @@ every delivery envelope has the shape:
 `id` is a ulid unique to the event (use it with `Roost-Delivery` for dedup). `event` is the stable event-type string. `occurredAt` is rfc 3339 utc. `data` is event-specific and documented below.
 
 ### roost lifecycle
+
+These lifecycle events are planned and are not accepted by the current developer-preview subscription validator yet. The current accepted catalog begins at [versions](#versions).
 
 - **`roost.created`** — a new roost was created via `POST /api/roosts`.
   ```json
@@ -466,6 +470,8 @@ every webhook `POST` includes:
 ---
 
 ## delivery guarantees
+
+The guarantees below describe production event dispatch. In the current developer preview, they apply to manual retry/probe records and to stored delivery-history semantics; automatic event dispatch is deferred.
 
 - **at-least-once.** a delivery may arrive more than once if your receiver times out after processing but before returning `2xx`. dedup on `Roost-Delivery`.
 - **retries.** any non-2xx response (or transport error) triggers exponential backoff: 10s, 30s, 2m, 10m, 1h, 6h, 24h. each attempt gets a fresh `Roost-Signature` timestamp but the same `Roost-Delivery` id.

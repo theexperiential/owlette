@@ -5,7 +5,7 @@ hide:
 
 # user
 
-`owlette user` manages platform users — promoting, demoting, granting site access, and soft-deleting accounts. **superadmin token required** on every verb. tier: **ready** — all seven verbs are wired to `/api/users/*` shipped in api-sprint wave 3B.
+`owlette user` manages platform users — promoting, demoting, granting site access, and soft-deleting accounts. **superadmin token required** on every verb. tier: **ready** — all seven verbs are wired to `/api/users/*` and covered by the public API contract.
 
 mutations carry an auto-generated `Idempotency-Key` so a retry returns the cached response rather than re-running the cascade. two server-side conflict codes get special handling because they're the common operator-error path: `last_superadmin` on `demote` and `orphan_sites` on `delete`.
 
@@ -120,8 +120,8 @@ backing endpoint: `DELETE /api/users/{uid}?successorUid=`. on `409 orphan_sites`
 ## notes
 
 - **scope**: platform-wide. session callers are double-checked against `users/{uid}.role === 'superadmin'` server-side; api keys must carry the matching scope.
-- **tier**: ready (api-sprint wave 3B).
+- **tier**: ready (public-api Wave 2.2).
 - **idempotency**: every mutation auto-generates a unique key. set `--idempotency-key` to dedupe at the script level.
 - **floor enforcement**: `demote` cannot drop the platform below the minimum active-superadmin count (default 1). promote a successor first.
 - **cascade on delete**: soft-delete revokes all the target's api keys, cancels their pending commands, and (with `--successor`) transfers owned sites in a single transaction.
-- **see also**: [user-management api docs](../../api/users.md); the dashboard surface lives at owlette.app/admin/users.
+- **see also**: the user-management routes in `web/openapi.yaml`; the dashboard surface lives at owlette.app/admin/users.
