@@ -15,14 +15,21 @@ npm install @owlette/sdk
 ```ts
 import { Roost } from '@owlette/sdk';
 
+const token = process.env.OWLETTE_TOKEN ?? process.env.ROOST_TOKEN;
 const roost = new Roost({
-  token: process.env.ROOST_TOKEN!,
+  token: token!,
   apiUrl: 'https://owlette.app',
 });
 
+// verify auth and inspect the target site
+const identity = await roost.account.whoami();
+const site = await roost.sites.get(identity.primarySiteId ?? 'site-1');
+console.log('authenticated as', identity.email ?? identity.userId);
+console.log('site', site.id, site.name);
+
 // publish a directory as a new version
 const result = await roost.roosts.push('./dist', 'rst_abc', {
-  siteId: 'site-1',
+  siteId: site.id,
   description: 'fixed broken video',
   onProgress: (evt) => console.log(evt),
 });
@@ -52,22 +59,31 @@ or api keys.
 
 | resource        | methods                                                            |
 |-----------------|--------------------------------------------------------------------|
+| `roost.account` | `whoami`, `version`, `apiKeys.list`, `apiKeys.create`, `apiKeys.revoke` |
 | `roost.roosts`  | `list`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy` |
 | `roost.chunks`  | `check`, `uploadUrls`, `downloadUrls`, `mount`, `referrers`        |
-| `roost.versions` | `list`, `get`, `files`, `diff`                                    |
+| `roost.versions` | `list`, `get`, `patch`, `files`, `diff`                           |
 | `roost.deployments` | `list`, `get`                                                  |
-| `roost.keys`    | `create`, `list`, `rotate`, `revoke`                               |
-| `roost.webhooks` | `subscribe`, `list`, `get`, `update`, `remove`, `rotateSecret`, `probe` |
+| `roost.keys`    | legacy session/ID-token key admin: `create`, `list`, `rotate`, `revoke` |
+| `roost.webhooks` | `subscribe`, `list`, `get`, `update`, `remove`, `rotateSecret`, `probe`, `deliveries`, `delivery`, `retryDelivery` |
 | `roost.sites`   | `list`, `get`                                                      |
-| `roost.machines` | `list`, `get`, `deployments`                                      |
+| `roost.machines` | `list`, `get`, `deployments`, `dispatchCommand`, `getCommand`, `captureScreenshot` |
+| `roost.installerDeployments` | `list`, `get`, `create`, `retry`, `cancel`, `uninstall`, `delete` |
+| `roost.installer` | `list`, `latest`, `upload`, `setLatest`, `delete`                |
+| `roost.processes(siteId, machineId)` | `list`, `create`, `update`, `start`, `stop`, `restart`, `schedule`, `remove` |
+| `roost.chat`    | `new`, `list`, `send`, `rename`, `delete`                          |
+| `roost.users`   | `list`, `promote`, `demote`, `assignSites`, `removeSites`, `delete` |
+| `roost.members(siteId)` | `list`, `add`, `remove`                                    |
 | `roost.quotas`  | `current`, `history`                                               |
+
+For a complete token-to-publish script, see
+[`examples/run-roost-workflow.ts`](./examples/run-roost-workflow.ts).
 
 ## push progress
 
-`roost.roosts.push()` exposes progress two ways:
+`roost.roosts.push()` reports live progress through `onProgress`:
 
 ```ts
-// Callback
 await roost.roosts.push('./dist', 'rst_abc', {
   siteId: 'site-1',
   onProgress: (evt) => {
@@ -75,10 +91,6 @@ await roost.roosts.push('./dist', 'rst_abc', {
     if (evt.phase === 'upload') console.log(`${evt.uploaded}/${evt.total}`);
   },
 });
-
-// EventEmitter on the resolved result
-const result = await roost.roosts.push('./dist', 'rst_abc', { siteId: 'site-1' });
-result.events.on('progress', (evt) => console.log(evt));
 ```
 
 ## webhook signature verification

@@ -1,4 +1,5 @@
 import type { RoostClient } from '../lib/client';
+import type { VersionSummary } from './roosts';
 
 export interface VersionDetail {
   versionId: string;
@@ -53,20 +54,60 @@ export interface VersionDiff {
   }>;
 }
 
+export interface ListVersionsOptions {
+  siteId: string;
+  /** Deprecated alias for pageSize; use pageSize for new code. */
+  limit?: number;
+  /** Deprecated alias for pageToken; use pageToken for new code. */
+  cursor?: string;
+  pageSize?: number;
+  pageToken?: string;
+}
+
+export interface ListVersionsResult {
+  versions: Array<Record<string, unknown>>;
+  nextPageToken: string;
+  /** Deprecated alias retained for older callers. */
+  nextCursor: string | null;
+}
+
+interface ListVersionsResponse {
+  versions: Array<Record<string, unknown>>;
+  nextPageToken?: string;
+  next_page_token?: string;
+  nextCursor?: string | null;
+}
+
+export interface PatchVersionOptions {
+  siteId: string;
+  description: string | null;
+  idempotencyKey?: string;
+}
+
 export class Versions {
   constructor(private readonly client: RoostClient) {}
 
   async list(
     roostId: string,
-    opts: { siteId: string; limit?: number; cursor?: string },
-  ): Promise<{ versions: Array<Record<string, unknown>>; nextCursor: string | null }> {
-    const res = await this.client.request<{
-      versions: Array<Record<string, unknown>>;
-      nextCursor: string | null;
-    }>(`/api/roosts/${encodeURIComponent(roostId)}/versions`, {
-      query: { siteId: opts.siteId, limit: opts.limit, cursor: opts.cursor },
-    });
-    return res.data;
+    opts: ListVersionsOptions,
+  ): Promise<ListVersionsResult> {
+    const res = await this.client.request<ListVersionsResponse>(
+      `/api/roosts/${encodeURIComponent(roostId)}/versions`,
+      {
+        query: {
+          siteId: opts.siteId,
+          page_size: opts.pageSize ?? opts.limit,
+          page_token: opts.pageToken ?? opts.cursor,
+        },
+      },
+    );
+    const nextPageToken =
+      res.data.nextPageToken ?? res.data.next_page_token ?? res.data.nextCursor ?? '';
+    return {
+      versions: res.data.versions,
+      nextPageToken,
+      nextCursor: res.data.nextCursor ?? (nextPageToken || null),
+    };
   }
 
   async get(
@@ -84,13 +125,37 @@ export class Versions {
   async files(
     roostId: string,
     versionRef: string | number,
-    opts: { siteId: string; limit?: number; cursor?: string },
+    opts: ListVersionsOptions,
   ): Promise<VersionFilesPage> {
     const res = await this.client.request<VersionFilesPage>(
       `/api/roosts/${encodeURIComponent(roostId)}/versions/${encodeURIComponent(String(versionRef))}/files`,
       {
-        query: { siteId: opts.siteId, limit: opts.limit, cursor: opts.cursor },
+        query: {
+          siteId: opts.siteId,
+          page_size: opts.pageSize ?? opts.limit,
+          page_token: opts.pageToken ?? opts.cursor,
+        },
       },
+    );
+    return res.data;
+  }
+
+  async patch(
+    roostId: string,
+    versionRef: string | number,
+    opts: PatchVersionOptions,
+  ): Promise<VersionSummary> {
+    const requestOpts: Parameters<RoostClient['request']>[1] = {
+      method: 'PATCH',
+      body: {
+        siteId: opts.siteId,
+        description: opts.description,
+      },
+    };
+    if (opts.idempotencyKey) requestOpts.idempotencyKey = opts.idempotencyKey;
+    const res = await this.client.request<VersionSummary>(
+      `/api/roosts/${encodeURIComponent(roostId)}/versions/${encodeURIComponent(String(versionRef))}`,
+      requestOpts,
     );
     return res.data;
   }

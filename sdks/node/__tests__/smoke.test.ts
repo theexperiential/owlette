@@ -8,6 +8,9 @@
  *   ROOST_SDK_SMOKE_API_URL    e.g. https://dev.owlette.app
  *   ROOST_SDK_SMOKE_TOKEN      valid owk_test_* / owk_live_* key
  *   ROOST_SDK_SMOKE_SITE       site id with read access
+ *   ROOST_SDK_SMOKE_ROOST      optional roost id for publish smoke
+ *   ROOST_SDK_SMOKE_PUSH_DIR   optional directory for publish smoke
+ *   ROOST_SDK_SMOKE_RUN_PUSH   set to 1 to run the mutating publish smoke
  */
 
 import { Roost } from '../src/index';
@@ -16,8 +19,13 @@ const SMOKE_ENABLED = process.env.ROOST_SDK_SMOKE === '1';
 const SMOKE_API_URL = process.env.ROOST_SDK_SMOKE_API_URL;
 const SMOKE_TOKEN = process.env.ROOST_SDK_SMOKE_TOKEN;
 const SMOKE_SITE = process.env.ROOST_SDK_SMOKE_SITE;
+const SMOKE_ROOST = process.env.ROOST_SDK_SMOKE_ROOST;
+const SMOKE_PUSH_DIR = process.env.ROOST_SDK_SMOKE_PUSH_DIR;
+const SMOKE_RUN_PUSH = process.env.ROOST_SDK_SMOKE_RUN_PUSH === '1';
 
 const maybeDescribe = SMOKE_ENABLED ? describe : describe.skip;
+const maybePublishIt =
+  SMOKE_ENABLED && SMOKE_RUN_PUSH && SMOKE_ROOST && SMOKE_PUSH_DIR ? it : it.skip;
 
 maybeDescribe('sdk smoke (ROOST_SDK_SMOKE=1)', () => {
   beforeAll(() => {
@@ -35,11 +43,38 @@ maybeDescribe('sdk smoke (ROOST_SDK_SMOKE=1)', () => {
     expect(sites.length).toBeGreaterThan(0);
   });
 
+  it('account.whoami and version resolve auth context', async () => {
+    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const [identity, version] = await Promise.all([
+      roost.account.whoami(),
+      roost.account.version(),
+    ]);
+    expect(identity.userId).toEqual(expect.any(String));
+    expect(typeof version.current).toBe('string');
+    expect(Array.isArray(version.supported)).toBe(true);
+  });
+
+  it('sites.get inspects the configured site', async () => {
+    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const site = await roost.sites.get(SMOKE_SITE!);
+    expect(site.id).toBe(SMOKE_SITE);
+  });
+
   it('roosts.list paginates the configured site', async () => {
     const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
     const result = await roost.roosts.list({ siteId: SMOKE_SITE!, pageSize: 5 });
     expect(Array.isArray(result.roosts)).toBe(true);
     expect(typeof result.nextPageToken).toBe('string');
+  });
+
+  maybePublishIt('roosts.push can publish a configured directory', async () => {
+    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const result = await roost.roosts.push(SMOKE_PUSH_DIR!, SMOKE_ROOST!, {
+      siteId: SMOKE_SITE!,
+      description: 'node sdk smoke publish',
+    });
+    expect(typeof result.versionId).toBe('string');
+    expect(result.versionNumber).toBeGreaterThan(0);
   });
 
   it('installerDeployments.list returns an items array', async () => {

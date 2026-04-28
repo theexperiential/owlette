@@ -55,12 +55,103 @@ describe('roost.sites', () => {
   });
 });
 
+describe('roost.account', () => {
+  it('whoami -> GET /api/whoami', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          userId: 'u-1',
+          email: 'dev@example.com',
+          role: 'admin',
+          key: {
+            keyId: 'key-1',
+            name: 'ci',
+            keyPrefix: 'owk_live_abc',
+            scopes: [{ resource: 'site', id: 'site-1', permissions: ['read'] }],
+            environment: 'live',
+            expiresAt: 1,
+            lastUsedAt: null,
+            isLegacy: false,
+          },
+          rateLimit: { tier: 'api', limitPerMinute: 600 },
+          quota: { siteId: 'site-1', tier: 'pro', usedBytes: 10, limitBytes: 100 },
+          primarySiteId: 'site-1',
+        },
+      },
+    ]);
+    const result = await roost.account.whoami();
+    expect(calls[0]!.url).toBe('https://dev.test/api/whoami');
+    expect(result.primarySiteId).toBe('site-1');
+    expect(result.key?.scopes?.[0]?.resource).toBe('site');
+  });
+
+  it('version -> GET /api/version', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { current: '2026-04-22', supported: ['2026-04-22'] } },
+    ]);
+    const result = await roost.account.version();
+    expect(calls[0]!.url).toBe('https://dev.test/api/version');
+    expect(result.current).toBe('2026-04-22');
+  });
+
+  it('apiKeys use account API-key-compatible routes', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          success: true,
+          keys: [
+            {
+              id: 'key-1',
+              name: 'ci',
+              keyPrefix: 'owk_live_abc',
+              environment: 'live',
+              scopes: [],
+              expiresAt: 1,
+              createdAt: 0,
+              lastUsedAt: null,
+            },
+          ],
+        },
+      },
+      {
+        status: 200,
+        body: {
+          success: true,
+          key: 'owk_live_secret',
+          keyId: 'key-2',
+          name: 'preview',
+          environment: 'live',
+          scopes: [],
+          expiresAt: 2,
+          keyPrefix: 'owk_live_def',
+        },
+      },
+      { status: 200, body: { success: true } },
+    ]);
+
+    const listed = await roost.account.apiKeys.list();
+    const created = await roost.account.apiKeys.create({ name: 'preview' });
+    await roost.account.apiKeys.revoke('key-2');
+
+    expect(listed[0]!.id).toBe('key-1');
+    expect(created.keyId).toBe('key-2');
+    expect(calls[0]!.url).toBe('https://dev.test/api/account/api-keys');
+    expect(calls[1]!.url).toBe('https://dev.test/api/account/api-keys');
+    expect(calls[1]!.init.method).toBe('POST');
+    expect(JSON.parse(String(calls[1]!.init.body))).toEqual({ name: 'preview' });
+    expect(calls[2]!.url).toBe('https://dev.test/api/account/api-keys/key-2');
+    expect(calls[2]!.init.method).toBe('DELETE');
+  });
+});
+
 describe('roost.roosts', () => {
   it('list → GET /api/roosts?siteId=…', async () => {
     const { roost, calls } = makeRoost([{ status: 200, body: { roosts: [], nextPageToken: '' } }]);
     await roost.roosts.list({ siteId: 'site-1', pageSize: 10 });
     expect(calls[0]!.url).toContain('/api/roosts?siteId=site-1');
-    expect(calls[0]!.url).toContain('limit=10');
+    expect(calls[0]!.url).toContain('page_size=10');
   });
 
   it('get → GET /api/roosts/{id}?siteId=…', async () => {
@@ -148,10 +239,18 @@ describe('roost.roosts', () => {
 describe('roost.versions', () => {
   it('list → GET /api/roosts/{id}/versions', async () => {
     const { roost, calls } = makeRoost([
-      { status: 200, body: { versions: [], nextCursor: null } },
+      { status: 200, body: { versions: [], nextPageToken: 'v2' } },
     ]);
-    await roost.versions.list('rst_abc', { siteId: 's1' });
-    expect(calls[0]!.url).toBe('https://dev.test/api/roosts/rst_abc/versions?siteId=s1');
+    const result = await roost.versions.list('rst_abc', {
+      siteId: 's1',
+      pageSize: 10,
+      pageToken: 'v1',
+    });
+    expect(calls[0]!.url).toBe(
+      'https://dev.test/api/roosts/rst_abc/versions?siteId=s1&page_size=10&page_token=v1',
+    );
+    expect(result.nextPageToken).toBe('v2');
+    expect(result.nextCursor).toBe('v2');
   });
 
   it('get → GET /api/roosts/{id}/versions/{ref}', async () => {
@@ -211,6 +310,55 @@ describe('roost.versions', () => {
       'https://dev.test/api/roosts/rst_abc/versions/v3/diff?siteId=s1&against=current',
     );
   });
+
+  it('patch -> PATCH /api/roosts/{id}/versions/{ref}', async () => {
+    const { roost, calls } = makeRoost([
+      {
+        status: 200,
+        body: {
+          versionId: 'vrs_abc',
+          versionNumber: 3,
+          description: 'updated',
+          versionUrl: null,
+          createdAt: null,
+          createdBy: null,
+          totalSize: 0,
+          totalFiles: 0,
+          parentVersionId: null,
+        },
+      },
+    ]);
+    await roost.versions.patch('rst_abc', 'current', {
+      siteId: 's1',
+      description: 'updated',
+      idempotencyKey: 'version-patch',
+    });
+    expect(calls[0]!.url).toBe('https://dev.test/api/roosts/rst_abc/versions/current');
+    expect(calls[0]!.init.method).toBe('PATCH');
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toBe('version-patch');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      siteId: 's1',
+      description: 'updated',
+    });
+  });
+});
+
+describe('roost.deployments', () => {
+  it('list -> GET /api/roosts/{id}/deployments with canonical pagination', async () => {
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { rollouts: [], nextPageToken: 'r2' } },
+    ]);
+    const result = await roost.deployments.list('rst_abc', {
+      siteId: 's1',
+      pageSize: 5,
+      pageToken: 'r1',
+    });
+    expect(calls[0]!.url).toBe(
+      'https://dev.test/api/roosts/rst_abc/deployments?siteId=s1&page_size=5&page_token=r1',
+    );
+    expect(result.nextPageToken).toBe('r2');
+  });
 });
 
 describe('roost.chunks', () => {
@@ -231,6 +379,17 @@ describe('roost.chunks', () => {
     expect(calls[0]!.url).toContain('siteId=site-1');
     expect(calls[0]!.url).toContain('from=rst_from0001abc');
     expect(calls[0]!.url).toContain('to=rst_to00001234');
+  });
+
+  it('referrers -> GET with canonical pagination query', async () => {
+    const digest = 'd'.repeat(64);
+    const { roost, calls } = makeRoost([
+      { status: 200, body: { digest, siteId: 'site-1', referrers: [], nextPageToken: '' } },
+    ]);
+    await roost.chunks.referrers(digest, 'site-1', { limit: 10, cursor: 'r1' });
+    expect(calls[0]!.url).toBe(
+      `https://dev.test/api/chunks/${digest}/referrers?siteId=site-1&page_size=10&page_token=r1`,
+    );
   });
 });
 
@@ -253,12 +412,12 @@ describe('roost.keys', () => {
     ]);
     await roost.keys.create({
       name: 'ci',
-      scopes: [{ resource: 'roost', id: '*', permissions: ['write'] }],
+      scopes: [{ resource: 'chat', id: 'site-1', permissions: ['read'] }],
       ttlDays: 30,
       environment: 'live',
     });
     const body = JSON.parse(String(calls[0]!.init.body));
-    expect(body.scopes[0].resource).toBe('roost');
+    expect(body.scopes[0].resource).toBe('chat');
     expect(body.ttlDays).toBe(30);
   });
 

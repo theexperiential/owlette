@@ -1,6 +1,6 @@
 # sdk — node / typescript
 
-**Last updated**: 2026-04-24
+**Last updated**: 2026-04-28
 **Package**: [`@owlette/sdk`](https://www.npmjs.com/package/@owlette/sdk) · node ≥ 20 · zero runtime deps
 
 the official typescript sdk for the [roost api](./overview.md). wraps the rest surface with a typed resource tree, auto-retry, automatic `Idempotency-Key`, chunk-aware `push()`, stripe-style webhook verification, version-ref resolution, and progress events. if you can use `fetch` directly you can use this — it just adds the tedious bits.
@@ -25,8 +25,10 @@ the package ships `.js` + `.d.ts` for both esm and cjs. no native modules; no wa
 import { Roost } from '@owlette/sdk';
 
 const roost = new Roost({ token: process.env.ROOST_TOKEN! });
+const identity = await roost.account.whoami();
+const siteId = identity.primarySiteId ?? 'kiosk-fleet-01';
 const result = await roost.roosts.push('./dist', 'rst_abc', {
-  siteId: 'kiosk-fleet-01',
+  siteId,
   description: 'initial publish',  // optional ≤500 chars, surfaced in the version-history ui
 });
 console.log('published', `v${result.versionNumber}`, result.versionId, '—', result.stats.uploadedChunks, 'chunks uploaded');
@@ -38,13 +40,13 @@ that's the whole flow: walk `./dist`, sha-256 chunk it, dedup-check against r2, 
 
 ## authentication
 
-every request needs an `owk_live_*` or `owk_test_*` key. mint one from the dashboard (`settings → api keys → new key`) or via [`POST /api/keys`](./authentication.md#creating-a-key). the sdk reads the token from the constructor — it never touches the filesystem.
+every request needs an `owk_live_*` or `owk_test_*` key. mint one from the dashboard (`settings → api keys → new key`) or via the account key route. the sdk reads the token from the constructor — it never touches the filesystem.
 
 ```ts
 const roost = new Roost({
   token: process.env.ROOST_TOKEN!,     // required — owk_live_* or owk_test_*
   apiUrl: 'https://owlette.app',       // default
-  environment: 'live',                 // optional — 'live' | 'test' (defaults from token prefix)
+  environment: 'live',                 // optional — 'live' | 'test' metadata
   roostVersion: '2026-04-22',          // default — sent as Roost-Version header
   retry: { maxAttempts: 5 },           // optional — overrides default policy
   fetch: customFetch,                  // optional — drop-in proxy / mtls / tracing wrapper
@@ -63,18 +65,40 @@ every top-level noun is a resource class hung off the client.
 
 | resource             | methods                                                                                         |
 |----------------------|-------------------------------------------------------------------------------------------------|
+| `roost.account`      | `whoami`, `version`, `apiKeys.list`, `apiKeys.create`, `apiKeys.revoke`                         |
 | `roost.roosts`       | `list`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy`                        |
 | `roost.chunks`       | `check`, `uploadUrls`, `downloadUrls`, `mount`, `referrers`                                     |
 | `roost.versions`     | `list`, `get`, `patch`, `files`, `diff`                                                         |
 | `roost.deployments`  | `list`, `get`                                                                                   |
-| `roost.keys`         | `create`, `list`, `rotate`, `revoke`                                                            |
+| `roost.keys`         | legacy session/ID-token key admin: `create`, `list`, `rotate`, `revoke`                         |
 | `roost.webhooks`     | `subscribe`, `list`, `get`, `update`, `remove`, `rotateSecret`, `probe`                         |
 | `roost.sites`        | `list`, `get`                                                                                   |
-| `roost.machines`     | `list`, `get`, `deployments`                                                                    |
+| `roost.machines`     | `list`, `get`, `deployments`, `dispatchCommand`, `getCommand`, `captureScreenshot`              |
+| `roost.installerDeployments` | `list`, `get`, `create`, `retry`, `cancel`, `uninstall`, `delete`                       |
+| `roost.installer`    | `list`, `latest`, `upload`, `setLatest`, `delete`                                               |
+| `roost.processes(siteId, machineId)` | `list`, `create`, `update`, `start`, `stop`, `restart`, `schedule`, `remove`  |
 | `roost.chat`         | `new`, `list`, `send`, `rename`, `delete`                                                       |
+| `roost.users`        | `list`, `promote`, `demote`, `assignSites`, `removeSites`, `delete`                             |
+| `roost.members(siteId)` | `list`, `add`, `remove`                                                                      |
 | `roost.quotas`       | `current`, `history`                                                                            |
 | `roost.events`       | `verifySignature`, `isSignatureValid`, `signBody`                                               |
 | `roost.http`         | raw low-level client — escape hatch when you need headers/bodies the wrapper doesn't expose     |
+
+### account
+
+```ts
+const identity = await roost.account.whoami();
+console.log(identity.email ?? identity.userId, identity.key?.keyPrefix);
+
+const version = await roost.account.version();
+console.log(version.current, version.supported);
+
+// API-key-compatible key management. New keys inherit the caller's allowed
+// scopes, so an API-key caller cannot widen its own privileges.
+const created = await roost.account.apiKeys.create({ name: 'preview publisher' });
+const keys = await roost.account.apiKeys.list();
+await roost.account.apiKeys.revoke(created.keyId);
+```
 
 ### roosts
 
@@ -180,7 +204,7 @@ const refs = await roost.chunks.referrers('sha256:ab12...', 'site-1');
 
 ```ts
 // list versions for a roost (paged — cursor-based, newest first)
-const page = await roost.versions.list('rst_abc', { siteId: 'site-1', limit: 20 });
+const page = await roost.versions.list('rst_abc', { siteId: 'site-1', pageSize: 20 });
 for (const v of page.versions) console.log(`v${v.versionNumber}`, v.versionId, v.description, v.createdAt);
 
 // fetch one — `versionRef` accepts the same forms as rollback's targetVersion:
@@ -196,7 +220,7 @@ await roost.versions.patch('rst_abc', v.versionId, {
 // file listing (paths + per-file digests, paged)
 const files = await roost.versions.files('rst_abc', 3, {
   siteId: 'site-1',
-  limit: 500,
+  pageSize: 500,
 });
 
 // diff two versions — `against` is the baseline; both sides accept any versionRef form
@@ -209,7 +233,8 @@ const diff = await roost.versions.diff('rst_abc', 'current', {
 ### keys
 
 ```ts
-// create a scoped key (response contains `key` once — store it now)
+// legacy scoped key creation requires a session or Firebase ID token.
+// API-key callers should prefer roost.account.apiKeys.
 const created = await roost.keys.create({
   name: 'ci publisher',
   scopes: [
@@ -220,7 +245,7 @@ const created = await roost.keys.create({
 });
 console.log(created.key);              // owk_live_...  <-- shown exactly once
 
-// list, rotate (24h grace), revoke
+// list, rotate (24h grace), revoke on the legacy key-admin route
 const all = await roost.keys.list();
 await roost.keys.rotate(created.keyId, 90);
 await roost.keys.revoke(created.keyId);
@@ -297,17 +322,6 @@ await roost.roosts.push('./dist', 'rst_abc', {
 });
 ```
 
-### event emitter
-
-for long-running pushes behind a ui you want to wire listeners to:
-
-```ts
-const result = await roost.roosts.push('./dist', 'rst_abc', { siteId: 'site-1' });
-result.events.on('progress', (evt) => {
-  // same shape as the callback above — fired after push completes
-});
-```
-
 ### push options reference
 
 ```ts
@@ -322,7 +336,7 @@ interface PushOptions {
 }
 ```
 
-**retry on concurrent publish.** if another writer publishes between your `push()` starting and the version post, the sdk re-reads the current version, re-diffs, and retries before surfacing `RoostApiError`. your chunk uploads never re-run — they're already addressed by hash.
+**retry on concurrent publish.** if another writer publishes between your `push()` starting and the version post, the sdk retries the final publish with the server-reported current version before surfacing `RoostApiError`. your chunk uploads never re-run — they're already addressed by hash.
 
 ---
 

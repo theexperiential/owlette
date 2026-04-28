@@ -1,17 +1,31 @@
 import type { RoostClient } from '../lib/client';
 
+export interface ListDeploymentsOptions {
+  siteId: string;
+  /** Deprecated alias for pageSize; use pageSize for new code. */
+  limit?: number;
+  /** Deprecated alias for pageToken; use pageToken for new code. */
+  cursor?: string;
+  pageSize?: number;
+  pageToken?: string;
+}
+
 export class Deployments {
   constructor(private readonly client: RoostClient) {}
 
   async list(
     roostId: string,
-    opts: { siteId: string; limit?: number; cursor?: string },
+    opts: ListDeploymentsOptions,
   ): Promise<{ rollouts: Array<Record<string, unknown>>; nextPageToken: string }> {
     const res = await this.client.request<{
       rollouts: Array<Record<string, unknown>>;
       nextPageToken: string;
     }>(`/api/roosts/${encodeURIComponent(roostId)}/deployments`, {
-      query: { siteId: opts.siteId, limit: opts.limit, cursor: opts.cursor },
+      query: {
+        siteId: opts.siteId,
+        page_size: opts.pageSize ?? opts.limit,
+        page_token: opts.pageToken ?? opts.cursor,
+      },
     });
     return res.data;
   }

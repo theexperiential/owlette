@@ -1,6 +1,6 @@
 {
   "name": "@owlette/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "node sdk for the owlette public api (owlette.app)",
   "license": "FSL-1.1-Apache-2.0",
   "main": "./dist/index.js",
@@ -8,6 +8,7 @@
   "type": "commonjs",
   "files": [
     "dist/",
+    "examples/run-roost-workflow.ts",
     "README.md"
   ],
   "engines": {
@@ -17,7 +18,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json -w",
     "test": "jest",
-    "lint": "eslint 'src/**/*.ts'"
+    "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {},
   "devDependencies": {

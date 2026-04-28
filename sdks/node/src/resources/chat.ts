@@ -21,6 +21,7 @@
  */
 import { randomUUID } from 'crypto';
 import type { RoostClient } from '../lib/client';
+import { SDK_VERSION } from '../version';
 
 /* --------------------------------------------------------------------- */
 /*  types                                                                */
@@ -188,7 +189,7 @@ export class Chat {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.client.token}`,
       'Roost-Version': this.client.roostVersion,
-      'User-Agent': '@owlette/sdk (node-sdk) 0.1.0',
+      'User-Agent': `@owlette/sdk (node-sdk) ${SDK_VERSION}`,
       Accept: 'application/json',
       'Content-Type': 'application/json',
       'Idempotency-Key': opts.idempotencyKey ?? `sdk-chat-send-${randomUUID()}`,

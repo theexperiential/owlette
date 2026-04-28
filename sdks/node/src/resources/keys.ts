@@ -1,7 +1,16 @@
 import type { RoostClient } from '../lib/client';
 
 export type ApiKeyPermission = 'read' | 'write' | 'deploy' | 'rollback' | 'admin';
-export type ApiKeyResource = 'roost' | 'site' | 'machine';
+export type ApiKeyResource =
+  | 'roost'
+  | 'site'
+  | 'machine'
+  | 'chat'
+  | 'deploy'
+  | 'process'
+  | 'user'
+  | 'installer';
+export type ApiKeyEnvironment = 'live' | 'test';
 
 export interface ApiKeyScope {
   resource: ApiKeyResource;
@@ -13,15 +22,18 @@ export interface ApiKeyRecord {
   id: string;
   name: string | null;
   keyPrefix: string | null;
-  environment: 'live' | 'test' | null;
+  environment: ApiKeyEnvironment | null;
   scopes: ApiKeyScope[] | null;
-  expiresAt: number | null;
-  lastUsedAt: number | null;
-  rotatedAt: number | null;
-  retiresAt: number | null;
-  revokedAt: number | null;
-  expired: boolean;
-  retired: boolean;
+  expiresAt: number | string | null;
+  createdAt?: number | string | Record<string, unknown> | null;
+  lastUsedAt: number | string | Record<string, unknown> | null;
+  lastUsedIp?: string | null;
+  rotatedAt?: number | string | null;
+  rotatedFromKeyId?: string | null;
+  retiresAt?: number | string | null;
+  revokedAt?: number | string | null;
+  expired?: boolean;
+  retired?: boolean;
 }
 
 export class Keys {
@@ -31,12 +43,12 @@ export class Keys {
     name: string;
     scopes: ApiKeyScope[];
     ttlDays?: number;
-    environment?: 'live' | 'test';
+    environment?: ApiKeyEnvironment;
   }): Promise<{
     key: string;
     keyId: string;
     name: string;
-    environment: 'live' | 'test';
+    environment: ApiKeyEnvironment;
     scopes: ApiKeyScope[];
     expiresAt: number;
     keyPrefix: string;
@@ -46,7 +58,7 @@ export class Keys {
       key: string;
       keyId: string;
       name: string;
-      environment: 'live' | 'test';
+      environment: ApiKeyEnvironment;
       scopes: ApiKeyScope[];
       expiresAt: number;
       keyPrefix: string;

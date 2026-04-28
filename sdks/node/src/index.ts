@@ -17,6 +17,7 @@ import { Versions } from './resources/versions';
 import { Deployments } from './resources/deployments';
 import { Webhooks } from './resources/webhooks';
 import { Keys } from './resources/keys';
+import { Account } from './resources/account';
 import { Sites } from './resources/sites';
 import { Machines } from './resources/machines';
 import { Quotas } from './resources/quotas';
@@ -26,6 +27,7 @@ import { Processes } from './resources/processes';
 import { Chat } from './resources/chat';
 import { Users } from './resources/users';
 import { Members } from './resources/members';
+import { SDK_VERSION } from './version';
 import {
   verifySignature,
   isSignatureValid,
@@ -33,8 +35,6 @@ import {
   type VerifySignatureOptions,
   type VerifySignatureResult,
 } from './lib/signature';
-
-const SDK_VERSION = '0.1.0';
 
 export class Roost {
   readonly client: RoostClient;
@@ -45,6 +45,7 @@ export class Roost {
   #deployments?: Deployments;
   #webhooks?: Webhooks;
   #keys?: Keys;
+  #account?: Account;
   #sites?: Sites;
   #machines?: Machines;
   #quotas?: Quotas;
@@ -79,6 +80,10 @@ export class Roost {
 
   get keys(): Keys {
     return (this.#keys ??= new Keys(this.client));
+  }
+
+  get account(): Account {
+    return (this.#account ??= new Account(this.client));
   }
 
   get sites(): Sites {
@@ -181,7 +186,23 @@ export type {
   PushProgressEvent,
   PushResult,
 } from './resources/roosts';
-export type { ApiKeyPermission, ApiKeyResource, ApiKeyScope, ApiKeyRecord } from './resources/keys';
+export type {
+  AccountApiKeyCreateOptions,
+  AccountApiKeyCreateResult,
+  AccountApiKeyRecord,
+  AccountKeyContext,
+  AccountQuotaSummary,
+  AccountRateLimit,
+  ApiVersionResponse,
+  WhoamiResponse,
+} from './resources/account';
+export type {
+  ApiKeyEnvironment,
+  ApiKeyPermission,
+  ApiKeyResource,
+  ApiKeyScope,
+  ApiKeyRecord,
+} from './resources/keys';
 export type { Site } from './resources/sites';
 export type {
   MachineSummary,
@@ -195,13 +216,21 @@ export type {
   CaptureScreenshotResult,
 } from './resources/machines';
 export type { QuotaSnapshot, QuotaHistoryDay } from './resources/quotas';
+export type { ListDeploymentsOptions } from './resources/deployments';
 export type {
   ListWebhookDeliveriesResult,
   ProbeWebhookOptions,
   WebhookDelivery,
   WebhookSubscription,
 } from './resources/webhooks';
-export type { VersionDetail, VersionFilesPage, VersionDiff } from './resources/versions';
+export type {
+  ListVersionsResult,
+  ListVersionsOptions,
+  PatchVersionOptions,
+  VersionDetail,
+  VersionFilesPage,
+  VersionDiff,
+} from './resources/versions';
 export type { ChunkedFileEntry, ChunkProgressEvent } from './lib/chunker';
 export type {
   InstallerDeploymentTarget,

@@ -204,8 +204,8 @@ export class Roosts {
     const res = await this.client.request<ListRoostsResult>('/api/roosts', {
       query: {
         siteId: opts.siteId,
-        limit: opts.pageSize,
-        cursor: opts.cursor,
+        page_size: opts.pageSize,
+        page_token: opts.cursor,
         includeDeleted: opts.includeDeleted ? 'true' : undefined,
       },
     });

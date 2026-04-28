@@ -18,6 +18,7 @@
 
 import { randomUUID } from 'crypto';
 import { retry, type RetryOptions } from './retry';
+import { SDK_VERSION } from '../version';
 
 export const DEFAULT_API_URL = 'https://owlette.app';
 export const DEFAULT_ROOST_VERSION = '2026-04-22';
@@ -118,7 +119,7 @@ export class RoostClient {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
       'Roost-Version': this.roostVersion,
-      'User-Agent': '@owlette/sdk (node-sdk) 0.1.0',
+      'User-Agent': `@owlette/sdk (node-sdk) ${SDK_VERSION}`,
       Accept: 'application/json',
       ...(options.headers ?? {}),
     };

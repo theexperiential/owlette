@@ -71,7 +71,7 @@ export class Chunks {
       referrers: Array<Record<string, unknown>>;
       nextPageToken: string;
     }>(`/api/chunks/${encodeURIComponent(digest)}/referrers`, {
-      query: { siteId, limit: opts.limit, cursor: opts.cursor },
+      query: { siteId, page_size: opts.limit, page_token: opts.cursor },
     });
     return res.data;
   }
