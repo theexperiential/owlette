@@ -15,6 +15,10 @@ import {
   problemValidation,
   ProblemType,
 } from '@/lib/apiErrors';
+import {
+  parsePagination,
+  withPaginationFields,
+} from '@/lib/pagination';
 import { getVersionBody } from '@/lib/r2Client.server';
 import { resolveVersion, ResolveVersionError } from '@/lib/resolveVersion';
 import {
@@ -56,18 +60,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'read');
     if (!auth.ok) return auth.response;
 
-    const limitRaw = Number(request.nextUrl.searchParams.get('limit') ?? DEFAULT_LIMIT);
-    const limit = Math.min(
-      Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_LIMIT),
-      MAX_LIMIT,
-    );
-    const cursorRaw = request.nextUrl.searchParams.get('cursor');
-    const cursor = cursorRaw ? parseInt(cursorRaw, 10) : 0;
-    if (cursorRaw && (!Number.isFinite(cursor) || cursor < 0)) {
-      return problemValidation('cursor must be a non-negative integer', {
-        'query.cursor': ['invalid cursor'],
+    const parsedPagination = parsePagination(request.nextUrl.searchParams, {
+      defaultPageSize: DEFAULT_LIMIT,
+      maxPageSize: MAX_LIMIT,
+    });
+    if (!parsedPagination.ok) return parsedPagination.response;
+    const { pageSize, pageToken } = parsedPagination.pagination;
+    const offset = pageToken ? parseInt(pageToken, 10) : 0;
+    if (pageToken && (!Number.isFinite(offset) || offset < 0 || String(offset) !== pageToken)) {
+      return problemValidation('page_token must be a non-negative integer offset', {
+        'query.page_token': ['invalid page token'],
       });
     }
+    const prefix = request.nextUrl.searchParams.get('prefix') ?? '';
 
     // Resolve the ref to a concrete versionId.
     let versionId: string;
@@ -105,19 +110,27 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const versionBody = body as { files?: VersionFile[] };
     const allFiles = Array.isArray(versionBody.files) ? versionBody.files : [];
-    const page = allFiles.slice(cursor, cursor + limit);
-    const nextOffset = cursor + page.length;
-    const nextPageToken = nextOffset < allFiles.length ? String(nextOffset) : '';
+    const filteredFiles = prefix
+      ? allFiles.filter((file) => file.path.startsWith(prefix))
+      : allFiles;
+    const page = filteredFiles.slice(offset, offset + pageSize);
+    const nextOffset = offset + page.length;
+    const nextPageToken = nextOffset < filteredFiles.length ? String(nextOffset) : '';
 
     return applyAuthDeprecations(
-      NextResponse.json({
-        versionId,
-        roostId,
-        siteId: site.siteId,
-        total: allFiles.length,
-        files: page,
-        nextPageToken,
-      }),
+      NextResponse.json(
+        withPaginationFields(
+          {
+            versionId,
+            roostId,
+            siteId: site.siteId,
+            total: filteredFiles.length,
+            files: page,
+            items: page,
+          },
+          nextPageToken,
+        ),
+      ),
       auth.scopeCheck,
     );
   } catch (err) {

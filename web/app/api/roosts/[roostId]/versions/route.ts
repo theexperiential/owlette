@@ -18,9 +18,15 @@ import {
   problem,
   ProblemType,
 } from '@/lib/apiErrors';
+import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { timestampToIso } from '@/lib/firestoreTime.server';
+import {
+  nextPageTokenFromDocs,
+  parsePagination,
+  withPaginationFields,
+} from '@/lib/pagination';
 import {
   bucketFor,
   currentEnv,
@@ -29,6 +35,7 @@ import {
   putVersionBody,
 } from '@/lib/r2Client.server';
 import {
+  auditActorIdentifier,
   applyAuthDeprecations,
   readAndParseJsonBody,
   requireRoostAuthAndScope,
@@ -68,12 +75,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'read');
     if (!auth.ok) return auth.response;
 
-    const limitRaw = Number(request.nextUrl.searchParams.get('limit') ?? DEFAULT_LIST_LIMIT);
-    const limit = Math.min(
-      Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_LIST_LIMIT),
-      MAX_LIST_LIMIT,
-    );
-    const cursor = request.nextUrl.searchParams.get('cursor');
+    const parsedPagination = parsePagination(request.nextUrl.searchParams, {
+      defaultPageSize: DEFAULT_LIST_LIMIT,
+      maxPageSize: MAX_LIST_LIMIT,
+    });
+    if (!parsedPagination.ok) return parsedPagination.response;
+    const { pageSize, pageToken } = parsedPagination.pagination;
 
     const db = getAdminDb();
     const roostRef = db
@@ -95,19 +102,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     let query = roostRef
       .collection('versions')
       .orderBy('createdAt', 'desc')
-      .limit(limit + 1);
-    if (cursor) {
+      .limit(pageSize + 1);
+    if (pageToken) {
       const cursorSnap = await roostRef
         .collection('versions')
-        .doc(cursor)
+        .doc(pageToken)
         .get();
       if (cursorSnap.exists) {
         query = query.startAfter(cursorSnap);
       }
     }
     const snap = await query.get();
-    const docs = snap.docs.slice(0, limit);
-    const nextCursor = snap.docs.length > limit ? snap.docs[limit].id : null;
+    const docs = snap.docs.slice(0, pageSize);
+    const nextPageToken = nextPageTokenFromDocs(snap.docs, pageSize);
 
     const versions = docs.map((d) => {
       const data = d.data();
@@ -125,7 +132,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     });
 
     return applyAuthDeprecations(
-      NextResponse.json({ versions, nextCursor }),
+      NextResponse.json(
+        withPaginationFields(
+          {
+            versions,
+            nextCursor: nextPageToken || null,
+          },
+          nextPageToken,
+        ),
+      ),
       auth.scopeCheck,
     );
   } catch (err) {
@@ -267,6 +282,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // Derive a stable versionId from the canonical JSON body.
     const canonicalBody = canonicalJson(m);
     const versionId = await sha256Hex(canonicalBody);
+    const chunkReferrers = summariseChunkReferences(m);
 
     // Write the version body to R2. Done BEFORE the firestore transaction
     // so a transaction-abort doesn't leave an orphan version-pointer
@@ -405,6 +421,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
+    await writeVersionChunkReferrers(
+      db,
+      site.siteId,
+      roostId,
+      result.versionId,
+      result.versionNumber,
+      auth.userId,
+      chunkReferrers,
+    );
+
     const response = applyAuthDeprecations(
       NextResponse.json(
         {
@@ -418,6 +444,23 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       auth.scopeCheck,
     );
     if (idem.mode === 'proceed') await saveIdempotency(idem.token, response);
+    emitMutation({
+      kind: 'roost_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: result.versionId,
+      attributes: {
+        verb: 'version_publish',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        roostId,
+        versionNumber: result.versionNumber,
+        previousVersionId: result.previousVersionId,
+        totalFiles: m.files.length,
+        totalSize,
+        hasDescription: deployDescription !== null,
+      },
+    });
     return response;
   } catch (err) {
     return problemFromError(err, 'v2/roosts/[roostId]/versions (POST)');
@@ -540,4 +583,72 @@ async function sha256Hex(input: string): Promise<string> {
   return [...new Uint8Array(buf)]
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+interface ChunkReferenceSummary {
+  digest: string;
+  fileCount: number;
+  totalBytes: number;
+}
+
+function summariseChunkReferences(version: VersionShape): ChunkReferenceSummary[] {
+  const refs = new Map<string, { paths: Set<string>; totalBytes: number }>();
+  for (const file of version.files) {
+    for (const chunk of file.chunks) {
+      const existing = refs.get(chunk.hash) ?? {
+        paths: new Set<string>(),
+        totalBytes: 0,
+      };
+      existing.paths.add(file.path);
+      existing.totalBytes += chunk.size;
+      refs.set(chunk.hash, existing);
+    }
+  }
+  return [...refs.entries()].map(([digest, ref]) => ({
+    digest,
+    fileCount: ref.paths.size,
+    totalBytes: ref.totalBytes,
+  }));
+}
+
+async function writeVersionChunkReferrers(
+  db: ReturnType<typeof getAdminDb>,
+  siteId: string,
+  roostId: string,
+  versionId: string,
+  versionNumber: number,
+  createdBy: string,
+  refs: readonly ChunkReferenceSummary[],
+): Promise<void> {
+  const batchLimit = 450;
+  for (let i = 0; i < refs.length; i += batchLimit) {
+    const batch = db.batch();
+    for (const ref of refs.slice(i, i + batchLimit)) {
+      const entryRef = db
+        .collection('sites')
+        .doc(siteId)
+        .collection('chunk_referrers')
+        .doc(ref.digest)
+        .collection('entries')
+        .doc(`version_${roostId}_${versionId}`);
+      batch.set(
+        entryRef,
+        {
+          digest: ref.digest,
+          source: 'version',
+          roostId,
+          versionId,
+          versionNumber,
+          fileCount: ref.fileCount,
+          pathCount: ref.fileCount,
+          totalBytes: ref.totalBytes,
+          createdAt: FieldValue.serverTimestamp(),
+          createdBy,
+          mountedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
+    await batch.commit();
+  }
 }

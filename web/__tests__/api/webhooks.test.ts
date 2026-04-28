@@ -8,6 +8,8 @@ import {
   querySnapshot,
 } from './helpers/firestore-mock';
 
+const mockEmitMutation = jest.fn();
+
 jest.mock('@sentry/nextjs', () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
@@ -18,6 +20,7 @@ jest.mock('@/lib/firebase-admin', () => ({
 }));
 jest.mock('@/lib/auditLogClient', () => ({
   emitApiKeyUsed: jest.fn(),
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
 
@@ -142,6 +145,22 @@ describe('POST /api/webhooks', () => {
     expect(mocks.set).toHaveBeenCalledTimes(1);
     const stored = mocks.set.mock.calls[0]![0] as { signingSecret: string };
     expect(stored.signingSecret).toBe(body.signingSecret);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'webhook_mutated',
+        siteId: SITE,
+        actor: 'user:user-1',
+        targetId: body.id,
+        attributes: expect.objectContaining({
+          verb: 'create',
+          endpoint: '/api/webhooks',
+          method: 'POST',
+          eventCount: 2,
+          hasDescription: true,
+        }),
+      }),
+    );
+    expect(JSON.stringify(mockEmitMutation.mock.calls)).not.toContain(body.signingSecret);
   });
 });
 
@@ -177,13 +196,107 @@ describe('GET /api/webhooks', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       webhooks: Array<{ id: string; signingSecret?: string }>;
+      next_page_token: string;
+      nextPageToken: string;
     };
     expect(body.webhooks).toHaveLength(1);
     expect(body.webhooks[0]!.id).toBe('wh_alive_0000000001');
+    expect(body.next_page_token).toBe('');
+    expect(body.nextPageToken).toBe('');
     // signingSecret must NEVER appear in any response shape from list.
     const raw = JSON.stringify(body);
     expect(raw).not.toMatch(/whsec_/);
     expect(body.webhooks[0]!.signingSecret).toBeUndefined();
+  });
+
+  it('accepts page_size/page_token and emits next_page_token', async () => {
+    mocks.collectionGet.mockResolvedValueOnce(
+      querySnapshot([
+        {
+          id: 'wh_alive_0000000001',
+          data: {
+            url: 'https://example.com/a',
+            events: ['version.published'],
+            paused: false,
+          },
+        },
+        {
+          id: 'wh_alive_0000000002',
+          data: {
+            url: 'https://example.com/b',
+            events: ['deployment.failed'],
+            paused: false,
+          },
+        },
+      ]),
+    );
+
+    const req = createMockRequest(
+      `http://localhost/api/webhooks?siteId=${SITE}&page_size=1&page_token=wh_before`,
+    );
+    const res = await listGET(req);
+    const body = (await res.json()) as {
+      webhooks: Array<{ id: string }>;
+      next_page_token: string;
+      nextPageToken: string;
+    };
+
+    expect(res.status).toBe(200);
+    expect(mocks.limit).toHaveBeenCalledWith(2);
+    expect(mocks.startAfter).toHaveBeenCalled();
+    expect(body.webhooks).toHaveLength(1);
+    expect(body.next_page_token).toBe('wh_alive_0000000001');
+    expect(body.nextPageToken).toBe(body.next_page_token);
+  });
+
+  it('uses the last emitted webhook as page token when deleted docs are skipped', async () => {
+    mocks.collectionGet
+      .mockResolvedValueOnce(
+        querySnapshot([
+          {
+            id: 'wh_alive_0000000001',
+            data: {
+              url: 'https://example.com/a',
+              events: ['version.published'],
+              paused: false,
+            },
+          },
+          {
+            id: 'wh_deleted0000001',
+            data: {
+              url: 'https://example.com/deleted',
+              events: ['version.published'],
+              deletedAt: 1_700_000_000_000,
+            },
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        querySnapshot([
+          {
+            id: 'wh_alive_0000000002',
+            data: {
+              url: 'https://example.com/b',
+              events: ['deployment.failed'],
+              paused: false,
+            },
+          },
+        ]),
+      );
+
+    const req = createMockRequest(
+      `http://localhost/api/webhooks?siteId=${SITE}&page_size=1`,
+    );
+    const res = await listGET(req);
+    const body = (await res.json()) as {
+      webhooks: Array<{ id: string }>;
+      next_page_token: string;
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.webhooks).toHaveLength(1);
+    expect(body.webhooks[0]!.id).toBe('wh_alive_0000000001');
+    expect(body.next_page_token).toBe('wh_alive_0000000001');
   });
 });
 
@@ -287,6 +400,20 @@ describe('PATCH /api/webhooks/{webhookId}', () => {
     expect(updatePayload.paused).toBe(true);
     expect(updatePayload.events).toEqual(['deployment.failed']);
     expect(updatePayload.url).toBeUndefined(); // not touched
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'webhook_mutated',
+        siteId: SITE,
+        actor: 'user:user-1',
+        targetId: WEBHOOK,
+        attributes: expect.objectContaining({
+          verb: 'update',
+          endpoint: `/api/webhooks/${WEBHOOK}`,
+          method: 'PATCH',
+          changedFields: expect.arrayContaining(['events', 'paused']),
+        }),
+      }),
+    );
   });
 
   it('404 on patched doc that is soft-deleted', async () => {
@@ -336,6 +463,19 @@ describe('DELETE /api/webhooks/{webhookId}', () => {
     expect(updatePayload.deletedAt).toBeDefined();
     expect(updatePayload.tombstoneExpiresAt).toBeDefined();
     expect(updatePayload.paused).toBe(true);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'webhook_mutated',
+        siteId: SITE,
+        actor: 'user:user-1',
+        targetId: WEBHOOK,
+        attributes: expect.objectContaining({
+          verb: 'delete',
+          endpoint: `/api/webhooks/${WEBHOOK}`,
+          method: 'DELETE',
+        }),
+      }),
+    );
   });
 
   it('idempotent on repeat — re-returns the original tombstone, does not re-stamp', async () => {
@@ -411,6 +551,21 @@ describe('POST /api/webhooks/{webhookId}/rotate-secret', () => {
     expect(updatePayload.signingSecret).toBe(body.signingSecret);
     expect(updatePayload.previousSigningSecret).toBe('whsec_OLD');
     expect(updatePayload.previousSecretValidUntil).toBeDefined();
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'webhook_mutated',
+        siteId: SITE,
+        actor: 'user:user-1',
+        targetId: WEBHOOK,
+        attributes: expect.objectContaining({
+          verb: 'rotate_secret',
+          endpoint: `/api/webhooks/${WEBHOOK}/rotate-secret`,
+          method: 'POST',
+          gracePeriodHours: 24,
+        }),
+      }),
+    );
+    expect(JSON.stringify(mockEmitMutation.mock.calls)).not.toContain(body.signingSecret);
   });
 
   it('404 when subscription missing', async () => {
@@ -487,8 +642,12 @@ describe('GET /api/webhooks/{webhookId}/deliveries', () => {
         attempt: number;
         nextAttemptAt: string | null;
       }>;
+      next_page_token: string;
+      nextPageToken: string;
     };
     expect(body.deliveries).toHaveLength(2);
+    expect(body.next_page_token).toBe('');
+    expect(body.nextPageToken).toBe('');
     const succeeded = body.deliveries.find((d) => d.state === 'succeeded')!;
     const pending = body.deliveries.find((d) => d.state === 'pending')!;
     expect(succeeded.nextAttemptAt).toBeNull();
@@ -626,6 +785,22 @@ describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
     expect(writePayload.attempt).toBe(0);
     expect(writePayload.headers['Roost-Signature']).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
     expect(writePayload.headers['Roost-Delivery']).toBe('public_delivery_id_here');
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'webhook_mutated',
+        siteId: SITE,
+        actor: 'user:user-1',
+        targetId: WEBHOOK,
+        attributes: expect.objectContaining({
+          verb: 'retry_delivery',
+          endpoint: `/api/webhooks/${WEBHOOK}/deliveries/${DELIVERY}/retry`,
+          method: 'POST',
+          deliveryId: DELIVERY,
+          retryDeliveryId: body.id,
+          event: 'version.published',
+        }),
+      }),
+    );
   });
 
   it('404 when original delivery belongs to a different subscription', async () => {

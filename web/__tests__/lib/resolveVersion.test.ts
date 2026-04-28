@@ -127,6 +127,34 @@ describe('resolveVersion — number forms', () => {
 /* ========================================================================== */
 
 describe('resolveVersion — stable id form', () => {
+  it('bare sha-256 id → lookupById on /versions/{id}', async () => {
+    const versionId = 'a'.repeat(64);
+    mocks.get.mockResolvedValueOnce(
+      docSnapshot(versionId, { versionId, versionNumber: 8 }),
+    );
+    const result = await resolveVersion({
+      roostId: ROOST,
+      siteId: SITE,
+      ref: versionId,
+    });
+    expect(result.versionId).toBe(versionId);
+    expect(result.versionNumber).toBe(8);
+  });
+
+  it('legacy vrs_ sha id resolves to the bare stored id first', async () => {
+    const versionId = 'b'.repeat(64);
+    mocks.get.mockResolvedValueOnce(
+      docSnapshot(versionId, { versionId, versionNumber: 9 }),
+    );
+    const result = await resolveVersion({
+      roostId: ROOST,
+      siteId: SITE,
+      ref: `vrs_${versionId}`,
+    });
+    expect(result.versionId).toBe(versionId);
+    expect(result.versionNumber).toBe(9);
+  });
+
   it('vrs_* prefix → lookupById on /versions/{id}', async () => {
     mocks.get.mockResolvedValueOnce(
       docSnapshot('vrs_abc123', { versionId: 'vrs_abc123', versionNumber: 7 }),

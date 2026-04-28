@@ -16,6 +16,11 @@ import {
 import { getAdminDb } from '@/lib/firebase-admin';
 import { timestampToIso } from '@/lib/firestoreTime.server';
 import {
+  nextPageTokenFromDocs,
+  parsePagination,
+  withPaginationFields,
+} from '@/lib/pagination';
+import {
   applyAuthDeprecations,
   requireSiteAuthAndScope,
   validateSiteIdBody,
@@ -50,12 +55,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'read');
     if (!auth.ok) return auth.response;
 
-    const limitRaw = Number(request.nextUrl.searchParams.get('limit') ?? DEFAULT_LIMIT);
-    const limit = Math.min(
-      Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_LIMIT),
-      MAX_LIMIT,
-    );
-    const cursor = request.nextUrl.searchParams.get('cursor');
+    const parsedPagination = parsePagination(request.nextUrl.searchParams, {
+      defaultPageSize: DEFAULT_LIMIT,
+      maxPageSize: MAX_LIMIT,
+    });
+    if (!parsedPagination.ok) return parsedPagination.response;
+    const { pageSize, pageToken } = parsedPagination.pagination;
 
     const db = getAdminDb();
     const entriesCol = db
@@ -65,36 +70,60 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       .doc(digest)
       .collection('entries');
 
-    let query = entriesCol.orderBy('mountedAt', 'desc').limit(limit + 1);
-    if (cursor) {
-      const cursorSnap = await entriesCol.doc(cursor).get();
+    let query = entriesCol.orderBy('mountedAt', 'desc').limit(pageSize + 1);
+    if (pageToken) {
+      const cursorSnap = await entriesCol.doc(pageToken).get();
       if (cursorSnap.exists) query = query.startAfter(cursorSnap);
     }
 
     const snap = await query.get();
-    const docs = snap.docs.slice(0, limit);
-    const nextPageToken = snap.docs.length > limit ? snap.docs[limit].id : '';
+    const docs = snap.docs.slice(0, pageSize);
+    const nextPageToken = nextPageTokenFromDocs(snap.docs, pageSize);
 
     const referrers = docs.map((d) => {
       const data = d.data();
       return {
         entryId: d.id,
         source: typeof data.source === 'string' ? data.source : 'mount',
+        roostId: data.roostId ?? null,
         fromRoostId: data.fromRoostId ?? null,
         toRoostId: data.toRoostId ?? null,
         versionId: data.versionId ?? null,
+        versionNumber:
+          typeof data.versionNumber === 'number' ? data.versionNumber : null,
+        fileCount:
+          typeof data.fileCount === 'number'
+            ? data.fileCount
+            : typeof data.pathCount === 'number'
+              ? data.pathCount
+              : null,
+        pathCount:
+          typeof data.pathCount === 'number'
+            ? data.pathCount
+            : typeof data.fileCount === 'number'
+              ? data.fileCount
+              : null,
+        totalBytes: typeof data.totalBytes === 'number' ? data.totalBytes : null,
+        referencedAt: timestampToIso(data.referencedAt ?? data.mountedAt ?? data.createdAt),
+        createdAt: timestampToIso(data.createdAt),
+        createdBy: data.createdBy ?? null,
         mountedAt: timestampToIso(data.mountedAt),
         mountedBy: data.mountedBy ?? null,
       };
     });
 
     return applyAuthDeprecations(
-      NextResponse.json({
-        digest,
-        siteId: site.siteId,
-        referrers,
-        nextPageToken,
-      }),
+      NextResponse.json(
+        withPaginationFields(
+          {
+            digest,
+            siteId: site.siteId,
+            referrers,
+            items: referrers,
+          },
+          nextPageToken,
+        ),
+      ),
       auth.scopeCheck,
     );
   } catch (err) {

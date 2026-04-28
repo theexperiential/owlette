@@ -1,11 +1,25 @@
 /** @jest-environment node */
 
 import { NextRequest } from 'next/server';
+import { ProblemType } from '@/lib/apiErrors';
 
 const store = new Map<string, Record<string, unknown> | null>();
+let mockKeyContext: { keyId?: string; scopes?: unknown[] | null } | null = null;
+let collectionGetError: Error | null = null;
+let consoleErrorSpy: jest.SpyInstance;
+const mockEmitMutation = jest.fn();
+
+jest.mock('@sentry/nextjs', () => ({
+  captureException: jest.fn(),
+  captureMessage: jest.fn(),
+}));
 
 jest.mock('@/lib/withRateLimit', () => ({
   withRateLimit: (handler: unknown) => handler,
+}));
+
+jest.mock('@/lib/auditLogClient', () => ({
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
 }));
 
 jest.mock('@/lib/authorizedHandler.server', () => ({
@@ -16,7 +30,7 @@ jest.mock('@/lib/authorizedHandler.server', () => ({
         {
           actor: { type: 'user', userId: 'test-admin', role: 'superadmin', sites: [] },
           correlationId: 'corr-test',
-          auth: { userId: 'test-admin', keyContext: null },
+          auth: { userId: 'test-admin', keyContext: mockKeyContext },
           scopeCheck: { isLegacy: false },
         },
         routeContext,
@@ -61,14 +75,17 @@ function collectionRef(parts: string[]) {
     doc: (id: string) => docRef([...parts, id]),
     collection: (name: string) => collectionRef([...parts, name]),
     orderBy: () => ref,
-    get: async () => ({
-      docs: Array.from(store.entries())
-        .filter(([docPath, data]) => data && docPath.startsWith(`${path}/`))
-        .map(([docPath, data]) => ({
-          id: docPath.slice(path.length + 1).split('/')[0],
-          data: () => data,
-        })),
-    }),
+    get: async () => {
+      if (collectionGetError) throw collectionGetError;
+      return {
+        docs: Array.from(store.entries())
+          .filter(([docPath, data]) => data && docPath.startsWith(`${path}/`))
+          .map(([docPath, data]) => ({
+            id: docPath.slice(path.length + 1).split('/')[0],
+            data: () => data,
+          })),
+      };
+    },
   };
   return ref;
 }
@@ -93,13 +110,23 @@ import { DELETE } from '@/app/api/account/api-keys/[keyId]/route';
 
 beforeEach(() => {
   store.clear();
+  mockKeyContext = null;
+  collectionGetError = null;
+  consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  consoleErrorSpy.mockRestore();
 });
 
 describe('/api/account/api-keys', () => {
   it('lists API key metadata for the authenticated account', async () => {
     store.set('users/test-admin/api_keys/key-a', {
       name: 'CI',
-      keyPrefix: 'owk_abc',
+      keyPrefix: 'owk_live_abc123',
+      environment: 'live',
+      scopes: [{ resource: 'site', id: '*', permissions: ['read'] }],
+      expiresAt: 456,
       createdAt: 123,
       lastUsedAt: null,
     });
@@ -109,8 +136,35 @@ describe('/api/account/api-keys', () => {
     const json = await res.json();
     expect(json).toMatchObject({
       success: true,
-      keys: [{ id: 'key-a', name: 'CI', keyPrefix: 'owk_abc' }],
+      keys: [{
+        id: 'key-a',
+        name: 'CI',
+        keyPrefix: 'owk_live_abc123',
+        environment: 'live',
+        scopes: [{ resource: 'site', id: '*', permissions: ['read'] }],
+        expiresAt: 456,
+      }],
     });
+  });
+
+  it('returns problem+json when key listing fails unexpectedly', async () => {
+    collectionGetError = new Error('firestore unavailable');
+
+    const res = await GET(new NextRequest('http://localhost/api/account/api-keys'));
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(res.headers.get('Content-Type')).toBe('application/problem+json; charset=utf-8');
+    expect(res.headers.get('X-Request-Id')).toBeTruthy();
+    expect(body).toMatchObject({
+      type: ProblemType.Internal,
+      title: 'internal error',
+      status: 500,
+      code: 'internal_error',
+      docsUrl: 'https://owlette.app/docs/api/errors#internal_error',
+      instance: 'account/api-keys',
+    });
+    expect(body.requestId).toBe(res.headers.get('X-Request-Id'));
   });
 
   it('creates a key and returns the raw key once', async () => {
@@ -124,10 +178,119 @@ describe('/api/account/api-keys', () => {
     const json = await res.json();
     expect(json.success).toBe(true);
     expect(json.name).toBe('Deploy');
-    expect(json.key).toMatch(/^owk_/);
+    expect(json.key).toMatch(/^owk_live_/);
+    expect(json.environment).toBe('live');
+    expect(json.keyPrefix).toBe(json.key.slice(0, 15));
+    expect(json.expiresAt).toEqual(expect.any(Number));
+    expect(json.scopes).toEqual(
+      expect.arrayContaining([
+        {
+          resource: 'user',
+          id: '*',
+          permissions: ['read', 'write', 'deploy', 'rollback', 'admin'],
+        },
+        {
+          resource: 'installer',
+          id: '*',
+          permissions: ['read', 'write', 'deploy', 'rollback', 'admin'],
+        },
+      ]),
+    );
 
-    expect(Array.from(store.keys()).some((p) => p.startsWith('users/test-admin/api_keys/'))).toBe(true);
-    expect(Array.from(store.keys()).some((p) => p.startsWith('api_keys/'))).toBe(true);
+    const userRecord = Array.from(store.entries()).find(([p]) =>
+      p.startsWith('users/test-admin/api_keys/'),
+    )?.[1];
+    expect(userRecord).toMatchObject({
+      name: 'Deploy',
+      keyPrefix: json.keyPrefix,
+      environment: 'live',
+      scopes: json.scopes,
+      expiresAt: json.expiresAt,
+    });
+
+    const lookupRecord = Array.from(store.entries()).find(([p]) =>
+      p.startsWith('api_keys/'),
+    )?.[1];
+    expect(lookupRecord).toMatchObject({
+      userId: 'test-admin',
+      keyId: json.keyId,
+      environment: 'live',
+      scopes: json.scopes,
+      expiresAt: json.expiresAt,
+    });
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'api_key_mutated',
+        siteId: '',
+        actor: 'user:test-admin',
+        targetId: json.keyId,
+        attributes: expect.objectContaining({
+          verb: 'create',
+          endpoint: '/api/account/api-keys',
+          method: 'POST',
+          environment: 'live',
+          keyPrefix: json.keyPrefix,
+          inheritedFromCallerKey: false,
+        }),
+      }),
+    );
+    expect(JSON.stringify(mockEmitMutation.mock.calls)).not.toContain(json.key);
+  });
+
+  it('carries forward scoped API-key caller scopes instead of widening', async () => {
+    const callerScopes = [
+      { resource: 'site', id: 'site-1', permissions: ['read'] },
+    ];
+    mockKeyContext = { scopes: callerScopes };
+
+    const res = await POST(new NextRequest('http://localhost/api/account/api-keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Child key' }),
+    }));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.scopes).toEqual(callerScopes);
+    expect(json.scopes).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ resource: 'user' }),
+        expect.objectContaining({ resource: 'installer' }),
+      ]),
+    );
+
+    const lookupRecord = Array.from(store.entries()).find(([p]) =>
+      p.startsWith('api_keys/'),
+    )?.[1];
+    expect(lookupRecord).toMatchObject({ scopes: callerScopes });
+  });
+
+  it('audits child-key creation under the caller API key actor', async () => {
+    const callerScopes = [
+      { resource: 'site', id: 'site-1', permissions: ['read'] },
+    ];
+    mockKeyContext = { keyId: 'parent-key', scopes: callerScopes };
+
+    const res = await POST(new NextRequest('http://localhost/api/account/api-keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Child key' }),
+    }));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'api_key_mutated',
+        actor: 'apiKey:parent-key',
+        targetId: json.keyId,
+        attributes: expect.objectContaining({
+          verb: 'create',
+          inheritedFromCallerKey: true,
+        }),
+      }),
+    );
+    expect(JSON.stringify(mockEmitMutation.mock.calls)).not.toContain(json.key);
   });
 });
 
@@ -148,5 +311,38 @@ describe('/api/account/api-keys/{keyId}', () => {
     expect(await res.json()).toEqual({ success: true });
     expect(store.get('users/test-admin/api_keys/key-a')).toBeNull();
     expect(store.get('api_keys/hash-a')).toBeNull();
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'api_key_mutated',
+        siteId: '',
+        actor: 'user:test-admin',
+        targetId: 'key-a',
+        attributes: expect.objectContaining({
+          verb: 'revoke',
+          endpoint: '/api/account/api-keys/key-a',
+          method: 'DELETE',
+        }),
+      }),
+    );
+  });
+
+  it('returns problem+json when revoking an unknown key', async () => {
+    const res = await DELETE(
+      new NextRequest('http://localhost/api/account/api-keys/missing-key', { method: 'DELETE' }),
+      { params: Promise.resolve({ keyId: 'missing-key' }) },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(res.headers.get('Content-Type')).toBe('application/problem+json; charset=utf-8');
+    expect(body).toMatchObject({
+      type: ProblemType.NotFound,
+      title: 'not found',
+      status: 404,
+      code: 'not_found',
+      docsUrl: 'https://owlette.app/docs/api/errors#not_found',
+      detail: 'API key not found',
+    });
+    expect(body.requestId).toBe(res.headers.get('X-Request-Id'));
   });
 });

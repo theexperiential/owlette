@@ -43,11 +43,13 @@ import {
   assertUserHasSiteAccess,
   type ResolvedAuth,
 } from '@/lib/apiAuth.server';
+import { getAdminDb } from '@/lib/firebase-admin';
 import { emitApiKeyUsed } from '@/lib/auditLogClient';
 import {
   requireSiteAuthAndScope,
   requireRoostAuthAndScope,
   requireAgentOrSiteAuthAndScope,
+  requirePlatformAuthAndScope,
   applyAuthDeprecations,
 } from '@/app/api/_shared';
 import type { ApiKeyPermission, ApiKeyScope } from '@/lib/apiKeyTypes';
@@ -58,6 +60,7 @@ const mockedAssertSite = assertUserHasSiteAccess as jest.MockedFunction<
   typeof assertUserHasSiteAccess
 >;
 const mockedAuditEmit = emitApiKeyUsed as jest.MockedFunction<typeof emitApiKeyUsed>;
+const mockedGetAdminDb = getAdminDb as jest.MockedFunction<typeof getAdminDb>;
 
 const SITE_ID = 'site-test-01';
 const ROOST_ID = 'roost-test-01';
@@ -90,9 +93,23 @@ function sessionAuth(): ResolvedAuth {
   return { userId: 'user-test', keyContext: null };
 }
 
+function mockPlatformRole(role: 'superadmin' | 'admin' | 'member' | null): void {
+  mockedGetAdminDb.mockReturnValue({
+    collection: () => ({
+      doc: () => ({
+        get: async () => ({
+          exists: role !== null,
+          data: () => (role === null ? undefined : { role }),
+        }),
+      }),
+    }),
+  } as unknown as ReturnType<typeof getAdminDb>);
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockedAssertSite.mockResolvedValue({ siteId: SITE_ID, siteData: {} });
+  mockPlatformRole('superadmin');
 });
 
 describe('requireSiteAuthAndScope — site resource matrix', () => {
@@ -299,6 +316,66 @@ describe('session / id-token auth (no API key)', () => {
     mockedResolveAuth.mockResolvedValue(sessionAuth());
     await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
     expect(mockedAuditEmit).not.toHaveBeenCalled();
+  });
+});
+
+describe('requirePlatformAuthAndScope', () => {
+  it('allows a superadmin session without API-key scope', async () => {
+    mockedResolveAuth.mockResolvedValue(sessionAuth());
+    mockPlatformRole('superadmin');
+
+    const result = await requirePlatformAuthAndScope(makeRequest(), 'user', 'admin');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.scopeCheck.isLegacy).toBe(false);
+    }
+  });
+
+  it('rejects a superadmin API key that lacks the required platform scope', async () => {
+    mockedResolveAuth.mockResolvedValue(
+      authFromScopes([{ resource: 'installer', id: '*', permissions: ['read'] }]),
+    );
+    mockPlatformRole('superadmin');
+
+    const result = await requirePlatformAuthAndScope(makeRequest(), 'user', 'admin');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
+      expect(body.code).toBe('scope_insufficient');
+      expect(body.required).toEqual({ resource: 'user', id: '*', permission: 'admin' });
+    }
+  });
+
+  it('rejects a non-superadmin API key even when the key has platform scope', async () => {
+    mockedResolveAuth.mockResolvedValue(
+      authFromScopes([{ resource: 'user', id: '*', permissions: ['admin'] }]),
+    );
+    mockPlatformRole('member');
+
+    const result = await requirePlatformAuthAndScope(makeRequest(), 'user', 'admin');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
+      expect(body.code).toBe('forbidden');
+      expect(body.detail).toBe('superadmin access required');
+    }
+  });
+
+  it('allows a legacy superadmin key through the current compatibility path', async () => {
+    mockedResolveAuth.mockResolvedValue(authFromScopes(null));
+    mockPlatformRole('superadmin');
+
+    const result = await requirePlatformAuthAndScope(makeRequest(), 'installer', 'admin');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.scopeCheck.isLegacy).toBe(true);
+    }
   });
 });
 

@@ -29,6 +29,7 @@ import { NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { timestampToIso } from '@/lib/firestoreTime.server';
 
+import { emitMutation } from '@/lib/auditLogClient';
 import {
   problemFromError,
   problemValidation,
@@ -36,10 +37,16 @@ import {
   ProblemType,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import {
+  collectFilteredPage,
+  parsePagination,
+  withPaginationFields,
+} from '@/lib/pagination';
 import { validateEvents } from '@/lib/webhookEvents';
 import { validateWebhookUrl } from '@/lib/webhookUrl';
 
 import {
+  auditActorIdentifier,
   applyAuthDeprecations,
   readAndParseJsonBody,
   requireSiteAuthAndScope,
@@ -163,6 +170,20 @@ export async function POST(request: NextRequest) {
     });
 
     const createdAt = new Date().toISOString();
+    emitMutation({
+      kind: 'webhook_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: webhookId,
+      attributes: {
+        verb: 'create',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        eventCount: eventsValidation.events.length,
+        hasDescription: description !== undefined,
+      },
+    });
+
     const responseBody: Record<string, unknown> = {
       id: webhookId,
       siteId: site.siteId,
@@ -201,14 +222,12 @@ export async function GET(request: NextRequest) {
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'read');
     if (!auth.ok) return auth.response;
 
-    const limitRaw = Number(
-      request.nextUrl.searchParams.get('limit') ?? DEFAULT_LIST_LIMIT,
-    );
-    const limit = Math.min(
-      Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_LIST_LIMIT),
-      MAX_LIST_LIMIT,
-    );
-    const cursor = request.nextUrl.searchParams.get('cursor');
+    const parsedPagination = parsePagination(request.nextUrl.searchParams, {
+      defaultPageSize: DEFAULT_LIST_LIMIT,
+      maxPageSize: MAX_LIST_LIMIT,
+    });
+    if (!parsedPagination.ok) return parsedPagination.response;
+    const { pageSize, pageToken } = parsedPagination.pagination;
 
     const db = getAdminDb();
     const webhooksCol = db
@@ -216,27 +235,32 @@ export async function GET(request: NextRequest) {
       .doc(site.siteId)
       .collection('webhooks');
 
-    let query = webhooksCol.orderBy('createdAt', 'desc').limit(limit + 1);
-    if (cursor) {
-      const cursorSnap = await webhooksCol.doc(cursor).get();
-      if (cursorSnap.exists) query = query.startAfter(cursorSnap);
-    }
+    const page = await collectFilteredPage({
+      pageSize,
+      pageToken,
+      fetchPage: async (cursor, limit) => {
+        let query = webhooksCol.orderBy('createdAt', 'desc').limit(limit);
+        if (cursor) {
+          const cursorSnap = await webhooksCol.doc(cursor).get();
+          if (cursorSnap.exists) query = query.startAfter(cursorSnap);
+        }
+        const snap = await query.get();
+        return snap.docs;
+      },
+      include: (doc) => {
+        const data = doc.data();
+        return !data.deletedAt;
+      },
+    });
 
-    const snap = await query.get();
-    const overflow = snap.docs.length > limit;
-    const pageDocs = overflow ? snap.docs.slice(0, limit) : snap.docs;
-    const nextPageToken = overflow ? (snap.docs[limit]?.id ?? '') : '';
-
-    const webhooks = pageDocs
+    const webhooks = page.docs
       .map((d) => {
         const data = d.data();
-        if (data.deletedAt) return null;
         return serializeSubscription(d.id, data);
-      })
-      .filter((w): w is NonNullable<typeof w> => w !== null);
+      });
 
     return applyAuthDeprecations(
-      NextResponse.json({ webhooks, nextPageToken }),
+      NextResponse.json(withPaginationFields({ webhooks }, page.nextPageToken)),
       auth.scopeCheck,
     );
   } catch (err) {

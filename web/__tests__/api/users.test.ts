@@ -447,7 +447,24 @@ describe('GET /api/users', () => {
 
     expect(res.status).toBe(200);
     expect(body.users).toHaveLength(2);
+    expect(body.next_page_token).toBe(body.nextPageToken);
     expect(body.nextPageToken).not.toBe('');
+  });
+
+  it('uses the last emitted user as page token when deleted users are skipped', async () => {
+    authedAsSuperadminWithKey('read');
+    seedUser('a-active', { role: 'member' });
+    seedUser('b-deleted', { role: 'member', deletedAt: 1234 });
+    seedUser('c-active', { role: 'member' });
+
+    const req = createMockRequest('http://localhost/api/users?page_size=1');
+    const res = await listGET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.users).toHaveLength(1);
+    expect(body.users[0].uid).toBe('a-active');
+    expect(body.next_page_token).toBe('a-active');
   });
 });
 

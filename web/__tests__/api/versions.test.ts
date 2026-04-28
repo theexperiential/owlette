@@ -7,12 +7,15 @@ import {
   docSnapshot,
 } from './helpers/firestore-mock';
 
+const mockEmitMutation = jest.fn();
+
 jest.mock('@sentry/nextjs', () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
 }));
 jest.mock('@/lib/auditLogClient', () => ({
   emitApiKeyUsed: jest.fn(),
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
 
@@ -147,6 +150,39 @@ describe('POST /versions — version-number monotonicity', () => {
     expect(txState.versionWrites[0]!.versionNumber).toBe(1);
     expect(txState.roostWrites[0]!.versionCounter).toBe(1);
     expect(txState.roostWrites[0]!.currentVersionNumber).toBe(1);
+    expect(mocks.batchSet).toHaveBeenCalledWith(
+      expect.objectContaining({}),
+      expect.objectContaining({
+        digest: CHUNK_HASH,
+        source: 'version',
+        roostId: ROOST,
+        versionId: res.body.versionId,
+        versionNumber: 1,
+        fileCount: 1,
+        pathCount: 1,
+        totalBytes: 4,
+        createdBy: 'user-1',
+      }),
+      { merge: true },
+    );
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'roost_mutated',
+        siteId: SITE,
+        actor: 'user:user-1',
+        targetId: res.body.versionId,
+        attributes: expect.objectContaining({
+          verb: 'version_publish',
+          endpoint: `/api/roosts/${ROOST}/versions`,
+          method: 'POST',
+          roostId: ROOST,
+          versionNumber: 1,
+          previousVersionId: null,
+          totalFiles: 1,
+          totalSize: 4,
+        }),
+      }),
+    );
   });
 
   it('two sequential publishes yield monotonic 1 → 2 (no collision, no gap)', async () => {

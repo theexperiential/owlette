@@ -15,6 +15,7 @@ import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { timestampToIso, timestampToMs } from '@/lib/firestoreTime.server';
+import { emitMutation } from '@/lib/auditLogClient';
 import {
   problem,
   problemFromError,
@@ -23,6 +24,12 @@ import {
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
+  collectFilteredPage,
+  parsePagination,
+  withPaginationFields,
+} from '@/lib/pagination';
+import {
+  auditActorIdentifier,
   applyAuthDeprecations,
   parseJsonBody,
   requireSiteAuthAndScope,
@@ -54,14 +61,12 @@ export async function GET(request: NextRequest) {
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'read');
     if (!auth.ok) return auth.response;
 
-    const limitRaw = Number(
-      request.nextUrl.searchParams.get('limit') ?? DEFAULT_LIST_LIMIT,
-    );
-    const limit = Math.min(
-      Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_LIST_LIMIT),
-      MAX_LIST_LIMIT,
-    );
-    const cursor = request.nextUrl.searchParams.get('cursor');
+    const parsedPagination = parsePagination(request.nextUrl.searchParams, {
+      defaultPageSize: DEFAULT_LIST_LIMIT,
+      maxPageSize: MAX_LIST_LIMIT,
+    });
+    if (!parsedPagination.ok) return parsedPagination.response;
+    const { pageSize, pageToken } = parsedPagination.pagination;
     const includeDeleted =
       request.nextUrl.searchParams.get('includeDeleted') === 'true';
 
@@ -71,21 +76,28 @@ export async function GET(request: NextRequest) {
       .doc(site.siteId)
       .collection('roosts');
 
-    let query = roostsCol.orderBy('createdAt', 'desc').limit(limit + 1);
-    if (cursor) {
-      const cursorSnap = await roostsCol.doc(cursor).get();
-      if (cursorSnap.exists) query = query.startAfter(cursorSnap);
-    }
+    const page = await collectFilteredPage({
+      pageSize,
+      pageToken,
+      fetchPage: async (cursor, limit) => {
+        let query = roostsCol.orderBy('createdAt', 'desc').limit(limit);
+        if (cursor) {
+          const cursorSnap = await roostsCol.doc(cursor).get();
+          if (cursorSnap.exists) query = query.startAfter(cursorSnap);
+        }
+        const snap = await query.get();
+        return snap.docs;
+      },
+      include: (doc) => {
+        const data = doc.data();
+        const deletedAt = timestampToMs(data.deletedAt);
+        return includeDeleted || deletedAt === null;
+      },
+    });
 
-    const snap = await query.get();
-    const docs = snap.docs.slice(0, limit);
-    const nextPageToken = snap.docs.length > limit ? snap.docs[limit].id : '';
-
-    const roosts = docs
+    const roosts = page.docs
       .map((d) => {
         const data = d.data();
-        const deletedAt = timestampToMs(data.deletedAt);
-        if (!includeDeleted && deletedAt !== null) return null;
         return {
           roostId: d.id,
           siteId: site.siteId,
@@ -102,10 +114,9 @@ export async function GET(request: NextRequest) {
           tombstoneExpiresAt: timestampToIso(data.tombstoneExpiresAt),
         };
       })
-      .filter((r): r is NonNullable<typeof r> => r !== null);
 
     return applyAuthDeprecations(
-      NextResponse.json({ roosts, nextPageToken }),
+      NextResponse.json(withPaginationFields({ roosts }, page.nextPageToken)),
       auth.scopeCheck,
     );
   } catch (err) {
@@ -193,6 +204,7 @@ export async function POST(request: NextRequest) {
       .doc(roostId);
 
     const existing = await roostRef.get();
+    const wasDeleted = existing.exists && Boolean(existing.data()?.deletedAt);
     if (existing.exists) {
       const data = existing.data() ?? {};
       if (!data.deletedAt) {
@@ -222,6 +234,20 @@ export async function POST(request: NextRequest) {
       },
       { merge: true },
     );
+
+    emitMutation({
+      kind: 'roost_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: roostId,
+      attributes: {
+        verb: wasDeleted ? 'undelete' : 'create',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        targetCount: targets.length,
+        hasExtractPath: extractPath !== undefined,
+      },
+    });
 
     return applyAuthDeprecations(
       NextResponse.json(

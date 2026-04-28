@@ -24,6 +24,11 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { problemFromError, problemValidation } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import {
+  collectFilteredPage,
+  parsePagination,
+  withPaginationFields,
+} from '@/lib/pagination';
 import { applyAuthDeprecations, requirePlatformAuthAndScope } from '../_shared';
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -66,21 +71,12 @@ export async function GET(request: NextRequest) {
 
     const sp = request.nextUrl.searchParams;
 
-    const pageSizeRaw = Number(sp.get('page_size') ?? DEFAULT_PAGE_SIZE);
-    if (sp.has('page_size') && !Number.isFinite(pageSizeRaw)) {
-      return problemValidation('page_size must be a positive integer', {
-        'query.page_size': ['must be a finite number'],
-      });
-    }
-    const pageSize = Math.min(
-      Math.max(
-        1,
-        Number.isFinite(pageSizeRaw) ? Math.floor(pageSizeRaw) : DEFAULT_PAGE_SIZE,
-      ),
-      MAX_PAGE_SIZE,
-    );
-
-    const pageToken = sp.get('page_token');
+    const parsedPagination = parsePagination(sp, {
+      defaultPageSize: DEFAULT_PAGE_SIZE,
+      maxPageSize: MAX_PAGE_SIZE,
+    });
+    if (!parsedPagination.ok) return parsedPagination.response;
+    const { pageSize, pageToken } = parsedPagination.pagination;
     const includeDeleted = sp.get('includeDeleted') === 'true';
 
     const roleFilter = sp.get('role');
@@ -107,24 +103,33 @@ export async function GET(request: NextRequest) {
     // guaranteed indexable field across all user shapes (legacy users may
     // have no createdAt). Doc id is always present and lexicographically
     // stable.
-    query = query.orderBy('__name__').limit(pageSize + 1);
+    const orderedQuery = query.orderBy('__name__');
 
-    if (pageToken) {
-      const cursorSnap = await usersCol.doc(pageToken).get();
-      if (cursorSnap.exists) query = query.startAfter(cursorSnap);
-    }
+    const page = await collectFilteredPage({
+      pageSize,
+      pageToken,
+      fetchPage: async (cursor, limit) => {
+        let pageQuery = orderedQuery.limit(limit);
+        if (cursor) {
+          const cursorSnap = await usersCol.doc(cursor).get();
+          if (cursorSnap.exists) pageQuery = pageQuery.startAfter(cursorSnap);
+        }
+        const snap = await pageQuery.get();
+        return snap.docs;
+      },
+      include: (doc) => {
+        const data = doc.data() as UserDoc;
+        const deletedAt =
+          typeof data.deletedAt === 'number' ? data.deletedAt : null;
+        return includeDeleted || deletedAt === null;
+      },
+    });
 
-    const snap = await query.get();
-    const docs = snap.docs.slice(0, pageSize);
-    const nextPageToken =
-      snap.docs.length > pageSize ? snap.docs[pageSize].id : '';
-
-    const users = docs
+    const users = page.docs
       .map((d) => {
         const data = d.data() as UserDoc;
         const deletedAt =
           typeof data.deletedAt === 'number' ? data.deletedAt : null;
-        if (!includeDeleted && deletedAt !== null) return null;
 
         const sites = Array.isArray(data.sites)
           ? data.sites.filter((s): s is string => typeof s === 'string')
@@ -144,10 +149,9 @@ export async function GET(request: NextRequest) {
           deletedAt,
         };
       })
-      .filter((u): u is NonNullable<typeof u> => u !== null);
 
     return applyAuthDeprecations(
-      NextResponse.json({ users, nextPageToken }),
+      NextResponse.json(withPaginationFields({ users }, page.nextPageToken)),
       auth.scopeCheck,
     );
   } catch (err) {

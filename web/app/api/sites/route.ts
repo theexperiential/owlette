@@ -1,12 +1,10 @@
 /**
- * GET /api/sites
- *      → List sites the caller has access to. Scoped for API-key auth:
- *        keys with specific site scopes see only those sites; wildcard /
- *        legacy keys see everything the underlying user can access.
+ * GET  /api/sites
+ * POST /api/sites
  *
- * Read-only in v2. Site create / update / delete stays in the dashboard.
- *
- * roost public api wave 3.5.
+ * List and create sites. Scoped API keys only see sites covered by explicit
+ * `site` scopes; wildcard / legacy keys and session auth keep the underlying
+ * user's account view.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -27,7 +25,6 @@ import {
   type ResolvedAuth,
 } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import type { ApiKeyScope } from '@/lib/apiKeyTypes';
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedPlatformHandler, type PlatformHandlerContext } from '@/lib/authorizedHandler.server';
 import { Capability } from '@/lib/capabilities';
@@ -91,7 +88,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Intersect with API-key scope when scoped to specific site ids.
-    const scopeAllowed = scopeAllowedSites(auth.keyContext?.scopes ?? null);
+    const scopeAllowed = scopeAllowedSites(auth.keyContext);
 
     let siteDocs: FirebaseFirestore.QueryDocumentSnapshot[];
     if (candidates === 'all') {
@@ -204,22 +201,17 @@ export const POST = authorizedPlatformHandler({
 });
 
 /**
- * Null = unrestricted (wildcard or non-site scope); Set = restricted to these site ids.
- * Legacy / session keys return null.
+ * Null = unrestricted (session, legacy key, or site wildcard); Set = restricted
+ * to explicit site ids. Scoped API keys with no site scopes get an empty set.
  */
-function scopeAllowedSites(scopes: ApiKeyScope[] | null): Set<string> | null {
-  if (!scopes || scopes.length === 0) return null;
+function scopeAllowedSites(keyContext: ResolvedAuth['keyContext']): Set<string> | null {
+  if (!keyContext || keyContext.isLegacy || !keyContext.scopes) return null;
   const ids = new Set<string>();
-  let hasSiteScope = false;
-  for (const s of scopes) {
+  for (const s of keyContext.scopes) {
     if (s.resource !== 'site') continue;
-    hasSiteScope = true;
     if (s.id === '*') return null; // wildcard beats any restriction
     ids.add(s.id);
   }
-  // If the key has NO site scopes at all (only roost/machine scopes),
-  // don't restrict here — the list endpoint shows the account's view.
-  if (!hasSiteScope) return null;
   return ids;
 }
 

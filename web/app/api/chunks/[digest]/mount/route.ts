@@ -21,9 +21,11 @@ import {
   problemValidation,
   ProblemType,
 } from '@/lib/apiErrors';
+import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { hasChunk } from '@/lib/r2Client.server';
 import {
+  auditActorIdentifier,
   applyAuthDeprecations,
   parseJsonBody,
   requireSiteAuthAndScope,
@@ -156,10 +158,27 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         fromRoostId: fromCandidate,
         toRoostId: toCandidate,
         mountedAt: FieldValue.serverTimestamp(),
+        referencedAt: FieldValue.serverTimestamp(),
         mountedBy: auth.userId,
       },
       { merge: true },
     );
+
+    emitMutation({
+      kind: 'chunk_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: digest,
+      attributes: {
+        verb: 'mount',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        fromRoostId: fromCandidate,
+        toRoostId: toCandidate,
+        entryId,
+        zeroByte: true,
+      },
+    });
 
     return applyAuthDeprecations(
       NextResponse.json(

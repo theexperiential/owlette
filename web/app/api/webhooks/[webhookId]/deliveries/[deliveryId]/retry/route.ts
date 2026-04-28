@@ -22,6 +22,7 @@
 
 import { randomBytes } from 'node:crypto';
 
+import { emitMutation } from '@/lib/auditLogClient';
 import { signPayload } from '@/lib/webhookSignature';
 
 import type { NextRequest } from 'next/server';
@@ -37,6 +38,7 @@ import {
 import { getAdminDb } from '@/lib/firebase-admin';
 
 import {
+  auditActorIdentifier,
   applyAuthDeprecations,
   requireSiteAuthAndScope,
   validateSiteIdBody,
@@ -180,6 +182,21 @@ export async function POST(
     };
 
     await db.collection(DELIVERIES_COLLECTION).doc(newRecordId).set(retryRecord);
+
+    emitMutation({
+      kind: 'webhook_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: webhookId,
+      attributes: {
+        verb: 'retry_delivery',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        deliveryId,
+        retryDeliveryId: newRecordId,
+        event,
+      },
+    });
 
     return applyAuthDeprecations(
       NextResponse.json(

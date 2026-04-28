@@ -17,6 +17,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { timestampToIso } from '@/lib/firestoreTime.server';
+import { emitMutation } from '@/lib/auditLogClient';
 import {
   problem,
   problemFromError,
@@ -30,6 +31,7 @@ import {
   ResolveVersionError,
 } from '@/lib/resolveVersion';
 import {
+  auditActorIdentifier,
   applyAuthDeprecations,
   readAndParseJsonBody,
   requireRoostAuthAndScope,
@@ -253,6 +255,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     // `currentVersionDescription` for the row preview, so without this the
     // preview would lag until the next publish.
     const roostRef = resolved.doc.ref.parent.parent;
+    let mirroredToRoost = false;
     if (roostRef) {
       const roostSnap = await roostRef.get();
       const currentId = roostSnap.exists
@@ -263,6 +266,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
           currentVersionDescription: newDescription,
           updatedAt: FieldValue.serverTimestamp(),
         });
+        mirroredToRoost = true;
       }
     }
 
@@ -288,6 +292,21 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       auth.scopeCheck,
     );
     if (idem.mode === 'proceed') await saveIdempotency(idem.token, response);
+    emitMutation({
+      kind: 'roost_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: refreshed.id,
+      attributes: {
+        verb: 'version_description_update',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        roostId,
+        versionRef,
+        hasDescription: newDescription !== null,
+        mirroredToRoost,
+      },
+    });
     return response;
   } catch (err) {
     return problemFromError(err, 'v2/roosts/[roostId]/versions/[versionRef]:PATCH');

@@ -122,11 +122,13 @@ function normalise(raw: Record<string, unknown>, fallbackHash: string): AuditRec
     event.attributes && typeof event.attributes === 'object' && !Array.isArray(event.attributes)
       ? (event.attributes as Record<string, unknown>)
       : {};
+  const target = typeof event.target === 'string' ? event.target : undefined;
   return {
     event: {
       kind: event.kind,
       siteId: event.siteId,
       actor: event.actor,
+      ...(target !== undefined ? { target } : {}),
       occurredAt: event.occurredAt,
       attributes,
     },

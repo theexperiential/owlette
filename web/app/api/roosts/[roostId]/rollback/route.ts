@@ -39,12 +39,14 @@ import {
   problemValidation,
   ProblemType,
 } from '@/lib/apiErrors';
+import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
   resolveVersion,
   ResolveVersionError,
 } from '@/lib/resolveVersion';
 import {
+  auditActorIdentifier,
   applyAuthDeprecations,
   readAndParseJsonBody,
   requireRoostAuthAndScope,
@@ -247,12 +249,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // rollout state, but webhook publication is a separate dispatcher
     // not yet wired up — same gap as `version.published`. Track in the
     // wave-2 webhook-emission task.
-    //
-    // TODO(roost-audit): emit `version_pointer_changed` audit-log entry.
-    // The audit-log sink lives in functions/src/auditLog.ts and isn't
-    // currently called from any web route — once the helper is exposed,
-    // call it here with { kind: 'rollback', from: previousVersionId,
-    // to: resolved.versionId, actor: auth.userId }.
 
     const response = applyAuthDeprecations(
       NextResponse.json({
@@ -266,6 +262,22 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       auth.scopeCheck,
     );
     if (idem.mode === 'proceed') await saveIdempotency(idem.token, response);
+    emitMutation({
+      kind: 'roost_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: resolved.versionId,
+      attributes: {
+        verb: 'rollback',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        roostId,
+        targetVersion: refInput,
+        fromVersionId: txResult.previousVersionId,
+        toVersionId: resolved.versionId,
+        toVersionNumber: resolved.versionNumber,
+      },
+    });
     return response;
   } catch (err) {
     return problemFromError(err, 'v2/roosts/[roostId]/rollback');

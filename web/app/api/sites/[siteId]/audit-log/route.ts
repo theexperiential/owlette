@@ -99,6 +99,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       kind: string;
       actor: string;
       siteId: string;
+      target: string | null;
       occurredAt: number | null;
       recordedAt: number | null;
       attributes: Record<string, unknown>;
@@ -110,6 +111,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           kind?: string;
           siteId?: string;
           actor?: string;
+          target?: string;
           occurredAt?: number;
           attributes?: Record<string, unknown>;
         };
@@ -121,6 +123,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         kind: typeof evt.kind === 'string' ? evt.kind : 'unknown',
         actor: typeof evt.actor === 'string' ? evt.actor : '',
         siteId: typeof evt.siteId === 'string' ? evt.siteId : siteId,
+        target: typeof evt.target === 'string' ? evt.target : null,
         occurredAt: typeof evt.occurredAt === 'number' ? evt.occurredAt : null,
         recordedAt: timestampToMs(data.recordedAt),
         attributes: evt.attributes && typeof evt.attributes === 'object' ? evt.attributes : {},

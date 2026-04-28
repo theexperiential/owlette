@@ -3,6 +3,7 @@ import {
   ApiAuthError,
   requireSessionOrIdToken,
 } from '@/lib/apiAuth.server';
+import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
   problem,
@@ -53,6 +54,18 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       batch.delete(db.collection('api_keys').doc(keyHash));
     }
     await batch.commit();
+
+    emitMutation({
+      kind: 'api_key_mutated',
+      siteId: '',
+      actor: `user:${userId}`,
+      targetId: keyId,
+      attributes: {
+        verb: 'revoke',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+      },
+    });
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {

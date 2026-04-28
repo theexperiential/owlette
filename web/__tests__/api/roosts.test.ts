@@ -8,6 +8,8 @@ import {
   querySnapshot,
 } from './helpers/firestore-mock';
 
+const mockEmitMutation = jest.fn();
+
 jest.mock('@sentry/nextjs', () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
@@ -18,6 +20,7 @@ jest.mock('@/lib/firebase-admin', () => ({
 }));
 jest.mock('@/lib/auditLogClient', () => ({
   emitApiKeyUsed: jest.fn(),
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
 
@@ -89,6 +92,71 @@ describe('GET /api/roosts', () => {
     const body = await res.json();
     expect(body.roosts).toHaveLength(1);
     expect(body.roosts[0].roostId).toBe('rst_active00001');
+    expect(body.next_page_token).toBe('');
+    expect(body.nextPageToken).toBe('');
+  });
+
+  it('accepts page_size/page_token and emits next_page_token', async () => {
+    mocks.collectionGet.mockResolvedValueOnce(
+      querySnapshot([
+        {
+          id: 'rst_active00001',
+          data: { name: 'active', targets: ['m1'], currentVersionId: 'v-1' },
+        },
+        {
+          id: 'rst_active00002',
+          data: { name: 'next', targets: ['m2'], currentVersionId: 'v-2' },
+        },
+      ]),
+    );
+
+    const req = createMockRequest(
+      `http://localhost/api/roosts?siteId=${SITE}&page_size=1&page_token=rst_before`,
+    );
+    const res = await listGET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mocks.limit).toHaveBeenCalledWith(2);
+    expect(mocks.startAfter).toHaveBeenCalled();
+    expect(body.roosts).toHaveLength(1);
+    expect(body.next_page_token).toBe('rst_active00001');
+    expect(body.nextPageToken).toBe(body.next_page_token);
+  });
+
+  it('uses the last emitted roost as page token when deleted docs are skipped', async () => {
+    mocks.collectionGet
+      .mockResolvedValueOnce(
+        querySnapshot([
+          {
+            id: 'rst_active00001',
+            data: { name: 'active', targets: ['m1'], currentVersionId: 'v-1' },
+          },
+          {
+            id: 'rst_deleted0001',
+            data: { name: 'tomb', targets: [], deletedAt: 1_700_000_000_000 },
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        querySnapshot([
+          {
+            id: 'rst_active00002',
+            data: { name: 'next', targets: ['m2'], currentVersionId: 'v-2' },
+          },
+        ]),
+      );
+
+    const req = createMockRequest(
+      `http://localhost/api/roosts?siteId=${SITE}&page_size=1`,
+    );
+    const res = await listGET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.roosts).toHaveLength(1);
+    expect(body.roosts[0].roostId).toBe('rst_active00001');
+    expect(body.next_page_token).toBe('rst_active00001');
   });
 
   it('includeDeleted=true surfaces tombstoned entries', async () => {
@@ -143,6 +211,20 @@ describe('POST /api/roosts', () => {
     expect(body.roostId).toMatch(/^rst_[0-9a-f]{18}$/);
     expect(body.name).toBe('my roost');
     expect(body.targets).toEqual(['m-1']);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'roost_mutated',
+        siteId: SITE,
+        actor: 'user:user-1',
+        targetId: body.roostId,
+        attributes: expect.objectContaining({
+          verb: 'create',
+          endpoint: '/api/roosts',
+          method: 'POST',
+          targetCount: 1,
+        }),
+      }),
+    );
   });
 
   it('409 when roost exists (not tombstoned)', async () => {
@@ -276,6 +358,20 @@ describe('PATCH /api/roosts/{id}', () => {
     const body = await res.json();
     expect(body.updated).toContain('name');
     expect(mocks.update).toHaveBeenCalled();
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'roost_mutated',
+        siteId: SITE,
+        actor: 'user:user-1',
+        targetId: ROOST,
+        attributes: expect.objectContaining({
+          verb: 'update',
+          endpoint: `/api/roosts/${ROOST}`,
+          method: 'PATCH',
+          changedFields: ['name'],
+        }),
+      }),
+    );
   });
 });
 
@@ -315,5 +411,18 @@ describe('DELETE /api/roosts/{id}', () => {
     const updateCall = (mocks.update as jest.Mock).mock.calls[0][0];
     expect(updateCall.deletedBy).toBe('user-1');
     expect(typeof updateCall.tombstoneExpiresAt).toBe('number');
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'roost_mutated',
+        siteId: SITE,
+        actor: 'user:user-1',
+        targetId: ROOST,
+        attributes: expect.objectContaining({
+          verb: 'delete',
+          endpoint: `/api/roosts/${ROOST}`,
+          method: 'DELETE',
+        }),
+      }),
+    );
   });
 });

@@ -41,6 +41,7 @@ import {
   type ApiKeyScope,
   DEFAULT_TTL_DAYS,
   MAX_TTL_DAYS,
+  SUPERADMIN_ONLY_RESOURCES,
 } from '@/lib/apiKeyTypes';
 import { apiError } from '@/lib/apiErrorResponse';
 
@@ -120,6 +121,33 @@ export const POST = withRateLimit(
       }
       const scopes = scopesResult;
 
+      const superadminScopeWithConcreteId = scopes.find(
+        (scope) =>
+          SUPERADMIN_ONLY_RESOURCES.includes(scope.resource) &&
+          scope.id !== '*',
+      );
+      if (superadminScopeWithConcreteId) {
+        return NextResponse.json(
+          { error: `${superadminScopeWithConcreteId.resource} scopes must use id "*"` },
+          { status: 400 },
+        );
+      }
+
+      const db = getAdminDb();
+      const needsSuperadminGrant = scopes.some((scope) =>
+        SUPERADMIN_ONLY_RESOURCES.includes(scope.resource),
+      );
+      if (needsSuperadminGrant) {
+        const userDoc = await db.collection('users').doc(userId).get();
+        const role = userDoc.exists ? userDoc.data()?.role : null;
+        if (role !== 'superadmin') {
+          return NextResponse.json(
+            { error: 'superadmin access required to create user or installer scopes' },
+            { status: 403 },
+          );
+        }
+      }
+
       const rawTtl = body.ttlDays === undefined ? DEFAULT_TTL_DAYS : body.ttlDays;
       if (
         typeof rawTtl !== 'number' ||
@@ -151,7 +179,6 @@ export const POST = withRateLimit(
         }
       }
 
-      const db = getAdminDb();
       const codeRef = db.collection('cli_device_codes').doc(code);
       const codeSnap = await codeRef.get();
       if (!codeSnap.exists) {

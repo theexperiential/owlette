@@ -8,6 +8,8 @@ import {
   querySnapshot,
 } from './helpers/firestore-mock';
 
+const mockEmitMutation = jest.fn();
+
 jest.mock('@sentry/nextjs', () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
@@ -18,6 +20,7 @@ jest.mock('@/lib/firebase-admin', () => ({
 }));
 jest.mock('@/lib/auditLogClient', () => ({
   emitApiKeyUsed: jest.fn(),
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
 
@@ -35,6 +38,7 @@ jest.mock('@/lib/apiAuth.server', () => {
 
 import { POST as deployPOST } from '@/app/api/roosts/[roostId]/deploy/route';
 import { GET as deploymentsGET } from '@/app/api/roosts/[roostId]/deployments/route';
+import { POST as resyncPOST } from '@/app/api/roosts/[roostId]/resync/route';
 
 const SITE = 'site-dep';
 const ROOST = 'rst_deployroot1';
@@ -52,6 +56,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   authed();
   mocks.set.mockResolvedValue(undefined);
+  mocks.batchCommit.mockResolvedValue(undefined);
   mocks.get.mockImplementation(() => Promise.resolve(docSnapshot('any', {})));
   mocks.collectionGet.mockResolvedValue(querySnapshot([]));
 });
@@ -129,13 +134,35 @@ describe('POST /api/roosts/{id}/deploy', () => {
     expect(body.versionId).toBe(VERSION);
     expect(body.canary.length).toBeGreaterThan(0);
     expect(mocks.set).not.toHaveBeenCalled();
+    expect(mockEmitMutation).not.toHaveBeenCalled();
   });
 
-  // Note: a full "201 writes + queues" integration case needs a
-  // db.batch() mock that the shared firestore-mock doesn't surface. The
-  // dryRun test above exercises the plan-computation path without
-  // requiring a batch. Covered more thoroughly by the firestore-emulator
-  // suite (deferred to wave 4 e2e).
+  it('returns 202 when a rollout is queued', async () => {
+    mocks.get
+      .mockResolvedValueOnce(
+        docSnapshot(ROOST, {
+          currentVersionId: VERSION,
+          versionUrl: 'https://r2/.../version.json',
+          targets: ['m-1', 'm-2'],
+        }),
+      )
+      .mockResolvedValueOnce(docSnapshot(VERSION, null));
+    const req = createMockRequest(
+      `http://localhost/api/roosts/${ROOST}/deploy`,
+      { method: 'POST', body: { siteId: SITE } },
+    );
+    const res = await deployPOST(req, { params: Promise.resolve({ roostId: ROOST }) });
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.rolloutId).toBe(VERSION);
+    expect(mocks.batchCommit).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'roost_mutated',
+      siteId: SITE,
+      targetId: VERSION,
+      attributes: expect.objectContaining({ verb: 'deploy' }),
+    }));
+  });
 
   it('returns alreadyRunning=true on idempotent re-trigger for active rollout', async () => {
     mocks.get.mockResolvedValueOnce(
@@ -195,8 +222,52 @@ describe('GET /api/roosts/{id}/deployments', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.rollouts).toHaveLength(1);
+    expect(body.items).toHaveLength(1);
     expect(body.rollouts[0].rolloutId).toBe(VERSION);
     expect(body.rollouts[0].versionId).toBe(VERSION);
     expect(body.rollouts[0].stage).toBe('canary');
+    expect(body.next_page_token).toBe('');
+  });
+});
+
+describe('POST /api/roosts/{id}/resync', () => {
+  it('audits API-key resync with the key actor after committing commands', async () => {
+    mockResolveAuth.mockResolvedValueOnce({
+      userId: 'user-1',
+      keyContext: {
+        keyId: 'key-operator',
+        scopes: [{ resource: 'roost', id: ROOST, permissions: ['deploy'] }],
+        environment: 'live',
+        expiresAt: null,
+        isLegacy: false,
+      },
+    });
+    mocks.get.mockResolvedValueOnce(
+      docSnapshot(ROOST, {
+        currentVersionId: VERSION,
+        versionUrl: 'https://r2.example/version.json',
+        targets: ['m-1', 'm-2'],
+      }),
+    );
+
+    const req = createMockRequest(
+      `http://localhost/api/roosts/${ROOST}/resync`,
+      { method: 'POST', body: { siteId: SITE } },
+    );
+    const res = await resyncPOST(req, { params: Promise.resolve({ roostId: ROOST }) });
+
+    expect(res.status).toBe(200);
+    expect(mocks.batchCommit).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'roost_mutated',
+      siteId: SITE,
+      actor: 'apiKey:key-operator',
+      targetId: ROOST,
+      attributes: expect.objectContaining({
+        verb: 'resync',
+        versionId: VERSION,
+        targetCount: 2,
+      }),
+    }));
   });
 });

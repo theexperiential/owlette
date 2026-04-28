@@ -27,6 +27,11 @@ import {
   problemValidation,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import {
+  nextPageTokenFromDocs,
+  parsePagination,
+  withPaginationFields,
+} from '@/lib/pagination';
 
 import {
   applyAuthDeprecations,
@@ -83,14 +88,12 @@ export async function GET(
       return problemNotFound(`webhook ${webhookId} not found on site ${site.siteId}`);
     }
 
-    const limitRaw = Number(
-      request.nextUrl.searchParams.get('limit') ?? DEFAULT_LIST_LIMIT,
-    );
-    const limit = Math.min(
-      Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_LIST_LIMIT),
-      MAX_LIST_LIMIT,
-    );
-    const cursor = request.nextUrl.searchParams.get('cursor');
+    const parsedPagination = parsePagination(request.nextUrl.searchParams, {
+      defaultPageSize: DEFAULT_LIST_LIMIT,
+      maxPageSize: MAX_LIST_LIMIT,
+    });
+    if (!parsedPagination.ok) return parsedPagination.response;
+    const { pageSize, pageToken } = parsedPagination.pagination;
 
     const windowStart = Date.now() - HISTORY_WINDOW_MS;
     const base = db
@@ -99,16 +102,16 @@ export async function GET(
       .where('createdAt', '>=', windowStart)
       .orderBy('createdAt', 'desc');
 
-    let query = base.limit(limit + 1);
-    if (cursor) {
-      const cursorSnap = await db.collection(DELIVERIES_COLLECTION).doc(cursor).get();
+    let query = base.limit(pageSize + 1);
+    if (pageToken) {
+      const cursorSnap = await db.collection(DELIVERIES_COLLECTION).doc(pageToken).get();
       if (cursorSnap.exists) query = query.startAfter(cursorSnap);
     }
 
     const snap = await query.get();
-    const overflow = snap.docs.length > limit;
-    const pageDocs = overflow ? snap.docs.slice(0, limit) : snap.docs;
-    const nextPageToken = overflow ? (snap.docs[limit]?.id ?? '') : '';
+    const overflow = snap.docs.length > pageSize;
+    const pageDocs = overflow ? snap.docs.slice(0, pageSize) : snap.docs;
+    const nextPageToken = nextPageTokenFromDocs(snap.docs, pageSize);
 
     const deliveries = pageDocs.map((d) => {
       const data = d.data();
@@ -130,7 +133,7 @@ export async function GET(
     });
 
     return applyAuthDeprecations(
-      NextResponse.json({ deliveries, nextPageToken }),
+      NextResponse.json(withPaginationFields({ deliveries }, nextPageToken)),
       auth.scopeCheck,
     );
   } catch (err) {

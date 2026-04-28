@@ -8,6 +8,8 @@ import {
   querySnapshot,
 } from './helpers/firestore-mock';
 
+const mockEmitMutation = jest.fn();
+
 jest.mock('@sentry/nextjs', () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
@@ -18,6 +20,7 @@ jest.mock('@/lib/firebase-admin', () => ({
 }));
 jest.mock('@/lib/auditLogClient', () => ({
   emitApiKeyUsed: jest.fn(),
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
 
@@ -118,6 +121,22 @@ describe('POST /api/chunks/{digest}/mount', () => {
     expect(body.from).toBe(ROOST_FROM);
     expect(body.to).toBe(ROOST_TO);
     expect(mocks.set).toHaveBeenCalled();
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'chunk_mutated',
+        siteId: SITE,
+        actor: 'user:user-1',
+        targetId: DIGEST,
+        attributes: expect.objectContaining({
+          verb: 'mount',
+          endpoint: `/api/chunks/${DIGEST}/mount`,
+          method: 'POST',
+          fromRoostId: ROOST_FROM,
+          toRoostId: ROOST_TO,
+          zeroByte: true,
+        }),
+      }),
+    );
   });
 });
 
@@ -160,8 +179,11 @@ describe('GET /api/chunks/{digest}/referrers', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.referrers).toHaveLength(1);
+    expect(body.items).toHaveLength(1);
     expect(body.referrers[0].source).toBe('mount');
     expect(body.referrers[0].fromRoostId).toBe(ROOST_FROM);
+    expect(body.referrers[0].referencedAt).toBeTruthy();
+    expect(body.next_page_token).toBe('');
     expect(body.nextPageToken).toBe('');
   });
 });

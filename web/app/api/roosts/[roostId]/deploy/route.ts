@@ -20,6 +20,8 @@
  *   scheduled?: { at: string, warning: string },
  * }
  *
+ * Returns 202 Accepted once the rollout is queued.
+ *
  * Honors the optional `Idempotency-Key` header by returning a cached
  * response shape if the same versionId rollout already exists (per-
  * version idempotency is natively provided by the rollout doc key).
@@ -35,8 +37,10 @@ import {
   problemValidation,
   ProblemType,
 } from '@/lib/apiErrors';
+import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
+  auditActorIdentifier,
   applyAuthDeprecations,
   readAndParseJsonBody,
   requireRoostAuthAndScope,
@@ -336,11 +340,28 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
               }
             : {}),
         },
-        { status: 201 },
+        { status: 202 },
       ),
       auth.scopeCheck,
     );
     if (idem.mode === 'proceed') await saveIdempotency(idem.token, response);
+    emitMutation({
+      kind: 'roost_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: versionId,
+      attributes: {
+        verb: 'deploy',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        roostId,
+        versionId,
+        stage: scheduled ? 'scheduled' : 'canary',
+        targetCount: machines.length,
+        canaryCount: canary.length,
+        scheduled,
+      },
+    });
     return response;
   } catch (err) {
     return problemFromError(err, 'v2/roosts/[roostId]/deploy:POST');

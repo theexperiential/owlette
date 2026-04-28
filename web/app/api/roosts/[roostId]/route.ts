@@ -15,6 +15,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { timestampToIso } from '@/lib/firestoreTime.server';
+import { emitMutation } from '@/lib/auditLogClient';
 import {
   problem,
   problemFromError,
@@ -23,6 +24,7 @@ import {
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
+  auditActorIdentifier,
   applyAuthDeprecations,
   parseJsonBody,
   requireRoostAuthAndScope,
@@ -206,7 +208,21 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     updates.updatedAt = FieldValue.serverTimestamp();
+    const changedFields = Object.keys(updates).filter((field) => field !== 'updatedAt');
     await roostRef.update(updates);
+
+    emitMutation({
+      kind: 'roost_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: roostId,
+      attributes: {
+        verb: 'update',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        changedFields,
+      },
+    });
 
     return applyAuthDeprecations(
       NextResponse.json({ roostId, siteId: site.siteId, updated: Object.keys(updates) }),
@@ -259,6 +275,19 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       deletedBy: auth.userId,
       tombstoneExpiresAt,
       updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    emitMutation({
+      kind: 'roost_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: roostId,
+      attributes: {
+        verb: 'delete',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        tombstoneExpiresAt,
+      },
     });
 
     return applyAuthDeprecations(

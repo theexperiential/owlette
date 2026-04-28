@@ -7,12 +7,15 @@ import {
   docSnapshot,
 } from './helpers/firestore-mock';
 
+const mockEmitMutation = jest.fn();
+
 jest.mock('@sentry/nextjs', () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
 }));
 jest.mock('@/lib/auditLogClient', () => ({
   emitApiKeyUsed: jest.fn(),
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
 
@@ -127,6 +130,7 @@ function authedAsOperator() {
   mockResolveAuth.mockResolvedValue({
     userId: 'user-operator',
     keyContext: {
+      keyId: 'key-operator',
       environment: 'live',
       isLegacy: false,
       scopes: [
@@ -142,6 +146,7 @@ function authedAsReadOnly() {
   mockResolveAuth.mockResolvedValue({
     userId: 'user-readonly',
     keyContext: {
+      keyId: 'key-readonly',
       environment: 'live',
       isLegacy: false,
       scopes: [{ resource: 'roost', id: '*', permissions: ['read'] }],
@@ -229,6 +234,24 @@ describe('POST /rollback — happy paths', () => {
       totalFiles: 3,
       totalSize: 4096,
     });
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'roost_mutated',
+        siteId: SITE,
+        actor: 'apiKey:key-operator',
+        targetId: 'vrs_v4_id',
+        attributes: expect.objectContaining({
+          verb: 'rollback',
+          endpoint: `/api/roosts/${ROOST}/rollback`,
+          method: 'POST',
+          roostId: ROOST,
+          targetVersion: 'previous',
+          fromVersionId: 'vrs_v5_id',
+          toVersionId: 'vrs_v4_id',
+          toVersionNumber: 4,
+        }),
+      }),
+    );
   });
 
   it('explicit number target: targetVersion=3 flips to v3', async () => {

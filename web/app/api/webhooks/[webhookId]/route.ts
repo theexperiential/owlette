@@ -31,6 +31,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 
+import { emitMutation } from '@/lib/auditLogClient';
 import {
   problem,
   problemFromError,
@@ -44,6 +45,7 @@ import { validateEvents } from '@/lib/webhookEvents';
 import { validateWebhookUrl } from '@/lib/webhookUrl';
 
 import {
+  auditActorIdentifier,
   applyAuthDeprecations,
   readAndParseJsonBody,
   requireSiteAuthAndScope,
@@ -238,6 +240,7 @@ export async function PATCH(
     }
 
     updates.updatedAt = FieldValue.serverTimestamp();
+    const changedFields = Object.keys(updates).filter((field) => field !== 'updatedAt');
     await ref.update(updates);
 
     const refreshed = await ref.get();
@@ -249,6 +252,18 @@ export async function PATCH(
     );
 
     if (idem.mode === 'proceed') await saveIdempotency(idem.token, response);
+    emitMutation({
+      kind: 'webhook_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: webhookId,
+      attributes: {
+        verb: 'update',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        changedFields,
+      },
+    });
     return response;
   } catch (err) {
     return problemFromError(err, 'webhooks/[webhookId]:PATCH');
@@ -322,6 +337,19 @@ export async function DELETE(
       tombstoneExpiresAt,
       paused: true,
       updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    emitMutation({
+      kind: 'webhook_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: webhookId,
+      attributes: {
+        verb: 'delete',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        tombstoneExpiresAt,
+      },
     });
 
     return applyAuthDeprecations(

@@ -5,6 +5,7 @@ import {
   ApiAuthError,
   requireSessionOrIdToken,
 } from '@/lib/apiAuth.server';
+import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
   problem,
@@ -179,6 +180,24 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
 
       await batch.commit();
+
+      emitMutation({
+        kind: 'api_key_mutated',
+        siteId: '',
+        actor: `user:${userId}`,
+        targetId: newKeyId,
+        attributes: {
+          verb: 'rotate',
+          endpoint: request.nextUrl.pathname,
+          method: request.method,
+          environment,
+          keyPrefix,
+          rotatedFromKeyId: keyId,
+          previousKeyRetiresAt: retiresAt,
+          scopeCount: scopes.length,
+          ttlDays,
+        },
+      });
 
       return NextResponse.json({
         success: true,

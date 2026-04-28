@@ -14,6 +14,11 @@ import {
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
+  collectFilteredPage,
+  parsePagination,
+  withPaginationFields,
+} from '@/lib/pagination';
+import {
   applyAuthDeprecations,
   requireRoostAuthAndScope,
   validateResourceId,
@@ -26,6 +31,7 @@ interface RouteParams {
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+const VALID_STAGES = new Set(['scheduled', 'canary', 'complete', 'aborted']);
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
@@ -45,12 +51,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'read');
     if (!auth.ok) return auth.response;
 
-    const limitRaw = Number(request.nextUrl.searchParams.get('limit') ?? DEFAULT_LIMIT);
-    const limit = Math.min(
-      Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_LIMIT),
-      MAX_LIMIT,
-    );
-    const cursor = request.nextUrl.searchParams.get('cursor');
+    const parsedPagination = parsePagination(request.nextUrl.searchParams, {
+      defaultPageSize: DEFAULT_LIMIT,
+      maxPageSize: MAX_LIMIT,
+    });
+    if (!parsedPagination.ok) return parsedPagination.response;
+    const { pageSize, pageToken } = parsedPagination.pagination;
+
+    const stageFilter = request.nextUrl.searchParams.get('stage');
+    if (stageFilter && !VALID_STAGES.has(stageFilter)) {
+      return problemValidation('stage must be one of scheduled, canary, complete, aborted', {
+        'query.stage': ['invalid stage'],
+      });
+    }
 
     const db = getAdminDb();
     const rolloutsCol = db
@@ -60,17 +73,26 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       .doc(roostId)
       .collection('rollouts');
 
-    let query = rolloutsCol.orderBy('startedAt', 'desc').limit(limit + 1);
-    if (cursor) {
-      const cursorSnap = await rolloutsCol.doc(cursor).get();
-      if (cursorSnap.exists) query = query.startAfter(cursorSnap);
-    }
+    const page = await collectFilteredPage({
+      pageSize,
+      pageToken,
+      fetchPage: async (cursor, limit) => {
+        let query = rolloutsCol.orderBy('startedAt', 'desc').limit(limit);
+        if (cursor) {
+          const cursorSnap = await rolloutsCol.doc(cursor).get();
+          if (cursorSnap.exists) query = query.startAfter(cursorSnap);
+        }
+        const snap = await query.get();
+        return snap.docs;
+      },
+      include: (doc) => {
+        if (!stageFilter) return true;
+        const data = doc.data();
+        return data.stage === stageFilter;
+      },
+    });
 
-    const snap = await query.get();
-    const docs = snap.docs.slice(0, limit);
-    const nextPageToken = snap.docs.length > limit ? snap.docs[limit].id : '';
-
-    const rollouts = docs.map((d) => {
+    const rollouts = page.docs.map((d) => {
       const data = d.data();
       return {
         rolloutId: d.id,
@@ -90,7 +112,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     });
 
     return applyAuthDeprecations(
-      NextResponse.json({ rollouts, nextPageToken }),
+      NextResponse.json(
+        withPaginationFields(
+          {
+            rollouts,
+            items: rollouts,
+          },
+          page.nextPageToken,
+        ),
+      ),
       auth.scopeCheck,
     );
   } catch (err) {

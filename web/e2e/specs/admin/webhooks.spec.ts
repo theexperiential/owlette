@@ -11,12 +11,12 @@
  *     "never triggered" status badge
  *   - create flow — "add webhook" → fills name/URL/events → "create
  *     webhook" → secret dialog shown + Admin SDK verifies Firestore
- *     doc exists with the expected shape (https URL, enabled=true,
- *     non-empty secret, events array)
+ *     doc exists with the expected shape (https URL, paused=false,
+ *     non-empty signing secret, events array)
  *   - edit flow — pencil → dialog → new URL → "save changes" → toast +
  *     Admin SDK verifies the updated URL
  *   - delete flow — trash → inline "confirm"/"cancel" → confirm → toast
- *     + row gone + Admin SDK confirms doc deleted
+ *     + row gone + Admin SDK confirms doc is soft-deleted
  *
  * Not covered: test-send (hits real HTTP — flaky in E2E) and webhook
  * disable/enable toggle (lower-value UI toggle — defer if time permits
@@ -37,7 +37,7 @@ const SITE_NAME = 'Z Webhook Test Site';
 const SEEDED_WEBHOOK = {
   name: 'seeded webhook',
   url: 'https://example.com/seeded-hook',
-  events: ['machine.offline', 'process.crashed'],
+  events: ['machine.offline', 'deployment.failed'],
 };
 
 async function clearWebhooks() {
@@ -56,16 +56,18 @@ async function seedWebhook(name = SEEDED_WEBHOOK.name, url = SEEDED_WEBHOOK.url)
   const db = getAdminDb();
   const ref = db.collection('sites').doc(SITE_ID).collection('webhooks').doc();
   await ref.set({
-    name,
+    description: name,
     url,
     events: SEEDED_WEBHOOK.events,
-    enabled: true,
-    secret: 'deadbeef'.repeat(8),
+    paused: false,
+    signingSecret: `whsec_${'deadbeef'.repeat(8)}`,
     createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
     createdBy: 'super-uid',
-    lastTriggered: null,
-    lastStatus: 0,
-    failCount: 0,
+    lastDeliveryAt: null,
+    lastDeliveryStatus: null,
+    failureCount: 0,
+    deletedAt: null,
   });
   return ref.id;
 }
@@ -111,7 +113,7 @@ test('creating a webhook writes Firestore doc and shows the signing secret', asy
 
   await addDialog.getByLabel('name').fill(newName);
   await addDialog.getByLabel(/URL/).fill(newUrl);
-  // Pre-seeded events (machine.offline + process.crashed) are already checked
+  // Pre-seeded events (machine.offline + deployment.failed) are already checked
   // per the default state — leave as-is.
 
   await addDialog.getByRole('button', { name: /^create webhook$/i }).click();
@@ -120,21 +122,20 @@ test('creating a webhook writes Firestore doc and shows the signing secret', asy
   await expect(page.getByText(/webhook created/i).first()).toBeVisible();
   const secretDialog = page.getByRole('dialog', { name: /^webhook created$/i });
   await expect(secretDialog).toBeVisible();
-  // The secret is a 64-char hex string (32 random bytes).
-  await expect(secretDialog.locator('code')).toHaveText(/^[0-9a-f]{64}$/);
+  // The secret follows the whsec_ + 64-char hex format.
+  await expect(secretDialog.locator('code')).toHaveText(/^whsec_[0-9a-f]{64}$/);
   await secretDialog.getByRole('button', { name: /^done$/i }).click();
 
   // Admin SDK read-through — verify the doc shape.
   const db = getAdminDb();
   const snap = await db.collection('sites').doc(SITE_ID).collection('webhooks').get();
-  const matching = snap.docs.find((d) => d.data().name === newName);
+  const matching = snap.docs.find((d) => d.data().description === newName);
   expect(matching).toBeDefined();
   const data = matching!.data();
   expect(data.url).toBe(newUrl);
-  expect(data.enabled).toBe(true);
-  expect(data.events).toEqual(expect.arrayContaining(['machine.offline', 'process.crashed']));
-  expect(typeof data.secret).toBe('string');
-  expect(data.secret.length).toBeGreaterThan(32);
+  expect(data.paused).toBe(false);
+  expect(data.events).toEqual(expect.arrayContaining(['machine.offline', 'deployment.failed']));
+  expect(data.signingSecret).toMatch(/^whsec_[0-9a-f]{64}$/);
 });
 
 test('editing a webhook updates the Firestore URL', async ({ page }) => {
@@ -175,8 +176,10 @@ test('deleting a webhook removes the Firestore doc', async ({ page }) => {
 
   await expect(page.getByText(/webhook deleted/i)).toBeVisible();
 
-  // Admin SDK verifies the doc is gone.
+  // Admin SDK verifies the doc is soft-deleted.
   const db = getAdminDb();
   const snap = await db.collection('sites').doc(SITE_ID).collection('webhooks').doc(webhookId).get();
-  expect(snap.exists).toBe(false);
+  expect(snap.exists).toBe(true);
+  expect(snap.data()!.deletedAt).toBeDefined();
+  expect(snap.data()!.paused).toBe(true);
 });

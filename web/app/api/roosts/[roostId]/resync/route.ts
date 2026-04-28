@@ -32,14 +32,16 @@ import {
   problemFromError,
   ProblemType,
 } from '@/lib/apiErrors';
+import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
+  auditActorIdentifier,
+  applyAuthDeprecations,
   parseJsonBody,
+  requireRoostAuthAndScope,
   validateResourceId,
   validateSiteIdBody,
-  requireAuthOrProblem,
-  requireSiteScope,
 } from '../../../_shared';
 
 // Match the agent's destination_allowlist DEFAULT_ROOTS. Keep in sync
@@ -53,9 +55,6 @@ interface RouteParams {
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requireAuthOrProblem(request);
-    if (!auth.ok) return auth.response;
-
     const { roostId } = await params;
     const roostError = validateResourceId(roostId, 'roostId');
     if (roostError) return roostError;
@@ -67,8 +66,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const site = validateSiteIdBody(body.siteId);
     if (!site.ok) return site.response;
 
-    const scopeError = await requireSiteScope(auth.userId, site.siteId);
-    if (scopeError) return scopeError;
+    const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'deploy');
+    if (!auth.ok) return auth.response;
 
     const db = getAdminDb();
     const roostRef = db
@@ -176,7 +175,24 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     await batch.commit();
 
-    return NextResponse.json({ resynced: targets.length, targets });
+    emitMutation({
+      kind: 'roost_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: roostId,
+      attributes: {
+        verb: 'resync',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        versionId,
+        targetCount: targets.length,
+      },
+    });
+
+    return applyAuthDeprecations(
+      NextResponse.json({ resynced: targets.length, targets }),
+      auth.scopeCheck,
+    );
   } catch (err) {
     return problemFromError(err, 'v2/roosts/[roostId]/resync');
   }

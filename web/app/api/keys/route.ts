@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
+import { emitMutation } from '@/lib/auditLogClient';
 import {
   ApiAuthError,
   assertUserHasSiteAccess,
@@ -10,6 +11,7 @@ import {
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
   problem,
+  problemForbidden,
   problemFromError,
   problemTokenExpired,
   problemUnauthorized,
@@ -26,6 +28,7 @@ import {
   type ApiKeyScope,
   DEFAULT_TTL_DAYS,
   MAX_TTL_DAYS,
+  SUPERADMIN_ONLY_RESOURCES,
 } from '@/lib/apiKeyTypes';
 
 const VALID_RESOURCES: readonly ApiKeyResource[] = ALL_RESOURCES;
@@ -127,6 +130,31 @@ export const POST = withRateLimit(
       }
       const scopes = scopesResult;
 
+      const superadminScopeWithConcreteId = scopes.find(
+        (scope) =>
+          SUPERADMIN_ONLY_RESOURCES.includes(scope.resource) &&
+          scope.id !== '*',
+      );
+      if (superadminScopeWithConcreteId) {
+        return problemValidation(
+          `${superadminScopeWithConcreteId.resource} scopes must use id "*"`,
+        );
+      }
+
+      const needsSuperadminGrant = scopes.some((scope) =>
+        SUPERADMIN_ONLY_RESOURCES.includes(scope.resource),
+      );
+      if (needsSuperadminGrant) {
+        const db = getAdminDb();
+        const userDoc = await db.collection('users').doc(userId).get();
+        const role = userDoc.exists ? userDoc.data()?.role : null;
+        if (role !== 'superadmin') {
+          return problemForbidden(
+            'superadmin access required to create user or installer scopes',
+          );
+        }
+      }
+
       const rawTtl = body.ttlDays === undefined ? DEFAULT_TTL_DAYS : body.ttlDays;
       if (typeof rawTtl !== 'number' || !Number.isFinite(rawTtl) || !Number.isInteger(rawTtl)) {
         return problemValidation('ttlDays must be an integer');
@@ -193,6 +221,22 @@ export const POST = withRateLimit(
       batch.set(db.collection('api_keys').doc(keyHash), lookup);
 
       await batch.commit();
+
+      emitMutation({
+        kind: 'api_key_mutated',
+        siteId: '',
+        actor: `user:${userId}`,
+        targetId: keyId,
+        attributes: {
+          verb: 'create',
+          endpoint: request.nextUrl.pathname,
+          method: request.method,
+          environment,
+          keyPrefix,
+          scopeCount: scopes.length,
+          ttlDays,
+        },
+      });
 
       return NextResponse.json({
         success: true,

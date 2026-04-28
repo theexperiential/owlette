@@ -24,6 +24,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 
+import { emitMutation } from '@/lib/auditLogClient';
 import {
   problemFromError,
   problemNotFound,
@@ -32,6 +33,7 @@ import {
 import { getAdminDb } from '@/lib/firebase-admin';
 
 import {
+  auditActorIdentifier,
   applyAuthDeprecations,
   requireSiteAuthAndScope,
   validateSiteIdBody,
@@ -95,6 +97,20 @@ export async function POST(
       secretRotatedAt: FieldValue.serverTimestamp(),
       secretRotatedBy: auth.userId,
       updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    emitMutation({
+      kind: 'webhook_mutated',
+      siteId: site.siteId,
+      actor: auditActorIdentifier(auth.auth),
+      targetId: webhookId,
+      attributes: {
+        verb: 'rotate_secret',
+        endpoint: request.nextUrl.pathname,
+        method: request.method,
+        previousSecretValidUntil: previousSecretValidUntilMs,
+        gracePeriodHours: GRACE_PERIOD_MS / (60 * 60 * 1000),
+      },
     });
 
     return applyAuthDeprecations(

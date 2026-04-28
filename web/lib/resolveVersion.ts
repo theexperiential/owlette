@@ -5,7 +5,7 @@
  * Accepted `ref` forms (all map to the same `{ versionId, versionNumber }`):
  *
  *   - alias:    `current` / `previous` / `first`
- *   - stable id: `vrs_<hex>` (content-addressed id written at publish)
+ *   - stable id: a bare 64-char sha-256 hex string, or legacy `vrs_<hex>`
  *   - number:    `3` / `#3` / `v3` / `V3` (the per-roost versionNumber)
  *
  * The resolver is side-effect free — mutating routes (rollback, deploy,
@@ -114,8 +114,21 @@ export async function resolveVersion(
     return lookupByNumber(roostRef, 1);
   }
 
-  // ── stable content-addressed id form ─────────────────────────────
+  // Stable content-addressed id forms. New publishes currently return a
+  // bare sha-256 hex string; accept the old vrs_ form as a compatibility
+  // alias so clients from the Roost-only API plan still resolve correctly.
+  if (/^[0-9a-f]{64}$/.test(ref)) {
+    return lookupById(roostRef, ref);
+  }
   if (ref.startsWith('vrs_')) {
+    if (/^vrs_[0-9a-f]{64}$/.test(ref)) {
+      const bareId = ref.slice(4);
+      try {
+        return await lookupById(roostRef, bareId);
+      } catch (err) {
+        if (!(err instanceof VersionNotFoundError)) throw err;
+      }
+    }
     return lookupById(roostRef, ref);
   }
 
@@ -136,7 +149,8 @@ export async function resolveVersion(
 
   throw new VersionRefMalformedError(
     `versionRef '${ref}' is malformed — accepts: a positive integer ('3'), ` +
-      `'#3' / 'v3', a 'vrs_*' id, or alias 'current'/'previous'/'first'.`,
+      `'#3' / 'v3', a 64-char sha-256 version id, legacy 'vrs_*' id, ` +
+      `or alias 'current'/'previous'/'first'.`,
   );
 }
 

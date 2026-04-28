@@ -51,26 +51,19 @@ interface WebhookData {
 
 const SUPPORTED_EVENTS = [
   { id: 'machine.offline', label: 'machine offline', description: 'machine stops sending heartbeats' },
-  { id: 'process.crashed', label: 'process crashed', description: 'a monitored process crashes' },
-  { id: 'process.restarted', label: 'process restarted', description: 'a monitored process is restarted' },
+  { id: 'deployment.started', label: 'deployment started', description: 'software deployment starts' },
+  { id: 'version.published', label: 'version published', description: 'a software version is published' },
   { id: 'machine.online', label: 'machine online', description: 'machine comes back online (future)' },
   { id: 'deployment.completed', label: 'deployment completed', description: 'software deployment succeeds (future)' },
   { id: 'deployment.failed', label: 'deployment failed', description: 'software deployment fails (future)' },
-  // [B4.2] Display events. Unchecked by default — operators must opt in
-  // explicitly so existing webhooks don't suddenly start firing on monitor
-  // events they never subscribed to. The 10 ids below mirror the
-  // `webhookEventName`s in `web/lib/alerts/displayEventRouting.ts`; severity
-  // labels in the description help the operator decide which to enable.
-  { id: 'display.monitor_removed', label: 'display: monitor removed', description: 'a monitor disappears from the live topology (critical)' },
-  { id: 'display.apply_failed', label: 'display: apply failed', description: 'a layout apply rejected by the OS (critical)' },
-  { id: 'display.auto_revert_fired', label: 'display: auto-reverted', description: 'no ack within window — agent reverted the apply (critical)' },
-  { id: 'display.sync_lost', label: 'display: sync lost', description: 'nvidia gsync / framelock device dropped (critical)' },
-  { id: 'display.drift', label: 'display: drift', description: 'live config diverged from the stored layout (warning)' },
-  { id: 'display.monitor_swapped', label: 'display: monitor swapped', description: 'same port now reports a different panel (warning)' },
-  { id: 'display.mosaic_disabled', label: 'display: mosaic disabled', description: 'nvidia mosaic spanning turned off (warning)' },
-  { id: 'display.apply_refused_mosaic', label: 'display: apply refused (mosaic)', description: 'apply rejected because mosaic is active (warning)' },
-  { id: 'display.monitor_added', label: 'display: monitor added', description: 'a new monitor appeared in the live topology (info)' },
-  { id: 'display.apply_succeeded', label: 'display: apply succeeded', description: 'a layout apply completed successfully (info)' },
+  // Keep this list aligned with the public webhook API's canonical event catalog.
+  { id: 'version.rolled_back', label: 'version rolled back', description: 'a published version is rolled back' },
+  { id: 'chunk.garbage_collected', label: 'chunk garbage collected', description: 'unused deployment chunks are removed' },
+  { id: 'chunk.verify_failed', label: 'chunk verify failed', description: 'deployment chunk verification fails' },
+  { id: 'quota.warning', label: 'quota warning', description: 'site usage approaches quota' },
+  { id: 'quota.exceeded', label: 'quota exceeded', description: 'site usage exceeds quota' },
+  { id: 'api_key.used', label: 'api key used', description: 'an API key is used' },
+  { id: 'api_key.expired', label: 'api key expired', description: 'an API key expires' },
 ];
 
 async function apiJson<T>(url: string, init: RequestInit): Promise<T> {
@@ -499,7 +492,7 @@ interface AddWebhookDialogProps {
 export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebhookDialogProps) {
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
-  const [newEvents, setNewEvents] = useState<string[]>(['machine.offline', 'process.crashed']);
+  const [newEvents, setNewEvents] = useState<string[]>(['machine.offline', 'deployment.failed']);
   const [saving, setSaving] = useState(false);
   const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
 
@@ -508,7 +501,7 @@ export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebh
     if (open) {
       setNewName('');
       setNewUrl('');
-      setNewEvents(['machine.offline', 'process.crashed']);
+      setNewEvents(['machine.offline', 'deployment.failed']);
     }
   }, [open]);
 
