@@ -7,6 +7,7 @@ import {
   _resetDeprecationWarnings,
   loadConfig,
 } from '../src/config';
+import { defaultCredentialPath, writeStoredCredential } from '../src/credentialStore';
 
 function withConfigFile(toml: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'owlette-cli-config-'));
@@ -122,6 +123,58 @@ token = "owk_live_fromfile"
       reload: true,
     });
     expect(config.token).toBe('owk_live_fromenv');
+  });
+
+  it('reads token-file credentials before legacy config tokens', () => {
+    const path = withConfigFile(`
+[profiles.default]
+token = "owk_live_fromconfig"
+api_url = "https://config.example"
+`);
+    const credentialPath = defaultCredentialPath(path);
+    writeStoredCredential({
+      credentialPath,
+      backend: 'token-file',
+      profile: 'default',
+      token: 'owk_live_fromstore',
+      apiUrl: 'https://store.example',
+      environment: 'live',
+    });
+
+    const config = loadConfig({
+      configPath: path,
+      legacyConfigPath: '/nonexistent/roost/config.toml',
+      credentialBackend: 'token-file',
+      env: {},
+      reload: true,
+    });
+
+    expect(config.token).toBe('owk_live_fromstore');
+    expect(config.apiUrl).toBe('https://config.example');
+    expect(config.environment).toBe('live');
+    expect(config.credentialSource).toBe('token-file');
+    expect(config.credentialPath).toBe(credentialPath);
+  });
+
+  it('OWLETTE_TOKEN env overrides token-file credentials', () => {
+    const path = withConfigFile('');
+    writeStoredCredential({
+      credentialPath: defaultCredentialPath(path),
+      backend: 'token-file',
+      profile: 'default',
+      token: 'owk_live_fromstore',
+    });
+
+    const config = loadConfig({
+      configPath: path,
+      legacyConfigPath: '/nonexistent/roost/config.toml',
+      credentialBackend: 'token-file',
+      env: { OWLETTE_TOKEN: 'owk_live_fromenv' },
+      reload: true,
+    });
+
+    expect(config.token).toBe('owk_live_fromenv');
+    expect(config.credentialSource).toBe('env');
   });
 
   it('OWLETTE_API_URL env overrides profile api_url', () => {

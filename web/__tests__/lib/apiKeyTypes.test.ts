@@ -8,6 +8,7 @@
  */
 import {
   ALL_RESOURCES,
+  SCOPE_PRESETS,
   SUPERADMIN_ONLY_RESOURCES,
   scopeMatches,
   type ApiKeyScope,
@@ -29,6 +30,22 @@ describe('ALL_RESOURCES', () => {
 
   it('flags `user` and `installer` as superadmin-only', () => {
     expect([...SUPERADMIN_ONLY_RESOURCES].sort()).toEqual(['installer', 'user']);
+  });
+});
+
+describe('SCOPE_PRESETS', () => {
+  it('includes chat in common CLI/dashboard presets', () => {
+    expect(SCOPE_PRESETS.publisher.map((scope) => scope.resource).sort()).toEqual([
+      'chat',
+      'machine',
+      'roost',
+      'site',
+    ]);
+    expect(SCOPE_PRESETS.publisher.find((scope) => scope.resource === 'chat')).toEqual({
+      resource: 'chat',
+      id: '*',
+      permissions: ['read', 'write'],
+    });
   });
 });
 

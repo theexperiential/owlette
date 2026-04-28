@@ -39,8 +39,8 @@ const PERMISSIONS: ApiKeyPermission[] = ['read', 'write', 'deploy', 'rollback', 
 const PRESETS: ApiKeyScopePreset[] = ['readonly', 'publisher', 'operator', 'admin'];
 
 const PRESET_DESCRIPTIONS: Record<ApiKeyScopePreset, string> = {
-  readonly: 'read access to roosts, sites, and machines — no mutations',
-  publisher: 'read + write — can upload chunks and publish versions',
+  readonly: 'read access to roosts, sites, machines, and cortex chats — no mutations',
+  publisher: 'read + write — can upload chunks, publish versions, and use cortex chats',
   operator: 'read, write, deploy, rollback — full day-to-day operations',
   admin: 'full access including admin permissions',
 };

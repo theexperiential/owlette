@@ -30,6 +30,13 @@ export interface ClearTokenOpts {
   profile: string;
 }
 
+export interface WriteProfileConfigOpts {
+  configPath: string;
+  profile: string;
+  apiUrl?: string;
+  environment?: 'live' | 'test';
+}
+
 interface ProfileTable {
   token?: string;
   api_url?: string;
@@ -93,9 +100,41 @@ function serialise(config: ConfigFile): string {
   return lines.join('\n').replace(/\n+$/, '\n');
 }
 
+function writeConfigFile(path: string, config: ConfigFile): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, serialise(config), { encoding: 'utf-8', mode: 0o600 });
+
+  // Belt + suspenders on the file permissions — writeFileSync's mode is
+  // honored on fresh files but not on overwrites of existing ones.
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    /* chmod is best-effort on Windows */
+  }
+}
+
+/**
+ * Write non-secret profile metadata. New `auth login` calls use this for
+ * api_url / environment while storing the raw token in the credential store.
+ */
+export function writeProfileConfig(opts: WriteProfileConfigOpts): string {
+  const config = loadOrInit(opts.configPath);
+  config.profiles ??= {};
+  const existing = config.profiles[opts.profile] ?? {};
+  const next: ProfileTable = { ...existing };
+  if (opts.apiUrl) next.api_url = opts.apiUrl;
+  if (opts.environment) next.environment = opts.environment;
+  config.profiles[opts.profile] = next;
+
+  writeConfigFile(opts.configPath, config);
+  return opts.configPath;
+}
+
 /**
  * Write the token (+ optional api_url / environment) to the named profile
  * in config.toml. Creates parent dirs as needed. Returns the written path.
+ * Kept for legacy tests/migration paths; new login code stores tokens with
+ * credentialStore.ts instead.
  */
 export function writeTokenToConfig(opts: WriteTokenOpts): string {
   const config = loadOrInit(opts.configPath);
@@ -110,17 +149,7 @@ export function writeTokenToConfig(opts: WriteTokenOpts): string {
   if (opts.environment) next.environment = opts.environment;
   config.profiles[opts.profile] = next;
 
-  mkdirSync(dirname(opts.configPath), { recursive: true });
-  writeFileSync(opts.configPath, serialise(config), { encoding: 'utf-8', mode: 0o600 });
-
-  // Belt + suspenders on the file permissions — writeFileSync's mode is
-  // honored on fresh files but not on overwrites of existing ones.
-  try {
-    chmodSync(opts.configPath, 0o600);
-  } catch {
-    /* chmod is best-effort on Windows */
-  }
-
+  writeConfigFile(opts.configPath, config);
   return opts.configPath;
 }
 
@@ -135,12 +164,6 @@ export function clearTokenFromConfig(opts: ClearTokenOpts): boolean {
   if (!profile || typeof profile.token !== 'string') return false;
 
   delete profile.token;
-  mkdirSync(dirname(opts.configPath), { recursive: true });
-  writeFileSync(opts.configPath, serialise(config), { encoding: 'utf-8', mode: 0o600 });
-  try {
-    chmodSync(opts.configPath, 0o600);
-  } catch {
-    /* ignore */
-  }
+  writeConfigFile(opts.configPath, config);
   return true;
 }

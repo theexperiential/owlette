@@ -49,7 +49,7 @@ Until 2026-10-01 the binary is also installed under the old name `roost` as a de
 owlette auth login
 ```
 
-Opens your browser to `owlette.app/cli` with a 3-word pairing phrase pre-filled. Approve the request in the dashboard and the cli stores the issued api key in `~/.config/owlette/config.toml` under the `default` profile.
+Opens your browser to `owlette.app/cli` with a 3-word pairing phrase pre-filled. Approve the request in the dashboard and the cli stores the issued api key for the `default` profile using the OS keychain when available, or `~/.config/owlette/credentials.json` as a `0600` token-file fallback.
 
 If you can't open a browser on the cli host (ssh, headless ci, etc):
 
@@ -104,8 +104,9 @@ Every config field follows the same first-wins ladder:
 ```
 1. cli flag           (--api-url, --profile)
 2. env var            (OWLETTE_API_URL, OWLETTE_PROFILE, OWLETTE_TOKEN, OWLETTE_ENVIRONMENT)
-3. profile in config  (~/.config/owlette/config.toml — selected by --profile or OWLETTE_PROFILE)
-4. built-in default   (api_url=https://owlette.app)
+3. credential store   (OS keychain, then ~/.config/owlette/credentials.json)
+4. profile in config  (~/.config/owlette/config.toml — selected by --profile or OWLETTE_PROFILE)
+5. built-in default   (api_url=https://owlette.app)
 ```
 
 Legacy `ROOST_*` env vars + `~/.config/roost/config.toml` are read as fallback through 2026-10-01 with a one-time deprecation warning per process.
@@ -118,16 +119,14 @@ api_url = "https://owlette.app"
 environment = "live"
 
 [profiles.default]
-token = "owk_live_..."
 api_url = "https://owlette.app"
 
 [profiles.dev]
-token = "owk_test_..."
 api_url = "https://dev.owlette.app"
 environment = "test"
 ```
 
-`owlette auth login` writes to the file with `0600` permissions. Switch profiles with `--profile dev` or `OWLETTE_PROFILE=dev`.
+Legacy `token = "owk_*"` fields are still read for migration, but `owlette auth login` now writes secrets to the credential store and uses `config.toml` for non-secret profile metadata. Switch profiles with `--profile dev` or `OWLETTE_PROFILE=dev`.
 
 ---
 

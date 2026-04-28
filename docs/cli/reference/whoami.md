@@ -31,6 +31,7 @@ owlette whoami
 # apiUrl      https://owlette.app
 # profile     default
 # configPath  /home/you/.config/owlette/config.toml
+# credential  token-file /home/you/.config/owlette/credentials.json
 ```
 
 ```bash
@@ -62,6 +63,7 @@ seven aligned key/value lines on stdout:
 | `apiUrl` | local config | resolved api host (flag → env → profile → built-in) |
 | `profile` | local config | active profile name |
 | `configPath` | local config | absolute path to the toml the cli read, or `(no config file)` |
+| `credential` | local credential store | `env`, `keychain`, `token-file <path>`, `config.toml (legacy)`, or `(none)` |
 
 ### json mode (`--json`)
 
@@ -72,6 +74,8 @@ emits the historical envelope `auth status` has always produced:
   "apiUrl": "https://owlette.app",
   "profile": "default",
   "configPath": "/home/you/.config/owlette/config.toml",
+  "credentialPath": "/home/you/.config/owlette/credentials.json",
+  "credentialSource": "token-file",
   "environment": "live",
   "whoami": { /* raw GET /api/whoami response — userId, email, key, rateLimit, quota, primarySiteId */ }
 }
@@ -94,5 +98,5 @@ emits the historical envelope `auth status` has always produced:
 - **scope**: user (no site / machine targeting — asks about the cli's own credential)
 - **tier**: `[ready]`
 - **alias**: [`auth status`](auth.md#auth-status) — same code path, byte-identical stdout/stderr
-- **token source**: precedence is `OWLETTE_TOKEN` env var → active profile's `token` field in `config.toml`. `--profile <name>` picks the profile; the bare command uses `default`
+- **token source**: precedence is `OWLETTE_TOKEN` env var -> OS keychain/token-file credential store -> legacy active profile `token` field in `config.toml`. `--profile <name>` picks the profile; the bare command uses `default`
 - **related**: [`auth login`](auth.md#auth-login) to mint + store the token this command introspects, [`key list`](key.md) for the server-side view of every key on your account

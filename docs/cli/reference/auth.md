@@ -17,7 +17,7 @@ verbs:
 
 ## auth login
 
-starts the device-code flow against `/api/cli/device-code`, prints a 3-word pairing phrase + verification url, polls until the dashboard authorises, then writes the issued `owk_*` key into the active profile in `~/.config/owlette/config.toml`.
+starts the device-code flow against `/api/cli/device-code`, prints a 3-word pairing phrase + verification url, polls until the dashboard authorises, then stores the issued `owk_*` key for the active profile. the cli uses the OS keychain when the local platform tooling is available; otherwise it falls back to `~/.config/owlette/credentials.json` with `0600` permissions. `~/.config/owlette/config.toml` stores only non-secret profile metadata such as `api_url` and `environment`.
 
 ```bash
 owlette auth login [--no-browser]
@@ -78,7 +78,7 @@ backing: `GET /api/whoami`.
 
 ## auth logout
 
-clears the `token` field from the active profile in `~/.config/owlette/config.toml`. local-only — does not revoke the key server-side. to actually revoke a key, use `owlette key revoke <keyId>`.
+clears the stored credential for the active profile. local-only — does not revoke the key server-side. to actually revoke a key, use `owlette key revoke <keyId>`.
 
 ```bash
 owlette auth logout
@@ -114,6 +114,6 @@ backing: none — local file write only.
 
 - **scope**: user (acts on the active profile in the local config file)
 - **tier**: `[ready]` for all three verbs
-- **token storage**: `~/.config/owlette/config.toml`, file mode forced to `0o600` by `configWriter.ts`. comments + rich toml syntax are dropped on rewrite
+- **token storage**: OS keychain when available, otherwise `~/.config/owlette/credentials.json` with file mode forced to `0o600`. legacy `token` fields in `config.toml` are still read but new logins do not write them
 - **profile selection**: `--profile <name>` (or `OWLETTE_PROFILE`) selects which `[profiles.X]` block reads/writes
 - **related**: [`whoami`](whoami.md) (identical to `auth status`), [`key`](key.md) for server-side key management, [overview](../overview.md) for config precedence

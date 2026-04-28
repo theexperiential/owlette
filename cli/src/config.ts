@@ -5,11 +5,13 @@
  *   1. Environment: OWLETTE_TOKEN | OWLETTE_API_URL | OWLETTE_PROFILE |
  *      OWLETTE_ENVIRONMENT (with legacy ROOST_* fallback through
  *      2026-10-01 — emits a one-time deprecation per process).
- *   2. Profile in ~/.config/owlette/config.toml (default profile: `default`).
+ *   2. Stored credential for the active profile (OS keychain when available,
+ *      otherwise ~/.config/owlette/credentials.json).
+ *   3. Profile in ~/.config/owlette/config.toml (default profile: `default`).
  *      On first access, if the new path doesn't exist but
  *      ~/.config/roost/config.toml does, the legacy file is copied to the
  *      new location once and a one-time migration notice is printed.
- *   3. Built-in defaults (apiUrl → https://owlette.app).
+ *   4. Built-in defaults (apiUrl → https://owlette.app).
  *
  * Config file schema (TOML):
  *
@@ -37,6 +39,11 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { parse as parseToml } from 'smol-toml';
+import {
+  defaultCredentialPath,
+  readStoredCredential,
+  type CredentialBackend,
+} from './credentialStore';
 
 export const DEFAULT_API_URL = 'https://owlette.app';
 
@@ -57,11 +64,19 @@ export interface OwletteConfig {
   profile: string;
   /** Absolute path to the config file; null when no file was found. */
   configPath: string | null;
+  /** Absolute path to the fallback credential file when used. */
+  credentialPath: string | null;
+  /** Where the active token came from, if any. */
+  credentialSource: 'env' | 'keychain' | 'token-file' | 'config' | null;
 }
 
 export interface LoadConfigOpts {
   /** Override ~/.config/owlette/config.toml lookup (used in tests). */
   configPath?: string;
+  /** Override ~/.config/owlette/credentials.json lookup (used in tests). */
+  credentialPath?: string;
+  /** Force credential backend selection (used in tests and diagnostics). */
+  credentialBackend?: CredentialBackend;
   /** Force re-read (bypasses the module-level cache). */
   reload?: boolean;
   /**
@@ -162,6 +177,7 @@ export function loadConfig(opts: LoadConfigOpts = {}): OwletteConfig {
   const profile = opts.profile ?? profileEnv ?? 'default';
 
   const requestedConfigPath = opts.configPath ?? defaultConfigPath();
+  const requestedCredentialPath = opts.credentialPath ?? defaultCredentialPath(requestedConfigPath);
   const legacyPath = opts.legacyConfigPath ?? legacyConfigPath();
   const configPath = migrateLegacyConfigOnce(requestedConfigPath, legacyPath, warn);
 
@@ -169,7 +185,10 @@ export function loadConfig(opts: LoadConfigOpts = {}): OwletteConfig {
   const apiUrlEnv = readEnvWithLegacyFallback(env, warn, 'OWLETTE_API_URL', 'ROOST_API_URL');
   const envEnv = readEnvWithLegacyFallback(env, warn, 'OWLETTE_ENVIRONMENT', 'ROOST_ENVIRONMENT');
 
-  const cacheKey = `${configPath}::${profile}::${tokenEnv ?? ''}::${apiUrlEnv ?? ''}::${envEnv ?? ''}`;
+  const cacheKey =
+    `${configPath}::${requestedCredentialPath}::${profile}::` +
+    `${opts.credentialBackend ?? env.OWLETTE_CREDENTIAL_BACKEND ?? ''}::` +
+    `${tokenEnv ?? ''}::${apiUrlEnv ?? ''}::${envEnv ?? ''}`;
   if (!opts.reload && cache?.key === cacheKey) return cache.config;
 
   let fileToken: string | null = null;
@@ -201,9 +220,27 @@ export function loadConfig(opts: LoadConfigOpts = {}): OwletteConfig {
     if (fileEnv === null && topEnv !== null) fileEnv = topEnv;
   }
 
-  const token = tokenEnv ?? fileToken;
-  const apiUrl = apiUrlEnv ?? fileApiUrl ?? DEFAULT_API_URL;
-  const environment = parseEnv(envEnv) ?? fileEnv;
+  const shouldReadStoredCredential =
+    !(env.NODE_ENV === 'test' && !opts.configPath && !opts.credentialPath && !opts.credentialBackend);
+  const storedCredential = shouldReadStoredCredential
+    ? readStoredCredential({
+        profile,
+        credentialPath: requestedCredentialPath,
+        backend: opts.credentialBackend,
+        env,
+      })
+    : null;
+
+  const token = tokenEnv ?? storedCredential?.token ?? fileToken;
+  const apiUrl = apiUrlEnv ?? fileApiUrl ?? storedCredential?.apiUrl ?? DEFAULT_API_URL;
+  const environment = parseEnv(envEnv) ?? fileEnv ?? storedCredential?.environment ?? null;
+  const credentialSource = tokenEnv
+    ? 'env'
+    : storedCredential
+      ? storedCredential.source
+      : fileToken
+        ? 'config'
+        : null;
 
   const config: OwletteConfig = {
     token,
@@ -211,6 +248,8 @@ export function loadConfig(opts: LoadConfigOpts = {}): OwletteConfig {
     environment,
     profile,
     configPath: resolvedConfigPath,
+    credentialPath: storedCredential?.credentialPath ?? null,
+    credentialSource,
   };
 
   cache = { config, key: cacheKey };

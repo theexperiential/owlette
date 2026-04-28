@@ -42,6 +42,7 @@ const VALID_PERMISSIONS: readonly ApiKeyPermission[] = [
 const VALID_ENVIRONMENTS: readonly ApiKeyEnvironment[] = ['live', 'test'];
 const MAX_NAME_LENGTH = 100;
 const MAX_SCOPES = 50;
+const SITE_SCOPED_RESOURCES = new Set<ApiKeyResource>(['site', 'chat', 'deploy']);
 
 interface CreateKeyBody {
   name?: unknown;
@@ -176,7 +177,7 @@ export const POST = withRateLimit(
       // Runtime requireScope() also enforces this; doing it here catches typos
       // and prevents storing unusable scopes.
       for (const scope of scopes) {
-        if (scope.resource === 'site' && scope.id !== '*') {
+        if (SITE_SCOPED_RESOURCES.has(scope.resource) && scope.id !== '*') {
           await assertUserHasSiteAccess(userId, scope.id);
         }
       }

@@ -27,6 +27,7 @@ import { registerChatCommands } from './commands/chat';
 import { registerUserCommands } from './commands/user';
 import { registerProcessCommands } from './commands/process';
 import { registerInstallerCommands } from './commands/installer';
+import { _resetConfigCache } from './config';
 
 const PROGRAM_NAME = 'owlette';
 const VERSION = '0.2.0';
@@ -37,8 +38,17 @@ export function buildProgram(): Command {
     .name(PROGRAM_NAME)
     .description('owlette — cli for the owlette api')
     .version(VERSION)
+    .option('--api-url <url>', 'target api host')
     .option('--profile <name>', 'named profile from ~/.config/owlette/config.toml')
     .option('--json', 'emit structured JSON instead of ascii tables on stdout');
+
+  program.hook('preAction', () => {
+    const opts = program.opts<{ apiUrl?: string }>();
+    if (opts.apiUrl) {
+      process.env.OWLETTE_API_URL = opts.apiUrl.replace(/\/+$/, '');
+      _resetConfigCache();
+    }
+  });
 
   // top-level: auth (login / status / logout)
   registerAuthCommands(program);

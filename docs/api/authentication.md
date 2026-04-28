@@ -187,10 +187,10 @@ the dashboard offers four presets to cover the common cases. each expands to a c
 
 | preset | scopes | use case |
 |---|---|---|
-| **`readonly`** | `[{ resource: "site", id: "<siteId>", permissions: ["read"] }, { resource: "roost", id: "*", permissions: ["read"] }]` | dashboards, observability, read-only monitoring; cannot publish, deploy, or rollback. |
-| **`publisher`** | `[{ resource: "roost", id: "*", permissions: ["read", "write"] }]` | ci/cd that builds + uploads versions but does not trigger rollout (paired with a human-approved `operator` key for the deploy step). |
-| **`operator`** | `[{ resource: "roost", id: "*", permissions: ["read", "deploy", "rollback"] }]` | on-call rollout + rollback tooling; cannot modify roost contents. |
-| **`admin`** | `[{ resource: "site", id: "<siteId>", permissions: ["read", "admin"] }, { resource: "roost", id: "*", permissions: ["read", "write", "deploy", "rollback", "admin"] }]` | site-wide automation: webhook management, audit log access, full lifecycle. treat as root-equivalent. |
+| **`readonly`** | `roost=*`, `site=*`, `machine=*`, `chat=*` with `["read"]` | dashboards, observability, read-only monitoring; cannot publish, deploy, or rollback. |
+| **`publisher`** | `roost=*`, `site=*`, `machine=*`, `chat=*` with `["read", "write"]` | ci/cd and local CLI workflows that build, upload, and update Cortex conversations. |
+| **`operator`** | common resources with `["read", "write", "deploy", "rollback"]` | on-call rollout + rollback tooling. |
+| **`admin`** | common resources with `["read", "write", "deploy", "rollback", "admin"]` | site-wide automation: webhook management, audit log access, full lifecycle. treat as root-equivalent. |
 
 presets are a starting point — you can always narrow them further (remove an id wildcard, drop a permission). you cannot broaden a preset by editing the scopes after creation (see [narrowing scopes](#narrowing-scopes)).
 

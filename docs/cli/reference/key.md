@@ -19,13 +19,13 @@ manage your own api keys — mint scoped `owk_*` keys, rotate with a 24-hour gra
 <resource>=<id>:<perm>[,<perm>...]
 ```
 
-- `<resource>` — `roost` | `site` | `machine`
+- `<resource>` — `roost` | `site` | `machine` | `chat` | `deploy` | `process` | `user` | `installer`
 - `<id>` — a specific resource id (e.g. `rst_abc`, `site-1`, `m_abc123`) or `*` for wildcard
 - `<perm>` — one or more of `read`, `write`, `deploy`, `rollback`, `admin`
 
-`--scope` is repeatable. examples: `roost=rst_abc:write,deploy`, `site=*:read`, `machine=m_abc123:write`.
+`--scope` is repeatable. examples: `roost=rst_abc:write,deploy`, `site=*:read`, `machine=m_abc123:write`, `chat=site-1:read,write`, `installer=*:admin`.
 
-`--preset` is a shortcut that wildcards every resource type with a canonical permission set: `readonly` (read), `publisher` (read+write), `operator` (read+write+deploy+rollback), `admin` (all). `--preset` and `--scope` are mutually exclusive — pick one.
+`--preset` is a shortcut that wildcards the common CLI resources (`roost`, `site`, `machine`, `chat`) with a canonical permission set: `readonly` (read), `publisher` (read+write), `operator` (read+write+deploy+rollback), `admin` (all). `--preset` and `--scope` are mutually exclusive — pick one. Platform scopes (`user`, `installer`) are superadmin-only at mint time and must use `*` as the id.
 
 ---
 

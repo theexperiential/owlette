@@ -26,6 +26,17 @@ describe('parseScopeSpec', () => {
     expect(parseScopeSpec('widget=x:read')).toMatch(/resource must be one of/);
   });
 
+  it.each(['chat', 'deploy', 'process', 'user', 'installer'] as const)(
+    'accepts public-api resource %s',
+    (resource) => {
+      expect(parseScopeSpec(`${resource}=*:read`)).toEqual({
+        resource,
+        id: '*',
+        permissions: ['read'],
+      });
+    },
+  );
+
   it('rejects missing : separator', () => {
     expect(parseScopeSpec('roost=rst_abc')).toMatch(/must include.*perm/);
   });
@@ -65,8 +76,13 @@ describe('PRESETS', () => {
   it('covers every resource type with the preset permissions', () => {
     for (const preset of ['readonly', 'publisher', 'operator', 'admin'] as const) {
       const scopes = PRESETS[preset];
-      expect(scopes).toHaveLength(3);
-      expect(scopes.map((s) => s.resource).sort()).toEqual(['machine', 'roost', 'site']);
+      expect(scopes).toHaveLength(4);
+      expect(scopes.map((s) => s.resource).sort()).toEqual([
+        'chat',
+        'machine',
+        'roost',
+        'site',
+      ]);
       for (const s of scopes) expect(s.id).toBe('*');
     }
   });

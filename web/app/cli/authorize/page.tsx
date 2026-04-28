@@ -74,7 +74,7 @@ function CliAuthorizeInner() {
         setDone(true);
         toast.success('cli authorised — return to your terminal');
       } else {
-        toast.error(data.error || 'authorisation failed');
+        toast.error(data.detail || data.error || 'authorisation failed');
       }
     } catch {
       toast.error('authorisation failed');

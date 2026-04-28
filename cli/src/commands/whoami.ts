@@ -6,9 +6,9 @@
  *   GET /api/whoami
  *
  * Renders a key/value summary by default (user id, email, scopes,
- * environment, apiUrl, profile, configPath) and emits the same JSON
+ * environment, apiUrl, profile, configPath, credentialSource) and emits the same JSON
  * envelope `owlette auth status` historically produced
- * (`{ apiUrl, profile, configPath, environment, whoami: <raw response> }`)
+ * (`{ apiUrl, profile, configPath, credentialSource, environment, whoami: <raw response> }`)
  * when `--json` is passed.
  *
  * `runWhoami` is exported and reused by the `auth status` action so
@@ -54,7 +54,15 @@ interface WhoamiResponse {
  *   1 — request failed (non-2xx response or network error)
  */
 export async function runWhoami(cmd: Command): Promise<void> {
-  const { apiUrl, token, profile, environment, configPath } = loadConfig({
+  const {
+    apiUrl,
+    token,
+    profile,
+    environment,
+    configPath,
+    credentialPath,
+    credentialSource,
+  } = loadConfig({
     profile: cmd.optsWithGlobals().profile,
   });
   if (!token) {
@@ -86,13 +94,24 @@ export async function runWhoami(cmd: Command): Promise<void> {
       apiUrl,
       profile,
       configPath,
+      credentialPath,
+      credentialSource,
       environment,
       whoami: data,
     });
     return;
   }
 
-  printLine(formatWhoami(data as unknown as WhoamiResponse, { apiUrl, profile, environment, configPath }));
+  printLine(
+    formatWhoami(data as unknown as WhoamiResponse, {
+      apiUrl,
+      profile,
+      environment,
+      configPath,
+      credentialPath,
+      credentialSource,
+    }),
+  );
 }
 
 /** Register `owlette whoami` against the root program. */
@@ -114,6 +133,8 @@ interface LocalContext {
   profile: string;
   environment: 'live' | 'test' | null;
   configPath: string | null;
+  credentialPath: string | null;
+  credentialSource: 'env' | 'keychain' | 'token-file' | 'config' | null;
 }
 
 function formatWhoami(w: WhoamiResponse, ctx: LocalContext): string {
@@ -125,7 +146,17 @@ function formatWhoami(w: WhoamiResponse, ctx: LocalContext): string {
   out.push(`apiUrl      ${ctx.apiUrl}`);
   out.push(`profile     ${ctx.profile}`);
   out.push(`configPath  ${ctx.configPath ?? '(no config file)'}`);
+  out.push(`credential  ${formatCredential(ctx)}`);
   return out.join('\n');
+}
+
+function formatCredential(ctx: LocalContext): string {
+  if (!ctx.credentialSource) return '(none)';
+  if (ctx.credentialSource === 'token-file') {
+    return `${ctx.credentialSource} ${ctx.credentialPath ?? '(unknown path)'}`;
+  }
+  if (ctx.credentialSource === 'config') return 'config.toml (legacy)';
+  return ctx.credentialSource;
 }
 
 function summarizeScopes(key: WhoamiResponse['key']): string {
@@ -139,4 +170,4 @@ function summarizeScopes(key: WhoamiResponse['key']): string {
 }
 
 /** Exported for unit tests. */
-export const _internals = { formatWhoami, summarizeScopes };
+export const _internals = { formatWhoami, summarizeScopes, formatCredential };

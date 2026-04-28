@@ -3,23 +3,28 @@
  *
  * login: kicks off the cli device-code flow against `/api/cli/device-code`,
  *        prints the pairing phrase + verification URL, polls until
- *        authorised, and writes the returned owk_* key to the active
- *        profile in ~/.config/owlette/config.toml.
+ *        authorised, and stores the returned owk_* key in the active
+ *        profile's credential store.
  * status: calls GET /api/whoami with the configured token and prints
  *         the server-resolved identity + scope + quota summary.
- * logout: removes the token from the active profile in config.toml.
+ * logout: removes the token from the active profile's credential store.
  */
 
 import { Command } from 'commander';
 import { exec } from 'child_process';
 import { platform } from 'os';
 import {
-  DEFAULT_API_URL,
   _resetConfigCache,
   defaultConfigPath,
   loadConfig,
 } from '../config';
-import { writeTokenToConfig, clearTokenFromConfig } from '../configWriter';
+import { clearTokenFromConfig, writeProfileConfig } from '../configWriter';
+import {
+  clearStoredCredential,
+  defaultCredentialPath,
+  writeStoredCredential,
+  type WriteCredentialResult,
+} from '../credentialStore';
 import { runWhoami } from './whoami';
 
 const POLL_INTERVAL_MS = 5_000;
@@ -55,6 +60,11 @@ function tryOpenBrowser(url: string): void {
   } catch {
     /* ignore */
   }
+}
+
+function describeCredentialLocation(result: WriteCredentialResult): string {
+  if (result.source === 'keychain') return 'OS keychain';
+  return result.credentialPath ?? 'token file';
 }
 
 async function post<T>(
@@ -126,19 +136,36 @@ export function registerAuthCommands(program: Command): void {
           continue;
         }
         if (pollRes.status === 200 && pollRes.data.apiKey) {
-          process.stdout.write('\nowlette: authorised — storing key…\n');
-          const writeOpts: Parameters<typeof writeTokenToConfig>[0] = {
-            configPath: configPath ?? defaultConfigPath(),
+          process.stdout.write('\nowlette: authorised — storing credential...\n');
+          const targetConfigPath = configPath ?? defaultConfigPath();
+          const credentialPath = defaultCredentialPath(targetConfigPath);
+          const credentialOpts: Parameters<typeof writeStoredCredential>[0] = {
+            credentialPath,
             profile,
             token: pollRes.data.apiKey,
+            apiUrl,
           };
-          if (apiUrl !== DEFAULT_API_URL) writeOpts.apiUrl = apiUrl;
-          if (pollRes.data.environment) writeOpts.environment = pollRes.data.environment;
-          const written = writeTokenToConfig(writeOpts);
+          if (pollRes.data.environment) {
+            credentialOpts.environment = pollRes.data.environment;
+          }
+          const storedCredential = writeStoredCredential(credentialOpts);
+
+          const profileOpts: Parameters<typeof writeProfileConfig>[0] = {
+            configPath: targetConfigPath,
+            profile,
+            apiUrl,
+          };
+          if (pollRes.data.environment) profileOpts.environment = pollRes.data.environment;
+          const writtenProfile = writeProfileConfig(profileOpts);
+          clearTokenFromConfig({ configPath: targetConfigPath, profile });
+
           _resetConfigCache();
           process.stdout.write(
-            `owlette: stored key in profile '${profile}' at ${written}\n`,
+            `owlette: stored credential for profile '${profile}' in ${describeCredentialLocation(
+              storedCredential,
+            )}\n`,
           );
+          process.stdout.write(`       profile metadata: ${writtenProfile}\n`);
           if (pollRes.data.keyId) {
             process.stdout.write(`       keyId: ${pollRes.data.keyId}\n`);
           }
@@ -173,20 +200,28 @@ export function registerAuthCommands(program: Command): void {
 
   auth
     .command('logout')
-    .description('clear the stored token from the active profile')
+    .description('clear the stored credential from the active profile')
     .action(async (_opts, cmd) => {
-      const { profile, configPath } = loadConfig({
+      const { profile, configPath, credentialPath } = loadConfig({
         profile: cmd.optsWithGlobals().profile,
       });
-      const target = configPath ?? defaultConfigPath();
-      const cleared = clearTokenFromConfig({ configPath: target, profile });
+      const targetConfigPath = configPath ?? defaultConfigPath();
+      const targetCredentialPath = credentialPath ?? defaultCredentialPath(targetConfigPath);
+      const clearedCredential = clearStoredCredential({
+        credentialPath: targetCredentialPath,
+        profile,
+      });
+      const clearedConfig = clearTokenFromConfig({ configPath: targetConfigPath, profile });
       _resetConfigCache();
-      if (cleared) {
-        process.stdout.write(`owlette: cleared token from profile '${profile}' at ${target}\n`);
+      if (clearedCredential || clearedConfig) {
+        process.stdout.write(`owlette: cleared stored credential for profile '${profile}'\n`);
       } else {
         process.stdout.write(
-          `owlette: profile '${profile}' had no stored token (nothing to clear).\n`,
+          `owlette: profile '${profile}' had no stored credential (nothing to clear).\n`,
         );
+      }
+      if (process.env.OWLETTE_TOKEN) {
+        process.stdout.write('owlette: OWLETTE_TOKEN is still set and will continue to authenticate.\n');
       }
     });
 }

@@ -257,6 +257,22 @@ describe('/api/keys POST', () => {
     ]);
     expect(mockAssertUserHasSiteAccess).toHaveBeenCalledWith('user-member', 'site-1');
   });
+
+  it.each(['chat', 'deploy'] as const)(
+    'validates concrete %s scopes against caller site access',
+    async (resource) => {
+      const res = await makePost({
+        name: 'Site-scoped key',
+        environment: 'live',
+        scopes: [{ resource, id: 'site-1', permissions: ['read'] }],
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.scopes).toEqual([{ resource, id: 'site-1', permissions: ['read'] }]);
+      expect(mockAssertUserHasSiteAccess).toHaveBeenCalledWith('user-member', 'site-1');
+    },
+  );
 });
 
 describe('/api/keys/{keyId} DELETE', () => {

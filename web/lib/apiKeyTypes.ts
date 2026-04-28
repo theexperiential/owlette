@@ -82,9 +82,9 @@ export interface ApiKeyLookup {
 
 export type ApiKeyScopePreset = 'readonly' | 'publisher' | 'operator' | 'admin';
 
-/** Wildcard scopes for all three resource types. */
+/** Wildcard scopes for common operator resources. */
 function wildcardScopes(permissions: ApiKeyPermission[]): ApiKeyScope[] {
-  return (['roost', 'site', 'machine'] as ApiKeyResource[]).map((resource) => ({
+  return (['roost', 'site', 'machine', 'chat'] as ApiKeyResource[]).map((resource) => ({
     resource,
     id: '*',
     permissions,

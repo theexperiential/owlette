@@ -2,7 +2,11 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { parse as parseToml } from 'smol-toml';
-import { writeTokenToConfig, clearTokenFromConfig } from '../src/configWriter';
+import {
+  writeTokenToConfig,
+  clearTokenFromConfig,
+  writeProfileConfig,
+} from '../src/configWriter';
 
 function tmpPath(): string {
   const dir = mkdtempSync(join(tmpdir(), 'roost-cli-writer-'));
@@ -118,5 +122,48 @@ describe('clearTokenFromConfig', () => {
     };
     expect(parsed.profiles?.default?.token).toBeUndefined();
     expect(parsed.profiles?.dev?.token).toBe('owk_test_dev');
+  });
+});
+
+describe('writeProfileConfig', () => {
+  it('writes profile metadata without adding a token field', () => {
+    const path = tmpPath();
+
+    writeProfileConfig({
+      configPath: path,
+      profile: 'default',
+      apiUrl: 'https://dev.owlette.app',
+      environment: 'test',
+    });
+
+    const parsed = parseToml(readFileSync(path, 'utf-8')) as {
+      profiles?: Record<string, { token?: string; api_url?: string; environment?: string }>;
+    };
+    expect(parsed.profiles?.default?.token).toBeUndefined();
+    expect(parsed.profiles?.default?.api_url).toBe('https://dev.owlette.app');
+    expect(parsed.profiles?.default?.environment).toBe('test');
+  });
+
+  it('overwrites stale profile api_url metadata', () => {
+    const path = tmpPath();
+    writeProfileConfig({
+      configPath: path,
+      profile: 'default',
+      apiUrl: 'https://dev.owlette.app',
+      environment: 'test',
+    });
+
+    writeProfileConfig({
+      configPath: path,
+      profile: 'default',
+      apiUrl: 'https://owlette.app',
+      environment: 'live',
+    });
+
+    const parsed = parseToml(readFileSync(path, 'utf-8')) as {
+      profiles?: Record<string, { api_url?: string; environment?: string }>;
+    };
+    expect(parsed.profiles?.default?.api_url).toBe('https://owlette.app');
+    expect(parsed.profiles?.default?.environment).toBe('live');
   });
 });

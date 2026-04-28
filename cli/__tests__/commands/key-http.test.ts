@@ -99,8 +99,14 @@ describe('owlette key create', () => {
     expect(body.name).toBe('ci');
     expect(body.ttlDays).toBe(30);
     expect(body.environment).toBe('live');
-    // publisher preset expands to wildcard scopes over all 3 resource types
-    expect(body.scopes).toHaveLength(3);
+    // publisher preset expands to wildcard scopes over common CLI resource types
+    expect(body.scopes).toHaveLength(4);
+    expect(body.scopes.map((s: { resource: string }) => s.resource).sort()).toEqual([
+      'chat',
+      'machine',
+      'roost',
+      'site',
+    ]);
     expect(body.scopes.every((s: { id: string }) => s.id === '*')).toBe(true);
     const perms = new Set<string>();
     for (const s of body.scopes as Array<{ permissions: string[] }>) {

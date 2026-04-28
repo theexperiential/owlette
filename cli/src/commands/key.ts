@@ -12,7 +12,7 @@
  *       (wildcard against every resource type with the preset permissions).
  *   --scope <spec> (repeatable)
  *     → spec = `<resource>=<id>:<perm>,<perm>,...`
- *       resource ∈ roost | site | machine
+ *       resource ∈ roost | site | machine | chat | deploy | process | user | installer
  *       id = '*' or a specific resource id
  *       perms ⊂ read | write | deploy | rollback | admin
  *     e.g. `--scope roost=rst_abc:write,deploy --scope site=site-1:read`
@@ -25,7 +25,17 @@ import { Command } from 'commander';
 import { loadConfig } from '../config';
 import { isJson, renderTable as sharedRenderTable } from '../lib/output';
 
-const VALID_RESOURCES = ['roost', 'site', 'machine'] as const;
+const VALID_RESOURCES = [
+  'roost',
+  'site',
+  'machine',
+  'chat',
+  'deploy',
+  'process',
+  'user',
+  'installer',
+] as const;
+const PRESET_RESOURCES = ['roost', 'site', 'machine', 'chat'] as const;
 const VALID_PERMISSIONS = ['read', 'write', 'deploy', 'rollback', 'admin'] as const;
 const VALID_PRESETS = ['readonly', 'publisher', 'operator', 'admin'] as const;
 
@@ -44,7 +54,7 @@ interface ScopeSpec {
 /* --------------------------------------------------------------------- */
 
 function wildcardScopes(perms: readonly Permission[]): ScopeSpec[] {
-  return VALID_RESOURCES.map((resource) => ({
+  return PRESET_RESOURCES.map((resource) => ({
     resource,
     id: '*',
     permissions: [...perms],
