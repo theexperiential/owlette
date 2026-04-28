@@ -20,6 +20,7 @@ const ADMIN_ROUTES = [
   '/admin/tokens',
   '/admin/schedules',
   '/admin/email',
+  '/admin/presets',
 ];
 
 test.describe('route guards — unauthenticated', () => {

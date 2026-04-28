@@ -66,6 +66,19 @@ async function captureStorageStateForRole(role: TestRole): Promise<void> {
       );
     });
 
+    page.on('response', async (res) => {
+      if (res.status() < 400) return;
+      let body = '';
+      try {
+        body = await res.text();
+      } catch {
+        body = '<unreadable body>';
+      }
+      console.warn(
+        `[global-setup][${role}][response.${res.status()}] ${res.request().method()} ${res.url()} ${body.slice(0, 500)}`,
+      );
+    });
+
     await page.goto('/login', { waitUntil: 'domcontentloaded' });
 
     // Fill + submit the email/password login form.

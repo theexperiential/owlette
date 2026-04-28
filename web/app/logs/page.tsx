@@ -135,9 +135,9 @@ const getLevelBadge = (level: string) => {
   const base = "inline-flex items-center rounded-full px-1.5 text-[11px] font-medium leading-5 whitespace-nowrap";
   switch (level.toLowerCase()) {
     case 'error':
-      return <span className={`${base} bg-destructive text-white`}>error</span>;
+      return <span className={`${base} bg-red-700 text-white`}>error</span>;
     case 'warning':
-      return <span className={`${base} bg-yellow-600 text-white`}>warning</span>;
+      return <span className={`${base} bg-yellow-400 text-gray-950`}>warning</span>;
     case 'info':
       return <span className={`${base} bg-accent-cyan text-gray-900`}>info</span>;
     default:
@@ -179,10 +179,11 @@ const LogRow = React.memo(function LogRow({
     <Collapsible
       open={isExpanded}
       onOpenChange={() => onToggle(log.id)}
+      data-testid={`log-row-${log.id}`}
       className={`group/row hover:bg-muted/50 transition-colors border-b border-border last:border-b-0 ${isExpanded ? 'bg-muted/30' : ''}`}
     >
       <CollapsibleTrigger asChild>
-        <div className="px-4 py-3 cursor-pointer">
+        <button type="button" className="w-full px-4 py-3 text-left cursor-pointer">
           <div className="flex items-center justify-between gap-4 text-sm">
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <div className="flex items-center gap-3 flex-shrink-0">
@@ -233,7 +234,7 @@ const LogRow = React.memo(function LogRow({
               )}
             </div>
           </div>
-        </div>
+        </button>
       </CollapsibleTrigger>
       <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
         <div className="px-4 pb-3 pt-3 border-t border-border/50 text-sm flex gap-6">
@@ -670,6 +671,8 @@ export default function LogsPage() {
                   <Button
                     variant="outline"
                     onClick={toggleAllExpanded}
+                    aria-label={allExpanded ? 'collapse all logs' : 'expand all logs'}
+                    data-testid="logs-expand-all"
                     className="hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
                     size="icon"
                   >
@@ -708,7 +711,7 @@ export default function LogsPage() {
               <div>
                 <Label className="text-foreground text-sm mb-2">action type</Label>
                 <Select value={filterAction} onValueChange={setFilterAction}>
-                  <SelectTrigger className="bg-muted border-border">
+                  <SelectTrigger data-testid="logs-filter-action" className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -724,7 +727,7 @@ export default function LogsPage() {
               <div>
                 <Label className="text-foreground text-sm mb-2">machine</Label>
                 <Select value={filterMachine} onValueChange={setFilterMachine}>
-                  <SelectTrigger className="bg-muted border-border">
+                  <SelectTrigger data-testid="logs-filter-machine" className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -741,7 +744,7 @@ export default function LogsPage() {
               <div>
                 <Label className="text-foreground text-sm mb-2">level</Label>
                 <Select value={filterLevel} onValueChange={setFilterLevel}>
-                  <SelectTrigger className="bg-muted border-border">
+                  <SelectTrigger data-testid="logs-filter-level" className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -756,7 +759,7 @@ export default function LogsPage() {
               <div>
                 <Label className="text-foreground text-sm mb-2">date range</Label>
                 <Select value={filterDatePreset} onValueChange={(v) => setFilterDatePreset(v as DatePreset)}>
-                  <SelectTrigger className="bg-muted border-border">
+                  <SelectTrigger data-testid="logs-filter-date" className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -861,6 +864,7 @@ export default function LogsPage() {
           />
           <button
             onClick={() => setScreenshotModalUrl(null)}
+            aria-label="close screenshot"
             className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors"
           >
             <X className="w-6 h-6" />

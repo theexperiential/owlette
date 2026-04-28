@@ -215,6 +215,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                               size="sm"
                               disabled={isLoadingVersion || !downloadUrl}
                               onClick={() => downloadUrl && window.open(downloadUrl, '_blank')}
+                              aria-label="download owlette agent"
                               className="text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer p-1.5"
                             >
                               {isLoadingVersion ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
@@ -238,6 +239,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                                   toast.success('download link copied');
                                 }
                               }}
+                              aria-label="copy owlette agent download link"
                               className="text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer p-1.5"
                             >
                               <Copy className="h-4 w-4" />
@@ -311,6 +313,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                         variant="outline"
                         size="sm"
                         onClick={() => copyToClipboard(generatedPhrase, 'Phrase')}
+                        aria-label="copy pairing phrase"
                         className="border-border text-foreground hover:bg-secondary cursor-pointer shrink-0"
                       >
                         <Copy className="h-4 w-4" />
@@ -332,6 +335,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                           `Owlette-Installer-v${version}.exe /ADD=${generatedPhrase} /SILENT`,
                           'Command'
                         )}
+                        aria-label="copy silent install command"
                         className="border-border text-foreground hover:bg-secondary cursor-pointer shrink-0"
                       >
                         <Copy className="h-4 w-4" />

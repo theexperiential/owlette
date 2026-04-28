@@ -197,7 +197,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           <p className="font-medium text-sm">{item.name}</p>
                           <p
                             className={`text-xs mt-0.5 ${
-                              isActive ? 'text-accent-cyan/70' : 'text-muted-foreground'
+                              isActive ? 'text-accent-cyan' : 'text-muted-foreground'
                             }`}
                           >
                             {item.description}

@@ -640,6 +640,7 @@ function MachineCard({
                     {displayDriftCount > 0 && (
                       <span
                         className="inline-block w-2 h-2 rounded-full bg-amber-500 ml-2 flex-shrink-0"
+                        role="img"
                         aria-label={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
                         title={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
                       />
@@ -647,6 +648,7 @@ function MachineCard({
                     {machine.displayBreakerTripped && (
                       <span
                         className="inline-block w-2 h-2 rounded-full bg-destructive ml-1 flex-shrink-0"
+                        role="img"
                         aria-label="auto-restore disabled — circuit breaker tripped"
                         title="auto-restore disabled — circuit breaker tripped"
                       />
@@ -695,7 +697,7 @@ function MachineCard({
                         <span className="font-mono text-muted-foreground shrink-0">{i + 1}</span>
                         <span className="text-foreground font-medium truncate">{m.friendlyName || m.id}</span>
                         <span className="text-muted-foreground shrink-0 tabular-nums">{effW}×{effH}</span>
-                        {m.primary && <span className="text-amber-500 shrink-0" aria-label="primary">★</span>}
+                        {m.primary && <span className="text-amber-500 shrink-0" role="img" aria-label="primary">★</span>}
                       </div>
                     );
                   })}

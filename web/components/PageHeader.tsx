@@ -234,7 +234,10 @@ export function PageHeader({
           {!disableNav && (
             <DropdownMenu onOpenChange={(open) => { setHelpMenuOpen(open); handleMenuOpenChange(open); }}>
               <DropdownMenuTrigger asChild>
-                <button className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-secondary transition-colors cursor-pointer">
+                <button
+                  aria-label="help"
+                  className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-secondary transition-colors cursor-pointer"
+                >
                   <CircleHelp className="h-4 w-4 text-muted-foreground" />
                 </button>
               </DropdownMenuTrigger>

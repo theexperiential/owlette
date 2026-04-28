@@ -323,7 +323,7 @@ function KindBadge({ kind }: { kind: 'added' | 'removed' | 'changed' }) {
   }[kind];
   const sym = { added: '+', removed: '−', changed: '~' }[kind];
   return (
-    <span className={`w-3 text-center font-bold ${tone}`} aria-label={kind}>
+    <span className={`w-3 text-center font-bold ${tone}`} role="img" aria-label={kind}>
       {sym}
     </span>
   );

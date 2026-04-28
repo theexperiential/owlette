@@ -62,14 +62,14 @@ export default defineConfig({
   // Env vars threaded in here drive the emulator branches in web/lib/firebase.ts
   // and web/lib/firebase-admin.ts — without them, the app hits real Firebase.
   webServer: {
-    // Why `next start`, not `next dev`:
+    // Why `scripts/e2e-next-server.mjs`, not `next dev`:
     //   Next 16 + Turbopack refuses to start a second `next dev` in the same
-    //   project directory, even on different ports. `next start` doesn't have
-    //   that concurrent-instance lock, so E2E can run alongside the user's
-    //   `npm run dev`. The trade-off: a production build must exist in `.next/`
-    //   before `next start` can boot. The top-level `npm run e2e` script
-    //   handles the build step first.
-    command: `npx next start -p ${PORT} -H 127.0.0.1`,
+    //   project directory, even on different ports. The wrapper runs the
+    //   production Next app and serves .next/static directly first; this avoids
+    //   rare long-suite 500s for existing chunk/font files on Windows while
+    //   preserving Next routing and API behavior. The top-level `npm run e2e`
+    //   script handles the production build first.
+    command: `node scripts/e2e-next-server.mjs --port ${PORT} --hostname 127.0.0.1`,
     url: BASE_URL,
     reuseExistingServer: !IS_CI,
     timeout: 60_000,
@@ -91,6 +91,7 @@ export default defineConfig({
       FIREBASE_PROJECT_ID: 'demo-playwright-e2e',
       // Keep iron-session happy. Any 32+ char string works for emulator-only.
       SESSION_SECRET: 'demo-session-secret-for-emulator-playwright-tests-32chars',
+      MFA_ENCRYPTION_KEY: 'demo-mfa-encryption-secret-for-playwright-only',
       // Silence Sentry in test.
       NEXT_PUBLIC_SENTRY_DSN: '',
       // Disable Upstash-backed rate limiting. Without this override, the

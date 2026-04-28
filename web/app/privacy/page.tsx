@@ -195,7 +195,7 @@ export default function PrivacyPage() {
               </p>
               <p className="mt-4">
                 <strong>email:</strong>{' '}
-                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan">
+                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan underline underline-offset-2">
                   support@owlette.app
                 </a>
               </p>

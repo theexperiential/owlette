@@ -265,6 +265,7 @@ export default function CortexPage() {
                   onClick={() => handleNewChat()}
                   variant="ghost"
                   size="icon"
+                  aria-label="new conversation"
                   className="h-8 w-8 min-w-8 text-muted-foreground hover:text-foreground"
                 >
                   <Plus className="h-4 w-4" />
@@ -316,6 +317,7 @@ export default function CortexPage() {
                         }}
                         variant="ghost"
                         size="icon"
+                        aria-label={collapsedGroups.size > 0 ? 'expand conversation groups' : 'collapse conversation groups'}
                         className="h-8 w-8 min-w-8 text-muted-foreground hover:text-foreground"
                       >
                         {collapsedGroups.size > 0 ? (
@@ -336,6 +338,7 @@ export default function CortexPage() {
                       onClick={() => setSearchOpen(true)}
                       variant="ghost"
                       size="icon"
+                      aria-label="search conversations"
                       className="h-8 w-8 min-w-8 text-muted-foreground hover:text-foreground"
                     >
                       <Search className="h-4 w-4" />
@@ -427,7 +430,7 @@ export default function CortexPage() {
                     <button
                       onClick={categorizeAll}
                       disabled={categorizingAll}
-                      className="text-sm text-accent-cyan/70 hover:text-accent-cyan transition-colors cursor-pointer disabled:opacity-50 inline-flex items-center gap-1"
+                      className="text-sm text-accent-cyan hover:text-accent-cyan-hover transition-colors cursor-pointer disabled:opacity-50 inline-flex items-center gap-1"
                     >
                       {categorizingAll ? (
                         <><Loader2 className="h-3 w-3 animate-spin" /> categorizing {uncategorizedIds.length}...</>
@@ -463,6 +466,7 @@ export default function CortexPage() {
               <TooltipTrigger asChild>
                 <button
                   onClick={() => setSidebarOpen((prev) => !prev)}
+                  aria-label={sidebarOpen ? 'hide cortex sidebar' : 'show cortex sidebar'}
                   className="hidden md:flex p-1 rounded hover:bg-accent transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
                 >
                   {sidebarOpen ? (
@@ -598,6 +602,7 @@ function ConversationItem({
                 onDelete();
                 setConfirming(false);
               }}
+              aria-label={`confirm delete ${conversation.title}`}
               className="p-1 rounded hover:bg-red-900/50 transition-colors cursor-pointer"
             >
               <Check className="h-3.5 w-3.5 text-red-400" />
@@ -612,6 +617,7 @@ function ConversationItem({
             e.stopPropagation();
             setConfirming(false);
           }}
+          aria-label={`cancel delete ${conversation.title}`}
           className="p-1 rounded hover:bg-secondary transition-colors cursor-pointer"
         >
           <X className="h-3.5 w-3.5 text-muted-foreground" />
@@ -640,13 +646,14 @@ function ConversationItem({
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onRename(editValue);
-                setEditing(false);
-              }}
-              className="p-1 rounded hover:bg-secondary transition-colors cursor-pointer"
-            >
+            onClick={(e) => {
+              e.stopPropagation();
+              onRename(editValue);
+              setEditing(false);
+            }}
+            aria-label={`save rename ${conversation.title}`}
+            className="p-1 rounded hover:bg-secondary transition-colors cursor-pointer"
+          >
               <Check className="h-3.5 w-3.5 text-accent-cyan" />
             </button>
           </TooltipTrigger>
@@ -659,6 +666,7 @@ function ConversationItem({
             e.stopPropagation();
             setEditing(false);
           }}
+          aria-label={`cancel rename ${conversation.title}`}
           className="p-1 rounded hover:bg-secondary transition-colors cursor-pointer"
         >
           <X className="h-3.5 w-3.5 text-muted-foreground" />
@@ -690,7 +698,7 @@ function ConversationItem({
         </div>
         <p className="text-xs text-muted-foreground flex items-center gap-1">
           <span className="truncate">{conversation.targetType === 'site' ? 'all machines' : conversation.machineName || 'unknown machine'}</span>
-          <span className="opacity-50 flex-shrink-0">· {timeAgo(conversation.updatedAt)}</span>
+          <span className="text-muted-foreground flex-shrink-0">· {timeAgo(conversation.updatedAt)}</span>
         </p>
       </div>
       <div className="opacity-0 group-hover:opacity-100 flex items-center transition-all">
@@ -700,6 +708,7 @@ function ConversationItem({
             setEditValue(conversation.title);
             setEditing(true);
           }}
+          aria-label={`rename ${conversation.title}`}
           className="p-1 rounded hover:bg-secondary transition-colors cursor-pointer"
         >
           <Pencil className="h-3 w-3 text-muted-foreground hover:text-foreground transition-colors" />
@@ -709,6 +718,7 @@ function ConversationItem({
             e.stopPropagation();
             setConfirming(true);
           }}
+          aria-label={`delete ${conversation.title}`}
           className="p-1 rounded hover:bg-red-900/40 transition-colors cursor-pointer"
         >
           <Trash2 className="h-3 w-3 text-muted-foreground hover:text-red-400 transition-colors" />

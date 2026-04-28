@@ -199,7 +199,7 @@ export default function TermsPage() {
               <p>
                 before filing a claim against TEC, you agree to try to resolve the dispute
                 informally by contacting us at{' '}
-                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan">
+                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan underline underline-offset-2">
                   support@owlette.app
                 </a>
                 . we will try to resolve the dispute informally by contacting you via email.
@@ -233,7 +233,7 @@ export default function TermsPage() {
               </p>
               <p className="mt-4">
                 <strong>email:</strong>{' '}
-                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan">
+                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan underline underline-offset-2">
                   support@owlette.app
                 </a>
               </p>

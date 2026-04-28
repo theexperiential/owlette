@@ -426,6 +426,7 @@ export function MachineRow({
                 {displayDriftCount > 0 && (
                   <span
                     className="absolute -top-0.5 -right-0.5 inline-block w-2 h-2 rounded-full bg-amber-500 pointer-events-none"
+                    role="img"
                     aria-label={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
                     title={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
                   />
@@ -435,6 +436,7 @@ export function MachineRow({
                     className={`absolute inline-block w-2 h-2 rounded-full bg-destructive pointer-events-none ${
                       displayDriftCount > 0 ? '-bottom-0.5 -right-0.5' : '-top-0.5 -right-0.5'
                     }`}
+                    role="img"
                     aria-label="auto-restore disabled — circuit breaker tripped"
                     title="auto-restore disabled — circuit breaker tripped"
                   />

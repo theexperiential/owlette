@@ -245,6 +245,7 @@ export default function SystemPresetsPage() {
                               variant="ghost"
                               size="icon"
                               onClick={() => handleEdit(preset)}
+                              aria-label={`edit ${preset.name}`}
                               className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
                             >
                               <Pencil className="h-3.5 w-3.5" />
@@ -253,6 +254,7 @@ export default function SystemPresetsPage() {
                               variant="ghost"
                               size="icon"
                               onClick={() => handleDelete(preset)}
+                              aria-label={`delete ${preset.name}`}
                               className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -317,6 +319,7 @@ export default function SystemPresetsPage() {
                       variant="ghost"
                       size="icon"
                       onClick={() => handleEdit(preset)}
+                      aria-label={`edit ${preset.name}`}
                       className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -325,6 +328,7 @@ export default function SystemPresetsPage() {
                       variant="ghost"
                       size="icon"
                       onClick={() => handleDelete(preset)}
+                      aria-label={`delete ${preset.name}`}
                       className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
