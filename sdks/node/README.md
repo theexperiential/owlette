@@ -76,8 +76,8 @@ or api keys.
 | `roost.members(siteId)` | `list`, `add`, `remove`                                    |
 | `roost.quotas`  | `current`, `history`                                               |
 
-For a complete token-to-publish script, see
-[`examples/run-roost-workflow.ts`](./examples/run-roost-workflow.ts).
+For complete runnable scripts, see `examples/`: auth/inventory,
+token-to-publish, command polling, and webhook verification.
 
 ## push progress
 

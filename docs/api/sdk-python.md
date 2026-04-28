@@ -85,7 +85,7 @@ every top-level noun is a resource class hung off the client. all methods are `a
 | `client.keys`        | legacy session/ID-token key admin: `create`, `list`, `rotate`, `revoke`                            |
 | `client.webhooks`    | `subscribe`, `list`, `get`, `update`, `remove`, `rotate_secret`, `probe`                           |
 | `client.sites`       | `list`, `get`                                                                                      |
-| `client.machines`    | `list`, `get`, `deployments`                                                                       |
+| `client.machines`    | `list`, `get`, `deployments`, `dispatch_command`, `get_command`, `capture_screenshot`              |
 | `client.installer_deployments` | `list`, `get`, `create`, `retry`, `cancel`, `uninstall`, `delete`                         |
 | `client.installer`   | `list`, `latest`, `upload`, `set_latest`, `delete`                                                 |
 | `client.processes(site_id, machine_id)` | `list`, `create`, `update`, `start`, `stop`, `restart`, `schedule`, `remove`    |
@@ -530,6 +530,7 @@ async with Roost(token="owk_test_...", transport=httpx.MockTransport(handler)) a
 - **[quickstart](./quickstart.md)** — the same flow in `curl`, useful for debugging or shell pipelines.
 - **[authentication](./authentication.md)** — scope grammar, presets, rotation, revocation.
 - **[webhooks](./webhooks.md)** — event catalog, retry model, signing secret lifecycle.
+- **[sdk workflow examples](./examples/sdk-workflows.md)** — executable Node/Python samples and dev fixture env.
 - **[examples/nightly-sync.md](./examples/nightly-sync.md)** — a realistic async batch job.
 - **[node sdk](./sdk-node.md)** — typescript, same resource tree, same error codes.
 

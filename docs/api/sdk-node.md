@@ -464,6 +464,7 @@ const roost = new Roost({
 - **[quickstart](./quickstart.md)** — the same flow in `curl`, useful for debugging or shell pipelines.
 - **[authentication](./authentication.md)** — scope grammar, presets, rotation, revocation.
 - **[webhooks](./webhooks.md)** — event catalog, retry model, signing secret lifecycle.
+- **[sdk workflow examples](./examples/sdk-workflows.md)** — executable Node/Python samples and dev fixture env.
 - **[examples/ci-cd-github-actions.md](./examples/ci-cd-github-actions.md)** — the sdk inside an actual workflow.
 - **[python sdk](./sdk-python.md)** — async python, same resource tree, same error codes.
 

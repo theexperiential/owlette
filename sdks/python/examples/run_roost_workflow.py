@@ -66,6 +66,17 @@ async def main() -> int:
             print("identity", identity.email or identity.user_id or "api-key")
             print("api version", version.current)
 
+            sites = await client.sites.list()
+            print("sites", len(sites))
+            for visible_site in sites[:10]:
+                print("site", visible_site.id, visible_site.name)
+
+            machines = await client.machines.list(site_id)
+            print("machines", len(machines))
+            for machine in machines[:10]:
+                state = "online" if machine.online else "offline"
+                print("machine", machine.id, machine.name, state)
+
             site = await client.sites.get(site_id)
             roost = await client.roosts.get(roost_id, site_id=site_id)
             print("site", site.id, site.name)

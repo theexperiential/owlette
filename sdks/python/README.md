@@ -62,7 +62,7 @@ Roost(
 | `roost.keys`      | legacy session/ID-token key admin: `create`, `list`, `rotate`, `revoke` |
 | `roost.webhooks`  | `subscribe`, `list`, `get`, `update`, `remove`, `rotate_secret`, `probe` |
 | `roost.sites`     | `list`, `get`                                                           |
-| `roost.machines`  | `list`, `get`, `deployments`                                            |
+| `roost.machines`  | `list`, `get`, `deployments`, `dispatch_command`, `get_command`, `capture_screenshot` |
 | `roost.quotas`    | `current`, `history`                                                    |
 
 Roost, version, deployment, and chunk-referrer paginated lists expose
@@ -94,8 +94,8 @@ keys = await client.account.api_keys.list()
 await client.account.api_keys.revoke(created["keyId"])
 ```
 
-For a complete runnable workflow, see
-`examples/run_roost_workflow.py`.
+For complete runnable scripts, see `examples/`: auth/inventory,
+token-to-publish, command polling, and webhook verification.
 
 ## push progress
 

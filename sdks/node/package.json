@@ -8,7 +8,7 @@
   "type": "commonjs",
   "files": [
     "dist/",
-    "examples/run-roost-workflow.ts",
+    "examples/*.ts",
     "README.md"
   ],
   "engines": {

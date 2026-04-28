@@ -14,7 +14,7 @@
  */
 
 import http from 'node:http';
-import { Roost, RoostApiError, verifySignature } from '../src/index.js';
+import { Roost, RoostApiError, verifySignature } from '@owlette/sdk';
 
 const {
   ROOST_TOKEN, ROOST_SIGNING_SECRET, SLACK_WEBHOOK_URL, AUTO_ROLLBACK_SITE_IDS,

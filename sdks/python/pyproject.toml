@@ -36,10 +36,13 @@ dev = [
 Homepage = "https://owlette.app"
 
 [tool.hatch.build.targets.sdist]
-include = ["roost/**", "examples/run_roost_workflow.py", "README.md", "LICENSE"]
+include = ["roost/**", "examples/*.py", "README.md", "LICENSE"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["roost"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"examples" = "examples"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
