@@ -13,6 +13,18 @@ For the full version management workflow, see [Version Management](internal/vers
 
 ## [Unreleased]
 
+### added - security-boundary migration prep
+
+Adds the production-readiness material for the security-boundary migration: W8.2 observability, W9.0 operator runbooks, customer communication draft, and scheduled audit-export plan.
+
+**admin impact**: expected to be no user-visible change for admins and superadmins. Control-plane writes now stay server-mediated through scoped REST routes, capability checks, rate limits, and blocking audit writes; existing dashboard workflows should keep the same behavior.
+
+**member impact**: milestone A intentionally keeps direct member control-plane command capability denied after rules lockdown. Members may continue read-only and explicitly allowed flows, but machine commands and other privileged control-plane writes remain admin/superadmin-only until the configurable policy work lands in milestone B.
+
+**operations**: both enforcement switches are documented (`capability_enforcement`, `rate_limit_enforcement`), including when to flip them, the 4-hour incident window, audit implications, alert wiring, and re-enable checklist. The incident playbook covers capability denial spikes, Cortex system-bucket 429s, and account-deletion cascade recovery.
+
+**audit retention**: security-boundary audit rows under `sites/*/audit_log` and platform rows under `global/audit_log/entries` now have a GCS managed-export schedule plan with retention longer than the Firestore hot-store window and a restore drill.
+
 ### added — api-sprint: 30+ scoped REST endpoints across 6 capability tracks
 
 Promotes the internal admin-gated capabilities (machine commands, processes, classic-installer deploys, agent-installer mgmt, cortex chat, user/member admin) to public, scoped, api-key-friendly REST endpoints. Closes 35 cli stubs in `owlette-cli`. New: full Node + Python SDK coverage. The roost data-plane (chunks/versions/deployments/keys/webhooks) was already public from the prior cycle; this release fills out the rest of the platform surface.
