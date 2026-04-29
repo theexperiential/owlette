@@ -46,6 +46,25 @@ interface RouteContext {
 const VALID_ROLES: ChatRole[] = ['user'];
 const SEND_ALLOWED_FIELDS = new Set(['role', 'content']);
 
+/**
+ * Conversations are user-private within a site: only the owner (or a
+ * platform superadmin) may read/write/delete them. Without this guard, any
+ * site member with `chat=<siteId>:write` could access other users' chats
+ * on the same site.
+ *
+ * Returns 404 (not 403) on miss to avoid leaking the existence of another
+ * user's conversation.
+ */
+async function ensureConversationOwner(
+  conversation: ChatConversation,
+  userId: string,
+): Promise<NextResponse | null> {
+  if (conversation.ownerUid === userId) return null;
+  const userDoc = await getAdminDb().collection('users').doc(userId).get();
+  if (userDoc.exists && userDoc.data()?.role === 'superadmin') return null;
+  return problemNotFound('conversation not found');
+}
+
 /* -------------------------------------------------------------------------- */
 /*  POST — send message + stream response                                     */
 /* -------------------------------------------------------------------------- */
@@ -96,6 +115,9 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
     const auth = await requireChatAuthAndScope(request, conversation.siteId, 'write');
     if (!auth.ok) return auth.response;
+
+    const ownerCheck = await ensureConversationOwner(conversation, auth.userId);
+    if (ownerCheck) return ownerCheck;
 
     return withIdempotency(
       request,
@@ -253,6 +275,9 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     const auth = await requireChatAuthAndScope(request, conversation.siteId, 'write');
     if (!auth.ok) return auth.response;
 
+    const ownerCheck = await ensureConversationOwner(conversation, auth.userId);
+    if (ownerCheck) return ownerCheck;
+
     return withIdempotency(
       request,
       {
@@ -324,6 +349,9 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
 
     const auth = await requireChatAuthAndScope(request, conversation.siteId, 'write');
     if (!auth.ok) return auth.response;
+
+    const ownerCheck = await ensureConversationOwner(conversation, auth.userId);
+    if (ownerCheck) return ownerCheck;
 
     return withIdempotency(
       request,

@@ -61,7 +61,16 @@ export async function GET(request: NextRequest) {
       request.nextUrl.searchParams.get('cursor') ??
       '';
     const includeDeleted = request.nextUrl.searchParams.get('includeDeleted') === 'true';
-    const ownerOnly = request.nextUrl.searchParams.get('owner') === 'me';
+    // Conversations are user-private. Default to "owner is me"; only superadmins
+    // may opt into a cross-user view via `?owner=all`. Without this default, any
+    // site member could enumerate other users' chats on shared sites.
+    const ownerParam = request.nextUrl.searchParams.get('owner');
+    let ownerFilter: string | undefined = auth.userId;
+    if (ownerParam === 'all') {
+      const userDoc = await getAdminDb().collection('users').doc(auth.userId).get();
+      const isSuperadmin = userDoc.exists && userDoc.data()?.role === 'superadmin';
+      if (isSuperadmin) ownerFilter = undefined;
+    }
     const siteIdRaw = request.nextUrl.searchParams.get('siteId');
 
     let requestedSiteId: string | undefined;
@@ -88,7 +97,7 @@ export async function GET(request: NextRequest) {
 
     const result = await listConversations({
       siteIds: effectiveSiteIds,
-      ownerUid: ownerOnly ? auth.userId : undefined,
+      ownerUid: ownerFilter,
       pageSize,
       pageToken,
       includeDeleted,

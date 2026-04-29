@@ -113,14 +113,22 @@ jest.mock('@/lib/apiAuth.server', () => {
   };
 });
 
-// Firebase admin: the route only uses it for the owned-sites lookup on GET
-// /api/cortex/conversations. Return an empty owner-query result by default.
+// Firebase admin: GET list uses it for the owned-sites lookup; the per-conversation
+// routes use it for the superadmin override on the conversation-owner check.
+// Default the user-doc lookup to "no role" so the superadmin escape hatch is closed.
 const mockOwnedSitesGet = jest.fn().mockResolvedValue({ docs: [] });
+const mockUserDocGet = jest.fn().mockResolvedValue({
+  exists: false,
+  data: () => null,
+});
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
-    collection: () => ({
-      where: () => ({ get: mockOwnedSitesGet }),
-    }),
+    collection: (name: string) => {
+      if (name === 'users') {
+        return { doc: () => ({ get: mockUserDocGet }) };
+      }
+      return { where: () => ({ get: mockOwnedSitesGet }) };
+    },
   }),
   getAdminAuth: () => ({
     verifyIdToken: jest.fn().mockRejectedValue(new Error('n/a')),
@@ -556,6 +564,48 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
       ctx(),
     );
     expect(res.status).toBe(403);
+  });
+
+  it('404 when caller is not the conversation owner (cross-user hijack)', async () => {
+    // Conversation owned by someone else on the same site. The caller has
+    // valid `chat=<siteId>:write` scope on the site (default mock auth) but
+    // must not be able to read/write another user's conversation.
+    mockGetConversation.mockResolvedValueOnce(
+      mockConversation({ ownerUid: 'other-user' }),
+    );
+    const res = await sendPOST(
+      jsonReq(
+        `http://localhost/api/cortex/conversations/${CONV}`,
+        'POST',
+        { role: 'user', content: 'x' },
+        { 'idempotency-key': 'sk-hijack' },
+      ),
+      ctx(),
+    );
+    // 404 (not 403) intentionally — don't leak existence of another user's chat.
+    expect(res.status).toBe(404);
+    expect(mockAppendMessage).not.toHaveBeenCalled();
+    expect(mockRunCortexStream).not.toHaveBeenCalled();
+  });
+
+  it('200 when caller is superadmin overriding owner check', async () => {
+    mockUserDocGet.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({ role: 'superadmin' }),
+    });
+    mockGetConversation.mockResolvedValueOnce(
+      mockConversation({ ownerUid: 'other-user' }),
+    );
+    const res = await sendPOST(
+      jsonReq(
+        `http://localhost/api/cortex/conversations/${CONV}`,
+        'POST',
+        { role: 'user', content: 'x' },
+        { 'idempotency-key': 'sk-super' },
+      ),
+      ctx(),
+    );
+    expect(res.status).toBe(200);
   });
 
   it('503 when cortex stream reports machine offline', async () => {
