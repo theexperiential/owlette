@@ -45,6 +45,21 @@ node scripts/security-boundary-probe.mjs
 
 For one-shot CI/smoke use, add `OWLETTE_PROBE_ONCE=1`.
 
+## Dev Staging Status
+
+As of 2026-04-29, W8.2 is live in dev only:
+
+- Railway dev service: `owlette-dev`
+- Sentry mirror: `SECURITY_BOUNDARY_SENTRY_METRICS=true`
+- Firestore indexes: deployed to `owlette-dev-3838a`
+- Authenticated probe target: `https://dev.owlette.app/api/sites/default_site/machines/TEC-A4D`
+- Cloud Monitoring uptime check: `projects/owlette-dev-3838a/uptimeCheckConfigs/w8-2-security-boundary-dev-probe-OrT11yV2nz4`
+- Cloud Monitoring alert policy: `projects/owlette-dev-3838a/alertPolicies/7104635980783343496`
+- Notification channel: `projects/owlette-dev-3838a/notificationChannels/1048804608000008252`
+- Local staging probe log: `test-results/security-boundary-probe-dev.jsonl`
+
+The uptime check masks the `Authorization` header in Cloud Monitoring. Treat the probe API key as temporary because it was created for staging; revoke or rotate it after the migration window.
+
 ## Capability Denial Rate
 
 Alert: `capability-denial-rate`

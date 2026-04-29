@@ -17,6 +17,10 @@ sources:
   firestore:
     type: cloud-monitoring-firestore
     project: owlette-dev-3838a
+  cloud_monitoring_uptime:
+    type: google-cloud-monitoring-uptime
+    project: owlette-dev-3838a
+    check: projects/owlette-dev-3838a/uptimeCheckConfigs/w8-2-security-boundary-dev-probe-OrT11yV2nz4
 
 metrics:
   - name: capability_decision_total
@@ -80,6 +84,11 @@ metrics:
     unit: count
     labels: [site]
     description: Autonomous Cortex events accepted for processing.
+  - name: probe_success
+    source: cloud_monitoring_uptime
+    unit: gauge
+    labels: [probe, site, machine]
+    description: External authenticated dev probe for the privileged machine-read route.
 
 alerts:
   - id: capability-denial-rate
@@ -124,6 +133,6 @@ alerts:
     runbook: docs/ops/security-boundary-monitoring.md#cortex-events-stalled
   - id: synthetic-probe-5xx
     severity: page
-    query: "probe_success{probe='security-boundary-privileged-read'} == 0"
+    query: "Cloud Monitoring policy projects/owlette-dev-3838a/alertPolicies/7104635980783343496: uptime check success fraction < 1 for 2m"
     for: 2m
     runbook: docs/ops/security-boundary-monitoring.md#synthetic-probe-5xx
