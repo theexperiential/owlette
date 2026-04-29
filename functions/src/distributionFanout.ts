@@ -32,6 +32,7 @@ import {
   type TargetState,
   type TargetStatus,
 } from './lib/fanoutLogic';
+import { buildSyncPullCommand, syncPullCommandId } from './lib/syncPullCommand';
 
 const db = admin.firestore();
 
@@ -267,13 +268,11 @@ interface Writable {
 }
 
 /**
- * Queue a `roost_sync` command in the machine's pending commands doc.
+ * Queue a `sync_pull` command in the machine's pending commands doc.
  * Agent's command_router dispatches it; result lands in completed/.
  *
- * `roostId` is passed as `folder_id` in the command payload — the agent's
- * sync_commands handler + on-disk sqlite schema still use `folder_id` for
- * the local filesystem-folder-of-sync concept (unrelated to the firestore
- * collection rename).
+ * Payload shape lives in `lib/syncPullCommand.ts` so it can be
+ * contract-tested without firebase-admin.
  */
 function queueSyncCommand(
   writable: Writable,
@@ -295,19 +294,18 @@ function queueSyncCommand(
   // one-doc-per-machine pending commands (matches existing pattern used
   // by deploymentStatus.ts). command id is deterministic per version+roost
   // so retries of this function don't duplicate.
-  const cmdId = `roost_sync_${roostId}_${versionId}`;
+  const cmdId = syncPullCommandId(roostId, versionId);
   writable.set(
     pendingRef,
     {
-      [cmdId]: {
-        type: 'sync_pull',
-        site_id: siteId,
-        folder_id: roostId,
-        version_id: versionId,
-        version_url: versionUrl,
-        extract_root: extractRoot,
-        queued_at: FieldValue.serverTimestamp(),
-      },
+      [cmdId]: buildSyncPullCommand(
+        siteId,
+        roostId,
+        versionId,
+        versionUrl,
+        extractRoot,
+        FieldValue.serverTimestamp(),
+      ),
     },
     { merge: true },
   );
