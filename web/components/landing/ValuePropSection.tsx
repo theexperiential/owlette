@@ -103,7 +103,7 @@ export function ValuePropSection() {
           }}
         >
           <Image
-            src="/dashboard.png"
+            src="/landing-screens/dashboard.png"
             alt="owlette dashboard showing 10 machines with real-time metrics"
             width={2400}
             height={1300}

@@ -10,7 +10,10 @@ import {
 // Lazy-load below-fold sections to reduce initial JS bundle
 // Note: ValuePropSection stays static because it contains the LCP image (dashboard.png)
 const UseCaseSection = dynamic(() => import('@/components/landing/UseCaseSection').then(m => ({ default: m.UseCaseSection })));
+const DisplaySection = dynamic(() => import('@/components/landing/DisplaySection').then(m => ({ default: m.DisplaySection })));
+const DeveloperSection = dynamic(() => import('@/components/landing/DeveloperSection').then(m => ({ default: m.DeveloperSection })));
 const FeatureGrid = dynamic(() => import('@/components/landing/FeatureGrid').then(m => ({ default: m.FeatureGrid })));
+const ProofStrip = dynamic(() => import('@/components/landing/ProofStrip').then(m => ({ default: m.ProofStrip })));
 const FAQSection = dynamic(() => import('@/components/landing/FAQSection').then(m => ({ default: m.FAQSection })));
 
 const jsonLd = {
@@ -23,9 +26,27 @@ const jsonLd = {
   description: 'owlette gives your machines the attention they need — so you don\'t have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.',
   screenshot: 'https://owlette.app/og-image.png',
   offers: {
-    '@type': 'Offer',
-    price: '0',
+    '@type': 'AggregateOffer',
     priceCurrency: 'USD',
+    lowPrice: '0',
+    highPrice: '0',
+    offerCount: '2',
+    offers: [
+      {
+        '@type': 'Offer',
+        name: 'core',
+        price: '0',
+        priceCurrency: 'USD',
+        description: 'free during beta. $10/machine/month after.',
+      },
+      {
+        '@type': 'Offer',
+        name: 'pro',
+        price: '0',
+        priceCurrency: 'USD',
+        description: 'free during beta. $40/site/month after, includes 100GB project storage.',
+      },
+    ],
   },
   featureList: [
     'Real-time CPU, memory, disk, GPU monitoring',
@@ -56,8 +77,11 @@ export default function LandingPage() {
         <HeroSection />
         <ValuePropSection />
         <UseCaseSection />
+        <DisplaySection />
+        <DeveloperSection />
         <FeatureGrid />
         <PricingSection />
+        <ProofStrip />
         <FAQSection />
       </main>
       <LandingFooter />
