@@ -1148,14 +1148,28 @@ class OwletteConfigApp:
 
     def kill_process(self):
         if self.selected_process:
-            os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
-
-            # Get process name for logging
+            # Get process name for logging + confirmation copy
             process_name = None
             for process in self.config.get('processes', []):
                 if process.get('id') == self.selected_process:
                     process_name = process.get('name')
                     break
+
+            # Confirmation — mirrors restart_process; copy intentionally
+            # lowercase to match UI voice.
+            display_name = process_name or self.selected_process
+            response = CTkMessagebox(
+                master=self.master,
+                title="kill process",
+                message=f"kill {display_name}? the process will be terminated and won't auto-relaunch until you start it again.",
+                icon="question",
+                option_1="Yes",
+                option_2="No",
+            )
+            if response.get() != 'Yes':
+                return
+
+            os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
 
             if os_pid:
                 # Run kill in background thread to avoid freezing the GUI
