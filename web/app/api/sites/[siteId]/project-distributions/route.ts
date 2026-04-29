@@ -30,15 +30,13 @@ import {
   requireSiteAuthAndScope,
 } from '../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
-import { generateCorrelationId } from '@/lib/auditLog.server';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import {
   createDistribution,
   type CreateDistributionInput,
 } from '@/lib/actions/createDistribution.server';
 
-interface RouteParams {
-  params: Promise<{ siteId: string }>;
-}
+type RouteParams = { siteId: string };
 
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
@@ -47,9 +45,14 @@ const MAX_PAGE_SIZE = 100;
 /*  GET — list distributions                                             */
 /* --------------------------------------------------------------------- */
 
-export async function GET(request: NextRequest, { params }: RouteParams) {
+export const GET = authorizedSiteHandler<RouteParams>({
+  capability: 'DISTRIBUTION_MANAGE',
+  siteIdParam: 'path',
+  targetKind: 'distribution',
+  apiKeyPermission: 'read',
+})(async (request: NextRequest, _ctx, routeContext) => {
   try {
-    const { siteId } = await params;
+    const { siteId } = await routeContext.params;
     const auth = await requireSiteAuthAndScope(request, siteId, 'read');
     if (!auth.ok) return auth.response;
 
@@ -87,7 +90,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/project-distributions:GET');
   }
-}
+});
 
 /* --------------------------------------------------------------------- */
 /*  POST — create distribution                                           */
@@ -102,9 +105,13 @@ interface CreateDistributionBody {
   machines?: unknown;
 }
 
-export async function POST(request: NextRequest, { params }: RouteParams) {
+export const POST = authorizedSiteHandler<RouteParams>({
+  capability: 'DISTRIBUTION_MANAGE',
+  siteIdParam: 'path',
+  targetKind: 'distribution',
+})(async (request: NextRequest, ctx, routeContext) => {
   try {
-    const { siteId } = await params;
+    const { siteId } = await routeContext.params;
 
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
@@ -121,7 +128,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       },
       parsed.raw,
       async () => {
-        const correlationId = generateCorrelationId();
         const actorIdentifier = auth.auth.keyContext
           ? `apiKey:${auth.auth.keyContext.keyId}`
           : `user:${auth.userId}`;
@@ -133,7 +139,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const result = await createDistribution(input, {
           siteId,
           actorIdentifier,
-          correlationId,
+          correlationId: ctx.correlationId,
         });
 
         if (!result.ok) {
@@ -170,7 +176,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/project-distributions:POST');
   }
-}
+});
 
 /* --------------------------------------------------------------------- */
 /*  helpers                                                              */

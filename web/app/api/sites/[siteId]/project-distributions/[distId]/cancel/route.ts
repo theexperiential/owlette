@@ -24,16 +24,19 @@ import {
   requireSiteAuthAndScope,
 } from '../../../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
-import { generateCorrelationId } from '@/lib/auditLog.server';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import { cancelDistribution } from '@/lib/actions/cancelDistribution.server';
 
-interface RouteParams {
-  params: Promise<{ siteId: string; distId: string }>;
-}
+type RouteParams = { siteId: string; distId: string };
 
-export async function POST(request: NextRequest, { params }: RouteParams) {
+export const POST = authorizedSiteHandler<RouteParams>({
+  capability: 'DISTRIBUTION_MANAGE',
+  siteIdParam: 'path',
+  targetKind: 'distribution',
+  targetIdParam: 'distId',
+})(async (request: NextRequest, ctx, routeContext) => {
   try {
-    const { siteId, distId } = await params;
+    const { siteId, distId } = await routeContext.params;
 
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
@@ -49,7 +52,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       },
       parsed.raw,
       async () => {
-        const correlationId = generateCorrelationId();
         const actorIdentifier = auth.auth.keyContext
           ? `apiKey:${auth.auth.keyContext.keyId}`
           : `user:${auth.userId}`;
@@ -58,7 +60,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           siteId,
           distributionId: distId,
           actorIdentifier,
-          correlationId,
+          correlationId: ctx.correlationId,
         });
 
         if (!result.ok) {
@@ -100,4 +102,4 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       'sites/[siteId]/project-distributions/[distId]/cancel:POST',
     );
   }
-}
+});

@@ -23,20 +23,24 @@ import {
   requireSiteAuthAndScope,
 } from '../../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
-import { generateCorrelationId } from '@/lib/auditLog.server';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import { deleteDistribution } from '@/lib/actions/deleteDistribution.server';
 
-interface RouteParams {
-  params: Promise<{ siteId: string; distId: string }>;
-}
+type RouteParams = { siteId: string; distId: string };
 
 /* --------------------------------------------------------------------- */
 /*  GET — distribution detail                                            */
 /* --------------------------------------------------------------------- */
 
-export async function GET(request: NextRequest, { params }: RouteParams) {
+export const GET = authorizedSiteHandler<RouteParams>({
+  capability: 'DISTRIBUTION_MANAGE',
+  siteIdParam: 'path',
+  targetKind: 'distribution',
+  targetIdParam: 'distId',
+  apiKeyPermission: 'read',
+})(async (request: NextRequest, _ctx, routeContext) => {
   try {
-    const { siteId, distId } = await params;
+    const { siteId, distId } = await routeContext.params;
     const auth = await requireSiteAuthAndScope(request, siteId, 'read');
     if (!auth.ok) return auth.response;
 
@@ -80,15 +84,20 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/project-distributions/[distId]:GET');
   }
-}
+});
 
 /* --------------------------------------------------------------------- */
 /*  DELETE — terminal-only delete                                        */
 /* --------------------------------------------------------------------- */
 
-export async function DELETE(request: NextRequest, { params }: RouteParams) {
+export const DELETE = authorizedSiteHandler<RouteParams>({
+  capability: 'DISTRIBUTION_MANAGE',
+  siteIdParam: 'path',
+  targetKind: 'distribution',
+  targetIdParam: 'distId',
+})(async (request: NextRequest, ctx, routeContext) => {
   try {
-    const { siteId, distId } = await params;
+    const { siteId, distId } = await routeContext.params;
 
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
@@ -104,7 +113,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       },
       parsed.raw,
       async () => {
-        const correlationId = generateCorrelationId();
         const actorIdentifier = auth.auth.keyContext
           ? `apiKey:${auth.auth.keyContext.keyId}`
           : `user:${auth.userId}`;
@@ -113,7 +121,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
           siteId,
           distributionId: distId,
           actorIdentifier,
-          correlationId,
+          correlationId: ctx.correlationId,
         });
 
         if (!result.ok) {
@@ -151,4 +159,4 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/project-distributions/[distId]:DELETE');
   }
-}
+});
