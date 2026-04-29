@@ -131,23 +131,41 @@ export async function apiHealth(options: HealthCheckOptions = {}): Promise<Healt
   const baseUrl = publicBaseUrl(options.baseUrl);
 
   try {
-    const [version, whoami] = await Promise.all([
+    const [version, whoami, openapi, docs] = await Promise.all([
       fetchWithTimeout(`${baseUrl}/api/version`, API_TIMEOUT_MS, options),
       fetchWithTimeout(`${baseUrl}/api/whoami`, API_TIMEOUT_MS, options),
+      fetchWithTimeout(`${baseUrl}/api/openapi`, API_TIMEOUT_MS, options),
+      fetchWithTimeout(`${baseUrl}/docs/api`, API_TIMEOUT_MS, options),
     ]);
     const versionOk = version.status >= 200 && version.status < 300;
     const whoamiOk = whoami.status === 401 || (whoami.status >= 200 && whoami.status < 300);
-    const ok = versionOk && whoamiOk;
+    const openapiOk = openapi.status >= 200 && openapi.status < 300;
+    const docsOk = docs.status >= 200 && docs.status < 300;
+    const ok = versionOk && whoamiOk && openapiOk && docsOk;
 
     return result('api', started, ok, {
-      status: ok ? 200 : versionOk ? whoami.status : version.status,
+      status: ok
+        ? 200
+        : !versionOk
+          ? version.status
+          : !whoamiOk
+            ? whoami.status
+            : !openapiOk
+              ? openapi.status
+              : docs.status,
       metadata: {
         version_status: version.status,
         whoami_status: whoami.status,
+        openapi_status: openapi.status,
+        docs_status: docs.status,
       },
       ...(ok
         ? {}
-        : { error: `api probes returned version=${version.status}, whoami=${whoami.status}` }),
+        : {
+            error:
+              `api probes returned version=${version.status}, whoami=${whoami.status}, ` +
+              `openapi=${openapi.status}, docs=${docs.status}`,
+          }),
     });
   } catch (error) {
     return result('api', started, false, { error: errorMessage(error) });

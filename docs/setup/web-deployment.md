@@ -90,9 +90,18 @@ GET https://<your-app>/api/cron/status-ping
 X-Cron-Secret: <CRON_SECRET value>
 ```
 
-The route writes an internal status-ping record and posts component status changes to Instatus when the `INSTATUS_*` variables are configured. It waits for two consecutive failures before degrading a component, then marks it operational on recovery. Publish failures are logged and returned in the cron response without failing the local ping write.
+The route writes an internal status-ping record and posts component status changes to Instatus when the `INSTATUS_*` variables are configured. It waits for two consecutive failures before degrading a component, then marks it operational on recovery. Publish failures are logged and summarized in the cron response without returning vendor error bodies or failing the local ping write.
 
 Use a separate cron job/service if the hosting provider only supports one schedule per service. Keep `/api/cron/status-ping` internal; it is not part of the public API reference.
+
+After adding the status-page variables, run the readiness check from an operator shell with the same env values loaded:
+
+```powershell
+node scripts/check-status-page-ready.mjs --env-only
+node scripts/check-status-page-ready.mjs --base-url https://<your-app>
+```
+
+The check validates required env names, component ids, and the live status-ping response without printing secrets.
 
 ---
 

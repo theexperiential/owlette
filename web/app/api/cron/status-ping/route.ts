@@ -10,6 +10,7 @@ import {
   type InstatusPublishResult,
   statusForHealth,
   setInstatusComponentStatus,
+  validateInstatusConfig,
 } from '@/lib/instatusClient';
 import { getAdminDb } from '@/lib/firebase-admin';
 
@@ -26,6 +27,14 @@ export interface ComponentStatusUpdate {
   currentOk: boolean;
   status: ReturnType<typeof statusForHealth>;
   reason: 'second_consecutive_failure' | 'recovered';
+}
+
+interface StatusPingResponseResult {
+  component: StatusComponent;
+  ok: boolean;
+  latency_ms: number;
+  status?: number;
+  placeholder?: boolean;
 }
 
 function componentMap(results: HealthCheckResult[]): Map<StatusComponent, HealthCheckResult> {
@@ -154,6 +163,31 @@ async function publishStatusUpdates(
   });
 }
 
+function summarizeHealthResults(results: HealthCheckResult[]): StatusPingResponseResult[] {
+  return results.map((entry) => ({
+    component: entry.component,
+    ok: entry.ok,
+    latency_ms: entry.latency_ms,
+    ...(typeof entry.status === 'number' ? { status: entry.status } : {}),
+    ...(entry.metadata?.placeholder === true ? { placeholder: true } : {}),
+  }));
+}
+
+function summarizePublishResults(results: InstatusPublishResult[]) {
+  return {
+    attempted: results.length,
+    succeeded: results.filter((entry) => entry.ok).length,
+    failed: results.filter((entry) => !entry.ok && !entry.skipped).length,
+    skipped: results.filter((entry) => entry.skipped).length,
+    failedComponents: results
+      .filter((entry) => !entry.ok && !entry.skipped)
+      .map((entry) => entry.component),
+    skippedComponents: results
+      .filter((entry) => entry.skipped)
+      .map((entry) => entry.component),
+  };
+}
+
 export async function GET(request: NextRequest) {
   const cronSecret = request.headers.get('x-cron-secret');
   if (!process.env.CRON_SECRET || cronSecret !== process.env.CRON_SECRET) {
@@ -172,15 +206,24 @@ export async function GET(request: NextRequest) {
       previousPings[1]?.results,
     );
     const publishResults = await publishStatusUpdates(updates);
+    const configValidation = validateInstatusConfig();
 
     return NextResponse.json({
       ok: results.every((entry) => entry.ok),
       pingId: ping.pingId,
       checkedAt: ping.checkedAt,
       observedAtMs: ping.observedAtMs,
-      results,
-      updates,
-      publishResults,
+      results: summarizeHealthResults(results),
+      updates: updates.map((update) => ({
+        component: update.component,
+        status: update.status,
+        reason: update.reason,
+      })),
+      statusPage: {
+        configured: configValidation.ok,
+        missing: configValidation.missing,
+        publish: summarizePublishResults(publishResults),
+      },
     });
   } catch (error) {
     return apiError(error, 'cron/status-ping');

@@ -24,6 +24,11 @@ export interface InstatusPublishResult {
   error?: string;
 }
 
+export interface InstatusConfigValidation {
+  ok: boolean;
+  missing: string[];
+}
+
 export const INSTATUS_COMPONENT_ENV: Record<StatusComponent, string> = {
   dashboard: 'INSTATUS_COMPONENT_DASHBOARD_ID',
   api: 'INSTATUS_COMPONENT_API_ID',
@@ -46,7 +51,7 @@ export function getInstatusConfigFromEnv(
   return {
     apiKey: env.INSTATUS_API_KEY ?? '',
     pageId: env.INSTATUS_PAGE_ID ?? '',
-    apiBaseUrl: (env.INSTATUS_API_BASE_URL ?? 'https://api.instatus.com/v1').replace(/\/+$/, ''),
+    apiBaseUrl: (env.INSTATUS_API_BASE_URL ?? 'https://api.instatus.com').replace(/\/+$/, ''),
     componentStatusMethod: env.INSTATUS_COMPONENT_STATUS_METHOD ?? 'PUT',
     componentStatusUrlTemplate: env.INSTATUS_COMPONENT_STATUS_URL_TEMPLATE ?? '',
     componentIds,
@@ -67,6 +72,20 @@ function missingConfigReason(
   return null;
 }
 
+export function validateInstatusConfig(
+  config: InstatusConfig = getInstatusConfigFromEnv(),
+): InstatusConfigValidation {
+  const missing: string[] = [];
+  if (!config.apiKey) missing.push('INSTATUS_API_KEY');
+  if (!config.pageId) missing.push('INSTATUS_PAGE_ID');
+
+  for (const component of Object.keys(INSTATUS_COMPONENT_ENV) as StatusComponent[]) {
+    if (!config.componentIds[component]) missing.push(INSTATUS_COMPONENT_ENV[component]);
+  }
+
+  return { ok: missing.length === 0, missing };
+}
+
 export async function setInstatusComponentStatus(
   component: StatusComponent,
   status: InstatusComponentStatus,
@@ -78,7 +97,7 @@ export async function setInstatusComponentStatus(
   }
 
   const componentId = config.componentIds[component] as string;
-  const url = (config.componentStatusUrlTemplate || `${config.apiBaseUrl}/components/{componentId}`)
+  const url = (config.componentStatusUrlTemplate || `${config.apiBaseUrl}/v2/{pageId}/components/{componentId}`)
     .replace('{pageId}', encodeURIComponent(config.pageId))
     .replace('{componentId}', encodeURIComponent(componentId));
 

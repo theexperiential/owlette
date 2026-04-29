@@ -158,6 +158,12 @@ describe('GET /api/cron/status-ping', () => {
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.results).toHaveLength(1);
+    expect(body.results[0]).toEqual({
+      component: 'api',
+      ok: true,
+      latency_ms: 12,
+    });
+    expect(body.statusPage.configured).toBe(false);
     expect(mockStatusSet).toHaveBeenCalledWith(
       expect.objectContaining({
         ok: true,
@@ -247,14 +253,13 @@ describe('GET /api/cron/status-ping', () => {
 
     expect(res.status).toBe(200);
     expect(mockStatusSet).toHaveBeenCalled();
-    expect(body.publishResults).toEqual([
-      {
-        component: 'api',
-        status: 'DEGRADEDPERFORMANCE',
-        ok: false,
-        error: 'instatus unavailable',
-      },
-    ]);
+    expect(body.statusPage.publish).toMatchObject({
+      attempted: 1,
+      succeeded: 0,
+      failed: 1,
+      skipped: 0,
+      failedComponents: ['api'],
+    });
     expect(warnSpy).toHaveBeenCalledWith(
       '[cron/status-ping] Instatus publish failed',
       expect.objectContaining({ component: 'api', ok: false }),

@@ -104,15 +104,22 @@ describe('status health checks', () => {
     expect(result.error).toBe('network down');
   });
 
-  it('checks both /api/version and /api/whoami for API liveness', async () => {
+  it('checks version, auth, OpenAPI, and rendered docs for API liveness', async () => {
     mockFetch
       .mockResolvedValueOnce(response(200))
-      .mockResolvedValueOnce(response(401));
+      .mockResolvedValueOnce(response(401))
+      .mockResolvedValueOnce(response(200))
+      .mockResolvedValueOnce(response(200));
 
     const result = await apiHealth({ baseUrl: 'https://example.test' });
 
     expect(result.ok).toBe(true);
-    expect(result.metadata).toEqual({ version_status: 200, whoami_status: 401 });
+    expect(result.metadata).toEqual({
+      version_status: 200,
+      whoami_status: 401,
+      openapi_status: 200,
+      docs_status: 200,
+    });
   });
 
   it('marks the API degraded when either probe returns 5xx', async () => {
@@ -124,6 +131,19 @@ describe('status health checks', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain('whoami=503');
+  });
+
+  it('marks the API degraded when OpenAPI or docs are unavailable', async () => {
+    mockFetch
+      .mockResolvedValueOnce(response(200))
+      .mockResolvedValueOnce(response(401))
+      .mockResolvedValueOnce(response(200))
+      .mockResolvedValueOnce(response(503));
+
+    const result = await apiHealth({ baseUrl: 'https://example.test' });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('docs=503');
   });
 
   it('marks the API degraded when a probe throws', async () => {

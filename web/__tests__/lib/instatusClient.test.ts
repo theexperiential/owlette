@@ -7,6 +7,7 @@ import {
   getInstatusConfigFromEnv,
   setInstatusComponentStatus,
   statusForHealth,
+  validateInstatusConfig,
 } from '@/lib/instatusClient';
 
 function response(status: number, body = ''): Response {
@@ -34,13 +35,29 @@ describe('instatusClient', () => {
     expect(config.pageId).toBe('page-1');
     expect(config.componentIds.api).toBe('component-api');
     expect(config.componentStatusMethod).toBe('PUT');
+    expect(config.apiBaseUrl).toBe('https://api.instatus.com');
+  });
+
+  it('validates all required status page component config', () => {
+    const result = validateInstatusConfig({
+      apiKey: 'secret',
+      pageId: 'page-1',
+      apiBaseUrl: 'https://api.instatus.com',
+      componentStatusMethod: 'PUT',
+      componentStatusUrlTemplate: '',
+      componentIds: { api: 'component-api' },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.missing).toContain('INSTATUS_COMPONENT_DASHBOARD_ID');
+    expect(result.missing).not.toContain('INSTATUS_COMPONENT_API_ID');
   });
 
   it('skips publishing when required config is missing', async () => {
     const result = await setInstatusComponentStatus('api', 'OPERATIONAL', {
       apiKey: '',
       pageId: 'page-1',
-      apiBaseUrl: 'https://api.instatus.com/v1',
+      apiBaseUrl: 'https://api.instatus.com',
       componentStatusMethod: 'PUT',
       componentStatusUrlTemplate: '',
       componentIds: { api: 'component-api' },
@@ -62,7 +79,7 @@ describe('instatusClient', () => {
     const result = await setInstatusComponentStatus('api', 'DEGRADEDPERFORMANCE', {
       apiKey: 'secret',
       pageId: 'page-1',
-      apiBaseUrl: 'https://api.instatus.com/v1',
+      apiBaseUrl: 'https://api.instatus.com',
       componentStatusMethod: 'PUT',
       componentStatusUrlTemplate: '',
       componentIds: { api: 'component-api' },
@@ -70,7 +87,7 @@ describe('instatusClient', () => {
 
     expect(result).toMatchObject({ ok: true, statusCode: 200 });
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://api.instatus.com/v1/components/component-api',
+      'https://api.instatus.com/v2/page-1/components/component-api',
       expect.objectContaining({
         method: 'PUT',
         body: JSON.stringify({ status: 'DEGRADEDPERFORMANCE' }),
@@ -102,7 +119,7 @@ describe('instatusClient', () => {
     const result = await setInstatusComponentStatus('api', 'OPERATIONAL', {
       apiKey: 'secret',
       pageId: 'page-1',
-      apiBaseUrl: 'https://api.instatus.com/v1',
+      apiBaseUrl: 'https://api.instatus.com',
       componentStatusMethod: 'PUT',
       componentStatusUrlTemplate: '',
       componentIds: { api: 'component-api' },
@@ -123,7 +140,7 @@ describe('instatusClient', () => {
     const result = await setInstatusComponentStatus('api', 'OPERATIONAL', {
       apiKey: 'secret',
       pageId: 'page-1',
-      apiBaseUrl: 'https://api.instatus.com/v1',
+      apiBaseUrl: 'https://api.instatus.com',
       componentStatusMethod: 'PUT',
       componentStatusUrlTemplate: '',
       componentIds: { api: 'component-api' },
