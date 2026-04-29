@@ -341,12 +341,56 @@ export const recordUsageEvent = onRequest(
   },
 );
 
+/**
+ * Per-tenant cost data — must verify the caller can access `siteId` before
+ * returning anything. Without this check, any authenticated user (or
+ * arbitrary HTTPS caller, since this used to be wide open) could enumerate
+ * cost figures for sites they don't belong to. Allowed callers:
+ *   - any user whose `users/{uid}.sites[]` includes the requested siteId
+ *   - any superadmin (`users/{uid}.role === 'superadmin'`)
+ *
+ * Single 401 for "no token" and "no access" so the endpoint can't be
+ * used to enumerate which siteIds an attacker happens to have access to.
+ */
+export async function isAuthorizedForSiteUsage(
+  authorizationHeader: string | undefined,
+  siteId: string,
+): Promise<boolean> {
+  const token = (authorizationHeader ?? '').replace(/^Bearer\s+/i, '').trim();
+  if (!token) return false;
+  let uid: string;
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+    uid = decoded.uid;
+  } catch {
+    return false;
+  }
+  try {
+    const userSnap = await admin.firestore().collection('users').doc(uid).get();
+    if (!userSnap.exists) return false;
+    const data = userSnap.data() ?? {};
+    if (data.role === 'superadmin') return true;
+    const sites = Array.isArray(data.sites) ? data.sites : [];
+    return sites.includes(siteId);
+  } catch {
+    return false;
+  }
+}
+
 export const getUsageSummaryHttp = onRequest(
   { timeoutSeconds: 15, memory: '256MiB' },
   async (req, res) => {
     const siteId = String(req.query.siteId ?? '');
     if (!siteId) {
       res.status(400).json({ error: 'siteId_required' });
+      return;
+    }
+    const authorized = await isAuthorizedForSiteUsage(
+      req.headers.authorization,
+      siteId,
+    );
+    if (!authorized) {
+      res.status(401).json({ error: 'unauthorized' });
       return;
     }
     const summary = await getUsageSummary(siteId, {
