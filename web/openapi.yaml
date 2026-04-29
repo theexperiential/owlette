@@ -2684,12 +2684,19 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [siteId, name, timezone, owner, createdAt]
+                required: [siteId, name, timezone, owner, tier, createdAt]
                 properties:
                   siteId: { type: string }
                   name: { type: string }
                   timezone: { type: string }
                   owner: { type: string }
+                  tier:
+                    type: string
+                    enum: [core, pro]
+                    description: |
+                      Pricing tier minted with the site. New sites bootstrap
+                      with the public-beta default (`pro`); a future billing
+                      sprint will flip this default and gate pro features.
                   createdAt: { type: integer, format: int64 }
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
@@ -5564,6 +5571,46 @@ paths:
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
+  /api/sites/{siteId}/machines/{machineId}/processes/{processId}/restart:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+      - $ref: '#/components/parameters/ProcessIdPath'
+    post:
+      operationId: restartMachineProcess
+      tags: [Processes]
+      summary: restart a process (queued command)
+      description: Queue a `restart_process` command. Requires `machine=<machineId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      responses:
+        '202':
+          description: Command queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    required: [commandId, status]
+                    properties:
+                      commandId: { type: string }
+                      status: { type: string, example: pending }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/start:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
@@ -8150,6 +8197,15 @@ components:
           type: string
           enum: [free, starter, pro, enterprise]
           nullable: true
+        tier:
+          type: string
+          enum: [core, pro]
+          nullable: true
+          description: |
+            Pricing tier that gates pro-only features (currently roost).
+            `null` on legacy site docs created before the field was
+            introduced — clients should treat absent/null as the beta
+            default (`pro`) until a billing flow flips this.
         timezone:
           type: string
           nullable: true

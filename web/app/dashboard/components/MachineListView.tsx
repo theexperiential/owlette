@@ -7,7 +7,7 @@
  * Features:
  * - Tabular layout with sortable columns
  * - Expandable rows for process details
- * - Process controls (autolaunch, edit, kill)
+ * - Process controls (autolaunch, edit, restart, kill)
  * - Create add process button
  * - Memoized table header for performance
  * - Sparkline charts behind metric cells
@@ -27,7 +27,7 @@ import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff, RotateCw } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -229,6 +229,7 @@ interface MachineListViewProps {
   onEditProcess: (machineId: string, process: Process) => void;
   onCreateProcess: (machineId: string) => void;
   onKillProcess: (machineId: string, processId: string, processName: string) => void;
+  onRestartProcess: (machineId: string, processId: string, processName: string) => void;
   onSetLaunchMode: (machineId: string, processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
   onConfigureSchedule?: (machineId: string, process: Process) => void;
   onRemoveMachine: (machineId: string, machineName: string, isOnline: boolean) => void;
@@ -250,6 +251,7 @@ interface MachineRowProps {
   onEditProcess: (process: Process) => void;
   onCreateProcess: () => void;
   onKillProcess: (processId: string, processName: string) => void;
+  onRestartProcess: (processId: string, processName: string) => void;
   onSetLaunchMode: (processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
   onConfigureSchedule?: (process: Process) => void;
   onRemoveMachine: () => void;
@@ -281,6 +283,7 @@ export function MachineRow({
   onEditProcess,
   onCreateProcess,
   onKillProcess,
+  onRestartProcess,
   onSetLaunchMode,
   onConfigureSchedule,
   onRemoveMachine,
@@ -820,6 +823,16 @@ export function MachineRow({
                                   <Button
                                     variant="ghost"
                                     size="sm"
+                                    onClick={() => onRestartProcess(process.id, process.name)}
+                                    className="bg-card border border-border text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                  >
+                                    <RotateCw className="h-3 w-3 mr-1" />
+                                    restart
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
                                     onClick={() => onKillProcess(process.id, process.name)}
                                     className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50"
                                     disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
@@ -886,6 +899,23 @@ export function MachineRow({
                                       </DropdownMenuItem>
                                     </DropdownMenuContent>
                                   </DropdownMenu>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => onRestartProcess(process.id, process.name)}
+                                        aria-label={`restart ${process.name}`}
+                                        className="bg-card border border-border text-foreground disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
+                                        disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                      >
+                                        <RotateCw className="h-3 w-3" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>restart process</p>
+                                    </TooltipContent>
+                                  </Tooltip>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button
@@ -958,6 +988,7 @@ export function MachineListView({
   onEditProcess,
   onCreateProcess,
   onKillProcess,
+  onRestartProcess,
   onSetLaunchMode,
   onConfigureSchedule,
   onRemoveMachine,
@@ -1013,6 +1044,7 @@ export function MachineListView({
               onEditProcess={(process) => onEditProcess(machine.machineId, process)}
               onCreateProcess={() => onCreateProcess(machine.machineId)}
               onKillProcess={(processId, processName) => onKillProcess(machine.machineId, processId, processName)}
+              onRestartProcess={(processId, processName) => onRestartProcess(machine.machineId, processId, processName)}
               onSetLaunchMode={(processId, processName, mode, exePath, schedules) =>
                 onSetLaunchMode(machine.machineId, processId, processName, mode, exePath, schedules)
               }

@@ -8,6 +8,7 @@
  *   PATCH  /api/sites/{siteId}/machines/{machineId}/processes/{processId}
  *   DELETE /api/sites/{siteId}/machines/{machineId}/processes/{processId}
  *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/kill
+ *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/restart
  *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/start
  *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/stop
  *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/schedule
@@ -16,9 +17,10 @@
  * every call. Mutations auto-generate an `Idempotency-Key` so retries are
  * safe — the server caches the response for 24h on the same key.
  *
- * The control verbs (kill / start / stop) and `schedule` queue commands
- * (or write through process-config) and return 202 with a `commandId` —
- * the cli prints the id so callers can poll the command-state endpoint.
+ * The control verbs (kill / restart / start / stop) and `schedule` queue
+ * commands (or write through process-config) and return 202 with a
+ * `commandId` — the cli prints the id so callers can poll the
+ * command-state endpoint.
  *
  * Server envelope is `{ ok: true, data: ... }` for all 2B routes; errors
  * are RFC-7807 problem+json with stable `code` strings (e.g.
@@ -95,6 +97,7 @@ export function registerProcessCommands(program: Command): void {
     'update',
     'delete',
     'kill',
+    'restart',
     'start',
     'stop',
     'schedule',
@@ -361,9 +364,10 @@ export function registerProcessCommands(program: Command): void {
       );
     });
 
-  /* -------------------- kill / start / stop (control verbs) -------------------- */
+  /* -------------------- kill / restart / start / stop (control verbs) -------------------- */
 
   registerControlVerb(proc, 'kill', 'forcibly terminate a running managed process');
+  registerControlVerb(proc, 'restart', 'restart a managed process (graceful stop, then start)');
   registerControlVerb(proc, 'start', 'start a managed process');
   registerControlVerb(proc, 'stop', 'gracefully stop a managed process');
 
@@ -438,10 +442,14 @@ export function registerProcessCommands(program: Command): void {
 }
 
 /* --------------------------------------------------------------------- */
-/*  control-verb helper (kill / start / stop share the same shape)       */
+/*  control-verb helper (kill / restart / start / stop share the shape)  */
 /* --------------------------------------------------------------------- */
 
-function registerControlVerb(proc: Command, verb: 'kill' | 'start' | 'stop', description: string): void {
+function registerControlVerb(
+  proc: Command,
+  verb: 'kill' | 'restart' | 'start' | 'stop',
+  description: string,
+): void {
   proc
     .command(`${verb} <processId>`)
     .description(description)

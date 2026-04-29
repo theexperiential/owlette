@@ -317,6 +317,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
         except Exception as e:
             logging.warning(f"Failed to register machine-api handlers: {e}")
 
+        # Register process-control public handlers (landing-redesign wave R.2).
+        # restart_process supersedes the legacy if/elif branch in
+        # _execute_command — the router takes precedence in dispatch.
+        try:
+            from process_commands import register_handlers as _register_process_handlers
+            _register_process_handlers(self._command_router)
+        except Exception as e:
+            logging.warning(f"Failed to register process-control handlers: {e}")
+
         # Initialize Firebase client
         self.firebase_client = None
         logging.debug(f"Firebase check - Available: {FIREBASE_AVAILABLE}")

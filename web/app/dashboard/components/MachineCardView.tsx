@@ -8,7 +8,7 @@
  * - Machine status (online/offline)
  * - System metrics (CPU, Memory, Disk, GPU) with sparkline charts
  * - Expandable process list
- * - Process controls (autolaunch, edit, kill)
+ * - Process controls (autolaunch, edit, restart, kill)
  * - Create add process button
  * - Click sparklines to open detail panel
  *
@@ -25,7 +25,7 @@ import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, Settings2, BellOff } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, RotateCw, Settings2, BellOff } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass, getUsageRingClass } from '@/lib/usageColorUtils';
@@ -55,6 +55,7 @@ interface MachineCardViewProps {
   onEditProcess: (machineId: string, process: Process) => void;
   onCreateProcess: (machineId: string) => void;
   onKillProcess: (machineId: string, processId: string, processName: string) => void;
+  onRestartProcess: (machineId: string, processId: string, processName: string) => void;
   onSetLaunchMode: (machineId: string, processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
   onConfigureSchedule?: (machineId: string, process: Process) => void;
   onRemoveMachine: (machineId: string, machineName: string, isOnline: boolean) => void;
@@ -89,6 +90,7 @@ interface MachineCardProps {
   onEditProcess: (process: Process) => void;
   onCreateProcess: () => void;
   onKillProcess: (processId: string, processName: string) => void;
+  onRestartProcess: (processId: string, processName: string) => void;
   onSetLaunchMode: (processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
   onConfigureSchedule?: (process: Process) => void;
   onRemoveMachine: () => void;
@@ -120,6 +122,7 @@ function MachineCard({
   onEditProcess,
   onCreateProcess,
   onKillProcess,
+  onRestartProcess,
   onSetLaunchMode,
   onConfigureSchedule,
   onRemoveMachine,
@@ -846,6 +849,23 @@ function MachineCard({
                               <Button
                                 variant="ghost"
                                 size="sm"
+                                onClick={() => onRestartProcess(process.id, process.name)}
+                                aria-label={`restart ${process.name}`}
+                                className="bg-card border border-border text-foreground disabled:cursor-not-allowed disabled:opacity-50 p-2"
+                                disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                              >
+                                <RotateCw className="h-3 w-3" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>restart process</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
                                 onClick={() => onKillProcess(process.id, process.name)}
                                 aria-label={`kill ${process.name}`}
                                 className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 p-2"
@@ -912,6 +932,7 @@ export function MachineCardView({
   onEditProcess,
   onCreateProcess,
   onKillProcess,
+  onRestartProcess,
   onSetLaunchMode,
   onConfigureSchedule,
   onRemoveMachine,
@@ -956,6 +977,7 @@ export function MachineCardView({
           onEditProcess={(process) => onEditProcess(machine.machineId, process)}
           onCreateProcess={() => onCreateProcess(machine.machineId)}
           onKillProcess={(processId, processName) => onKillProcess(machine.machineId, processId, processName)}
+          onRestartProcess={(processId, processName) => onRestartProcess(machine.machineId, processId, processName)}
           onSetLaunchMode={(processId, processName, mode, exePath, schedules) =>
             onSetLaunchMode(machine.machineId, processId, processName, mode, exePath, schedules)
           }

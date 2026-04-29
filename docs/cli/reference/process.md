@@ -5,9 +5,9 @@ hide:
 
 # process
 
-manage the lifecycle of long-running processes on a single machine — register, update, delete, and queue start / stop / kill commands, plus configure run-mode + schedule blocks. every verb is **machine-scoped** and requires both `--site <siteId>` and `--machine <machineId>`. all nine verbs are **tier A — ready** and hit the wave-2B public process api today.
+manage the lifecycle of long-running processes on a single machine — register, update, delete, and queue start / stop / restart / kill commands, plus configure run-mode + schedule blocks. every verb is **machine-scoped** and requires both `--site <siteId>` and `--machine <machineId>`. all ten verbs are **tier A — ready** and hit the wave-2B public process api today.
 
-control verbs (`kill` / `start` / `stop`) and `schedule` are queued through the agent command channel and return a `commandId` you can poll via `owlette machine` command-state endpoints. mutations auto-generate an `Idempotency-Key` (server caches the response for 24h on the same key).
+control verbs (`kill` / `restart` / `start` / `stop`) and `schedule` are queued through the agent command channel and return a `commandId` you can poll via `owlette machine` command-state endpoints. mutations auto-generate an `Idempotency-Key` (server caches the response for 24h on the same key).
 
 ---
 
@@ -129,11 +129,11 @@ owlette process delete pr_main_td --site site-1 --machine m_abc123 --yes --json
 
 ---
 
-## kill / start / stop
+## kill / restart / start / stop
 
-queue a control command on the agent — `kill` forces termination, `start` boots the process, `stop` requests a graceful shutdown. all three return `202` with a `commandId`; the cli prints the id so you can poll command-state.
+queue a control command on the agent — `kill` forces termination, `restart` requests a graceful stop followed by a fresh start, `start` boots the process, `stop` requests a graceful shutdown. all four return `202` with a `commandId`; the cli prints the id so you can poll command-state.
 
-**synopsis** — `owlette process <kill|start|stop> <processId> --site <siteId> --machine <machineId>`
+**synopsis** — `owlette process <kill|restart|start|stop> <processId> --site <siteId> --machine <machineId>`
 
 | flag | required | purpose |
 |---|---|---|
@@ -141,14 +141,16 @@ queue a control command on the agent — `kill` forces termination, `start` boot
 | `--machine <machineId>` | yes | machine id that owns the process |
 
 ```bash
-owlette process start pr_main_td --site site-1 --machine m_abc123
-owlette process stop  pr_main_td --site site-1 --machine m_abc123
-owlette process kill  pr_main_td --site site-1 --machine m_abc123 --json
+owlette process start   pr_main_td --site site-1 --machine m_abc123
+owlette process stop    pr_main_td --site site-1 --machine m_abc123
+owlette process restart pr_main_td --site site-1 --machine m_abc123
+owlette process kill    pr_main_td --site site-1 --machine m_abc123 --json
 # → { "commandId": "cmd_xyz", "status": "queued" }
 ```
 
 **backing endpoints**:
 - `POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/kill`
+- `POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/restart`
 - `POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/start`
 - `POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/stop`
 
@@ -193,7 +195,7 @@ stable problem+json codes surfaced with hints: `duplicate_process_name`, `proces
 
 - **scope**: machine-scoped. mutations require an api key with `machine=<id>:write` (or `site=<id>:write`).
 - **tier**: A — every verb hits a real public api (public-api Wave 2.4).
-- **idempotency**: every mutation auto-generates an `Idempotency-Key`. control verbs (`kill` / `start` / `stop`) send an empty body so the server can hash + cache the request.
+- **idempotency**: every mutation auto-generates an `Idempotency-Key`. control verbs (`kill` / `restart` / `start` / `stop`) send an empty body so the server can hash + cache the request.
 - **race-safe creates**: the server uses `withProcessLock` (firestore transaction) so two concurrent `create` calls with the same `--name` resolve cleanly — one wins, the other gets `409 duplicate_process_name`.
 - **related**: [`owlette machine`](machine.md) for machine-level inspection (`get` shows the live process list inline) and reboot / shutdown.
 - see [overview](../overview.md) for global flags (`--profile`, `--json`, `--api-url`) and config precedence.

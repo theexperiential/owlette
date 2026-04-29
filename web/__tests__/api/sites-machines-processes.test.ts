@@ -221,6 +221,7 @@ import {
   DELETE as DELETE_REMOVE,
 } from '@/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/route';
 import { POST as POST_KILL } from '@/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/kill/route';
+import { POST as POST_RESTART } from '@/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/restart/route';
 import { POST as POST_START } from '@/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/start/route';
 import { POST as POST_STOP } from '@/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/stop/route';
 import { POST as POST_SCHEDULE } from '@/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/schedule/route';
@@ -813,11 +814,12 @@ describe('DELETE /api/sites/{siteId}/machines/{machineId}/processes/{processId}'
 });
 
 /* -------------------------------------------------------------------------- */
-/*  Control verbs (kill / start / stop)                                       */
+/*  Control verbs (kill / restart / start / stop)                             */
 /* -------------------------------------------------------------------------- */
 
 describe.each([
   ['kill', POST_KILL, 'kill_process'],
+  ['restart', POST_RESTART, 'restart_process'],
   ['start', POST_START, 'start_process'],
   ['stop', POST_STOP, 'stop_process'],
 ] as const)('POST .../processes/{id}/%s', (verb, handler, expectedCmdType) => {

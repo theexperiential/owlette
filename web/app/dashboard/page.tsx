@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, LayoutGrid, List, ChevronsUpDown, ChevronsDownUp, Square, Copy, Trash2, Download, Monitor, Cog, Settings2 } from 'lucide-react';
+import { Plus, LayoutGrid, List, ChevronsUpDown, ChevronsDownUp, Square, Copy, Trash2, Download, Monitor, Cog, Settings2, RotateCw } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody } from '@/components/ui/table';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
@@ -173,6 +173,11 @@ export default function DashboardPage() {
   // Kill Process Confirmation state
   const [killConfirmOpen, setKillConfirmOpen] = useState(false);
   const [killTarget, setKillTarget] = useState<{ machineId: string; processId: string; processName: string } | null>(null);
+
+  // Restart Process Confirmation state
+  const [restartConfirmOpen, setRestartConfirmOpen] = useState(false);
+  const [restartTarget, setRestartTarget] = useState<{ machineId: string; processId: string; processName: string } | null>(null);
+  const [restartInFlight, setRestartInFlight] = useState(false);
 
   // Screenshot Dialog state
   const [screenshotDialogOpen, setScreenshotDialogOpen] = useState(false);
@@ -657,6 +662,43 @@ export default function DashboardPage() {
       console.error('confirmKillProcess error:', error);
       const msg = error instanceof Error ? error.message : 'Failed to kill process';
       toast.error(msg);
+    }
+  };
+
+  const handleRestartProcess = (machineId: string, processId: string, processName: string) => {
+    setRestartTarget({ machineId, processId, processName });
+    setRestartConfirmOpen(true);
+  };
+
+  const confirmRestartProcess = async () => {
+    if (!restartTarget) return;
+    const { machineId, processId, processName } = restartTarget;
+    setRestartInFlight(true);
+    try {
+      const res = await fetch(
+        `/api/sites/${encodeURIComponent(currentSiteId)}/machines/${encodeURIComponent(machineId)}/processes/${encodeURIComponent(processId)}/restart`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': crypto.randomUUID(),
+          },
+        },
+      );
+      const text = await res.text();
+      const body = text ? JSON.parse(text) : null;
+      if (!res.ok) {
+        throw new Error(body?.detail || body?.title || `Request failed with ${res.status}`);
+      }
+      toast.success(`restart queued for "${processName}"`);
+      setRestartConfirmOpen(false);
+      setRestartTarget(null);
+    } catch (error: unknown) {
+      console.error('confirmRestartProcess error:', error);
+      const msg = error instanceof Error ? error.message : 'failed to restart process';
+      toast.error(msg);
+    } finally {
+      setRestartInFlight(false);
     }
   };
 
@@ -1173,6 +1215,7 @@ export default function DashboardPage() {
                   onEditProcess={openEditProcessDialog}
                   onCreateProcess={openCreateProcessDialog}
                   onKillProcess={handleKillProcess}
+                  onRestartProcess={handleRestartProcess}
                   onSetLaunchMode={handleSetLaunchMode}
                   onConfigureSchedule={handleConfigureSchedule}
                   onRemoveMachine={openRemoveMachineDialog}
@@ -1220,6 +1263,7 @@ export default function DashboardPage() {
                         onEditProcess={(process) => openEditProcessDialog(machine.machineId, process)}
                         onCreateProcess={() => openCreateProcessDialog(machine.machineId)}
                         onKillProcess={(processId, processName) => handleKillProcess(machine.machineId, processId, processName)}
+                        onRestartProcess={(processId, processName) => handleRestartProcess(machine.machineId, processId, processName)}
                         onSetLaunchMode={(processId, processName, mode, exePath, schedules) =>
                           handleSetLaunchMode(machine.machineId, processId, processName, mode, exePath, schedules)
                         }
@@ -1665,6 +1709,46 @@ export default function DashboardPage() {
             >
               <Square className="h-4 w-4 mr-2" />
               kill process
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Restart Process Confirmation Dialog */}
+      <Dialog
+        open={restartConfirmOpen}
+        onOpenChange={(open) => {
+          if (restartInFlight) return;
+          setRestartConfirmOpen(open);
+          if (!open) setRestartTarget(null);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>restart {restartTarget?.processName}?</DialogTitle>
+            <DialogDescription>
+              restart <span className="font-semibold text-foreground">{restartTarget?.processName}</span> on <span className="font-semibold text-foreground">{restartTarget?.machineId}</span>? this will briefly stop the process before relaunching.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setRestartConfirmOpen(false);
+                setRestartTarget(null);
+              }}
+              disabled={restartInFlight}
+              className="bg-secondary border border-border cursor-pointer"
+            >
+              cancel
+            </Button>
+            <Button
+              variant="default"
+              onClick={confirmRestartProcess}
+              disabled={restartInFlight}
+            >
+              <RotateCw className={`h-4 w-4 mr-2 ${restartInFlight ? 'animate-spin' : ''}`} />
+              restart
             </Button>
           </DialogFooter>
         </DialogContent>

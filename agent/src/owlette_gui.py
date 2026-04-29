@@ -1076,6 +1076,76 @@ class OwletteConfigApp:
         last_pid = max(pids, key=int) if pids else None
         return int(last_pid) if last_pid else None
 
+    def restart_process(self):
+        # Restart mirrors the kill_process flow: terminate the OS PID locally
+        # via shared_utils.graceful_terminate, then rely on the service's main
+        # monitoring loop to relaunch the process on its next tick (subject to
+        # launch_mode). The kill flow is purely local (no command dispatch),
+        # so restart matches that mechanism exactly — different audit copy
+        # and an up-front confirmation dialog are the only behavioral deltas.
+        if not self.selected_process:
+            CTkMessagebox(master=self.master, title="Error",
+                          message="You must select a process to restart it.", icon="cancel")
+            return
+
+        # Resolve process name for the confirmation dialog and audit log
+        process_name = None
+        for process in self.config.get('processes', []):
+            if process.get('id') == self.selected_process:
+                process_name = process.get('name')
+                break
+
+        # Confirmation — copy intentionally lowercase to match UI voice
+        display_name = process_name or self.selected_process
+        response = CTkMessagebox(
+            master=self.master,
+            title="restart process",
+            message=f"restart {display_name}? this will briefly stop the process before relaunching.",
+            icon="question",
+            option_1="Yes",
+            option_2="No",
+        )
+        if response.get() != 'Yes':
+            return
+
+        os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
+
+        if not os_pid:
+            CTkMessagebox(master=self.master, title="Error",
+                          message="No OS process ID found for the selected process.", icon="cancel")
+            return
+
+        # Run terminate in background thread to avoid freezing the GUI
+        # (graceful_terminate blocks up to 8s, log_event makes network calls).
+        # NOTE: we deliberately do NOT mark status as 'KILLED' here — that
+        # marker suppresses the service's crash-detection logging on the next
+        # tick. For a restart we want the service to observe the missing PID
+        # and relaunch via its normal autolaunch path; the audit event below
+        # documents that this was an operator-initiated restart.
+        def _do_restart():
+            try:
+                shared_utils.graceful_terminate(os_pid)
+
+                # Log process restart event to Firebase
+                if self.firebase_client and self.firebase_client.is_connected():
+                    try:
+                        self.firebase_client.log_event(
+                            action='process_restarted',
+                            level='info',
+                            process_name=process_name,
+                            details=f'Manual restart from GUI - terminated PID: {os_pid} (service will relaunch on next tick)'
+                        )
+                        logging.info(f"Logged process restart event for {process_name} (PID {os_pid})")
+                    except Exception as log_err:
+                        logging.error(f"Failed to log restart event: {log_err}")
+
+            except Exception as e:
+                self.master.after(0, lambda: CTkMessagebox(
+                    master=self.master, title="Error",
+                    message=f"Failed to restart the process: {e}", icon="cancel"))
+
+        threading.Thread(target=_do_restart, daemon=True).start()
+
     def kill_process(self):
         if self.selected_process:
             os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
@@ -1489,8 +1559,11 @@ class OwletteConfigApp:
                 self.master.after(50, cmd)
             return action
 
-        # Kill
-        ctk.CTkButton(frame, text="  kill process", command=make_action(self.kill_process), **btn_opts).pack(fill='x', padx=4, pady=(4, 0))
+        # Restart
+        ctk.CTkButton(frame, text="  restart process", command=make_action(self.restart_process), **btn_opts).pack(fill='x', padx=4, pady=(4, 0))
+
+        # Kill (no top padding — restart sits directly above)
+        ctk.CTkButton(frame, text="  kill process", command=make_action(self.kill_process), **btn_opts).pack(fill='x', padx=4)
 
         # Separator
         ctk.CTkFrame(frame, fg_color=shared_utils.BORDER_COLOR, height=1).pack(fill='x', padx=8, pady=3)

@@ -95,6 +95,7 @@ Legend:
 | `owlette process schedule <processId>` | ready | `POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/schedule` |
 | `owlette process start <processId>` | ready | `POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/start` |
 | `owlette process stop <processId>` | ready | `POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/stop` |
+| `owlette process restart <processId>` | ready | `POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/restart` |
 | `owlette process kill <processId>` | ready | `POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/kill` |
 
 ## keys, users, and installer management

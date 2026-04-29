@@ -279,6 +279,7 @@ export default function DemoPage() {
                   onEditProcess={noop}
                   onCreateProcess={noop}
                   onKillProcess={noop}
+                  onRestartProcess={noop}
                   onSetLaunchMode={noop}
                   onRemoveMachine={noop}
                   onMetricClick={handleMetricClick}
@@ -310,6 +311,7 @@ export default function DemoPage() {
                         onEditProcess={noop}
                         onCreateProcess={noop}
                         onKillProcess={noop}
+                        onRestartProcess={noop}
                         onSetLaunchMode={noop}
                         onRemoveMachine={noop}
                         onMetricClick={(metricType) => handleMetricClick(machine.machineId, metricType)}

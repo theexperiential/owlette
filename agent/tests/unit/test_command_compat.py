@@ -183,6 +183,7 @@ _DISPATCH_FILES = (
     "command_router.py",
     "sync_commands.py",
     "machine_commands.py",
+    "process_commands.py",
 )
 
 

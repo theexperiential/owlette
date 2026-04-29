@@ -1,5 +1,6 @@
 /**
- * Shared helpers for the process control-verb routes (kill / start / stop).
+ * Shared helpers for the process control-verb routes (kill / restart / start /
+ * stop).
  *
  * Each control verb validates the process and queues a canonical machine
  * command via `executeMachineCommand`.
@@ -21,7 +22,7 @@ import {
 } from '@/lib/actions/executeMachineCommand.server';
 import logger from '@/lib/logger';
 
-export type ControlVerb = 'kill' | 'start' | 'stop';
+export type ControlVerb = 'kill' | 'restart' | 'start' | 'stop';
 
 interface RouteParams {
   [key: string]: string | undefined;
@@ -32,6 +33,7 @@ interface RouteParams {
 
 const VERB_TO_COMMAND: Record<ControlVerb, string> = {
   kill: 'kill_process',
+  restart: 'restart_process',
   start: 'start_process',
   stop: 'stop_process',
 };
@@ -53,6 +55,7 @@ const CONTROL_HANDLERS: Record<
   (request: NextRequest, context: { params: Promise<RouteParams> }) => Promise<NextResponse>
 > = {
   kill: createControlHandler('kill'),
+  restart: createControlHandler('restart'),
   start: createControlHandler('start'),
   stop: createControlHandler('stop'),
 };

@@ -7,7 +7,7 @@
  *   GET    /api/sites/:siteId/machines/:machineId/processes/:processId
  *   PATCH  .../:processId
  *   DELETE .../:processId
- *   POST   .../:processId/{kill,start,stop}
+ *   POST   .../:processId/{kill,restart,start,stop}
  *   POST   .../:processId/schedule
  *
  * Properties asserted (in addition to plain url + method shape):
@@ -378,11 +378,12 @@ describe('owlette process delete', () => {
 });
 
 /* -------------------------------------------------------------------- */
-/*  kill / start / stop                                                  */
+/*  kill / restart / start / stop                                        */
 /* -------------------------------------------------------------------- */
 
 describe.each([
   ['kill', 'kill_process'],
+  ['restart', 'restart_process'],
   ['start', 'start_process'],
   ['stop', 'stop_process'],
 ] as const)('owlette process %s', (verb, _commandType) => {

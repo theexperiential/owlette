@@ -196,6 +196,11 @@ if __name__ == '__main__':
                 _register_machine_handlers(self._command_router)
             except Exception as e:
                 logging.warning(f"Failed to register machine-api handlers: {e}")
+            try:
+                from process_commands import register_handlers as _register_process_handlers
+                _register_process_handlers(self._command_router)
+            except Exception as e:
+                logging.warning(f"Failed to register process-control handlers: {e}")
             # Throttle state for _write_service_status() — OwletteService has
             # a hasattr() guard, but mirror here so the safety net never has
             # to fire under NSSM.
