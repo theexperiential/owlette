@@ -110,6 +110,7 @@ nav:
     - overview: api/overview.md
     - api reference links: api/reference.md
     - quickstart: api/quickstart.md
+    - developer preview checklist: api/developer-preview-checklist.md
     - authentication: api/authentication.md
     - pagination: api/pagination.md
     - idempotency: api/idempotency.md

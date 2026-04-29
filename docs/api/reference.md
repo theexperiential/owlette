@@ -14,6 +14,10 @@ Use the shared convention pages for behavior that applies across operations:
 [idempotency](idempotency.md), [errors](errors.md), and
 [rate limits](rate-limits.md).
 
+For dev/staging handoff, use the
+[developer-preview checklist](developer-preview-checklist.md) before sharing
+the reference with internal consumers.
+
 run this before publishing API docs or changing public routes:
 
 ```powershell
