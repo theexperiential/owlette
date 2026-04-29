@@ -193,6 +193,20 @@ export async function saveIdempotency(
     // fresh attempt. 4xx/5xx still return, just aren't cached.
     if (response.status >= 400) return;
 
+    // Don't cache streaming responses. `response.clone().text()` would buffer
+    // the entire stream into memory before returning, which (a) breaks real
+    // streaming for the original consumer and (b) risks OOM on long streams.
+    // Streaming responses are non-deterministic anyway; replays should re-run
+    // the handler.
+    const contentType = response.headers.get('content-type') || '';
+    if (
+      contentType.includes('text/event-stream') ||
+      contentType.includes('application/x-ndjson') ||
+      response.headers.get('transfer-encoding') === 'chunked'
+    ) {
+      return;
+    }
+
     const bodyText = await response.clone().text();
     const headers: Record<string, string> = {};
     response.headers.forEach((value, key) => {
