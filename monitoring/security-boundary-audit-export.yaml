@@ -25,8 +25,9 @@ environments:
     schedule: "30 6 * * *"
     timezone: UTC
     bucket: "gs://owlette-dev-security-boundary-audit-exports"
-    output_prefix: "firestore/security-boundary-audit/dev"
-    scheduler_job: security-boundary-audit-export-dev
+    output_prefix: "firestore/security-boundary-audit/dev/scheduled/{timestamp}"
+    scheduler_job: "firebase-schedule-exportSecurityBoundaryAuditDevDaily-us-central1"
+    function: exportSecurityBoundaryAuditDevDaily
     service_account: "security-boundary-audit-export@owlette-dev-3838a.iam.gserviceaccount.com"
   prod:
     project_id: "<prod-project-id>"
@@ -35,9 +36,13 @@ environments:
     schedule: "30 6 * * *"
     timezone: UTC
     bucket: "gs://<prod-security-boundary-audit-export-bucket>"
-    output_prefix: "firestore/security-boundary-audit/prod"
-    scheduler_job: security-boundary-audit-export-prod
+    output_prefix: "firestore/security-boundary-audit/prod/scheduled/{timestamp}"
+    scheduler_job: "<prod-firebase-schedule-job>"
+    function: "<prod-scheduled-export-function>"
     service_account: "security-boundary-audit-export@<prod-project-id>.iam.gserviceaccount.com"
+    required_env:
+      SECURITY_BOUNDARY_AUDIT_EXPORT_BUCKET: "gs://<prod-security-boundary-audit-export-bucket>"
+      SECURITY_BOUNDARY_AUDIT_EXPORT_ENV: prod
 
 firestore_export_request:
   method: POST
@@ -65,7 +70,7 @@ provisioning_commands:
   create_service_account: "gcloud iam service-accounts create security-boundary-audit-export --project={project_id} --display-name='Security boundary audit export'"
   grant_firestore_export: "gcloud projects add-iam-policy-binding {project_id} --member=serviceAccount:{service_account} --role=roles/datastore.importExportAdmin"
   grant_bucket_write: "gcloud storage buckets add-iam-policy-binding {bucket} --member=serviceAccount:{service_account} --role=roles/storage.objectAdmin"
-  create_scheduler_job: "gcloud scheduler jobs create http {scheduler_job} --project={project_id} --location={location} --schedule='{schedule}' --time-zone={timezone} --uri='https://firestore.googleapis.com/v1/projects/{project_id}/databases/%28default%29:exportDocuments' --http-method=POST --oauth-service-account-email={service_account} --headers='Content-Type=application/json' --message-body='{\"outputUriPrefix\":\"{bucket}/{output_prefix}\",\"collectionIds\":[\"audit_log\",\"entries\"]}'"
+  deploy_scheduler_wrapper: "firebase deploy --only functions:{function} --project {project_id}"
 
 verification:
   one_time_export: "gcloud firestore export {bucket}/{output_prefix}/manual-{yyyy}{mm}{dd}-{hh}{min} --project={project_id} --collection-ids=audit_log,entries"
@@ -73,5 +78,5 @@ verification:
   restore_drill_target: "disposable Firebase project only; never prod"
 
 notes:
-  - "Cloud Scheduler does not expand date tokens in HTTP bodies. Use a wrapper job if per-day prefixes are required."
+  - "Cloud Scheduler does not expand date tokens in HTTP bodies. The Firebase scheduled function wrapper generates {timestamp} at runtime."
   - "The one-time export command intentionally uses a dated manual prefix for verification."

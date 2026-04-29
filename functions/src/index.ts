@@ -29,6 +29,7 @@ export {
   recordAuditEvent,
   verifyAuditChain,
 } from './auditLog';
+export { exportSecurityBoundaryAuditDevDaily } from './securityBoundaryAuditExport';
 export { emitWebhook, processRetryQueue } from './webhookDispatch';
 export { sweepExpiredApiKeysDaily } from './apiKeyExpire';
 export { sweepExpiredIdempotencyCacheDaily } from './idempotencyCleanup';
