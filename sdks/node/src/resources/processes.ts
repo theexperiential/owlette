@@ -1,5 +1,5 @@
 /**
- * `roost.processes(siteId, machineId)` — public scoped process management.
+ * `owlette.processes(siteId, machineId)` — public scoped process management.
  *
  * Wraps the wave-2B routes:
  *
@@ -11,16 +11,17 @@
  *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/kill
  *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/start
  *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/stop
+ *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/restart
  *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/schedule
  *
  * The constructor is bound to a (siteId, machineId) tuple — exposed as a
- * factory on the root `Roost` instance so callers do
- * `roost.processes(siteId, machineId).list()`. This matches the api shape
+ * factory on the root `Owlette` instance so callers do
+ * `owlette.processes(siteId, machineId).list()`. This matches the api shape
  * (process resource is always nested under a machine) without forcing the
  * caller to pass siteId+machineId on every call.
  */
 import { randomUUID } from 'crypto';
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 
 /* --------------------------------------------------------------------- */
 /*  types                                                                */
@@ -87,13 +88,24 @@ export interface ScheduleOptions {
   idempotencyKey?: string;
 }
 
+/**
+ * Response shape returned by `restart`. The server queues an agent
+ * command and returns the command id immediately — callers can poll
+ * `owlette.machines.getCommand(siteId, machineId, commandId)` to track
+ * progress.
+ */
+export interface RestartProcessResult {
+  commandId: string;
+  status: string;
+}
+
 /* --------------------------------------------------------------------- */
 /*  resource                                                             */
 /* --------------------------------------------------------------------- */
 
 export class Processes {
   constructor(
-    private readonly client: RoostClient,
+    private readonly client: OwletteClient,
     private readonly siteId: string,
     private readonly machineId: string,
   ) {}
@@ -192,6 +204,29 @@ export class Processes {
     opts: { idempotencyKey?: string } = {},
   ): Promise<{ ok: true; data: Record<string, unknown> }> {
     return this.controlVerb('stop', processId, opts.idempotencyKey);
+  }
+
+  /**
+   * Queue a restart for the named process. Mirrors `start` / `stop` /
+   * `kill` but returns the queued command id (and status) directly so
+   * callers don't have to peel the envelope. The server-side handler
+   * stops the process if running, then starts it again — the agent
+   * reports each transition over the command stream.
+   */
+  async restart(
+    processId: string,
+    opts: { idempotencyKey?: string } = {},
+  ): Promise<RestartProcessResult> {
+    const res = await this.client.request<{
+      ok: true;
+      data: RestartProcessResult;
+    }>(`${this.base}/${encodeURIComponent(processId)}/restart`, {
+      method: 'POST',
+      body: {},
+      idempotencyKey:
+        opts.idempotencyKey ?? `sdk-processes-restart-${randomUUID()}`,
+    });
+    return res.data.data;
   }
 
   async schedule(

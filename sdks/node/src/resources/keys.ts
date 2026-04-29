@@ -1,4 +1,4 @@
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 
 export type ApiKeyPermission = 'read' | 'write' | 'deploy' | 'rollback' | 'admin';
 export type ApiKeyResource =
@@ -37,7 +37,7 @@ export interface ApiKeyRecord {
 }
 
 export class Keys {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async create(opts: {
     name: string;

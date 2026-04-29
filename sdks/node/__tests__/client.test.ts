@@ -1,9 +1,9 @@
 /**
- * RoostClient — header injection, error typing, retry policy.
+ * OwletteClient — header injection, error typing, retry policy.
  * Uses a fake `fetch` passed via the constructor so tests run hermetic.
  */
 
-import { RoostClient, RoostApiError, DEFAULT_ROOST_VERSION } from '../src/lib/client';
+import { OwletteClient, OwletteApiError, DEFAULT_ROOST_VERSION } from '../src/lib/client';
 
 interface Call {
   url: string;
@@ -29,10 +29,10 @@ function makeFakeFetch(
   return { fetch: fake, calls };
 }
 
-describe('RoostClient headers', () => {
+describe('OwletteClient headers', () => {
   it('injects Authorization + Roost-Version + Idempotency-Key on POST', async () => {
     const { fetch, calls } = makeFakeFetch(async () => ({ status: 200, body: { ok: true } }));
-    const client = new RoostClient({ token: 'owk_live_testtoken', fetch });
+    const client = new OwletteClient({ token: 'owk_live_testtoken', fetch });
 
     await client.request('/api/roosts', { method: 'POST', body: { siteId: 's' } });
     expect(calls).toHaveLength(1);
@@ -45,7 +45,7 @@ describe('RoostClient headers', () => {
 
   it('does NOT inject Idempotency-Key on GET', async () => {
     const { fetch, calls } = makeFakeFetch(async () => ({ status: 200, body: { sites: [] } }));
-    const client = new RoostClient({ token: 'owk_live_x', fetch });
+    const client = new OwletteClient({ token: 'owk_live_x', fetch });
     await client.request('/api/sites');
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers['Idempotency-Key']).toBeUndefined();
@@ -53,7 +53,7 @@ describe('RoostClient headers', () => {
 
   it('injects Idempotency-Key on DELETE', async () => {
     const { fetch, calls } = makeFakeFetch(async () => ({ status: 200, body: { ok: true } }));
-    const client = new RoostClient({ token: 'owk_live_x', fetch });
+    const client = new OwletteClient({ token: 'owk_live_x', fetch });
     await client.request('/api/sites/site-1/deployments/deploy-1', {
       method: 'DELETE',
       body: {},
@@ -64,7 +64,7 @@ describe('RoostClient headers', () => {
 
   it('honors an explicit Idempotency-Key', async () => {
     const { fetch, calls } = makeFakeFetch(async () => ({ status: 200, body: {} }));
-    const client = new RoostClient({ token: 'owk_live_x', fetch });
+    const client = new OwletteClient({ token: 'owk_live_x', fetch });
     await client.request('/api/roosts', {
       method: 'POST',
       body: {},
@@ -75,7 +75,7 @@ describe('RoostClient headers', () => {
 
   it('translates query params correctly', async () => {
     const { fetch, calls } = makeFakeFetch(async () => ({ status: 200, body: {} }));
-    const client = new RoostClient({ token: 'owk_live_x', fetch, apiUrl: 'https://api.test' });
+    const client = new OwletteClient({ token: 'owk_live_x', fetch, apiUrl: 'https://api.test' });
     await client.request('/api/roosts', {
       query: { siteId: 'site-1', limit: 5, includeDeleted: undefined },
     });
@@ -83,8 +83,8 @@ describe('RoostClient headers', () => {
   });
 });
 
-describe('RoostClient error translation', () => {
-  it('throws RoostApiError with status + code + requestId on 400', async () => {
+describe('OwletteClient error translation', () => {
+  it('throws OwletteApiError with status + code + requestId on 400', async () => {
     const { fetch } = makeFakeFetch(async () => ({
       status: 400,
       body: {
@@ -96,9 +96,9 @@ describe('RoostClient error translation', () => {
         requestId: 'req-abc',
       },
     }));
-    const client = new RoostClient({ token: 'owk_live_x', fetch, retry: { maxAttempts: 1 } });
+    const client = new OwletteClient({ token: 'owk_live_x', fetch, retry: { maxAttempts: 1 } });
     await expect(client.request('/api/roosts', { method: 'POST', body: {} })).rejects.toMatchObject({
-      name: 'RoostApiError',
+      name: 'OwletteApiError',
       status: 400,
       code: 'validation_failed',
       requestId: 'req-abc',
@@ -110,19 +110,19 @@ describe('RoostClient error translation', () => {
       status: 403,
       body: { code: 'scope_insufficient', required: { resource: 'roost', id: 'r1', permission: 'write' } },
     }));
-    const client = new RoostClient({ token: 'owk_live_x', fetch, retry: { maxAttempts: 1 } });
+    const client = new OwletteClient({ token: 'owk_live_x', fetch, retry: { maxAttempts: 1 } });
     try {
       await client.request('/api/roosts', { method: 'POST', body: {} });
       throw new Error('should have thrown');
     } catch (err) {
-      if (!(err instanceof RoostApiError)) throw err;
+      if (!(err instanceof OwletteApiError)) throw err;
       expect(err.code).toBe('scope_insufficient');
       expect(err.problem.required).toEqual({ resource: 'roost', id: 'r1', permission: 'write' });
     }
   });
 });
 
-describe('RoostClient retry policy', () => {
+describe('OwletteClient retry policy', () => {
   it('retries 429 until success', async () => {
     let attempts = 0;
     const { fetch, calls } = makeFakeFetch(async () => {
@@ -130,7 +130,7 @@ describe('RoostClient retry policy', () => {
       if (attempts < 3) return { status: 429, body: { retryAfter: 0.001 } };
       return { status: 200, body: { done: true } };
     });
-    const client = new RoostClient({
+    const client = new OwletteClient({
       token: 'owk_live_x',
       fetch,
       retry: { maxAttempts: 5, baseDelayMs: 1, maxDelayMs: 5, jitter: 0 },
@@ -142,7 +142,7 @@ describe('RoostClient retry policy', () => {
 
   it('does NOT retry 400', async () => {
     const { fetch, calls } = makeFakeFetch(async () => ({ status: 400, body: { detail: 'bad' } }));
-    const client = new RoostClient({
+    const client = new OwletteClient({
       token: 'owk_live_x',
       fetch,
       retry: { maxAttempts: 5, baseDelayMs: 1, maxDelayMs: 5, jitter: 0 },
@@ -153,7 +153,7 @@ describe('RoostClient retry policy', () => {
 
   it('stops after maxAttempts', async () => {
     const { fetch, calls } = makeFakeFetch(async () => ({ status: 500, body: { detail: 'oops' } }));
-    const client = new RoostClient({
+    const client = new OwletteClient({
       token: 'owk_live_x',
       fetch,
       retry: { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 5, jitter: 0 },
@@ -164,7 +164,7 @@ describe('RoostClient retry policy', () => {
 
   it('noRetry skips the policy entirely', async () => {
     const { fetch, calls } = makeFakeFetch(async () => ({ status: 500, body: {} }));
-    const client = new RoostClient({ token: 'owk_live_x', fetch });
+    const client = new OwletteClient({ token: 'owk_live_x', fetch });
     await expect(client.request('/api/sites', { noRetry: true })).rejects.toBeDefined();
     expect(calls).toHaveLength(1);
   });

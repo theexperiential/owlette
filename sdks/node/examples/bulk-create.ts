@@ -13,7 +13,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { Roost, RoostApiError } from '@owlette/sdk';
+import { Owlette, OwletteApiError } from '@owlette/sdk';
 
 const { ROOST_TOKEN, ROOST_BASE = 'https://owlette.app' } = process.env;
 const csvPath = process.argv[2];
@@ -47,18 +47,18 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  const roost = new Roost({ token: ROOST_TOKEN, apiUrl: ROOST_BASE });
+  const owlette = new Owlette({ token: ROOST_TOKEN, apiUrl: ROOST_BASE });
   const rows = parseCsv(await readFile(csvPath, 'utf8'));
   const counts = { created: 0, failed: 0 };
 
   for (const row of rows) {
     try {
-      const res = await roost.roosts.create(row);
+      const res = await owlette.roosts.create(row);
       console.log(`[bulk-create] ok site=${row.siteId} roost=${res.roostId} name=${row.name}`);
       counts.created += 1;
     } catch (err) {
       counts.failed += 1;
-      if (err instanceof RoostApiError) {
+      if (err instanceof OwletteApiError) {
         console.error(
           `[bulk-create] fail site=${row.siteId} name=${row.name} ` +
             `${err.status} ${err.code}: ${err.problem.detail}`,

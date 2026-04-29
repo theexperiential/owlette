@@ -1,9 +1,9 @@
 # sdk — node / typescript
 
 **Last updated**: 2026-04-29
-**Package target**: [`@owlette/sdk`](https://www.npmjs.com/package/@owlette/sdk) `1.0.0-rc.0` · node ≥ 20 · zero runtime deps
+**Package target**: [`@owlette/sdk`](https://www.npmjs.com/package/@owlette/sdk) `1.0.0-rc.1` · node ≥ 20 · zero runtime deps
 
-the official typescript sdk for the [Owlette public API](./overview.md). wraps the rest surface with a typed resource tree, auto-retry, automatic `Idempotency-Key`, chunk-aware Roost `push()`, stripe-style webhook verification, version-ref resolution, and progress events. if you can use `fetch` directly you can use this — it just adds the tedious bits.
+the official typescript sdk for the [Owlette public API](./overview.md). wraps the rest surface with a typed resource tree, auto-retry, automatic `Idempotency-Key`, chunk-aware roost `push()`, stripe-style webhook verification, version-ref resolution, and progress events. if you can use `fetch` directly you can use this — it just adds the tedious bits.
 
 ---
 
@@ -24,12 +24,12 @@ Registry install is the Wave 5.3 release target. Until the npm `rc` tag is publi
 ## hello world (< 10 lines)
 
 ```ts
-import { Roost } from '@owlette/sdk';
+import { Owlette } from '@owlette/sdk';
 
-const roost = new Roost({ token: process.env.ROOST_TOKEN! });
-const identity = await roost.account.whoami();
+const owlette = new Owlette({ token: process.env.OWLETTE_TOKEN! });
+const identity = await owlette.account.whoami();
 const siteId = identity.primarySiteId ?? 'kiosk-fleet-01';
-const result = await roost.roosts.push('./dist', 'rst_abc', {
+const result = await owlette.roosts.push('./dist', 'rst_abc', {
   siteId,
   description: 'initial publish',  // optional ≤500 chars, surfaced in the version-history ui
 });
@@ -45,8 +45,8 @@ that's the whole flow: walk `./dist`, sha-256 chunk it, dedup-check against r2, 
 every request needs an `owk_live_*` or `owk_test_*` key. mint one from the dashboard (`settings → api keys → new key`) or via the account key route. the sdk reads the token from the constructor — it never touches the filesystem.
 
 ```ts
-const roost = new Roost({
-  token: process.env.ROOST_TOKEN!,     // required — owk_live_* or owk_test_*
+const owlette = new Owlette({
+  token: process.env.OWLETTE_TOKEN!,   // required — owk_live_* or owk_test_*
   apiUrl: 'https://owlette.app',       // default
   environment: 'live',                 // optional — 'live' | 'test' metadata
   roostVersion: '2026-04-22',          // default — sent as Roost-Version header
@@ -55,7 +55,7 @@ const roost = new Roost({
 });
 ```
 
-**scope enforcement is server-side.** the sdk does not validate scopes locally — an over-broad call fails with `RoostApiError.code === 'scope_insufficient'`. see [authentication.md](./authentication.md) for the full scope grammar.
+**scope enforcement is server-side.** the sdk does not validate scopes locally — an over-broad call fails with `OwletteApiError.code === 'scope_insufficient'`. see [authentication.md](./authentication.md) for the full scope grammar.
 
 the sdk auto-generates an `Idempotency-Key` header on every mutating request (POST / PATCH / PUT) unless you pass one explicitly. transparent retries can't create duplicate rollouts, roosts, or keys. see [idempotency.md](./idempotency.md) for the replay window.
 
@@ -67,59 +67,59 @@ every top-level noun is a resource class hung off the client.
 
 | resource             | methods                                                                                         |
 |----------------------|-------------------------------------------------------------------------------------------------|
-| `roost.account`      | `whoami`, `version`, `apiKeys.list`, `apiKeys.create`, `apiKeys.revoke`                         |
-| `roost.roosts`       | `list`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy`                        |
-| `roost.chunks`       | `check`, `uploadUrls`, `downloadUrls`, `mount`, `referrers`                                     |
-| `roost.versions`     | `list`, `get`, `patch`, `files`, `diff`                                                         |
-| `roost.deployments`  | `list`, `get`                                                                                   |
-| `roost.keys`         | legacy session/ID-token key admin: `create`, `list`, `rotate`, `revoke`                         |
-| `roost.webhooks`     | `subscribe`, `list`, `get`, `update`, `remove`, `rotateSecret`, `probe`                         |
-| `roost.sites`        | `list`, `get`                                                                                   |
-| `roost.machines`     | `list`, `get`, `deployments`, `dispatchCommand`, `getCommand`, `captureScreenshot`              |
-| `roost.installerDeployments` | `list`, `get`, `create`, `retry`, `cancel`, `uninstall`, `delete`                       |
-| `roost.installer`    | `list`, `latest`, `upload`, `setLatest`, `delete`                                               |
-| `roost.processes(siteId, machineId)` | `list`, `create`, `update`, `start`, `stop`, `restart`, `schedule`, `remove`  |
-| `roost.chat`         | `new`, `list`, `send`, `rename`, `delete`                                                       |
-| `roost.users`        | `list`, `promote`, `demote`, `assignSites`, `removeSites`, `delete`                             |
-| `roost.members(siteId)` | `list`, `add`, `remove`                                                                      |
-| `roost.quotas`       | `current`, `history`                                                                            |
-| `roost.events`       | `verifySignature`, `isSignatureValid`, `signBody`                                               |
-| `roost.http`         | raw low-level client — escape hatch when you need headers/bodies the wrapper doesn't expose     |
+| `owlette.account`      | `whoami`, `version`, `apiKeys.list`, `apiKeys.create`, `apiKeys.revoke`                         |
+| `owlette.roosts`       | `list`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy`                        |
+| `owlette.chunks`       | `check`, `uploadUrls`, `downloadUrls`, `mount`, `referrers`                                     |
+| `owlette.versions`     | `list`, `get`, `patch`, `files`, `diff`                                                         |
+| `owlette.deployments`  | `list`, `get`                                                                                   |
+| `owlette.keys`         | legacy session/ID-token key admin: `create`, `list`, `rotate`, `revoke`                         |
+| `owlette.webhooks`     | `subscribe`, `list`, `get`, `update`, `remove`, `rotateSecret`, `probe`                         |
+| `owlette.sites`        | `list`, `get`                                                                                   |
+| `owlette.machines`     | `list`, `get`, `deployments`, `dispatchCommand`, `getCommand`, `captureScreenshot`              |
+| `owlette.installerDeployments` | `list`, `get`, `create`, `retry`, `cancel`, `uninstall`, `delete`                       |
+| `owlette.installer`    | `list`, `latest`, `upload`, `setLatest`, `delete`                                               |
+| `owlette.processes(siteId, machineId)` | `list`, `create`, `update`, `start`, `stop`, `restart`, `schedule`, `remove`  |
+| `owlette.chat`         | `new`, `list`, `send`, `rename`, `delete`                                                       |
+| `owlette.users`        | `list`, `promote`, `demote`, `assignSites`, `removeSites`, `delete`                             |
+| `owlette.members(siteId)` | `list`, `add`, `remove`                                                                      |
+| `owlette.quotas`       | `current`, `history`                                                                            |
+| `owlette.events`       | `verifySignature`, `isSignatureValid`, `signBody`                                               |
+| `owlette.http`         | raw low-level client — escape hatch when you need headers/bodies the wrapper doesn't expose     |
 
 ### account
 
 ```ts
-const identity = await roost.account.whoami();
+const identity = await owlette.account.whoami();
 console.log(identity.email ?? identity.userId, identity.key?.keyPrefix);
 
-const version = await roost.account.version();
+const version = await owlette.account.version();
 console.log(version.current, version.supported);
 
 // API-key-compatible key management. New keys inherit the caller's allowed
 // scopes, so an API-key caller cannot widen its own privileges.
-const created = await roost.account.apiKeys.create({ name: 'preview publisher' });
-const keys = await roost.account.apiKeys.list();
-await roost.account.apiKeys.revoke(created.keyId);
+const created = await owlette.account.apiKeys.create({ name: 'preview publisher' });
+const keys = await owlette.account.apiKeys.list();
+await owlette.account.apiKeys.revoke(created.keyId);
 ```
 
 ### roosts
 
 ```ts
 // list roosts in a site (cursor-paged)
-const page = await roost.roosts.list({ siteId: 'site-1', pageSize: 20 });
+const page = await owlette.roosts.list({ siteId: 'site-1', pageSize: 20 });
 for (const r of page.roosts) console.log(r.roostId, r.name, r.currentVersionId);
 if (page.nextPageToken) {
-  const page2 = await roost.roosts.list({
+  const page2 = await owlette.roosts.list({
     siteId: 'site-1',
     cursor: page.nextPageToken,
   });
 }
 
 // fetch one
-const r = await roost.roosts.get('rst_abc', { siteId: 'site-1' });
+const r = await owlette.roosts.get('rst_abc', { siteId: 'site-1' });
 
 // create
-const created = await roost.roosts.create({
+const created = await owlette.roosts.create({
   siteId: 'site-1',
   name: 'lobby touchdesigner',
   targets: ['machine-a7f3'],            // machine ids
@@ -128,13 +128,13 @@ const created = await roost.roosts.create({
 });
 
 // patch (rename, retarget)
-await roost.roosts.patch('rst_lobby_td', { siteId: 'site-1', name: 'lobby (v2)' });
+await owlette.roosts.patch('rst_lobby_td', { siteId: 'site-1', name: 'lobby (v2)' });
 
 // soft-delete (undo by re-creating with same id within 30 days)
-await roost.roosts.remove('rst_lobby_td', { siteId: 'site-1' });
+await owlette.roosts.remove('rst_lobby_td', { siteId: 'site-1' });
 
 // publish from a directory — the flagship call
-const { versionId, versionNumber, stats, events } = await roost.roosts.push('./dist', 'rst_abc', {
+const { versionId, versionNumber, stats, events } = await owlette.roosts.push('./dist', 'rst_abc', {
   siteId: 'site-1',
   description: 'fixed broken lobby video',   // optional ≤500 chars
   onProgress: (evt) => console.log(evt),
@@ -145,13 +145,13 @@ const { versionId, versionNumber, stats, events } = await roost.roosts.push('./d
 //   "vrs_..."             → a stable version id
 //   "current" / "previous" / "first" → aliases resolved server-side
 // omit it entirely to revert one step (equivalent to "previous").
-await roost.roosts.rollback('rst_abc', {
+await owlette.roosts.rollback('rst_abc', {
   siteId: 'site-1',
   targetVersion: 3,
 });
 
 // trigger a deployment (targeted / scheduled / dry-run)
-const deploy = await roost.roosts.deploy('rst_abc', {
+const deploy = await owlette.roosts.deploy('rst_abc', {
   siteId: 'site-1',
   machines: ['machine-a7f3'],           // subset of targets — omit for the full target list
   scheduleAt: '2026-04-25T03:00:00Z',   // optional — iso-8601 utc or Date
@@ -162,15 +162,15 @@ const deploy = await roost.roosts.deploy('rst_abc', {
 ### cortex
 
 ```ts
-const conversation = await roost.chat.new({
+const conversation = await owlette.chat.new({
   siteId: 'site-1',
   machineId: 'machine-a7f3',
   title: 'diagnostics',
 });
 
-const page = await roost.chat.list({ siteId: 'site-1', pageSize: 10 });
+const page = await owlette.chat.list({ siteId: 'site-1', pageSize: 10 });
 
-const stream = await roost.chat.send(conversation.conversationId, 'summarize machine health', {
+const stream = await owlette.chat.send(conversation.conversationId, 'summarize machine health', {
   onDelta: (text) => process.stdout.write(text),
 });
 await stream.complete;
@@ -184,49 +184,49 @@ most users never touch these; `roosts.push()` is the high-level wrapper. when yo
 
 ```ts
 // dedup-check — returns the hashes r2 is missing
-const missing = await roost.chunks.check('site-1', ['sha256:ab12...', 'sha256:cd34...']);
+const missing = await owlette.chunks.check('site-1', ['sha256:ab12...', 'sha256:cd34...']);
 
 // mint signed r2 put urls (60 min ttl) — returns { urls, expiresAt }
-const { urls } = await roost.chunks.uploadUrls('site-1', missing);
+const { urls } = await owlette.chunks.uploadUrls('site-1', missing);
 for (const [hash, url] of Object.entries(urls)) {
   await fetch(url, { method: 'PUT', body: await chunkBytes(hash) });
 }
 
 // mint signed r2 get urls (15 min ttl) — same { urls, expiresAt } shape
-const { urls: downloadUrls } = await roost.chunks.downloadUrls('site-1', ['sha256:ab12...']);
+const { urls: downloadUrls } = await owlette.chunks.downloadUrls('site-1', ['sha256:ab12...']);
 
 // mount an existing chunk from one roost into another (no re-upload)
-await roost.chunks.mount('sha256:ab12...', 'site-1', 'rst_source', 'rst_target');
+await owlette.chunks.mount('sha256:ab12...', 'site-1', 'rst_source', 'rst_target');
 
 // which roosts reference this chunk?
-const refs = await roost.chunks.referrers('sha256:ab12...', 'site-1');
+const refs = await owlette.chunks.referrers('sha256:ab12...', 'site-1');
 ```
 
 ### versions
 
 ```ts
 // list versions for a roost (paged — cursor-based, newest first)
-const page = await roost.versions.list('rst_abc', { siteId: 'site-1', pageSize: 20 });
+const page = await owlette.versions.list('rst_abc', { siteId: 'site-1', pageSize: 20 });
 for (const v of page.versions) console.log(`v${v.versionNumber}`, v.versionId, v.description, v.createdAt);
 
 // fetch one — `versionRef` accepts the same forms as rollback's targetVersion:
 //   a number (3), "#3" / "v3", a "vrs_*" id, or "current" / "previous" / "first"
-const v = await roost.versions.get('rst_abc', 'current', { siteId: 'site-1' });
+const v = await owlette.versions.get('rst_abc', 'current', { siteId: 'site-1' });
 
 // edit the description only (everything else on a published version is immutable)
-await roost.versions.patch('rst_abc', v.versionId, {
+await owlette.versions.patch('rst_abc', v.versionId, {
   siteId: 'site-1',
   description: 'updated release notes',
 });
 
 // file listing (paths + per-file digests, paged)
-const files = await roost.versions.files('rst_abc', 3, {
+const files = await owlette.versions.files('rst_abc', 3, {
   siteId: 'site-1',
   pageSize: 500,
 });
 
 // diff two versions — `against` is the baseline; both sides accept any versionRef form
-const diff = await roost.versions.diff('rst_abc', 'current', {
+const diff = await owlette.versions.diff('rst_abc', 'current', {
   siteId: 'site-1',
   against: 'previous',
 });
@@ -236,8 +236,8 @@ const diff = await roost.versions.diff('rst_abc', 'current', {
 
 ```ts
 // legacy scoped key creation requires a session or Firebase ID token.
-// API-key callers should prefer roost.account.apiKeys.
-const created = await roost.keys.create({
+// API-key callers should prefer owlette.account.apiKeys.
+const created = await owlette.keys.create({
   name: 'ci publisher',
   scopes: [
     { resource: 'site', id: 'site-1', permissions: ['read'] },
@@ -248,30 +248,30 @@ const created = await roost.keys.create({
 console.log(created.key);              // owk_live_...  <-- shown exactly once
 
 // list, rotate (24h grace), revoke on the legacy key-admin route
-const all = await roost.keys.list();
-await roost.keys.rotate(created.keyId, 90);
-await roost.keys.revoke(created.keyId);
+const all = await owlette.keys.list();
+await owlette.keys.rotate(created.keyId, 90);
+await owlette.keys.revoke(created.keyId);
 ```
 
 ### sites / machines / quotas
 
 ```ts
-const sites = await roost.sites.list();                 // Site[]
-const site = await roost.sites.get('site-1');           // Site
+const sites = await owlette.sites.list();                 // Site[]
+const site = await owlette.sites.get('site-1');           // Site
 
-const machines = await roost.machines.list('site-1');   // MachineSummary[]
-const machine = await roost.machines.get('site-1', 'machine-a7f3');
-const deploys = await roost.machines.deployments('site-1', 'machine-a7f3');
+const machines = await owlette.machines.list('site-1');   // MachineSummary[]
+const machine = await owlette.machines.get('site-1', 'machine-a7f3');
+const deploys = await owlette.machines.deployments('site-1', 'machine-a7f3');
 
-const quota = await roost.quotas.current('site-1');     // QuotaSnapshot
-const history = await roost.quotas.history('site-1', '30d');  // '7d' | '14d' | '30d' | '60d' | '90d'
+const quota = await owlette.quotas.current('site-1');     // QuotaSnapshot
+const history = await owlette.quotas.history('site-1', '30d');  // '7d' | '14d' | '30d' | '60d' | '90d'
 ```
 
 ### webhooks
 
 ```ts
 // subscribe — signing secret is returned ONCE; store it now
-const hook = await roost.webhooks.subscribe(
+const hook = await owlette.webhooks.subscribe(
   'site-1',
   'https://example.com/hooks/roost',
   ['version.published', 'deployment.failed'],
@@ -279,19 +279,19 @@ const hook = await roost.webhooks.subscribe(
 console.log(hook.signingSecret);
 
 // crud + delivery debugging
-await roost.webhooks.list('site-1');
-await roost.webhooks.get(hook.id, 'site-1');
-await roost.webhooks.update(hook.id, 'site-1', { events: ['version.published'] });
-await roost.webhooks.rotateSecret(hook.id, 'site-1');
-const deliveries = await roost.webhooks.deliveries(hook.id, 'site-1');
+await owlette.webhooks.list('site-1');
+await owlette.webhooks.get(hook.id, 'site-1');
+await owlette.webhooks.update(hook.id, 'site-1', { events: ['version.published'] });
+await owlette.webhooks.rotateSecret(hook.id, 'site-1');
+const deliveries = await owlette.webhooks.deliveries(hook.id, 'site-1');
 if (deliveries.deliveries[0]) {
-  await roost.webhooks.delivery(hook.id, deliveries.deliveries[0].id, 'site-1');
-  await roost.webhooks.retryDelivery(hook.id, deliveries.deliveries[0].id, 'site-1');
+  await owlette.webhooks.delivery(hook.id, deliveries.deliveries[0].id, 'site-1');
+  await owlette.webhooks.retryDelivery(hook.id, deliveries.deliveries[0].id, 'site-1');
 }
-await roost.webhooks.remove(hook.id, 'site-1');
+await owlette.webhooks.remove(hook.id, 'site-1');
 
 // probe fires a signed test delivery
-await roost.webhooks.probe('site-1', 'version.published', {
+await owlette.webhooks.probe('site-1', 'version.published', {
   url: 'https://example.com/hooks/roost',
   payload: {
     roostId: 'rst_abc',
@@ -305,12 +305,12 @@ await roost.webhooks.probe('site-1', 'version.published', {
 
 ## push progress
 
-`roost.roosts.push()` emits progress two ways so you can plug it into whatever ui you already have.
+`owlette.roosts.push()` emits progress two ways so you can plug it into whatever ui you already have.
 
 ### callback
 
 ```ts
-await roost.roosts.push('./dist', 'rst_abc', {
+await owlette.roosts.push('./dist', 'rst_abc', {
   siteId: 'site-1',
   onProgress: (evt) => {
     switch (evt.phase) {
@@ -384,12 +384,12 @@ const sig = signBody(JSON.stringify({ event: 'version.published' }), 'whsec_...'
 every non-2xx response throws `RoostApiError` with structured fields pulled from the rfc 7807 problem+json body:
 
 ```ts
-import { Roost, RoostApiError } from '@owlette/sdk';
+import { Owlette, OwletteApiError } from '@owlette/sdk';
 
 try {
-  await roost.roosts.get('rst_missing', { siteId: 'site-1' });
+  await owlette.roosts.get('rst_missing', { siteId: 'site-1' });
 } catch (err) {
-  if (err instanceof RoostApiError) {
+  if (err instanceof OwletteApiError) {
     console.log(err.status);            // 404
     console.log(err.code);              // 'roost_not_found' — stable, machine-readable
     console.log(err.requestId);         // for support tickets
@@ -418,12 +418,12 @@ the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring
 
 ## cancellation
 
-the low-level `roost.http.request()` accepts an `AbortSignal`:
+the low-level `owlette.http.request()` accepts an `AbortSignal`:
 
 ```ts
 const ctl = new AbortController();
 setTimeout(() => ctl.abort(), 30_000);
-await roost.http.request('/api/sites', { signal: ctl.signal });
+await owlette.http.request('/api/sites', { signal: ctl.signal });
 ```
 
 high-level resource methods don't yet surface the signal parameter — wrap the promise in `Promise.race()` against a timeout if you need to bound list/get calls. for `push()`, throwing inside the `onProgress` callback is the current cooperative-cancel mechanism.
@@ -453,8 +453,8 @@ import fetch from 'node-fetch';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 
 const agent = new HttpsProxyAgent(process.env.HTTPS_PROXY!);
-const roost = new Roost({
-  token: process.env.ROOST_TOKEN!,
+const owlette = new Owlette({
+  token: process.env.OWLETTE_TOKEN!,
   fetch: (url, init) => fetch(url, { ...init, agent } as any),
 });
 ```

@@ -1,5 +1,5 @@
 /**
- * `roost.chat` — cortex chat noun (wave 3A).
+ * `owlette.chat` — cortex chat noun (wave 3A).
  *
  *   POST   /api/cortex/conversations                  — create a conversation
  *   GET    /api/cortex/conversations                  — list conversations
@@ -20,7 +20,7 @@
  * reply once the stream ends.
  */
 import { randomUUID } from 'crypto';
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 import { SDK_VERSION } from '../version';
 
 /* --------------------------------------------------------------------- */
@@ -97,7 +97,7 @@ export interface SendMessageStream {
 /* --------------------------------------------------------------------- */
 
 export class Chat {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async new(opts: CreateConversationOptions): Promise<CreateConversationResult> {
     const body: Record<string, unknown> = { siteId: opts.siteId };

@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { writeFile } from 'fs/promises';
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 
 export interface MachineSummary {
   id: string;
@@ -97,7 +97,7 @@ const DEFAULT_MAX_POLLS = 40;
 /* --------------------------------------------------------------------- */
 
 export class Machines {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async list(siteId: string): Promise<MachineSummary[]> {
     const res = await this.client.request<{ machines: MachineSummary[] }>(

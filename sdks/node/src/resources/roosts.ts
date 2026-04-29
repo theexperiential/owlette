@@ -1,5 +1,5 @@
 /**
- * `roost.roosts.*` resource.
+ * `owlette.roosts.*` resource.
  *
  * Flagship methods:
  *   push(dir, roostId, opts)    — chunk → dedup → upload → publish
@@ -19,7 +19,7 @@ import { EventEmitter } from 'events';
 import { createReadStream } from 'fs';
 import { hostname, platform } from 'os';
 import { join } from 'path';
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 import {
   chunkDirectory,
   type ChunkDirectoryOpts,
@@ -196,7 +196,7 @@ export interface PushResult {
 
 export class Roosts {
   constructor(
-    private readonly client: RoostClient,
+    private readonly client: OwletteClient,
     private readonly cliVersion: string,
   ) {}
 
@@ -253,7 +253,7 @@ export class Roosts {
   async rollback(roostId: string, opts: RollbackOptions): Promise<RollbackResult> {
     const body: Record<string, unknown> = { siteId: opts.siteId };
     if (opts.targetVersion !== undefined) body.targetVersion = opts.targetVersion;
-    const requestOpts: Parameters<RoostClient['request']>[1] = {
+    const requestOpts: Parameters<OwletteClient['request']>[1] = {
       method: 'POST',
       body,
     };
@@ -276,7 +276,7 @@ export class Roosts {
           : opts.scheduleAt;
     }
     if (opts.dryRun) body.dryRun = true;
-    const requestOpts: Parameters<RoostClient['request']>[1] = {
+    const requestOpts: Parameters<OwletteClient['request']>[1] = {
       method: 'POST',
       body,
     };
@@ -516,7 +516,7 @@ export class Roosts {
         };
       } catch (err) {
         lastErr = err;
-        const isApiError = err instanceof Error && err.name === 'RoostApiError';
+        const isApiError = err instanceof Error && err.name === 'OwletteApiError';
         if (!isApiError) throw err;
         const apiErr = err as unknown as {
           status: number;

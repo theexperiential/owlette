@@ -1,15 +1,15 @@
 /**
- * `roost.members(siteId)` — site-scoped membership management (wave 3B).
+ * `owlette.members(siteId)` — site-scoped membership management (wave 3B).
  *
  *   GET    /api/sites/{siteId}/members
  *   POST   /api/sites/{siteId}/members           — body `{ uid, role }`
  *   DELETE /api/sites/{siteId}/members/{uid}
  *
  * The constructor binds to a `siteId`. Exposed as a factory on the root
- * `Roost` instance so callers do `roost.members(siteId).list()`.
+ * `Owlette` instance so callers do `owlette.members(siteId).list()`.
  */
 import { randomUUID } from 'crypto';
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 
 /* --------------------------------------------------------------------- */
 /*  types                                                                */
@@ -52,7 +52,7 @@ export interface RemoveMemberResult {
 
 export class Members {
   constructor(
-    private readonly client: RoostClient,
+    private readonly client: OwletteClient,
     private readonly siteId: string,
   ) {}
 

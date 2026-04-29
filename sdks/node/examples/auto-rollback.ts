@@ -14,7 +14,7 @@
  */
 
 import http from 'node:http';
-import { Roost, RoostApiError, verifySignature } from '@owlette/sdk';
+import { Owlette, OwletteApiError, verifySignature } from '@owlette/sdk';
 
 const {
   ROOST_TOKEN, ROOST_SIGNING_SECRET, SLACK_WEBHOOK_URL, AUTO_ROLLBACK_SITE_IDS,
@@ -27,7 +27,7 @@ for (const k of ['ROOST_TOKEN', 'ROOST_SIGNING_SECRET', 'SLACK_WEBHOOK_URL', 'AU
 }
 
 const allowedSites = new Set(AUTO_ROLLBACK_SITE_IDS!.split(',').map((s) => s.trim()));
-const roost = new Roost({ token: ROOST_TOKEN!, apiUrl: ROOST_BASE });
+const owlette = new Owlette({ token: ROOST_TOKEN!, apiUrl: ROOST_BASE });
 
 async function slack(text: string): Promise<void> {
   await fetch(SLACK_WEBHOOK_URL!, {
@@ -62,12 +62,12 @@ http.createServer(async (req, res) => {
   }
 
   try {
-    const result = await roost.roosts.rollback(roostId, { siteId });
+    const result = await owlette.roosts.rollback(roostId, { siteId });
     console.log(`[auto-rollback] ok roost=${roostId} reverted ${failedVersionId} → ${result.currentVersionId}`);
     await slack(`:rewind: auto-rollback fired for *${roostId}* on *${siteId}* — reverted \`${failedVersionId}\` → \`${result.currentVersionId}\``);
     res.statusCode = 200; res.end('{"ok":true}');
   } catch (err) {
-    const detail = err instanceof RoostApiError ? `${err.status} ${err.code}` : String(err);
+    const detail = err instanceof OwletteApiError ? `${err.status} ${err.code}` : String(err);
     console.error(`[auto-rollback] rollback failed roost=${roostId}: ${detail}`);
     await slack(`:rotating_light: auto-rollback FAILED for *${roostId}* — ${detail}`);
     res.statusCode = 502; res.end('rollback failed');

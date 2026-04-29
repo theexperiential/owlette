@@ -1,4 +1,4 @@
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 
 export interface Site {
   id: string;
@@ -10,7 +10,7 @@ export interface Site {
 }
 
 export class Sites {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async list(): Promise<Site[]> {
     const res = await this.client.request<{ sites: Site[] }>('/api/sites');

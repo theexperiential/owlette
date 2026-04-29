@@ -1,4 +1,4 @@
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 import type {
   ApiKeyEnvironment,
   ApiKeyRecord,
@@ -74,7 +74,7 @@ export interface AccountApiKeyCreateResult {
 }
 
 export class AccountApiKeys {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async list(): Promise<AccountApiKeyRecord[]> {
     const res = await this.client.request<{
@@ -110,7 +110,7 @@ export class AccountApiKeys {
 export class Account {
   #apiKeys?: AccountApiKeys;
 
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   get apiKeys(): AccountApiKeys {
     return (this.#apiKeys ??= new AccountApiKeys(this.client));

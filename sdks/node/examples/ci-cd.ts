@@ -2,7 +2,7 @@
  * ci/cd: publish a new roost version on every git tag.
  *
  * Mirrors docs/api/examples/ci-cd-github-actions.md but replaces curl + jq
- * with a single `roost.roosts.push()` call.
+ * with a single `owlette.roosts.push()` call.
  *
  * Required env vars:
  *   ROOST_TOKEN     api key with roost:<id>:write,deploy scope
@@ -11,7 +11,7 @@
  *   BUILD_DIR       directory to publish (defaults to ./build)
  */
 
-import { Roost, RoostApiError } from '@owlette/sdk';
+import { Owlette, OwletteApiError } from '@owlette/sdk';
 
 const {
   ROOST_TOKEN, ROOST_SITE_ID, ROOST_ID,
@@ -28,11 +28,11 @@ async function main(): Promise<number> {
     }
   }
 
-  const roost = new Roost({ token: ROOST_TOKEN!, apiUrl: ROOST_BASE });
+  const owlette = new Owlette({ token: ROOST_TOKEN!, apiUrl: ROOST_BASE });
 
   try {
     console.log(`[ci-cd] publishing ${BUILD_DIR} -> ${ROOST_ID} (version ${VERSION})`);
-    const result = await roost.roosts.push(BUILD_DIR, ROOST_ID!, {
+    const result = await owlette.roosts.push(BUILD_DIR, ROOST_ID!, {
       siteId: ROOST_SITE_ID!,
       onProgress: (evt) => {
         if (evt.phase === 'upload') console.log(`  upload ${evt.uploaded}/${evt.total}`);
@@ -43,12 +43,12 @@ async function main(): Promise<number> {
     console.log('[ci-cd] published version', result.versionId, `#${result.versionNumber}`);
     console.log('[ci-cd] stats:', JSON.stringify(result.stats, null, 2));
 
-    const deploy = await roost.roosts.deploy(ROOST_ID!, { siteId: ROOST_SITE_ID! });
+    const deploy = await owlette.roosts.deploy(ROOST_ID!, { siteId: ROOST_SITE_ID! });
     console.log(`[ci-cd] rollout ${deploy.rolloutId} - ${deploy.fleet.length} machines queued`);
 
     return 0;
   } catch (err) {
-    if (err instanceof RoostApiError) {
+    if (err instanceof OwletteApiError) {
       console.error(`[ci-cd] roost api error ${err.status} ${err.code}: ${err.problem.detail}`);
       console.error(`  request_id: ${err.requestId}`);
       if (err.code === 'scope_insufficient' || err.code === 'quota_exceeded') return 2;

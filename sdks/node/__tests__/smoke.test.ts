@@ -13,7 +13,7 @@
  *   ROOST_SDK_SMOKE_RUN_PUSH   set to 1 to run the mutating publish smoke
  */
 
-import { Roost } from '../src/index';
+import { Owlette } from '../src/index';
 
 const SMOKE_ENABLED = process.env.ROOST_SDK_SMOKE === '1';
 const SMOKE_API_URL = process.env.ROOST_SDK_SMOKE_API_URL;
@@ -37,17 +37,17 @@ maybeDescribe('sdk smoke (ROOST_SDK_SMOKE=1)', () => {
   });
 
   it('sites.list returns at least one entry', async () => {
-    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
-    const sites = await roost.sites.list();
+    const owlette = new Owlette({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const sites = await owlette.sites.list();
     expect(Array.isArray(sites)).toBe(true);
     expect(sites.length).toBeGreaterThan(0);
   });
 
   it('account.whoami and version resolve auth context', async () => {
-    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const owlette = new Owlette({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
     const [identity, version] = await Promise.all([
-      roost.account.whoami(),
-      roost.account.version(),
+      owlette.account.whoami(),
+      owlette.account.version(),
     ]);
     expect(identity.userId).toEqual(expect.any(String));
     expect(typeof version.current).toBe('string');
@@ -55,21 +55,21 @@ maybeDescribe('sdk smoke (ROOST_SDK_SMOKE=1)', () => {
   });
 
   it('sites.get inspects the configured site', async () => {
-    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
-    const site = await roost.sites.get(SMOKE_SITE!);
+    const owlette = new Owlette({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const site = await owlette.sites.get(SMOKE_SITE!);
     expect(site.id).toBe(SMOKE_SITE);
   });
 
   it('roosts.list paginates the configured site', async () => {
-    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
-    const result = await roost.roosts.list({ siteId: SMOKE_SITE!, pageSize: 5 });
+    const owlette = new Owlette({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const result = await owlette.roosts.list({ siteId: SMOKE_SITE!, pageSize: 5 });
     expect(Array.isArray(result.roosts)).toBe(true);
     expect(typeof result.nextPageToken).toBe('string');
   });
 
   maybePublishIt('roosts.push can publish a configured directory', async () => {
-    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
-    const result = await roost.roosts.push(SMOKE_PUSH_DIR!, SMOKE_ROOST!, {
+    const owlette = new Owlette({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const result = await owlette.roosts.push(SMOKE_PUSH_DIR!, SMOKE_ROOST!, {
       siteId: SMOKE_SITE!,
       description: 'node sdk smoke publish',
     });
@@ -78,43 +78,43 @@ maybeDescribe('sdk smoke (ROOST_SDK_SMOKE=1)', () => {
   });
 
   it('installerDeployments.list returns an items array', async () => {
-    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
-    const result = await roost.installerDeployments.list(SMOKE_SITE!, { pageSize: 1 });
+    const owlette = new Owlette({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const result = await owlette.installerDeployments.list(SMOKE_SITE!, { pageSize: 1 });
     expect(Array.isArray(result.items)).toBe(true);
     expect(typeof result.nextPageToken).toBe('string');
   });
 
   it('installer.list returns a versions array (superadmin keys only)', async () => {
-    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
-    const result = await roost.installer.list({ pageSize: 1 });
+    const owlette = new Owlette({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const result = await owlette.installer.list({ pageSize: 1 });
     expect(Array.isArray(result.versions)).toBe(true);
   });
 
   it('users.list returns a users array (superadmin keys only)', async () => {
-    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
-    const result = await roost.users.list({ pageSize: 1 });
+    const owlette = new Owlette({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const result = await owlette.users.list({ pageSize: 1 });
     expect(Array.isArray(result.users)).toBe(true);
   });
 
   it('chat.list returns a conversations array', async () => {
-    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
-    const result = await roost.chat.list({ pageSize: 1 });
+    const owlette = new Owlette({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const result = await owlette.chat.list({ pageSize: 1 });
     expect(Array.isArray(result.conversations)).toBe(true);
   });
 
   it('members(site).list returns an array', async () => {
-    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
-    const members = await roost.members(SMOKE_SITE!).list();
+    const owlette = new Owlette({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const members = await owlette.members(SMOKE_SITE!).list();
     expect(Array.isArray(members)).toBe(true);
   });
 
   it('processes(site, machine) factory binds the tuple', async () => {
-    const roost = new Roost({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
+    const owlette = new Owlette({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
     // We can't actually list against an arbitrary machineId here, so just
     // verify the factory returns a usable object. A real read smoke would
     // need a known machine id from the smoke env config — leave that to
     // the operator running the smoke suite.
-    const handle = roost.processes(SMOKE_SITE!, '__smoke_unused_machine__');
+    const handle = owlette.processes(SMOKE_SITE!, '__smoke_unused_machine__');
     expect(typeof handle.list).toBe('function');
   });
 });

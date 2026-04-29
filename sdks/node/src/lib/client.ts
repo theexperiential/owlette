@@ -5,7 +5,7 @@
  *   - attach `Authorization: Bearer owk_*` + `Roost-Version` + default
  *     `Idempotency-Key` on mutating calls (auto-generated per request
  *     so retries on transient failure don't create duplicate writes).
- *   - translate 4xx/5xx problem+json bodies into typed `RoostApiError`
+ *   - translate 4xx/5xx problem+json bodies into typed `OwletteApiError`
  *     instances so callers can `instanceof`-check for specific codes.
  *   - delegate retry to `./retry.ts` with a sensible default schedule
  *     (5 attempts, exponential with jitter, only for 429 + 5xx).
@@ -25,7 +25,7 @@ export const DEFAULT_ROOST_VERSION = '2026-04-22';
 
 export type Environment = 'live' | 'test';
 
-export interface RoostClientOpts {
+export interface OwletteClientOpts {
   /** Bearer token — `owk_live_*` or `owk_test_*`. */
   token: string;
   /** Override the api host. Default: https://owlette.app */
@@ -67,7 +67,7 @@ export interface ApiResponse<T> {
 }
 
 /** Typed error thrown by `request()` on non-2xx responses. */
-export class RoostApiError extends Error {
+export class OwletteApiError extends Error {
   readonly status: number;
   readonly code: string | null;
   readonly problem: Record<string, unknown>;
@@ -77,7 +77,7 @@ export class RoostApiError extends Error {
     const detail = typeof problem.detail === 'string' ? problem.detail : undefined;
     const title = typeof problem.title === 'string' ? problem.title : `http ${status}`;
     super(detail ?? title);
-    this.name = 'RoostApiError';
+    this.name = 'OwletteApiError';
     this.status = status;
     this.code = typeof problem.code === 'string' ? problem.code : null;
     this.problem = problem;
@@ -86,7 +86,7 @@ export class RoostApiError extends Error {
   }
 }
 
-export class RoostClient {
+export class OwletteClient {
   readonly apiUrl: string;
   readonly token: string;
   readonly roostVersion: string;
@@ -94,9 +94,9 @@ export class RoostClient {
   readonly _fetch: typeof fetch;
   private readonly _retry: Partial<RetryOptions>;
 
-  constructor(opts: RoostClientOpts) {
+  constructor(opts: OwletteClientOpts) {
     if (!opts.token || typeof opts.token !== 'string') {
-      throw new TypeError('RoostClient: `token` is required');
+      throw new TypeError('OwletteClient: `token` is required');
     }
     this.token = opts.token;
     this.apiUrl = (opts.apiUrl ?? DEFAULT_API_URL).replace(/\/+$/, '');
@@ -156,7 +156,7 @@ export class RoostClient {
           parsed && typeof parsed === 'object'
             ? (parsed as Record<string, unknown>)
             : { detail: String(parsed ?? '') };
-        throw new RoostApiError(res.status, problem);
+        throw new OwletteApiError(res.status, problem);
       }
 
       const capturedHeaders: Record<string, string> = {};

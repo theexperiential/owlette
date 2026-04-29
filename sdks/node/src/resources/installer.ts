@@ -1,5 +1,5 @@
 /**
- * `roost.installer` — superadmin-only installer-version management.
+ * `owlette.installer` — superadmin-only installer-version management.
  *
  * Wraps the wave-1B installer-api routes:
  *
@@ -16,12 +16,12 @@
  * the server can reject a corrupted upload.
  *
  * Mutations auto-generate `Idempotency-Key` headers when the caller omits
- * one. Errors surface as `RoostApiError`.
+ * one. Errors surface as `OwletteApiError`.
  */
 import { createHash, randomUUID } from 'crypto';
 import { createReadStream } from 'fs';
 import { stat } from 'fs/promises';
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 
 /* --------------------------------------------------------------------- */
 /*  types                                                                */
@@ -88,7 +88,7 @@ export interface UploadResult {
 /* --------------------------------------------------------------------- */
 
 export class Installer {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async list(opts: ListInstallerOptions = {}): Promise<ListInstallerResult> {
     const query: Record<string, string | number | boolean | undefined> = {};

@@ -16,7 +16,7 @@
  *   OWLETTE_DEPLOY=1 queues a deploy after the publish
  */
 
-import { Roost, RoostApiError } from '@owlette/sdk';
+import { Owlette, OwletteApiError } from '@owlette/sdk';
 
 const token = process.env.OWLETTE_TOKEN ?? process.env.ROOST_TOKEN;
 const apiUrl = process.env.OWLETTE_API_URL ?? process.env.ROOST_BASE ?? 'https://owlette.app';
@@ -37,36 +37,36 @@ async function main(): Promise<number> {
     }
   }
 
-  const roost = new Roost({ token: token!, apiUrl });
+  const owlette = new Owlette({ token: token!, apiUrl });
 
   try {
     const [identity, version] = await Promise.all([
-      roost.account.whoami(),
-      roost.account.version(),
+      owlette.account.whoami(),
+      owlette.account.version(),
     ]);
     console.log('api', version.current, 'user', identity.email ?? identity.userId);
     console.log('key', identity.key?.keyPrefix ?? 'session', 'primary site', identity.primarySiteId);
 
-    const sites = await roost.sites.list();
+    const sites = await owlette.sites.list();
     console.log('sites', sites.length);
     for (const site of sites.slice(0, 10)) {
       console.log('site', site.id, site.name);
     }
 
-    const machines = await roost.machines.list(siteId!);
+    const machines = await owlette.machines.list(siteId!);
     console.log('machines', machines.length);
     for (const machine of machines.slice(0, 10)) {
       console.log('machine', machine.id, machine.name, machine.online ? 'online' : 'offline');
     }
 
     const [site, currentRoost] = await Promise.all([
-      roost.sites.get(siteId!),
-      roost.roosts.get(roostId!, { siteId: siteId! }),
+      owlette.sites.get(siteId!),
+      owlette.roosts.get(roostId!, { siteId: siteId! }),
     ]);
     console.log('site', site.id, site.name);
     console.log('roost', currentRoost.roostId, currentRoost.name);
 
-    const published = await roost.roosts.push(buildDir, roostId!, {
+    const published = await owlette.roosts.push(buildDir, roostId!, {
       siteId: siteId!,
       description: `node sdk publish ${new Date().toISOString()}`,
       onProgress: (evt) => {
@@ -78,7 +78,7 @@ async function main(): Promise<number> {
     console.log('published', `v${published.versionNumber}`, published.versionId);
 
     if (shouldDeploy) {
-      const deploy = await roost.roosts.deploy(roostId!, {
+      const deploy = await owlette.roosts.deploy(roostId!, {
         siteId: siteId!,
         versionId: published.versionId,
       });
@@ -86,7 +86,7 @@ async function main(): Promise<number> {
     }
     return 0;
   } catch (err) {
-    if (err instanceof RoostApiError) {
+    if (err instanceof OwletteApiError) {
       console.error('api error', err.status, err.code, err.problem.detail ?? err.message);
     } else {
       console.error('unexpected error', err);

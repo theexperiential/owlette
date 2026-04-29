@@ -1,7 +1,7 @@
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 
 export class Chunks {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async check(siteId: string, hashes: readonly string[]): Promise<string[]> {
     const res = await this.client.request<{ missing: string[] }>('/api/chunks/check', {

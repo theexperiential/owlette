@@ -1,4 +1,4 @@
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 import type { VersionSummary } from './roosts';
 
 export interface VersionDetail {
@@ -85,7 +85,7 @@ export interface PatchVersionOptions {
 }
 
 export class Versions {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async list(
     roostId: string,
@@ -145,7 +145,7 @@ export class Versions {
     versionRef: string | number,
     opts: PatchVersionOptions,
   ): Promise<VersionSummary> {
-    const requestOpts: Parameters<RoostClient['request']>[1] = {
+    const requestOpts: Parameters<OwletteClient['request']>[1] = {
       method: 'PATCH',
       body: {
         siteId: opts.siteId,

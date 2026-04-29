@@ -1,5 +1,5 @@
 /**
- * `roost.installerDeployments` - classic installer deployment lifecycle.
+ * `owlette.installerDeployments` - classic installer deployment lifecycle.
  *
  * Wraps the wave-1A installer-deployments routes:
  *
@@ -14,10 +14,10 @@
  * Every mutation auto-generates an `Idempotency-Key` of the form
  * `sdk-installer-deployments-<verb>-${randomUUID()}` if the caller does
  * not pass `opts.idempotencyKey`. Errors surface as the canonical
- * `RoostApiError` instances thrown by `client.request`.
+ * `OwletteApiError` instances thrown by `client.request`.
  */
 import { randomUUID } from 'crypto';
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 
 /* --------------------------------------------------------------------- */
 /*  types                                                                */
@@ -126,7 +126,7 @@ export interface InstallerDeploymentDeleteResult {
 /* --------------------------------------------------------------------- */
 
 export class InstallerDeployments {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async list(
     siteId: string,

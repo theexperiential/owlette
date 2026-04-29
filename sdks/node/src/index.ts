@@ -1,16 +1,22 @@
 /**
  * `@owlette/sdk` — node sdk entry point.
  *
- *   import { Roost } from '@owlette/sdk';
- *   const roost = new Roost({ token: process.env.ROOST_TOKEN! });
- *   await roost.roosts.push('./dist', 'rst_abc', { siteId: 'site-1' });
+ *   import { Owlette } from '@owlette/sdk';
+ *   const owlette = new Owlette({ token: process.env.OWLETTE_TOKEN! });
+ *   await owlette.roosts.push('./dist', 'rst_abc', { siteId: 'site-1' });
  *
  * Every resource is lazily constructed on first access to keep the
- * constructor cheap — you can `new Roost()` inside a request handler
+ * constructor cheap — you can `new Owlette()` inside a request handler
  * without measurable overhead.
  */
 
-import { RoostClient, type RoostClientOpts, RoostApiError, DEFAULT_API_URL, DEFAULT_ROOST_VERSION } from './lib/client';
+import {
+  OwletteClient,
+  type OwletteClientOpts,
+  OwletteApiError,
+  DEFAULT_API_URL,
+  DEFAULT_ROOST_VERSION,
+} from './lib/client';
 import { Roosts } from './resources/roosts';
 import { Chunks } from './resources/chunks';
 import { Versions } from './resources/versions';
@@ -36,8 +42,8 @@ import {
   type VerifySignatureResult,
 } from './lib/signature';
 
-export class Roost {
-  readonly client: RoostClient;
+export class Owlette {
+  readonly client: OwletteClient;
 
   #roosts?: Roosts;
   #chunks?: Chunks;
@@ -54,8 +60,8 @@ export class Roost {
   #chat?: Chat;
   #users?: Users;
 
-  constructor(opts: RoostClientOpts) {
-    this.client = new RoostClient(opts);
+  constructor(opts: OwletteClientOpts) {
+    this.client = new OwletteClient(opts);
   }
 
   get roosts(): Roosts {
@@ -133,9 +139,9 @@ export class Roost {
 
   /**
    * Webhook signature verification — static helpers grouped under
-   * `roost.events` so calling sites read naturally:
+   * `owlette.events` so calling sites read naturally:
    *
-   *   if (!roost.events.verifySignature(header, body, secret)) {
+   *   if (!owlette.events.verifySignature(header, body, secret)) {
    *     return res.status(401).send();
    *   }
    */
@@ -156,14 +162,19 @@ export class Roost {
   };
 
   /** Get the raw low-level http client for escape-hatch calls. */
-  get http(): RoostClient {
+  get http(): OwletteClient {
     return this.client;
   }
 }
 
-export { RoostClient, RoostApiError, DEFAULT_API_URL, DEFAULT_ROOST_VERSION };
+export {
+  OwletteClient,
+  OwletteApiError,
+  DEFAULT_API_URL,
+  DEFAULT_ROOST_VERSION,
+};
 export type {
-  RoostClientOpts,
+  OwletteClientOpts,
   Environment,
   ApiResponse,
   RequestOptions,
@@ -259,6 +270,7 @@ export type {
   CreateProcessOptions,
   UpdateProcessOptions,
   ScheduleOptions,
+  RestartProcessResult,
 } from './resources/processes';
 export type {
   ChatRole,

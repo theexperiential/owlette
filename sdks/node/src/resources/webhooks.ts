@@ -1,4 +1,4 @@
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 
 export interface WebhookSubscription {
   id: string;
@@ -52,7 +52,7 @@ export interface ProbeWebhookOptions {
 }
 
 export class Webhooks {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async subscribe(
     siteId: string,

@@ -12,7 +12,7 @@
  *   OWLETTE_SITE_ID or ROOST_SITE_ID overrides the site selection
  */
 
-import { Roost, RoostApiError } from '@owlette/sdk';
+import { Owlette, OwletteApiError } from '@owlette/sdk';
 
 const token = process.env.OWLETTE_TOKEN ?? process.env.ROOST_TOKEN;
 const apiUrl = process.env.OWLETTE_API_URL ?? process.env.ROOST_BASE ?? 'https://owlette.app';
@@ -23,14 +23,14 @@ if (!token) {
   process.exit(1);
 }
 
-const roost = new Roost({ token, apiUrl });
+const owlette = new Owlette({ token, apiUrl });
 
 async function main(): Promise<number> {
   try {
     const [identity, version, sites] = await Promise.all([
-      roost.account.whoami(),
-      roost.account.version(),
-      roost.sites.list(),
+      owlette.account.whoami(),
+      owlette.account.version(),
+      owlette.sites.list(),
     ]);
 
     console.log('api', version.current, 'supported', version.supported.join(','));
@@ -48,7 +48,7 @@ async function main(): Promise<number> {
       return 0;
     }
 
-    const machines = await roost.machines.list(siteId);
+    const machines = await owlette.machines.list(siteId);
     console.log('selected site', siteId, 'machines', machines.length);
     for (const machine of machines) {
       console.log(
@@ -57,7 +57,7 @@ async function main(): Promise<number> {
     }
     return 0;
   } catch (err) {
-    if (err instanceof RoostApiError) {
+    if (err instanceof OwletteApiError) {
       console.error('api error', err.status, err.code, err.problem.detail ?? err.message);
       if (err.requestId) console.error('request_id', err.requestId);
     } else {

@@ -4,7 +4,7 @@
  * client.test.ts but exercises every resource class surface.
  */
 
-import { Roost } from '../src/index';
+import { Owlette } from '../src/index';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -14,9 +14,9 @@ interface Call {
   init: RequestInit;
 }
 
-function makeRoost(
+function makeOwlette(
   responses: Array<{ status: number; body: unknown }>,
-): { roost: Roost; calls: Call[] } {
+): { owlette: Owlette; calls: Call[] } {
   const calls: Call[] = [];
   let i = 0;
   const fetch: typeof global.fetch = async (input, init = {}) => {
@@ -31,33 +31,33 @@ function makeRoost(
       text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
     } as Response;
   };
-  const roost = new Roost({
+  const owlette = new Owlette({
     token: 'owk_live_testtoken',
     apiUrl: 'https://dev.test',
     fetch,
     retry: { maxAttempts: 1 },
   });
-  return { roost, calls };
+  return { owlette, calls };
 }
 
-describe('roost.sites', () => {
+describe('owlette.sites', () => {
   it('list → GET /api/sites', async () => {
-    const { roost, calls } = makeRoost([{ status: 200, body: { sites: [{ id: 's1', name: 'alpha' }] } }]);
-    const result = await roost.sites.list();
+    const { owlette, calls } = makeOwlette([{ status: 200, body: { sites: [{ id: 's1', name: 'alpha' }] } }]);
+    const result = await owlette.sites.list();
     expect(calls[0]!.url).toBe('https://dev.test/api/sites');
     expect(result[0]!.id).toBe('s1');
   });
 
   it('get → GET /api/sites/{id}', async () => {
-    const { roost, calls } = makeRoost([{ status: 200, body: { id: 's1', name: 'alpha' } }]);
-    await roost.sites.get('s1');
+    const { owlette, calls } = makeOwlette([{ status: 200, body: { id: 's1', name: 'alpha' } }]);
+    await owlette.sites.get('s1');
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/s1');
   });
 });
 
-describe('roost.account', () => {
+describe('owlette.account', () => {
   it('whoami -> GET /api/whoami', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -80,23 +80,23 @@ describe('roost.account', () => {
         },
       },
     ]);
-    const result = await roost.account.whoami();
+    const result = await owlette.account.whoami();
     expect(calls[0]!.url).toBe('https://dev.test/api/whoami');
     expect(result.primarySiteId).toBe('site-1');
     expect(result.key?.scopes?.[0]?.resource).toBe('site');
   });
 
   it('version -> GET /api/version', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { current: '2026-04-22', supported: ['2026-04-22'] } },
     ]);
-    const result = await roost.account.version();
+    const result = await owlette.account.version();
     expect(calls[0]!.url).toBe('https://dev.test/api/version');
     expect(result.current).toBe('2026-04-22');
   });
 
   it('apiKeys use account API-key-compatible routes', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -131,9 +131,9 @@ describe('roost.account', () => {
       { status: 200, body: { success: true } },
     ]);
 
-    const listed = await roost.account.apiKeys.list();
-    const created = await roost.account.apiKeys.create({ name: 'preview' });
-    await roost.account.apiKeys.revoke('key-2');
+    const listed = await owlette.account.apiKeys.list();
+    const created = await owlette.account.apiKeys.create({ name: 'preview' });
+    await owlette.account.apiKeys.revoke('key-2');
 
     expect(listed[0]!.id).toBe('key-1');
     expect(created.keyId).toBe('key-2');
@@ -146,16 +146,16 @@ describe('roost.account', () => {
   });
 });
 
-describe('roost.roosts', () => {
+describe('owlette.roosts', () => {
   it('list → GET /api/roosts?siteId=…', async () => {
-    const { roost, calls } = makeRoost([{ status: 200, body: { roosts: [], nextPageToken: '' } }]);
-    await roost.roosts.list({ siteId: 'site-1', pageSize: 10 });
+    const { owlette, calls } = makeOwlette([{ status: 200, body: { roosts: [], nextPageToken: '' } }]);
+    await owlette.roosts.list({ siteId: 'site-1', pageSize: 10 });
     expect(calls[0]!.url).toContain('/api/roosts?siteId=site-1');
     expect(calls[0]!.url).toContain('page_size=10');
   });
 
   it('get → GET /api/roosts/{id}?siteId=…', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -176,15 +176,15 @@ describe('roost.roosts', () => {
         },
       },
     ]);
-    await roost.roosts.get('rst_abc', { siteId: 's1' });
+    await owlette.roosts.get('rst_abc', { siteId: 's1' });
     expect(calls[0]!.url).toBe('https://dev.test/api/roosts/rst_abc?siteId=s1');
   });
 
   it('rollback → POST /api/roosts/{id}/rollback with targetVersion', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { currentVersionId: 'to', previousVersionId: 'from' } },
     ]);
-    await roost.roosts.rollback('rst_abc', { siteId: 's', targetVersion: 3 });
+    await owlette.roosts.rollback('rst_abc', { siteId: 's', targetVersion: 3 });
     expect(calls[0]!.url).toBe('https://dev.test/api/roosts/rst_abc/rollback');
     expect(calls[0]!.init.method).toBe('POST');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
@@ -194,10 +194,10 @@ describe('roost.roosts', () => {
   });
 
   it('rollback → accepts string aliases as targetVersion', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { currentVersionId: 'to', previousVersionId: 'from' } },
     ]);
-    await roost.roosts.rollback('rst_abc', { siteId: 's', targetVersion: 'previous' });
+    await owlette.roosts.rollback('rst_abc', { siteId: 's', targetVersion: 'previous' });
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
       siteId: 's',
       targetVersion: 'previous',
@@ -205,7 +205,7 @@ describe('roost.roosts', () => {
   });
 
   it('deploy → POST /api/roosts/{id}/deploy with all options', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -222,7 +222,7 @@ describe('roost.roosts', () => {
       },
     ]);
     const when = new Date('2026-05-01T00:00:00Z');
-    await roost.roosts.deploy('rst_abc', {
+    await owlette.roosts.deploy('rst_abc', {
       siteId: 's',
       versionId: 'm-new',
       machines: ['m-1'],
@@ -236,12 +236,12 @@ describe('roost.roosts', () => {
   });
 });
 
-describe('roost.versions', () => {
+describe('owlette.versions', () => {
   it('list → GET /api/roosts/{id}/versions', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { versions: [], nextPageToken: 'v2' } },
     ]);
-    const result = await roost.versions.list('rst_abc', {
+    const result = await owlette.versions.list('rst_abc', {
       siteId: 's1',
       pageSize: 10,
       pageToken: 'v1',
@@ -254,7 +254,7 @@ describe('roost.versions', () => {
   });
 
   it('get → GET /api/roosts/{id}/versions/{ref}', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -275,14 +275,14 @@ describe('roost.versions', () => {
         },
       },
     ]);
-    const res = await roost.versions.get('rst_abc', 3, { siteId: 's1' });
+    const res = await owlette.versions.get('rst_abc', 3, { siteId: 's1' });
     expect(calls[0]!.url).toBe('https://dev.test/api/roosts/rst_abc/versions/3?siteId=s1');
     expect(res.versionNumber).toBe(3);
     expect(res.description).toBe('fixed video');
   });
 
   it('diff → GET /api/roosts/{id}/versions/{ref}/diff', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -305,14 +305,14 @@ describe('roost.versions', () => {
         },
       },
     ]);
-    await roost.versions.diff('rst_abc', 'v3', { siteId: 's1', against: 'current' });
+    await owlette.versions.diff('rst_abc', 'v3', { siteId: 's1', against: 'current' });
     expect(calls[0]!.url).toBe(
       'https://dev.test/api/roosts/rst_abc/versions/v3/diff?siteId=s1&against=current',
     );
   });
 
   it('patch -> PATCH /api/roosts/{id}/versions/{ref}', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -328,7 +328,7 @@ describe('roost.versions', () => {
         },
       },
     ]);
-    await roost.versions.patch('rst_abc', 'current', {
+    await owlette.versions.patch('rst_abc', 'current', {
       siteId: 's1',
       description: 'updated',
       idempotencyKey: 'version-patch',
@@ -344,12 +344,12 @@ describe('roost.versions', () => {
   });
 });
 
-describe('roost.deployments', () => {
+describe('owlette.deployments', () => {
   it('list -> GET /api/roosts/{id}/deployments with canonical pagination', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { rollouts: [], nextPageToken: 'r2' } },
     ]);
-    const result = await roost.deployments.list('rst_abc', {
+    const result = await owlette.deployments.list('rst_abc', {
       siteId: 's1',
       pageSize: 5,
       pageToken: 'r1',
@@ -361,20 +361,20 @@ describe('roost.deployments', () => {
   });
 });
 
-describe('roost.chunks', () => {
+describe('owlette.chunks', () => {
   it('check → POST /api/chunks/check', async () => {
-    const { roost, calls } = makeRoost([{ status: 200, body: { missing: ['h1'] } }]);
-    const result = await roost.chunks.check('site-1', ['h1', 'h2']);
+    const { owlette, calls } = makeOwlette([{ status: 200, body: { missing: ['h1'] } }]);
+    const result = await owlette.chunks.check('site-1', ['h1', 'h2']);
     expect(calls[0]!.url).toBe('https://dev.test/api/chunks/check');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ siteId: 'site-1', hashes: ['h1', 'h2'] });
     expect(result).toEqual(['h1']);
   });
 
   it('mount → POST /api/chunks/{digest}/mount?…', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { digest: 'd', siteId: 's', from: 'a', to: 'b', mounted: true, zeroByte: true } },
     ]);
-    await roost.chunks.mount('d'.repeat(64), 'site-1', 'rst_from0001abc', 'rst_to00001234');
+    await owlette.chunks.mount('d'.repeat(64), 'site-1', 'rst_from0001abc', 'rst_to00001234');
     expect(calls[0]!.url).toContain(`/api/chunks/${'d'.repeat(64)}/mount?`);
     expect(calls[0]!.url).toContain('siteId=site-1');
     expect(calls[0]!.url).toContain('from=rst_from0001abc');
@@ -383,19 +383,19 @@ describe('roost.chunks', () => {
 
   it('referrers -> GET with canonical pagination query', async () => {
     const digest = 'd'.repeat(64);
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { digest, siteId: 'site-1', referrers: [], nextPageToken: '' } },
     ]);
-    await roost.chunks.referrers(digest, 'site-1', { limit: 10, cursor: 'r1' });
+    await owlette.chunks.referrers(digest, 'site-1', { limit: 10, cursor: 'r1' });
     expect(calls[0]!.url).toBe(
       `https://dev.test/api/chunks/${digest}/referrers?siteId=site-1&page_size=10&page_token=r1`,
     );
   });
 });
 
-describe('roost.keys', () => {
+describe('owlette.keys', () => {
   it('create → POST /api/keys with scopes', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -410,7 +410,7 @@ describe('roost.keys', () => {
         },
       },
     ]);
-    await roost.keys.create({
+    await owlette.keys.create({
       name: 'ci',
       scopes: [{ resource: 'chat', id: 'site-1', permissions: ['read'] }],
       ttlDays: 30,
@@ -422,7 +422,7 @@ describe('roost.keys', () => {
   });
 
   it('rotate → POST /api/keys/{id}/rotate', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -435,22 +435,22 @@ describe('roost.keys', () => {
         },
       },
     ]);
-    await roost.keys.rotate('old', 180);
+    await owlette.keys.rotate('old', 180);
     expect(calls[0]!.url).toBe('https://dev.test/api/keys/old/rotate');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ ttlDays: 180 });
   });
 
   it('revoke → DELETE /api/keys/{id}', async () => {
-    const { roost, calls } = makeRoost([{ status: 200, body: { success: true } }]);
-    await roost.keys.revoke('doomed');
+    const { owlette, calls } = makeOwlette([{ status: 200, body: { success: true } }]);
+    await owlette.keys.revoke('doomed');
     expect(calls[0]!.init.method).toBe('DELETE');
     expect(calls[0]!.url).toBe('https://dev.test/api/keys/doomed');
   });
 });
 
-describe('roost.quotas', () => {
+describe('owlette.quotas', () => {
   it('current -> GET /api/sites/{siteId}/quota', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -469,13 +469,13 @@ describe('roost.quotas', () => {
         },
       },
     ]);
-    const result = await roost.quotas.current('site-1');
+    const result = await owlette.quotas.current('site-1');
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/quota');
     expect(result.committedBytes).toBe(125);
   });
 
   it('history -> GET /api/sites/{siteId}/quota/history?period=...', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -486,7 +486,7 @@ describe('roost.quotas', () => {
         },
       },
     ]);
-    const result = await roost.quotas.history('site-1', '7d');
+    const result = await owlette.quotas.history('site-1', '7d');
     expect(calls[0]!.url).toBe(
       'https://dev.test/api/sites/site-1/quota/history?period=7d',
     );
@@ -494,12 +494,12 @@ describe('roost.quotas', () => {
   });
 });
 
-describe('roost.webhooks', () => {
+describe('owlette.webhooks', () => {
   it('subscribe -> POST /api/webhooks?siteId=...', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 201, body: { id: 'wh_1', signingSecret: 'whsec_1' } },
     ]);
-    await roost.webhooks.subscribe('site-1', 'https://hooks.example/roost', [
+    await owlette.webhooks.subscribe('site-1', 'https://hooks.example/roost', [
       'version.published',
     ]);
     expect(calls[0]!.url).toBe('https://dev.test/api/webhooks?siteId=site-1');
@@ -510,20 +510,20 @@ describe('roost.webhooks', () => {
   });
 
   it('deliveries -> GET with canonical pagination query', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: { deliveries: [], next_page_token: '', nextPageToken: '' },
       },
     ]);
-    await roost.webhooks.deliveries('wh_1', 'site-1', { pageSize: 5, pageToken: 'd0' });
+    await owlette.webhooks.deliveries('wh_1', 'site-1', { pageSize: 5, pageToken: 'd0' });
     expect(calls[0]!.url).toBe(
       'https://dev.test/api/webhooks/wh_1/deliveries?siteId=site-1&page_size=5&page_token=d0',
     );
   });
 
   it('delivery -> GET detail and retryDelivery -> POST retry', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -549,8 +549,8 @@ describe('roost.webhooks', () => {
         },
       },
     ]);
-    await roost.webhooks.delivery('wh_1', 'del_1', 'site-1');
-    await roost.webhooks.retryDelivery('wh_1', 'del_1', 'site-1');
+    await owlette.webhooks.delivery('wh_1', 'del_1', 'site-1');
+    await owlette.webhooks.retryDelivery('wh_1', 'del_1', 'site-1');
     expect(calls[0]!.url).toBe(
       'https://dev.test/api/webhooks/wh_1/deliveries/del_1?siteId=site-1',
     );
@@ -563,8 +563,8 @@ describe('roost.webhooks', () => {
   });
 
   it('probe -> POST /api/webhooks/probe?siteId=... with url and event', async () => {
-    const { roost, calls } = makeRoost([{ status: 200, body: { status: 200 } }]);
-    await roost.webhooks.probe('site-1', 'version.published', {
+    const { owlette, calls } = makeOwlette([{ status: 200, body: { status: 200 } }]);
+    await owlette.webhooks.probe('site-1', 'version.published', {
       url: 'https://hooks.example/roost',
       payload: { roostId: 'rst_1' },
       signingSecret: 'whsec_local_test_secret_000000000000',
@@ -577,18 +577,18 @@ describe('roost.webhooks', () => {
   });
 });
 
-describe('roost.installerDeployments', () => {
+describe('owlette.installerDeployments', () => {
   it('list → GET /api/sites/{siteId}/deployments?page_size=…', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { items: [], next_page_token: 'cursor' } },
     ]);
-    const result = await roost.installerDeployments.list('site-1', { pageSize: 10 });
+    const result = await owlette.installerDeployments.list('site-1', { pageSize: 10 });
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/deployments?page_size=10');
     expect(result.nextPageToken).toBe('cursor');
   });
 
   it('create → POST with Idempotency-Key auto-gen + machines body', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 201,
         body: {
@@ -599,7 +599,7 @@ describe('roost.installerDeployments', () => {
         },
       },
     ]);
-    await roost.installerDeployments.create('site-1', {
+    await owlette.installerDeployments.create('site-1', {
       name: 'rollout',
       installer_url: 'https://example.com/x.exe',
       installer_name: 'x.exe',
@@ -620,20 +620,20 @@ describe('roost.installerDeployments', () => {
     expect(body.suppress_projects).toEqual(['show-a']);
   });
 
-  it('cancel → POST /cancel surfaces RoostApiError on 409', async () => {
-    const { roost } = makeRoost([
+  it('cancel → POST /cancel surfaces OwletteApiError on 409', async () => {
+    const { owlette } = makeOwlette([
       {
         status: 409,
         body: { code: 'no_cancellable_targets', detail: 'every target is past queue' },
       },
     ]);
     await expect(
-      roost.installerDeployments.cancel('site-1', 'deploy-1'),
-    ).rejects.toMatchObject({ name: 'RoostApiError', status: 409, code: 'no_cancellable_targets' });
+      owlette.installerDeployments.cancel('site-1', 'deploy-1'),
+    ).rejects.toMatchObject({ name: 'OwletteApiError', status: 409, code: 'no_cancellable_targets' });
   });
 
   it('uninstall → POST and honours custom idempotency-key', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -645,7 +645,7 @@ describe('roost.installerDeployments', () => {
         },
       },
     ]);
-    await roost.installerDeployments.uninstall('site-1', 'deploy-1', {
+    await owlette.installerDeployments.uninstall('site-1', 'deploy-1', {
       idempotencyKey: 'caller-supplied',
     });
     const headers = calls[0]!.init.headers as Record<string, string>;
@@ -656,13 +656,13 @@ describe('roost.installerDeployments', () => {
   });
 
   it('delete -> DELETE with Idempotency-Key and empty body', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: { deploymentId: 'deploy-1', siteId: 'site-1', deleted: true },
       },
     ]);
-    await roost.installerDeployments.delete('site-1', 'deploy-1', {
+    await owlette.installerDeployments.delete('site-1', 'deploy-1', {
       idempotencyKey: 'delete-key',
     });
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/deployments/deploy-1');
@@ -673,19 +673,19 @@ describe('roost.installerDeployments', () => {
   });
 });
 
-describe('roost.installer', () => {
+describe('owlette.installer', () => {
   it('list → GET /api/installer with pagination', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { versions: [], nextPageToken: '' } },
     ]);
-    await roost.installer.list({ pageSize: 5, includeDeleted: true });
+    await owlette.installer.list({ pageSize: 5, includeDeleted: true });
     expect(calls[0]!.url).toContain('/api/installer?');
     expect(calls[0]!.url).toContain('page_size=5');
     expect(calls[0]!.url).toContain('includeDeleted=true');
   });
 
   it('latest -> GET /api/installer/latest', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -701,7 +701,7 @@ describe('roost.installer', () => {
         },
       },
     ]);
-    const latest = await roost.installer.latest();
+    const latest = await owlette.installer.latest();
     expect(calls[0]!.url).toBe('https://dev.test/api/installer/latest');
     expect(latest.version).toBe('2.10.0');
   });
@@ -711,7 +711,7 @@ describe('roost.installer', () => {
     const filePath = join(tempDir, 'Owlette-Installer-v2.11.0.exe');
     writeFileSync(filePath, Buffer.from('fake installer bytes'));
     try {
-      const { roost, calls } = makeRoost([
+      const { owlette, calls } = makeOwlette([
         {
           status: 200,
           body: {
@@ -733,7 +733,7 @@ describe('roost.installer', () => {
         },
       ]);
 
-      await roost.installer.upload({ filePath, version: '2.11.0' });
+      await owlette.installer.upload({ filePath, version: '2.11.0' });
 
       expect(calls).toHaveLength(3);
       expect(calls[0]!.url).toBe('https://dev.test/api/installer/upload');
@@ -753,13 +753,13 @@ describe('roost.installer', () => {
   });
 
   it('setLatest → POST /api/installer/{version}/set-latest with auto idempotency-key', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: { version: '2.10.0', latest: { version: '2.10.0' } },
       },
     ]);
-    await roost.installer.setLatest('2.10.0');
+    await owlette.installer.setLatest('2.10.0');
     const call = calls[0]!;
     expect(call.url).toBe('https://dev.test/api/installer/2.10.0/set-latest');
     expect(call.init.method).toBe('POST');
@@ -768,10 +768,10 @@ describe('roost.installer', () => {
   });
 
   it('delete → DELETE /api/installer/{version}', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { version: '2.5.0', deletedAt: 1, alreadyDeleted: false } },
     ]);
-    const result = await roost.installer.delete('2.5.0');
+    const result = await owlette.installer.delete('2.5.0');
     expect(calls[0]!.init.method).toBe('DELETE');
     expect(calls[0]!.url).toBe('https://dev.test/api/installer/2.5.0');
     const headers = calls[0]!.init.headers as Record<string, string>;
@@ -780,20 +780,20 @@ describe('roost.installer', () => {
   });
 });
 
-describe('roost.processes (factory)', () => {
+describe('owlette.processes (factory)', () => {
   it('list → GET /api/sites/{siteId}/machines/{machineId}/processes', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { ok: true, data: { processes: [], nextPageToken: null } } },
     ]);
-    await roost.processes('site-1', 'm-1').list();
+    await owlette.processes('site-1', 'm-1').list();
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/machines/m-1/processes');
   });
 
   it('create → POST with required fields + auto idempotency-key', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 201, body: { ok: true, data: { processId: 'p-1' } } },
     ]);
-    await roost.processes('site-1', 'm-1').create({
+    await owlette.processes('site-1', 'm-1').create({
       name: 'TouchDesigner',
       exe_path: 'C:/Program Files/Derivative/TouchDesigner/bin/TouchDesigner.exe',
       launch_mode: 'always',
@@ -808,21 +808,53 @@ describe('roost.processes (factory)', () => {
   });
 
   it('start verb → POST /processes/{id}/start', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { ok: true, data: { processId: 'p-1' } } },
     ]);
-    await roost.processes('site-1', 'm-1').start('p-1');
+    await owlette.processes('site-1', 'm-1').start('p-1');
     expect(calls[0]!.url).toBe(
       'https://dev.test/api/sites/site-1/machines/m-1/processes/p-1/start',
     );
     expect(calls[0]!.init.method).toBe('POST');
   });
 
+  it('restart verb → POST /processes/{id}/restart with auto idempotency-key', async () => {
+    const { owlette, calls } = makeOwlette([
+      {
+        status: 202,
+        body: { ok: true, data: { commandId: 'cmd_restart_1', status: 'pending' } },
+      },
+    ]);
+    const result = await owlette.processes('site-1', 'm-1').restart('p-1');
+    expect(calls[0]!.url).toBe(
+      'https://dev.test/api/sites/site-1/machines/m-1/processes/p-1/restart',
+    );
+    expect(calls[0]!.init.method).toBe('POST');
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^sdk-processes-restart-/);
+    expect(result.commandId).toBe('cmd_restart_1');
+    expect(result.status).toBe('pending');
+  });
+
+  it('restart honours custom idempotency-key', async () => {
+    const { owlette, calls } = makeOwlette([
+      {
+        status: 202,
+        body: { ok: true, data: { commandId: 'cmd_restart_2', status: 'pending' } },
+      },
+    ]);
+    await owlette.processes('site-1', 'm-1').restart('p-1', {
+      idempotencyKey: 'caller-supplied-restart',
+    });
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toBe('caller-supplied-restart');
+  });
+
   it('schedule → POST /schedule with mode + blocks', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { ok: true, data: { processId: 'p-1', mode: 'scheduled' } } },
     ]);
-    await roost.processes('site-1', 'm-1').schedule('p-1', {
+    await owlette.processes('site-1', 'm-1').schedule('p-1', {
       mode: 'scheduled',
       blocks: [{ days: ['Mon'], ranges: [{ start: '09:00', stop: '17:00' }] }],
     });
@@ -832,9 +864,9 @@ describe('roost.processes (factory)', () => {
   });
 });
 
-describe('roost.chat', () => {
+describe('owlette.chat', () => {
   it('new -> POST /api/cortex/conversations with siteId', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 201,
         body: {
@@ -843,7 +875,7 @@ describe('roost.chat', () => {
         },
       },
     ]);
-    const result = await roost.chat.new({ siteId: 'site-1', title: 'help me' });
+    const result = await owlette.chat.new({ siteId: 'site-1', title: 'help me' });
     expect(calls[0]!.url).toBe('https://dev.test/api/cortex/conversations');
     expect(calls[0]!.init.method).toBe('POST');
     const body = JSON.parse(String(calls[0]!.init.body));
@@ -855,10 +887,10 @@ describe('roost.chat', () => {
   });
 
   it('list -> GET /api/cortex/conversations?page_size=...', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { ok: true, data: { conversations: [], nextPageToken: '' } } },
     ]);
-    await roost.chat.list({ siteId: 'site-1', pageSize: 25, ownerOnly: true });
+    await owlette.chat.list({ siteId: 'site-1', pageSize: 25, ownerOnly: true });
     expect(calls[0]!.url).toContain('/api/cortex/conversations?');
     expect(calls[0]!.url).toContain('siteId=site-1');
     expect(calls[0]!.url).toContain('page_size=25');
@@ -866,26 +898,26 @@ describe('roost.chat', () => {
   });
 
   it('rename -> PATCH /api/cortex/conversations/{id}', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: { ok: true, data: { conversationId: 'conv-1', title: 'renamed' } },
       },
     ]);
-    await roost.chat.rename('conv-1', 'renamed');
+    await owlette.chat.rename('conv-1', 'renamed');
     expect(calls[0]!.init.method).toBe('PATCH');
     expect(calls[0]!.url).toBe('https://dev.test/api/cortex/conversations/conv-1');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ title: 'renamed' });
   });
 
   it('delete -> DELETE /api/cortex/conversations/{id} returns alreadyDeleted', async () => {
-    const { roost } = makeRoost([
+    const { owlette } = makeOwlette([
       {
         status: 200,
         body: { ok: true, data: { conversationId: 'conv-1', alreadyDeleted: true } },
       },
     ]);
-    const result = await roost.chat.delete('conv-1');
+    const result = await owlette.chat.delete('conv-1');
     expect(result.alreadyDeleted).toBe(true);
   });
 
@@ -911,14 +943,14 @@ describe('roost.chat', () => {
       body: stream,
     })) as unknown as typeof fetch;
 
-    const { Roost } = await import('../src/index');
-    const roost = new Roost({
+    const { Owlette } = await import('../src/index');
+    const owlette = new Owlette({
       token: 'owk_test_x',
       apiUrl: 'https://dev.test',
       fetch: fetchMock,
       retry: { maxAttempts: 1 },
     });
-    const handle = await roost.chat.send('conv-1', 'hi');
+    const handle = await owlette.chat.send('conv-1', 'hi');
     const collected: string[] = [];
     for await (const delta of handle.deltas) collected.push(delta);
     expect(collected.join('')).toBe('hello world');
@@ -926,12 +958,12 @@ describe('roost.chat', () => {
   });
 });
 
-describe('roost.users', () => {
+describe('owlette.users', () => {
   it('list → GET /api/users with role + site filters', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { users: [], nextPageToken: '' } },
     ]);
-    await roost.users.list({ role: 'admin', site: 'site-1', pageSize: 50 });
+    await owlette.users.list({ role: 'admin', site: 'site-1', pageSize: 50 });
     expect(calls[0]!.url).toContain('/api/users?');
     expect(calls[0]!.url).toContain('role=admin');
     expect(calls[0]!.url).toContain('site=site-1');
@@ -939,13 +971,13 @@ describe('roost.users', () => {
   });
 
   it('promote → POST /api/users/{uid}/promote auto-generates idempotency-key', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: { uid: 'u-1', role: 'admin', previousRole: 'member', changed: true },
       },
     ]);
-    await roost.users.promote('u-1', 'admin');
+    await owlette.users.promote('u-1', 'admin');
     expect(calls[0]!.url).toBe('https://dev.test/api/users/u-1/promote');
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers['Idempotency-Key']).toMatch(/^sdk-users-promote-/);
@@ -953,7 +985,7 @@ describe('roost.users', () => {
   });
 
   it('demote → surfaces last_superadmin error code on 409', async () => {
-    const { roost } = makeRoost([
+    const { owlette } = makeOwlette([
       {
         status: 409,
         body: {
@@ -962,24 +994,24 @@ describe('roost.users', () => {
         },
       },
     ]);
-    await expect(roost.users.demote('u-1')).rejects.toMatchObject({
-      name: 'RoostApiError',
+    await expect(owlette.users.demote('u-1')).rejects.toMatchObject({
+      name: 'OwletteApiError',
       status: 409,
       code: 'last_superadmin',
     });
   });
 
   it('assignSites → POST with body.siteIds array', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { uid: 'u-1', assignedSiteIds: ['site-1'] } },
     ]);
-    await roost.users.assignSites('u-1', ['site-1', 'site-2']);
+    await owlette.users.assignSites('u-1', ['site-1', 'site-2']);
     const body = JSON.parse(String(calls[0]!.init.body));
     expect(body.siteIds).toEqual(['site-1', 'site-2']);
   });
 
   it('delete with successorUid forwards the query param', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -991,21 +1023,21 @@ describe('roost.users', () => {
         },
       },
     ]);
-    await roost.users.delete('u-1', { successorUid: 'u-2' });
+    await owlette.users.delete('u-1', { successorUid: 'u-2' });
     expect(calls[0]!.init.method).toBe('DELETE');
     expect(calls[0]!.url).toBe('https://dev.test/api/users/u-1?successorUid=u-2');
   });
 });
 
-describe('roost.members (factory)', () => {
+describe('owlette.members (factory)', () => {
   it('list → GET /api/sites/{siteId}/members', async () => {
-    const { roost, calls } = makeRoost([{ status: 200, body: { members: [] } }]);
-    await roost.members('site-1').list();
+    const { owlette, calls } = makeOwlette([{ status: 200, body: { members: [] } }]);
+    await owlette.members('site-1').list();
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/members');
   });
 
   it('add → POST with uid + role and auto idempotency-key', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -1017,32 +1049,32 @@ describe('roost.members (factory)', () => {
         },
       },
     ]);
-    await roost.members('site-1').add({ uid: 'u-1', role: 'admin' });
+    await owlette.members('site-1').add({ uid: 'u-1', role: 'admin' });
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers['Idempotency-Key']).toMatch(/^sdk-members-add-/);
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ uid: 'u-1', role: 'admin' });
   });
 
   it('remove → DELETE /api/sites/{siteId}/members/{uid}', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       { status: 200, body: { siteId: 'site-1', uid: 'u-1', wasMember: true } },
     ]);
-    const result = await roost.members('site-1').remove('u-1');
+    const result = await owlette.members('site-1').remove('u-1');
     expect(calls[0]!.init.method).toBe('DELETE');
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/members/u-1');
     expect(result.wasMember).toBe(true);
   });
 });
 
-describe('roost.machines (extended)', () => {
+describe('owlette.machines (extended)', () => {
   it('dispatchCommand → POST /commands with type + auto idempotency-key', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 202,
         body: { ok: true, data: { commandId: 'cmd_abc', status: 'pending' } },
       },
     ]);
-    const result = await roost.machines.dispatchCommand(
+    const result = await owlette.machines.dispatchCommand(
       'site-1',
       'm-1',
       'reboot_machine',
@@ -1058,7 +1090,7 @@ describe('roost.machines (extended)', () => {
   });
 
   it('getCommand → GET /commands/{commandId}', async () => {
-    const { roost, calls } = makeRoost([
+    const { owlette, calls } = makeOwlette([
       {
         status: 200,
         body: {
@@ -1073,7 +1105,7 @@ describe('roost.machines (extended)', () => {
         },
       },
     ]);
-    const result = await roost.machines.getCommand('site-1', 'm-1', 'cmd_abc');
+    const result = await owlette.machines.getCommand('site-1', 'm-1', 'cmd_abc');
     expect(calls[0]!.url).toBe(
       'https://dev.test/api/sites/site-1/machines/m-1/commands/cmd_abc',
     );
@@ -1142,15 +1174,15 @@ describe('roost.machines (extended)', () => {
           r.bytes ? r.bytes.buffer.slice(r.bytes.byteOffset, r.bytes.byteOffset + r.bytes.byteLength) : new ArrayBuffer(0),
       } as Response;
     };
-    const { Roost } = await import('../src/index');
-    const roost = new Roost({
+    const { Owlette } = await import('../src/index');
+    const owlette = new Owlette({
       token: 'owk_live_x',
       apiUrl: 'https://dev.test',
       fetch,
       retry: { maxAttempts: 1 },
     });
 
-    const result = await roost.machines.captureScreenshot('site-1', 'm-1', {
+    const result = await owlette.machines.captureScreenshot('site-1', 'm-1', {
       pollIntervalMs: 1, // keep tests fast
       timeoutMs: 1000,
     });
@@ -1164,20 +1196,20 @@ describe('roost.machines (extended)', () => {
   });
 });
 
-describe('roost.events signature helpers', () => {
+describe('owlette.events signature helpers', () => {
   it('signBody round-trips through verifySignature', async () => {
-    const { roost } = makeRoost([]);
+    const { owlette } = makeOwlette([]);
     const body = '{"event":"x"}';
-    const header = roost.events.signBody(body, 'secret');
-    const result = roost.events.verifySignature(header, body, 'secret');
+    const header = owlette.events.signBody(body, 'secret');
+    const result = owlette.events.verifySignature(header, body, 'secret');
     expect(result.ok).toBe(true);
   });
 
   it('isSignatureValid boolean form matches verifySignature.ok', async () => {
-    const { roost } = makeRoost([]);
+    const { owlette } = makeOwlette([]);
     const body = 'hello';
-    const header = roost.events.signBody(body, 'secret');
-    expect(roost.events.isSignatureValid(header, body, 'secret')).toBe(true);
-    expect(roost.events.isSignatureValid(header, 'tampered', 'secret')).toBe(false);
+    const header = owlette.events.signBody(body, 'secret');
+    expect(owlette.events.isSignatureValid(header, body, 'secret')).toBe(true);
+    expect(owlette.events.isSignatureValid(header, 'tampered', 'secret')).toBe(false);
   });
 });

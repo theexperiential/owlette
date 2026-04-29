@@ -3,16 +3,16 @@
  *
  * Default policy: 5 attempts, exponential backoff starting at 250ms,
  * capped at 8s, with ±25% jitter. Retries only when the operation
- * throws a `RoostApiError` with status 429 or ≥ 500 — everything else
- * (auth failures, validation errors, scope issues) bubbles immediately
- * because the caller can't unstick them with another try.
+ * throws an `OwletteApiError` with status 429 or ≥ 500 — everything
+ * else (auth failures, validation errors, scope issues) bubbles
+ * immediately because the caller can't unstick them with another try.
  *
  * When the server hands back `Retry-After: <seconds>` on a 429, we
  * honor it instead of the exponential schedule. We clamp it to
  * `maxDelayMs * 2` so an abusive header can't wedge a caller forever.
  */
 
-import { RoostApiError } from './client';
+import { OwletteApiError } from './client';
 
 export interface RetryOptions {
   /** Max attempts including the first. Default 5. */
@@ -33,7 +33,7 @@ export const DEFAULT_RETRY: RetryOptions = {
   maxDelayMs: 8_000,
   jitter: 0.25,
   shouldRetry: (err: unknown): boolean => {
-    if (err instanceof RoostApiError) {
+    if (err instanceof OwletteApiError) {
       return err.status === 429 || err.status >= 500;
     }
     // Network / fetch errors are opaque — retry them.
@@ -71,7 +71,7 @@ function computeDelay(
   err: unknown,
 ): number {
   // Honor Retry-After on 429 if the server sent one inside the problem+json.
-  if (err instanceof RoostApiError && err.status === 429) {
+  if (err instanceof OwletteApiError && err.status === 429) {
     const retryAfter = err.problem.retryAfter;
     if (typeof retryAfter === 'number' && Number.isFinite(retryAfter)) {
       const ms = Math.max(0, Math.floor(retryAfter * 1000));

@@ -1,4 +1,4 @@
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 
 export interface QuotaSnapshot {
   siteId: string;
@@ -24,7 +24,7 @@ export interface QuotaHistoryDay {
 }
 
 export class Quotas {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async current(siteId: string): Promise<QuotaSnapshot> {
     const res = await this.client.request<QuotaSnapshot>(

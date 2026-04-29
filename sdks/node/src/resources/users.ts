@@ -1,5 +1,5 @@
 /**
- * `roost.users` — superadmin-only platform user management (wave 3B).
+ * `owlette.users` — superadmin-only platform user management (wave 3B).
  *
  *   GET    /api/users
  *   GET    /api/users/{uid}
@@ -11,11 +11,11 @@
  *
  * Stable error codes surfaced by these endpoints (`last_superadmin`,
  * `orphan_sites`, `successor_invalid`, `unknown_site`) live on the thrown
- * `RoostApiError.code` field — callers can `instanceof`-check the error
- * and switch on `.code` rather than parsing prose.
+ * `OwletteApiError.code` field — callers can `instanceof`-check the
+ * error and switch on `.code` rather than parsing prose.
  */
 import { randomUUID } from 'crypto';
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 
 /* --------------------------------------------------------------------- */
 /*  types                                                                */
@@ -79,7 +79,7 @@ export interface DeleteUserResult {
 /* --------------------------------------------------------------------- */
 
 export class Users {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async list(opts: ListUsersOptions = {}): Promise<ListUsersResult> {
     const query: Record<string, string | number | boolean | undefined> = {};

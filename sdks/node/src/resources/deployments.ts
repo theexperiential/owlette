@@ -1,4 +1,4 @@
-import type { RoostClient } from '../lib/client';
+import type { OwletteClient } from '../lib/client';
 
 export interface ListDeploymentsOptions {
   siteId: string;
@@ -11,7 +11,7 @@ export interface ListDeploymentsOptions {
 }
 
 export class Deployments {
-  constructor(private readonly client: RoostClient) {}
+  constructor(private readonly client: OwletteClient) {}
 
   async list(
     roostId: string,

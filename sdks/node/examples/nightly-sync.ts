@@ -8,7 +8,7 @@
  *   ALERT_WEBHOOK - Slack incoming webhook for quota alerts.
  */
 
-import { Roost, RoostApiError } from '@owlette/sdk';
+import { Owlette, OwletteApiError } from '@owlette/sdk';
 
 const {
   ROOST_TOKEN, ROOST_SITE_ID, ROOST_ID, WATCH_DIR,
@@ -33,13 +33,13 @@ async function main(): Promise<number> {
     }
   }
 
-  const roost = new Roost({ token: ROOST_TOKEN!, apiUrl: ROOST_BASE });
+  const owlette = new Owlette({ token: ROOST_TOKEN!, apiUrl: ROOST_BASE });
 
   try {
-    const before = await roost.roosts.get(ROOST_ID!, { siteId: ROOST_SITE_ID! });
+    const before = await owlette.roosts.get(ROOST_ID!, { siteId: ROOST_SITE_ID! });
     const previousVersionId = before.currentVersion?.versionId ?? null;
 
-    const result = await roost.roosts.push(WATCH_DIR!, ROOST_ID!, {
+    const result = await owlette.roosts.push(WATCH_DIR!, ROOST_ID!, {
       siteId: ROOST_SITE_ID!,
     });
 
@@ -63,7 +63,7 @@ async function main(): Promise<number> {
     }));
     return 0;
   } catch (err) {
-    if (err instanceof RoostApiError && err.code === 'quota_exceeded') {
+    if (err instanceof OwletteApiError && err.code === 'quota_exceeded') {
       await alert(`roost nightly-sync: quota exceeded for site ${ROOST_SITE_ID}`);
       console.error(JSON.stringify({
         level: 'error',

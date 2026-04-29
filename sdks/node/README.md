@@ -1,6 +1,6 @@
 # @owlette/sdk — node sdk
 
-Programmatic access to the [roost](https://owlette.app) public api from
+Programmatic access to the [owlette](https://owlette.app) public api from
 Node 20+. Zero runtime dependencies — uses the built-in `fetch`, `crypto`,
 and `fs` modules.
 
@@ -15,22 +15,21 @@ npm install @owlette/sdk@rc
 ## quickstart
 
 ```ts
-import { Roost } from '@owlette/sdk';
+import { Owlette } from '@owlette/sdk';
 
-const token = process.env.OWLETTE_TOKEN ?? process.env.ROOST_TOKEN;
-const roost = new Roost({
-  token: token!,
+const owlette = new Owlette({
+  token: process.env.OWLETTE_TOKEN!,
   apiUrl: 'https://owlette.app',
 });
 
 // verify auth and inspect the target site
-const identity = await roost.account.whoami();
-const site = await roost.sites.get(identity.primarySiteId ?? 'site-1');
+const identity = await owlette.account.whoami();
+const site = await owlette.sites.get(identity.primarySiteId ?? 'site-1');
 console.log('authenticated as', identity.email ?? identity.userId);
 console.log('site', site.id, site.name);
 
 // publish a directory as a new version
-const result = await roost.roosts.push('./dist', 'rst_abc', {
+const result = await owlette.roosts.push('./dist', 'rst_abc', {
   siteId: site.id,
   description: 'fixed broken video',
   onProgress: (evt) => console.log(evt),
@@ -43,7 +42,7 @@ console.log('uploaded', result.stats.uploadedChunks, 'chunks');
 ## client options
 
 ```ts
-new Roost({
+new Owlette({
   token: 'owk_live_...',          // required
   apiUrl: 'https://owlette.app',  // default
   environment: 'live',            // optional — 'live' | 'test'
@@ -61,32 +60,32 @@ or api keys.
 
 | resource        | methods                                                            |
 |-----------------|--------------------------------------------------------------------|
-| `roost.account` | `whoami`, `version`, `apiKeys.list`, `apiKeys.create`, `apiKeys.revoke` |
-| `roost.roosts`  | `list`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy` |
-| `roost.chunks`  | `check`, `uploadUrls`, `downloadUrls`, `mount`, `referrers`        |
-| `roost.versions` | `list`, `get`, `patch`, `files`, `diff`                           |
-| `roost.deployments` | `list`, `get`                                                  |
-| `roost.keys`    | legacy session/ID-token key admin: `create`, `list`, `rotate`, `revoke` |
-| `roost.webhooks` | `subscribe`, `list`, `get`, `update`, `remove`, `rotateSecret`, `probe`, `deliveries`, `delivery`, `retryDelivery` |
-| `roost.sites`   | `list`, `get`                                                      |
-| `roost.machines` | `list`, `get`, `deployments`, `dispatchCommand`, `getCommand`, `captureScreenshot` |
-| `roost.installerDeployments` | `list`, `get`, `create`, `retry`, `cancel`, `uninstall`, `delete` |
-| `roost.installer` | `list`, `latest`, `upload`, `setLatest`, `delete`                |
-| `roost.processes(siteId, machineId)` | `list`, `create`, `update`, `start`, `stop`, `restart`, `schedule`, `remove` |
-| `roost.chat`    | `new`, `list`, `send`, `rename`, `delete`                          |
-| `roost.users`   | `list`, `promote`, `demote`, `assignSites`, `removeSites`, `delete` |
-| `roost.members(siteId)` | `list`, `add`, `remove`                                    |
-| `roost.quotas`  | `current`, `history`                                               |
+| `owlette.account` | `whoami`, `version`, `apiKeys.list`, `apiKeys.create`, `apiKeys.revoke` |
+| `owlette.roosts`  | `list`, `get`, `create`, `patch`, `remove`, `push`, `rollback`, `deploy` |
+| `owlette.chunks`  | `check`, `uploadUrls`, `downloadUrls`, `mount`, `referrers`        |
+| `owlette.versions` | `list`, `get`, `patch`, `files`, `diff`                           |
+| `owlette.deployments` | `list`, `get`                                                  |
+| `owlette.keys`    | legacy session/ID-token key admin: `create`, `list`, `rotate`, `revoke` |
+| `owlette.webhooks` | `subscribe`, `list`, `get`, `update`, `remove`, `rotateSecret`, `probe`, `deliveries`, `delivery`, `retryDelivery` |
+| `owlette.sites`   | `list`, `get`                                                      |
+| `owlette.machines` | `list`, `get`, `deployments`, `dispatchCommand`, `getCommand`, `captureScreenshot` |
+| `owlette.installerDeployments` | `list`, `get`, `create`, `retry`, `cancel`, `uninstall`, `delete` |
+| `owlette.installer` | `list`, `latest`, `upload`, `setLatest`, `delete`                |
+| `owlette.processes(siteId, machineId)` | `list`, `create`, `update`, `start`, `stop`, `restart`, `kill`, `schedule`, `delete` |
+| `owlette.chat`    | `new`, `list`, `send`, `rename`, `delete`                          |
+| `owlette.users`   | `list`, `promote`, `demote`, `assignSites`, `removeSites`, `delete` |
+| `owlette.members(siteId)` | `list`, `add`, `remove`                                    |
+| `owlette.quotas`  | `current`, `history`                                               |
 
 For complete runnable scripts, see `examples/`: auth/inventory,
 token-to-publish, command polling, and webhook verification.
 
 ## push progress
 
-`roost.roosts.push()` reports live progress through `onProgress`:
+`owlette.roosts.push()` reports live progress through `onProgress`:
 
 ```ts
-await roost.roosts.push('./dist', 'rst_abc', {
+await owlette.roosts.push('./dist', 'rst_abc', {
   siteId: 'site-1',
   onProgress: (evt) => {
     if (evt.phase === 'hash') console.log(`hashing ${evt.file}`);
@@ -117,15 +116,15 @@ to compare hashes.
 
 ## errors
 
-All non-2xx api responses throw `RoostApiError`:
+All non-2xx api responses throw `OwletteApiError`:
 
 ```ts
-import { Roost, RoostApiError } from '@owlette/sdk';
+import { Owlette, OwletteApiError } from '@owlette/sdk';
 
 try {
-  await roost.roosts.get('rst_missing', { siteId: 'site-1' });
+  await owlette.roosts.get('rst_missing', { siteId: 'site-1' });
 } catch (err) {
-  if (err instanceof RoostApiError) {
+  if (err instanceof OwletteApiError) {
     console.log(err.status, err.code, err.requestId);
   }
   throw err;

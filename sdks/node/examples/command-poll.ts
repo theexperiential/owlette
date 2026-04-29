@@ -19,8 +19,8 @@
  */
 
 import {
-  Roost,
-  RoostApiError,
+  Owlette,
+  OwletteApiError,
   type MachineCommandType,
 } from '@owlette/sdk';
 
@@ -63,7 +63,7 @@ if (!Number.isFinite(pollSeconds) || pollSeconds <= 0 || !Number.isFinite(timeou
 }
 
 const commandType = rawCommandType as MachineCommandType;
-const roost = new Roost({ token: token!, apiUrl });
+const owlette = new Owlette({ token: token!, apiUrl });
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -77,7 +77,7 @@ async function main(): Promise<number> {
       if (commandType === 'capture_screenshot') {
         params.monitor = process.env.OWLETTE_MONITOR ?? 'primary';
       }
-      const queued = await roost.machines.dispatchCommand(
+      const queued = await owlette.machines.dispatchCommand(
         siteId!,
         machineId!,
         commandType,
@@ -89,7 +89,7 @@ async function main(): Promise<number> {
 
     const maxPolls = Math.max(1, Math.ceil(timeoutSeconds / pollSeconds));
     for (let attempt = 0; attempt < maxPolls; attempt += 1) {
-      const status = await roost.machines.getCommand(siteId!, machineId!, commandId);
+      const status = await owlette.machines.getCommand(siteId!, machineId!, commandId);
       console.log('status', commandId, status.status);
       if (status.status === 'completed') {
         console.log(JSON.stringify(status.result ?? {}, null, 2));
@@ -105,7 +105,7 @@ async function main(): Promise<number> {
     console.error(`timed out waiting for ${commandId}`);
     return 3;
   } catch (err) {
-    if (err instanceof RoostApiError) {
+    if (err instanceof OwletteApiError) {
       console.error('api error', err.status, err.code, err.problem.detail ?? err.message);
       if (err.requestId) console.error('request_id', err.requestId);
     } else {
