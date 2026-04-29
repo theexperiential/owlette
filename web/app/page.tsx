@@ -35,6 +35,10 @@ const jsonLd = {
     'Multi-site organization with role-based access',
     'Project file distribution',
     'Threshold alerts, email notifications, webhooks',
+    'Public REST API with scoped keys',
+    'CLI and TypeScript SDK',
+    'Display topology management with auto-revert',
+    'Scheduled reboots and dependency-aware restarts',
   ],
 };
 

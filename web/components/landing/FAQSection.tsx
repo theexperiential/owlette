@@ -10,10 +10,6 @@ const faqs: { q: string; a: React.ReactNode }[] = [
     a: "during beta, yes. no credit card, no trial clock, no free-tier sleight of hand. after beta it's $10/machine/month — no seats, no tiers, no hidden fees. just machines.",
   },
   {
-    q: "will it work with my software?",
-    a: "if it runs on windows and has a process, yes. touchdesigner, unreal engine, unity, obs, vlc, your custom node.js app, that internal tool nobody documented in 2019 — all fair game. owlette monitors processes, not specific applications.",
-  },
-  {
     q: "does it work on mac or linux?",
     a: "no. owlette is windows-only. your mac is fine — it doesn't need monitoring. it'll let you know when something's wrong. loudly. in the middle of a show.",
   },
@@ -26,32 +22,16 @@ const faqs: { q: string; a: React.ReactNode }[] = [
     a: "no inbound ports, no vpn. agents connect outbound over https (port 443) to google's firebase infrastructure. if your network allows general internet access, it just works. locked-down environments may need to whitelist *.googleapis.com and *.firebaseio.com.",
   },
   {
-    q: "how fast does auto-recovery happen?",
-    a: "crashed processes are detected and restarted within about 10 seconds. fast enough that most end-users never notice. fast enough that your machine quietly died inside and came back before anyone found the body.",
-  },
-  {
     q: "what's cortex?",
     a: "cortex is owlette's ai fleet assistant — ask it the questions you ask yourself every day: \"which nvidia driver are we running?\", \"restart the media server on node 3\", \"what crashed at 3am?\" it translates natural language into real commands across your fleet. you bring your own api key (openai, anthropic, or any compatible provider).",
   },
   {
-    q: "if a kiosk crashes and nobody's there to see it, did it really crash?",
-    a: "yes. owlette saw it. owlette always sees it.",
-  },
-  {
     q: "is my data secure?",
-    a: "agents connect over tls, credentials are encrypted on-device using a machine-bound key, and oauth tokens are never logged or stored in plaintext. access is managed through firebase auth with optional passkey and two-factor authentication. all your base are belong to... you.",
-  },
-  {
-    q: "what's the difference between a site and a machine?",
-    a: "a site is a logical grouping — \"nyc office\", \"main stage\", \"lobby\". a machine is an individual windows pc inside that site. most people start with one site and add more as their fleet grows.",
-  },
-  {
-    q: "is mayonnaise an instrument?",
-    a: <>nein, patrick, mayonnaise ist kein instrument. <a href="https://www.youtube.com/watch?v=coM3idB-jpI" target="_blank" rel="noopener noreferrer" className="text-accent-cyan hover:underline underline-offset-4">beweis.</a></>,
+    a: "agents connect over tls, credentials are encrypted on-device using a machine-bound key, and oauth tokens are never logged or stored in plaintext. access is managed through firebase auth with optional passkey and two-factor authentication.",
   },
   {
     q: "can i self-host it?",
-    a: "yes — owlette is agpl-3.0. the full source is on github. fair warning: it requires firebase, a railway (or equivalent) deployment for the web app, and a willingness to blow past your usage limits at 3am debugging support tickets from your neighbor's camper because your furnace broke and it's -10 outside. we won't talk you out of it, but the hosted version exists for a reason.",
+    a: "yes — owlette is FSL-1.1-Apache-2.0 (converts to apache 2.0 two years after each release). the full source is on github. fair warning: it requires firebase, a railway (or equivalent) deployment for the web app, and a willingness to blow past your usage limits at 3am debugging support tickets from your neighbor's camper because your furnace broke and it's -10 outside. we won't talk you out of it, but the hosted version exists for a reason.",
   },
 ];
 

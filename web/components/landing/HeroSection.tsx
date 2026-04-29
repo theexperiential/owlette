@@ -6,7 +6,7 @@ import { InteractiveBackground } from './InteractiveBackground';
 import { OwletteEye } from './OwletteEye';
 import { RotatingWord } from './RotatingWord';
 
-const prefixWords = ['monitor', 'deploy software to', 'ask questions to', 'remotely control', 'manage'];
+const prefixWords = ['monitor', 'deploy software to', 'ask questions to', 'remotely control', 'manage', 'script', 'lay out displays on', 'diagnose'];
 const suffixWords = [
   'computers',
   'media servers',
@@ -17,6 +17,9 @@ const suffixWords = [
   'TouchDesigner PCs',
   'Unreal Engine nodes',
   'Node.js servers',
+  'projector walls',
+  'LED arrays',
+  'video walls',
 ];
 
 export function HeroSection() {
@@ -62,9 +65,22 @@ export function HeroSection() {
             <Link href="/register">get started</Link>
           </Button>
           <Button asChild variant="outline" size="lg" className="border-border/50 hover:bg-accent-warm/10 hover:border-accent-warm/30 h-12 text-base text-muted-foreground">
-            <Link href="/login">sign in</Link>
+            <Link href="/demo" target="_blank">see the live demo</Link>
           </Button>
         </div>
+
+        {/* Platform pill row */}
+        <p className="mt-6 sm:mt-8 text-xs sm:text-sm text-muted-foreground text-center hero-enter-delay-3">
+          windows only <span className="mx-1 sm:mx-2">&middot;</span> free during beta <span className="mx-1 sm:mx-2">&middot;</span>
+          <a
+            href="https://github.com/theexperiential/owlette/blob/main/LICENSE"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-foreground transition-colors"
+          >
+            FSL-1.1 source on github
+          </a>
+        </p>
       </div>
 
     </section>

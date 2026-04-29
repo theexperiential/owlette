@@ -203,9 +203,21 @@
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
+      transition-delay: 0ms !important;
       scroll-behavior: auto !important;
+    }
+
+    .hero-enter,
+    .hero-enter-nav,
+    .hero-enter-delay-1,
+    .hero-enter-delay-2,
+    .hero-enter-delay-3 {
+      animation: none !important;
+      opacity: 1 !important;
+      transform: none !important;
     }
   }
   body {

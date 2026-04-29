@@ -7,10 +7,14 @@ const included = [
   { label: 'process control & auto-recovery' },
   { label: 'email & webhook notifications' },
   { label: 'software & file deployment' },
+  { label: 'display layouts with watchdog auto-revert' },
   { label: 'process scheduling & automatic reboots' },
   { label: 'remote screenshots' },
   { label: 'multi-site organization' },
   { label: 'unlimited log history' },
+  { label: 'public REST API with scoped keys' },
+  { label: 'CLI + TypeScript SDK' },
+  { label: 'webhooks with HMAC signing' },
   { label: 'cortex AI fleet assistant', asterisk: true },
 ];
 

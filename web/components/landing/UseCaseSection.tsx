@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, Brain, ChevronDown, ChevronLeft, ChevronRight, Power, Rocket, X, type LucideIcon } from 'lucide-react';
+import { Activity, Brain, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Monitor, Power, Rocket, X, type LucideIcon } from 'lucide-react';
 import Image from 'next/image';
 
 const capabilities: { label: string; detail: string; expanded: string; preview: string; icon: LucideIcon }[] = [
@@ -27,11 +27,25 @@ const capabilities: { label: string; detail: string; expanded: string; preview: 
     icon: Rocket,
   },
   {
-    label: 'converse',
-    detail: 'talk to your machines like a human with cortex',
-    expanded: 'cortex lets you talk to your machines in natural language. ask questions, run diagnostics, and execute commands across your fleet through a conversational interface.',
+    label: 'diagnose',
+    detail: 'ask cortex why a process crashed, what driver is installed, or which machine just dropped offline.',
+    expanded: 'cortex turns plain-english questions into real diagnostic actions across your fleet. bring your own openai or anthropic key.',
     preview: '/preview-converse.png',
     icon: Brain,
+  },
+  {
+    label: 'display',
+    detail: 'apply windows display layouts atomically — with a watchdog that auto-reverts a bad layout before anyone sees a black screen.',
+    expanded: 'capture, save, and apply windows display topologies (resolution, orientation, primary, multi-monitor). mosaic-aware: owlette detects and protects active nvidia mosaic configurations. every apply is idempotent and reversible.',
+    preview: '/preview-converse.png',
+    icon: Monitor,
+  },
+  {
+    label: 'automate',
+    detail: 'scheduled reboots, startup sequences, dependency-aware restarts. set the rules once and stop babysitting.',
+    expanded: 'define when machines reboot, the order processes start in, and the dependencies between them. owlette runs the playbook so you don\'t have to.',
+    preview: '/preview-converse.png',
+    icon: CalendarClock,
   },
 ];
 
@@ -226,9 +240,9 @@ export function UseCaseSection() {
           ))}
         </div>
 
-        {/* Desktop: 4-column grid with shared preview area below */}
+        {/* Desktop: 3-column grid (2 rows of 3) with shared preview area below */}
         <div className="hidden lg:block">
-          <div className="grid grid-cols-4 gap-6 items-start">
+          <div className="grid grid-cols-3 gap-6 items-start">
             {capabilities.map((cap, i) => (
               <button
                 key={cap.label}
@@ -253,7 +267,7 @@ export function UseCaseSection() {
 
           {/* Expanded text — mirrored grid so text appears below its card */}
           {openIndex !== null && (
-            <div className="grid grid-cols-4 gap-6 mt-2">
+            <div className="grid grid-cols-3 gap-6 mt-2">
               {capabilities.map((cap, i) => (
                 <div key={cap.label} className={i === openIndex ? 'animate-in fade-in duration-300' : ''}>
                   {i === openIndex && (
@@ -386,7 +400,7 @@ export function UseCaseSection() {
           />
 
           {/* Caption under image */}
-          <p className="absolute bottom-14 left-1/2 -translate-x-1/2 z-10 text-lg text-white/70 text-center whitespace-nowrap">
+          <p className="absolute bottom-14 left-1/2 -translate-x-1/2 z-10 text-lg text-white/70 text-center text-balance max-w-2xl mx-auto px-4">
             {capabilities[lightboxIndex].detail}
           </p>
 
