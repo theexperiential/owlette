@@ -1,6 +1,22 @@
 {
   "indexes": [
     {
+      "collectionGroup": "dmca_notices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "complainant.email", "order": "ASCENDING" },
+        { "fieldPath": "submittedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "dmca_notices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sourceIp", "order": "ASCENDING" },
+        { "fieldPath": "submittedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "chats",
       "queryScope": "COLLECTION",
       "fields": [
