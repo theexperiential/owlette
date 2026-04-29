@@ -1,110 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Activity, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, Eye, Monitor, Power, Rocket, RotateCcw, X, type LucideIcon } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Activity, Brain, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Monitor, Power, Rocket, X, type LucideIcon } from 'lucide-react';
 import Image from 'next/image';
 
-function DisplayPreviewArt() {
-  return (
-    <div className="relative w-full aspect-[2300/1050] bg-card/40 px-8 py-10 flex flex-col items-center justify-center gap-6">
-      {/* 4-monitor mosaic with one drifted + restored indicator */}
-      <div className="grid grid-cols-2 gap-3 w-full max-w-md aspect-[16/9]">
-        {[1, 2, 3, 4].map((n) => {
-          const drifted = n === 3;
-          return (
-            <div
-              key={n}
-              className={`relative rounded-md border flex items-center justify-center transition-colors ${
-                drifted
-                  ? 'border-accent-warm/50 bg-accent-warm/10'
-                  : 'border-accent-cyan/40 bg-accent-cyan/10'
-              }`}
-            >
-              <span className={`text-sm font-mono ${drifted ? 'text-accent-warm' : 'text-accent-cyan/80'}`}>
-                {n}
-              </span>
-              {drifted && (
-                <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-accent-cyan flex items-center justify-center ring-2 ring-card">
-                  <Check className="w-2.5 h-2.5 text-background" strokeWidth={3} />
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Status row */}
-      <div className="flex items-center gap-6 text-xs font-mono">
-        <span className="flex items-center gap-1.5 text-muted-foreground">
-          <Eye className="w-3 h-3" /> watching
-        </span>
-        <span className="flex items-center gap-1.5 text-accent-warm">
-          <span className="w-1.5 h-1.5 rounded-full bg-accent-warm" />
-          monitor 3 drifted
-        </span>
-        <span className="flex items-center gap-1.5 text-accent-cyan">
-          <RotateCcw className="w-3 h-3" />
-          auto-restored
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function AutomatePreviewArt() {
-  const rules = [
-    { when: 'mon-fri · 04:00', what: 'reboot lobby-display, museum-kiosk-*', tag: 'reboot' },
-    { when: 'on boot', what: 'launch obs64.exe, then touchdesigner.exe', tag: 'sequence' },
-    { when: 'cpu > 90% for 5min', what: 'restart media-server-stage', tag: 'rule' },
-    { when: 'sun · 03:00', what: 'pull latest content, deploy roost v4', tag: 'deploy' },
-  ];
-  const tagColor: Record<string, string> = {
-    reboot: 'text-accent-cyan border-accent-cyan/40 bg-accent-cyan/10',
-    sequence: 'text-accent-warm border-accent-warm/40 bg-accent-warm/10',
-    rule: 'text-foreground/80 border-border bg-card/40',
-    deploy: 'text-accent-cyan border-accent-cyan/40 bg-accent-cyan/10',
-  };
-  return (
-    <div className="relative w-full aspect-[2300/1050] bg-card/40 p-8 flex flex-col gap-3 justify-center">
-      <div className="flex items-center justify-between mb-1 px-1">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-mono">
-          schedule
-        </span>
-        <span className="flex items-center gap-1.5 text-[10px] text-accent-cyan font-mono">
-          <span className="w-1.5 h-1.5 rounded-full bg-accent-cyan" />
-          4 rules active
-        </span>
-      </div>
-      {rules.map((rule, i) => (
-        <div
-          key={i}
-          className="flex items-center gap-4 rounded-md border border-border bg-card/60 px-4 py-3"
-        >
-          <span className="text-xs font-mono text-muted-foreground w-44 flex-shrink-0 truncate">
-            {rule.when}
-          </span>
-          <span className="text-xs text-foreground/90 flex-1 truncate">
-            {rule.what}
-          </span>
-          <span className={`hidden sm:inline-flex items-center text-[10px] font-mono px-2 py-0.5 rounded border ${tagColor[rule.tag]}`}>
-            {rule.tag}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-type Capability = {
-  label: string;
-  detail: string;
-  expanded: string;
-  preview: string;
-  icon: LucideIcon;
-  previewElement?: ReactNode;
-};
-
-const capabilities: Capability[] = [
+const capabilities: { label: string; detail: string; expanded: string; preview: string; icon: LucideIcon }[] = [
   {
     label: 'monitor',
     detail: 'real-time metrics and email/webhook notifications',
@@ -139,7 +39,6 @@ const capabilities: Capability[] = [
     expanded: 'owlette captures the windows display topology you want and watches for drift. when a reboot, a driver update, or an accidental change moves a monitor, owlette restores the known-good layout automatically. mosaic-aware.',
     preview: '/landing-screens/preview-displays.png',
     icon: Monitor,
-    previewElement: <DisplayPreviewArt />,
   },
   {
     label: 'automate',
@@ -147,7 +46,6 @@ const capabilities: Capability[] = [
     expanded: 'define when machines reboot, the order processes start in, and the dependencies between them. owlette runs the playbook so you don\'t have to.',
     preview: '/landing-screens/preview-automate.png',
     icon: CalendarClock,
-    previewElement: <AutomatePreviewArt />,
   },
 ];
 
@@ -315,30 +213,27 @@ export function UseCaseSection() {
 
               {/* Expanded content inline below the card */}
               <div className={`overflow-hidden transition-all duration-500 ease-out ${openIndex === i ? 'max-h-[800px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                <p className="text-sm text-muted-foreground/80 leading-relaxed text-center px-6 pb-4 animate-in fade-in duration-300">
+                <p className="text-base text-foreground/80 leading-loose text-center px-6 pb-4 animate-in fade-in duration-300">
                   {cap.expanded}
                 </p>
                 <div className="px-2 pb-4">
                   <div
-                    className={`relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 ${cap.previewElement ? '' : 'cursor-zoom-in'}`}
-                    style={cap.previewElement ? undefined : {
+                    className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 cursor-zoom-in"
+                    style={{
                       maskImage: 'linear-gradient(to bottom, black 80%, transparent)',
                       WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent)',
                     }}
-                    onClick={cap.previewElement ? undefined : () => setLightboxIndex(i)}
+                    onClick={() => setLightboxIndex(i)}
                   >
-                    {cap.previewElement ? (
-                      cap.previewElement
-                    ) : (
-                      <Image
-                        src={cap.preview}
-                        alt={`${cap.label} preview`}
-                        width={2300}
-                        height={1050}
-                        className="w-full h-auto"
-                        priority
-                      />
-                    )}
+                    <Image
+                      src={cap.preview}
+                      alt={`${cap.label} preview`}
+                      width={1280}
+                      height={720}
+                      className="w-full h-auto"
+                      priority
+                      unoptimized
+                    />
                   </div>
                 </div>
               </div>
@@ -346,99 +241,106 @@ export function UseCaseSection() {
           ))}
         </div>
 
-        {/* Desktop: 3-column grid (2 rows of 3) with shared preview area below */}
+        {/* Desktop: two 3-column rows; the preview slides in below whichever
+            row contains the active card so users don't have to look past
+            unrelated cards to see the screenshot. */}
         <div className="hidden lg:block">
-          <div className="grid grid-cols-3 gap-6 items-start">
-            {capabilities.map((cap, i) => (
-              <button
-                key={cap.label}
-                onClick={() => toggle(i)}
-                className={`text-center group cursor-pointer rounded-lg p-4 transition-all duration-300 border ${openIndex === i ? 'bg-card/60 border-border' : 'border-transparent hover:bg-card/50'}`}
-              >
-                <cap.icon className={`w-8 h-8 mx-auto mb-3 transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-muted-foreground group-hover:text-accent-cyan'}`} />
-                <div className="flex items-center justify-center gap-1.5 mb-2">
-                  <h3 className={`text-2xl font-bold font-heading transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-foreground group-hover:text-accent-cyan'}`}>
-                    {cap.label}
-                  </h3>
-                  <ChevronDown
-                    className={`w-4 h-4 text-muted-foreground transition-transform duration-300 ${openIndex === i ? 'rotate-180' : ''}`}
-                  />
-                </div>
-                <p className="text-base text-muted-foreground">
-                  {cap.detail}
-                </p>
-              </button>
-            ))}
-          </div>
-
-          {/* Expanded text — mirrored grid so text appears below its card */}
-          {openIndex !== null && (
-            <div className="grid grid-cols-3 gap-6 mt-2">
-              {capabilities.map((cap, i) => (
-                <div key={cap.label} className={i === openIndex ? 'animate-in fade-in duration-300' : ''}>
-                  {i === openIndex && (
-                    <p className="text-sm text-muted-foreground/80 leading-relaxed text-center px-2">
-                      {cap.expanded}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Preview area — below the grid so cards never shift. supports both image and inline-jsx previews */}
-          {(() => {
-            const activeCap = openIndex !== null ? capabilities[openIndex] : null;
-            const hasInline = activeCap?.previewElement != null;
+          {[0, 1].map((rowIdx) => {
+            const rowStart = rowIdx * 3;
+            const rowCaps = capabilities.slice(rowStart, rowStart + 3);
+            const rowHasActive = openIndex !== null && openIndex >= rowStart && openIndex < rowStart + 3;
+            const rowSpacing = rowIdx === 0 ? '' : 'mt-6';
             return (
-              <div
-                className={`overflow-hidden transition-all duration-500 ease-out ${activeCap ? 'max-h-[800px] opacity-100 mt-8' : 'max-h-0 opacity-0 mt-0'}`}
-              >
+              <div key={rowIdx} className={rowSpacing}>
+                <div className="grid grid-cols-3 gap-6 items-start">
+                  {rowCaps.map((cap, sliceIdx) => {
+                    const i = rowStart + sliceIdx;
+                    return (
+                      <button
+                        key={cap.label}
+                        onClick={() => toggle(i)}
+                        className={`text-center group cursor-pointer rounded-lg p-4 transition-all duration-300 border ${openIndex === i ? 'bg-card/60 border-border' : 'border-transparent hover:bg-card/50'}`}
+                      >
+                        <cap.icon className={`w-8 h-8 mx-auto mb-3 transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-muted-foreground group-hover:text-accent-cyan'}`} />
+                        <div className="flex items-center justify-center gap-1.5 mb-2">
+                          <h3 className={`text-2xl font-bold font-heading transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-foreground group-hover:text-accent-cyan'}`}>
+                            {cap.label}
+                          </h3>
+                          <ChevronDown
+                            className={`w-4 h-4 text-muted-foreground transition-transform duration-300 ${openIndex === i ? 'rotate-180' : ''}`}
+                          />
+                        </div>
+                        <p className="text-base text-muted-foreground">
+                          {cap.detail}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Expanded text — mirrors this row's column for the active card */}
+                {rowHasActive && (
+                  <div className="grid grid-cols-3 gap-6 mt-2">
+                    {rowCaps.map((cap, sliceIdx) => {
+                      const i = rowStart + sliceIdx;
+                      return (
+                        <div key={cap.label} className={i === openIndex ? 'animate-in fade-in duration-300' : ''}>
+                          {i === openIndex && (
+                            <p className="text-base text-foreground/80 leading-loose text-center px-2">
+                              {cap.expanded}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Preview image — slides down below this row when its card is active */}
                 <div
-                  className={`relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 ${hasInline ? '' : 'cursor-zoom-in'}`}
-                  style={hasInline ? undefined : {
-                    maskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
-                    maskComposite: 'intersect',
-                    WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
-                    WebkitMaskComposite: 'source-in',
-                  }}
-                  onClick={hasInline ? undefined : () => openIndex !== null && setLightboxIndex(openIndex)}
+                  className={`overflow-hidden transition-all duration-500 ease-out ${rowHasActive ? 'max-h-[800px] opacity-100 mt-8' : 'max-h-0 opacity-0 mt-0'}`}
                 >
-                  {hasInline ? (
-                    activeCap.previewElement
-                  ) : (
+                  <div
+                    className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 cursor-zoom-in"
+                    style={{
+                      maskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
+                      maskComposite: 'intersect',
+                      WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
+                      WebkitMaskComposite: 'source-in',
+                    }}
+                    onClick={() => openIndex !== null && setLightboxIndex(openIndex)}
+                  >
                     <div className="relative">
-                      {capabilities.map((cap) => (
+                      {rowCaps.map((cap) => (
                         <div
                           key={cap.preview}
                           className="transition-all duration-500 ease-out"
                           style={{
-                            opacity: !cap.previewElement && activePreview === cap.preview ? 1 : 0,
-                            position: !cap.previewElement && activePreview === cap.preview ? 'relative' : 'absolute',
+                            opacity: rowHasActive && activePreview === cap.preview ? 1 : 0,
+                            position: rowHasActive && activePreview === cap.preview ? 'relative' : 'absolute',
                             top: 0,
                             left: 0,
                             width: '100%',
-                            transform: !cap.previewElement && activePreview === cap.preview ? 'translateY(0)' : 'translateY(12px)',
+                            transform: rowHasActive && activePreview === cap.preview ? 'translateY(0)' : 'translateY(12px)',
                           }}
                         >
-                          {!cap.previewElement && (
-                            <Image
-                              src={cap.preview}
-                              alt={`${cap.label} preview`}
-                              width={2300}
-                              height={1050}
-                              className="w-full h-auto"
-                              priority
-                            />
-                          )}
+                          <Image
+                            src={cap.preview}
+                            alt={`${cap.label} preview`}
+                            width={1280}
+                            height={720}
+                            className="w-full h-auto"
+                            priority
+                            unoptimized
+                          />
                         </div>
                       ))}
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
             );
-          })()}
+          })}
         </div>
 
       </div>
