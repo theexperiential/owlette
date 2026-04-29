@@ -354,11 +354,15 @@ describe('site CRUD actions', () => {
       name: 'Main Gallery',
       owner: 'owner-1',
       timezone: 'Not/AZone',
+      // wave 3.2: new sites bootstrap with the beta default tier so the
+      // roost gate doesn't lock new users out during the public beta.
+      tier: 'pro',
     });
     expect(db.docs.get('sites/site-a')).toMatchObject({
       name: 'Main Gallery',
       owner: 'owner-1',
       timezone: 'Not/AZone',
+      tier: 'pro',
     });
     expect(db.docs.get('users/owner-1')?.sites).toEqual([]);
   });

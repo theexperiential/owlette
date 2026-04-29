@@ -133,6 +133,12 @@ jest.mock('@/hooks/useSelectedRoost', () => ({
   }),
 }));
 
+// Pro-tier gate (wave 3.2). These tests assert the existing roost-list
+// wiring, so the mock returns `'pro'` to keep the gate inactive.
+jest.mock('@/hooks/useSiteTier', () => ({
+  useSiteTier: () => 'pro',
+}));
+
 jest.mock('@/hooks/useRoostUpload', () => ({
   useRoostUpload: () => ({
     state: { status: 'idle' },
