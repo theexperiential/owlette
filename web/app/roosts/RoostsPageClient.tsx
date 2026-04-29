@@ -1,16 +1,18 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
 import { useProjectDistributionManager } from '@/hooks/useProjectDistributions';
 import { useRoosts } from '@/hooks/useRoosts';
 import { useSelectedRoost } from '@/hooks/useSelectedRoost';
+import { useSiteTier } from '@/hooks/useSiteTier';
 import { RoostStatusPill } from '@/components/RoostTargetRow';
 import { EmptyStateUpload } from '@/components/EmptyStateUpload';
 import { Button } from '@/components/ui/button';
-import { Plus, Loader2, FolderSync, Archive, MoreVertical, Trash2, RefreshCw, Copy } from 'lucide-react';
+import { Plus, Loader2, FolderSync, Archive, MoreVertical, Trash2, RefreshCw, Copy, Sparkles } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -189,6 +191,13 @@ export default function RoostsPageClient() {
   // onboarding and "create your first roost" CTA.
   const { machines } = useMachines(currentSiteId);
 
+  // Pricing tier gate (wave 3.2). roost is a pro feature; core sites see
+  // the upgrade empty state below. Returns `undefined` while the site doc
+  // is still resolving — we keep rendering the normal page (loading shows
+  // its own spinner) rather than risk a flash of the gate, and rely on
+  // `getSiteTier`'s beta default to keep `'pro'` users unaffected.
+  const siteTier = useSiteTier(currentSiteId);
+
   // Upload execution lives at the page level so a multi-GB run survives
   // dismissal of ProjectDistributionDialog. When the dialog is closed
   // while `upload.state.status === 'uploading'`, the MinimizedUploadCard
@@ -287,6 +296,83 @@ export default function RoostsPageClient() {
 
   if (!user) {
     return null;
+  }
+
+  // Pro-tier gate: core sites get the "pro feature" empty state instead of
+  // the roost UI. Tier is authoritative at the site level — an owner of a
+  // core-tier site still sees this gate. Render only when the tier has
+  // resolved to `'core'`; `undefined` (still loading) keeps the normal
+  // page so we don't briefly flash the gate during initial load.
+  if (siteTier === 'core') {
+    return (
+      <div className="relative min-h-screen pb-8">
+        <PageHeader
+          currentPage="roost"
+          sites={sites}
+          currentSiteId={currentSiteId}
+          onSiteChange={handleSiteChange}
+          onManageSites={() => setManageDialogOpen(true)}
+          onAccountSettings={() => setAccountSettingsOpen(true)}
+          actionButton={<DownloadButton />}
+        />
+
+        <ManageSitesDialog
+          open={manageDialogOpen}
+          onOpenChange={setManageDialogOpen}
+          sites={sites}
+          currentSiteId={currentSiteId}
+          onUpdateSite={updateSite}
+          onDeleteSite={async (siteId) => {
+            await deleteSite(siteId);
+            if (siteId === currentSiteId) {
+              const remainingSites = sites.filter((s) => s.id !== siteId);
+              if (remainingSites.length > 0) {
+                handleSiteChange(remainingSites[0].id);
+              }
+            }
+          }}
+          onCreateSite={() => setCreateDialogOpen(true)}
+        />
+
+        <CreateSiteDialog
+          open={createDialogOpen}
+          onOpenChange={setCreateDialogOpen}
+          onCreateSite={createSite}
+          onSiteCreated={(siteId) => setUserPickedSiteId(siteId)}
+        />
+
+        <AccountSettingsDialog
+          open={accountSettingsOpen}
+          onOpenChange={setAccountSettingsOpen}
+        />
+
+        <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
+          <div className="mt-12 md:mt-16 flex justify-center">
+            <div className="max-w-md rounded-lg border border-border bg-card p-8 text-center">
+              <div className="mx-auto mb-4 inline-flex rounded-md bg-accent-cyan/10 p-2.5 text-accent-cyan">
+                <Sparkles className="h-5 w-5" aria-hidden="true" />
+              </div>
+              <h2 className="text-lg font-semibold text-foreground">
+                roost is a pro feature.
+              </h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                roost is included in the pro tier — content-addressed project
+                distribution with atomic deploy and 30-day rollback history.
+                upgrade your site to enable.
+              </p>
+              <div className="mt-6">
+                <Button
+                  asChild
+                  className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                >
+                  <Link href="/#pricing">see pricing →</Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
   }
 
   return (

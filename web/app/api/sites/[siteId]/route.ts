@@ -62,12 +62,16 @@ export async function GET(request: NextRequest, { params }: { params: Promise<Ro
     }
 
     const data = siteSnap.data() ?? {};
+    const rawTier = data.tier;
+    const tier: 'core' | 'pro' | null =
+      rawTier === 'core' || rawTier === 'pro' ? rawTier : null;
 
     return applyAuthDeprecations(
       NextResponse.json({
         id: siteId,
         name: typeof data.name === 'string' ? data.name : siteId,
         plan: typeof data.plan === 'string' ? data.plan : null,
+        tier,
         timezone: typeof data.timezone === 'string' ? data.timezone : null,
         owner: typeof data.owner === 'string' ? data.owner : null,
         createdAt: timestampToIso(data.createdAt),

@@ -19,6 +19,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import { validateSiteId } from '@/lib/validators';
+import { BETA_DEFAULT_TIER, type SiteTier } from '@/lib/siteTier';
 
 const NAME_MAX_LENGTH = 200;
 
@@ -49,6 +50,7 @@ export type CreateSiteResult =
       name: string;
       timezone: string;
       owner: string;
+      tier: SiteTier;
       createdAt: number;
     };
 
@@ -88,12 +90,18 @@ export async function createSite(
   }
 
   const nowDate = (input.now ?? (() => new Date()))();
+  // New sites bootstrap with the beta default tier so the roost gate (and
+  // any future pro-only feature) doesn't lock new users out during the
+  // beta. Flipping `BETA_DEFAULT_TIER` to `'core'` is the single switch
+  // that ends free pro access for sites created from that point forward.
+  const tier: SiteTier = BETA_DEFAULT_TIER;
 
   await siteRef.set({
     name: trimmedName,
     createdAt: nowDate,
     owner: input.ownerUid,
     timezone,
+    tier,
   });
 
   emitMutation({
@@ -107,6 +115,7 @@ export async function createSite(
       verb: 'created',
       owner: input.ownerUid,
       timezone,
+      tier,
     },
   });
 
@@ -116,6 +125,7 @@ export async function createSite(
     name: trimmedName,
     timezone,
     owner: input.ownerUid,
+    tier,
     createdAt: nowDate.getTime(),
   };
 }
