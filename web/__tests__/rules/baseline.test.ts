@@ -212,7 +212,7 @@ describe('agent reads + writes', () => {
         targets: [MACHINE_X],
         createdAt: Date.now(),
         schemaVersion: 2,
-        currentManifestId: null,
+        currentVersionId: null,
       });
     });
 

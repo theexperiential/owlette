@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // Owlette Firestore Security Rules
-// Version: 2.3.0 - Control-Plane API Boundary Lockdown
+// Version: 2.4.0 - Roost pointer field rename (manifest -> version)
 // Last Updated: 2026-04-28
 //
 // Security Model:
@@ -289,24 +289,36 @@ service cloud.firestore {
       // ----------------------------------------
       // The v2 replacement for project_distributions. Each roost
       // represents a project that's kept in sync with one or more machines.
-      // The doc itself stores ONLY the manifest pointer (currentManifestId,
-      // previousManifestId, manifestUrl) plus targets[] + metadata.
-      // Manifests themselves live in R2 (size: a 500GB project ~10MB
-      // manifest, well over Firestore's 1MB doc limit).
+      // The doc itself stores ONLY the version pointer (currentVersionId,
+      // previousVersionId, versionUrl) plus targets[] + metadata.
+      // Version bodies themselves live in R2 (size: a 500GB project ~10MB
+      // body, well over Firestore's 1MB doc limit).
       // schemaVersion: 2 distinguishes from v1 project_distributions.
+      //
+      // The old `*Manifest*` field names (currentManifestId, etc.) are
+      // also blocked as defense-in-depth: legacy roost docs predate the
+      // manifest->version rename and may still carry those keys, so the
+      // immutability guard covers both names.
 
       match /roosts/{roostId} {
         allow read: if canAccessSite(siteId);
         // CREATE: site-scoped users can create the roost shell, but the
-        // pointer fields (currentManifestId, previousManifestId,
-        // manifestUrl) MUST be null/unset at create time. The first real
-        // manifest is published via /api/roosts/.../versions using
-        // the admin SDK (which bypasses these rules). This prevents a
-        // direct-Firestore client from publishing a fake "v0" pointing
-        // at attacker-controlled storage.
+        // pointer fields (currentVersionId, previousVersionId, versionUrl —
+        // and the legacy currentManifestId/previousManifestId/manifestUrl
+        // names) MUST be null/unset at create time. The first real version
+        // is published via /api/roosts/.../versions using the admin SDK
+        // (which bypasses these rules). This prevents a direct-Firestore
+        // client from publishing a fake "v0" pointing at attacker-
+        // controlled storage.
         allow create: if canAccessSite(siteId) &&
                          hasRequiredFields(['name', 'targets', 'createdAt', 'schemaVersion']) &&
                          request.resource.data.schemaVersion == 2 &&
+                         (!('currentVersionId' in request.resource.data) ||
+                          request.resource.data.currentVersionId == null) &&
+                         (!('previousVersionId' in request.resource.data) ||
+                          request.resource.data.previousVersionId == null) &&
+                         (!('versionUrl' in request.resource.data) ||
+                          request.resource.data.versionUrl == null) &&
                          (!('currentManifestId' in request.resource.data) ||
                           request.resource.data.currentManifestId == null) &&
                          (!('previousManifestId' in request.resource.data) ||
@@ -318,14 +330,18 @@ service cloud.firestore {
         // which use Firestore transactions (CAS) under admin SDK creds.
         allow update: if canAccessSite(siteId) &&
                          !request.resource.data.diff(resource.data).affectedKeys()
-                            .hasAny(['currentManifestId', 'previousManifestId', 'manifestUrl', 'schemaVersion']);
+                            .hasAny([
+                              'currentVersionId', 'previousVersionId', 'versionUrl',
+                              'currentManifestId', 'previousManifestId', 'manifestUrl',
+                              'schemaVersion'
+                            ]);
         allow delete: if canAccessSite(siteId);
 
         // ------------------------------------------
         // Per-target reported state (one doc per machine)
         // ------------------------------------------
         // Agents write their own observed state here so the dashboard can
-        // show "machine X is ON manifest Y" vs the intended currentManifestId.
+        // show "machine X is ON version Y" vs the intended currentVersionId.
         // This closes the loop between intent (set by web) and reality
         // (reported by agent).
 

@@ -275,6 +275,134 @@ describe('site-scoped control-plane writes', () => {
   });
 });
 
+describe('roost version-pointer immutability', () => {
+  // The pointer fields on a roost doc (currentVersionId, previousVersionId,
+  // versionUrl) are the trust root for "what code runs on the fleet". They
+  // can only be flipped by /api/roosts/.../versions and /rollback under
+  // the admin SDK (which bypasses these rules and does CAS in a Firestore
+  // transaction). A direct browser write would let any site member ship
+  // arbitrary code to every targeted machine.
+  //
+  // Legacy field names (currentManifestId, etc.) are also blocked as
+  // defense-in-depth — old roost docs may still carry those keys and we
+  // don't want a stale name to become a bypass.
+
+  test('member cannot create a roost with currentVersionId pre-set', async () => {
+    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
+
+    await assertFails(
+      setDoc(doc(db, 'sites', SITE_A, 'roosts', 'roost-evil'), {
+        name: 'evil',
+        targets: [MACHINE_X],
+        createdAt: serverTimestamp(),
+        schemaVersion: 2,
+        currentVersionId: 'attacker-version',
+        versionUrl: 'https://attacker.example/payload',
+      }),
+    );
+  });
+
+  test('member cannot flip currentVersionId on an existing roost', async () => {
+    await seedAsAdmin(async (db) => {
+      await setDoc(doc(db, 'sites', SITE_A, 'roosts', 'roost-1'), {
+        name: 'kiosk-bundle',
+        targets: [MACHINE_X],
+        createdAt: Date.now(),
+        schemaVersion: 2,
+        currentVersionId: 'v-legit',
+        versionUrl: 'https://r2.example/legit',
+      });
+    });
+
+    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
+
+    await assertFails(
+      updateDoc(doc(db, 'sites', SITE_A, 'roosts', 'roost-1'), {
+        currentVersionId: 'v-evil',
+      }),
+    );
+  });
+
+  test('member cannot flip versionUrl on an existing roost', async () => {
+    await seedAsAdmin(async (db) => {
+      await setDoc(doc(db, 'sites', SITE_A, 'roosts', 'roost-1'), {
+        name: 'kiosk-bundle',
+        targets: [MACHINE_X],
+        createdAt: Date.now(),
+        schemaVersion: 2,
+        currentVersionId: 'v-legit',
+        versionUrl: 'https://r2.example/legit',
+      });
+    });
+
+    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
+
+    await assertFails(
+      updateDoc(doc(db, 'sites', SITE_A, 'roosts', 'roost-1'), {
+        versionUrl: 'https://attacker.example/payload',
+      }),
+    );
+  });
+
+  test('member cannot flip previousVersionId on an existing roost', async () => {
+    await seedAsAdmin(async (db) => {
+      await setDoc(doc(db, 'sites', SITE_A, 'roosts', 'roost-1'), {
+        name: 'kiosk-bundle',
+        targets: [MACHINE_X],
+        createdAt: Date.now(),
+        schemaVersion: 2,
+        currentVersionId: 'v-legit',
+        previousVersionId: 'v-prior',
+      });
+    });
+
+    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
+
+    await assertFails(
+      updateDoc(doc(db, 'sites', SITE_A, 'roosts', 'roost-1'), {
+        previousVersionId: 'v-evil',
+      }),
+    );
+  });
+
+  test('member cannot flip the legacy currentManifestId field on a roost', async () => {
+    // Defense in depth — legacy roost docs predate the manifest->version
+    // rename. Even though no code WRITES this field anymore, the rules
+    // still block flipping it so a stale doc can't become a bypass.
+    await seedAsAdmin(async (db) => {
+      await setDoc(doc(db, 'sites', SITE_A, 'roosts', 'roost-legacy'), {
+        name: 'legacy',
+        targets: [MACHINE_X],
+        createdAt: Date.now(),
+        schemaVersion: 2,
+        currentManifestId: 'm-legit',
+      });
+    });
+
+    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
+
+    await assertFails(
+      updateDoc(doc(db, 'sites', SITE_A, 'roosts', 'roost-legacy'), {
+        currentManifestId: 'm-evil',
+      }),
+    );
+  });
+
+  test('member cannot create a roost with the legacy currentManifestId pre-set', async () => {
+    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
+
+    await assertFails(
+      setDoc(doc(db, 'sites', SITE_A, 'roosts', 'roost-legacy-evil'), {
+        name: 'legacy-evil',
+        targets: [MACHINE_X],
+        createdAt: serverTimestamp(),
+        schemaVersion: 2,
+        currentManifestId: 'attacker-manifest',
+      }),
+    );
+  });
+});
+
 describe('machine control-plane writes', () => {
   test('member cannot write pending commands directly', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
