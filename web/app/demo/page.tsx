@@ -11,6 +11,7 @@ import { DisplayLayoutPanel } from '@/components/charts/DisplayLayoutPanel';
 import { MachineCardView } from '@/app/dashboard/components/MachineCardView';
 import { MachineRow, MemoizedTableHeader as ListViewTableHeader } from '@/app/dashboard/components/MachineListView';
 import { AddMachineButton } from '@/app/dashboard/components/AddMachineButton';
+import { useSlidePanel } from '@/hooks/useSlidePanel';
 import { DemoContext } from '@/contexts/DemoContext';
 import {
   DEMO_SITE_ID,
@@ -53,6 +54,20 @@ export default function DemoPage() {
   const [viewType, setViewType] = useState<ViewType>('list');
   const [statsExpanded, setStatsExpanded] = useState(false);
   const [detailPanel, setDetailPanel] = useState<DetailPanelState | null>(null);
+
+  // Slide-reveal animation for the detail panel — same hook the
+  // dashboard uses, so demo and prod feel identical when expanding /
+  // collapsing a metric or display panel.
+  const {
+    wrapperRef: slideWrapperRef,
+    contentRef: slideContentRef,
+    held: heldDetailPanel,
+    slideAnimating,
+  } = useSlidePanel<DetailPanelState>({
+    value: detailPanel,
+    reanimateKey: (p) => p.machineId,
+    reflowKey: (p) => (p.metric === 'display' ? 'display' : 'metric'),
+  });
 
   // Per-row expand state — initialize all as collapsed
   const [expandedMachineIds, setExpandedMachineIds] = useState<Set<string>>(
@@ -174,31 +189,41 @@ export default function DemoPage() {
             </div>
           </div>
 
-          {/* Detail Panel — `display` opens the topology panel; everything
-              else opens the metrics panel. Mirrors the dashboard's split. */}
-          {detailPanel && (
-            <div className="mb-6">
-              {detailPanel.metric === 'display' ? (
-                <DisplayLayoutPanel
-                  machineId={detailPanel.machineId}
-                  machineName={detailPanel.machineName}
-                  siteId={DEMO_SITE_ID}
-                  onClose={() => setDetailPanel(null)}
-                />
-              ) : (
-                <MetricsDetailPanel
-                  machineId={detailPanel.machineId}
-                  machineName={detailPanel.machineName}
-                  siteId={DEMO_SITE_ID}
-                  initialMetric={detailPanel.metric}
-                  onClose={() => setDetailPanel(null)}
-                />
+          {/* Detail Panel — animates open / close via `useSlidePanel`,
+              mirroring the dashboard. The held copy stays mounted during
+              the close transition so the height interpolation has visual
+              content to slide over. `display` renders the topology
+              panel; everything else renders the metrics panel. */}
+          <div
+            ref={slideWrapperRef}
+            className="overflow-hidden transition-[height] duration-200 ease-out"
+            style={{ contain: 'layout paint' }}
+            aria-hidden={!detailPanel}
+          >
+            <div ref={slideContentRef} className="pb-6" style={{ contain: 'layout paint' }}>
+              {heldDetailPanel && (
+                heldDetailPanel.metric === 'display' ? (
+                  <DisplayLayoutPanel
+                    machineId={heldDetailPanel.machineId}
+                    machineName={heldDetailPanel.machineName}
+                    siteId={DEMO_SITE_ID}
+                    onClose={() => setDetailPanel(null)}
+                  />
+                ) : (
+                  <MetricsDetailPanel
+                    machineId={heldDetailPanel.machineId}
+                    machineName={heldDetailPanel.machineName}
+                    siteId={DEMO_SITE_ID}
+                    initialMetric={heldDetailPanel.metric}
+                    onClose={() => setDetailPanel(null)}
+                  />
+                )
               )}
             </div>
-          )}
+          </div>
 
           {/* Machines */}
-          <div className="space-y-6">
+          <div className="space-y-6" data-slide-pausing={slideAnimating ? 'true' : undefined}>
             <div className="flex items-center justify-between">
               <h3 className="text-lg md:text-xl font-bold text-foreground">machines</h3>
 

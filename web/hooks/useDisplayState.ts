@@ -507,16 +507,19 @@ export function useDisplayState(
   // Demo route — return synthesized topology directly. Skip the live
   // Firestore path entirely; the demo site/machine docs don't exist and
   // would surface a permission error in the panel's loading state.
+  // Demo machines start with `remoteApplyEnabled: true` so the panel
+  // surfaces the "restore" workflow rather than the one-time "enable
+  // restore" gate — visitors should land on the meaningful demo state.
   if (demo) {
     if (!enabled || !machineId) {
-      return { profile: null, assigned: null, autoRestore: DEFAULT_AUTO_RESTORE, remoteApplyEnabled: false, loading: false, error: null };
+      return { profile: null, assigned: null, autoRestore: DEFAULT_AUTO_RESTORE, remoteApplyEnabled: true, loading: false, error: null };
     }
     const { profile, assigned } = demo.getDisplayState(machineId);
     return {
       profile,
       assigned: subscribeAssigned ? assigned : null,
       autoRestore: DEFAULT_AUTO_RESTORE,
-      remoteApplyEnabled: false,
+      remoteApplyEnabled: true,
       loading: false,
       error: null,
     };
