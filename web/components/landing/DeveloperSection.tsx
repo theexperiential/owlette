@@ -13,14 +13,28 @@ const TABS: { id: TabId; label: string }[] = [
 ];
 
 const SAMPLES: Record<TabId, string> = {
-  curl: `curl -X POST https://owlette.app/api/sites/$SITE/machines/$MACHINE/processes/$PROC/restart \\
+  curl: `# restart a process across the API
+URL="https://owlette.app/api/sites/$SITE/machines/$MACHINE"
+
+curl -X POST "$URL/processes/$PROC/restart" \\
   -H "Authorization: Bearer $OWLETTE_TOKEN" \\
   -H "Idempotency-Key: $(uuidgen)"`,
-  cli: `owlette process restart $PROC --site $SITE --machine $MACHINE`,
+  cli: `# install once
+npm i -g @owlette/cli
+owlette login
+
+# restart a process anywhere
+owlette process restart $PROC \\
+  --site $SITE --machine $MACHINE`,
   typescript: `import { Owlette } from '@owlette/sdk';
 
-const owlette = new Owlette({ token: process.env.OWLETTE_TOKEN! });
-await owlette.processes(siteId, machineId).restart(processId);`,
+const owlette = new Owlette({
+  token: process.env.OWLETTE_TOKEN!,
+});
+
+await owlette
+  .processes(siteId, machineId)
+  .restart(processId);`,
 };
 
 const PROOF_CHIPS: { icon: typeof KeyRound; label: string; body: string }[] = [
@@ -58,10 +72,10 @@ export function DeveloperSection() {
           </p>
         </div>
 
-        <div className="flex flex-col lg:flex-row gap-6 lg:gap-8">
+        <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 lg:items-stretch">
           {/* Code block — 60% on desktop, full on mobile */}
-          <div className="lg:w-3/5">
-            <div className="rounded-xl border border-border bg-card/60 shadow-2xl shadow-black/30 ring-1 ring-white/5 overflow-hidden">
+          <div className="lg:w-3/5 flex">
+            <div className="flex-1 min-w-0 rounded-xl border border-border bg-card/60 shadow-2xl shadow-black/30 ring-1 ring-white/5 overflow-hidden flex flex-col">
               <div role="tablist" className="flex border-b border-border bg-card/40">
                 {TABS.map((tab) => {
                   const isActive = tab.id === activeTab;
@@ -83,26 +97,26 @@ export function DeveloperSection() {
                   );
                 })}
               </div>
-              <pre className="p-4 sm:p-5 text-xs sm:text-sm font-mono text-foreground/90 leading-relaxed overflow-x-auto">
+              <pre className="flex-1 p-4 sm:p-5 text-xs sm:text-sm font-mono text-foreground/90 leading-relaxed whitespace-pre-wrap break-words">
                 <code>{SAMPLES[activeTab]}</code>
               </pre>
             </div>
           </div>
 
           {/* Proof chips — 40% on desktop, stacked below on mobile */}
-          <div className="lg:w-2/5 flex flex-col gap-4">
+          <div className="lg:w-2/5 flex flex-col gap-3">
             {PROOF_CHIPS.map((chip) => (
               <div
                 key={chip.label}
-                className="rounded-xl border border-border bg-card/60 p-4 sm:p-5 shadow-2xl shadow-black/30 ring-1 ring-white/5"
+                className="rounded-xl border border-border bg-card/60 p-4 shadow-2xl shadow-black/30 ring-1 ring-white/5"
               >
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex items-center gap-2 mb-1.5">
                   <chip.icon className="w-4 h-4 text-accent-cyan flex-shrink-0" />
                   <h3 className="text-sm font-semibold text-foreground">
                     {chip.label}
                   </h3>
                 </div>
-                <p className="text-sm text-muted-foreground leading-relaxed">
+                <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
                   {chip.body}
                 </p>
               </div>

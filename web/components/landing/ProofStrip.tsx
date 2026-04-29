@@ -32,10 +32,10 @@ export function ProofStrip() {
           {proofs.map(({ icon: Icon, headline, body }) => (
             <div key={headline} className="text-center">
               <Icon className="w-6 h-6 mx-auto mb-3 text-accent-cyan" />
-              <h3 className="text-lg font-semibold font-heading text-foreground mb-2">
+              <h3 className="text-lg font-semibold font-heading text-foreground mb-2 text-balance">
                 {headline}
               </h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
+              <p className="text-sm text-muted-foreground leading-relaxed text-balance">
                 {body}
               </p>
             </div>

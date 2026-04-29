@@ -1,10 +1,110 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, Brain, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Monitor, Power, Rocket, X, type LucideIcon } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Activity, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, Eye, Monitor, Power, Rocket, RotateCcw, X, type LucideIcon } from 'lucide-react';
 import Image from 'next/image';
 
-const capabilities: { label: string; detail: string; expanded: string; preview: string; icon: LucideIcon }[] = [
+function DisplayPreviewArt() {
+  return (
+    <div className="relative w-full aspect-[2300/1050] bg-card/40 px-8 py-10 flex flex-col items-center justify-center gap-6">
+      {/* 4-monitor mosaic with one drifted + restored indicator */}
+      <div className="grid grid-cols-2 gap-3 w-full max-w-md aspect-[16/9]">
+        {[1, 2, 3, 4].map((n) => {
+          const drifted = n === 3;
+          return (
+            <div
+              key={n}
+              className={`relative rounded-md border flex items-center justify-center transition-colors ${
+                drifted
+                  ? 'border-accent-warm/50 bg-accent-warm/10'
+                  : 'border-accent-cyan/40 bg-accent-cyan/10'
+              }`}
+            >
+              <span className={`text-sm font-mono ${drifted ? 'text-accent-warm' : 'text-accent-cyan/80'}`}>
+                {n}
+              </span>
+              {drifted && (
+                <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-accent-cyan flex items-center justify-center ring-2 ring-card">
+                  <Check className="w-2.5 h-2.5 text-background" strokeWidth={3} />
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Status row */}
+      <div className="flex items-center gap-6 text-xs font-mono">
+        <span className="flex items-center gap-1.5 text-muted-foreground">
+          <Eye className="w-3 h-3" /> watching
+        </span>
+        <span className="flex items-center gap-1.5 text-accent-warm">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent-warm" />
+          monitor 3 drifted
+        </span>
+        <span className="flex items-center gap-1.5 text-accent-cyan">
+          <RotateCcw className="w-3 h-3" />
+          auto-restored
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function AutomatePreviewArt() {
+  const rules = [
+    { when: 'mon-fri · 04:00', what: 'reboot lobby-display, museum-kiosk-*', tag: 'reboot' },
+    { when: 'on boot', what: 'launch obs64.exe, then touchdesigner.exe', tag: 'sequence' },
+    { when: 'cpu > 90% for 5min', what: 'restart media-server-stage', tag: 'rule' },
+    { when: 'sun · 03:00', what: 'pull latest content, deploy roost v4', tag: 'deploy' },
+  ];
+  const tagColor: Record<string, string> = {
+    reboot: 'text-accent-cyan border-accent-cyan/40 bg-accent-cyan/10',
+    sequence: 'text-accent-warm border-accent-warm/40 bg-accent-warm/10',
+    rule: 'text-foreground/80 border-border bg-card/40',
+    deploy: 'text-accent-cyan border-accent-cyan/40 bg-accent-cyan/10',
+  };
+  return (
+    <div className="relative w-full aspect-[2300/1050] bg-card/40 p-8 flex flex-col gap-3 justify-center">
+      <div className="flex items-center justify-between mb-1 px-1">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-mono">
+          schedule
+        </span>
+        <span className="flex items-center gap-1.5 text-[10px] text-accent-cyan font-mono">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent-cyan" />
+          4 rules active
+        </span>
+      </div>
+      {rules.map((rule, i) => (
+        <div
+          key={i}
+          className="flex items-center gap-4 rounded-md border border-border bg-card/60 px-4 py-3"
+        >
+          <span className="text-xs font-mono text-muted-foreground w-44 flex-shrink-0 truncate">
+            {rule.when}
+          </span>
+          <span className="text-xs text-foreground/90 flex-1 truncate">
+            {rule.what}
+          </span>
+          <span className={`hidden sm:inline-flex items-center text-[10px] font-mono px-2 py-0.5 rounded border ${tagColor[rule.tag]}`}>
+            {rule.tag}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type Capability = {
+  label: string;
+  detail: string;
+  expanded: string;
+  preview: string;
+  icon: LucideIcon;
+  previewElement?: ReactNode;
+};
+
+const capabilities: Capability[] = [
   {
     label: 'monitor',
     detail: 'real-time metrics and email/webhook notifications',
@@ -35,10 +135,11 @@ const capabilities: { label: string; detail: string; expanded: string; preview: 
   },
   {
     label: 'display',
-    detail: 'apply windows display layouts atomically — with a watchdog that auto-reverts a bad layout before anyone sees a black screen.',
-    expanded: 'capture, save, and apply windows display topologies (resolution, orientation, primary, multi-monitor). mosaic-aware: owlette detects and protects active nvidia mosaic configurations. every apply is idempotent and reversible.',
+    detail: 'displays that stay put — drift-detected and auto-restored after reboots, driver updates, or accidental changes.',
+    expanded: 'owlette captures the windows display topology you want and watches for drift. when a reboot, a driver update, or an accidental change moves a monitor, owlette restores the known-good layout automatically. mosaic-aware.',
     preview: '/landing-screens/preview-displays.png',
     icon: Monitor,
+    previewElement: <DisplayPreviewArt />,
   },
   {
     label: 'automate',
@@ -46,6 +147,7 @@ const capabilities: { label: string; detail: string; expanded: string; preview: 
     expanded: 'define when machines reboot, the order processes start in, and the dependencies between them. owlette runs the playbook so you don\'t have to.',
     preview: '/landing-screens/preview-automate.png',
     icon: CalendarClock,
+    previewElement: <AutomatePreviewArt />,
   },
 ];
 
@@ -218,21 +320,25 @@ export function UseCaseSection() {
                 </p>
                 <div className="px-2 pb-4">
                   <div
-                    className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 cursor-zoom-in"
-                    style={{
+                    className={`relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 ${cap.previewElement ? '' : 'cursor-zoom-in'}`}
+                    style={cap.previewElement ? undefined : {
                       maskImage: 'linear-gradient(to bottom, black 80%, transparent)',
                       WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent)',
                     }}
-                    onClick={() => setLightboxIndex(i)}
+                    onClick={cap.previewElement ? undefined : () => setLightboxIndex(i)}
                   >
-                    <Image
-                      src={cap.preview}
-                      alt={`${cap.label} preview`}
-                      width={2300}
-                      height={1050}
-                      className="w-full h-auto"
-                      priority
-                    />
+                    {cap.previewElement ? (
+                      cap.previewElement
+                    ) : (
+                      <Image
+                        src={cap.preview}
+                        alt={`${cap.label} preview`}
+                        width={2300}
+                        height={1050}
+                        className="w-full h-auto"
+                        priority
+                      />
+                    )}
                   </div>
                 </div>
               </div>
@@ -280,47 +386,59 @@ export function UseCaseSection() {
             </div>
           )}
 
-          {/* Preview image — below the grid so cards never shift */}
-          <div
-            className={`overflow-hidden transition-all duration-500 ease-out ${activePreview ? 'max-h-[800px] opacity-100 mt-8' : 'max-h-0 opacity-0 mt-0'}`}
-          >
-            <div
-              className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 cursor-zoom-in"
-              style={{
-                maskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
-                maskComposite: 'intersect',
-                WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
-                WebkitMaskComposite: 'source-in',
-              }}
-              onClick={() => openIndex !== null && setLightboxIndex(openIndex)}
-            >
-              <div className="relative">
-                {capabilities.map((cap) => (
-                  <div
-                    key={cap.preview}
-                    className="transition-all duration-500 ease-out"
-                    style={{
-                      opacity: activePreview === cap.preview ? 1 : 0,
-                      position: activePreview === cap.preview ? 'relative' : 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      transform: activePreview === cap.preview ? 'translateY(0)' : 'translateY(12px)',
-                    }}
-                  >
-                    <Image
-                      src={cap.preview}
-                      alt={`${cap.label} preview`}
-                      width={2300}
-                      height={1050}
-                      className="w-full h-auto"
-                      priority
-                    />
-                  </div>
-                ))}
+          {/* Preview area — below the grid so cards never shift. supports both image and inline-jsx previews */}
+          {(() => {
+            const activeCap = openIndex !== null ? capabilities[openIndex] : null;
+            const hasInline = activeCap?.previewElement != null;
+            return (
+              <div
+                className={`overflow-hidden transition-all duration-500 ease-out ${activeCap ? 'max-h-[800px] opacity-100 mt-8' : 'max-h-0 opacity-0 mt-0'}`}
+              >
+                <div
+                  className={`relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 ${hasInline ? '' : 'cursor-zoom-in'}`}
+                  style={hasInline ? undefined : {
+                    maskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
+                    maskComposite: 'intersect',
+                    WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
+                    WebkitMaskComposite: 'source-in',
+                  }}
+                  onClick={hasInline ? undefined : () => openIndex !== null && setLightboxIndex(openIndex)}
+                >
+                  {hasInline ? (
+                    activeCap.previewElement
+                  ) : (
+                    <div className="relative">
+                      {capabilities.map((cap) => (
+                        <div
+                          key={cap.preview}
+                          className="transition-all duration-500 ease-out"
+                          style={{
+                            opacity: !cap.previewElement && activePreview === cap.preview ? 1 : 0,
+                            position: !cap.previewElement && activePreview === cap.preview ? 'relative' : 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            transform: !cap.previewElement && activePreview === cap.preview ? 'translateY(0)' : 'translateY(12px)',
+                          }}
+                        >
+                          {!cap.previewElement && (
+                            <Image
+                              src={cap.preview}
+                              alt={`${cap.label} preview`}
+                              width={2300}
+                              height={1050}
+                              className="w-full h-auto"
+                              priority
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          </div>
+            );
+          })()}
         </div>
 
       </div>
