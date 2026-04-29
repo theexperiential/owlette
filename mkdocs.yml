@@ -115,6 +115,7 @@ nav:
     - load testing and SLOs: api/load-testing.md
     - SDK and CLI distribution: api/distribution.md
     - public launch assets: api/launch-assets.md
+    - public launch runbook: api/launch-runbook.md
     - authentication: api/authentication.md
     - pagination: api/pagination.md
     - idempotency: api/idempotency.md
@@ -135,6 +136,12 @@ nav:
       - auto rollback: api/examples/auto-rollback.md
   - architecture: architecture.md
   - troubleshooting: troubleshooting.md
+  - operations:
+    - Roost kill switch: ops/roost-kill-switch.md
+    - security boundary kill switches: ops/security-boundary-kill-switches.md
+    - security boundary incident playbook: ops/security-boundary-incident-playbook.md
+    - security boundary monitoring: ops/security-boundary-monitoring.md
+    - security boundary customer email: ops/security-boundary-customer-email.md
   - changelog: changelog.md
   - self-hosting:
     - setup/index.md

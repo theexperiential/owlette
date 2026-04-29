@@ -122,6 +122,14 @@ Do not store the Instatus API key in docs or screenshots. Record only component 
 
 ---
 
+## public API launch state
+
+There is no environment variable that enables the public API launch. The launch state is tracked in the public API launch ticket and [runbook](../api/launch-runbook.md), while API routes continue to enforce authentication, scopes, rate limits, and audit behavior.
+
+Do not add an `OWLETTE_PUBLIC_API_LAUNCHED` style flag unless the web code also enforces that flag on the relevant routes and the rollback behavior is documented.
+
+---
+
 ## encryption (required for llm keys)
 
 | variable | description |

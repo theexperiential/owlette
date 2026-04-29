@@ -6,6 +6,8 @@ External public launch needs more than working routes. The launch surface must g
 
 Developer preview can proceed without this page being complete. External launch should not.
 
+Use the [public launch runbook](launch-runbook.md) to move from preview to launch-ready, staff support, monitor the first week, and choose rollback paths.
+
 ---
 
 ## launch gate
@@ -17,6 +19,7 @@ Developer preview can proceed without this page being complete. External launch 
 - the GitHub Actions Roost deploy asset has a usage doc, a copyable workflow template, and a scoped-key recommendation
 - Node and Python SDK examples are grouped into launch-ready workflows, not only internal fixtures
 - marketplace/listing copy is ready for npm, PyPI, and GitHub Actions
+- the launch ticket links the public launch runbook and records support, rollback, status-page, package, and load-test owners
 - external example repositories are created or deliberately waived in favor of in-repo templates
 - no public page claims npm, PyPI, Homebrew, Scoop, winget, custom-domain status, or paid billing is live before the corresponding Wave 5 gate is closed
 

@@ -72,6 +72,7 @@ Top-level site document.
 | `name` | string | Display name (e.g., "NYC Office") |
 | `owner` | string | UID of the user who created the site |
 | `createdAt` | timestamp | When the site was created |
+| `roostEnabled` | boolean | Per-site Roost distribution kill switch. Absent/`true` = enabled; `false` pauses new Roost web and agent sync work for the site. |
 
 ---
 

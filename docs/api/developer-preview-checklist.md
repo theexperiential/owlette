@@ -19,7 +19,7 @@ Developer preview is ready when an internal consumer can:
 - use documented shared behavior for auth, errors, pagination, idempotency, and rate limits
 - inspect the rendered reference at `/docs/api`
 
-Preview does not mean the public launch packaging is complete. Status page, [public SLOs](load-testing.md), [published SDK/CLI channels](distribution.md), [marketplace/example assets](launch-assets.md), pricing/signup pages, and first-week support runbooks remain Wave 5 launch work.
+Preview does not mean the public launch packaging is complete. Status page, [public SLOs](load-testing.md), [published SDK/CLI channels](distribution.md), [marketplace/example assets](launch-assets.md), pricing/signup pages, and the [first-week launch runbook](launch-runbook.md) remain Wave 5 launch work.
 
 ---
 
@@ -110,6 +110,7 @@ Send internal consumers this minimal set:
 - Required setup: account, accessible site, online machine, scoped `test` API key
 - Scope reminder: use exact permissions; `write` does not imply `read`
 - Support payload: method, URL, status, problem `code`, `requestId`, `X-Request-Id`, and any `RateLimit-*` / `Retry-After` headers
+- External launch support payload and severity targets live in the [public launch runbook](launch-runbook.md).
 
 Recommend the 10-minute quickstart as the first smoke test before SDK or CLI workflows.
 
@@ -121,7 +122,8 @@ If a preview consumer hits a release-blocking issue:
 
 - For docs/reference drift, revert the docs/OpenAPI commit and redeploy docs.
 - For an over-scoped key, revoke it or create a narrower replacement from the dashboard.
-- For a route rejecting legitimate callers because of role/capability/rate-limit bugs, use the security kill switch only as a short-lived superadmin mitigation and record the reason, expiry, and follow-up fix.
+- For a route rejecting legitimate callers because of role or membership bugs, fix or roll back the route instead of weakening enforcement.
+- For legitimate capability-matrix or privileged rate-limit enforcement bugs, use the security kill switch only as a short-lived superadmin mitigation and record the reason, expiry, and follow-up fix.
 - For an unsafe mutation surface, remove the route from preview docs/OpenAPI or mark it internal/deferred, then rerun `validate:api`.
 - For persistent server errors, capture `requestId` and affected route before rolling back the deployment.
 

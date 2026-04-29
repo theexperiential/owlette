@@ -71,6 +71,8 @@ Next update: <time, usually 15 minutes from now>.
 
 Mark the incident resolved when the underlying issue is fixed. Monitoring can remain elevated while the incident is in `monitoring`.
 
+During the public API launch window, pair incidents with the [public launch runbook](launch-runbook.md) so support ownership, rollback ownership, and first-week monitoring are recorded in the launch ticket.
+
 ---
 
 ## launch gate

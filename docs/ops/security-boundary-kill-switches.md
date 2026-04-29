@@ -2,6 +2,8 @@
 
 This runbook covers the two W9 security-boundary enforcement switches. Use these only during an active incident or a planned drill.
 
+These switches are not public API launch flags. They do not enable or disable routes, hide docs, change package distribution, or pause public onboarding. For the public API launch process, use the [API launch runbook](../api/launch-runbook.md). For site-specific Roost distribution containment, use the [Roost kill switch runbook](roost-kill-switch.md).
+
 ## Switches
 
 | flag | normal value | when to disable |
