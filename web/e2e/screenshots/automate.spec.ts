@@ -16,7 +16,10 @@ import { getAdminDb } from '../helpers/emulator';
 import { TEST_USERS } from '../helpers/seed';
 import { FIXED_NOW_MS, seedScreenshotFixtures } from './fixtures';
 
-test.use(roleState('admin'));
+// /admin/schedules is wrapped in RequireSuperadmin — the regular admin role
+// is redirected to /dashboard. Run as superadmin so the schedule preset
+// editor actually renders.
+test.use(roleState('superadmin'));
 
 test('automate capability card preview', async ({ page }) => {
   const ctx = await seedScreenshotFixtures('automate-schedule-editor');
@@ -24,7 +27,7 @@ test('automate capability card preview', async ({ page }) => {
   try {
     await getAdminDb()
       .collection('users')
-      .doc(TEST_USERS.admin.uid)
+      .doc(TEST_USERS.superadmin.uid)
       .set({ lastSiteId: ctx.siteId }, { merge: true });
 
     // Pin the clock BEFORE goto so any "updated Xd ago" / "createdAt"
@@ -37,7 +40,8 @@ test('automate capability card preview', async ({ page }) => {
     // useSchedulePresets hook resolved against the screenshot site.
     await expect(page.getByText('museum hours', { exact: false })).toBeVisible();
 
-    await page.waitForLoadState('networkidle');
+    // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
+    await page.waitForTimeout(1500);
 
     await page.addStyleTag({
       content: `

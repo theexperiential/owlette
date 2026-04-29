@@ -52,7 +52,8 @@ test('diagnose capability card preview', async ({ page }) => {
       page.getByText('access violation', { exact: false })
     ).toBeVisible();
 
-    await page.waitForLoadState('networkidle');
+    // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
+    await page.waitForTimeout(1500);
 
     await page.addStyleTag({
       content: `

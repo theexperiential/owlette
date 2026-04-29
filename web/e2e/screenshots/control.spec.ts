@@ -40,7 +40,8 @@ test('control capability card preview', async ({ page }) => {
     // to render so the LAUNCHING badge/spinner is visible.
     await expect(card.getByText('touchdesigner.exe', { exact: false })).toBeVisible();
 
-    await page.waitForLoadState('networkidle');
+    // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
+    await page.waitForTimeout(1500);
 
     await page.addStyleTag({
       content: `

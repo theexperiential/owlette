@@ -5,9 +5,11 @@
  * Used by: the landing page deploy capability card (wired up by wave 4.5).
  *
  * Drives the deployments page into the `deploy-roost-rolling` scenario:
- * a roost with 4 versions and an in-flight rollout where 3 of 10 targets
- * have completed, 1 is installing, and 6 are pending. The seeded site is
- * tier=pro so the roosts/deployments UI is unblocked.
+ * a roost with 4 versions, an in-flight rollout where 3 of 10 targets have
+ * completed and 1 is installing, plus three sibling deployments at
+ * different statuses (completed / failed / scheduled) so the list reads as
+ * an active deployment surface. The in-flight row is expanded to show its
+ * per-target progress before capture.
  */
 import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
@@ -34,9 +36,16 @@ test('deploy capability card preview', async ({ page }) => {
 
     // Wait for the seeded in-flight deployment row to render. The deployment
     // name `stage show v4` is rendered as plain text inside each row.
-    await expect(page.getByText('stage show v4', { exact: false })).toBeVisible();
+    const inFlightRow = page.getByText('stage show v4', { exact: false });
+    await expect(inFlightRow).toBeVisible();
 
-    await page.waitForLoadState('networkidle');
+    // Expand the in-flight row so the per-target progress (3 completed,
+    // 1 installing at 64%, 6 pending) is visible — the user wanted to see
+    // the deployment "expanded" to show it actively rolling out.
+    await inFlightRow.click();
+
+    // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
+    await page.waitForTimeout(1500);
 
     await page.addStyleTag({
       content: `

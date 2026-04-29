@@ -31,13 +31,8 @@
  */
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { getAdminDb } from '../helpers/emulator';
 import {
-  clearAuthEmulator,
-  clearFirestoreEmulator,
-  getAdminDb,
-} from '../helpers/emulator';
-import {
-  seedBaseline,
   seedMachine,
   seedRoostWithVersionHistory,
   TEST_USERS,
@@ -197,10 +192,25 @@ async function deleteRecursive(
   await ref.delete().catch(() => undefined);
 }
 
-/** Reset the entire emulator (Firestore + Auth) and re-seed users/sites. */
+/**
+ * Surgical per-scenario reset: drops only site-A's data. Users in firestore
+ * + auth persist from global-setup. We deliberately DO NOT call seedBaseline
+ * here — its `seedUser` path calls `auth.updateUser(uid, { password })`,
+ * which invalidates existing refresh tokens and breaks the storageState
+ * session cookies captured during global-setup. The per-site data
+ * (machines, deployments, etc.) is the only thing we need to reset.
+ */
 async function resetAndReseedBaseline(): Promise<void> {
-  await Promise.all([clearFirestoreEmulator(), clearAuthEmulator()]);
-  await seedBaseline();
+  await deleteSiteSubtree('site-A');
+  // Restore the bare site-A doc (deleteSiteSubtree wiped it). Use merge so
+  // the per-scenario seedScreenshotSite call afterwards can layer name/tier
+  // on top.
+  const db = getAdminDb();
+  await db.collection('sites').doc('site-A').set({
+    name: 'Site A (Assigned)',
+    owner: 'someone-else',
+    timezone: 'UTC',
+  }, { merge: true });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -208,9 +218,12 @@ async function resetAndReseedBaseline(): Promise<void> {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Create the screenshot-pipeline site. We intentionally don't use the
- * canonical `site-A` / `site-B` from the baseline so screenshots aren't
- * confused with the regression suite's data.
+ * Upgrade the canonical `site-A` baseline doc with the per-scenario name and
+ * tier (e.g. `pro` for roost-rolling). We seed into the admin user's already-
+ * assigned `site-A` instead of a separate `site-screenshot-*` so the dashboard
+ * auto-selects it on load — there's no clean way to force a specific site
+ * selection from the spec without races between the firestore writes and the
+ * dashboard's site-pick effect.
  */
 async function seedScreenshotSite(
   siteId: string,
@@ -218,15 +231,18 @@ async function seedScreenshotSite(
   ownerUid: string = TEST_USERS.admin.uid,
 ): Promise<void> {
   const db = getAdminDb();
-  await db.collection('sites').doc(siteId).set({
-    name,
-    owner: ownerUid,
-    timezone: 'America/Los_Angeles',
-    tier: 'pro',
-    createdAt: tsAgo(60 * 60 * 24 * 30), // 30d ago
-  });
-  // Add the site to the admin user's sites[] so they can navigate to it
-  // when storageState boots them into the dashboard.
+  // Merge — preserve baseline-set fields (owner, etc) and only update what
+  // this scenario needs.
+  await db.collection('sites').doc(siteId).set(
+    {
+      name,
+      tier: 'pro',
+      timezone: 'America/Los_Angeles',
+      createdAt: tsAgo(60 * 60 * 24 * 30),
+    },
+    { merge: true },
+  );
+  // Idempotent: admin already has site-A in their sites[] from baseline.
   await db.collection('users').doc(ownerUid).set(
     { sites: FieldValue.arrayUnion(siteId) },
     { merge: true },
@@ -270,9 +286,13 @@ async function writeMachineMetrics(
           timestamp: tsAgo(heartbeatOffsetSec),
           cpus: { CPU0: { percent: sample.cpuPct, temperature: 58 } },
           memory: { percent: sample.memPct, usedGb: sample.memUsedGb },
-          disks: { 'C:': { percent: sample.diskPct, usedGb: 320 } },
+          disks: {
+            'C:': { percent: sample.diskPct, usedGb: 320 },
+            'D:': { percent: Math.max(5, sample.diskPct - 12), usedGb: 1450 },
+          },
           gpus: {
-            GPU0: {
+            'NVIDIA RTX A5000': {
+              name: 'NVIDIA RTX A5000',
               usagePercent: sample.gpuPct,
               vramUsedGb: 4.2,
               temperature: 62,
@@ -280,9 +300,14 @@ async function writeMachineMetrics(
           },
           nics: {
             'Ethernet 1': { txBps: 250_000, rxBps: 1_200_000, txUtil: 2, rxUtil: 12 },
+            'Tailscale': { txBps: 80_000, rxBps: 95_000, txUtil: 0.5, rxUtil: 0.6 },
+          },
+          diskio: {
+            'C:': { readBps: 3_000_000, writeBps: 4_000_000, busyPct: 8, maxBps: 500_000_000 },
+            'D:': { readBps: 80_000_000, writeBps: 12_000_000, busyPct: 35, maxBps: 3_000_000_000 },
           },
           network: { latencyMs: 12, packetLossPct: 0, gatewayIp: '192.168.1.1' },
-          primary: { cpu: 'CPU0', disk: 'C:', gpu: 'GPU0', nic: 'Ethernet 1' },
+          primary: { cpu: 'CPU0', disk: 'C:', gpu: 'NVIDIA RTX A5000', nic: 'Ethernet 1' },
         },
       },
       { merge: true },
@@ -310,16 +335,22 @@ async function writeMachineMetrics(
           socketIndex: 0,
         },
       ],
-      disks: [{ id: 'C:', label: 'System', fs: 'NTFS', totalGb: 1000 }],
+      disks: [
+        { id: 'C:', label: 'System', fs: 'NTFS', totalGb: 1000 },
+        { id: 'D:', label: 'Media', fs: 'NTFS', totalGb: 4000 },
+      ],
       gpus: [
         {
-          id: 'GPU0',
+          id: 'NVIDIA RTX A5000',
           name: 'NVIDIA RTX A5000',
           vramTotalGb: 24,
           pciBus: '0000:01:00.0',
         },
       ],
-      nics: [{ id: 'Ethernet 1', mac: '00:1a:2b:3c:4d:5e', linkSpeedMbps: 1000 }],
+      nics: [
+        { id: 'Ethernet 1', mac: '00:1a:2b:3c:4d:5e', linkSpeedMbps: 1000 },
+        { id: 'Tailscale', mac: '00:00:00:00:00:01', linkSpeedMbps: 100 },
+      ],
     });
 }
 
@@ -333,7 +364,7 @@ async function writeMachineMetrics(
  * so the screenshot looks like a real operations view.
  */
 async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
-  const siteId = 'site-screenshot-flagship';
+  const siteId = 'site-A';
   await seedScreenshotSite(siteId, 'flagship');
 
   type Spec = {
@@ -371,6 +402,11 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
       sample: { cpuPct: 18, memPct: 29, memUsedGb: 9.2, gpuPct: 14, diskPct: 38 } },
   ];
 
+  // Per-machine PRNG seeds so each row's sparkline trace looks distinct
+  // rather than identical. Stable: machineId → seed.
+  const seedFor = (id: string): number =>
+    id.split('').reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 0xc0ffee00);
+
   for (const spec of specs) {
     const heartbeatOffset = spec.state === 'offline' ? 600 : 5;
     await seedMachine(siteId, spec.machineId, {
@@ -378,6 +414,20 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
       heartbeatOffsetSec: heartbeatOffset,
     });
     await writeMachineMetrics(siteId, spec.machineId, spec.sample, heartbeatOffset);
+
+    // Seed metrics_history so each row's inline sparkline traces render —
+    // without these, every row's CPU/RAM/disk/GPU column shows just numbers
+    // and a flat baseline. Centered around each machine's current sample so
+    // the trace flows naturally into the present.
+    if (spec.state !== 'offline') {
+      await writeMetricsHistory(siteId, spec.machineId, {
+        cpuBase: spec.sample.cpuPct,
+        memBase: spec.sample.memPct,
+        diskBase: spec.sample.diskPct,
+        gpuBase: spec.sample.gpuPct,
+        seed: seedFor(spec.machineId),
+      });
+    }
 
     if (spec.state === 'just-restarted' && spec.secondsSinceRestart !== undefined) {
       // Stamp a recent reboot completion so the dashboard's "just restarted"
@@ -407,47 +457,83 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Single machine view. Adds a deterministic 60-sample sparkline series so
- * the metrics charts have realistic variance instead of flat lines.
+ * Multi-machine view focused on `media-server-stage`. Seeds 4 machines with
+ * deterministic metrics_history buckets so each card's CPU/memory/disk/GPU
+ * sparklines render. The spec opens the focus card's MetricsDetailPanel for
+ * the screenshot — surrounding cards stay visible.
  */
 async function seedMonitorSingleMachine(): Promise<ScreenshotFixture> {
-  const siteId = 'site-screenshot-monitor';
-  const machineId = 'media-server-stage';
+  const siteId = 'site-A';
+  const focusMachineId = 'media-server-stage';
   await seedScreenshotSite(siteId, 'flagship');
-  await seedMachine(siteId, machineId, { heartbeatOffsetSec: 5 });
-  await writeMachineMetrics(siteId, machineId, {
-    cpuPct: 64, memPct: 71, memUsedGb: 45.2, gpuPct: 58, diskPct: 73,
-  }, 5);
 
-  // Seed a 60-minute sparkline by writing one historical metrics doc per
-  // minute. PRNG seeded from a fixed integer so values reproduce exactly.
-  const rng = makePrng(0xfa11ed1a);
-  const db = getAdminDb();
-  const histRef = db
-    .collection('sites')
-    .doc(siteId)
-    .collection('machines')
-    .doc(machineId)
-    .collection('historical_metrics');
+  type MachineSpec = {
+    id: string;
+    metrics: { cpuPct: number; memPct: number; memUsedGb: number; gpuPct: number; diskPct: number };
+    history: {
+      cpuBase: number;
+      memBase: number;
+      diskBase: number;
+      gpuBase: number;
+      seed: number;
+      disks?: HistoryDiskSpec[];
+      gpus?: HistoryGpuSpec[];
+      nics?: HistoryNicSpec[];
+    };
+  };
 
-  for (let i = 0; i < 60; i++) {
-    const minutesAgo = 60 - i;
-    // Random walk around 60% CPU / 70% mem so the sparkline has realistic
-    // variance without spikes.
-    const cpu = clamp(60 + (rng() - 0.5) * 30, 5, 95);
-    const mem = clamp(70 + (rng() - 0.5) * 20, 30, 95);
-    const gpu = clamp(55 + (rng() - 0.5) * 25, 5, 95);
-    await histRef.doc(`m-${i.toString().padStart(2, '0')}`).set({
-      timestamp: tsAgo(minutesAgo * 60),
-      cpus: { CPU0: { percent: cpu } },
-      memory: { percent: mem, usedGb: 32 + (mem / 100) * 32 },
-      gpus: { GPU0: { usagePercent: gpu } },
-    });
+  // Two-disk + two-NIC + named-GPU spec for the focused machine — mirrors
+  // the production chart's per-device tab discovery (one tab per disk, GPU,
+  // and NIC; disks also surface a paired I/O tab via dios[]).
+  const focusDisks: HistoryDiskSpec[] = [
+    { id: 'C:', pctBase: 73, ioReadBpsBase: 3_000_000, ioWriteBpsBase: 4_000_000, maxBps: 500_000_000 },
+    { id: 'D:', pctBase: 61, ioReadBpsBase: 80_000_000, ioWriteBpsBase: 12_000_000, maxBps: 3_000_000_000 },
+  ];
+  const focusGpus: HistoryGpuSpec[] = [
+    { id: 'NVIDIA RTX A5000', usageBase: 55, tempBase: 64 },
+  ];
+  const focusNics: HistoryNicSpec[] = [
+    { id: 'Ethernet 1', txBpsBase: 250_000, rxBpsBase: 1_200_000, txUtilBase: 2, rxUtilBase: 12 },
+    { id: 'Tailscale', txBpsBase: 80_000, rxBpsBase: 95_000, txUtilBase: 0.5, rxUtilBase: 0.6 },
+  ];
+
+  const machines: MachineSpec[] = [
+    {
+      id: focusMachineId,
+      metrics: { cpuPct: 64, memPct: 71, memUsedGb: 45.2, gpuPct: 58, diskPct: 73 },
+      history: {
+        cpuBase: 60, memBase: 70, diskBase: 70, gpuBase: 55, seed: 0xfa11ed1a,
+        disks: focusDisks,
+        gpus: focusGpus,
+        nics: focusNics,
+      },
+    },
+    {
+      id: 'lobby-display',
+      metrics: { cpuPct: 22, memPct: 38, memUsedGb: 12.1, gpuPct: 18, diskPct: 41 },
+      history: { cpuBase: 22, memBase: 38, diskBase: 40, gpuBase: 18, seed: 0xb00b1e57 },
+    },
+    {
+      id: 'museum-kiosk-1',
+      metrics: { cpuPct: 41, memPct: 53, memUsedGb: 16.8, gpuPct: 31, diskPct: 56 },
+      history: { cpuBase: 40, memBase: 52, diskBase: 55, gpuBase: 30, seed: 0xdeadbeef },
+    },
+    {
+      id: 'unreal-render-1',
+      metrics: { cpuPct: 78, memPct: 82, memUsedGb: 52.0, gpuPct: 88, diskPct: 64 },
+      history: { cpuBase: 75, memBase: 80, diskBase: 60, gpuBase: 85, seed: 0xc0ffee42 },
+    },
+  ];
+
+  for (const m of machines) {
+    await seedMachine(siteId, m.id, { heartbeatOffsetSec: 5 });
+    await writeMachineMetrics(siteId, m.id, m.metrics, 5);
+    await writeMetricsHistory(siteId, m.id, m.history);
   }
 
   return {
     siteId,
-    machineId,
+    machineId: focusMachineId,
     cleanup: () => deleteSiteSubtree(siteId),
   };
 }
@@ -456,109 +542,340 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
+/**
+ * Write a metrics_history bucket the dashboard's `useSparklineData` /
+ * `useAllSparklineData` / `useHistoricalMetrics` hooks consume:
+ *
+ *   sites/{siteId}/machines/{machineId}/metrics_history/{YYYY-MM-DD}
+ *     { samples: [{ t, c, m, d, g, ct, gt, ds[], gs[], n[], dios[] }, ...] }
+ *
+ * Sample shape mirrors the production cloud function at
+ * `functions/src/metricsHistory.ts` so the chart panel auto-discovers the
+ * same per-device tabs (one per disk, GPU, NIC) and overlay lines (CPU temp
+ * paired with CPU usage, GPU temp paired with GPU usage, disk IO read/write
+ * pairs) that production users see.
+ *
+ * Bucket id matches FIXED_NOW because specs `page.clock.install` before
+ * navigation; `new Date().toISOString().split('T')[0]` in the page resolves
+ * to this bucket.
+ */
+interface HistoryDiskSpec {
+  id: string;
+  pctBase: number;
+  /** Bytes-per-second base values for IO read / write traces. Optional —
+   *  defaults to a small idle rate when omitted. */
+  ioReadBpsBase?: number;
+  ioWriteBpsBase?: number;
+  /** Hardware-class peak bandwidth ceiling for the `_io_*_pct` lines. */
+  maxBps?: number;
+}
+interface HistoryGpuSpec {
+  id: string;
+  usageBase: number;
+  tempBase?: number;
+}
+interface HistoryNicSpec {
+  id: string;
+  txBpsBase?: number;
+  rxBpsBase?: number;
+  txUtilBase?: number;
+  rxUtilBase?: number;
+}
+
+async function writeMetricsHistory(
+  siteId: string,
+  machineId: string,
+  opts: {
+    cpuBase?: number;
+    memBase?: number;
+    diskBase?: number;
+    gpuBase?: number;
+    seed?: number;
+    sampleCount?: number;
+    /** When omitted, derived from `cpuBase` (40 + cpuBase * 0.35). */
+    cpuTempBase?: number;
+    /** When omitted, derived from `gpuBase` (48 + gpuBase * 0.32). */
+    gpuTempBase?: number;
+    /** Per-disk usage entries. Defaults to `[{ id: 'C:', pctBase: diskBase }]`. */
+    disks?: HistoryDiskSpec[];
+    /** Per-GPU entries. Defaults to one entry named `NVIDIA RTX A5000` mapped to `gpuBase`. */
+    gpus?: HistoryGpuSpec[];
+    /** Per-NIC entries. Defaults to a single low-traffic Ethernet 1 NIC. */
+    nics?: HistoryNicSpec[];
+  } = {},
+): Promise<void> {
+  const {
+    cpuBase = 50,
+    memBase = 60,
+    diskBase = 45,
+    gpuBase = 35,
+    seed = 0xfa11ed1a,
+    sampleCount = 60,
+    cpuTempBase = 40 + cpuBase * 0.35,
+    gpuTempBase = 48 + gpuBase * 0.32,
+    disks = [{ id: 'C:', pctBase: diskBase, maxBps: 500_000_000 }],
+    gpus = [{ id: 'NVIDIA RTX A5000', usageBase: gpuBase }],
+    nics = [{ id: 'Ethernet 1' }],
+  } = opts;
+  const rng = makePrng(seed);
+  const bucketId = new Date(FIXED_NOW_MS).toISOString().split('T')[0];
+
+  // `useHistoricalMetrics` expects sample timestamps in SECONDS — it does
+  // `sample.t * 1000` when constructing chart points (see hook). Sparklines
+  // use the value directly so either unit works, but the metrics detail
+  // chart needs seconds or the line plots off-screen at year 50000+.
+  const nowSec = Math.floor(FIXED_NOW_MS / 1000);
+  type DiskSample = { i: string; p: number };
+  type GpuSample = { i: string; u: number; t?: number };
+  type NicSample = { i: string; tx: number; rx: number; tu: number; ru: number };
+  type DiskIOSample = { i: string; rb: number; wb: number; bu: number; mb: number };
+  type Sample = {
+    t: number;
+    c: number;
+    m: number;
+    d: number;
+    g: number;
+    ct: number;
+    gt: number;
+    ds: DiskSample[];
+    gs: GpuSample[];
+    n: NicSample[];
+    dios: DiskIOSample[];
+  };
+  const samples: Sample[] = [];
+
+  for (let i = 0; i < sampleCount; i++) {
+    const minutesAgo = sampleCount - i;
+    const cpu = clamp(cpuBase + (rng() - 0.5) * 30, 5, 95);
+    const memory = clamp(memBase + (rng() - 0.5) * 20, 30, 95);
+    const diskAgg = clamp(diskBase + (rng() - 0.5) * 15, 20, 90);
+    const gpuAgg = clamp(gpuBase + (rng() - 0.5) * 25, 5, 95);
+    const activity = (cpuBase + gpuBase) / 100; // 0 - ~2
+
+    const ds: DiskSample[] = disks.map((d) => ({
+      i: d.id,
+      p: clamp(d.pctBase + (rng() - 0.5) * 12, 10, 95),
+    }));
+    const gs: GpuSample[] = gpus.map((g) => {
+      const u = clamp(g.usageBase + (rng() - 0.5) * 25, 5, 95);
+      const t = clamp((g.tempBase ?? 48 + g.usageBase * 0.32) + (rng() - 0.5) * 4, 35, 92);
+      return { i: g.id, u, t };
+    });
+    const n: NicSample[] = nics.map((nic) => {
+      const tx = Math.round((nic.txBpsBase ?? 250_000) * (0.5 + rng() * 1.0));
+      const rx = Math.round((nic.rxBpsBase ?? 1_200_000) * (0.5 + rng() * 1.0));
+      const tu = clamp((nic.txUtilBase ?? 2) + (rng() - 0.5) * 1.5, 0, 80);
+      const ru = clamp((nic.rxUtilBase ?? 12) + (rng() - 0.5) * 4, 0, 80);
+      return { i: nic.id, tx, rx, tu, ru };
+    });
+    const dios: DiskIOSample[] = disks.map((d) => {
+      const baseRead = d.ioReadBpsBase ?? 3_000_000;
+      const baseWrite = d.ioWriteBpsBase ?? 4_000_000;
+      const maxBps = d.maxBps ?? 500_000_000;
+      const rb = Math.max(0, Math.round(baseRead * activity * (0.6 + rng() * 0.8)));
+      const wb = Math.max(0, Math.round(baseWrite * activity * (0.5 + rng() * 0.8)));
+      const bu = clamp(8 * activity + rng() * 6, 0, 95);
+      return { i: d.id, rb, wb, bu, mb: maxBps };
+    });
+
+    samples.push({
+      t: nowSec - minutesAgo * 60,
+      c: cpu,
+      m: memory,
+      d: diskAgg,
+      g: gpuAgg,
+      ct: clamp(cpuTempBase + (cpu - cpuBase) * 0.4 + (rng() - 0.5) * 3, 35, 90),
+      gt: clamp(gpuTempBase + (gpuAgg - gpuBase) * 0.32 + (rng() - 0.5) * 3, 35, 92),
+      ds,
+      gs,
+      n,
+      dios,
+    });
+  }
+
+  await getAdminDb()
+    .collection('sites')
+    .doc(siteId)
+    .collection('machines')
+    .doc(machineId)
+    .collection('metrics_history')
+    .doc(bucketId)
+    .set({ samples });
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Scenario: control-process-restarting                                      */
 /* -------------------------------------------------------------------------- */
 
 /**
- * One machine with a touchdesigner process mid-restart (status=LAUNCHING)
- * — the control surface renders a status banner under the process row.
+ * Multi-machine card-view focused on `td-control-room`'s mid-restart
+ * touchdesigner process. Surrounding cards have their own running process
+ * sets so the screenshot reads as a populated control surface.
  */
 async function seedControlProcessRestarting(): Promise<ScreenshotFixture> {
-  const siteId = 'site-screenshot-control';
-  const machineId = 'td-control-room';
-  const processId = 'proc-touchdesigner-main';
+  const siteId = 'site-A';
+  const focusMachineId = 'td-control-room';
+  const focusProcessId = 'proc-touchdesigner-main';
   await seedScreenshotSite(siteId, 'flagship');
-  await seedMachine(siteId, machineId, { heartbeatOffsetSec: 5 });
-  await writeMachineMetrics(siteId, machineId, {
-    cpuPct: 38, memPct: 52, memUsedGb: 16.6, gpuPct: 41, diskPct: 47,
-  }, 5);
 
-  // Status doc carries the live process map; config doc carries the
-  // launch_mode override. Both writes mirror what the agent emits during
-  // a process restart.
-  const db = getAdminDb();
-  await db
-    .collection('sites')
-    .doc(siteId)
-    .collection('machines')
-    .doc(machineId)
-    .set(
-      {
-        metrics: {
-          processes: {
-            [processId]: {
-              name: 'touchdesigner.exe',
-              status: 'LAUNCHING',
-              pid: 4218,
-              autolaunch: true,
-              launch_mode: 'always',
-              exe_path: 'C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe',
-              file_path: 'C:\\Owlette\\projects\\stage-show\\main.toe',
-              cwd: 'C:\\Owlette\\projects\\stage-show',
-              priority: 'High',
-              visibility: 'Show',
-              time_delay: '5',
-              time_to_init: '15',
-              relaunch_attempts: '3',
-              responsive: false,
-              last_updated: FIXED_NOW_SEC - 4,
-              index: 0,
-            },
-            'proc-obs-stream': {
-              name: 'obs64.exe',
-              status: 'RUNNING',
-              pid: 5102,
-              autolaunch: true,
-              launch_mode: 'always',
-              exe_path: 'C:\\Program Files\\obs-studio\\bin\\64bit\\obs64.exe',
-              file_path: '',
-              cwd: 'C:\\Program Files\\obs-studio\\bin\\64bit',
-              priority: 'Normal',
-              visibility: 'Show',
-              time_delay: '0',
-              time_to_init: '5',
-              relaunch_attempts: '3',
-              responsive: true,
-              last_updated: FIXED_NOW_SEC - 600,
-              index: 1,
-            },
-          },
+  type ProcEntry = {
+    id: string;
+    name: string;
+    status: 'RUNNING' | 'LAUNCHING' | 'STOPPED';
+    pid: number;
+    exe_path: string;
+    file_path?: string;
+    cwd: string;
+    last_updated_offset: number;
+    responsive?: boolean;
+  };
+  type MachineSpec = {
+    id: string;
+    metrics: { cpuPct: number; memPct: number; memUsedGb: number; gpuPct: number; diskPct: number };
+    history: { cpuBase: number; memBase: number; diskBase: number; gpuBase: number; seed: number };
+    processes: ProcEntry[];
+  };
+
+  const machines: MachineSpec[] = [
+    {
+      id: focusMachineId,
+      metrics: { cpuPct: 38, memPct: 52, memUsedGb: 16.6, gpuPct: 41, diskPct: 47 },
+      history: { cpuBase: 36, memBase: 50, diskBase: 47, gpuBase: 40, seed: 0xc0ffee01 },
+      processes: [
+        {
+          id: focusProcessId,
+          name: 'touchdesigner.exe',
+          status: 'LAUNCHING',
+          pid: 4218,
+          exe_path: 'C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe',
+          file_path: 'C:\\Owlette\\projects\\stage-show\\main.toe',
+          cwd: 'C:\\Owlette\\projects\\stage-show',
+          last_updated_offset: 4,
+          responsive: false,
         },
-      },
-      { merge: true },
-    );
+        {
+          id: 'proc-obs-stream',
+          name: 'obs64.exe',
+          status: 'RUNNING',
+          pid: 5102,
+          exe_path: 'C:\\Program Files\\obs-studio\\bin\\64bit\\obs64.exe',
+          cwd: 'C:\\Program Files\\obs-studio\\bin\\64bit',
+          last_updated_offset: 600,
+          responsive: true,
+        },
+      ],
+    },
+    {
+      id: 'media-server-stage',
+      metrics: { cpuPct: 64, memPct: 71, memUsedGb: 45.2, gpuPct: 58, diskPct: 73 },
+      history: { cpuBase: 62, memBase: 70, diskBase: 70, gpuBase: 55, seed: 0xc0ffee02 },
+      processes: [
+        {
+          id: 'proc-mediaserver-main',
+          name: 'media-server.exe',
+          status: 'RUNNING',
+          pid: 7320,
+          exe_path: 'C:\\Owlette\\bin\\media-server.exe',
+          cwd: 'C:\\Owlette\\bin',
+          last_updated_offset: 12,
+          responsive: true,
+        },
+      ],
+    },
+    {
+      id: 'mainstage-led',
+      metrics: { cpuPct: 28, memPct: 42, memUsedGb: 13.4, gpuPct: 35, diskPct: 51 },
+      history: { cpuBase: 28, memBase: 40, diskBase: 50, gpuBase: 35, seed: 0xc0ffee03 },
+      processes: [
+        {
+          id: 'proc-resolume',
+          name: 'avenue.exe',
+          status: 'RUNNING',
+          pid: 9024,
+          exe_path: 'C:\\Program Files\\Resolume Avenue\\Avenue.exe',
+          cwd: 'C:\\Program Files\\Resolume Avenue',
+          last_updated_offset: 30,
+          responsive: true,
+        },
+      ],
+    },
+    {
+      id: 'lobby-display',
+      metrics: { cpuPct: 22, memPct: 38, memUsedGb: 12.1, gpuPct: 18, diskPct: 41 },
+      history: { cpuBase: 22, memBase: 38, diskBase: 40, gpuBase: 18, seed: 0xc0ffee04 },
+      processes: [
+        {
+          id: 'proc-signage-player',
+          name: 'BrightSignSigner.exe',
+          status: 'RUNNING',
+          pid: 1180,
+          exe_path: 'C:\\Owlette\\signage\\BrightSignSigner.exe',
+          cwd: 'C:\\Owlette\\signage',
+          last_updated_offset: 8,
+          responsive: true,
+        },
+      ],
+    },
+  ];
 
-  // Config doc — authoritative launch_mode (matches what useMachines reads).
-  await db
-    .collection('config')
-    .doc(siteId)
-    .collection('machines')
-    .doc(machineId)
-    .set(
-      {
-        processes: [
-          {
-            id: processId,
-            name: 'touchdesigner.exe',
+  const db = getAdminDb();
+  for (let mi = 0; mi < machines.length; mi++) {
+    const m = machines[mi];
+    await seedMachine(siteId, m.id, { heartbeatOffsetSec: 5 });
+    await writeMachineMetrics(siteId, m.id, m.metrics, 5);
+    await writeMetricsHistory(siteId, m.id, m.history);
+
+    const processMap: Record<string, unknown> = {};
+    m.processes.forEach((p, idx) => {
+      processMap[p.id] = {
+        name: p.name,
+        status: p.status,
+        pid: p.pid,
+        autolaunch: true,
+        launch_mode: 'always',
+        exe_path: p.exe_path,
+        file_path: p.file_path ?? '',
+        cwd: p.cwd,
+        priority: 'Normal',
+        visibility: 'Show',
+        time_delay: '0',
+        time_to_init: '5',
+        relaunch_attempts: '3',
+        responsive: p.responsive ?? true,
+        last_updated: FIXED_NOW_SEC - p.last_updated_offset,
+        index: idx,
+      };
+    });
+
+    await db
+      .collection('sites')
+      .doc(siteId)
+      .collection('machines')
+      .doc(m.id)
+      .set({ metrics: { processes: processMap } }, { merge: true });
+
+    await db
+      .collection('config')
+      .doc(siteId)
+      .collection('machines')
+      .doc(m.id)
+      .set(
+        {
+          processes: m.processes.map((p) => ({
+            id: p.id,
+            name: p.name,
             launch_mode: 'always',
             schedules: null,
-          },
-          {
-            id: 'proc-obs-stream',
-            name: 'obs64.exe',
-            launch_mode: 'always',
-            schedules: null,
-          },
-        ],
-      },
-      { merge: true },
-    );
+          })),
+        },
+        { merge: true },
+      );
+  }
 
   return {
     siteId,
-    machineId,
-    processId,
+    machineId: focusMachineId,
+    processId: focusProcessId,
     cleanup: () => deleteSiteSubtree(siteId),
   };
 }
@@ -572,7 +889,7 @@ async function seedControlProcessRestarting(): Promise<ScreenshotFixture> {
  * the gate from siteTier resolves true.
  */
 async function seedDeployRoostRolling(): Promise<ScreenshotFixture> {
-  const siteId = 'site-screenshot-deploy';
+  const siteId = 'site-A';
   await seedScreenshotSite(siteId, 'flagship');
 
   const machineIds = [
@@ -602,37 +919,88 @@ async function seedDeployRoostRolling(): Promise<ScreenshotFixture> {
     ],
   });
 
-  // In-flight deployment record — 3 done, 1 in progress, 6 pending. The
-  // dashboard surfaces these via `sites/{siteId}/deployments` so the rollout
-  // bar reads "3 of 10 complete".
+  // Mixed-status deployment list: one in-flight (the canonical preview),
+  // one completed, one failed, one queued. The deploy spec clicks the
+  // in-progress row to expand it before screenshotting.
   const db = getAdminDb();
-  await db
-    .collection('sites')
-    .doc(siteId)
-    .collection('deployments')
-    .doc('depl-stage-show-v4')
-    .set({
-      name: 'stage show v4',
-      installer_name: 'stage-show.zip',
-      installer_url: 'https://e2e-seed.test/roost/stage-show.zip',
-      silent_flags: '',
-      status: 'in_progress',
-      createdAt: tsAgo(60 * 8),
-      targets: machineIds.map((mid, idx) => {
-        if (idx < 3) {
-          return {
-            machineId: mid,
-            status: 'completed',
-            progress: 100,
-            completedAt: tsAgo(60 * 5 - idx * 30),
-          };
-        }
-        if (idx === 3) {
-          return { machineId: mid, status: 'installing', progress: 64 };
-        }
-        return { machineId: mid, status: 'pending' };
-      }),
-    });
+  const deploymentsRef = db.collection('sites').doc(siteId).collection('deployments');
+
+  // 1) IN-PROGRESS — the row the spec expands.
+  await deploymentsRef.doc('depl-stage-show-v4').set({
+    name: 'stage show v4',
+    installer_name: 'stage-show.zip',
+    installer_url: 'https://e2e-seed.test/roost/stage-show.zip',
+    silent_flags: '',
+    status: 'in_progress',
+    createdAt: tsAgo(60 * 8),
+    targets: machineIds.map((mid, idx) => {
+      if (idx < 3) {
+        return {
+          machineId: mid,
+          status: 'completed',
+          progress: 100,
+          completedAt: tsAgo(60 * 5 - idx * 30),
+        };
+      }
+      if (idx === 3) {
+        return { machineId: mid, status: 'installing', progress: 64 };
+      }
+      return { machineId: mid, status: 'pending' };
+    }),
+  });
+
+  // 2) COMPLETED — finished 2 days ago across the same fleet.
+  await deploymentsRef.doc('depl-stage-show-v3').set({
+    name: 'stage show v3',
+    installer_name: 'stage-show.zip',
+    installer_url: 'https://e2e-seed.test/roost/stage-show-v3.zip',
+    silent_flags: '',
+    status: 'completed',
+    createdAt: tsAgo(60 * 60 * 48),
+    completedAt: tsAgo(60 * 60 * 47),
+    targets: machineIds.map((mid, idx) => ({
+      machineId: mid,
+      status: 'completed',
+      progress: 100,
+      completedAt: tsAgo(60 * 60 * 47 - idx * 60),
+    })),
+  });
+
+  // 3) FAILED — partial rollout that hit an installer error on one machine.
+  await deploymentsRef.doc('depl-touchdesigner-driver-update').set({
+    name: 'touchdesigner 2024.40000 driver bump',
+    installer_name: 'TouchDesigner-2024.40000.exe',
+    installer_url: 'https://e2e-seed.test/roost/td-2024.40000.exe',
+    silent_flags: '/SILENT',
+    status: 'failed',
+    createdAt: tsAgo(60 * 60 * 5),
+    completedAt: tsAgo(60 * 60 * 4),
+    targets: machineIds.slice(0, 4).map((mid, idx) => {
+      if (idx < 2) {
+        return { machineId: mid, status: 'completed', progress: 100, completedAt: tsAgo(60 * 60 * 4 + 60) };
+      }
+      if (idx === 2) {
+        return { machineId: mid, status: 'failed', progress: 87, error: 'msi exit code 1603 (fatal install error)' };
+      }
+      return { machineId: mid, status: 'cancelled', progress: 0 };
+    }),
+  });
+
+  // 4) SCHEDULED — queued for later tonight.
+  await deploymentsRef.doc('depl-content-pack-spring').set({
+    name: 'spring content pack',
+    installer_name: 'content-pack-spring.zip',
+    installer_url: 'https://e2e-seed.test/roost/content-pack-spring.zip',
+    silent_flags: '',
+    status: 'scheduled',
+    createdAt: tsAgo(60 * 60 * 1),
+    scheduledFor: Timestamp.fromMillis(FIXED_NOW_MS + 60 * 60 * 6 * 1000),
+    targets: machineIds.slice(0, 6).map((mid) => ({
+      machineId: mid,
+      status: 'pending',
+      progress: 0,
+    })),
+  });
 
   return {
     siteId,
@@ -652,7 +1020,7 @@ async function seedDeployRoostRolling(): Promise<ScreenshotFixture> {
  * collection (`chats/...`) so the surface is known to exist.
  */
 async function seedDiagnoseCortexChat(): Promise<ScreenshotFixture> {
-  const siteId = 'site-screenshot-cortex';
+  const siteId = 'site-A';
   const machineId = 'media-server-stage';
   const userId = TEST_USERS.admin.uid;
   await seedScreenshotSite(siteId, 'flagship', userId);
@@ -670,8 +1038,9 @@ async function seedDiagnoseCortexChat(): Promise<ScreenshotFixture> {
     updatedAt: tsAgo(60 * 60 * 24 * 3),
   });
 
-  const conversationId = `screenshot-cortex-${siteId}`;
-  await db.collection('chats').doc(conversationId).set({
+  // Focus conversation — the spec opens this one for the screenshot.
+  const focusConversationId = `screenshot-cortex-${siteId}`;
+  await db.collection('chats').doc(focusConversationId).set({
     userId,
     siteId,
     title: '03:14 incident — media-server-stage',
@@ -725,6 +1094,96 @@ async function seedDiagnoseCortexChat(): Promise<ScreenshotFixture> {
     updatedAt: tsAgo(60 * 30),
   });
 
+  // Sidebar fillers — a handful of recent conversations so the sidebar reads
+  // as a real working assistant, not a one-off. Lightweight (1-turn each).
+  const fillerConversations: Array<{
+    id: string;
+    title: string;
+    category: string;
+    machineName: string;
+    targetMachineId: string | null;
+    userText: string;
+    assistantText: string;
+    createdAtSecAgo: number;
+    updatedAtSecAgo: number;
+  }> = [
+    {
+      id: 'screenshot-cortex-driver-audit',
+      title: 'nvidia driver audit across the fleet',
+      category: 'Operations',
+      machineName: 'all machines',
+      targetMachineId: null,
+      userText: 'which machines are still on nvidia 552.22?',
+      assistantText:
+        '4 machines are still on 552.22: media-server-stage, mainstage-led, unreal-render-1, td-control-room. the rest are on 555.85.',
+      createdAtSecAgo: 60 * 60 * 24 * 2 + 60 * 30,
+      updatedAtSecAgo: 60 * 60 * 24 * 2,
+    },
+    {
+      id: 'screenshot-cortex-disk-warning',
+      title: 'disk space warning — museum-kiosk-2',
+      category: 'Health',
+      machineName: 'museum-kiosk-2',
+      targetMachineId: 'museum-kiosk-2',
+      userText: "museum-kiosk-2 says it's at 92% disk. what's eating it?",
+      assistantText:
+        '88GB is in C:\\Owlette\\projects\\stage-show\\renders — looks like the auto-render cache hasn\'t been pruned since february. safe to clear; nothing in there is referenced by the current roost manifest.',
+      createdAtSecAgo: 60 * 60 * 5,
+      updatedAtSecAgo: 60 * 60 * 4,
+    },
+    {
+      id: 'screenshot-cortex-restart-sequence',
+      title: 'startup sequence for opening night',
+      category: 'Operations',
+      machineName: 'mainstage-led',
+      targetMachineId: 'mainstage-led',
+      userText: 'walk me through the boot order for mainstage-led on opening night.',
+      assistantText:
+        'sequence: 1) BrightSignSigner waits 8s for the LED matrix to handshake, 2) avenue.exe launches with the spring-tour.avc composition, 3) td-control-room starts main.toe and signals avenue over osc once it\'s ready. total time-to-show is roughly 45 seconds from cold boot.',
+      createdAtSecAgo: 60 * 60 * 24 * 1,
+      updatedAtSecAgo: 60 * 60 * 22,
+    },
+    {
+      id: 'screenshot-cortex-license-check',
+      title: 'touchdesigner license expiry',
+      category: 'Compliance',
+      machineName: 'all machines',
+      targetMachineId: null,
+      userText: 'when do our touchdesigner pro licenses expire?',
+      assistantText:
+        'all 6 td-pro licenses renew on 2026-09-14. the seat assigned to td-control-room is the only one set to auto-renew; the rest will need a manual nudge in derivative\'s portal in september.',
+      createdAtSecAgo: 60 * 60 * 24 * 4,
+      updatedAtSecAgo: 60 * 60 * 24 * 4,
+    },
+  ];
+
+  for (const c of fillerConversations) {
+    await db.collection('chats').doc(c.id).set({
+      userId,
+      siteId,
+      title: c.title,
+      category: c.category,
+      targetType: c.targetMachineId ? 'machine' : 'site',
+      targetMachineId: c.targetMachineId,
+      machineName: c.machineName,
+      source: 'user',
+      messages: [
+        {
+          id: `${c.id}-msg-user-1`,
+          role: 'user',
+          parts: [{ type: 'text', text: c.userText }],
+        },
+        {
+          id: `${c.id}-msg-assistant-1`,
+          role: 'assistant',
+          parts: [{ type: 'text', text: c.assistantText }],
+        },
+      ],
+      createdAt: tsAgo(c.createdAtSecAgo),
+      updatedAt: tsAgo(c.updatedAtSecAgo),
+    });
+  }
+
   return {
     siteId,
     machineId,
@@ -743,7 +1202,7 @@ async function seedDiagnoseCortexChat(): Promise<ScreenshotFixture> {
  * setDisplayLayout action.
  */
 async function seedDisplayLayoutEditor(): Promise<ScreenshotFixture> {
-  const siteId = 'site-screenshot-display';
+  const siteId = 'site-A';
   const machineId = 'mainstage-led';
   await seedScreenshotSite(siteId, 'flagship');
   await seedMachine(siteId, machineId, {
@@ -868,7 +1327,7 @@ async function writeFourMonitorProfile(
  * present in `web/lib/actions/setAlertRules.server.ts`.
  */
 async function seedAutomateScheduleEditor(): Promise<ScreenshotFixture> {
-  const siteId = 'site-screenshot-automate';
+  const siteId = 'site-A';
   const machineId = 'lobby-display';
   await seedScreenshotSite(siteId, 'flagship');
   await seedMachine(siteId, machineId, { heartbeatOffsetSec: 5 });
@@ -968,7 +1427,7 @@ async function seedAutomateScheduleEditor(): Promise<ScreenshotFixture> {
 async function seedDisplayStoryboardFrame(
   frame: 1 | 2 | 3,
 ): Promise<ScreenshotFixture> {
-  const siteId = 'site-screenshot-storyboard';
+  const siteId = 'site-A';
   const machineId = 'mainstage-led';
   await seedScreenshotSite(siteId, 'flagship');
   await seedMachine(siteId, machineId, {

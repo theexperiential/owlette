@@ -51,7 +51,8 @@ test('display capability card preview', async ({ page }) => {
     // Wait for the network to settle so any late-paint (4-monitor canvas
     // render after the display profile snapshot resolves) finishes before
     // we capture pixels.
-    await page.waitForLoadState('networkidle');
+    // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
+    await page.waitForTimeout(1500);
 
     // Disable CSS animations + transitions so cycling effects (panel slide,
     // monitor card fade-ins) don't introduce per-run jitter.

@@ -43,7 +43,13 @@ test('monitor capability card preview', async ({ page }) => {
     // text or any other "cpu"-containing string on the card.
     await card.getByText('cpu', { exact: true }).first().click();
 
-    await page.waitForLoadState('networkidle');
+    // The MetricsDetailPanel renders at page-level above the machines list,
+    // not inside the card. Scroll back to the page top so the panel's
+    // header (with metric tabs / time-range selector) is fully visible.
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+
+    // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
+    await page.waitForTimeout(1500);
 
     await page.addStyleTag({
       content: `

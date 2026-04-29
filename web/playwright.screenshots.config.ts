@@ -5,10 +5,14 @@ import { defineConfig, devices } from '@playwright/test';
  *
  * Separate from `playwright.config.ts` (the regression e2e suite) because:
  *   - testDir is `./e2e/screenshots` (not `./e2e/specs`)
- *   - workers: 4 (each spec touches its own fixture data, parallel-safe)
+ *   - workers: 1 (serialized — every scenario calls resetAndReseedBaseline
+ *     which clears the auth + firestore emulator, so parallel workers wipe
+ *     each other's seed data mid-test)
  *   - retries: 0 (failures should be loud — screenshot output must be deterministic)
- *   - chromium-only with a 2400×1300 default viewport matching the existing
- *     `public/dashboard.png` aspect ratio
+ *   - chromium-only with a 1280×720 default viewport (capability previews
+ *     are sized to display compactly inside the landing page card grid).
+ *     `dashboard.spec.ts` overrides up to 2400×1300 since the hero treatment
+ *     wants more density.
  *
  * Specs themselves call `page.screenshot({ path: 'public/landing-screens/X.png' })`
  * to write PNGs into `web/public/landing-screens/`. The `outputDir` below is only
@@ -35,12 +39,12 @@ export default defineConfig({
   // marketing PNGs. Specs write those directly to `public/landing-screens/`
   // via `page.screenshot({ path: ... })`.
   outputDir: OUTPUT_DIR,
-  fullyParallel: true,
+  fullyParallel: false,
   forbidOnly: false,
   // Screenshot generation must be deterministic. A retry that produces a
   // different pixel-perfect output silently is worse than a loud failure.
   retries: 0,
-  workers: 4,
+  workers: 1,
   reporter: [['list']],
 
   globalSetup: require.resolve('./e2e/global-setup'),
@@ -58,13 +62,13 @@ export default defineConfig({
     video: 'off',
     actionTimeout: 10_000,
     navigationTimeout: 20_000,
-    viewport: { width: 2400, height: 1300 },
+    viewport: { width: 1280, height: 720 },
   },
 
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'], viewport: { width: 2400, height: 1300 } },
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 720 } },
     },
   ],
 

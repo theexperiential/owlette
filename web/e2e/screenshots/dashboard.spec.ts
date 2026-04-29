@@ -7,7 +7,8 @@
  *
  * Drives the dashboard into the `dashboard-mixed-states` scenario: 10 seeded
  * machines covering running / alerting / offline / just-restarted, then
- * captures the default card grid view.
+ * flips to list view (denser, more legible at the page-hero scale) and
+ * captures the result.
  */
 import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
@@ -15,7 +16,11 @@ import { getAdminDb } from '../helpers/emulator';
 import { TEST_USERS } from '../helpers/seed';
 import { FIXED_NOW_MS, seedScreenshotFixtures } from './fixtures';
 
-test.use(roleState('admin'));
+// Hero shot — explicitly higher res than the capability-preview default
+// (1280×720) since the dashboard image is the LCP asset and gets a 3D-tilt
+// treatment in the value-prop section. 1920×1080 keeps the dashboard
+// content close to the table width without wasting horizontal margin.
+test.use({ ...roleState('admin'), viewport: { width: 1920, height: 1080 } });
 
 test('dashboard capability card preview', async ({ page }) => {
   const ctx = await seedScreenshotFixtures('dashboard-mixed-states');
@@ -23,10 +28,18 @@ test('dashboard capability card preview', async ({ page }) => {
   try {
     // Pin lastSiteId so /dashboard auto-selects the screenshot site instead
     // of the baseline `site-A` the admin user is also assigned to.
+    // Also collapse the per-machine process panels so list rows render as
+    // single dense rows instead of expanded accordions — the global
+    // seedUser default is `processesExpanded: true`, but for the hero shot
+    // we want a tight, scannable list.
     await getAdminDb()
       .collection('users')
       .doc(TEST_USERS.admin.uid)
       .set({ lastSiteId: ctx.siteId }, { merge: true });
+    await getAdminDb()
+      .collection('users')
+      .doc(TEST_USERS.admin.uid)
+      .update({ 'preferences.processesExpanded': false });
 
     // Pin the clock BEFORE goto so any "x minutes ago" / heartbeat-age text
     // resolves against FIXED_NOW.
@@ -34,11 +47,15 @@ test('dashboard capability card preview', async ({ page }) => {
 
     await page.goto('/dashboard');
 
-    // Wait for all 10 seeded machine cards to render before screenshotting.
+    // Wait for the default card grid to render so we know the dashboard is
+    // populated, then flip to list view for the hero screenshot.
     await expect(page.getByTestId('machine-card')).toHaveCount(10);
+    await page.getByTestId('view-toggle-list').click();
+    await expect(page.getByTestId('machine-row')).toHaveCount(10);
 
     // Let any late-paint (sparkline series, metric badges) settle.
-    await page.waitForLoadState('networkidle');
+    // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
+    await page.waitForTimeout(1500);
 
     await page.addStyleTag({
       content: `

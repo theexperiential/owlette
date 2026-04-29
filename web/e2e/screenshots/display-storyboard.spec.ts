@@ -95,7 +95,8 @@ test('display section storyboard — three frames', async ({ page }) => {
 
       // Let any late-paint (display canvas render after profile snapshot
       // resolves, banner mount, countdown render) settle before capture.
-      await page.waitForLoadState('networkidle');
+      // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
+    await page.waitForTimeout(1500);
       await disableAnimations(page);
 
       // Re-pin Date.now() after navigation so any hook that captured it
