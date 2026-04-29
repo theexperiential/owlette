@@ -17,7 +17,7 @@
  * is set.
  */
 
-import type { VersionFileEntry } from './chunking';
+import type { NamedBlob, VersionFileEntry } from './chunking';
 import { summariseVersion } from './chunking';
 
 /* --------------------------------------------------------------------- */
@@ -95,6 +95,26 @@ export function summariseSize(
     totalBytes: summary.totalBytes,
     uploadBytes,
     dedupRatio,
+  };
+}
+
+/**
+ * Pre-hash sibling of summariseSize for the confirmation screen we show
+ * BEFORE chunking + hashing have run. Returns the same SizeSummary shape
+ * but with `uploadBytes === totalBytes` (worst case — no dedup yet) and
+ * `dedupRatio === 0`. Use this for the "are you sure?" gate; switch to
+ * summariseSize once the hashing pass has produced VersionFileEntry[].
+ */
+export function summariseRawFiles(
+  files: readonly NamedBlob[],
+): SizeSummary {
+  let totalBytes = 0;
+  for (const f of files) totalBytes += f.blob.size;
+  return {
+    fileCount: files.length,
+    totalBytes,
+    uploadBytes: totalBytes,
+    dedupRatio: 0,
   };
 }
 

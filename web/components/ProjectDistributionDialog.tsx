@@ -18,11 +18,20 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { sanitizeError } from '@/lib/errorHandler';
 import { FolderDropzone } from '@/components/FolderDropzone';
+import { PreUploadSummary } from '@/components/PreUploadSummary';
 import type { NamedBlob } from '@/lib/chunking';
 import { summariseVersion } from '@/lib/chunking';
 import { resolveExtractPath, isLikelyAllowed } from '@/lib/extractPath';
-import { formatBytes } from '@/lib/preUploadCheck';
-import { useRoostUpload, type UseRoostUploadApi } from '@/hooks/useRoostUpload';
+import {
+  formatBytes,
+  summariseRawFiles,
+  type PreUploadTarget,
+} from '@/lib/preUploadCheck';
+import {
+  useRoostUpload,
+  type UseRoostUploadApi,
+  type UploadInputs,
+} from '@/hooks/useRoostUpload';
 
 /**
  * "+ new version" pre-fill — opens the dialog targeting an EXISTING roost.
@@ -169,6 +178,13 @@ export default function ProjectDistributionDialog({
   // run — the floating minimized card picks it up.
   const [droppedFiles, setDroppedFiles] = useState<NamedBlob[] | null>(null);
   const [droppedRootName, setDroppedRootName] = useState<string>('');
+  // When set, the operator has clicked an upload button and we're showing
+  // PreUploadSummary as a confirmation gate (size + per-target disk
+  // warnings). On confirm we hand the staged inputs to upload.start();
+  // on cancel we drop them and let the operator edit the form. Holds the
+  // FULL UploadInputs so confirmation captures the form state at the
+  // moment of click — subsequent edits to the form don't leak in.
+  const [pendingKickoff, setPendingKickoff] = useState<UploadInputs | null>(null);
   // Source mode — url (v1 one-shot download link) vs upload (v2 roost
   // chunked upload). Upload is the default because it's the expected
   // path for a first-party roost (drag a folder/files, go) — URL mode
@@ -216,6 +232,7 @@ export default function ProjectDistributionDialog({
     setPendingReplacePreset(null);
     setSourceMode('upload');
     setDescription('');
+    setPendingKickoff(null);
     // Pre-populate locked fields when opening in "+ new version" mode.
     // Upload mode is forced (new versions are bytes-driven; there's no
     // url-source equivalent for an existing roost).
@@ -521,11 +538,12 @@ export default function ProjectDistributionDialog({
 
     const totalBytes = droppedFiles.reduce((n, f) => n + f.blob.size, 0);
 
-    // Fire and forget — the hook tracks progress + result. We close the
-    // dialog immediately after kickoff so the user is free to navigate;
-    // the minimized card will surface completion (success toast fired by
-    // the effect below that watches `upload.state.status`).
-    upload.start({
+    // Stage the inputs for confirmation. The user sees PreUploadSummary
+    // (size + per-target disk warnings) and chooses to proceed. Without
+    // this gate, mistyped folder picks or target machines with full
+    // disks would burn bandwidth + storage and only fail mid-sync at
+    // the agent — codex audit #8 (security-boundary punchlist).
+    setPendingKickoff({
       siteId,
       roostId: isNewVersion ? newVersion!.roostId : resolvedRoostId,
       files: droppedFiles,
@@ -540,6 +558,59 @@ export default function ProjectDistributionDialog({
 
   const handleUploadOnly = () => startUpload(false);
   const handleUploadDistribute = async () => startUpload(true);
+
+  // PreUploadSummary's per-target disk check needs free-bytes on each
+  // selected machine. We sum across all volumes on the machine: each
+  // joined disk entry exposes both totalGb (from DiskProfile) and
+  // usedGb (from DiskMetric); free = total - used. Volumes that haven't
+  // reported metrics yet are skipped — if NO volume has both numbers
+  // we leave freeDiskBytes undefined so the summary renders the
+  // "unknown free disk" warning rather than showing a misleading 0.
+  //
+  // This is a SUM across volumes, not the destination volume's free
+  // alone. extract_root usually lands on C:; a 50GB roost that fits
+  // across all drives might still not fit on C:. The agent will catch
+  // the per-volume failure during sync; this client check just blocks
+  // the obviously-too-big case.
+  const summaryTargets = React.useMemo<PreUploadTarget[]>(() => {
+    if (!pendingKickoff) return [];
+    return pendingKickoff.targets.map((machineId) => {
+      const m = machines.find((x) => x.machineId === machineId);
+      const disks = m?.devices?.disks ?? [];
+      let totalFreeGb = 0;
+      let anyKnown = false;
+      for (const d of disks) {
+        if (typeof d.totalGb === 'number' && typeof d.usedGb === 'number') {
+          totalFreeGb += Math.max(0, d.totalGb - d.usedGb);
+          anyKnown = true;
+        }
+      }
+      return {
+        machineId,
+        name: machineId,
+        freeDiskBytes: anyKnown ? Math.round(totalFreeGb * 1024 ** 3) : undefined,
+      };
+    });
+  }, [pendingKickoff, machines]);
+
+  const summarySize = React.useMemo(
+    () => (pendingKickoff ? summariseRawFiles(pendingKickoff.files) : undefined),
+    [pendingKickoff],
+  );
+
+  // Fire-and-forget: the hook tracks progress + result. The minimized
+  // card surfaces completion (success toast fired by the effect below
+  // that watches `upload.state.status`).
+  const handleConfirmKickoff = () => {
+    if (!pendingKickoff) return;
+    const inputs = pendingKickoff;
+    setPendingKickoff(null);
+    upload.start(inputs);
+  };
+
+  const handleCancelKickoff = () => {
+    setPendingKickoff(null);
+  };
 
   // React to upload hook terminal states. We fire the user-facing toast
   // here rather than inside handleUploadDistribute because the dialog may
@@ -1222,7 +1293,18 @@ export default function ProjectDistributionDialog({
           </div>
         </div>
 
-        <DialogFooter>
+        {pendingKickoff && summarySize && (
+          <div className="border-t border-border pt-4">
+            <PreUploadSummary
+              sizeSummary={summarySize}
+              targets={summaryTargets}
+              onConfirm={handleConfirmKickoff}
+              onCancel={handleCancelKickoff}
+            />
+          </div>
+        )}
+
+        <DialogFooter className={pendingKickoff ? 'hidden' : undefined}>
           {/* During an upload the footer surfaces BOTH actions explicitly:
               - "cancel upload" aborts the in-flight run (AbortController
                 fires, fetches bail out, minimized card hides)

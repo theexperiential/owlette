@@ -37,10 +37,25 @@ import {
   type PreUploadCheck,
   type PreUploadTarget,
   type QuotaSnapshot,
+  type SizeSummary,
 } from '@/lib/preUploadCheck';
 
 interface PreUploadSummaryProps {
-  entries: VersionFileEntry[];
+  /**
+   * Post-hash chunked entries. Required when `sizeSummary` is omitted —
+   * the component then computes the SizeSummary itself (with dedup
+   * preview if `alreadyPresent` is supplied).
+   */
+  entries?: VersionFileEntry[];
+  /**
+   * Pre-hash size summary. Use when the confirmation step runs BEFORE
+   * the hashing pass (e.g. straight after FolderDropzone). Takes
+   * precedence over `entries` when both are provided.
+   *
+   * Constructed via `summariseRawFiles()`; `uploadBytes === totalBytes`
+   * and `dedupRatio === 0` because dedup isn't known until hashing.
+   */
+  sizeSummary?: SizeSummary;
   targets: PreUploadTarget[];
   /** Optional — omit for unlimited plans. */
   quota?: QuotaSnapshot;
@@ -54,6 +69,7 @@ interface PreUploadSummaryProps {
 
 export function PreUploadSummary({
   entries,
+  sizeSummary,
   targets,
   quota,
   alreadyPresent,
@@ -61,10 +77,11 @@ export function PreUploadSummary({
   onConfirm,
   onCancel,
 }: PreUploadSummaryProps) {
-  const size = useMemo(
-    () => summariseSize(entries, alreadyPresent),
-    [entries, alreadyPresent],
-  );
+  const size = useMemo<SizeSummary>(() => {
+    if (sizeSummary) return sizeSummary;
+    if (entries) return summariseSize(entries, alreadyPresent);
+    return { fileCount: 0, totalBytes: 0, uploadBytes: 0, dedupRatio: 0 };
+  }, [sizeSummary, entries, alreadyPresent]);
   const etaSeconds = useMemo(
     () => estimateUploadSeconds(size.uploadBytes, uploadMbps),
     [size.uploadBytes, uploadMbps],

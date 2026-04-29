@@ -4,7 +4,7 @@
  * tests for web/lib/preUploadCheck.ts (roost wave 3.4).
  */
 
-import type { VersionFileEntry } from '@/lib/chunking';
+import type { NamedBlob, VersionFileEntry } from '@/lib/chunking';
 import {
   canStartUpload,
   checkQuota,
@@ -13,6 +13,7 @@ import {
   estimateUploadSeconds,
   formatBytes,
   formatDuration,
+  summariseRawFiles,
   summariseSize,
   type PreUploadTarget,
 } from '@/lib/preUploadCheck';
@@ -74,6 +75,46 @@ describe('summariseSize', () => {
 
   it('dedupRatio=0 when totalBytes is 0 (guard against /0)', () => {
     const s = summariseSize([]);
+    expect(s.dedupRatio).toBe(0);
+  });
+});
+
+/* --------------------------------------------------------------------- */
+/*  summariseRawFiles                                                    */
+/* --------------------------------------------------------------------- */
+
+function rawFile(path: string, size: number): NamedBlob {
+  return { path, blob: { size } as unknown as Blob };
+}
+
+describe('summariseRawFiles', () => {
+  it('zero files → zeros, no NaN', () => {
+    const s = summariseRawFiles([]);
+    expect(s.fileCount).toBe(0);
+    expect(s.totalBytes).toBe(0);
+    expect(s.uploadBytes).toBe(0);
+    expect(s.dedupRatio).toBe(0);
+  });
+
+  it('sums blob sizes for fileCount + totalBytes', () => {
+    const s = summariseRawFiles([
+      rawFile('a.toe', 4 * MB),
+      rawFile('b.toe', 8 * MB),
+      rawFile('c/d.toe', 2 * MB),
+    ]);
+    expect(s.fileCount).toBe(3);
+    expect(s.totalBytes).toBe(14 * MB);
+  });
+
+  it('uploadBytes equals totalBytes (no dedup pre-hash)', () => {
+    // Pre-hash we can't know which content overlaps. The summary intentionally
+    // shows the worst-case upload size so the operator never sees a smaller
+    // number on the confirm screen than what actually goes over the wire.
+    const s = summariseRawFiles([
+      rawFile('a.toe', 4 * MB),
+      rawFile('b.toe', 4 * MB),
+    ]);
+    expect(s.uploadBytes).toBe(s.totalBytes);
     expect(s.dedupRatio).toBe(0);
   });
 });
