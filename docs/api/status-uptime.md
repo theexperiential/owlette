@@ -1,8 +1,8 @@
 # status page and uptime checks
 
-**Last updated**: 2026-04-28
+**Last updated**: 2026-04-29
 
-External public launch requires a customer-visible status page at `https://status.owlette.app`. The status page is the place to publish incidents, component health, and uptime history for API consumers.
+External public launch requires a customer-visible status page. The first launch target is an Instatus Starter hosted page, which is free and has enough monitor capacity for the initial component set. The custom domain `https://status.owlette.app` is deferred until a paid custom-domain plan or alternate provider path is approved.
 
 The status page is launch packaging. Developer preview can proceed without it, but external public launch should not.
 
@@ -12,7 +12,8 @@ The status page is launch packaging. Developer preview can proceed without it, b
 
 | surface | purpose |
 |---|---|
-| `https://status.owlette.app` | public status page for current health, active incidents, and incident history |
+| Instatus hosted page URL | public status page for current health, active incidents, and incident history |
+| `https://status.owlette.app` | later custom-domain alias for the public status page |
 | `GET /api/version` | unauthenticated API liveness check |
 | `GET /api/whoami` | auth-path liveness check; unauthenticated `401` is healthy |
 | `GET /api/openapi` | public contract availability check for docs/reference monitoring |
@@ -76,11 +77,11 @@ Mark the incident resolved when the underlying issue is fixed. Monitoring can re
 
 5.1 is externally complete when:
 
-- `status.owlette.app` resolves with valid TLS
+- an Instatus Starter hosted page URL is live and customer-visible
 - the seven components exist on the status page
 - the 60-second uptime checks are running
 - the API component flips degraded after two consecutive `/api/version` or `/api/whoami` failures
 - the API component flips operational after recovery
 - an operator can publish and resolve a test incident from the vendor UI
 
-Until DNS and vendor setup are complete, treat status-page work as launch-blocked but not developer-preview-blocked.
+The custom domain `status.owlette.app` remains a later launch-polish task because Instatus Starter does not include custom domains. Until the hosted page and vendor setup are complete, treat status-page work as launch-blocked but not developer-preview-blocked.

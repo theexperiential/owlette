@@ -1,5 +1,5 @@
 # status page — context
-**Last updated**: 2026-04-26
+**Last updated**: 2026-04-29
 
 ## problem statement
 
@@ -9,7 +9,7 @@ this lands as the api-sprint and roost-public-api endpoints get traffic from ext
 
 ## scope
 
-a public status page at `status.owlette.app` that shows:
+a public Instatus-hosted status page that shows:
 
 1. **overall system health** — green/yellow/red banner ("all systems operational" / "partial outage" / "major outage")
 2. **component-level status** — each major surface (dashboard, api, agent registry, webhook delivery, r2 uploads, firestore reads, cortex chat) with its own indicator
@@ -21,7 +21,7 @@ a public status page at `status.owlette.app` that shows:
 
 ## design principles
 
-1. **3rd-party first, self-hosted later**. ship a hosted status page (instatus or better stack) on day one with a subdomain (`status.owlette.app`). evaluate self-built only if cost or feature limits become a real problem. building a status page from scratch is 2-4 weeks; using a hosted service is 1-2 days.
+1. **3rd-party first, self-hosted later**. ship a hosted status page (instatus or better stack) on day one using the free hosted URL. defer the `status.owlette.app` custom domain until a paid custom-domain plan or alternate provider path is approved. evaluate self-built only if cost or feature limits become a real problem. building a status page from scratch is 2-4 weeks; using a hosted service is 1-2 days.
 2. **synthetic uptime + real signals**. ship synthetic checks (curl every 60s against `/api/whoami`, `/api/version`, etc.) on day one. plug in real internal signals (firestore latency, r2 5xx rate) over time as we instrument them.
 3. **operators publish, system reads**. incidents are human-curated — an oncall person publishes an update during an incident, the page reads it. don't try to auto-detect incidents (false positives ruin the signal).
 4. **public read, admin write**. no auth on the status page itself — it must work even when our auth is broken. updates published from a separate admin view (or the vendor's web ui).
@@ -29,9 +29,9 @@ a public status page at `status.owlette.app` that shows:
 
 ## key decisions (locked)
 
-1. **vendor selection: instatus**. $20/mo, custom subdomain, email + webhook subscribers, public api, 90-day history, no per-component pricing. better stack is comparable but bundles uptime monitoring we don't need (we already have synthetic checks via railway/cron). atlassian statuspage is enterprise-priced ($29-99/mo). instatus has the cleanest free-tier path if we ever need to start.
-2. **subdomain: `status.owlette.app`**. dns + ssl handled by instatus.
-3. **no integration with the dashboard initially**. dashboard links to `status.owlette.app` in the footer. inline incident banners inside the dashboard are a v2 concern.
+1. **vendor selection: instatus starter/free**. start with the free hosted page: 15 monitors, 2-minute checks, public status page, 200 subscribers, no custom domain. better stack is comparable but bundles uptime monitoring we don't need (we already have synthetic checks via railway/cron). atlassian statuspage is enterprise-priced ($29-99/mo). upgrade only when the custom domain or paid feature set is required.
+2. **custom domain: deferred**. `status.owlette.app` is still the preferred branded URL, but it is not a wave-1 prerequisite because Instatus Starter does not include custom domains.
+3. **no integration with the dashboard initially**. dashboard/footer links point at the Instatus hosted URL after vendor setup. switch them to `status.owlette.app` only after the custom domain exists. inline incident banners inside the dashboard are a v2 concern.
 4. **synthetic uptime via existing cron infra**. railway already runs cron jobs. a 60s `pingHealthCheck` cron writes results to firestore and calls the Instatus component-status API when state changes.
 5. **components list (initial)** — 7 components, deliberately small:
    - dashboard (`https://owlette.app`)
@@ -52,12 +52,12 @@ a public status page at `status.owlette.app` that shows:
 Public API W5.1 has already created the autonomous foundation files: `web/lib/healthChecks.server.ts`, `web/lib/instatusClient.ts`, `web/app/api/cron/status-ping/route.ts`, focused tests, and `docs/api/status-uptime.md`. The remaining new files in this section are still needed after vendor setup.
 - `web/lib/healthChecks.server.ts` (new) — internal healthcheck functions returning `{component, ok, latency_ms}` for each tracked component.
 - `web/app/api/cron/status-ping/route.ts` (new) — railway cron handler, runs every 60s, calls each healthcheck, posts Instatus component-status updates on state change.
-- `dev/active/status-page/reference/instatus-config.md` (new) — vendor setup notes (component ids, webhook urls, email template, dns record).
+- `dev/active/status-page/reference/instatus-config.md` (new) — vendor setup notes (hosted page URL, page id, component ids, component-status API template, email template).
 - `dev/active/status-page/reference/runbook.md` (new) — how to publish an incident: which dashboard, what to say, when to update.
 
 ### modify
-- `web/components/Footer.tsx` (or wherever the global footer lives) — add "system status" link to `https://status.owlette.app`.
-- `docs/changelog.md` — entry under unreleased: "added status page at status.owlette.app".
+- `web/components/Footer.tsx` (or wherever the global footer lives) — add "system status" link to the live Instatus hosted URL after setup.
+- `docs/changelog.md` — entry under unreleased once the hosted page is live.
 
 ### do not touch
 - existing rate-limit/audit infra — status page healthchecks should be excluded from rate limiting (use a dedicated bypass header or hardcoded path allowlist).
@@ -65,11 +65,11 @@ Public API W5.1 has already created the autonomous foundation files: `web/lib/he
 
 ## dependencies on existing infrastructure
 
-Public API W5.1 can record local pings before vendor setup, but external incident visibility remains blocked until `status.owlette.app` resolves and the Instatus page/component ids are configured.
+Public API W5.1 can record local pings before vendor setup, but external incident visibility remains blocked until the Instatus hosted page and component ids are configured.
 
 - **railway cron** — already configured for other cron jobs. add a new entry for `/api/cron/status-ping` every 60s.
 - **firestore** — write a `status_pings` collection for historical pings; instatus is the source of truth for the public page.
-- **instatus account** — $20/mo. one-time setup: create components, record component ids/status update endpoint details, and configure subdomain dns.
+- **instatus account** — free Starter tier. one-time setup: create components, record component ids/status update endpoint details, and record the hosted page URL. custom-domain dns is optional/later.
 
 ## out of scope for this plan
 
@@ -83,9 +83,9 @@ Public API W5.1 can record local pings before vendor setup, but external inciden
 
 ## success criteria
 
-1. `status.owlette.app` resolves and shows the 7-component list with current status.
+1. the Instatus hosted page URL shows the 7-component list with current status.
 2. when the api `/api/whoami` returns 5xx for >2 consecutive synthetic checks, the api component flips to "degraded" within 2 minutes.
 3. an oncall operator can publish an incident update from the instatus admin ui in <2 minutes during a real incident.
-4. footer link from `owlette.app` and `dev.owlette.app` points at the status page.
+4. footer link from `owlette.app` and `dev.owlette.app` points at the live status page URL.
 5. email subscribers get notified within 1 minute of an operator-published incident.
 6. one full end-to-end test: simulate an api outage (kill rate-limit middleware via env var), confirm component flips, restore, confirm it goes green.

@@ -6,17 +6,17 @@ Each task names files, what to do, and what "done" looks like. Waves correspond 
 
 ---
 
-## wave 1: vendor setup + dns (USER ACTION REQUIRED)
+## wave 1: free hosted status page setup (USER ACTION REQUIRED)
 
-- [ ] **Task 1.1: Instatus account + 7 components**
+- [ ] **Task 1.1: Instatus Starter/Free account + 7 components**
   - Files: none; vendor admin UI.
-  - Do: sign up at instatus.com on the $20/mo Starter plan. Create the 7 components from context.md exactly: `dashboard`, `api`, `agent registry`, `webhook delivery`, `r2 uploads`, `firestore`, `cortex chat`. Set initial state to operational on all. Note each component id.
+  - Do: sign up at instatus.com on the Starter/Free plan. Create the 7 components from context.md exactly: `dashboard`, `api`, `agent registry`, `webhook delivery`, `r2 uploads`, `firestore`, `cortex chat`. Set initial state to operational on all. Note each component id.
   - Done when: 7 components are visible on the Instatus admin dashboard, all green.
 
-- [ ] **Task 1.2: custom subdomain status.owlette.app**
-  - Files: none; vendor admin UI and DNS provider.
-  - Do: in Instatus admin, configure custom domain `status.owlette.app`. Add the CNAME record at the DNS provider managing `owlette.app`. Wait for SSL provisioning.
-  - Done when: `https://status.owlette.app` loads and shows the 7 components green with valid TLS.
+- [ ] **Task 1.2: hosted status page URL**
+  - Files: none; vendor admin UI.
+  - Do: record the Instatus hosted status page URL for launch validation. Keep `status.owlette.app` deferred because custom domains require a paid Instatus plan or alternate provider path.
+  - Done when: the hosted page URL loads and shows the 7 components green.
 
 - [ ] **Task 1.3: reference doc with component ids**
   - Files: `dev/active/status-page/reference/instatus-config.md` (new).
@@ -53,7 +53,7 @@ Each task names files, what to do, and what "done" looks like. Waves correspond 
 
 - [ ] **Task 3.1: footer link**
   - Files: `web/components/Footer.tsx` and landing footer if applicable.
-  - Do: add an inline link `system status` pointing at `https://status.owlette.app`. Lowercase. External link.
+  - Do: add an inline link `system status` pointing at the live Instatus hosted URL. Lowercase. External link. Switch to `https://status.owlette.app` later only after the custom domain exists.
   - Done when: the link is visible on dashboard and marketing pages after the status page resolves.
 
 - [ ] **Task 3.2: changelog entry**
@@ -69,7 +69,7 @@ Each task names files, what to do, and what "done" looks like. Waves correspond 
 - [ ] **Task 3.4: end-to-end test**
   - Files: none; manual test, log results here.
   - Do:
-    1. confirm `status.owlette.app` loads and shows 7 green components.
+    1. confirm the Instatus hosted status page loads and shows 7 green components.
     2. force the API check to fail in a controlled staging environment.
     3. wait 2 ping cycles and confirm the API component flips to degraded.
     4. restore the API check and confirm the component flips back to operational.
@@ -83,7 +83,7 @@ Each task names files, what to do, and what "done" looks like. Waves correspond 
 
 ### 2026-04-28
 - Public API W5.1 added the autonomous status-page foundation before vendor setup: healthcheck module, status-ping cron route, Instatus component-status client, focused tests, API docs, and deployment/env docs.
-- Tasks remain open because completion still requires user action: Instatus account, `status.owlette.app` DNS/TLS, component ids, Railway cron configuration, and a verified degraded/recovered component flip on the public page.
+- Tasks remain open because completion still requires user action: Instatus Starter/Free account, hosted page URL, component ids, Railway cron configuration, and a verified degraded/recovered component flip on the public page. `status.owlette.app` DNS/TLS is deferred.
 
 ### 2026-04-26
-- Plan created. Vendor: Instatus ($20/mo). Subdomain: `status.owlette.app`. 7 components: dashboard, api, agent registry, webhook delivery, r2 uploads, firestore, cortex chat. Synthetic uptime via Railway cron every 60s. Manual incident publishing. Wave 1 requires user action; waves 2-3 are autonomous after wave 1 lands.
+- Plan created. Vendor: Instatus, with Starter/Free now selected for the first hosted-page path. Later custom domain: `status.owlette.app`. 7 components: dashboard, api, agent registry, webhook delivery, r2 uploads, firestore, cortex chat. Synthetic uptime via Railway cron every 60s. Manual incident publishing. Wave 1 requires user action; waves 2-3 are autonomous after wave 1 lands.

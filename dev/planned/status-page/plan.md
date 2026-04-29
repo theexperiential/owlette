@@ -1,22 +1,22 @@
 # status page — plan
-**Last updated**: 2026-04-26 | **Estimated**: 4-6 days | **Vendor**: instatus
+**Last updated**: 2026-04-29 | **Estimated**: 4-6 days | **Vendor**: instatus starter/free
 
-ship a public status page at `status.owlette.app` showing component health + active incidents. see [context.md](context.md) for design + decisions; [reference/instatus-config.md](reference/instatus-config.md) for vendor setup details (created in wave 1).
+ship a public Instatus-hosted status page showing component health + active incidents. `status.owlette.app` remains the preferred later custom-domain alias, but the free-tier launch path uses the hosted URL. see [context.md](context.md) for design + decisions; [reference/instatus-config.md](reference/instatus-config.md) for vendor setup details (created in wave 1).
 
 ---
 
 ## wave structure
 
 ```
-wave 1   vendor setup + dns                              (~ 1 day, user-action required)
-  ├─ 1.1  instatus account + 7 components defined
-  ├─ 1.2  custom subdomain status.owlette.app
-  └─ 1.3  reference doc with component ids + webhook urls
+wave 1   free hosted status page setup                   (~ 1 day, user-action required)
+  ├─ 1.1  instatus starter/free account + 7 components defined
+  ├─ 1.2  hosted status page url recorded
+  └─ 1.3  reference doc with page id + component ids
 
 wave 2   synthetic healthchecks + cron                   (~ 2 days)
   ├─ 2.1  healthcheck module per component
   ├─ 2.2  status-ping cron route (60s)
-  ├─ 2.3  state-change webhook poster
+  ├─ 2.3  state-change component-status publisher
   └─ 2.4  unit tests for the healthcheck functions
 
 wave 3   integration + polish                            (~ 1 day)
@@ -28,15 +28,15 @@ wave 3   integration + polish                            (~ 1 day)
 
 ---
 
-## wave 1 — vendor setup + dns
+## wave 1 — free hosted status page setup
 
-**duration**: ~1 day. user-action heavy: requires creating an instatus account and adding a dns record. nothing to /execute autonomously.
+**duration**: ~1 day. user-action heavy: requires creating an instatus account. no paid plan or dns record is required for the initial hosted-page path.
 
-### 1.1 — instatus account + 7 components defined
-sign up at instatus.com on the $20/mo "starter" plan. create the 7 components from context.md (dashboard, api, agent registry, webhook delivery, r2 uploads, firestore, cortex chat). leave incident history empty.
+### 1.1 — instatus starter/free account + 7 components defined
+sign up at instatus.com on the Starter/Free plan. create the 7 components from context.md (dashboard, api, agent registry, webhook delivery, r2 uploads, firestore, cortex chat). leave incident history empty.
 
-### 1.2 — custom subdomain status.owlette.app
-configure custom domain in instatus admin. add the cname record at the dns provider (cloudflare, godaddy, wherever owlette.app's dns is managed). wait for ssl provisioning (usually <10min).
+### 1.2 — hosted status page url recorded
+record the Instatus hosted page URL and use it for launch validation. keep `status.owlette.app` as a later task because custom domains require a paid Instatus plan or a different provider path.
 
 ### 1.3 — reference doc
 record component ids + status update endpoint details in `reference/instatus-config.md` so the wave-2 cron knows where to post.
@@ -47,7 +47,7 @@ record component ids + status update endpoint details in `reference/instatus-con
 
 **duration**: ~2 days. all code work; depends on wave 1 reference doc landing.
 
-Public API W5.1 has landed the autonomous foundation early: `web/lib/healthChecks.server.ts`, `web/lib/instatusClient.ts`, `web/app/api/cron/status-ping/route.ts`, focused tests, and `docs/api/status-uptime.md`. Keep the wave-2 tasks open until the Instatus page id/component ids exist, the 60-second cron is configured, and a degraded/recovered state change is verified against the live status page.
+Public API W5.1 has landed the autonomous foundation early: `web/lib/healthChecks.server.ts`, `web/lib/instatusClient.ts`, `web/app/api/cron/status-ping/route.ts`, focused tests, and `docs/api/status-uptime.md`. Keep the wave-2 tasks open until the Instatus page id/component ids exist, the 60-second cron is configured, and a degraded/recovered state change is verified against the live hosted status page.
 
 ### 2.1 — healthcheck module
 new `web/lib/healthChecks.server.ts`. one async function per component, all returning `{component: string, ok: boolean, latency_ms: number, error?: string}`. specifics:
@@ -62,11 +62,11 @@ new `web/lib/healthChecks.server.ts`. one async function per component, all retu
 ### 2.2 — status-ping cron route
 new `web/app/api/cron/status-ping/route.ts`. railway cron entry calls it every 60s with the standard `X-Cron-Secret` header. handler runs all 7 healthchecks in parallel (`Promise.all`), writes a row to `status_pings/{tsMillis}` with the results, computes per-component current state.
 
-### 2.3 — state-change webhook poster
+### 2.3 — state-change component-status publisher
 in the cron handler, compare current state vs the most recent ping. if any component changed (ok→degraded or degraded→ok), call the Instatus component-status API for that component:
 - `PUT https://api.instatus.com/v1/components/{componentId}` with body `{status: 'OPERATIONAL' | 'DEGRADEDPERFORMANCE' | 'PARTIALOUTAGE' | 'MAJOROUTAGE'}` by default; override with `INSTATUS_COMPONENT_STATUS_URL_TEMPLATE` if the vendor account uses a different component endpoint shape.
 - bearer-auth using an instatus api key stored in railway env as `INSTATUS_API_KEY`.
-- swallow webhook failures (log + continue) — never let instatus being down cause our healthcheck cron to fail.
+- swallow publish failures (log + continue) — never let instatus being down cause our healthcheck cron to fail.
 
 ### 2.4 — unit tests
 new `web/__tests__/lib/healthChecks.test.ts`. mock fetch + firestore. cover:
@@ -82,10 +82,10 @@ new `web/__tests__/lib/healthChecks.test.ts`. mock fetch + firestore. cover:
 **duration**: ~1 day.
 
 ### 3.1 — footer link
-add "system status" link to the global footer pointing at `https://status.owlette.app`. lowercase per ui copy convention. visible on dashboard + marketing pages.
+add "system status" link to the global footer pointing at the live Instatus hosted URL. lowercase per ui copy convention. visible on dashboard + marketing pages. switch to `https://status.owlette.app` later only after the custom domain exists.
 
 ### 3.2 — changelog entry
-add unreleased section to `docs/changelog.md`: "added status page at status.owlette.app showing component health, active incidents, and 90-day uptime history."
+add unreleased section to `docs/changelog.md` once the hosted page is live.
 
 ### 3.3 — runbook
 new `dev/active/status-page/reference/runbook.md`. one page covering:
@@ -97,7 +97,7 @@ new `dev/active/status-page/reference/runbook.md`. one page covering:
 
 ### 3.4 — end-to-end test
 manual test:
-1. confirm `status.owlette.app` is live and shows all 7 components green
+1. confirm the Instatus hosted status page is live and shows all 7 components green
 2. set `RATE_LIMIT_FORCE_503=true` in railway env to simulate api outage
 3. wait 2 ping cycles (~2min); confirm the api component flips to degraded on the public page
 4. unset the env var; confirm the component flips back to operational within 2 minutes
@@ -118,14 +118,14 @@ manual test:
 **blocks**: nothing currently in `dev/active/`. shipping this strengthens the public api launch story (api-sprint + roost-public-api consumers benefit), but neither plan depends on it.
 
 **blocked by**:
-- wave 1 needs user action (instatus account creation + dns record). cannot be `/execute`'d autonomously.
+- wave 1 needs user action (instatus account creation and hosted page setup). cannot be `/execute`'d autonomously.
 - wave 2 depends on wave 1 reference doc.
-- public API W5.1 code can record local pings before wave 1, but external incident visibility remains blocked until `status.owlette.app` resolves and component ids are configured.
+- public API W5.1 code can record local pings before wave 1, but external incident visibility remains blocked until the hosted status page and component ids are configured.
 
 ## success criteria
 
 per [context.md](context.md):
-1. `status.owlette.app` resolves with 7 components.
+1. the Instatus hosted page URL resolves with 7 components.
 2. api 5xx → component flips to degraded within 2 minutes.
 3. operator publishes incident in <2 minutes.
 4. footer link from owlette.app + dev.owlette.app.

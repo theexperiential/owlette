@@ -106,7 +106,7 @@ These are server-side only. They wire `/api/cron/status-ping` to the hosted publ
 |----------|-------------|
 | `OWLETTE_STATUS_BASE_URL` | Optional base URL for synthetic checks; defaults to the request origin or `https://owlette.app` |
 | `INSTATUS_API_KEY` | Instatus API token |
-| `INSTATUS_PAGE_ID` | Instatus page id for `status.owlette.app` |
+| `INSTATUS_PAGE_ID` | Instatus hosted page id; not tied to the later `status.owlette.app` custom-domain upgrade |
 | `INSTATUS_API_BASE_URL` | Optional API override; defaults to `https://api.instatus.com/v1` |
 | `INSTATUS_COMPONENT_STATUS_METHOD` | Optional component update method; defaults to `PUT` |
 | `INSTATUS_COMPONENT_STATUS_URL_TEMPLATE` | Optional component update URL template using `{pageId}` and `{componentId}` placeholders |
