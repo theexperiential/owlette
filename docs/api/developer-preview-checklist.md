@@ -19,7 +19,7 @@ Developer preview is ready when an internal consumer can:
 - use documented shared behavior for auth, errors, pagination, idempotency, and rate limits
 - inspect the rendered reference at `/docs/api`
 
-Preview does not mean the public launch packaging is complete. Status page, [public SLOs](load-testing.md), [published SDK/CLI channels](distribution.md), marketplace assets, pricing/signup pages, and first-week support runbooks remain Wave 5 launch work.
+Preview does not mean the public launch packaging is complete. Status page, [public SLOs](load-testing.md), [published SDK/CLI channels](distribution.md), [marketplace/example assets](launch-assets.md), pricing/signup pages, and first-week support runbooks remain Wave 5 launch work.
 
 ---
 

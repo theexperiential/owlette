@@ -8,6 +8,8 @@ Small executable SDK examples live in:
 They are designed to run against a dev or staging tenant with explicit env vars.
 They do not read local credential files.
 
+For launch-facing CI/CD examples, see [ci/cd with GitHub Actions](ci-cd-github-actions.md) and the [public launch assets](../launch-assets.md) checklist.
+
 ## dev fixture env
 
 Use the same values for Node and Python examples:

@@ -114,6 +114,7 @@ nav:
     - status page and uptime: api/status-uptime.md
     - load testing and SLOs: api/load-testing.md
     - SDK and CLI distribution: api/distribution.md
+    - public launch assets: api/launch-assets.md
     - authentication: api/authentication.md
     - pagination: api/pagination.md
     - idempotency: api/idempotency.md
