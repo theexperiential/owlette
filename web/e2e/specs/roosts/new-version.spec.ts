@@ -175,6 +175,13 @@ test('+ new version round-trips through the full push pipeline', async ({ page }
   // machine(s)" — not the bare "upload" upload-only button.
   await dialog.getByRole('button', { name: /^upload and distribute to \d+ machine/i }).click();
 
+  // Confirmation gate (PreUploadSummary, wired in c3e1a93) — dialog footer
+  // hides and a "ready to roost?" panel renders with file-count / size /
+  // disk-warning tiles. Operator must click "start upload" to actually
+  // kick off the chunk upload + finalize POST.
+  await expect(dialog.getByRole('heading', { name: 'ready to roost?' })).toBeVisible();
+  await dialog.getByRole('button', { name: /^start upload$/i }).click();
+
   const response = await responsePromise;
   expect(response.status()).toBe(201);
 
