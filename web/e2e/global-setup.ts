@@ -24,7 +24,7 @@ import {
 } from './helpers/emulator';
 import { TEST_USERS, TestRole, seedBaseline } from './helpers/seed';
 
-const FIXTURES_DIR = join(__dirname, 'fixtures');
+const FIXTURES_DIR = process.env.E2E_FIXTURES_DIR || join(__dirname, 'fixtures');
 
 async function waitForUrl(url: string, label: string, timeoutMs = 30_000): Promise<void> {
   const started = Date.now();

@@ -10,7 +10,7 @@
 import { join } from 'path';
 import type { TestRole } from './seed';
 
-const FIXTURES_DIR = join(__dirname, '..', 'fixtures');
+const FIXTURES_DIR = process.env.E2E_FIXTURES_DIR || join(__dirname, '..', 'fixtures');
 
 /**
  * Convenience helper for `test.use({ storageState: ... })`. Returns the

@@ -7,7 +7,7 @@
  * report and exits non-zero when any gate fails or is missing.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -38,6 +38,7 @@ const CALIBRATION_PATH = join(
 const MAX_OUTPUT_CHARS = 6000;
 const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const NPX = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+const FIREBASE = process.platform === 'win32' ? 'firebase.cmd' : 'firebase';
 
 const args = new Set(process.argv.slice(2));
 const writeReport = !args.has('--no-report');
@@ -101,7 +102,9 @@ function gitValue(command, fallback = 'unknown') {
 function truncateOutput(text) {
   if (!text) return '';
   if (text.length <= MAX_OUTPUT_CHARS) return text.trim();
-  return `${text.slice(0, MAX_OUTPUT_CHARS).trim()}\n... [truncated]`;
+  const headChars = Math.floor(MAX_OUTPUT_CHARS * 0.35);
+  const tailChars = MAX_OUTPUT_CHARS - headChars;
+  return `${text.slice(0, headChars).trim()}\n... [truncated] ...\n${text.slice(-tailChars).trim()}`;
 }
 
 function commandCheck({ id, title, command, cwd, evaluate }) {
@@ -115,6 +118,159 @@ function commandCheck({ id, title, command, cwd, evaluate }) {
     details: evaluation.details ?? '',
     commandResult,
   };
+}
+
+function e2ePort(name, fallback) {
+  const parsed = Number(process.env[name]);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function e2ePorts() {
+  return {
+    web: e2ePort('W7_E2E_PORT', 13100),
+    auth: e2ePort('W7_E2E_AUTH_PORT', 19099),
+    firestore: e2ePort('W7_E2E_FIRESTORE_PORT', 18080),
+    storage: e2ePort('W7_E2E_STORAGE_PORT', 19199),
+    hub: e2ePort('W7_E2E_HUB_PORT', 14401),
+    logging: e2ePort('W7_E2E_LOGGING_PORT', 14501),
+    ui: e2ePort('W7_E2E_UI_PORT', 14001),
+  };
+}
+
+function toFirebasePath(path) {
+  return path.replace(/\\/g, '/');
+}
+
+function writeIsolatedFirebaseConfig(configPath, ports) {
+  const config = {
+    firestore: {
+      rules: toFirebasePath(join(ROOT, 'firestore.rules')),
+      indexes: toFirebasePath(join(ROOT, 'firestore.indexes.json')),
+    },
+    storage: {
+      rules: toFirebasePath(join(ROOT, 'storage.rules')),
+    },
+    emulators: {
+      auth: { host: '127.0.0.1', port: ports.auth },
+      firestore: { host: '127.0.0.1', port: ports.firestore },
+      storage: { host: '127.0.0.1', port: ports.storage },
+      ui: { enabled: false, host: '127.0.0.1', port: ports.ui },
+      hub: { host: '127.0.0.1', port: ports.hub },
+      logging: { host: '127.0.0.1', port: ports.logging },
+    },
+  };
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+}
+
+function writeIsolatedE2ERunner(runnerPath) {
+  if (process.platform === 'win32') {
+    writeFileSync(
+      runnerPath,
+      `@echo off\r\ncd /d "${WEB_DIR}"\r\nnpx.cmd playwright test\r\n`,
+      'utf8',
+    );
+    return;
+  }
+
+  writeFileSync(
+    runnerPath,
+    `#!/usr/bin/env sh\ncd "${WEB_DIR}"\nexec npx playwright test\n`,
+    'utf8',
+  );
+  chmodSync(runnerPath, 0o755);
+}
+
+function combineCommandResults(commandResults) {
+  const first = commandResults[0];
+  const last = commandResults[commandResults.length - 1];
+  return {
+    command: commandResults.map((result) => result.command).join(' && '),
+    cwd: '.',
+    startedAt: first.startedAt,
+    finishedAt: last.finishedAt,
+    exitCode: last.exitCode,
+    stdout: commandResults.map((result) => result.stdout).filter(Boolean).join('\n'),
+    stderr: commandResults.map((result) => result.stderr).filter(Boolean).join('\n'),
+    error: commandResults.map((result) => result.error).filter(Boolean).join('\n') || null,
+  };
+}
+
+function checkE2ESmoke() {
+  const ports = e2ePorts();
+  const configPath = join(tmpdir(), `owlette-w7-firebase-${process.pid}.json`);
+  const runnerPath = join(
+    tmpdir(),
+    process.platform === 'win32'
+      ? `owlette-w7-playwright-${process.pid}.cmd`
+      : `owlette-w7-playwright-${process.pid}.sh`,
+  );
+  const fixtureDir = join(tmpdir(), `owlette-w7-fixtures-${process.pid}`);
+  const outputDir = join(tmpdir(), `owlette-w7-results-${process.pid}`);
+  const reportDir = join(tmpdir(), `owlette-w7-report-${process.pid}`);
+  const nextDistDir = `e2e/.output/next-w7-${process.pid}`;
+  const env = {
+    E2E_PORT: String(ports.web),
+    E2E_FIXTURES_DIR: fixtureDir,
+    E2E_OUTPUT_DIR: outputDir,
+    E2E_REPORT_DIR: reportDir,
+    OWLETTE_NEXT_DIST_DIR: nextDistDir,
+    FIREBASE_AUTH_EMULATOR_HOST: `127.0.0.1:${ports.auth}`,
+    FIRESTORE_EMULATOR_HOST: `127.0.0.1:${ports.firestore}`,
+    FIREBASE_STORAGE_EMULATOR_HOST: `127.0.0.1:${ports.storage}`,
+  };
+  let passed = false;
+
+  try {
+    writeIsolatedFirebaseConfig(configPath, ports);
+    writeIsolatedE2ERunner(runnerPath);
+    mkdirSync(fixtureDir, { recursive: true });
+
+    const buildResult = run([NPM, 'run', 'e2e:build'], { cwd: WEB_DIR, env });
+    if (buildResult.exitCode !== 0) {
+      return {
+        id: 'e2e-smoke',
+        title: 'E2E smoke against permissive rules',
+        status: 'fail',
+        summary: `e2e build exited ${buildResult.exitCode}`,
+        details: `isolated ports web=${ports.web}, auth=${ports.auth}, firestore=${ports.firestore}, storage=${ports.storage}, next_dist=${nextDistDir}`,
+        commandResult: buildResult,
+      };
+    }
+
+    const testResult = run(
+      [
+        FIREBASE,
+        'emulators:exec',
+        '--config',
+        configPath,
+        '--only',
+        'auth,firestore,storage',
+        '--project',
+        'demo-playwright-e2e',
+        runnerPath,
+      ],
+      { cwd: ROOT, env },
+    );
+    passed = testResult.exitCode === 0;
+    const commandResult = passed ? combineCommandResults([buildResult, testResult]) : testResult;
+    return {
+      id: 'e2e-smoke',
+      title: 'E2E smoke against permissive rules',
+      status: passed ? 'pass' : 'fail',
+      summary: passed ? 'e2e suite passed' : `e2e exited ${testResult.exitCode}`,
+      details: `isolated ports web=${ports.web}, auth=${ports.auth}, firestore=${ports.firestore}, storage=${ports.storage}, next_dist=${nextDistDir}, runner=${runnerPath}`,
+      commandResult,
+    };
+  } finally {
+    if (passed) {
+      rmSync(configPath, { force: true });
+      rmSync(runnerPath, { force: true });
+      rmSync(fixtureDir, { recursive: true, force: true });
+      rmSync(outputDir, { recursive: true, force: true });
+      rmSync(reportDir, { recursive: true, force: true });
+      rmSync(join(WEB_DIR, nextDistDir), { recursive: true, force: true });
+    }
+  }
 }
 
 function checkAstScan() {
@@ -287,16 +443,7 @@ function runChecks() {
     }))) return checks;
   if (!add(checkCalibrationReport())) return checks;
   if (!add(checkDenialTests())) return checks;
-  add(commandCheck({
-      id: 'e2e-smoke',
-      title: 'E2E smoke against permissive rules',
-      command: [NPM, 'run', 'e2e'],
-      cwd: WEB_DIR,
-      evaluate: (result) => ({
-        ok: result.exitCode === 0,
-        summary: result.exitCode === 0 ? 'e2e suite passed' : `e2e exited ${result.exitCode}`,
-      }),
-    }));
+  add(checkE2ESmoke());
   return checks;
 }
 

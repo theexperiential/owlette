@@ -9,6 +9,9 @@
 import { test, expect } from '@playwright/test';
 import { roleState } from '../../helpers/roles';
 
+const E2E_PORT = Number(process.env.E2E_PORT) || 3100;
+const signedOutUrlPattern = new RegExp(`^http://127\\.0\\.0\\.1:${E2E_PORT}/(login)?$`);
+
 test.describe('logout — member', () => {
   test.use(roleState('member'));
 
@@ -23,7 +26,7 @@ test.describe('logout — member', () => {
     // Lands on the landing page (or /login) — either is valid "signed out".
     // The exact redirect target isn't load-bearing; what matters is that we
     // leave the authenticated surface and can't come back without re-auth.
-    await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:3100\/(login)?$/, {
+    await expect(page).toHaveURL(signedOutUrlPattern, {
       timeout: 10_000,
     });
 

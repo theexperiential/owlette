@@ -43,6 +43,21 @@ let auth: Auth | null = null;
 let db: Firestore | null = null;
 let storage: FirebaseStorage | null = null;
 
+function parseEmulatorHost(value: string | undefined, fallbackHost: string, fallbackPort: number) {
+  const trimmed = value?.trim();
+  if (!trimmed) return { host: fallbackHost, port: fallbackPort };
+
+  try {
+    const url = new URL(trimmed.includes('://') ? trimmed : `http://${trimmed}`);
+    return {
+      host: url.hostname || fallbackHost,
+      port: Number(url.port) || fallbackPort,
+    };
+  } catch {
+    return { host: fallbackHost, port: fallbackPort };
+  }
+}
+
 // Emulator wiring for Playwright E2E tests. Gated on NEXT_PUBLIC_USE_FIREBASE_EMULATOR
 // so production builds never connect to localhost. Called exactly once per app
 // instance (tracked on window to survive hot-reload re-execution of this module).
@@ -56,9 +71,27 @@ function maybeConnectEmulators(
   const w = window as Window & { __OWLETTE_EMULATORS_CONNECTED__?: boolean };
   if (w.__OWLETTE_EMULATORS_CONNECTED__) return;
 
-  connectAuthEmulator(authInstance, 'http://127.0.0.1:9099', { disableWarnings: true });
-  connectFirestoreEmulator(dbInstance, '127.0.0.1', 8080);
-  connectStorageEmulator(storageInstance, '127.0.0.1', 9199);
+  const authEmulator = parseEmulatorHost(
+    process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST,
+    '127.0.0.1',
+    9099,
+  );
+  const firestoreEmulator = parseEmulatorHost(
+    process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST,
+    '127.0.0.1',
+    8080,
+  );
+  const storageEmulator = parseEmulatorHost(
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_EMULATOR_HOST,
+    '127.0.0.1',
+    9199,
+  );
+
+  connectAuthEmulator(authInstance, `http://${authEmulator.host}:${authEmulator.port}`, {
+    disableWarnings: true,
+  });
+  connectFirestoreEmulator(dbInstance, firestoreEmulator.host, firestoreEmulator.port);
+  connectStorageEmulator(storageInstance, storageEmulator.host, storageEmulator.port);
   w.__OWLETTE_EMULATORS_CONNECTED__ = true;
 }
 

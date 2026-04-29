@@ -11,9 +11,14 @@ import admin from 'firebase-admin';
 
 export const EMULATOR_PROJECT_ID = 'demo-playwright-e2e';
 
-export const AUTH_EMULATOR_URL = 'http://127.0.0.1:9099';
-export const FIRESTORE_EMULATOR_URL = 'http://127.0.0.1:8080';
-export const STORAGE_EMULATOR_URL = 'http://127.0.0.1:9199';
+const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
+const FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
+const STORAGE_EMULATOR_HOST =
+  process.env.FIREBASE_STORAGE_EMULATOR_HOST || '127.0.0.1:9199';
+
+export const AUTH_EMULATOR_URL = `http://${AUTH_EMULATOR_HOST}`;
+export const FIRESTORE_EMULATOR_URL = `http://${FIRESTORE_EMULATOR_HOST}`;
+export const STORAGE_EMULATOR_URL = `http://${STORAGE_EMULATOR_HOST}`;
 
 export const E2E_PORT = Number(process.env.E2E_PORT) || 3100;
 export const E2E_BASE_URL = `http://127.0.0.1:${E2E_PORT}`;
