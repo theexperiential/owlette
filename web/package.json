@@ -16,7 +16,9 @@
     "e2e:build": "node scripts/e2e-build.mjs",
     "e2e": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test\"",
     "e2e:ui": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --ui\"",
-    "e2e:install": "playwright install chromium"
+    "e2e:install": "playwright install chromium",
+    "screenshots": "playwright test --config=playwright.screenshots.config.ts",
+    "screenshots:debug": "playwright test --config=playwright.screenshots.config.ts --headed --debug"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.63",
