@@ -1,5 +1,5 @@
 /**
- * k6 load test: GET /api/chat?siteId=... (api-sprint wave 3A / cortex noun).
+ * k6 load test: GET /api/cortex/conversations?siteId=...
  *
  * Lists chat conversations the caller can read. The handler:
  *   1. resolves the caller's effective site set (membership + ownership +
@@ -51,17 +51,17 @@ const ALL_SCENARIOS = {
 };
 
 export const options = {
-  ...optionsFor('chat_list'),
+  ...optionsFor('cortex_conversations_list'),
   scenarios: { [SCENARIO]: ALL_SCENARIOS[SCENARIO] },
 };
 
 export default function () {
   // siteId is also used as a hint for the conversation filter; the route
   // resolves the actual readable set from the api-key scopes.
-  const url = `${BASE_URL}/api/chat?page_size=25&siteId=${encodeURIComponent(SITE_ID)}`;
+  const url = `${BASE_URL}/api/cortex/conversations?page_size=25&siteId=${encodeURIComponent(SITE_ID)}`;
   const res = http.get(url, {
     headers: headers(),
-    tags: { endpoint: 'chat_list' },
+    tags: { endpoint: 'cortex_conversations_list' },
   });
 
   check(res, {

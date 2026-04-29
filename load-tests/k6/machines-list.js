@@ -1,25 +1,16 @@
 /**
- * k6 load test: GET /api/users.
+ * k6 load test: GET /api/sites/{siteId}/machines.
  *
- * Platform-wide users collection scan with cursor pagination + optional
- * role/site filters. Superadmin-only (the load test must run with a key
- * holding `user=*:read`). The handler walks `users` ordered by `__name__`
- * with `where(role,...)` / `where(sites,'array-contains',...)` filters when
- * the query string carries them.
+ * Fleet inventory hot path. The handler reads all machines in a site plus the
+ * site's Roost summaries so each machine can report current content.
  *
- * SLO: p99 < 300 ms (loose because the collection has no inherent partition
- * key — every page is a doc-id-ordered range scan).
+ * SLO: p99 < 500 ms for a launch fixture site capped at roughly 100 machines.
  *
- * Scenarios:
- *   `smoke`     — 1 VU, 10 s
- *   `sustained` — ramping 10 → 50 VUs over 5 min
- *   `spike`     — 200 VUs for 30 s
- *
- * No mutations — re-runnable without cleanup.
+ * No mutations. Re-runnable without cleanup.
  */
 import http from 'k6/http';
 import { check, sleep } from 'k6';
-import { BASE_URL, headers, optionsFor } from './lib/config.js';
+import { BASE_URL, SITE_ID, headers, optionsFor } from './lib/config.js';
 
 const SCENARIO = __ENV.SCENARIO || 'smoke';
 
@@ -49,23 +40,23 @@ const ALL_SCENARIOS = {
 };
 
 export const options = {
-  ...optionsFor('users_list'),
+  ...optionsFor('machines_list'),
   scenarios: { [SCENARIO]: ALL_SCENARIOS[SCENARIO] },
 };
 
 export default function () {
-  const res = http.get(`${BASE_URL}/api/users?page_size=25`, {
+  const res = http.get(`${BASE_URL}/api/sites/${SITE_ID}/machines`, {
     headers: headers(),
-    tags: { endpoint: 'users_list' },
+    tags: { endpoint: 'machines_list' },
   });
 
   check(res, {
     'status is 200': (r) => r.status === 200,
     'body is JSON': (r) => (r.headers['Content-Type'] || '').includes('json'),
-    'response.users is array': (r) => {
+    'response.machines is array': (r) => {
       try {
         const b = r.json();
-        return Array.isArray(b.users);
+        return Array.isArray(b.machines);
       } catch {
         return false;
       }

@@ -1,6 +1,6 @@
 /**
  * k6 load test: GET /api/sites/{siteId}/machines/{machineId}/processes
- * (api-sprint wave 2B).
+ * public API launch load suite.
  *
  * The fleet-management UI + every external monitoring integration polls this
  * endpoint per machine. Returns the merged config + live-status process list

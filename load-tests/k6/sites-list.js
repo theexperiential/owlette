@@ -1,21 +1,13 @@
 /**
- * k6 load test: GET /api/users.
+ * k6 load test: GET /api/sites.
  *
- * Platform-wide users collection scan with cursor pagination + optional
- * role/site filters. Superadmin-only (the load test must run with a key
- * holding `user=*:read`). The handler walks `users` ordered by `__name__`
- * with `where(role,...)` / `where(sites,'array-contains',...)` filters when
- * the query string carries them.
+ * Initial API bootstrap path for CLI/SDK clients. Scoped API keys should only
+ * see sites covered by their explicit site scopes; session/superadmin callers
+ * can see a broader account view.
  *
- * SLO: p99 < 300 ms (loose because the collection has no inherent partition
- * key — every page is a doc-id-ordered range scan).
+ * SLO: p99 < 300 ms.
  *
- * Scenarios:
- *   `smoke`     — 1 VU, 10 s
- *   `sustained` — ramping 10 → 50 VUs over 5 min
- *   `spike`     — 200 VUs for 30 s
- *
- * No mutations — re-runnable without cleanup.
+ * No mutations. Re-runnable without cleanup.
  */
 import http from 'k6/http';
 import { check, sleep } from 'k6';
@@ -49,23 +41,23 @@ const ALL_SCENARIOS = {
 };
 
 export const options = {
-  ...optionsFor('users_list'),
+  ...optionsFor('sites_list'),
   scenarios: { [SCENARIO]: ALL_SCENARIOS[SCENARIO] },
 };
 
 export default function () {
-  const res = http.get(`${BASE_URL}/api/users?page_size=25`, {
+  const res = http.get(`${BASE_URL}/api/sites`, {
     headers: headers(),
-    tags: { endpoint: 'users_list' },
+    tags: { endpoint: 'sites_list' },
   });
 
   check(res, {
     'status is 200': (r) => r.status === 200,
     'body is JSON': (r) => (r.headers['Content-Type'] || '').includes('json'),
-    'response.users is array': (r) => {
+    'response.sites is array': (r) => {
       try {
         const b = r.json();
-        return Array.isArray(b.users);
+        return Array.isArray(b.sites);
       } catch {
         return false;
       }

@@ -1,124 +1,115 @@
-# roost k6 load tests
+# Owlette public API k6 load tests
 
-**Wave 5.5.** k6 scripts for the latency-critical roost API endpoints.
+k6 scripts for the latency-critical public API launch paths. The scripts are plain ES modules and do not add npm dependencies.
 
 ## Requirements
 
-- [k6](https://k6.io/docs/getting-started/installation/) installed locally or in CI
-- A Firebase ID token with roost-site access (service account, or scripted sign-in)
-- A site + roost pre-created on the target environment (`K6_SITE_ID`, `K6_ROOST_ID`)
+- [k6](https://k6.io/docs/getting-started/installation/) installed locally or in CI.
+- A scoped Owlette API key for the target environment. Prefer `K6_API_KEY` over `K6_FIREBASE_ID_TOKEN` so the run mirrors SDK/CLI traffic.
+- A dedicated load-test site, machine, and Roost on the target environment:
+  - `K6_SITE_ID`
+  - `K6_MACHINE_ID`
+  - `K6_ROOST_ID`
 
-No npm dependencies — k6 is a standalone binary; these scripts are plain ES modules it executes directly.
+Do not run mutation scripts against a customer site. Use fixture data that can be reset after the run.
 
 ## Running
 
-Against the dev environment:
-
 ```bash
 export K6_BASE_URL=https://dev.owlette.app
-export K6_FIREBASE_ID_TOKEN=$(gcloud auth print-identity-token)
-export K6_SITE_ID=roost-load-site
+export K6_API_KEY=owk_test_...
+export K6_SITE_ID=owlette-load-site
+export K6_MACHINE_ID=owlette-load-machine
 export K6_ROOST_ID=roost-load-folder
+export K6_VERSION_CHUNK_HASHES=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
-# smoke (1 VU, 10s) — fast regression check
-k6 run --env SCENARIO=smoke load-tests/k6/chunks-check.js
+# smoke: 1 VU, 10 seconds
+k6 run --env SCENARIO=smoke load-tests/k6/sites-list.js
 
-# sustained (ramp 10 → 50 VUs over 5 min)
-k6 run --env SCENARIO=sustained load-tests/k6/chunks-check.js
+# sustained: ramp to normal launch load
+k6 run --env SCENARIO=sustained load-tests/k6/sites-list.js
 
-# spike (200 VUs × 30s)
-k6 run --env SCENARIO=spike load-tests/k6/chunks-check.js
+# spike: short burst for read-heavy routes
+k6 run --env SCENARIO=spike load-tests/k6/sites-list.js
 ```
 
-## SLO targets (p99 latency, ms)
+PowerShell:
 
-| endpoint | p99 ms | rationale |
-|---|---|---|
-| `POST /api/chunks/check` | **200** | hash-set diff against R2; called once per ~1000-chunk batch |
-| `POST /api/chunks/upload-urls` | **500** | R2 signed-URL minting is the slow path; tolerated up to 1000-hash batches |
-| `GET /api/chunks/download-urls` | **400** | same shape as upload-urls but reads are cheaper |
-| `POST /api/roosts/{id}/manifests` | **800** | firestore transaction + chunk-presence verify + audit append |
-| `POST /api/roosts/{id}/rollback` | **400** | pointer flip in a transaction; fast path |
-| `GET /api/sites/{s}/deployments` | **250** | Firestore range read (api-sprint wave 1A) |
-| `GET /api/sites/{s}/machines/{m}/processes` | **250** | config doc + machine status doc merge (wave 2B) |
-| `GET /api/chat?siteId=` | **300** | Firestore composite query w/ siteId filter (wave 3A) |
-| `GET /api/users` | **300** | platform users collection scan (wave 3B) |
-| `POST /api/sites/{s}/machines/{m}/commands` | **400** | mutation + audit emit (wave 2A) |
-| `POST /api/sites/{s}/machines/{m}/processes` | **400** | process-config-lock txn + audit (wave 2B) |
+```powershell
+$env:K6_BASE_URL = 'https://dev.owlette.app'
+$env:K6_API_KEY = 'owk_test_...'
+$env:K6_SITE_ID = 'owlette-load-site'
+$env:K6_MACHINE_ID = 'owlette-load-machine'
+$env:K6_ROOST_ID = 'roost-load-folder'
+$env:K6_VERSION_CHUNK_HASHES = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+k6 run --env SCENARIO=smoke load-tests/k6/sites-list.js
+```
 
-Error-rate gate: `http_req_failed < 0.01` across the run (exception: `race` scenario on `finalize-manifest.js` deliberately produces 412s).
+## SLO targets
 
-Thresholds are enforced in code (`lib/config.js`); a failing SLO fails the run's exit code. CI can wire the scripts in and treat a non-zero exit as a regression.
+Targets are p99 latency gates in milliseconds and are enforced in `lib/config.js`. The k6 summary also reports p95 for launch-report tracking.
+
+| script | endpoint | p99 target |
+|---|---|---:|
+| `sites-list.js` | `GET /api/sites` | 300 ms |
+| `machines-list.js` | `GET /api/sites/{siteId}/machines` | 500 ms |
+| `sites-deployments-list.js` | `GET /api/sites/{siteId}/deployments` | 250 ms |
+| `process-list.js` | `GET /api/sites/{siteId}/machines/{machineId}/processes` | 250 ms |
+| `cortex-conversations-list.js` | `GET /api/cortex/conversations` | 300 ms |
+| `users-list.js` | `GET /api/users` | 300 ms |
+| `dispatch-machine-command.js` | `POST /api/sites/{siteId}/machines/{machineId}/commands` | 400 ms |
+| `process-create.js` | `POST /api/sites/{siteId}/machines/{machineId}/processes` | 400 ms |
+| `chunks-check.js` | `POST /api/chunks/check` | 200 ms |
+| `upload-urls.js` | `POST /api/chunks/upload-urls` | 500 ms |
+| `download-urls.js` | `GET /api/chunks/download-urls` | 400 ms |
+| `publish-version.js` | `POST /api/roosts/{roostId}/versions` | 800 ms |
+
+Base reliability gate: `http_req_failed < 0.01`.
+
+`publish-version.js --env SCENARIO=race` is a contention guard, not a reliability SLO. It deliberately allows 412 responses; exactly one request should win the compare-and-swap. Set `K6_EXPECTED_CURRENT_VERSION_ID` to the Roost head immediately before running the race scenario.
 
 ## Scripts
 
-### roost (wave 5.5)
+Read-oriented scripts that support `smoke`, `sustained`, and `spike`:
 
-- `chunks-check.js` — smoke / sustained / spike scenarios
-- `upload-urls.js` — smoke / sustained / burst scenarios
-- `finalize-manifest.js` — smoke / sustained / **race** (concurrent-publish CAS regression)
+- `sites-list.js`
+- `machines-list.js`
+- `sites-deployments-list.js`
+- `process-list.js`
+- `cortex-conversations-list.js`
+- `users-list.js`
+- `chunks-check.js`
 
-### api-sprint (wave 5.4)
+Signed-URL scripts support `smoke`, `sustained`, and `burst`:
 
-Read-mostly scripts (smoke / sustained / spike — no data side-effects):
+- `upload-urls.js`
+- `download-urls.js`
 
-- `sites-deployments-list.js` — `GET /api/sites/{siteId}/deployments`
-- `process-list.js` — `GET /api/sites/{siteId}/machines/{machineId}/processes`
-- `chat-list.js` — `GET /api/chat?siteId=…`
-- `users-list.js` — `GET /api/users`
+Mutation scripts support `smoke` and `sustained` unless noted:
 
-Mutation scripts (smoke + sustained only — see "Mutation cleanup" below):
+- `dispatch-machine-command.js`
+- `process-create.js`
+- `publish-version.js` (`smoke`, `sustained`, `race`)
 
-- `dispatch-machine-command.js` — `POST /api/sites/{siteId}/machines/{machineId}/commands` (reboot type)
-- `process-create.js` — `POST /api/sites/{siteId}/machines/{machineId}/processes`
+Mutation scripts use a per-VU per-iteration `Idempotency-Key` from `lib/config.js` so the run benchmarks the handler instead of idempotency-cache hits.
 
-Both mutation scripts use `mutationHeaders(__VU, __ITER)` from `lib/config.js`
-to mint a per-VU per-iteration unique `Idempotency-Key` (`k6-<host>-<VU>-<ITER>-<ts>`).
-Without this, the 24h idempotency cache would short-circuit every iteration to
-the same cached response — the resulting load test would benchmark cache
-lookups, not the underlying handler.
+## Mutation cleanup
 
-### Required env vars (api-sprint scripts)
+`dispatch-machine-command.js` and `process-create.js` write Firestore data on every iteration. Recommended hygiene:
 
-In addition to `K6_BASE_URL` + auth token (`K6_FIREBASE_ID_TOKEN` or `K6_API_KEY`),
-api-sprint scripts read:
+1. Use a dedicated load-test machine.
+2. Delete or reset `sites/{K6_SITE_ID}/machines/{K6_MACHINE_ID}/commands` after command-dispatch runs.
+3. Reset the load-test machine's process config after process-create runs.
+4. Run Roost upload/publish scripts only against a disposable load-test Roost with pre-uploaded chunk hashes in `K6_VERSION_CHUNK_HASHES`.
 
-- `K6_SITE_ID` — target site id (must exist in the env you're hitting)
-- `K6_MACHINE_ID` — target machine id (must exist + be online for command dispatch)
+## CI wiring
 
-Use `K6_API_KEY` over `K6_FIREBASE_ID_TOKEN` for these — they're public-API
-endpoints designed for SDK callers, and the api-key path more closely
-mirrors production traffic.
+Public launch should use:
 
-### Mutation cleanup
+- PR smoke runs for scripts touched by a change.
+- Nightly sustained runs against `dev.owlette.app`.
+- A pre-production sustained run before the external launch flag is flipped.
 
-`dispatch-machine-command.js` and `process-create.js` write real Firestore
-documents on every iteration. Recommended hygiene:
+A non-zero k6 exit code means a latency or reliability threshold failed and should block launch until the run is explained or the regression is fixed.
 
-1. Use a dedicated load-test machine (`K6_MACHINE_ID=load-test-machine`) so
-   the data side-effects don't pollute production fleet state.
-2. After each load run, prune the test data:
-   ```bash
-   # Clear queued commands
-   gcloud firestore documents delete \
-     "sites/${K6_SITE_ID}/machines/${K6_MACHINE_ID}/commands/pending"
-
-   # Clear test processes — easiest is to overwrite the machine doc's
-   # `processes` array with an empty list via the admin script.
-   ```
-3. (Optional) Add a periodic GitHub Action that resets the load-test site +
-   machine docs nightly.
-
-## The `race` scenario
-
-`finalize-manifest.js --env SCENARIO=race` fires 20 VUs at the same roost, each with the same `expectedCurrentManifestId` pointer. If the compare-and-swap in the finalize transaction is correct, **exactly one** gets 201; the rest see 412 PreconditionFailed. If more than one 201 lands, the CAS is broken — that's a P0 regression this scenario guards against.
-
-Inspect the response-status distribution after the run; k6's default summary bundles by status code.
-
-## Wiring into CI
-
-When wave 0.6 (GCP deploy) is live, a github-actions job should run the `smoke` scenario on every PR that touches `/api/chunks/*` or `/api/roosts/*`, and the `sustained` scenarios nightly against dev. The deploy pipeline for prod should gate on a green sustained run.
-
-## Results location
-
-Numbers from real runs land in `dev/active/project-distribution-v2/load-test-report.md`. That file is structured so CI can append new runs over time.
+Record real run results in [API load testing and SLOs](../../docs/api/load-testing.md).

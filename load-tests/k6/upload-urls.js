@@ -1,5 +1,5 @@
 /**
- * k6 load test: POST /api/chunks/upload-urls (wave 5.5).
+ * k6 load test: POST /api/chunks/upload-urls.
  *
  * Called after /api/chunks/check to mint signed PUT URLs for every
  * chunk the server doesn't already have. R2 signed-URL issuance is
@@ -11,7 +11,7 @@
 
 import http from 'k6/http';
 import { check, sleep } from 'k6';
-import { BASE_URL, SITE_ID, fakeHash, headers, optionsFor } from './lib/config.js';
+import { BASE_URL, SITE_ID, fakeHash, mutationHeaders, optionsFor } from './lib/config.js';
 
 const SCENARIO = __ENV.SCENARIO || 'smoke';
 
@@ -55,18 +55,15 @@ export default function () {
   for (let i = 0; i < 50; i++) {
     hashes.push(fakeHash(__VU * 10000 + __ITER * 50 + i));
   }
-  const idempotencyKey = `k6-${__VU}-${__ITER}`;
-
   const body = JSON.stringify({ siteId: SITE_ID, hashes });
   const res = http.post(`${BASE_URL}/api/chunks/upload-urls`, body, {
-    headers: { ...headers(), 'Idempotency-Key': idempotencyKey },
+    headers: mutationHeaders(__VU, __ITER),
     tags: { endpoint: 'chunks_upload_urls' },
   });
 
   check(res, {
-    'status is 200 or 501 (stub)': (r) => r.status === 200 || r.status === 501,
-    'response has urls map OR is stubbed': (r) => {
-      if (r.status === 501) return true;
+    'status is 200': (r) => r.status === 200,
+    'response has urls map': (r) => {
       try {
         const b = r.json();
         return b.urls && typeof b.urls === 'object';

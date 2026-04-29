@@ -49,5 +49,5 @@ Public API paths are rooted at `/api`. The rendered endpoint reference is availa
 2. For internal dev/staging rollout, use the [developer-preview checklist](developer-preview-checklist.md) before handing the API to another consumer.
 3. Read the shared convention pages: [authentication](authentication.md), [pagination](pagination.md), [idempotency](idempotency.md), [errors](errors.md), and [rate limits](rate-limits.md).
 4. Use the [interactive reference](reference.md) for operation-level scopes, parameters, required idempotency headers, and response shapes.
-5. Before external public launch, confirm the [status page and uptime checks](status-uptime.md).
+5. Before external public launch, confirm the [status page and uptime checks](status-uptime.md) and [load testing and SLOs](load-testing.md).
 6. Move to the resource guide you need: [chunks](chunks.md), [versions](versions.md), [cortex](cortex.md), [webhooks](webhooks.md), or the SDK docs for [Node](sdk-node.md) and [Python](sdk-python.md).

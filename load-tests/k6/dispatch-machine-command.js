@@ -1,6 +1,6 @@
 /**
  * k6 load test: POST /api/sites/{siteId}/machines/{machineId}/commands
- * (api-sprint wave 2A / machine-api).
+ * public API launch load suite.
  *
  * Mutation hot path: queues a `reboot_machine` command. Each iteration:
  *   1. requireMachineAuthAndScope (api-key resolution + scope check + audit)
@@ -72,10 +72,9 @@ export default function () {
   });
 
   check(res, {
-    'status is 202 or 409 (offline)': (r) => r.status === 202 || r.status === 409,
+    'status is 202': (r) => r.status === 202,
     'body is JSON': (r) => (r.headers['Content-Type'] || '').includes('json'),
     'response shape is sane': (r) => {
-      if (r.status === 409) return true;
       try {
         const b = r.json();
         return b && b.ok === true && typeof b.data?.commandId === 'string';

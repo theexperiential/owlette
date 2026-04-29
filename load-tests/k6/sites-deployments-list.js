@@ -1,5 +1,5 @@
 /**
- * k6 load test: GET /api/sites/{siteId}/deployments (api-sprint wave 1A).
+ * k6 load test: GET /api/sites/{siteId}/deployments.
  *
  * The dashboard's deployment list view + every CLI/SDK that paginates
  * deployments hits this endpoint. Reads a 25-doc page from Firestore and

@@ -1,5 +1,5 @@
 /**
- * k6 load test: POST /api/chunks/check (wave 5.5).
+ * k6 load test: POST /api/chunks/check.
  *
  * The hot path when a browser client re-drops a previously-uploaded
  * folder: for every chunk in the new manifest, does the server already
@@ -70,13 +70,12 @@ export default function () {
   });
 
   check(res, {
-    'status is 200 or 501 (stub)': (r) => r.status === 200 || r.status === 501,
+    'status is 200': (r) => r.status === 200,
     'body is JSON': (r) => {
       const ct = r.headers['Content-Type'] || '';
       return ct.includes('json');
     },
-    'response has `missing` field OR is a problem+json': (r) => {
-      if (r.status === 501) return true; // stub is fine while wiring lands
+    'response has `missing` field': (r) => {
       try {
         const b = r.json();
         return Array.isArray(b.missing);

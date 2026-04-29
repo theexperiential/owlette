@@ -1,6 +1,6 @@
 /**
  * k6 load test: POST /api/sites/{siteId}/machines/{machineId}/processes
- * (api-sprint wave 2B / process-api).
+ * public API launch load suite.
  *
  * Creates a new process under a machine's config doc. Each iteration:
  *   1. requireMachineAuthAndScope
