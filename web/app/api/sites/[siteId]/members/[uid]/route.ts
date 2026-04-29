@@ -25,6 +25,7 @@ import {
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withIdempotency } from '@/lib/idempotency';
 import { emitMutation } from '@/lib/auditLogClient';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import {
   applyAuthDeprecations,
   readAndParseJsonBody,
@@ -33,13 +34,16 @@ import {
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 
-interface RouteParams {
-  params: Promise<{ siteId: string; uid: string }>;
-}
+type RouteParams = { siteId: string; uid: string };
 
-export async function DELETE(request: NextRequest, { params }: RouteParams) {
+export const DELETE = authorizedSiteHandler<RouteParams>({
+  capability: 'SITE_MEMBER_MANAGE',
+  siteIdParam: 'path',
+  targetKind: 'user',
+  targetIdParam: 'uid',
+})(async (request: NextRequest, _ctx, routeContext) => {
   try {
-    const { siteId, uid } = await params;
+    const { siteId, uid } = await routeContext.params;
     if (!UID_REGEX.test(uid)) {
       return problemValidation('uid must be 1-128 chars', {
         'path.uid': ['letters, digits, underscore, hyphen only'],
@@ -132,4 +136,4 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/members/[uid]:DELETE');
   }
-}
+});

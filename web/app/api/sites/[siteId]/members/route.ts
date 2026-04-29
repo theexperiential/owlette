@@ -33,6 +33,7 @@ import {
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withIdempotency } from '@/lib/idempotency';
 import { emitMutation } from '@/lib/auditLogClient';
+import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import {
   applyAuthDeprecations,
   readAndParseJsonBody,
@@ -42,9 +43,7 @@ import {
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 const VALID_ADD_ROLES = new Set(['member', 'admin']);
 
-interface RouteParams {
-  params: Promise<{ siteId: string }>;
-}
+type RouteParams = { siteId: string };
 
 interface AddMemberBody {
   uid?: unknown;
@@ -83,9 +82,13 @@ function derivePerSiteRole(
 /*  GET — list members                                                   */
 /* --------------------------------------------------------------------- */
 
-export async function GET(request: NextRequest, { params }: RouteParams) {
+export const GET = authorizedSiteHandler<RouteParams>({
+  capability: 'SITE_MEMBER_MANAGE',
+  siteIdParam: 'path',
+  apiKeyPermission: 'read',
+})(async (request: NextRequest, _ctx, routeContext) => {
   try {
-    const { siteId } = await params;
+    const { siteId } = await routeContext.params;
     const auth = await requireSiteAuthAndScope(request, siteId, 'admin');
     if (!auth.ok) return auth.response;
 
@@ -167,15 +170,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/members:GET');
   }
-}
+});
 
 /* --------------------------------------------------------------------- */
 /*  POST — add member                                                    */
 /* --------------------------------------------------------------------- */
 
-export async function POST(request: NextRequest, { params }: RouteParams) {
+export const POST = authorizedSiteHandler<RouteParams>({
+  capability: 'SITE_MEMBER_MANAGE',
+  siteIdParam: 'path',
+  targetKind: 'user',
+})(async (request: NextRequest, _ctx, routeContext) => {
   try {
-    const { siteId } = await params;
+    const { siteId } = await routeContext.params;
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 
@@ -275,4 +282,4 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/members:POST');
   }
-}
+});

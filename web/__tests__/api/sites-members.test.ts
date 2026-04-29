@@ -17,6 +17,37 @@ jest.mock('@sentry/nextjs', () => ({
   captureMessage: jest.fn(),
 }));
 
+// Mirror the deployments/distributions test pattern: bypass the
+// capability/rate/audit wrapper here and let the route's inner
+// `requireSiteAuthAndScope` (mocked via mockResolveAuth below) handle
+// auth shape. The wrapper itself is unit-tested in
+// `__tests__/lib/authorizedHandler.test.ts`.
+jest.mock('@/lib/authorizedHandler.server', () => ({
+  authorizedSiteHandler:
+    () =>
+    (handler: (...args: unknown[]) => unknown) =>
+    async (
+      request: unknown,
+      routeContext: { params: Promise<{ siteId: string }> },
+    ) => {
+      const params = await routeContext.params;
+      return handler(
+        request,
+        {
+          actor: {
+            type: 'user',
+            userId: 'user-1',
+            role: 'admin',
+            sites: [params.siteId],
+          },
+          siteId: params.siteId,
+          correlationId: 'corr-test',
+        },
+        routeContext,
+      );
+    },
+}));
+
 const mockEmitMutation = jest.fn();
 jest.mock('@/lib/auditLogClient', () => ({
   emitApiKeyUsed: jest.fn(),
