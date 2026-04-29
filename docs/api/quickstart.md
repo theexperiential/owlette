@@ -201,7 +201,8 @@ A completed screenshot command can include a one-hour signed URL:
 ## Next steps
 
 - Browse the interactive reference at `https://owlette.app/docs/api`.
-- Read [`authentication.md`](authentication.md), [`errors.md`](errors.md), and
+- Read [`authentication.md`](authentication.md), [`pagination.md`](pagination.md),
+  [`idempotency.md`](idempotency.md), [`errors.md`](errors.md), and
   [`rate-limits.md`](rate-limits.md) before wiring production automation.
 - Add webhooks with [`webhooks.md`](webhooks.md) once you want event callbacks.
 - Move from curl to the Node or Python SDK examples in

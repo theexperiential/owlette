@@ -24,9 +24,17 @@ Owlette does not require a new global API-version header for the developer-previ
 
 Public errors use \`application/problem+json\` with stable \`code\`, \`requestId\`, and \`docsUrl\` fields. Some dashboard compatibility routes may retain a temporary \`error\` alias during the preview window.
 
+## Pagination
+
+Collection endpoints use \`page_size\`, \`page_token\`, and \`next_page_token\` where paginated. Some compatibility routes also accept \`limit\` / \`cursor\` or return \`nextPageToken\`.
+
+## Idempotency
+
+Mutating endpoints that can trigger side effects require or accept \`Idempotency-Key\`. Replays are scoped to the same user, environment, method, path, query, and body hash.
+
 ## Rate limits
 
-Responses may include \`RateLimit-Limit\`, \`RateLimit-Remaining\`, \`RateLimit-Reset\`, and \`Retry-After\`. API-key traffic is bucketed by key id where available.`;
+Responses may include \`RateLimit-Limit\`, \`RateLimit-Remaining\`, \`RateLimit-Reset\`, and \`Retry-After\`. API-key traffic is bucketed by key id where available. See the docs pages for authentication, pagination, idempotency, errors, and rate limits at \`/docs/api\`.`;
 
 export interface OpenApiOperation {
   path: string;

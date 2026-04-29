@@ -1,345 +1,207 @@
 # authentication
 
-**Last updated**: 2026-04-22
+**Last updated**: 2026-04-28
 
-the roost public api authenticates every request with a scoped bearer token. this doc covers the full lifecycle: creating a key, using it, scoping it, rotating it, revoking it, and surviving the legacy-key deprecation window.
+Owlette public API calls authenticate with scoped API keys. Dashboard and setup flows may also use first-party sessions or Firebase ID tokens, but external integrations should use `owk_live_*` or `owk_test_*` keys.
 
 ---
 
-## tl;dr
+## bearer header
+
+Send API keys in the standard bearer header:
 
 ```http
-GET /api/roosts?siteId=kiosk-fleet-01 HTTP/1.1
-Host: owlette.app
-Authorization: Bearer owk_live_kB8n3pQrT5wXvZ2yA9cF1dG4hJ6mN8oL0sU
-Roost-Version: 2026-04-22
+Authorization: Bearer owk_live_...
 ```
 
-- tokens look like `owk_live_<24 chars>` (production) or `owk_test_<24 chars>` (sandbox).
-- every key carries a scope list — no full-access keys.
-- every key has an expiration (default 90 days, max 365).
-- the raw key is shown **once** at creation. store it in a secrets manager immediately.
+Compatibility paths remain available on selected routes during developer preview:
+
+- `x-api-key: owk_live_...`
+- `?api_key=owk_live_...`
+
+New clients should use `Authorization: Bearer`. Query-string keys are easy to leak through logs and should be avoided outside compatibility cases such as EventSource/SSE clients that cannot set headers.
 
 ---
 
-## creating an api key
+## key format
 
-### via the dashboard
+| prefix | environment | use |
+|---|---|---|
+| `owk_live_` | live | production fleets, production audit records, billable usage |
+| `owk_test_` | test | sandbox/dev integrations and non-production automation |
 
-1. sign in to [owlette.app](https://owlette.app) (or `dev.owlette.app`).
-2. open **settings → api keys**.
-3. click **new key**.
-4. fill in:
-   - **name** — human label (e.g. `ci/cd — prod`).
-   - **environment** — `live` or `test`.
-   - **scopes** — pick resources + permissions, or apply a preset (see [scope presets](#scope-presets)).
-   - **expiration** — default 90 days, max 365.
-5. hit **create**. the raw key is shown **once** — copy it to your secrets manager immediately; you cannot retrieve it again.
+The raw key suffix is a 32-byte random value encoded as base64url, currently 43 characters. Treat the full key as opaque. The API only returns the raw key once, at creation.
 
-### via the api
-
-`POST /api/keys` requires a signed-in **user session**, not an api key (you cannot bootstrap a key with another key). use this flow when provisioning keys from infrastructure-as-code against a service account.
-
-```bash
-curl -X POST "https://owlette.app/api/keys" \
-  -H "Authorization: Bearer $OWLETTE_USER_SESSION_TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: $(uuidgen)" \
-  -d '{
-    "name": "ci/cd — prod",
-    "environment": "live",
-    "scopes": [
-      { "resource": "roost", "id": "*", "permissions": ["read", "write", "deploy"] },
-      { "resource": "site", "id": "kiosk-fleet-01", "permissions": ["read"] }
-    ],
-    "ttlDays": 90
-  }'
-```
-
-response (`201 Created`):
-
-```json
-{
-  "id": "key_01HXYZA7F3B2C1D0E9F8G7H6J5",
-  "key": "owk_live_kB8n3pQrT5wXvZ2yA9cF1dG4hJ6mN8oL0sU",
-  "name": "ci/cd — prod",
-  "environment": "live",
-  "scopes": [
-    { "resource": "roost", "id": "*", "permissions": ["read", "write", "deploy"] },
-    { "resource": "site", "id": "kiosk-fleet-01", "permissions": ["read"] }
-  ],
-  "keyPrefix": "owk_live_kB8n3p",
-  "expiresAt": "2026-07-21T15:30:00Z",
-  "createdAt": "2026-04-22T15:30:00Z"
-}
-```
-
-the `key` field appears in this response and nowhere else. subsequent `GET /api/keys/{id}` calls return `keyPrefix` only.
+Stored and list responses expose a `keyPrefix` for display and audit correlation; they never return the full raw key again.
 
 ---
 
-## using an api key
+## creating keys
 
-every authenticated request sends the raw key as an `Authorization: Bearer` header:
+### dashboard
 
-```http
-Authorization: Bearer owk_live_kB8n3pQrT5wXvZ2yA9cF1dG4hJ6mN8oL0sU
-```
+Use **Settings -> API Keys** in the dashboard for normal key creation. Choose:
 
-### live vs test environments
+- name
+- environment: `live` or `test`
+- scopes
+- expiration
 
-| prefix | environment | traffic | r2 bucket | audit log | rate limits |
-|---|---|---|---|---|---|
-| `owk_live_*` | production | real fleets, billable storage + bandwidth | `owlette-prod` | writes production audit records | production tier |
-| `owk_test_*` | sandbox | synthetic / dev machines, non-billable | `owlette-test` | writes test audit records (separate chain) | higher burst, lower sustained |
+Copy the raw key immediately into a secrets manager.
 
-the two environments are strictly isolated: a test key cannot read, write, or deploy against a live resource, and vice versa. requests that cross the boundary return `403 scope_insufficient`. keep ci/cd and production integrations on `live`; keep local dev, integration tests, and sdk examples on `test`.
+### API creation split
 
-### verifying the current identity
+`POST /api/keys` creates scoped user API keys and requires a signed-in user session or Firebase ID token. You cannot bootstrap a new key with an API key.
 
-`GET /api/whoami` echoes back the resolved identity, scopes, rate-limit snapshot, and quota. useful for sanity checks in sdks and cli tools.
+`/api/account/api-keys` is a superadmin/platform convenience surface. It is not the normal self-service key bootstrap path for public integrations.
+
+This split is intentional: a leaked API key should not be able to mint a broader replacement for itself.
+
+---
+
+## verifying identity
+
+`GET /api/whoami` returns the resolved caller, active key context, scope list, rate-limit summary, quota summary, and primary site when available.
 
 ```bash
-curl "https://owlette.app/api/whoami" \
-  -H "Authorization: Bearer $OWK_LIVE"
+curl -fsS "https://owlette.app/api/whoami" \
+  -H "Authorization: Bearer $OWLETTE_API_KEY" | jq
 ```
+
+Representative API-key response:
 
 ```json
 {
   "userId": "user_01HWABCD1234EFGH5678IJKL90",
-  "keyId": "key_01HXYZA7F3B2C1D0E9F8G7H6J5",
-  "keyPrefix": "owk_live_kB8n3p",
-  "environment": "live",
-  "scopes": [
-    { "resource": "roost", "id": "*", "permissions": ["read", "write", "deploy"] }
-  ],
-  "rateLimit": { "limit": 1000, "remaining": 987, "resetAt": "2026-04-22T15:31:00Z" },
-  "quota": { "tier": "pro", "usedBytes": 23456789012, "limitBytes": 107374182400 }
+  "email": "ops@example.com",
+  "role": "admin",
+  "key": {
+    "keyId": "9e05dd1e-47ac-4a59-a8bf-00b38faea1b4",
+    "name": "ci preview",
+    "keyPrefix": "owk_live_kB8n3p",
+    "scopes": [
+      { "resource": "site", "id": "kiosk-fleet-01", "permissions": ["read"] },
+      { "resource": "machine", "id": "*", "permissions": ["read", "write"] }
+    ],
+    "environment": "live",
+    "expiresAt": 1798049400000,
+    "lastUsedAt": 1777408200000,
+    "isLegacy": false
+  },
+  "rateLimit": {
+    "tier": "api",
+    "limitPerMinute": 600,
+    "note": "use RateLimit-* response headers on actual API calls for live counters"
+  },
+  "quota": {
+    "siteId": "kiosk-fleet-01",
+    "tier": "pro",
+    "usedBytes": 23456789012,
+    "pendingBytes": 104857600,
+    "limitBytes": 107374182400
+  },
+  "primarySiteId": "kiosk-fleet-01"
 }
 ```
 
-### auth error codes
-
-| status | code | meaning |
-|---|---|---|
-| 401 | `auth_required` | no `Authorization` header, or malformed token |
-| 401 | `token_expired` | key passed its `expiresAt`; see [rotation](#rotating-a-key) |
-| 401 | `token_revoked` | key was explicitly revoked (see [revocation](#revoking-a-key)) |
-| 403 | `scope_insufficient` | key is valid but lacks permission for this resource/action |
-| 403 | `environment_mismatch` | `owk_test_*` key used against live resource (or vice versa) |
-
-all errors follow the `application/problem+json` envelope documented in `docs/api/errors.md`.
+When the request is authenticated by a session or Firebase ID token instead of an API key, `key` is `null`.
 
 ---
 
 ## scopes
 
-every key carries a `scopes[]` array. a key without at least one scope cannot be created — there is no "full-access" key in the public api.
-
-### scope syntax
+Each key has a `scopes[]` array. A request is allowed only when the key has a matching resource, id, and permission, and the owning user still has access to the resource.
 
 ```json
 [
-  { "resource": "roost",   "id": "roost_lobby_td",  "permissions": ["read", "write"] },
-  { "resource": "site",    "id": "kiosk-fleet-01",  "permissions": ["read"] },
-  { "resource": "machine", "id": "*",               "permissions": ["read"] }
+  { "resource": "site", "id": "kiosk-fleet-01", "permissions": ["read"] },
+  { "resource": "machine", "id": "*", "permissions": ["read", "write"] },
+  { "resource": "chat", "id": "kiosk-fleet-01", "permissions": ["read", "write"] }
 ]
 ```
 
-each scope object has three fields:
+Scope fields:
 
-- **`resource`** — one of `roost`, `site`, `machine`, `chat`, `deploy`, `process`, `user`, `installer`.
-- **`id`** — a specific resource id, or `*` to grant the scope across every resource of that type the user owns.
-- **`permissions`** — a non-empty subset of `read`, `write`, `deploy`, `rollback`, `admin`.
-
-a request passes authorization iff there is at least one scope entry whose resource matches, whose id matches (exact or `*`), and whose permissions include the one required by the endpoint.
-
-### resource types
-
-| resource | what it covers | notes |
-|---|---|---|
-| `roost` | a named versioned bundle (versions, chunks referenced by those versions, deploys/rollbacks targeting it) | scopes with `resource: "roost", id: "*"` grant access to every roost across every site the user owns. |
-| `site` | a tenant boundary (machines, quotas, audit log, webhooks, sites list entry) | scopes at the site level do **not** implicitly grant access to roosts inside that site — add an explicit `roost` scope if needed. |
-| `machine` | machine detail + deployment history for a single agent | used for read-only observability keys (e.g. a monitoring sidecar). |
-| `chat` | site-scoped Cortex conversations under `/api/cortex/conversations` | `chat=<siteId>:write` can send messages, but API-key callers are capped to read-only Cortex tools. |
-| `deploy` | classic installer deployment records | site-scoped classic deployment automation. |
-| `process` | configured processes on machines | process management endpoints are machine-scoped. |
-| `user` | platform user administration | superadmin-only at key minting. |
-| `installer` | platform installer binary management | superadmin-only at key minting. |
-
-### permissions
-
-| permission | grants |
+| field | meaning |
 |---|---|
-| `read` | list + detail `GET`s on the resource, version download urls, deployment history |
-| `write` | create/rename/delete roosts, publish versions, upload chunks |
-| `deploy` | trigger `POST /api/roosts/{id}/deploy` (targeted fan-out, canary, scheduled rollout) |
-| `rollback` | trigger `POST /api/roosts/{id}/rollback` (pointer flip) |
-| `admin` | webhook management, operational log clearing, key-level settings on the resource |
+| `resource` | One of `roost`, `site`, `machine`, `chat`, `deploy`, `process`, `user`, or `installer`. |
+| `id` | Specific resource id, or `*` for every resource of that type the owning user can access. |
+| `permissions` | Non-empty list of exact permissions. |
 
-permissions are additive and do not imply one another. `deploy` does not imply `write`; `write` does not imply `deploy`. a publisher key that also needs to roll back must list both `deploy` and `rollback` explicitly.
+Permissions are exact. `write` does not imply `read`, `deploy` does not imply `write`, and `admin` does not imply every other permission. Include every permission the integration needs.
 
-the exact scope each endpoint requires is listed in the endpoint's reference page and in `web/openapi.yaml` under `security`.
+Supported permissions:
 
-### scope presets
+| permission | common use |
+|---|---|
+| `read` | list and detail reads |
+| `write` | create, update, publish, or queue writable operations |
+| `deploy` | rollout or deployment actions where separately modeled |
+| `rollback` | rollback actions |
+| `admin` | administrative operations such as webhook management, log clearing, or platform resources |
 
-the dashboard offers four presets to cover the common cases. each expands to a canonical `scopes[]` the api accepts verbatim.
+`user` and `installer` scopes are superadmin-only at key creation time.
 
-| preset | scopes | use case |
+---
+
+## presets
+
+The dashboard exposes presets as a starting point:
+
+| preset | grants |
+|---|---|
+| `readonly` | `read` on common resources |
+| `publisher` | `read` and `write` on common resources |
+| `operator` | `read`, `write`, `deploy`, and `rollback` on common resources |
+| `admin` | `read`, `write`, `deploy`, `rollback`, and `admin` on common resources |
+
+Narrow presets before use when possible. Prefer one key per integration and one environment per key.
+
+---
+
+## expiration, rotation, and revocation
+
+Every scoped key expires. Current defaults are:
+
+- default TTL: 90 days
+- maximum TTL: 365 days
+- rotation grace: 24 hours for the old key value
+
+Rotate a key when the secret might have leaked or when your normal rotation schedule requires it. Rotation returns a new raw key once and leaves the key's scope policy intact.
+
+Revoke a key when the integration is retired or when rotation is not enough. Revocation is permanent; create a new key if access is needed again.
+
+---
+
+## auth errors
+
+| status | code | meaning |
 |---|---|---|
-| **`readonly`** | `roost=*`, `site=*`, `machine=*`, `chat=*` with `["read"]` | dashboards, observability, read-only monitoring; cannot publish, deploy, or rollback. |
-| **`publisher`** | `roost=*`, `site=*`, `machine=*`, `chat=*` with `["read", "write"]` | ci/cd and local CLI workflows that build, upload, and update Cortex conversations. |
-| **`operator`** | common resources with `["read", "write", "deploy", "rollback"]` | on-call rollout + rollback tooling. |
-| **`admin`** | common resources with `["read", "write", "deploy", "rollback", "admin"]` | site-wide automation: webhook management, audit log access, full lifecycle. treat as root-equivalent. |
+| 401 | `unauthorized` | Missing, malformed, unknown, or unsupported credential. |
+| 401 | `token_expired` | API key expired or rotated value is past its grace window. |
+| 403 | `scope_insufficient` | Credential is valid but lacks the exact resource/id/permission needed. |
+| 403 | `forbidden` | Caller lacks the required role, site membership, or platform capability. |
+| 404 | `not_found` | Resource is absent or intentionally hidden from this caller. |
 
-presets are a starting point — you can always narrow them further (remove an id wildcard, drop a permission). you cannot broaden a preset by editing the scopes after creation (see [narrowing scopes](#narrowing-scopes)).
-
----
-
-## expiration
-
-every key expires. this is not optional.
-
-- **default ttl**: 90 days from creation.
-- **maximum ttl**: 365 days. requests with `ttlDays > 365` return `400 validation_failed`.
-- **minimum ttl**: 1 day.
-- **past `expiresAt`**: the api returns `401 token_expired`. the key is not auto-renewed — rotate it before it expires (see [rotation](#rotating-a-key)).
-- **warnings**: responses within 14 days of `expiresAt` include an `X-Roost-Key-Expiring: <iso8601>` header so cli and sdks can surface a warning.
-
-expiration closes the leak path of "a key a former contractor pushed to github five years ago, still valid today." plan rotations on a calendar (quarterly for 90-day keys) rather than reactively.
+All public errors use the [problem envelope](errors.md). Do not branch on error prose; branch on `code`.
 
 ---
 
-## rotating a key
+## key handling
 
-rotation mints a **new raw key value** for the same key id. the old value keeps working for a 24-hour grace window so you can deploy the new secret without downtime.
-
-```bash
-curl -X POST "https://owlette.app/api/keys/key_01HXYZA7F3B2C1D0E9F8G7H6J5/rotate" \
-  -H "Authorization: Bearer $OWLETTE_USER_SESSION_TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: $(uuidgen)" \
-  -d '{ "graceHours": 24 }'
-```
-
-response (`200 OK`):
-
-```json
-{
-  "id": "key_01HXYZA7F3B2C1D0E9F8G7H6J5",
-  "key": "owk_live_nR9mT2qS4wVxYz1bB8cE0dF3gH5iJ7kL9mO",
-  "keyPrefix": "owk_live_nR9mT2",
-  "previousKeyExpiresAt": "2026-04-23T15:30:00Z",
-  "rotatedAt": "2026-04-22T15:30:00Z"
-}
-```
-
-### rotation flow
-
-1. call `POST /api/keys/{id}/rotate` and capture the new raw `key`.
-2. deploy the new value to every caller (secrets manager, ci/cd, sdks).
-3. verify traffic is flowing on the new key (`GET /api/whoami` → `keyPrefix` matches the new prefix; dashboard **last used** timestamp updates).
-4. wait for `previousKeyExpiresAt`. the old value stops working at that moment.
-
-rotate aggressively on any suspected leak. rotation is free, idempotent via `Idempotency-Key`, and does not change the key's `id`, `scopes`, or `expiresAt`.
-
-- **`graceHours` bounds**: `0` (immediate cutover, no overlap) to `72` (max 3 days). values outside this range return `400 validation_failed`.
-- **revoked keys**: rotating a revoked key returns `412 precondition_failed`. create a new key instead.
-- **scope is unchanged**: rotation does not re-prompt for scopes — it replaces the secret only.
-
-### narrowing scopes
-
-`PATCH /api/keys/{id}` lets you rename a key or **narrow** its scopes. scopes can only be made more restrictive (remove a permission, replace `*` with a specific id, drop a scope entry entirely). any attempt to broaden returns `400 validation_failed`.
-
-```bash
-curl -X PATCH "https://owlette.app/api/keys/key_01HXYZA7F3B2C1D0E9F8G7H6J5" \
-  -H "Authorization: Bearer $OWLETTE_USER_SESSION_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "ci/cd — prod (publish-only)",
-    "scopes": [
-      { "resource": "roost", "id": "roost_lobby_td", "permissions": ["read", "write"] }
-    ]
-  }'
-```
-
-to **broaden** scopes, create a new key. this is deliberate — it forces a fresh audit-log entry for the scope change.
+- Store keys in a secrets manager, not source code.
+- Never log raw keys.
+- Use separate keys for CI, local development, monitoring, and each external integration.
+- Use `test` keys for development automation and `live` keys only for production work.
+- Keep scopes narrow and add missing permissions intentionally after a `403 scope_insufficient`.
+- Revoke unused keys promptly.
 
 ---
 
-## revoking a key
+## see also
 
-revocation is permanent. the key is unusable within 60 seconds across every edge cache (most requests fail immediately).
-
-```bash
-curl -X DELETE "https://owlette.app/api/keys/key_01HXYZA7F3B2C1D0E9F8G7H6J5" \
-  -H "Authorization: Bearer $OWLETTE_USER_SESSION_TOKEN"
-```
-
-response: `204 No Content`.
-
-revoke a key when:
-
-- you suspect it has leaked (and rotation isn't enough — rotation keeps the same key id; revocation burns it).
-- a contractor or service that held it is decommissioned.
-- it was created by mistake or with overly broad scopes (revoke + create new, narrower key).
-
-revoked keys remain in `GET /api/keys` with `revokedAt` set for audit purposes. there is no un-revoke — mint a new key instead.
-
----
-
-## security best practices
-
-- **never commit a key to git.** use environment variables or a secrets manager (github actions secrets, aws secrets manager, doppler, 1password cli). gitguardian, trufflehog, and github secret scanning recognise the `owk_live_` / `owk_test_` prefix and will alert on accidental commits — but do not rely on scanners as your primary line of defence.
-- **rotate immediately on any suspected leak.** the 24-hour grace window exists so you can rotate without downtime; use it. if the key might already be in use by an attacker, set `graceHours: 0` and cut over instantly, then revoke.
-- **least-privilege scopes.** do not grant `admin` to a ci/cd key that only needs to publish. start from the narrowest preset (`readonly`, `publisher`, `operator`) and add permissions only when an endpoint returns `403 scope_insufficient`.
-- **separate keys per use case.** one key per integration point (ci/cd, monitoring, the slack bot, each developer's laptop). this way you can revoke one without taking down the others, and the audit log's `actor.id` tells you exactly which integration did what.
-- **separate keys per environment.** never reuse a key across live and test — the prefix already enforces this at the api, but the same applies to staging vs production pipelines.
-- **prefer short ttls.** 30-day keys for ci/cd, 7-day keys for incident-response break-glass scenarios, 90-day default only when rotation tooling exists. the harder it is to rotate, the shorter the ttl should be — this forces you to build the rotation tooling.
-- **monitor `api_key.used` webhooks.** subscribe to the `api_key.used` event to detect unexpected callers (new ip ranges, new user agents, off-hours activity).
-- **rely on the audit log.** every call made with a key appears in the site audit log with the key's `id` and a `scopeFingerprint` — use `GET /api/sites/{siteId}/audit-log?actor=apiKey:<keyId>` after any suspected incident.
-
----
-
-## legacy key deprecation (90-day grace)
-
-v1 of the api issued unscoped, non-expiring keys with the plain `owk_` prefix. those keys continue to work for **90 days** after the public api launch, then stop.
-
-### during the grace window
-
-- legacy keys are treated as **full-access** (every permission on every resource the user owns).
-- every response to a request authenticated by a legacy key includes a deprecation header:
-  ```http
-  X-Roost-Deprecation: legacy-key; rotate before 2026-07-21T00:00:00Z; see https://docs.owlette.app/api/authentication#legacy-key-deprecation
-  ```
-- the dashboard **settings → api keys** page highlights every legacy key with a red badge and a one-click "rotate into scoped key" action.
-- the `X-Roost-Deprecation` header also appears on **successful** responses, not just errors — this is intentional, so it reaches callers that are silently working.
-
-### after the grace window
-
-- legacy keys return `401 token_expired` with a `detail` pointing at this page.
-- there is no extension. rotating early is free; rotating late requires a user session.
-
-### migrating a legacy key to a scoped key
-
-1. in the dashboard, note every integration that currently uses the legacy key (check the audit log for the key's `actor.id` to find unique user agents / ip ranges).
-2. for each integration, decide the **minimum** scope it needs:
-   - ci/cd that pushes to one roost? → `publisher` preset narrowed to that one roost id.
-   - monitoring dashboard? → `readonly` preset.
-   - on-call rollback tooling? → `operator` preset.
-3. create a new scoped key per integration (`POST /api/keys`).
-4. deploy the new key alongside the legacy key. verify the new key works via `GET /api/whoami` + a real request.
-5. switch each integration to the new key. watch for `403 scope_insufficient` — if anything breaks, narrow too tight; add the missing permission and redeploy.
-6. once every integration is switched, revoke the legacy key (`DELETE /api/keys/<legacyId>`). do not wait for the grace window to expire.
-
-creating many new keys in one migration burst is fine — the per-user active-key quota is 50.
-
----
-
-## related reading
-
-- `docs/api/overview.md` — base urls, conventions, common headers.
-- `docs/api/errors.md` — full error envelope + code reference.
-- `docs/api/rate-limits.md` — `RateLimit-*` headers + per-tier limits.
-- `docs/api/webhooks.md` — `Roost-Signature` verification for webhook receivers.
-- [`docs/api/overview.md`](overview.md) and `web/openapi.yaml` — public API conventions, auth schemes, and route-level scope notes.
+- [quickstart.md](quickstart.md) for a first authenticated workflow.
+- [idempotency.md](idempotency.md) for mutating request retries.
+- [errors.md](errors.md) for auth-related error bodies.
+- [rate-limits.md](rate-limits.md) for per-key throttling behavior.
+- The rendered reference at `/docs/api` for operation-level scope notes.

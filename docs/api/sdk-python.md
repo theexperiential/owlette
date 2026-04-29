@@ -3,7 +3,7 @@
 **Last updated**: 2026-04-28
 **Package**: [`owlette-sdk`](https://pypi.org/project/owlette-sdk/) · python ≥ 3.10 · single runtime dep on `httpx`
 
-the official async python sdk for the [roost api](./overview.md). `async`-first (built on `httpx.AsyncClient`), typed with dataclasses + `py.typed` marker, and behaviour-compatible with [`@owlette/sdk`](./sdk-node.md): the resource tree, progress events, error codes, and signature scheme match, with pythonic `snake_case` method names.
+the official async python sdk for the [Owlette public API](./overview.md). `async`-first (built on `httpx.AsyncClient`), typed with dataclasses + `py.typed` marker, and behaviour-compatible with [`@owlette/sdk`](./sdk-node.md): the resource tree, progress events, error codes, and signature scheme match, with pythonic `snake_case` method names.
 
 ---
 
@@ -448,11 +448,11 @@ except RoostApiError as err:
     print(err.code)                 # "roost_not_found" — stable, machine-readable
     print(err.request_id)           # for support tickets
     print(err.problem)              # full problem+json dict
-    print(err.problem.get("doc_url"))  # link to errors.md#<code>
+    print(err.problem.get("docsUrl"))  # link to errors.md#<code>
     raise
 ```
 
-the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring the problem's `retry_after` seconds field and the `Retry-After` header when present. `401`, `403`, `404`, `412`, `422`, and other 4xxs bubble immediately — retrying them will never succeed.
+the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring the problem's `retryAfter` seconds field and the `Retry-After` header when present. `401`, `403`, `404`, `412`, `422`, and other 4xxs bubble immediately — retrying them will never succeed.
 
 **common codes** you'll hit early (full list: [errors.md](./errors.md)):
 
@@ -460,10 +460,10 @@ the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring
 |----------------------------|--------|------------------------------------------------------------------------|
 | `scope_insufficient`       | 403    | api key doesn't carry the resource+permission for this call            |
 | `token_expired`            | 401    | key hit its `expires_at` — rotate or mint a new one                    |
-| `idempotency_key_mismatch` | 409    | same key replayed with a different body                                |
+| `idempotency_key_mismatch` | 422    | same key replayed with a different body                                |
 | `version_stale`            | 412    | someone else published between your read and write — re-push           |
 | `version_not_found`        | 404    | `target_version` / `version_ref` didn't resolve against the roost      |
-| `rate_limited`             | 429    | see `retry_after` — the sdk already honors it                          |
+| `rate_limited`             | 429    | see `retryAfter` — the sdk already honors it                           |
 | `unsupported_version`      | 400    | `roost_version` older than the minimum — update this package           |
 
 ---

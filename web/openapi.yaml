@@ -12,8 +12,9 @@ info:
     Protected API requests use scoped credentials. New public integrations
     should send `Authorization: Bearer owk_live_...` or
     `Authorization: Bearer owk_test_...`.
-    Create API keys from the Owlette dashboard under Settings > API Keys, or via the
-    [Create API Key](#tag/api-keys/operation/createUserApiKey) endpoint.
+    Create API keys from the Owlette dashboard under Settings > API Keys.
+    Scripted `POST /api/keys` creation requires a user session or Firebase ID
+    token; API keys cannot bootstrap broader replacement keys.
 
     Include your API key using one of these methods:
 
@@ -36,7 +37,19 @@ info:
 
     Responses may include `RateLimit-Limit`, `RateLimit-Remaining`,
     `RateLimit-Reset`, and `Retry-After`. API-key traffic is bucketed by key id
-    where available.
+    where available. See `/docs/api/rate-limits`.
+
+    ## Pagination
+
+    Collection endpoints use `page_size` and `page_token`, and return
+    `next_page_token` when paginated. Some compatibility routes also accept
+    `limit` / `cursor` or return `nextPageToken`. See `/docs/api/pagination`.
+
+    ## Idempotency
+
+    Mutating endpoints that can trigger side effects require or accept
+    `Idempotency-Key`. Replays are scoped to the same user, environment,
+    method, path, query, and body hash. See `/docs/api/idempotency`.
 
     ## Errors
 
@@ -120,9 +133,9 @@ tags:
       All roost endpoints use RFC 7807 `application/problem+json`
       error envelopes (see the `ProblemDetails` schema).
 
-  # ── public roost api tags (wave 1) — granular grouping per resource.
+  # Public API tags: granular grouping per resource.
   # existing `Roost` tag above covers the first batch of live endpoints.
-  # new tags below match [reference/api-surface.md](../dev/active/roost-public-api/reference/api-surface.md).
+  # New tags below group the developer-preview public API surface.
   - name: api-keys
     description: |
       Self-service api key management. Scoped, expiring bearer tokens
@@ -1774,10 +1787,10 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   # ══════════════════════════════════════════════════════════════════════
-  # Public roost API (wave 1) — docs-first. Paths below carry
+  # Developer-preview public API surface. Paths below carry
   # `x-stub: true` where the route file does not yet exist; the openapi
   # drift validator skips the route-file check for those entries.
-  # Contract source: dev/active/roost-public-api/reference/api-surface.md.
+  # Contract source: dev/active/public-api/reference/api-surface.md.
   # ══════════════════════════════════════════════════════════════════════
 
   # ──────────────────────────────────────────────────────────────────────
@@ -1792,7 +1805,7 @@ paths:
         Lists the caller's own api keys (raw `key` is never included).
         Requires a user session or Firebase ID token; api keys cannot
         list other api keys. This route is currently unpaginated.
-        See [authentication.md](/docs/api/authentication#listing-keys).
+        See [authentication.md](/docs/api/authentication).
       security:
         - firebaseIdToken: []
       responses:
@@ -1827,7 +1840,7 @@ paths:
         Requires a user session or Firebase ID token. Non-superadmin
         callers cannot create `user` or `installer` scopes; those
         platform resources must use `id: "*"`.
-        See [authentication.md](/docs/api/authentication#creating-an-api-key).
+        See [authentication.md](/docs/api/authentication#creating-keys).
       security:
         - firebaseIdToken: []
       requestBody:
@@ -6439,7 +6452,7 @@ components:
       scheme: bearer
       bearerFormat: owk_live_* / owk_test_*
       description: |
-        Preferred auth mechanism for the public roost api. Send the
+        Preferred auth mechanism for the Owlette public API. Send the
         scoped api key as `Authorization: Bearer owk_live_<secret>`
         (production) or `Authorization: Bearer owk_test_<secret>`
         (sandbox). See [authentication.md](/docs/api/authentication).
@@ -6449,7 +6462,7 @@ components:
       bearerFormat: Firebase ID Token
       description: |
         Firebase ID token issued to the authenticated user or agent device.
-        Used by dashboard + agent requests to roost endpoints. First-party
+        Used by dashboard and agent requests. First-party
         clients only — external integrations use `apiKey` /
         `bearerApiKey` instead.
 
@@ -6523,6 +6536,7 @@ components:
         Client-generated idempotency key. If the server has seen the same
         key on this method, path, query, and request body within the replay
         window, it returns the original response instead of re-executing.
+        Replayed responses include `Idempotent-Replayed: true`.
 
     RequiredIdempotencyKeyHeader:
       name: Idempotency-Key
@@ -6535,7 +6549,7 @@ components:
         Required client-generated idempotency key. If the server has seen
         the same key on this method, path, query, and request body within
         the replay window, it returns the original response instead of
-        re-executing.
+        re-executing. Replayed responses include `Idempotent-Replayed: true`.
 
     RoostVersionHeader:
       name: Roost-Version
@@ -6587,8 +6601,8 @@ components:
       required: true
       schema:
         type: string
-        pattern: '^key_[A-Z0-9]+$'
-      description: The api key id (ulid-encoded).
+        minLength: 1
+      description: The API key id. Current scoped keys use UUID values; legacy records may use older ids.
 
     WebhookIdPath:
       name: webhookId
@@ -6668,7 +6682,7 @@ components:
 
   headers:
     RateLimitLimit:
-      description: Window limit for the rate-limit bucket that fired for this request.
+      description: Window limit for the active rate-limit bucket.
       schema:
         type: integer
     RateLimitRemaining:
@@ -6690,6 +6704,11 @@ components:
       schema:
         type: string
         enum: [global-rate, endpoint-rate, key-rate, site-concurrency]
+    IdempotentReplayed:
+      description: Present with value `true` when a response was replayed from the idempotency cache.
+      schema:
+        type: string
+        enum: ['true']
 
   responses:
     Problem400:
@@ -7367,7 +7386,7 @@ components:
         error. This carries a stable machine-readable `type` URI, `code`,
         docs link, correlation `requestId`, and optional field-level
         `errors`.
-      required: [type, title, status]
+      required: [type, title, status, code, docsUrl, requestId]
       properties:
         type:
           type: string
@@ -7400,6 +7419,9 @@ components:
           format: uri
           description: Documentation anchor for the error code.
           example: https://owlette.app/docs/api/errors#validation_failed
+        param:
+          type: string
+          description: Optional offending header, query parameter, path parameter, or body field.
         errors:
           type: object
           additionalProperties:
@@ -7506,15 +7528,16 @@ components:
                       type: integer
                       minimum: 1
 
-    # ── public roost api schemas (wave 1) ───────────────────────────
+    # Public API schemas.
 
     # Common primitives.
     Permission:
       type: string
       enum: [read, write, deploy, rollback, admin]
       description: |
-        Atomic permission within a scope entry. `admin` is the
-        superset; `deploy` implies `read`; `write` implies `read`.
+        Atomic permission within a scope entry. Permissions are exact;
+        `write`, `deploy`, `rollback`, and `admin` do not imply `read`
+        or any other permission.
     Scope:
       type: object
       description: |
@@ -7555,7 +7578,7 @@ components:
           enum: [live, test]
         keyPrefix:
           type: string
-          description: First ~14 chars of the raw key; safe to display.
+          description: Display-safe prefix of the raw key; current keys store the first 15 characters.
         scopes:
           type: array
           items: { $ref: '#/components/schemas/Scope' }

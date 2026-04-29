@@ -9,6 +9,11 @@ the interactive endpoint reference is rendered from the OpenAPI contract at:
 
 the rendered reference includes every developer-preview public operation, request/response examples, operation-level authentication, and a scope note for API-key callers.
 
+Use the shared convention pages for behavior that applies across operations:
+[authentication](authentication.md), [pagination](pagination.md),
+[idempotency](idempotency.md), [errors](errors.md), and
+[rate limits](rate-limits.md).
+
 run this before publishing API docs or changing public routes:
 
 ```powershell

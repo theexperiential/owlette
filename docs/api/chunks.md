@@ -66,7 +66,7 @@ the chunker never ships bytes the server already has. the upload dance is a thre
 
 ```
 ┌───────────┐   POST /api/chunks/check      ┌──────────────┐
-│  client   │─────────────────────────────▶│  roost api   │
+│  client   │─────────────────────────────▶│ Owlette API  │
 │  chunker  │◀── { missing: [hash,…] } ────│              │
 │           │                               │              │
 │           │   POST /api/chunks/upload-urls│              │
@@ -241,7 +241,7 @@ GET /api/chunks/sha256:2e7d2c03…/referrers?siteId=kiosk-fleet-01&page_size=25
 | operation | idempotent? | how |
 |---|---|---|
 | `POST /api/chunks/check` | yes (read-only) | stateless; every call recomputes from r2 metadata. |
-| `POST /api/chunks/upload-urls` | yes by convention — same `Idempotency-Key` + same body returns the cached response for 24h. minting multiple urls for the same hash is **safe** (multiple valid urls can coexist; r2 sees identical `PUT`s and accepts the first). | server caches `{userId, env, idempotencyKey, bodyHash}` → response for 24h. a reuse with a different body hash returns `idempotency_key_mismatch` (409). |
+| `POST /api/chunks/upload-urls` | yes by convention — same `Idempotency-Key` + same body returns the cached response for 24h. minting multiple urls for the same hash is **safe** (multiple valid urls can coexist; r2 sees identical `PUT`s and accepts the first). | server caches by user, environment, key, method, path, query, and body hash for 24h. a reuse with a different body hash returns `422 idempotency_key_mismatch`. |
 | `PUT <signed r2 url>` | yes — r2 is natively idempotent on content-addressed writes. the same bytes to the same key is a no-op on the second call. | r2 handles internally; the client does not need to track "did this succeed?" beyond status code. |
 | `POST /api/chunks/download-urls` | yes (read-only). | minting multiple download urls for the same hash is cheap and safe. |
 | `POST /api/chunks/{digest}/mount` | yes — same digest, same `toRoostId`, same `siteId` is a no-op on the second call. | enforced via firestore transaction; the referrer edge is upserted, never duplicated. |
@@ -345,7 +345,7 @@ notes applicable to both implementations:
 
 ## 10. error taxonomy
 
-every error response follows rfc 7807 `application/problem+json` with the stripe-style extensions (`code`, `param`, `doc_url`, `request_log_url`, `requestId`). the `code` field is the stable contract; match on that, never on the `detail` prose.
+every error response follows rfc 7807 `application/problem+json` with the standard extensions (`code`, `docsUrl`, `requestId`, and optional field-level `errors`). the `code` field is the stable contract; match on that, never on the `detail` prose.
 
 | code | status | endpoints | meaning |
 |---|---|---|---|
@@ -354,23 +354,22 @@ every error response follows rfc 7807 `application/problem+json` with the stripe
 | `scope_insufficient` | 403 | all (universal) | api key lacks the required scope. example: download request for chunks stored under a site the key cannot read; mount without `roost:from:read`. |
 | `chunk_not_found` | 404 | `POST /api/chunks/download-urls`, `POST /api/chunks/{digest}/mount`, `GET /api/chunks/{digest}/referrers` | one or more requested digests do not exist in the site's cas namespace. on batch endpoints the error lists the missing digests in the `param` field. |
 | `site_isolation_violation` | 403 | `POST /api/chunks/{digest}/mount` | source and destination roost live in different sites. mount across sites is never permitted. |
-| `idempotency_key_mismatch` | 409 | `POST /api/chunks/upload-urls`, `POST /api/chunks/{digest}/mount` | the same `Idempotency-Key` was replayed with a different request body hash within the 24h cache window. |
+| `idempotency_key_mismatch` | 422 | `POST /api/chunks/upload-urls`, `POST /api/chunks/{digest}/mount` | the same `Idempotency-Key` was replayed with a different request body hash within the 24h cache window. |
 | `rate_limited` | 429 | all | per-key or per-tenant rate limit tripped; retry after `Retry-After` seconds. see the `Roost-Rate-Limited-Reason` response header for the specific bucket. |
 
-universal errors (`auth_required` 401, `token_expired` 401, `internal_error` 500) are documented in the top-level api conventions and are not repeated here.
+universal errors (`unauthorized` 401, `token_expired` 401, `scope_insufficient` 403, `rate_limited` 429, `internal_error` 500) are documented in the top-level api conventions and are not repeated here.
 
 example `validation_failed` for a malformed digest:
 
 ```json
 {
-  "type": "https://owlette.app/errors/validation_failed",
+  "type": "https://owlette.app/problems/validation-failed",
   "title": "validation failed",
   "status": 400,
   "detail": "hash[0] is not a valid sha-256 digest; expected `sha256:` + 64 hex chars",
   "code": "validation_failed",
   "param": "hashes[0]",
-  "doc_url": "https://docs.owlette.app/api/errors#validation_failed",
-  "request_log_url": "https://owlette.app/dashboard/logs/req_01HW…",
+  "docsUrl": "https://owlette.app/docs/api/errors#validation_failed",
   "requestId": "req_01HW…"
 }
 ```

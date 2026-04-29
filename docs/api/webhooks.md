@@ -1,4 +1,4 @@
-# roost api — webhooks
+# Owlette API webhooks
 
 webhooks are how roost tells your systems that something happened — a new version published, a deploy failed, a machine dropped offline, a quota alarm tripped. instead of polling the api on a timer, you subscribe a url once and roost posts a signed json event to it when a matching event is dispatched.
 

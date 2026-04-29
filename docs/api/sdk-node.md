@@ -3,7 +3,7 @@
 **Last updated**: 2026-04-28
 **Package**: [`@owlette/sdk`](https://www.npmjs.com/package/@owlette/sdk) · node ≥ 20 · zero runtime deps
 
-the official typescript sdk for the [roost api](./overview.md). wraps the rest surface with a typed resource tree, auto-retry, automatic `Idempotency-Key`, chunk-aware `push()`, stripe-style webhook verification, version-ref resolution, and progress events. if you can use `fetch` directly you can use this — it just adds the tedious bits.
+the official typescript sdk for the [Owlette public API](./overview.md). wraps the rest surface with a typed resource tree, auto-retry, automatic `Idempotency-Key`, chunk-aware Roost `push()`, stripe-style webhook verification, version-ref resolution, and progress events. if you can use `fetch` directly you can use this — it just adds the tedious bits.
 
 ---
 
@@ -55,7 +55,7 @@ const roost = new Roost({
 
 **scope enforcement is server-side.** the sdk does not validate scopes locally — an over-broad call fails with `RoostApiError.code === 'scope_insufficient'`. see [authentication.md](./authentication.md) for the full scope grammar.
 
-the sdk auto-generates an `Idempotency-Key` header on every mutating request (POST / PATCH / PUT) unless you pass one explicitly. transparent retries can't create duplicate rollouts, roosts, or keys. see [rate-limits.md](./rate-limits.md#idempotency) for the replay window.
+the sdk auto-generates an `Idempotency-Key` header on every mutating request (POST / PATCH / PUT) unless you pass one explicitly. transparent retries can't create duplicate rollouts, roosts, or keys. see [idempotency.md](./idempotency.md) for the replay window.
 
 ---
 
@@ -392,13 +392,13 @@ try {
     console.log(err.code);              // 'roost_not_found' — stable, machine-readable
     console.log(err.requestId);         // for support tickets
     console.log(err.problem);           // full problem+json body
-    console.log(err.problem.doc_url);   // link to errors.md#<code>
+    console.log(err.problem.docsUrl);   // link to errors.md#<code>
   }
   throw err;
 }
 ```
 
-the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring the problem's `retry_after` seconds field and the `Retry-After` header when present. `401`, `403`, `404`, `412`, `422`, and other 4xxs bubble immediately — retrying them will never succeed.
+the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring the problem's `retryAfter` seconds field and the `Retry-After` header when present. `401`, `403`, `404`, `412`, `422`, and other 4xxs bubble immediately — retrying them will never succeed.
 
 **common codes** you'll hit early (full list: [errors.md](./errors.md)):
 
@@ -406,10 +406,10 @@ the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring
 |----------------------------|--------|------------------------------------------------------------------------|
 | `scope_insufficient`       | 403    | api key doesn't carry the resource+permission for this call            |
 | `token_expired`            | 401    | key hit its `expiresAt` — rotate or mint a new one                     |
-| `idempotency_key_mismatch` | 409    | same key replayed with a different body                                |
+| `idempotency_key_mismatch` | 422    | same key replayed with a different body                                |
 | `version_stale`            | 412    | someone else published between your read and write — re-push           |
 | `version_not_found`        | 404    | `targetVersion` / `versionRef` didn't resolve against the roost        |
-| `rate_limited`             | 429    | see `retry_after` — the sdk already honors it                          |
+| `rate_limited`             | 429    | see `retryAfter` — the sdk already honors it                           |
 | `unsupported_version`      | 400    | `roostVersion` older than the minimum — update this package            |
 
 ---

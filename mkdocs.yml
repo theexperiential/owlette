@@ -111,6 +111,8 @@ nav:
     - api reference links: api/reference.md
     - quickstart: api/quickstart.md
     - authentication: api/authentication.md
+    - pagination: api/pagination.md
+    - idempotency: api/idempotency.md
     - errors: api/errors.md
     - rate limits: api/rate-limits.md
     - chunks: api/chunks.md

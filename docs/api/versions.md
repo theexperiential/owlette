@@ -1,4 +1,4 @@
-# roost api — versions
+# Roost versions
 
 > **Note**: this resource was previously named "manifest" — it was renamed to "version" in 2026-04. all api paths, sdk method names, and docs have been updated.
 
@@ -353,7 +353,7 @@ HTTP/1.1 412 Precondition Failed
 Content-Type: application/problem+json
 
 {
-  "type": "https://owlette.app/errors/precondition_failed",
+  "type": "https://owlette.app/problems/precondition-failed",
   "title": "precondition failed",
   "status": 412,
   "detail": "current version digest is vrs_cc33...dd44, not vrs_aa11...bb22",
@@ -552,10 +552,10 @@ all version errors use rfc 7807 `application/problem+json` with stable `code` id
 | `precondition_failed` | 412 | `If-Match` or `expectedCurrentVersionId` does not match the roost's current pointer. | same root cause as `version_stale`, surfaced via http semantics when the caller opted in with `If-Match`. the response body includes `expected` and `actual`. |
 | `version_not_found` | 404 | the roost does not exist, the caller has no read access to it, or the `{versionRef}` / `targetVersion` does not resolve to any version in this roost's history. | typo in ref, revoked scope, alias that has no target yet (`previous` on a fresh roost), or referencing a version from a different roost. |
 | `conflict` | 409 | rollback would be a no-op (resolved target equals current), or was called without `targetVersion` on a roost with only one version published. | first publish has no prior to roll back to; omit the call or specify an explicit target once a second version exists. |
-| `idempotency_key_mismatch` | 409 | the same `Idempotency-Key` was reused with a different request body hash. | regenerate the uuid when you change the payload. |
+| `idempotency_key_mismatch` | 422 | the same `Idempotency-Key` was reused with a different request body hash. | regenerate the uuid when you change the payload. |
 | `quota_exceeded` | 402 | publishing this version would push the site over its storage limit. | the `missing` chunks you were about to upload would exceed your plan cap. check `GET /api/sites/{siteId}/quota`. |
 
-every response — success or error — carries `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` headers. on 429 use `Retry-After`, not arbitrary backoff.
+responses that pass through the public rate limiter include `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` headers when counters are available. on 429 use `Retry-After`, not arbitrary backoff.
 
 ---
 
