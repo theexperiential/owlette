@@ -1,7 +1,7 @@
 # sdk — node / typescript
 
-**Last updated**: 2026-04-28
-**Package**: [`@owlette/sdk`](https://www.npmjs.com/package/@owlette/sdk) · node ≥ 20 · zero runtime deps
+**Last updated**: 2026-04-29
+**Package target**: [`@owlette/sdk`](https://www.npmjs.com/package/@owlette/sdk) `1.0.0-rc.0` · node ≥ 20 · zero runtime deps
 
 the official typescript sdk for the [Owlette public API](./overview.md). wraps the rest surface with a typed resource tree, auto-retry, automatic `Idempotency-Key`, chunk-aware Roost `push()`, stripe-style webhook verification, version-ref resolution, and progress events. if you can use `fetch` directly you can use this — it just adds the tedious bits.
 
@@ -10,12 +10,14 @@ the official typescript sdk for the [Owlette public API](./overview.md). wraps t
 ## installation
 
 ```bash
-npm install @owlette/sdk
-# or: pnpm add @owlette/sdk
-# or: yarn add @owlette/sdk
+npm install @owlette/sdk@rc
+# or: pnpm add @owlette/sdk@rc
+# or: yarn add @owlette/sdk@rc
 ```
 
-the package ships `.js` + `.d.ts` for both esm and cjs. no native modules; no wasm; no postinstall script.
+the package ships CommonJS `.js` output plus `.d.ts` declarations. no native modules; no wasm; no postinstall script.
+
+Registry install is the Wave 5.3 release target. Until the npm `rc` tag is published and verified through the [distribution gate](distribution.md), use the SDK from the monorepo source checkout for developer-preview work.
 
 ---
 

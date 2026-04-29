@@ -13,14 +13,14 @@ This page is the 15-minute onboarding: install → log in → push your first ro
 
 ## installation
 
-### npm (coming soon)
+### npm release target
 
 ```bash
-npm install -g @owlette/cli
+npm install -g @owlette/cli@rc
 owlette --version
 ```
 
-The cli is currently shipped as part of the [owlette monorepo](https://github.com/owlette-app/owlette) at `cli/` and is not yet published to npm. Install it from source for now.
+The cli is prepared for the `@owlette/cli@1.0.0-rc.0` release channel, but it is not externally complete until the [SDK and CLI distribution gate](../api/distribution.md) is verified. Install from source until the npm `rc` tag is published.
 
 ### local dev (from the monorepo)
 

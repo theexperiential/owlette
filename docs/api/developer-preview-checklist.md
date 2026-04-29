@@ -19,7 +19,7 @@ Developer preview is ready when an internal consumer can:
 - use documented shared behavior for auth, errors, pagination, idempotency, and rate limits
 - inspect the rendered reference at `/docs/api`
 
-Preview does not mean the public launch packaging is complete. Status page, [public SLOs](load-testing.md), published SDK/CLI channels, marketplace assets, pricing/signup pages, and first-week support runbooks remain Wave 5 launch work.
+Preview does not mean the public launch packaging is complete. Status page, [public SLOs](load-testing.md), [published SDK/CLI channels](distribution.md), marketplace assets, pricing/signup pages, and first-week support runbooks remain Wave 5 launch work.
 
 ---
 
@@ -90,7 +90,7 @@ Do not advertise these as developer-preview public APIs:
 - Production event fanout through `/api/events/stream`; current stream validates auth/filters and emits liveness events only.
 - New path aliases such as `/api/installers`, `/api/sites/{siteId}/installer-deploys`, or `/api/sites/{siteId}/cortex/...`.
 - New `X-Owlette-Api-Version` request header; no Owlette-wide version header is required for preview.
-- External package publication, Homebrew/Scoop/winget distribution, status page, public uptime checks, launch marketing, and support SLAs.
+- External package publication, Homebrew/Scoop/winget distribution, status page, public uptime checks, launch marketing, and support SLAs. Use the [distribution gate](distribution.md) before claiming SDK or CLI packages are live.
 
 If an internal consumer asks for one of these, record it as a follow-up instead of expanding the preview contract ad hoc.
 

@@ -1,7 +1,7 @@
 # sdk — python
 
-**Last updated**: 2026-04-28
-**Package**: [`owlette-sdk`](https://pypi.org/project/owlette-sdk/) · python ≥ 3.10 · single runtime dep on `httpx`
+**Last updated**: 2026-04-29
+**Package target**: [`owlette-sdk`](https://pypi.org/project/owlette-sdk/) `1.0.0rc0` · python ≥ 3.10 · single runtime dep on `httpx`
 
 the official async python sdk for the [Owlette public API](./overview.md). `async`-first (built on `httpx.AsyncClient`), typed with dataclasses + `py.typed` marker, and behaviour-compatible with [`@owlette/sdk`](./sdk-node.md): the resource tree, progress events, error codes, and signature scheme match, with pythonic `snake_case` method names.
 
@@ -10,12 +10,14 @@ the official async python sdk for the [Owlette public API](./overview.md). `asyn
 ## installation
 
 ```bash
-pip install owlette-sdk
-# or: poetry add owlette-sdk
-# or: uv pip install owlette-sdk
+pip install --pre owlette-sdk
+# or: poetry add --allow-prereleases owlette-sdk
+# or: uv pip install --pre owlette-sdk
 ```
 
 python 3.10+ is required (async iterator + `match` + pep 604 unions). the package has one runtime dependency: `httpx>=0.27`.
+
+Registry install is the Wave 5.3 release target. Until the PyPI pre-release is published and verified through the [distribution gate](distribution.md), use the SDK from the monorepo source checkout for developer-preview work.
 
 ---
 

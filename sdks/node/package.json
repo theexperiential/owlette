@@ -1,6 +1,6 @@
 {
   "name": "@owlette/sdk",
-  "version": "0.2.0",
+  "version": "1.0.0-rc.0",
   "description": "node sdk for the owlette public api (owlette.app)",
   "license": "FSL-1.1-Apache-2.0",
   "main": "./dist/index.js",
@@ -9,7 +9,8 @@
   "files": [
     "dist/",
     "examples/*.ts",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"

@@ -7,8 +7,10 @@ and `fs` modules.
 ## install
 
 ```bash
-npm install @owlette/sdk
+npm install @owlette/sdk@rc
 ```
+
+`@owlette/sdk@rc` is the public launch target. Until the Wave 5.3 distribution gate is complete and the npm `rc` tag is visible, install from the monorepo source checkout.
 
 ## quickstart
 

@@ -1,6 +1,6 @@
 {
   "name": "@owlette/cli",
-  "version": "0.2.0",
+  "version": "1.0.0-rc.0",
   "description": "owlette — command line for the owlette api (owlette.app)",
   "license": "FSL-1.1-Apache-2.0",
   "bin": {
@@ -13,7 +13,8 @@
     "bin/",
     "dist/",
     "README.md",
-    "MIGRATION.md"
+    "MIGRATION.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"

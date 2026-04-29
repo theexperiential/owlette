@@ -5,9 +5,11 @@ command-line client for the [owlette.app](https://owlette.app) public api. authe
 ## install
 
 ```bash
-npm install -g @owlette/cli
+npm install -g @owlette/cli@rc
 owlette --version
 ```
+
+`@owlette/cli@rc` is the public launch target. Until the Wave 5.3 distribution gate is complete and the npm `rc` tag is visible, install from the monorepo source checkout.
 
 ## 30-second auth + push
 

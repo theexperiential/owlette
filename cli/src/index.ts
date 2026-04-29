@@ -30,7 +30,7 @@ import { registerInstallerCommands } from './commands/installer';
 import { _resetConfigCache } from './config';
 
 const PROGRAM_NAME = 'owlette';
-const VERSION = '0.2.0';
+const VERSION = '1.0.0-rc.0';
 
 export function buildProgram(): Command {
   const program = new Command();
