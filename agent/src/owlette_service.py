@@ -3064,16 +3064,24 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # Use the actual path where the file was saved (may differ if file was in use)
                     temp_installer_path = actual_installer_path
 
-                    # Verify checksum if provided (SECURITY: recommended for remote installations)
-                    if expected_sha256:
-                        logging.info("Verifying installer checksum...")
-                        checksum_valid = installer_utils.verify_checksum(temp_installer_path, expected_sha256)
-                        if not checksum_valid:
-                            installer_utils.cleanup_installer(temp_installer_path, force=True)
-                            return f"Error: Checksum verification failed for {installer_name}. Installation aborted for security."
-                        logging.info("[OK] Checksum verification passed")
-                    else:
-                        logging.warning("[WARNING] No checksum provided - skipping verification (security risk)")
+                    # SECURITY: checksum is mandatory for remote installations.
+                    # Without it, a compromised CDN, hijacked signed URL, or any actor with
+                    # write access to the command doc could ship arbitrary code that runs
+                    # elevated. The self-update path enforces this; the third-party install
+                    # path used to skip it — fixed here.
+                    if not expected_sha256:
+                        installer_utils.cleanup_installer(temp_installer_path, force=True)
+                        return (
+                            f"Error: Refusing to install {installer_name} without "
+                            f"sha256_checksum. Re-issue the command with a checksum."
+                        )
+
+                    logging.info("Verifying installer checksum...")
+                    checksum_valid = installer_utils.verify_checksum(temp_installer_path, expected_sha256)
+                    if not checksum_valid:
+                        installer_utils.cleanup_installer(temp_installer_path, force=True)
+                        return f"Error: Checksum verification failed for {installer_name}. Installation aborted for security."
+                    logging.info("[OK] Checksum verification passed")
 
                     # Update status: installing
                     if self.firebase_client:
