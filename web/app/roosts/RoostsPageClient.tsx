@@ -435,7 +435,15 @@ export default function RoostsPageClient() {
         {/* Section header with inline stats */}
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-center gap-6 md:gap-8">
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">roosts</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">roosts</h2>
+              <span
+                className="inline-flex items-center rounded-full border border-accent-cyan/30 bg-accent-cyan/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent-cyan"
+                title="roost is in developer preview — see docs/api/webhooks.md and the launch runbook for current limitations"
+              >
+                developer preview
+              </span>
+            </div>
 
             <div className="flex items-center gap-6 md:gap-8">
               <div className="flex items-center gap-2.5">

@@ -99,6 +99,26 @@ export default function WebhooksSettingsPage() {
     <div className="min-h-screen bg-background">
       <PageHeader currentPage="webhooks" />
       <main className="max-w-4xl mx-auto px-6 py-8">
+        {/* Developer-preview banner. Subscription management, manual probes,
+            delivery history, and retry are all live. Automatic dispatch of
+            roost lifecycle events (`version.published`, `version.rolled_back`,
+            `deployment.*`) is deferred — the routes carry explicit TODOs.
+            We surface that gap here rather than letting users subscribe
+            silently to events that won't fire. */}
+        <div className="mb-6 rounded-md border border-accent-cyan/30 bg-accent-cyan/10 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <span className="inline-flex items-center rounded-full border border-accent-cyan/30 bg-accent-cyan/20 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent-cyan flex-shrink-0">
+              developer preview
+            </span>
+            <div className="text-xs text-foreground/80 leading-relaxed">
+              subscription management, the manual <code className="text-[11px] bg-card px-1 rounded">/api/webhooks/probe</code> endpoint,
+              delivery history, and retry are live. <strong>automatic dispatch</strong> of roost lifecycle events
+              (<code className="text-[11px]">version.published</code>, <code className="text-[11px]">version.rolled_back</code>,
+              <code className="text-[11px]">deployment.*</code>) is not wired yet — subscriptions are accepted but those
+              events will not fire until a future release.
+            </div>
+          </div>
+        </div>
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
           <div>
             <h1 className="text-2xl font-semibold text-white flex items-center gap-2">
