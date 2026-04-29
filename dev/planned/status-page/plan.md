@@ -39,13 +39,15 @@ sign up at instatus.com on the $20/mo "starter" plan. create the 7 components fr
 configure custom domain in instatus admin. add the cname record at the dns provider (cloudflare, godaddy, wherever owlette.app's dns is managed). wait for ssl provisioning (usually <10min).
 
 ### 1.3 — reference doc
-record component ids + incoming-webhook urls in `reference/instatus-config.md` so the wave-2 cron knows where to post.
+record component ids + status update endpoint details in `reference/instatus-config.md` so the wave-2 cron knows where to post.
 
 ---
 
 ## wave 2 — synthetic healthchecks + cron (autonomous)
 
 **duration**: ~2 days. all code work; depends on wave 1 reference doc landing.
+
+Public API W5.1 has landed the autonomous foundation early: `web/lib/healthChecks.server.ts`, `web/lib/instatusClient.ts`, `web/app/api/cron/status-ping/route.ts`, focused tests, and `docs/api/status-uptime.md`. Keep the wave-2 tasks open until the Instatus page id/component ids exist, the 60-second cron is configured, and a degraded/recovered state change is verified against the live status page.
 
 ### 2.1 — healthcheck module
 new `web/lib/healthChecks.server.ts`. one async function per component, all returning `{component: string, ok: boolean, latency_ms: number, error?: string}`. specifics:
@@ -61,8 +63,8 @@ new `web/lib/healthChecks.server.ts`. one async function per component, all retu
 new `web/app/api/cron/status-ping/route.ts`. railway cron entry calls it every 60s with the standard `X-Cron-Secret` header. handler runs all 7 healthchecks in parallel (`Promise.all`), writes a row to `status_pings/{tsMillis}` with the results, computes per-component current state.
 
 ### 2.3 — state-change webhook poster
-in the cron handler, compare current state vs the most recent ping. if any component changed (ok→degraded or degraded→ok), post to instatus's incoming webhook for that component:
-- `POST https://api.instatus.com/v1/{pageId}/components/{componentId}` with body `{status: 'OPERATIONAL' | 'DEGRADEDPERFORMANCE' | 'PARTIALOUTAGE' | 'MAJOROUTAGE'}` (instatus exact enum tbd in 1.3).
+in the cron handler, compare current state vs the most recent ping. if any component changed (ok→degraded or degraded→ok), call the Instatus component-status API for that component:
+- `PUT https://api.instatus.com/v1/components/{componentId}` with body `{status: 'OPERATIONAL' | 'DEGRADEDPERFORMANCE' | 'PARTIALOUTAGE' | 'MAJOROUTAGE'}` by default; override with `INSTATUS_COMPONENT_STATUS_URL_TEMPLATE` if the vendor account uses a different component endpoint shape.
 - bearer-auth using an instatus api key stored in railway env as `INSTATUS_API_KEY`.
 - swallow webhook failures (log + continue) — never let instatus being down cause our healthcheck cron to fail.
 
@@ -106,7 +108,7 @@ manual test:
 
 ## risks
 
-- **instatus webhook flakiness**: if instatus's incoming webhook endpoint is down, our state changes won't propagate. mitigation: cron retries on failure (3 attempts, 5s apart) but never blocks; we'd see a stuck-stale state on the public page until the next state change goes through. acceptable v1 trade-off.
+- **instatus api flakiness**: if Instatus component-status updates fail, our state changes won't propagate. mitigation: cron logs and returns publish failures without blocking local ping writes; we'd see a stuck-stale state on the public page until the next successful state change goes through. acceptable v1 trade-off.
 - **synthetic check false positives**: railway cron running on a single region could see transient network blips that customers don't experience. mitigation: require 2 consecutive failures before flipping a component to degraded (state-change logic in 2.3).
 - **api healthcheck triggers rate limit**: 60s cron pings could cumulatively trip the api rate limiter. mitigation: dedicated read-only api key with elevated rate limit, OR allowlist the cron's source ip in `withRateLimit` middleware.
 - **webhook delivery / r2 healthchecks not yet instrumented**: 2.1 spec assumes these signals exist. if they don't, scope the initial healthcheck for those components down to "always ok" with a // TODO until the underlying signal is added (separate plan).
@@ -118,6 +120,7 @@ manual test:
 **blocked by**:
 - wave 1 needs user action (instatus account creation + dns record). cannot be `/execute`'d autonomously.
 - wave 2 depends on wave 1 reference doc.
+- public API W5.1 code can record local pings before wave 1, but external incident visibility remains blocked until `status.owlette.app` resolves and component ids are configured.
 
 ## success criteria
 

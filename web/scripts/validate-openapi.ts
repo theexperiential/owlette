@@ -50,6 +50,7 @@ const INTERNAL_ROUTES = new Set([
   '/api/cortex/escalation',
   '/api/cortex/provision-key',
   '/api/cron/display-alerts',
+  '/api/cron/status-ping',
   '/api/settings/llm-key',
   '/api/settings/llm-models',
   '/api/settings/site-llm-key',

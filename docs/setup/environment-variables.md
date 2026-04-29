@@ -98,6 +98,30 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 ---
 
+## public status page (required for external launch)
+
+These are server-side only. They wire `/api/cron/status-ping` to the hosted public status page.
+
+| variable | description |
+|----------|-------------|
+| `OWLETTE_STATUS_BASE_URL` | Optional base URL for synthetic checks; defaults to the request origin or `https://owlette.app` |
+| `INSTATUS_API_KEY` | Instatus API token |
+| `INSTATUS_PAGE_ID` | Instatus page id for `status.owlette.app` |
+| `INSTATUS_API_BASE_URL` | Optional API override; defaults to `https://api.instatus.com/v1` |
+| `INSTATUS_COMPONENT_STATUS_METHOD` | Optional component update method; defaults to `PUT` |
+| `INSTATUS_COMPONENT_STATUS_URL_TEMPLATE` | Optional component update URL template using `{pageId}` and `{componentId}` placeholders |
+| `INSTATUS_COMPONENT_DASHBOARD_ID` | Component id for dashboard |
+| `INSTATUS_COMPONENT_API_ID` | Component id for API |
+| `INSTATUS_COMPONENT_AGENT_REGISTRY_ID` | Component id for agent registry |
+| `INSTATUS_COMPONENT_WEBHOOK_DELIVERY_ID` | Component id for webhook delivery |
+| `INSTATUS_COMPONENT_R2_UPLOADS_ID` | Component id for R2 uploads |
+| `INSTATUS_COMPONENT_FIRESTORE_ID` | Component id for Firestore |
+| `INSTATUS_COMPONENT_CORTEX_CHAT_ID` | Component id for Cortex chat |
+
+Do not store the Instatus API key in docs or screenshots. Record only component ids and env var names in the operator reference.
+
+---
+
 ## encryption (required for llm keys)
 
 | variable | description |

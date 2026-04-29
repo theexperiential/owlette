@@ -111,6 +111,7 @@ nav:
     - api reference links: api/reference.md
     - quickstart: api/quickstart.md
     - developer preview checklist: api/developer-preview-checklist.md
+    - status page and uptime: api/status-uptime.md
     - authentication: api/authentication.md
     - pagination: api/pagination.md
     - idempotency: api/idempotency.md

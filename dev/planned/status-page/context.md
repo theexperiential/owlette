@@ -32,7 +32,7 @@ a public status page at `status.owlette.app` that shows:
 1. **vendor selection: instatus**. $20/mo, custom subdomain, email + webhook subscribers, public api, 90-day history, no per-component pricing. better stack is comparable but bundles uptime monitoring we don't need (we already have synthetic checks via railway/cron). atlassian statuspage is enterprise-priced ($29-99/mo). instatus has the cleanest free-tier path if we ever need to start.
 2. **subdomain: `status.owlette.app`**. dns + ssl handled by instatus.
 3. **no integration with the dashboard initially**. dashboard links to `status.owlette.app` in the footer. inline incident banners inside the dashboard are a v2 concern.
-4. **synthetic uptime via existing cron infra**. railway already runs cron jobs. a 60s `pingHealthCheck` cron writes results to firestore + posts to instatus's incoming-webhook api when state changes.
+4. **synthetic uptime via existing cron infra**. railway already runs cron jobs. a 60s `pingHealthCheck` cron writes results to firestore and calls the Instatus component-status API when state changes.
 5. **components list (initial)** — 7 components, deliberately small:
    - dashboard (`https://owlette.app`)
    - api (`/api/whoami`, `/api/version`)
@@ -48,8 +48,10 @@ a public status page at `status.owlette.app` that shows:
 ## key files (create / modify)
 
 ### create
+
+Public API W5.1 has already created the autonomous foundation files: `web/lib/healthChecks.server.ts`, `web/lib/instatusClient.ts`, `web/app/api/cron/status-ping/route.ts`, focused tests, and `docs/api/status-uptime.md`. The remaining new files in this section are still needed after vendor setup.
 - `web/lib/healthChecks.server.ts` (new) — internal healthcheck functions returning `{component, ok, latency_ms}` for each tracked component.
-- `web/app/api/cron/status-ping/route.ts` (new) — railway cron handler, runs every 60s, calls each healthcheck, posts to instatus incoming webhook on state change.
+- `web/app/api/cron/status-ping/route.ts` (new) — railway cron handler, runs every 60s, calls each healthcheck, posts Instatus component-status updates on state change.
 - `dev/active/status-page/reference/instatus-config.md` (new) — vendor setup notes (component ids, webhook urls, email template, dns record).
 - `dev/active/status-page/reference/runbook.md` (new) — how to publish an incident: which dashboard, what to say, when to update.
 
@@ -63,9 +65,11 @@ a public status page at `status.owlette.app` that shows:
 
 ## dependencies on existing infrastructure
 
+Public API W5.1 can record local pings before vendor setup, but external incident visibility remains blocked until `status.owlette.app` resolves and the Instatus page/component ids are configured.
+
 - **railway cron** — already configured for other cron jobs. add a new entry for `/api/cron/status-ping` every 60s.
 - **firestore** — write a `status_pings` collection for historical pings; instatus is the source of truth for the public page.
-- **instatus account** — $20/mo. one-time setup: create components, generate incoming webhook urls, configure subdomain dns.
+- **instatus account** — $20/mo. one-time setup: create components, record component ids/status update endpoint details, and configure subdomain dns.
 
 ## out of scope for this plan
 

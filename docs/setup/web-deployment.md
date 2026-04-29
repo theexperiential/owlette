@@ -81,6 +81,19 @@ Add as `CRON_SECRET` in Railway Variables.
 !!! warning "Format"
     Use spaces between fields: `*/5 * * * *`. No spaces (`*/5****`) will fail.
 
+### public status-page ping
+
+External public launch also needs a 60-second HTTP cron that calls:
+
+```text
+GET https://<your-app>/api/cron/status-ping
+X-Cron-Secret: <CRON_SECRET value>
+```
+
+The route writes an internal status-ping record and posts component status changes to Instatus when the `INSTATUS_*` variables are configured. It waits for two consecutive failures before degrading a component, then marks it operational on recovery. Publish failures are logged and returned in the cron response without failing the local ping write.
+
+Use a separate cron job/service if the hosting provider only supports one schedule per service. Keep `/api/cron/status-ping` internal; it is not part of the public API reference.
+
 ---
 
 ## two-branch deployment
