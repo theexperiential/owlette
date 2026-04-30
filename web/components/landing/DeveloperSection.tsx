@@ -63,12 +63,12 @@ export function DeveloperSection() {
       <div className="max-w-5xl mx-auto">
         <div className="text-center mb-12 sm:mb-16">
           <h2 className="section-headline text-foreground mb-4 leading-tight">
-            script your fleet. or don&apos;t.
+            every dashboard action, scriptable.
           </h2>
           <p className="section-subheadline text-balance max-w-3xl mx-auto">
-            every dashboard action is a documented REST endpoint. scoped keys,
-            idempotency, webhooks, OpenAPI. install the CLI on a runner, import
-            the SDK into your backend, or just curl it.
+            the same API that powers the dashboard — scoped keys, idempotency,
+            webhooks, OpenAPI. install the CLI on a runner, import the SDK
+            into your backend, or just curl it.
           </p>
         </div>
 

@@ -12,23 +12,22 @@ const coreFeatures: TierFeature[] = [
   { label: 'start, stop, restart, kill — every process, every machine' },
   { label: 'software & file deployment' },
   { label: 'display layouts with watchdog auto-revert' },
-  { label: 'public REST API with scoped keys' },
-  { label: 'CLI + TypeScript SDK' },
-  { label: 'webhooks with HMAC signing' },
   { label: 'cortex AI fleet assistant (BYOK)', asterisk: true },
-  { label: 'multi-site organization with rbac' },
-  { label: 'unlimited sites, machines, members' },
-  { label: 'email + webhook alerts' },
+  { label: '1 site with role-based access' },
+  { label: 'unlimited machines & members' },
+  { label: 'email alerts' },
   { label: 'email support' },
 ];
 
 const proFeatures: TierFeature[] = [
-  { label: 'roost — content-addressed project distribution with atomic deploy and rollback' },
-  { label: '100 GB included project storage per site' },
-  { label: '$0.10/GB overage' },
-  { label: '50-version retention (core: last 5)' },
-  { label: '30-day rollback history (core: 24h)' },
-  { label: 'extended webhook event retention' },
+  { label: 'roost — incremental project sync with atomic deploy and rollback' },
+  { label: '1 TB included project storage per site' },
+  { label: '$0.05/GB overage' },
+  { label: '50-version retention with 30-day rollback' },
+  { label: 'public REST API with scoped keys' },
+  { label: 'CLI + TypeScript SDK' },
+  { label: 'webhooks with HMAC signing' },
+  { label: 'unlimited sites with multi-site rbac' },
   { label: 'priority support' },
 ];
 
@@ -39,9 +38,10 @@ interface TierCardProps {
   features: TierFeature[];
   highlighted?: boolean;
   preludeNote?: string;
+  priceFootnote?: string;
 }
 
-function TierCard({ name, price, unit, features, highlighted = false, preludeNote }: TierCardProps) {
+function TierCard({ name, price, unit, features, highlighted = false, preludeNote, priceFootnote }: TierCardProps) {
   return (
     <div
       className={`relative rounded-2xl border bg-card/60 px-6 sm:px-10 text-center flex flex-col ${
@@ -69,6 +69,15 @@ function TierCard({ name, price, unit, features, highlighted = false, preludeNot
         </div>
         <p className="text-accent-warm font-semibold text-xl">
           free during beta
+        </p>
+        {/* Always rendered (with a non-breaking-space fallback) so the
+            horizontal divider lines up across both cards regardless of
+            whether the tier has a price footnote. */}
+        <p
+          className={`text-sm text-muted-foreground mt-2 ${priceFootnote ? '' : 'opacity-0 select-none'}`}
+          aria-hidden={priceFootnote ? undefined : true}
+        >
+          {priceFootnote ?? ' '}
         </p>
       </div>
 
@@ -124,7 +133,7 @@ export function PricingSection() {
             simple, transparent pricing.
           </h2>
           <p className="section-subheadline mb-10">
-            two tiers. no seats, no hidden fees. pay only for what you run.
+            two tiers. no hidden fees. pay only for what you run.
           </p>
         </div>
 
@@ -137,11 +146,12 @@ export function PricingSection() {
           />
           <TierCard
             name="pro"
-            price="$40"
-            unit="/site/month"
+            price="$50"
+            unit="/machine/month"
             features={proFeatures}
             highlighted
             preludeNote="everything in core, plus:"
+            priceFootnote="3-machine minimum"
           />
         </div>
 

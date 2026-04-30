@@ -140,18 +140,6 @@ export function MetricsDetailPanel({
   onClose,
   gpus,
 }: MetricsDetailPanelProps) {
-  // UUID → friendly-name lookup for GPU labels. Chart keys stay UUID-based
-  // (stable, unique, unaffected by driver-induced name changes) while the
-  // user sees "NVIDIA GeForce RTX 2080 Ti" everywhere a label would show.
-  const gpuLabels = useMemo(() => {
-    const m = new Map<string, string>();
-    if (gpus) for (const g of gpus) if (g.name) m.set(g.id, g.name);
-    return m;
-  }, [gpus]);
-  const resolveGpuLabel = useCallback(
-    (id: string) => gpuLabels.get(id) ?? id,
-    [gpuLabels],
-  );
 
   const { userPreferences, updateUserPreferences } = useAuth();
   const graphTabs = userPreferences.graphTabs;
@@ -234,8 +222,47 @@ export function MetricsDetailPanel({
         if (key.endsWith('_usage')) names.add(key.slice(0, -6));
       }
     }
-    return Array.from(names);
-  }, [chartData]);
+    const arr = Array.from(names);
+    // Stable order: prefer hardware-profile order from the gpus prop (which
+    // mirrors PCI bus / hardware-profile order), then alphabetical for any
+    // ids that aren't in the profile. Toggle rendering and "GPU 1 / GPU 2"
+    // numbering both depend on this list, so order stability matters.
+    if (gpus && gpus.length > 0) {
+      const orderIndex = new Map(gpus.map((g, i) => [g.id, i]));
+      arr.sort((a, b) => {
+        const ai = orderIndex.get(a) ?? Number.MAX_SAFE_INTEGER;
+        const bi = orderIndex.get(b) ?? Number.MAX_SAFE_INTEGER;
+        if (ai !== bi) return ai - bi;
+        return a.localeCompare(b);
+      });
+    } else {
+      arr.sort();
+    }
+    return arr;
+  }, [chartData, gpus]);
+
+  // "GPU" when there's a single device on the machine, "GPU 1" / "GPU 2" /
+  // ... when multiple. Index follows the sorted gpuNames order so each
+  // physical card keeps a stable label across renders. Toggle buttons,
+  // chart legend, stats cards, and ChartTooltip all share this convention
+  // so the user-facing label for a GPU is consistent everywhere.
+  const gpuDisplayLabel = useCallback(
+    (id: string): string => {
+      if (gpuNames.length <= 1) return 'GPU';
+      const idx = gpuNames.indexOf(id);
+      return idx >= 0 ? `GPU ${idx + 1}` : 'GPU';
+    },
+    [gpuNames],
+  );
+
+  // Map of chart-key id → display label, passed to ChartTooltip so hover
+  // rows render as "GPU" / "GPU N" matching the toggle row instead of the
+  // raw chart-key (which is the cloud function's gpu.name).
+  const gpuLabels = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const id of gpuNames) m.set(id, gpuDisplayLabel(id));
+    return m;
+  }, [gpuNames, gpuDisplayLabel]);
 
   // Discover available volume ids from the flat `{volumeId}_io_{channel}` chart
   // keys. Any sample that carries at least one IO key contributes its volume.
@@ -694,9 +721,9 @@ export function MetricsDetailPanel({
     for (const gpuName of selectedGpus) {
       const gpuIdx = gpuNames.indexOf(gpuName);
       const colors = getGpuColors(gpuIdx >= 0 ? gpuIdx : 0);
-      const friendly = resolveGpuLabel(gpuName);
-      lines.push({ key: `${gpuName}_usage`, color: colors.usage, label: friendly });
-      lines.push({ key: `${gpuName}_temp`, color: colors.temp, label: friendly });
+      const label = gpuDisplayLabel(gpuName);
+      lines.push({ key: `${gpuName}_usage`, color: colors.usage, label });
+      lines.push({ key: `${gpuName}_temp`, color: colors.temp, label });
     }
 
     // Per-volume disk IO activity: 2 visible lines per selected volume
@@ -720,7 +747,7 @@ export function MetricsDetailPanel({
     }
 
     return lines;
-  }, [effectiveMetrics, selectedNics, nicNames, networkMode, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIO, diskIOMode, resolveGpuLabel]);
+  }, [effectiveMetrics, selectedNics, nicNames, networkMode, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIO, diskIOMode, gpuDisplayLabel]);
 
   // Collect all selected metric/NIC/disk/GPU/disk-IO keys for stats summary.
   // `format: 'throughput'` switches the grid cell to byte-rate formatting
@@ -803,9 +830,9 @@ export function MetricsDetailPanel({
     for (const gpuName of selectedGpus) {
       const gpuIdx = gpuNames.indexOf(gpuName);
       const colors = getGpuColors(gpuIdx >= 0 ? gpuIdx : 0);
-      const friendly = resolveGpuLabel(gpuName);
-      keys.push({ key: `${gpuName}_usage`, label: friendly, color: colors.usage, isNetwork: false, unit: '%' });
-      keys.push({ key: `${gpuName}_temp`, label: friendly, color: colors.temp, isNetwork: false, unit: '°C', showThermometer: true });
+      const label = gpuDisplayLabel(gpuName);
+      keys.push({ key: `${gpuName}_usage`, label, color: colors.usage, isNetwork: false, unit: '%' });
+      keys.push({ key: `${gpuName}_temp`, label, color: colors.temp, isNetwork: false, unit: '°C', showThermometer: true });
     }
 
     // NIC cards — TX + RX per NIC, in the same order as the NIC toggles.
@@ -844,7 +871,7 @@ export function MetricsDetailPanel({
     }
 
     return keys;
-  }, [availableMetrics, effectiveMetrics, selectedNics, nicNames, networkMode, selectedDisks, diskNames, driveOrder, selectedGpus, gpuNames, effectiveDiskIO, diskIOMode, resolveGpuLabel]);
+  }, [availableMetrics, effectiveMetrics, selectedNics, nicNames, networkMode, selectedDisks, diskNames, driveOrder, selectedGpus, gpuNames, effectiveDiskIO, diskIOMode, gpuDisplayLabel]);
 
   return (
     <Card className="border-border bg-card py-0 gap-0">
@@ -993,7 +1020,7 @@ export function MetricsDetailPanel({
                     <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.usage }} />
                     <Thermometer className="w-3 h-3" style={{ color: colors.temp }} />
                   </span>
-                  <span className="ml-1.5">{resolveGpuLabel(gpuName)}</span>
+                  <span className="ml-1.5">{gpuDisplayLabel(gpuName)}</span>
                 </Button>
               );
             })}

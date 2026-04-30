@@ -7,7 +7,7 @@ import { Plus, Minus } from 'lucide-react';
 const faqs: { q: string; a: React.ReactNode }[] = [
   {
     q: "is it actually free?",
-    a: "during beta, yes. no credit card, no trial clock, no free-tier sleight of hand. after beta it's $10/machine/month — no seats, no tiers, no hidden fees. just machines.",
+    a: "during beta, yes — both tiers, no credit card, no trial clock. after beta: core is $10/machine/month for monitoring, control, deploy, displays, and cortex on a single site. pro is $50/machine/month (3-machine minimum) and adds the public API, CLI, SDK, webhooks, unlimited sites, and roost — incremental project sync with 1 TB included storage per site. no per-user fees on either.",
   },
   {
     q: "does it work on mac or linux?",

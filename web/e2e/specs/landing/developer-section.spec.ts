@@ -13,7 +13,7 @@ test.describe('developer section (landing)', () => {
     await expect(section).toBeVisible();
     await expect(section).toBeInViewport();
     await expect(
-      section.getByRole('heading', { name: /script your fleet/i })
+      section.getByRole('heading', { name: /every dashboard action, scriptable/i })
     ).toBeVisible();
   });
 

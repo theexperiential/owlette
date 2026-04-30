@@ -44,7 +44,7 @@ const jsonLd = {
         name: 'pro',
         price: '0',
         priceCurrency: 'USD',
-        description: 'free during beta. $40/site/month after, includes 100GB project storage.',
+        description: 'free during beta. $50/machine/month after (3-machine minimum), includes 1 TB project storage per site.',
       },
     ],
   },
