@@ -10,18 +10,20 @@ import { test, expect } from '@playwright/test';
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
+const DISPLAY_HEADLINE = 'displays that stay put.';
+
 test.describe('landing — display section', () => {
   test('renders headline, three storyboard frames, and api reference link', async ({ page }) => {
     await page.goto('/');
 
     // Headline
     await expect(
-      page.getByRole('heading', { name: 'change the wall without stranding the room.' }),
+      page.getByRole('heading', { name: DISPLAY_HEADLINE }),
     ).toBeVisible();
 
     // Three storyboard frame containers (one <figure> per frame)
     const section = page.locator('section', {
-      has: page.getByRole('heading', { name: 'change the wall without stranding the room.' }),
+      has: page.getByRole('heading', { name: DISPLAY_HEADLINE }),
     });
     await expect(section.locator('figure')).toHaveCount(3);
 

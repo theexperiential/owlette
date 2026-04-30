@@ -3,7 +3,10 @@ import { test, expect } from '@playwright/test';
 // Public landing page — no auth required.
 test.use({ storageState: { cookies: [], origins: [] } });
 
-const CAPABILITY_LABELS = ['monitor', 'control', 'deploy', 'display', 'diagnose', 'automate'] as const;
+const CAPABILITY_ROWS = [
+  ['monitor', 'control', 'deploy'],
+  ['diagnose', 'display', 'automate'],
+] as const;
 
 test.describe('landing capability grid', () => {
   test('renders all six capability cards in a 3-column desktop grid', async ({ page }) => {
@@ -16,11 +19,11 @@ test.describe('landing capability grid', () => {
     const desktop = page.locator('div.hidden.lg\\:block').first();
     await expect(desktop).toBeVisible();
 
-    const grid = desktop.locator('div.grid.grid-cols-3').first();
-    await expect(grid).toBeVisible();
+    const rows = desktop.locator('.grid.grid-cols-3.gap-6.items-start');
+    await expect(rows).toHaveCount(2);
 
-    for (const label of CAPABILITY_LABELS) {
-      await expect(grid.getByRole('heading', { name: label, level: 3 })).toBeVisible();
+    for (const [rowIndex, labels] of CAPABILITY_ROWS.entries()) {
+      await expect(rows.nth(rowIndex).getByRole('heading', { level: 3 })).toHaveText(labels);
     }
   });
 
@@ -44,8 +47,20 @@ test.describe('landing capability grid', () => {
     // Open a card so the shared preview area appears below the grid.
     await desktop.getByRole('button', { name: /^monitor/i }).click();
 
-    // Click the preview image to launch the lightbox overlay.
-    await desktop.locator('img[alt="monitor preview"]').click();
+    // Wait for the monitor preview to fade in (rowHasActive transitions
+    // the wrapper from max-h-0/opacity-0 to max-h-[800px]/opacity-100
+    // over 500ms).
+    const monitorImg = desktop.locator('img[alt="monitor preview"]');
+    await expect(monitorImg).toBeVisible();
+
+    // Click the image with force:true. Without it, the row's other preview
+    // images (deploy, control) — which are absolutely positioned at the
+    // same coordinates with opacity 0 — intercept pointer events because
+    // they're later siblings in the DOM. The onClick handler is on the
+    // shared cursor-zoom-in wrapper, so any click inside the stack opens
+    // the lightbox at openIndex regardless of which image actually receives
+    // the event.
+    await monitorImg.click({ force: true });
 
     // Lightbox is a fixed full-screen overlay outside the desktop block.
     const lightbox = page.locator('div.fixed.inset-0.z-\\[100\\]');

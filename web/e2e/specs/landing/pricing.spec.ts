@@ -24,9 +24,13 @@ test.describe('landing — pricing', () => {
       pricing.getByRole('heading', { name: /simple, transparent pricing\./i }),
     ).toBeVisible();
 
-    // Two tier cards — scope each by its heading.
-    const coreCard = pricing.locator('div').filter({ has: page.getByRole('heading', { name: 'core', exact: true }) }).first();
-    const proCard = pricing.locator('div').filter({ has: page.getByRole('heading', { name: 'pro', exact: true }) }).first();
+    // Two tier cards — start at the tier heading, then climb to the card
+    // shell so layout wrappers with both cards are not selected.
+    const tierCard = (name: string) => pricing
+      .getByRole('heading', { name, exact: true })
+      .locator('xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " rounded-2xl ")][1]');
+    const coreCard = tierCard('core');
+    const proCard = tierCard('pro');
 
     await expect(coreCard).toBeVisible();
     await expect(proCard).toBeVisible();
