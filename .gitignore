@@ -24,6 +24,21 @@ agent/.venv/
 dev/completed/
 dev/active/
 
+# One-shot codex/claude prompts and transcripts. Structured plan dirs (with
+# BRIEF.md, named-feature subfolders) and audit conclusions are committed
+# explicitly — see the negation below. Loose dev/codex-* one-shots, raw .txt
+# transcripts, and ad-hoc debug notes are scratch work and don't belong in
+# the repo. .claude/codex-prompts/ is local-only prompt scratchpad.
+dev/codex-*
+!dev/codex-dev-audit-*.output.md
+dev/build-failure-context.md
+*.output.txt
+.claude/codex-prompts/
+
+# Playwright per-run output (artifacts, traces, videos)
+test-results/
+web/e2e/.output/
+
 # IDE
 .vscode/
 .idea/
