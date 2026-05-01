@@ -478,3 +478,47 @@ describe('DisplayLayoutPanel — auto-restore UI', () => {
     expect(resetAutoRestoreBreaker).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('DisplayLayoutPanel — drift dot persistence', () => {
+  // Repro for "does the orange drift dot dismiss itself when the user clicks
+  // the 'stored' pill?" The dot is purely derived from
+  // `mode !== 'edit' && hasDrift` — clicking the pill only flips `activeTab`,
+  // so the dot must survive the click. If a future refactor accidentally
+  // ties the dot to `activeTab` or to a "seen" flag, this test catches it.
+  it('keeps the drift dot on the "stored" pill after clicking it', async () => {
+    const user = userEvent.setup();
+
+    setup({ canSiteAdmin: true });
+    // Override useDisplayState with a profile/assigned pair that drifts on
+    // position. Same edidHash so the monitor matches; different x so
+    // computeDisplayDrift records a per-field drift entry.
+    mockedUseDisplayState.mockReturnValue({
+      profile: makeProfile({
+        monitors: [makeMonitor({ position: { x: 100, y: 0 } })],
+      }),
+      assigned: makeAssigned({
+        monitors: [makeMonitor({ position: { x: 0, y: 0 } })],
+      }),
+      autoRestore: makeAutoRestore(),
+      remoteApplyEnabled: true,
+      loading: false,
+      error: null,
+    });
+
+    renderPanel();
+
+    // The badge-bearing pill carries an aria-label with the drift count.
+    // No badge -> aria-label is just "stored". So this query is a strict
+    // proxy for "dot is rendered".
+    const storedButton = screen.getByRole('button', {
+      name: /stored, \d+ display change/,
+    });
+    expect(storedButton).toBeInTheDocument();
+
+    await user.click(storedButton);
+
+    expect(
+      screen.getByRole('button', { name: /stored, \d+ display change/ }),
+    ).toBeInTheDocument();
+  });
+});
