@@ -493,25 +493,32 @@ export function MetricsDetailPanel({
   }, [hour12]);
 
   // Latch "now" in state so the time domain is a pure function of state.
-  // Refresh on every new data sample (chartData.length) AND on range change
-  // so the right edge tracks wall-clock as new metrics arrive — matches the
-  // behavior of the previous Date.now()-in-render implementation.
+  // Refresh on every new data array (chartData identity) AND on range change
+  // so the right edge tracks wall-clock as new metrics arrive. Watching the
+  // array ref instead of its length ensures a refetch that returns the same
+  // downsampled count (e.g. MAX_POINTS cap) still bumps nowTs.
   // setState-in-effect is intentional: Date.now() is impure and can't be called
   // during render, so we have to sync the external clock here.
   const [nowTs, setNowTs] = useState<number>(() => Date.now());
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setNowTs(Date.now());
-  }, [timeRange, chartData.length]);
+  }, [timeRange, chartData]);
 
   // Recharts' ResponsiveContainer uses ResizeObserver to measure its container,
   // but ResizeObserver and rAF are throttled while the tab is hidden. When the
   // tab becomes visible again the chart sometimes holds a stale width — the
   // plot area renders offset to the right with empty space on the left. Forcing
   // a window resize event triggers all ResponsiveContainers to re-measure.
+  //
+  // Snap nowTs to wall-clock here too so the time axis right-edge updates
+  // immediately on refocus, before the async refetch in useHistoricalMetrics
+  // lands. Without this the axis stays frozen at the old mount-time "now"
+  // and freshly-fetched samples render outside the window.
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
+        setNowTs(Date.now());
         window.dispatchEvent(new Event('resize'));
       }
     };
