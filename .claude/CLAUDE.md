@@ -12,7 +12,7 @@ A multi-quarter rewrite of project distribution into a content-addressed sync pl
 - No `/api/v2/` URL prefix — the new routes ARE the API (`/api/chunks/`, `/api/roosts/`).
 - No backwards compatibility with v1 agents — clean cutover, v3.0.0 agent is required to consume new uploads.
 - No header-based version negotiation (no `Accept: application/vnd.owlette.v2+json`).
-- v3-deferred (do NOT rebuild in v2): bidirectional sync, LAN swarm, Ed25519 manifest signing, public CLI, FastCDC.
+- v3-deferred (do NOT rebuild in v2): bidirectional sync, LAN swarm, Ed25519 manifest signing, FastCDC. (Public CLI was originally on this list but shipped via the api-sprint + roost-public-api waves — now `@owlette/cli` v1.0.0-rc.0; see `project_npm_packages.md`.)
 - Nav label `projects` → `roost`. `verify_files` field dropped (manifest is authoritative).
 
 ---
@@ -114,23 +114,31 @@ cd agent && powershell -Command "& './build_installer_full.bat'"
 sha256sum agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
 
 # 4. Upload via API (3-step: request URL → upload binary → finalize)
+# Endpoint is `/api/installer/upload` (api-sprint route — old `/api/admin/installer/upload` was removed).
+# Auth: api key with `installer=*:write` scope (superadmin-only at minting). `x-api-key` or `Authorization: Bearer owk_…` both work.
+# Idempotency-Key REQUIRED on both POST and PUT — the route is wrapped in `withIdempotency(..., { requireKey: true })`.
 API_KEY=$(grep OWLETTE_API_KEY .claude/.env.local | cut -d= -f2)
 BASE_URL="https://dev.owlette.app"  # or https://owlette.app for prod
 
 # Step 1: Get signed upload URL
-curl -s -X POST "$BASE_URL/api/admin/installer/upload" \
-  -H "Content-Type: application/json" -H "x-api-key: $API_KEY" \
+curl -s -X POST "$BASE_URL/api/installer/upload" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $API_KEY" \
+  -H "Idempotency-Key: installer-upload-X.Y.Z-$(date +%s)" \
   -d '{"version":"X.Y.Z","fileName":"Owlette-Installer-vX.Y.Z.exe","releaseNotes":"...","setAsLatest":true}'
-# → returns uploadUrl, uploadId
+# → returns uploadUrl, uploadId, storagePath, expiresAt (15-min window)
 
-# Step 2: Upload binary to signed URL
+# Step 2: Upload binary to the signed GCS URL (no Idempotency-Key here — it's a direct GCS PUT)
 curl -X PUT "$UPLOAD_URL" -H "Content-Type: application/octet-stream" \
   --data-binary @agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
 
-# Step 3: Finalize (verifies file, writes installer_metadata, sets as latest)
-curl -s -X PUT "$BASE_URL/api/admin/installer/upload" \
-  -H "Content-Type: application/json" -H "x-api-key: $API_KEY" \
-  -d '{"uploadId":"<from step 1>","checksum_sha256":"<sha256 from earlier>"}'  # checksum is optional — server computes if omitted
+# Step 3: Finalize (verifies file in storage, computes/checks checksum, writes installer_metadata, sets as latest)
+curl -s -X PUT "$BASE_URL/api/installer/upload" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $API_KEY" \
+  -H "Idempotency-Key: installer-finalize-X.Y.Z-$(date +%s)" \
+  -d '{"uploadId":"<from step 1>","checksum_sha256":"<sha256 from earlier>"}'
+# checksum_sha256 is optional — server computes it if omitted, but providing it gets a 412 `checksum_mismatch` on corruption.
 ```
 
 ---
@@ -220,4 +228,4 @@ Be real, not flattering. If something was mid, say so. If it was genuinely great
 
 ---
 
-**Last Updated**: 2026-04-25
+**Last Updated**: 2026-05-01
