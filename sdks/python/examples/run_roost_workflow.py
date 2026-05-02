@@ -1,14 +1,14 @@
 """Minimal public API workflow for the Python SDK.
 
 Required:
-    OWLETTE_TOKEN or ROOST_TOKEN
-    OWLETTE_SITE_ID or ROOST_SITE_ID
-    OWLETTE_ROOST_ID or ROOST_ID
+    OWLETTE_TOKEN
+    OWLETTE_SITE_ID
+    OWLETTE_ROOST_ID
 
 Optional:
-    OWLETTE_API_URL or ROOST_BASE      default: https://owlette.app
-    BUILD_DIR                         default: ./dist
-    OWLETTE_DEPLOY=1 or ROOST_DEPLOY=1
+    OWLETTE_API_URL   default: https://owlette.app
+    BUILD_DIR         default: ./dist
+    OWLETTE_DEPLOY=1
 """
 
 from __future__ import annotations
@@ -20,14 +20,6 @@ import sys
 from roost import DeployOptions, PushOptions, Roost, RoostApiError
 
 
-def _env(*names: str) -> str | None:
-    for name in names:
-        value = os.environ.get(name)
-        if value:
-            return value
-    return None
-
-
 def _progress(evt: object) -> None:
     phase = getattr(evt, "phase", "")
     if phase == "upload":
@@ -37,19 +29,19 @@ def _progress(evt: object) -> None:
 
 
 async def main() -> int:
-    token = _env("OWLETTE_TOKEN", "ROOST_TOKEN")
-    site_id = _env("OWLETTE_SITE_ID", "ROOST_SITE_ID")
-    roost_id = _env("OWLETTE_ROOST_ID", "ROOST_ID")
-    api_url = _env("OWLETTE_API_URL", "ROOST_BASE") or "https://owlette.app"
+    token = os.environ.get("OWLETTE_TOKEN")
+    site_id = os.environ.get("OWLETTE_SITE_ID")
+    roost_id = os.environ.get("OWLETTE_ROOST_ID")
+    api_url = os.environ.get("OWLETTE_API_URL") or "https://owlette.app"
     build_dir = os.environ.get("BUILD_DIR", "./dist")
-    deploy_enabled = _env("OWLETTE_DEPLOY", "ROOST_DEPLOY") == "1"
+    deploy_enabled = os.environ.get("OWLETTE_DEPLOY") == "1"
 
     missing = [
         name
         for name, value in (
-            ("OWLETTE_TOKEN or ROOST_TOKEN", token),
-            ("OWLETTE_SITE_ID or ROOST_SITE_ID", site_id),
-            ("OWLETTE_ROOST_ID or ROOST_ID", roost_id),
+            ("OWLETTE_TOKEN", token),
+            ("OWLETTE_SITE_ID", site_id),
+            ("OWLETTE_ROOST_ID", roost_id),
         )
         if not value
     ]

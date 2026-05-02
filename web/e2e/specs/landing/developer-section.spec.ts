@@ -42,8 +42,8 @@ test.describe('developer section (landing)', () => {
     await expect(codeBlock).not.toContainText('curl -X POST');
 
     // Switch to typescript — code should swap to the SDK sample. The sample
-    // MUST instantiate `Owlette` (not the legacy `Roost` symbol) — this is the
-    // load-bearing assertion guarding the rebrand.
+    // must instantiate `Owlette` and never expose a `Roost` symbol — guarding
+    // the SDK class name against drift.
     await tsTab.click();
     await expect(tsTab).toHaveAttribute('aria-selected', 'true');
     await expect(codeBlock).toContainText("import { Owlette } from '@owlette/sdk'");

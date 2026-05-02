@@ -7,7 +7,7 @@ retried by the SDK's default policy; permanent 4xx bubble.
 
 Required env vars::
 
-    ROOST_TOKEN — site:<id>:write scope on every site referenced in the csv
+    OWLETTE_TOKEN — site:<id>:write scope on every site referenced in the csv
 
 Usage::
 
@@ -55,12 +55,12 @@ def parse_csv(path: str) -> list[Row]:
 
 
 async def main() -> int:
-    token = os.environ.get("ROOST_TOKEN")
-    api_url = os.environ.get("ROOST_BASE", "https://owlette.app")
+    token = os.environ.get("OWLETTE_TOKEN")
+    api_url = os.environ.get("OWLETTE_API_URL", "https://owlette.app")
     csv_path = sys.argv[1] if len(sys.argv) > 1 else None
 
     if not token or not csv_path:
-        print("usage: ROOST_TOKEN=... python bulk_create.py <roosts.csv>", file=sys.stderr)
+        print("usage: OWLETTE_TOKEN=... python bulk_create.py <roosts.csv>", file=sys.stderr)
         return 1
 
     rows = parse_csv(csv_path)

@@ -11,7 +11,7 @@ Run from cron / systemd::
 
 Required env vars::
 
-    ROOST_TOKEN, ROOST_SITE_ID, ROOST_ID, WATCH_DIR
+    OWLETTE_TOKEN, ROOST_SITE_ID, ROOST_ID, WATCH_DIR
 
 Optional::
 
@@ -41,15 +41,15 @@ async def alert(webhook: str | None, text: str) -> None:
 
 
 async def main() -> int:
-    token = os.environ.get("ROOST_TOKEN")
+    token = os.environ.get("OWLETTE_TOKEN")
     site_id = os.environ.get("ROOST_SITE_ID")
     roost_id = os.environ.get("ROOST_ID")
     watch_dir = os.environ.get("WATCH_DIR")
-    api_url = os.environ.get("ROOST_BASE", "https://owlette.app")
+    api_url = os.environ.get("OWLETTE_API_URL", "https://owlette.app")
     alert_webhook = os.environ.get("ALERT_WEBHOOK")
 
     for name, val in [
-        ("ROOST_TOKEN", token), ("ROOST_SITE_ID", site_id),
+        ("OWLETTE_TOKEN", token), ("ROOST_SITE_ID", site_id),
         ("ROOST_ID", roost_id), ("WATCH_DIR", watch_dir),
     ]:
         if not val:

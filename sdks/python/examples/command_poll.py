@@ -4,12 +4,12 @@ Safe default: poll an existing command when OWLETTE_COMMAND_ID is set.
 To dispatch a new command, set OWLETTE_DISPATCH_COMMAND=1 explicitly.
 
 Required env:
-    OWLETTE_TOKEN or ROOST_TOKEN
-    OWLETTE_SITE_ID or ROOST_SITE_ID
-    OWLETTE_MACHINE_ID or ROOST_MACHINE_ID
+    OWLETTE_TOKEN
+    OWLETTE_SITE_ID
+    OWLETTE_MACHINE_ID
 
 Optional:
-    OWLETTE_API_URL or ROOST_BASE defaults to https://owlette.app
+    OWLETTE_API_URL defaults to https://owlette.app
     OWLETTE_COMMAND_ID polls an existing command instead of dispatching
     OWLETTE_COMMAND_TYPE defaults to capture_screenshot
     OWLETTE_MONITOR defaults to primary for capture_screenshot
@@ -31,14 +31,6 @@ from roost import CommandType, Roost, RoostApiError
 ALLOWED_COMMAND_TYPES = {"capture_screenshot", "reboot_machine", "shutdown_machine"}
 
 
-def _env(*names: str) -> str | None:
-    for name in names:
-        value = os.environ.get(name)
-        if value:
-            return value
-    return None
-
-
 def _float_env(name: str, default: float) -> float | None:
     raw = os.environ.get(name)
     if raw is None:
@@ -50,11 +42,11 @@ def _float_env(name: str, default: float) -> float | None:
 
 
 async def main() -> int:
-    token = _env("OWLETTE_TOKEN", "ROOST_TOKEN")
-    api_url = _env("OWLETTE_API_URL", "ROOST_BASE") or "https://owlette.app"
-    site_id = _env("OWLETTE_SITE_ID", "ROOST_SITE_ID")
-    machine_id = _env("OWLETTE_MACHINE_ID", "ROOST_MACHINE_ID")
-    command_id = _env("OWLETTE_COMMAND_ID", "ROOST_COMMAND_ID")
+    token = os.environ.get("OWLETTE_TOKEN")
+    api_url = os.environ.get("OWLETTE_API_URL") or "https://owlette.app"
+    site_id = os.environ.get("OWLETTE_SITE_ID")
+    machine_id = os.environ.get("OWLETTE_MACHINE_ID")
+    command_id = os.environ.get("OWLETTE_COMMAND_ID")
     raw_command_type = os.environ.get("OWLETTE_COMMAND_TYPE", "capture_screenshot")
     should_dispatch = os.environ.get("OWLETTE_DISPATCH_COMMAND") == "1"
     poll_seconds = _float_env("OWLETTE_POLL_SECONDS", 1.5)
@@ -63,9 +55,9 @@ async def main() -> int:
     missing = [
         name
         for name, value in (
-            ("OWLETTE_TOKEN or ROOST_TOKEN", token),
-            ("OWLETTE_SITE_ID or ROOST_SITE_ID", site_id),
-            ("OWLETTE_MACHINE_ID or ROOST_MACHINE_ID", machine_id),
+            ("OWLETTE_TOKEN", token),
+            ("OWLETTE_SITE_ID", site_id),
+            ("OWLETTE_MACHINE_ID", machine_id),
         )
         if not value
     ]
