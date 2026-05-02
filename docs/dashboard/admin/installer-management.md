@@ -2,7 +2,7 @@
 
 Upload, manage, and distribute agent installer versions.
 
-**Location**: Admin Panel -> Installer Versions (`/admin/installers`)
+**Location**: admin panel -> installers (`/admin/installers`)
 
 The dashboard uses the same canonical `/api/installer/*` public management API as the CLI and SDKs. All actions require a superadmin session.
 
@@ -10,14 +10,15 @@ The dashboard uses the same canonical `/api/installer/*` public management API a
 
 ## uploading a new version
 
-1. Click **Upload New Version**.
-2. Select the `.exe` installer.
-3. Enter a version in `X.Y.Z` format.
-4. Add release notes if needed.
-5. Choose whether to set the version as latest.
-6. Click **Upload Installer** and wait for progress to complete.
+1. Click **upload new version**.
+2. Select or drag in a `.exe` installer. The dialog accepts only `.exe` files and auto-detects `X.Y.Z` from filenames such as `Owlette-Installer-v2.11.0.exe`.
+3. Confirm the `X.Y.Z` version number, add optional release notes, leave **Set as latest version (recommended)** checked unless this is a staged upload, then click **upload installer**.
 
-The browser requests a signed upload URL, uploads the file directly to Storage, computes SHA-256, then finalizes through `PUT /api/installer/upload`. The server recomputes SHA-256 from the stored object and rejects mismatches with `checksum_mismatch`.
+The dashboard uses a three-step upload flow:
+
+1. **request URL**: `POST /api/installer/upload` with `version`, `fileName`, `contentType`, optional `releaseNotes`, and `setAsLatest` (defaults to `true`). The route requires an `Idempotency-Key`, validates the version and `.exe` filename, creates an `installer_uploads/{uploadId}` record, and returns a signed `uploadUrl`, `uploadId`, `storagePath`, and `expiresAt`. The signed URL expires after 15 minutes.
+2. **upload binary**: the browser `PUT`s the installer binary directly to the signed Storage URL and shows upload progress.
+3. **finalize**: `PUT /api/installer/upload` with the `uploadId` and dashboard-computed `checksum_sha256`. The route requires an `Idempotency-Key`, verifies the pending upload record has not expired, confirms the object exists, recomputes SHA-256 from the stored binary, rejects mismatches with `checksum_mismatch`, writes version metadata, and updates latest if requested.
 
 ---
 
@@ -27,14 +28,27 @@ Each active version shows:
 
 | column | description |
 |--------|-------------|
-| **Version** | Version number |
-| **File Size** | Installer file size |
-| **Release Date** | Upload date |
-| **Release Notes** | Change description |
-| **Uploaded By** | User who uploaded it |
-| **Status** | Latest badge if current |
+| **version** | Version number |
+| **file size** | Installer file size |
+| **uploaded** | Upload date |
+| **uploaded by** | User who uploaded it |
+| **release notes** | Change description, or `no notes` |
+| **actions** | set as latest, download, copy link, or delete |
 
 Soft-deleted versions are hidden from the dashboard list.
+
+Each finalized version stores this metadata under `installer_metadata/data/versions/{version}`:
+
+| field | source |
+|-------|--------|
+| `version` | Confirmed `X.Y.Z` version from the upload dialog |
+| `download_url` | Long-lived signed read URL generated during finalize |
+| `checksum_sha256` | Server-computed checksum for the stored binary |
+| `release_notes` | Optional notes from the upload dialog |
+| `file_size` | Storage object size in bytes |
+| `uploaded_at` / `release_date` | Finalize timestamp |
+| `uploaded_by` | User or API key actor that finalized the upload |
+| `deletedAt` | `null` for active versions; set when soft-deleted |
 
 ---
 
@@ -42,7 +56,9 @@ Soft-deleted versions are hidden from the dashboard list.
 
 ### set as latest
 
-Promotes an uploaded, active version through `POST /api/installer/{version}/set-latest`. Use this for rollback if a newer installer has issues.
+Uploads set the latest pointer by default. Clearing **Set as latest version (recommended)** keeps the version available in the table without changing the public latest installer.
+
+Promote any uploaded, active non-latest version later with **set as latest**, which calls `POST /api/installer/{version}/set-latest` and rewrites `installer_metadata/latest`. Use this for rollback if a newer installer has issues.
 
 ### download
 
@@ -61,7 +77,7 @@ You cannot delete:
 
 ## cleanup
 
-The **Clean Up** action identifies superseded patch versions:
+The **clean up** action identifies superseded patch versions:
 
 - not the newest patch in its `major.minor` series
 - older than the retention window

@@ -12,7 +12,7 @@ Developer preview can proceed without these runs. External launch should not.
 
 5.2 is externally complete when:
 
-- the launch fixture site, machine, and Roost exist in dev or staging
+- the launch fixture site, machine, and roost exist in dev or staging
 - `K6_API_KEY`, `K6_SITE_ID`, `K6_MACHINE_ID`, `K6_ROOST_ID`, and `K6_VERSION_CHUNK_HASHES` are configured for the fixture
 - every read-only script passes `smoke` and `sustained`
 - read-heavy scripts pass `spike`, and signed-URL scripts pass `burst`, or have a recorded launch waiver
@@ -37,10 +37,10 @@ The authoritative p99 thresholds are enforced in `load-tests/k6/lib/config.js`.
 | `users-list.js` | `GET /api/users` | 300 ms | platform admin list |
 | `dispatch-machine-command.js` | `POST /api/sites/{siteId}/machines/{machineId}/commands` | 400 ms | async machine command queue |
 | `process-create.js` | `POST /api/sites/{siteId}/machines/{machineId}/processes` | 400 ms | process config mutation |
-| `chunks-check.js` | `POST /api/chunks/check` | 200 ms | Roost upload diff |
+| `chunks-check.js` | `POST /api/chunks/check` | 200 ms | roost upload diff |
 | `upload-urls.js` | `POST /api/chunks/upload-urls` | 500 ms | R2 signed URL issuance |
-| `download-urls.js` | `GET /api/chunks/download-urls` | 400 ms | Roost chunk download URL issuance |
-| `publish-version.js` | `POST /api/roosts/{roostId}/versions` | 800 ms | Roost publish transaction |
+| `download-urls.js` | `GET /api/chunks/download-urls` | 400 ms | roost chunk download URL issuance |
+| `publish-version.js` | `POST /api/roosts/{roostId}/versions` | 800 ms | roost publish transaction |
 
 Base reliability budget: `http_req_failed < 0.01`.
 
@@ -58,7 +58,7 @@ k6 summaries report `avg`, `p(95)`, `p(99)`, and `max`. Launch reports must reco
 | `burst` | signed-URL burst | `upload-urls.js`, `download-urls.js` |
 | `race` | 20 concurrent publish attempts | `publish-version.js` compare-and-swap guard |
 
-The `race` scenario deliberately produces 412 responses. Set `K6_EXPECTED_CURRENT_VERSION_ID` to the Roost head immediately before the run. The script thresholds require exactly one 201 winner and nineteen 412 losers; anything else is a P0 compare-and-swap regression.
+The `race` scenario deliberately produces 412 responses. Set `K6_EXPECTED_CURRENT_VERSION_ID` to the roost head immediately before the run. The script thresholds require exactly one 201 winner and nineteen 412 losers; anything else is a P0 compare-and-swap regression.
 
 ---
 

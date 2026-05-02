@@ -1,6 +1,6 @@
 # Owlette API overview
 
-The Owlette public API lets you automate fleet operations from scripts, CI, internal tools, and SDKs. Use it to inspect sites and machines, queue machine commands, manage installer deployments, publish Roost content, run Cortex diagnostics, manage webhooks, and read operational logs.
+The Owlette public API lets you automate fleet operations from scripts, CI, internal tools, and SDKs. Use it to inspect sites and machines, queue machine commands, manage installer deployments, publish roost content, run Cortex diagnostics, manage webhooks, and read operational logs.
 
 The dashboard and API operate on the same underlying resources. Use the dashboard for exploration and one-off admin work; use the API when the workflow should be repeatable, audited, or integrated into another system.
 
@@ -22,11 +22,11 @@ Public API paths are rooted at `/api`. The rendered endpoint reference is availa
 
 | resource | purpose |
 |---|---|
-| sites | tenant boundary for machines, quotas, logs, webhooks, deployments, and Roost content |
+| sites | tenant boundary for machines, quotas, logs, webhooks, deployments, and roost content |
 | machines | Windows agents registered to a site |
 | commands | async work queued to a machine, such as screenshots or process actions |
 | deployments | classic installer fan-out records and per-target status |
-| Roosts | content-addressed project bundles, versions, chunks, rollouts, and rollback |
+| roosts | content-addressed project bundles, versions, chunks, rollouts, and rollback |
 | Cortex | site and machine diagnostics over `/api/cortex/conversations` |
 | webhooks | outbound event subscriptions and delivery history |
 | API keys | scoped credentials for automation |

@@ -64,11 +64,12 @@ The agent uses a progressive approach to detect frozen applications:
 
 | stage | time | action |
 |-------|------|--------|
-| **Detection** | 0-10s | `owlette_scout.py` sends `WM_NULL` to the process window |
-| **Wait** | 10-15s | If no response, wait for possible recovery |
-| **Confirmation** | 15s+ | If still unresponsive, mark as STALLED |
+| **Probe** | Every 5s | `owlette_scout.py` sends `WM_NULL` to the process window |
+| **Monitor** | Before 15s | Mark the process as STALLED, but keep waiting through repeated 5-second checks |
+| **Confirmation** | 15s+ | If the process has stayed unresponsive for `HANG_CONFIRM_SECONDS`, kill and relaunch it |
 
 `WM_NULL` is a harmless Windows message — if the process responds, it's alive. If it doesn't respond within the timeout, the process is likely hung.
+The agent does not kill on the first failed check; it waits until the process has been unresponsive for 15 seconds.
 
 ### 4. auto-restart
 
@@ -76,9 +77,11 @@ When a crash is detected and `autolaunch` is enabled:
 
 1. Agent increments the **relaunch counter**
 2. If under the limit (`relaunch_attempts`), restart the process
-3. Wait `launch_delay` seconds before starting
-4. Wait `init_time` seconds before monitoring responsiveness
+3. Wait `time_delay` seconds before starting
+4. Wait `time_to_init` seconds before monitoring responsiveness
 5. If at the limit, show a **reboot prompt** to the user
+
+If PID detection fails after launch, retry attempts wait for at least `time_to_init`, with a 60-second minimum cooldown for slow-starting applications.
 
 ---
 
@@ -123,7 +126,7 @@ This prevents duplicate instances after service restarts or crashes.
 
 ## relaunch limits
 
-Each process has a configurable `relaunch_attempts` limit (default: 5). When the limit is reached:
+Each process has a configurable `relaunch_attempts` limit (default: 3). When the limit is reached:
 
 1. The agent stops trying to restart the process
 2. A **reboot countdown prompt** appears on screen (`prompt_restart.py`)

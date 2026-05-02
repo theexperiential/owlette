@@ -1,70 +1,118 @@
 # token management
 
-View and revoke agent OAuth tokens. Each agent has a refresh token that allows it to authenticate with Firestore.
+View agent refresh tokens for a site and revoke them when an agent should no longer be able to reconnect.
 
-**Location**: Admin Panel → Token Management (`/admin/tokens`)
+**Location**: Admin Panel -> agent tokens (`/admin/tokens`)
+
+!!! note "Permissions"
+    The admin token page is superadmin-only. The backing site APIs require the `GLOBAL_SETTINGS_WRITE` capability, so site admins and members cannot use this page.
 
 ---
 
 ## token list
 
-The token management page shows all active agent refresh tokens for a site:
+The page starts with a site selector and a refresh button. After a site is selected, it loads active token records from `/api/sites/{siteId}/agent-tokens`.
 
 | column | description |
 |--------|-------------|
-| **Machine ID** | The machine's hostname |
-| **Agent UID** | Firebase UID assigned to the agent |
-| **Created** | When the token was issued |
-| **Last Used** | When the agent last refreshed its access token |
-| **Version** | Agent version that created the token |
+| **machine ID** | Machine hostname recorded when the agent paired or exchanged its installer registration code. |
+| **version** | Agent version that created the token, or `N/A` when unavailable. |
+| **status** | Expiry status for the refresh token. Current long-duration tokens usually show **Never expires** because new token records omit `expiresAt`. |
+| **created** | When the refresh token record was created. |
+| **last used** | When the agent last used this refresh token to request a new Firebase ID token. |
+| **actions** | Per-token revoke action. |
+
+The API also returns internal fields such as the token record ID, `createdBy`, and `agentUid`, but the current UI does not display them.
 
 ---
 
-## token lifecycle
+## refresh-token records
 
+Agent refresh tokens are stored server-side in the `agent_refresh_tokens` collection. The document ID is the SHA-256 hash of the refresh token, so the durable refresh-token record does not store the raw token in plaintext. During device-code pairing, the raw token is held only on the short-lived pairing document until the agent's single-use poll consumes it and deletes that document.
+
+Each token record contains:
+
+| field | description |
+|-------|-------------|
+| `siteId` | Site the token authorizes. |
+| `machineId` | Machine hostname. The refresh endpoint rejects requests when the submitted machine ID does not match this value. |
+| `version` | Agent version from the pairing or registration exchange. |
+| `createdBy` | User who generated or authorized the token flow. |
+| `createdAt` | Server timestamp for token creation. |
+| `lastUsed` | Server timestamp updated atomically on refresh. |
+| `agentUid` | Firebase Auth UID for the agent identity. |
+| `expiresAt` | Optional expiry. If absent, the refresh token does not expire automatically. |
+
+The token list is sorted newest-first by `createdAt`.
+
+---
+
+## lifecycle
+
+```text
+1. A pairing or installer flow creates a short-lived registration artifact:
+   - installer registration codes expire after 24 hours
+   - device-code pairing phrases expire after 10 minutes
+2. After authorization, the server creates:
+   - a Firebase ID token for immediate agent use
+   - a long-lived random refresh token
+   - a hashed refresh-token record in `agent_refresh_tokens`
+3. The agent stores the raw refresh token locally in
+   `C:\ProgramData\Owlette\.tokens.enc`.
+4. The agent caches the one-hour Firebase ID token and refreshes before expiry.
+5. Each successful refresh updates `lastUsed` and returns a new one-hour Firebase ID token.
 ```
-1. Admin generates registration code (24h expiry)
-2. Agent exchanges code for tokens:
-   ├── Custom Firebase Token (1-hour access token)
-   └── Refresh Token (long-lived)
-3. Agent stores refresh token encrypted locally
-4. Every ~55 minutes: agent refreshes access token
-5. Server updates lastUsed timestamp
-```
+
+The local token file is encrypted with a machine-specific key derived from the Windows MachineGuid and hostname. It stores the refresh token, cached access token, access-token expiry, and site ID.
+
+---
+
+## rotation behavior
+
+Refresh-token rotation is manual. The refresh endpoint does not issue a replacement refresh token during normal access-token refresh; it only returns a new one-hour Firebase ID token.
+
+To rotate an agent refresh token, revoke the existing token and re-register the agent with a new pairing or installer registration flow. The new flow creates a new refresh-token record and a new raw token stored on the machine.
 
 ---
 
 ## revoking tokens
 
-### revoke single token
+### revoke one token
 
-1. Find the token in the list
-2. Click **"Revoke"**
-3. The agent loses access and goes offline
+1. Select the site.
+2. Find the machine row in the token table.
+3. Click **revoke**.
+4. Confirm the dialog.
 
-### revoke all tokens for a machine
-
-If a machine has multiple tokens (e.g., from reinstallation):
-
-1. Click **"Revoke All"** for the machine
-2. All tokens for that machine ID are deleted
+The page sends the token record ID to `/api/sites/{siteId}/agent-tokens/revoke`, and the server deletes that one `agent_refresh_tokens` document after confirming it belongs to the selected site.
 
 ### revoke all tokens for a site
 
-Nuclear option — revokes every agent token for the site:
+When the selected site has active tokens, the page shows **revoke all**.
 
-1. Click **"Revoke All Site Tokens"**
-2. Confirm the action
-3. **All agents** in the site lose access and go offline
+1. Click **revoke all**.
+2. Confirm the destructive dialog.
+3. The server deletes every refresh-token record for that site and returns the revoked count.
 
-!!! warning "After revocation"
-    Revoked agents must be re-registered with a new registration code to reconnect.
+This is a site-wide action. Every agent in the selected site must be re-registered before it can regain refresh-token access.
+
+### machine-scoped revoke
+
+The revoke API also accepts a `machineId` and can delete all token records for that machine in the selected site. The current admin page does not expose a machine-scoped bulk action; it only exposes per-token revoke and site-wide revoke all.
+
+---
+
+## effect on agents
+
+Revocation deletes the refresh-token record immediately. A running agent may continue using a still-valid cached Firebase ID token until that token expires. On the next refresh attempt, the server rejects the deleted refresh token, and the agent clears its encrypted local credentials.
+
+After that point the agent reports an authentication error or no refresh token, disconnects from Firestore-backed sync, and must be paired again with a new registration or device-code flow.
 
 ---
 
 ## when to revoke
 
-- **Decommissioning a machine** — Revoke its token to clean up
-- **Security concern** — If a machine is compromised, revoke immediately
-- **Duplicate tokens** — If a machine was reinstalled and has stale tokens
-- **Debugging** — Force an agent to re-authenticate
+- **Decommissioning a machine** - revoke the token before removing or repurposing the machine.
+- **Security concern** - revoke immediately if the machine or local token file may be compromised.
+- **Duplicate registrations** - revoke stale tokens after reinstalling or re-pairing an agent.
+- **Credential rotation** - revoke and re-register when a new refresh token is required.

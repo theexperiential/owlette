@@ -1,131 +1,116 @@
 # email alerts
 
-owlette sends email notifications when machines go offline, processes crash, or connections fail.
+Owlette sends email notifications for machine health, process, threshold, Cortex, and display-event alerts. Superadmins manage alert rules in **Admin Panel -> alerts** (`/admin/alerts`) and test email delivery in **Admin Panel -> email** (`/admin/email`). Individual recipients manage their own delivery preferences in **account settings -> alerts**.
 
 ---
 
-## alert types
+## alert categories
 
-| alert | trigger | recipients |
-|-------|---------|------------|
-| **Machine Offline** | Heartbeat missing for 3+ minutes | All site users with `healthAlerts` enabled |
-| **Process Crash** | Configured process exits unexpectedly | Users subscribed to process alerts for that site |
-| **Process Start Failed** | Process failed to launch | Users subscribed to process alerts |
-| **Connection Failure** | Agent lost connection to Firestore | Site admins |
+| category | trigger | preference gate | delivery path |
+|----------|---------|-----------------|---------------|
+| **Machine offline** | A previously online machine has a heartbeat older than 3 minutes | `healthAlerts` | `GET /api/cron/health-check` sends per-site emails and respects a 1-hour per-machine cooldown |
+| **Agent connection failure** | The agent posts a `connection_failure` event | `healthAlerts` | `POST /api/agent/alert` sends immediately, subject to the agent-alert rate limit |
+| **Process crashed** | The agent posts `process_crash` for a monitored process | `processAlerts` | `POST /api/agent/alert` queues the event; `GET /api/cron/process-alerts` sends a digest |
+| **Process failed to start** | The agent posts `process_start_failed` | `processAlerts` | Same process-alert queue and digest path |
+| **Threshold alert** | A saved metric rule is breached | `thresholdAlerts` | Cloud Functions evaluates rules and calls `POST /api/alerts/trigger` |
+| **Cortex escalation** | Autonomous Cortex cannot resolve an issue and marks an escalation pending | `cortexAlerts` | `POST /api/cortex/escalation` or cron-style `GET /api/cortex/escalation` sends escalation emails |
+| **Display event** | A routed display event needs email delivery | `displayAlerts` | `POST /api/agent/alert` sends critical display emails immediately or queues a display digest |
 
----
-
-## machine offline alerts
-
-### how it works
-
-A Railway cron job runs every 5 minutes, calling `GET /api/cron/health-check`:
-
-1. Scans all `sites/{siteId}/machines/{machineId}` for stale heartbeats
-2. A machine is considered **offline** if its last heartbeat is older than 3 minutes
-3. Sends one grouped email per site listing all offline machines
-4. Writes `health.lastCronAlertAt` to Firestore to prevent repeat alerts
-5. **Cooldown**: 1 hour per machine — won't send another alert for the same machine within an hour
-
-### email content
-
-The email includes:
-
-- Site name
-- List of offline machines with last-seen timestamps
-- Direct link to the dashboard
+Display email delivery is not enabled for every display event. The current email-routed events are `display_monitor_removed`, `display_apply_failed`, `display_auto_revert_fired`, and `display_sync_lost`. `display_monitor_removed` and `display_auto_revert_fired` bypass the digest queue and send immediately; other routed display emails are drained by `GET /api/cron/display-alerts`.
 
 ---
 
-## process crash alerts
+## threshold alert rules
 
-When the agent detects a process crash:
+The **alerts** admin page (`/admin/alerts`) manages site-scoped threshold rules stored at `sites/{siteId}/settings/alerts`. A rule includes:
 
-1. Agent sends `POST /api/agent/alert` with alert type `process_crash`
-2. Server looks up users subscribed to process alerts for that site
-3. Sends email with process name, machine name, and error details
+| field | current options |
+|-------|-----------------|
+| metric | `cpu_percent`, `memory_percent`, `disk_percent`, `gpu_percent`, `cpu_temp`, `gpu_temp`, `network_latency`, `network_packet_loss` |
+| operator | `>`, `<`, `>=`, `<=` |
+| severity | `info`, `warning`, `critical` |
+| channel | `email`, `webhook`, or both |
+| cooldown | minutes before the same rule can notify again for the same machine |
 
-### rate limiting
-
-- **Process alerts**: 3 per hour per process per machine
-- **Connection failures**: 5 per hour per IP
-
----
-
-## setting up alerts
-
-### prerequisites
-
-1. **Resend API key** — Set `RESEND_API_KEY` environment variable in Railway
-2. **Admin email** — Set `ADMIN_EMAIL_PROD` (production) or `ADMIN_EMAIL_DEV` (development)
-3. **Cron job** — Configure Railway cron schedule (see below)
-
-### configuring the cron job
-
-1. In Railway dashboard, open your web service
-2. Go to **Settings** → **"Cron Schedule"**
-3. Enter: `*/5 * * * *` (every 5 minutes)
-4. Add `CRON_SECRET` environment variable:
-    ```bash
-    python -c "import secrets; print(secrets.token_hex(32))"
-    ```
-
-### user preferences
-
-Users can control their alert preferences:
-
-- **Health alerts**: Opt in/out of machine offline notifications
-- **Process alerts**: Opt in/out of process crash notifications
-
-### unsubscribe
-
-Each alert email contains a one-click unsubscribe link that disables health alerts for that user.
+The admin page ships presets for GPU overheating, low disk, high memory, and high CPU. Saving a rule replaces the rules array through `PUT /api/sites/{siteId}/alerts`.
 
 ---
 
-## testing emails
+## recipients and preferences
 
-### test email page
+Owlette builds the recipient list from users assigned to the site plus the site owner. If no site user email is available, it falls back to `ADMIN_EMAIL_PROD` or `ADMIN_EMAIL_DEV`.
 
-Admins can send test emails from **Admin Panel → Email Test** (`/admin/test-email`):
+Each user's **account settings -> alerts** section controls:
 
-1. Enter a recipient email
-2. Optionally customize subject and message
-3. Click **"Send Test Email"**
-4. Verify delivery in your inbox
+- **Machine offline alerts** (`healthAlerts`)
+- **Process crash alerts** (`processAlerts`)
+- **Threshold alerts** (`thresholdAlerts`)
+- **Cortex escalation alerts** (`cortexAlerts`)
+- **Display events** (`displayAlerts`)
+- **Additional CC recipients** (`alertCcEmails`, maximum 5)
+- **Muted machines** (`mutedMachines`)
 
-### simulate events
-
-Test the full alert pipeline from **`/api/admin/events/simulate`**:
-
-```bash
-curl -X POST https://your-dashboard.app/api/admin/events/simulate \
-  -H "Content-Type: application/json" \
-  -H "Cookie: session=..." \
-  -d '{
-    "siteId": "your-site",
-    "event": "process_crash",
-    "data": {
-      "machineId": "DESKTOP-TEST",
-      "machineName": "Test Machine",
-      "processName": "TouchDesigner",
-      "errorMessage": "Process exited with code 1"
-    }
-  }'
-```
-
-This triggers the same email alert flow as a real event, without requiring a real crash.
+Alert preferences default to enabled unless the stored preference is explicitly `false`. CC recipients are added to that user's alert emails, and muted machines suppress all alert emails for that user for the selected machine. Users mute or unmute a machine from the machine context menu; muted entries can also be removed from account settings.
 
 ---
 
-## environment variables
+## setup
+
+### environment variables
 
 | variable | required | description |
 |----------|----------|-------------|
-| `RESEND_API_KEY` | Yes | API key from [Resend](https://resend.com) |
-| `CRON_SECRET` | Yes | Shared secret for cron authentication |
-| `ADMIN_EMAIL_PROD` | Yes | Fallback admin email (production) |
-| `ADMIN_EMAIL_DEV` | Yes | Fallback admin email (development) |
+| `RESEND_API_KEY` | yes | Enables Resend email delivery |
+| `RESEND_FROM_EMAIL` | production recommended | Sender address shown by the admin email config page; falls back to `onboarding@resend.dev` if unset |
+| `ADMIN_EMAIL_PROD` | production | Fallback recipient and default test-email target in production |
+| `ADMIN_EMAIL_DEV` | development | Fallback recipient and default test-email target in development |
+| `CRON_SECRET` | yes for cron alerts | Shared secret for health, process, and display alert cron endpoints |
+| `CORTEX_INTERNAL_SECRET` | yes for threshold and Cortex flows | Shared secret for `/api/alerts/trigger`, Cortex autonomous flows, and the Cortex escalation POST route |
+
+### cron routes
+
+Configure the cron caller to include the expected secret header for each route:
+
+| route | schedule used by code comments | auth header | purpose |
+|-------|--------------------------------|-------------|---------|
+| `GET /api/cron/health-check` | every 5 minutes | `X-Cron-Secret: <CRON_SECRET>` | detects stale machine heartbeats |
+| `GET /api/cron/process-alerts` | every 3 minutes | `X-Cron-Secret: <CRON_SECRET>` | drains `pending_process_alerts` after a 2-minute accumulation window |
+| `GET /api/cron/display-alerts` | every 3 minutes | `X-Cron-Secret: <CRON_SECRET>` | drains `pending_display_alerts` after a 2-minute accumulation window |
+| `GET /api/cortex/escalation` | cron-style polling | `Authorization: Bearer <CRON_SECRET>` | processes pending Cortex escalation events |
+
+Threshold alerts are not drained by a cron route. The metrics Cloud Function evaluates stored rules and calls `POST /api/alerts/trigger` with `x-internal-secret: <CORTEX_INTERNAL_SECRET>`.
+
+---
+
+## testing email delivery
+
+Use **Admin Panel -> email** (`/admin/email`) to verify configuration and send template previews. The page reads current configuration from `GET /api/platform/email/config`, then sends the selected preview through `POST /api/test-email`.
+
+The current test templates are:
+
+- `test`
+- `process_crash`
+- `process_start_failed`
+- `agent_alert`
+- `threshold_alert`
+- `machines_offline`
+- `cortex_escalation`
+- `welcome`
+- `user_signup`
+
+The UI sends previews to the configured admin email. The API also accepts optional `to` and `cc` fields for direct admin-session calls. Event simulation is not part of the shipped email testing flow.
+
+---
+
+## rate limits and cooldowns
+
+| alert path | protection |
+|------------|------------|
+| Machine offline | 1-hour cooldown per machine via `health.lastCronAlertAt` |
+| Process alerts | 3 per hour per `machineId:processName` before queueing |
+| Agent alert route | 5 requests per hour per IP |
+| Display alerts | 1 per hour per machine and event type; `display_drift` uses a 4-hour window |
+| Threshold alerts | rule-specific `cooldownMinutes` per rule and machine |
 
 ---
 
@@ -133,18 +118,17 @@ This triggers the same email alert flow as a real event, without requiring a rea
 
 ### no emails received
 
-1. Check `RESEND_API_KEY` is set in Railway environment variables
-2. Verify the Resend API key is valid (test at resend.com)
-3. Check spam/junk folder
-4. Use the test email page to verify delivery
-5. Check Railway logs for email-related errors
+1. Check **Admin Panel -> email** for `RESEND_API_KEY`, sender, environment, and admin email status.
+2. Send the `test` template from `/admin/email`.
+3. Confirm the relevant account setting is still enabled for the recipient.
+4. Check whether the machine is muted for that recipient.
+5. Verify `CRON_SECRET` or `CORTEX_INTERNAL_SECRET` for the route that emits the alert.
+6. Check Railway or function logs for Resend errors.
+
+### expected process or display alerts are delayed
+
+Process alerts and non-critical display alerts are digested. The event must be older than the 2-minute accumulation window before the cron route sends it.
 
 ### duplicate alerts
 
-The system has built-in cooldowns (1 hour per machine for offline alerts, rate limits for process alerts). If you're getting duplicates, check that the cron job isn't running more frequently than expected.
-
-### cron not running
-
-1. Verify Railway cron schedule is set: `*/5 * * * *`
-2. Check that `CRON_SECRET` matches between the env var and the cron configuration
-3. Review Railway deployment logs for cron execution
+Check whether multiple emitters are calling the same route. The shipped alert paths include cooldowns or rate limits, but duplicate cron schedules can still create noisy logs and unnecessary route traffic.

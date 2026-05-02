@@ -67,7 +67,7 @@ async with Roost(
 
 **scope enforcement is server-side.** the sdk does not validate scopes locally — an over-broad call raises `RoostApiError` with `code="scope_insufficient"`. see [authentication.md](./authentication.md) for the full scope grammar.
 
-the sdk auto-generates an `Idempotency-Key` header on every mutating request (`POST` / `PATCH` / `PUT`) unless you pass one explicitly. transparent retries can't create duplicate rollouts, roosts, or keys.
+the sdk auto-generates an `Idempotency-Key` header on mutating requests so routes that implement replay caching can use it. the header alone is not a duplicate-prevention guarantee; rely on idempotent retries only for endpoints whose reference documents idempotency support.
 
 **always use `async with`**. the `Roost` context manager owns the underlying `httpx.AsyncClient` connection pool — exiting the block calls `close()` and releases the pool. forgetting this leaks file descriptors and slows teardown.
 
@@ -206,25 +206,30 @@ The SDK uses canonical `/api/cortex/conversations` routes. API-key callers are c
 most users never touch these; `roosts.push()` is the high-level wrapper. when you need raw control (network shares, custom uploaders, reuse across roosts):
 
 ```python
+# chunk hashes are bare lowercase sha-256 hex, with no scheme prefix.
+first_hash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+second_hash = "3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7"
+
 # dedup-check — returns the list of hashes that r2 is missing
-missing = await client.chunks.check(site_id="site-1", hashes=["sha256:ab12...", "sha256:cd34..."])
+missing = await client.chunks.check(site_id="site-1", hashes=[first_hash, second_hash])
 
 # mint signed r2 put urls (60 min ttl)
 payload = await client.chunks.upload_urls(site_id="site-1", hashes=missing)
+# payload is {"urls": {hash: put_url}, "expiresAt": "..."}.
 async with httpx.AsyncClient() as http:
-    for item in payload.get("uploads", []):
-        await http.put(item["url"], content=await chunk_bytes(item["hash"]))
+    for chunk_hash, url in payload.get("urls", {}).items():
+        await http.put(url, content=await chunk_bytes(chunk_hash))
 
 # mint signed r2 get urls (15 min ttl)
-downloads = await client.chunks.download_urls(site_id="site-1", hashes=["sha256:ab12..."])
+downloads = await client.chunks.download_urls(site_id="site-1", hashes=[first_hash])
 
 # mount an existing chunk into a different roost (no re-upload)
 await client.chunks.mount(
-    "sha256:ab12...", site_id="site-1", from_roost="rst_a", to_roost="rst_b",
+    first_hash, site_id="site-1", from_roost="rst_a", to_roost="rst_b",
 )
 
 # which roosts reference this chunk?
-async for ref in client.chunks.referrers("sha256:ab12...", site_id="site-1"):
+async for ref in client.chunks.referrers(first_hash, site_id="site-1"):
     print(ref["roostId"], ref["versionId"])
 ```
 
@@ -247,7 +252,7 @@ await client.versions.patch(
 
 # file listing (async gen)
 async for f in client.versions.files("rst_abc", 3, site_id="site-1"):
-    print(f["path"], f["digest"], f["size"])
+    print(f["path"], f["size"], [c["hash"] for c in f["chunks"]])
 
 # diff two versions — `against` is the baseline; both sides accept any versionRef form
 diff = await client.versions.diff(
@@ -393,6 +398,8 @@ pass either a sync or async `on_progress`; the sdk auto-detects and awaits the l
 roost signs every webhook with `Roost-Signature: t=<unix_seconds>,v1=<hmac_sha256_hex>`. the sdk ships a verifier that enforces a 5-minute replay window and uses `hmac.compare_digest`:
 
 ```python
+import json
+
 from fastapi import Request, HTTPException
 from roost import verify_signature, is_signature_valid
 
@@ -402,9 +409,12 @@ async def webhook(request: Request):
     sig = request.headers.get("roost-signature")
     result = verify_signature(sig, raw, secret=os.environ["WEBHOOK_SECRET"])
     if not result.ok:
-        # result.reason: "missing_header" | "malformed" | "outside_tolerance" | "bad_signature"
+        # result.reason:
+        # "missing_header" | "malformed_header" | "missing_timestamp" |
+        # "missing_v1" | "timestamp_out_of_tolerance" | "bad_signature"
         raise HTTPException(status_code=401, detail=result.reason)
-    return await handle_event(result.event)
+    event = json.loads(raw)
+    return await handle_event(event)
 
 # boolean shortcut for quick paths
 if not is_signature_valid(sig, raw, secret):
@@ -447,14 +457,14 @@ try:
     await client.roosts.get("rst_missing", site_id="site-1")
 except RoostApiError as err:
     print(err.status)               # 404
-    print(err.code)                 # "roost_not_found" — stable, machine-readable
+    print(err.code)                 # "not_found" — stable, machine-readable
     print(err.request_id)           # for support tickets
     print(err.problem)              # full problem+json dict
     print(err.problem.get("docsUrl"))  # link to errors.md#<code>
     raise
 ```
 
-the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring the problem's `retryAfter` seconds field and the `Retry-After` header when present. `401`, `403`, `404`, `412`, `422`, and other 4xxs bubble immediately — retrying them will never succeed.
+the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring the problem body's `retryAfter` seconds field when present. `401`, `403`, `404`, `412`, `422`, and other 4xxs bubble immediately — retrying them will never succeed.
 
 **common codes** you'll hit early (full list: [errors.md](./errors.md)):
 

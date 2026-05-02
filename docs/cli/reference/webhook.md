@@ -5,9 +5,9 @@ hide:
 
 # webhook
 
-> **CLI noun group planned for Wave 3.** The public webhook API routes are live for developer preview. Full `owlette webhook ...` management commands remain planned; today the shipped top-level helpers are `owlette listen` and `owlette trigger <event>`. See the [readiness matrix](../readiness.md#webhook-noun) for the route mapping.
+> **CLI noun group planned.** The public webhook API routes are live for developer preview, but no `owlette webhook` noun is registered in the current CLI. Full `owlette webhook ...` management commands remain planned; today the shipped top-level helpers are `owlette listen` and `owlette trigger <event>`. See the [readiness matrix](../readiness.md#webhook-noun) for the route mapping.
 
-`owlette webhook` will be a top-level operator noun for cross-product event subscriptions. Site-scoped commands require `--site` or a site-scoped API key.
+`owlette webhook` is the planned top-level operator noun for cross-product event subscriptions. Site-scoped commands are expected to require `--site` or a site-scoped API key when this surface ships.
 
 ---
 
@@ -93,41 +93,41 @@ owlette webhook probe --site <s> --url <url> --event <name> [--payload <json>]
 
 Fire a signed synthetic event at an arbitrary URL without creating a subscription. Backing endpoint: `POST /api/webhooks/probe?siteId=<s>`.
 
-### listen
+### listen (shipped top-level; planned noun alias)
 
 ```bash
 owlette listen --site <s> --forward-to <url> [--events <csv>]
 ```
 
-Shipped top-level helper. It opens `GET /api/events/stream?siteId=<s>` and forwards received SSE events. In the current developer preview the stream emits `connected` and `keepalive` liveness events only; production event fanout is deferred.
+Shipped top-level helper. It opens `GET /api/events/stream?siteId=<s>` and forwards received SSE events. In the current developer preview the stream emits `connected` and `keepalive` liveness events only; production event fanout is deferred. A future `owlette webhook listen` alias is planned but not shipped.
 
-### trigger
+### trigger (shipped top-level; planned noun alias)
 
 ```bash
 owlette trigger <event> --site <s> --to <url> [--payload <json>] [--via-api]
 ```
 
-Shipped top-level helper. Without `--via-api`, it posts a canned payload directly to `--to`. With `--via-api`, it calls `POST /api/webhooks/probe?siteId=<s>`.
+Shipped top-level helper. Without `--via-api`, it posts a canned payload directly to `--to`. With `--via-api`, it calls `POST /api/webhooks/probe?siteId=<s>`. A future `owlette webhook trigger` alias is planned but not shipped.
 
 ---
 
-## migration from top-level verbs
+## planned noun aliases
 
-Current:
+Current shipped commands:
 
 ```bash
 owlette listen --site site-1 --forward-to http://localhost:3000/hooks
 owlette trigger version.published --site site-1 --to http://localhost:3000/hooks
 ```
 
-When the `webhook` noun group ships, these move under it:
+Possible future noun aliases:
 
 ```bash
 owlette webhook listen --site site-1 --forward-to http://localhost:3000/hooks
 owlette webhook trigger version.published --site site-1 --to http://localhost:3000/hooks
 ```
 
-The top-level forms will remain compatibility aliases through the standard 2026-10-01 sunset.
+These aliases are planned, not available in the current CLI, and there is no committed sunset date for the shipped top-level forms.
 
 ---
 

@@ -95,9 +95,10 @@ nav:
     - machine monitoring: dashboard/machine-monitoring.md
     - process management: dashboard/process-management.md
     - deployments: dashboard/deployments.md
-    - project distribution: dashboard/project-distribution.md
+    - roost: dashboard/roost.md
     - cortex (ai chat): dashboard/cortex.md
     - activity logs: dashboard/activity-logs.md
+    - timezones: dashboard/timezones.md
     - admin:
       - dashboard/admin/index.md
       - user management: dashboard/admin/user-management.md
@@ -134,6 +135,34 @@ nav:
       - nightly sync: api/examples/nightly-sync.md
       - bulk create: api/examples/bulk-create.md
       - auto rollback: api/examples/auto-rollback.md
+  - cli:
+    - overview: cli/overview.md
+    - readiness: cli/readiness.md
+    - reference:
+      - auth: cli/reference/auth.md
+      - audit log: cli/reference/audit-log.md
+      - chat: cli/reference/chat.md
+      - deploy: cli/reference/deploy.md
+      - installer: cli/reference/installer.md
+      - key: cli/reference/key.md
+      - listen: cli/reference/listen.md
+      - machine: cli/reference/machine.md
+      - process: cli/reference/process.md
+      - quota: cli/reference/quota.md
+      - rollback: cli/reference/rollback.md
+      - roost: cli/reference/roost.md
+      - site: cli/reference/site.md
+      - trigger: cli/reference/trigger.md
+      - user: cli/reference/user.md
+      - version: cli/reference/version.md
+      - webhook: cli/reference/webhook.md
+      - whoami: cli/reference/whoami.md
+  - reference:
+    - reference/index.md
+    - platform authentication internals: reference/authentication.md
+    - agent commands: reference/agent-commands.md
+    - cortex tools: reference/cortex-tools.md
+    - firestore data model: reference/firestore-data-model.md
   - architecture: architecture.md
   - troubleshooting: troubleshooting.md
   - changelog: changelog.md
@@ -143,7 +172,6 @@ nav:
     - firestore rules: setup/firestore-rules.md
     - web deployment: setup/web-deployment.md
     - environment variables: setup/environment-variables.md
-    - firestore data model: reference/firestore-data-model.md
 
 copyright: built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">FSL-1.1-Apache-2.0</a>
 

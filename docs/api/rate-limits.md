@@ -1,6 +1,6 @@
 # rate limits and quotas
 
-**Last updated**: 2026-04-28
+**Last updated**: 2026-05-01
 
 Owlette enforces two related limits:
 
@@ -56,12 +56,60 @@ Some streaming, compatibility, and internal routes may omit rate-limit headers. 
 
 ---
 
+## shipped buckets
+
+Owlette has two rate-limit layers. Routes wrapped with `withRateLimit()` use the public wrapper buckets below. Authenticated dashboard/API actions that go through the capability boundary also consume a per-capability bucket.
+
+### public wrapper buckets
+
+These limits come from `web/lib/rateLimit.ts` and `web/lib/withRateLimit.ts`.
+
+| strategy | shipped limit | subject |
+|---|---:|---|
+| `auth` | 10/minute | client IP |
+| `tokenExchange` | 60/hour in prod, 200/hour in dev | client IP |
+| `tokenRefresh` | 120/hour | client IP |
+| `user` | 60/hour | user id when available, otherwise client IP |
+| `agentAlert` | 5/hour | client IP |
+| `upload` | 5/hour in prod, 30/hour in dev | client IP |
+| `api` | 300/hour | API key id when an `owk_...` credential resolves, otherwise client IP |
+
+If Redis is not configured or errors, these wrapper buckets fall back to a per-process in-memory limiter of 15 requests per minute per identifier. That fallback is local to one server process; it is a guardrail, not a distributed quota.
+
+### capability buckets
+
+Capability-protected actions use 60-second windows keyed by actor bucket, subject, site, and capability. User sessions and API keys share the user bucket; system actors use the separate system bucket.
+
+| capability | user bucket | system bucket |
+|---|---:|---:|
+| `MACHINE_EXEC_COMMAND` | 60/minute | 300/minute |
+| `MACHINE_CONFIG_WRITE` | 30/minute | 150/minute |
+| `MACHINE_REMOVE` | 5/minute | 25/minute |
+| `DEPLOYMENT_MANAGE` | 30/minute | 150/minute |
+| `DISTRIBUTION_MANAGE` | 30/minute | 150/minute |
+| `UNINSTALL_TRIGGER` | 30/minute | 150/minute |
+| `PRESET_MANAGE` | 60/minute | 300/minute |
+| `SITE_MEMBER_MANAGE` | 30/minute | 150/minute |
+| `WEBHOOK_MANAGE` | 30/minute | 150/minute |
+| `SITE_LOGS_MANAGE` | 30/minute | 150/minute |
+| `USER_ROLE_MANAGE` | 10/minute | 50/minute |
+| `USER_DELETE` | 5/minute | 25/minute |
+| `SYSTEM_PRESET_MANAGE` | 30/minute | 150/minute |
+| `INSTALLER_MANAGE` | 10/minute | 50/minute |
+| `GLOBAL_SETTINGS_WRITE` | 10/minute | 50/minute |
+| `USER_SELF_PREFS` | 120/minute | 600/minute |
+| `USER_SELF_DELETE` | 1/minute | 5/minute |
+
+The capability limiter first applies a per-process token bucket, then checks the authoritative Firestore sharded counter. A single response reports the active bucket that rejected the request.
+
+---
+
 ## example 429
 
 ```http
 HTTP/1.1 429 Too Many Requests
 Content-Type: application/problem+json
-RateLimit-Limit: 1000
+RateLimit-Limit: 300
 RateLimit-Remaining: 0
 RateLimit-Reset: 47
 Retry-After: 47
@@ -70,16 +118,12 @@ Roost-Rate-Limited-Reason: key-rate
 {
   "type": "https://owlette.app/problems/rate-limited",
   "title": "rate limited",
-  "status": 429,
   "detail": "Too many requests. Please try again in 47 seconds.",
-  "code": "rate_limited",
-  "retryAfter": 47,
-  "docsUrl": "https://owlette.app/docs/api/errors#rate_limited",
-  "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y0"
+  "retryAfter": 47
 }
 ```
 
-Clients should read `Retry-After` from the header first. The problem body's `retryAfter` field mirrors the same idea for JSON-only error handlers.
+Clients should read `Retry-After` from the header first. For rate-limit handling, rely on the problem body's stable `type`, `title`, `detail`, and `retryAfter` fields. Some `withRateLimit()` responses may include extra legacy body fields for compatibility; treat them as non-contractual.
 
 ---
 

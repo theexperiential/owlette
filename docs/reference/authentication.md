@@ -1,6 +1,8 @@
-# authentication
+# platform authentication internals
 
-owlette uses four authentication mechanisms: user auth (Firebase Auth), agent auth (device code pairing), passkey authentication (WebAuthn), and optional MFA (TOTP).
+This reference covers Owlette platform authentication internals: Firebase-backed user sessions, agent device-code pairing, passkey authentication (WebAuthn), optional MFA (TOTP), and role-based access control. For HTTP API integrations, use [API authentication](../api/authentication.md), which documents scoped `owk_*` API keys, bearer headers, scopes, and public API error behavior.
+
+Owlette uses four authentication mechanisms: user auth (Firebase Auth), agent auth (device code pairing), passkey authentication (WebAuthn), and optional MFA (TOTP).
 
 ---
 
@@ -265,7 +267,7 @@ New users default to `member`. Superadmins promote members to `admin` or `supera
 ### enforcement layers
 
 1. **Firestore Security Rules** — Database-level enforcement (cannot be bypassed). Helpers: `isSuperadmin()`, `isSiteAdmin(siteId)`, `canAccessSite(siteId)`. See [firestore-rules.md](../setup/firestore-rules.md#key-functions).
-2. **API Route Middleware** — Server-side session and role verification via `requireAdminOrIdToken` (returns 403 for any role below `superadmin`).
+2. **API Route Middleware** — Server-side helpers resolve sessions, Firebase ID tokens, and `owk_*` API keys. Public API routes use resource-scoped helpers such as `requireSiteAuthAndScope`, `requireMachineAuthAndScope`, `requireChatAuthAndScope`, and lower-level `resolveAuth`/`requireScope`; roost-specific routes use the same scoped-auth pattern. `requireAdminOrIdToken` is reserved for legacy or superadmin-gated platform routes.
 3. **React Components** — `RequireSuperadmin` for platform-scoped routes; `useAuth().isSiteAdmin(siteId)` for site-scoped UI gates.
 
 ### backwards-compatibility notes

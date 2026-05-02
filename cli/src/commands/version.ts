@@ -5,19 +5,12 @@
  *   GET /api/version
  *
  * Prints the cli's own package version alongside the server's current
- * dated api-version + the full list of accepted `Roost-Version` values.
+ * API date and the full list of server-supported dates.
  * Default output (one line):
  *
  *     cli X.Y.Z  |  server A.B.C  |  supported versions: D1, D2, ...
  *
  * `--json` emits the full record so scripts can compare without parsing.
- *
- * Pinning: `--api-version YYYY-MM-DD` is forwarded as the `Roost-Version`
- * request header. The endpoint itself accepts any value here (it's the
- * version catalog — clients probe it before they know what the server
- * supports), but if the pinned date is older than the oldest entry in
- * `supported[]` we emit a warning to stderr so the operator knows their
- * other requests are likely to be rejected with `unsupported_version`.
  *
  * The endpoint is unauthenticated, so a missing token is not fatal.
  */
@@ -69,22 +62,12 @@ export function registerVersionCommand(program: Command): void {
   program
     .command('version')
     .description('print cli + server versions')
-    .option(
-      '--api-version <YYYY-MM-DD>',
-      'pin the Roost-Version header sent with this request',
-    )
-    .action(async (opts, cmd) => {
+    .action(async (_opts, cmd) => {
       const json = isJson(cmd);
       const { apiUrl, token } = loadConfig({ profile: cmd.optsWithGlobals().profile });
 
-      const pinned: string | null =
-        typeof opts.apiVersion === 'string' && opts.apiVersion.trim() !== ''
-          ? opts.apiVersion.trim()
-          : null;
-
       const headers: Record<string, string> = { Accept: 'application/json' };
       if (token) headers.Authorization = `Bearer ${token}`;
-      if (pinned) headers['Roost-Version'] = pinned;
 
       let res: Response;
       try {
@@ -115,13 +98,6 @@ export function registerVersionCommand(program: Command): void {
       // Lex order on YYYY-MM-DD == chronological order, so min == oldest.
       const minimumVersion = [...supported].sort()[0] ?? serverCurrent;
 
-      if (pinned && pinned < minimumVersion) {
-        process.stderr.write(
-          `owlette: warning — pinned api-version ${pinned} is older than ` +
-            `server minimum ${minimumVersion}; some endpoints may reject your requests\n`,
-        );
-      }
-
       if (json) {
         process.stdout.write(
           JSON.stringify(
@@ -130,7 +106,6 @@ export function registerVersionCommand(program: Command): void {
               server: serverCurrent,
               supportedVersions: supported,
               minimumVersion,
-              pinned,
             },
             null,
             2,

@@ -5,7 +5,7 @@ hide:
 
 # architecture
 
-owlette uses a serverless, event-driven architecture where all communication flows through Cloud Firestore. There is no direct connection between agents and the dashboard — Firestore acts as the message bus.
+owlette uses a split control, state, and data plane. Cloud Firestore is the real-time state store and command queue, Next.js API routes handle authenticated control actions, and object storage carries large binaries plus roost chunks and version bodies. Agents and the dashboard do not maintain a direct persistent connection to each other; they coordinate through API routes, Firestore state, and signed storage URLs.
 
 ---
 
@@ -14,17 +14,26 @@ owlette uses a serverless, event-driven architecture where all communication flo
 ```mermaid
 flowchart LR
     Agents["Desktop Services\n(Agents)"]
+    API["Next.js API routes\n(control plane)"]
     FS[("Cloud Firestore\nReal-time NoSQL")]
+    Storage[("Firebase Storage / Cloudflare R2\nbinary data plane")]
     CF["Cloud Functions\n(event-driven)"]
     Dashboard["Web Dashboard\n(Next.js)"]
     Auth["Firebase Auth"]
 
-    Agents -- "metrics & heartbeats" --> FS
-    FS -- "commands" --> Agents
+    Dashboard -- "control actions" --> API
+    Agents -- "pairing, refresh,\nsigned URLs" --> API
+    API -- "server-mediated writes" --> FS
+    API -- "signed URLs / metadata" --> Storage
+    Dashboard -- "uploads via signed URLs" --> Storage
+    Agents -- "downloads via signed URLs" --> Storage
+    Agents -- "metrics, heartbeats,\ntarget state" --> FS
+    FS -- "commands, config" --> Agents
     FS -- "triggers" --> CF
     CF -- "history / status" --> FS
     FS <--> Dashboard
-    Auth -. "token validation" .-> FS
+    Auth -. "session / token validation" .-> API
+    Auth -. "security rules" .-> FS
 ```
 
 ---
@@ -48,7 +57,7 @@ The agent uses a **custom Firestore REST API client** (not the Firebase Admin SD
     - **Installation**: `C:\ProgramData\Owlette\`
     - **Agent code**: `C:\ProgramData\Owlette\agent\src\`
     - **Logs**: `C:\ProgramData\Owlette\logs\`
-    - **Config**: `C:\ProgramData\Owlette\agent\config\config.json`
+    - **Config**: `C:\ProgramData\Owlette\config\config.json`
 
 ### web dashboard (next.js)
 
@@ -57,37 +66,41 @@ The dashboard is a Next.js 16 application deployed to Railway. It:
 - **Displays real-time data** using Firestore `onSnapshot` listeners
 - **Manages processes** — add, edit, remove, start, stop, kill
 - **Deploys software** — push installers to machines with progress tracking
-- **Distributes projects** — sync ZIP files across the fleet
+- **Publishes roost versions** — content-addressed project sync through R2 chunks, immutable version history, resync, and rollback
 - **Manages users** — role-based access control with site-level permissions
 - **Provides Cortex** — AI chat interface for machine interaction, plus autonomous cluster management (auto-investigates crashes)
 
 ### firebase backend
 
-Firebase provides three services:
+Firebase provides the shared platform services:
 
-- **Cloud Firestore** — real-time NoSQL database for all data sync
+- **Cloud Firestore** — real-time state, command queues, machine metrics, roost pointers, and site data
 - **Firebase Authentication** — user auth (email/password, Google OAuth) and agent auth (custom tokens)
-- **Cloud Functions (2nd Gen)** — event-driven server-side logic (see below)
+- **Firebase Storage** — installer binaries, screenshot objects, and other Firebase-backed downloads
+- **Cloud Functions (2nd Gen)** — Firestore-triggered and scheduled server-side jobs (see below)
 
-the web dashboard's Next.js API routes handle most server-side operations (token generation, email sending, API endpoints). Cloud Functions handle event-driven tasks that must run in response to Firestore writes or on a schedule.
+The web dashboard's Next.js API routes handle most control-plane operations: session creation, agent pairing and refresh, server-mediated writes, public API endpoints, email sending, and signed URL issuance. Cloud Functions handle event-driven tasks that must run in response to Firestore writes or on a schedule.
 
 ### cloud functions
 
-three Cloud Functions run on Firebase (2nd Gen, Node.js 20). source: `functions/src/`.
+Cloud Functions run on Firebase (2nd Gen, Node.js 20). The exported inventory is defined in `functions/src/index.ts` and grouped by purpose below.
 
 | function | trigger | purpose |
 |----------|---------|---------|
 | **onMetricsWrite** | Firestore `onDocumentWritten` on `sites/{siteId}/machines/{machineId}` | appends a compact sample to the daily `metrics_history/{YYYY-MM-DD}` bucket (per-CPU, per-disk usage, per-volume disk IO, per-GPU, per-NIC). also evaluates threshold alert rules and fires notifications when breached. rate-limited to one sample per 55 seconds. each numeric field is `Number.isFinite()`-guarded so a single poisoned reading can't reject the whole sample write. |
 | **onCommandCompleted** | Firestore `onDocumentWritten` on `sites/{siteId}/machines/{machineId}/commands/completed` | when an agent finishes a command with a `deployment_id`, updates the deployment target's status, progress, and timestamps. recalculates overall deployment status across all targets. |
 | **sweepStaleDeployments** | Cloud Scheduler, every 5 minutes | catches deployments stuck in non-terminal states (agent crash, network loss). marks pending targets as failed after 15 min, downloading/installing targets after 30 min. |
-| **onRoostWritten** | Firestore `onDocumentWritten` on `sites/{siteId}/roosts/{roostId}` | roost fan-out. detects `currentManifestId` change, partitions targets into canary + fleet cohorts (stable hash, ≤10% / cap 50 canary), creates the rollout state doc, dispatches canary `roost_sync` commands. |
+| **onRoostWritten** | Firestore `onDocumentWritten` on `sites/{siteId}/roosts/{roostId}` | roost fan-out. detects `currentVersionId` change, partitions targets into canary + fleet cohorts (stable hash, <=10% / cap 50 canary), creates the rollout state doc, and dispatches canary `sync_pull` commands. |
 | **onTargetStateWritten** | Firestore `onDocumentWritten` on `sites/{siteId}/roosts/{roostId}/target_state/{machineId}` | roost rollout state machine. transactional canary→fleet promotion on ≥90% success, abort on >25% failure (mid-wave, not waiting for full settlement). |
-| **verifyChunk** | HTTPS callable | roost integrity check. streams an R2 chunk, computes SHA-256, deletes + alerts on hash mismatch (planted-bytes defense). invoked via Cloudflare Worker webhook on every R2 PUT. |
+| **verifyChunk** | HTTPS request | roost integrity check. streams an R2 chunk, computes SHA-256, deletes + alerts on hash mismatch (planted-bytes defense). invoked via Cloudflare Worker webhook on every R2 PUT. |
 | **chunkGcNightly** | Cloud Scheduler, 02:15 UTC | roost chunk garbage collection. two-phase mark-and-sweep with 30-day tombstone TTL, resurrection guard (a chunk re-referenced between mark and sweep has its tombstone cleared), pause-during-publish. `CHUNK_GC_MODE=dry-run` default. |
 | **preUploadCheck** + **reconcileQuota** | HTTPS + Cloud Scheduler (03:45 UTC) | roost per-tenant quota. pre-upload admit reserves pending bytes atomically; daily reconcile re-reads authoritative usage, fires only newly-crossed 50/80/100% alarms. |
 | **aggregateTelemetry** + **recordUsageEvent** + **getUsageSummaryHttp** | Cloud Scheduler (04:30 UTC) + HTTPS | roost telemetry. per-tenant cost attribution against R2 pricing ($0.015/GB-month, $4.50/M class-A, $0.36/M class-B, $0 egress). OTLP-shaped structured logs for downstream collector. |
 | **recordAuditEvent** + **exportAuditDaily** + **verifyAuditChain** | HTTPS + Cloud Scheduler (05:15 UTC) | roost append-only audit log. SHA-256 hash-chained records (tamper-evident by deletion + mutation), 7-year retention, BigQuery cold-storage sink at 05:15 UTC. |
+| **exportSecurityBoundaryAuditDevDaily** | Cloud Scheduler, 06:30 UTC | exports security-boundary audit collections to the configured GCS audit bucket. |
 | **emitWebhook** + **processRetryQueue** | HTTPS + Cloud Scheduler (every 1 minute) | roost webhook dispatcher. 7 event types (`distribution.queued/started/succeeded/failed`, `chunk.uploaded`, `manifest.published`, `rollback.executed`), HMAC-SHA256 signed (`sha256=<hex>`), exponential backoff retry (5 s base × 3 × 1 h cap × ±20% jitter, 10-attempt cap). |
+| **sweepExpiredApiKeysDaily** | Cloud Scheduler, 03:00 UTC | marks expired user API keys so settings and API auth stop treating them as active. |
+| **sweepExpiredIdempotencyCacheDaily** | Cloud Scheduler, 03:30 UTC | removes expired idempotency cache entries from `idempotency_cache/{hash}`. |
 
 **deployment:**
 
@@ -203,13 +216,16 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    Installer -->|device code flow| Code["Registration Code (24h expiry)"]
-    Code -->|"POST /api/agent/auth/exchange"| Exchange["token exchange"]
-    Exchange --> AT["Custom Firebase Token (1h)"]
-    Exchange --> RT["Refresh Token (long-lived, hashed in Firestore)"]
+    Installer -->|"POST /api/agent/auth/device-code"| DeviceCode["Pairing phrase + opaque device code\n10 min expiry, 5s poll interval"]
+    DeviceCode --> Codes[("device_codes")]
+    User["Operator in /add or dashboard"] -->|"POST /api/agent/auth/device-code/authorize"| Codes
+    Installer -->|"POST /api/agent/auth/device-code/poll"| Poll["pending / authorized / expired"]
+    Codes --> Poll
+    Poll --> AT["Firebase ID token with agent claims (1h)"]
+    Poll --> RT["Refresh token\nhashed in Firestore"]
     AT --> Store["encrypted local storage"]
     RT --> Store
-    Store -->|"on expiry: POST /api/agent/auth/refresh"| NewAT["New Custom Firebase Token (1h)"]
+    Store -->|"on expiry: POST /api/agent/auth/refresh"| NewAT["New Firebase ID token (1h)"]
 ```
 
 !!! info "More details"
@@ -225,8 +241,9 @@ All data is scoped to **sites**. Users can only access sites they are assigned t
 
 | role | access |
 |------|--------|
-| **User** | Sites listed in their `users/{uid}/sites` array |
-| **Admin** | All sites |
+| **Member** | Sites listed in their `users/{uid}/sites` array |
+| **Admin** | Site-scoped admin for sites listed in `users/{uid}/sites` |
+| **Superadmin** | All sites and platform-level operations |
 | **Agent** | Single site + single machine (from custom token claims) |
 
 ### firestore security rules
@@ -234,8 +251,10 @@ All data is scoped to **sites**. Users can only access sites they are assigned t
 Rules enforce access at the database level — no client-side bypass is possible:
 
 - Users must be authenticated
-- Site access checked via `hasSiteAccess(siteId)`
-- Agents scoped by `site_id` and `machine_id` claims in their custom token
+- Site access checked via `canAccessSite(siteId)`
+- Site-level elevated operations checked via `isSiteAdmin(siteId)`
+- Platform-wide operations checked via `isSuperadmin()`
+- Agents scoped by `site_id` and `machine_id` claims in their custom token and `agentCanAccessMachine(siteId, machineId)`
 - Token collections (`agent_tokens`, `agent_refresh_tokens`) are server-side only
 
 ---
@@ -249,7 +268,7 @@ The agent is designed to operate without internet:
 3. **Metrics buffered** — Heartbeats and metrics resume immediately on reconnection
 4. **Commands queued** — Pending commands in Firestore are picked up when the agent comes back online
 
-The `ConnectionManager` implements a state machine with circuit breaker logic — after repeated failures, the agent backs off exponentially (up to 5 minutes) before retrying:
+The `ConnectionManager` implements a state machine with circuit breaker logic. Retry backoff starts at 30 seconds, doubles with jitter, and caps at 1 hour. After enough consecutive failures the circuit opens; the first recovery probe is allowed after 5 minutes, while fatal-ish configuration errors still keep retrying on the 1-hour cadence.
 
 ```mermaid
 stateDiagram-v2
@@ -366,11 +385,11 @@ Module-state held by `display_manager.py`: `_apply_in_flight`, `_apply_lock`, `_
 
 ## roost — content-addressed project distribution (v2)
 
-roost replaces v1's single-URL-per-distribution model with a content-addressed sync layer. a *synced folder* maps to an immutable sequence of *manifests*; flipping a folder's `currentManifestId` pointer is what triggers a deploy or rollback.
+roost replaces v1's single-URL-per-distribution model with a content-addressed sync layer. A synced folder maps to an immutable sequence of versions; flipping a roost's `currentVersionId` pointer is what triggers a deploy or rollback.
 
 ### why the model changed
 
-v1 distribution was a one-shot download of a ZIP at a host-supplied URL. a one-byte change re-uploaded the whole archive, there was no rollback, and agents re-verified by re-downloading. roost fixes all three: content-addressed dedup transfers only changed bytes, rollback is an atomic pointer flip, and the manifest is authoritative (chunks are validated by hash, no verify-files list).
+v1 distribution was a one-shot download of a ZIP at a host-supplied URL. A one-byte change re-uploaded the whole archive, there was no rollback, and agents re-verified by re-downloading. roost fixes all three: content-addressed dedup transfers only changed bytes, rollback is an atomic pointer flip, and the version body is authoritative (chunks are validated by hash, with no separate verify-files list).
 
 ### storage layout
 
@@ -384,16 +403,16 @@ project-content/{siteId}/{hash[0:2]}/{hash}
 - `hash[0:2]` shards within a tenant so R2 listings don't bottleneck on a single prefix
 - `hash` is the lowercase 64-char SHA-256 of the 4 MiB chunk
 
-manifests are stored at `project-manifests/{siteId}/{roostId}/{manifestId}.json`, immutable once written. a firestore pointer at `sites/{siteId}/roosts/{roostId}.currentManifestId` is the mutable head.
+version bodies are stored at `project-manifests/{siteId}/{roostId}/{versionId}.json` (the R2 prefix keeps its legacy name), immutable once written. A Firestore pointer at `sites/{siteId}/roosts/{roostId}.currentVersionId` is the mutable head; `versionUrl` points at the current version body object.
 
-### manifest format
+### version body format
 
-OCI image manifest v1.1 derivation, `application/vnd.owlette.manifest.v1+json`. canonical JSON. full schema at [`docs/internal/manifest-format.md`](internal/manifest-format.md). minimal shape:
+The version body is an OCI-derived JSON document with media type `application/vnd.owlette.version.v1+json`. It is canonical JSON and includes a `config` object plus a non-empty `files[]` array. Minimal shape:
 
 ```json
 {
   "schemaVersion": 2,
-  "mediaType": "application/vnd.owlette.manifest.v1+json",
+  "mediaType": "application/vnd.owlette.version.v1+json",
   "config": { "name": "lobby-show", "siteId": "nyc", "createdAt": "...", "createdBy": "uid" },
   "files": [
     { "path": "project.toe", "size": 123456, "chunks": [
@@ -410,39 +429,41 @@ flowchart LR
     Drop["webkitdirectory drop"] --> Worker["web worker:\n4 MiB slice + SHA-256"]
     Worker --> Check["/api/chunks/check\n(missing-set)"]
     Check --> Upload["signed PUTs to R2\n(IndexedDB queue,\n4-way parallel)"]
-    Upload --> Finalize["/api/roosts/{id}/manifests\n(CAS on currentManifestId)"]
+    Upload --> Finalize["/api/roosts/{id}/versions\n(CAS on currentVersionId)"]
     Finalize --> Trigger["onRoostWritten\ntriggers canary fan-out"]
 ```
 
-- chunker + hasher off the main thread ([web/lib/chunking.ts](../web/lib/chunking.ts), worker at `web/lib/workers/manifestBuilder.worker.ts`)
+- chunker + hasher off the main thread ([web/lib/chunking.ts](../web/lib/chunking.ts), worker at `web/lib/workers/versionBuilder.worker.ts`)
 - upload queue persists to IndexedDB ([web/lib/uploadQueue.ts](../web/lib/uploadQueue.ts)) — closing the tab at 50% and re-dropping the same folder resumes from 50%
 - `admit` endpoint reserves `pendingBytes` atomically so concurrent uploads can't both fit when their sum would exceed quota
-- finalize is a firestore transaction — compare-and-swap on `currentManifestId` means concurrent finalizes serialise safely
+- finalize is a Firestore transaction — compare-and-swap on `currentVersionId` means concurrent finalizes serialise safely
 
 ### agent sync pipeline
 
-agents receive a `roost_sync` command on the fan-out trigger, then:
+Agents receive `sync_pull` commands from roost fan-out, manual deploy, resync, or rollback flows. `cancel_sync` can signal an in-flight pull to stop gracefully, and `rollback_to_version` reuses the same sync path after the server flips the pointer to an older immutable version.
 
-1. **manifest fetch** ([agent/src/sync_manifest.py](../agent/src/sync_manifest.py)) — pull from R2, cache at `~/Documents/Owlette/.owlette-sync/manifests/{manifestId}.json`, diff against previous to compute the chunk delta
+1. **version fetch** ([agent/src/sync_version.py](../agent/src/sync_version.py)) — pull the version body from R2, cache it under `%PROGRAMDATA%\Owlette\versions\{versionId}.json`, and diff against the previous committed version to compute the chunk and file delta
 2. **chunk download** ([agent/src/sync_downloader.py](../agent/src/sync_downloader.py)) — parallel workers (default 4) with `Range: bytes=<offset>-` resume, per-chunk SHA-256 verify, signed-URL refresh on 403
 3. **atomic assembly** ([agent/src/sync_assembler.py](../agent/src/sync_assembler.py)) — write to `<path>.partial`, fsync, `os.replace` (atomic). post-rename realpath check guards against TOCTOU symlink-swap between the allowlist validation and the rename landing
 4. **scrub** ([agent/src/sync_scrub.py](../agent/src/sync_scrub.py)) — periodic re-hashing of on-disk files against their manifest chunk hashes to catch silent bit rot
 
 every write is gated by the **destination allowlist** ([agent/src/destination_allowlist.py](../agent/src/destination_allowlist.py)) — fail-closed: an empty or missing allowlist rejects all writes. symlinks, junctions, Windows reserved device names (NUL, CON, PRN…), alternate data streams, and paths outside the allowed roots are rejected with realpath resolution, not just string matching.
 
+During sync, agents report per-target state to `sites/{siteId}/roosts/{roostId}/target_state/{machineId}` with statuses such as `pending`, `downloading`, `assembling`, `committed`, `failed`, and `cancelled`.
+
 ### rollout strategy (canary-first)
 
-every manifest pointer flip goes through a **staged rollout** — never all-at-once. this is the standing cloudflare 2025-11-18 lesson in code form:
+Every `currentVersionId` pointer flip goes through a **staged rollout** — never all-at-once. this is the standing cloudflare 2025-11-18 lesson in code form:
 
 ```mermaid
 flowchart LR
-    Pub["manifest published\n(currentManifestId change)"] --> Canary["canary wave\n≤10%, cap 50 machines"]
+    Pub["version published\n(currentVersionId change)"] --> Canary["canary wave\n≤10%, cap 50 machines"]
     Canary -->|"≥90% succeeded"| Fleet["fleet wave\nremaining machines"]
     Canary -->|">25% failed"| Abort["abort\n(no fleet wave)"]
     Fleet -->|"settled"| Complete["complete"]
 ```
 
-canary cohort selection is deterministic (FNV-1a hash of `machineId + manifestId`) so trigger retries don't flap the chosen cohort. the abort threshold evaluates against `total`, not `settled`, so a rollout that's already past the 25% failure mark bails immediately without waiting for remaining machines.
+canary cohort selection is deterministic (FNV-1a hash of `machineId + versionId`) so trigger retries don't flap the chosen cohort. the abort threshold evaluates against `total`, not `settled`, so a rollout that's already past the 25% failure mark bails immediately without waiting for remaining machines.
 
 ### security floor
 
@@ -451,9 +472,9 @@ canary cohort selection is deterministic (FNV-1a hash of `machineId + manifestId
 - **hash-chained audit log**: every `signed_url_issued` / `distribution_started` / `manifest_pointer_changed` / `api_key_used` / `gc_run` record embeds `hash(prev || canonicalPayload)` — tamper detection survives deletion + mutation
 - **no-token-logs lint gate**: `scripts/check-no-token-logs.mjs` blocks any commit that logs auth tokens (CI + optional pre-commit)
 
-### the clean-cutover decision
+### current agent support
 
-roost does **not** support v1 agents. there is no dual-write phase, no shadow-read, no `project_url` fallback. v3.0.0 agent is a hard requirement for consuming v2 manifests. operators upgrade their fleet before the feature flag flips; older agents stop receiving new deploys post-cutover. see [`docs/internal/v1-v2-migration.md`](internal/v1-v2-migration.md) for the historical migration-design notes (most of that document is superseded by the clean-cutover decision).
+The current checked-in agent version is `2.11.0`, and that agent registers the roost v2 handlers `sync_pull`, `cancel_sync`, and `rollback_to_version`. The v2 sync path does not use a `project_url` fallback; legacy v1 project-distribution records can coexist in Firestore during migration, but roost v2 deploys are consumed by agents with the v2 sync handlers.
 
 ---
 

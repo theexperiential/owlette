@@ -1,164 +1,251 @@
 # firebase setup
 
-Firebase provides the real-time database (Firestore) and authentication backend for owlette.
+Firebase provides Owlette's browser authentication, Firestore control/state database, and Firebase Storage bucket. Cloudflare R2 is configured separately for roost project content; see [environment variables](environment-variables.md) for the complete runtime variable list.
 
 ---
 
-## step 1: create firebase project
+## step 1: create the firebase project
 
-1. Go to [Firebase Console](https://console.firebase.google.com/)
-2. Click **"Add project"**
-3. Name it (e.g., "owlette" or "owlette-Dev")
-4. Disable Google Analytics (not needed)
-5. Click **"Create Project"**
+1. Open the [Firebase Console](https://console.firebase.google.com/).
+2. Select **Add project**.
+3. Name the project, for example `owlette-prod` or `owlette-dev`.
+4. Disable Google Analytics unless you explicitly need it.
+5. Finish project creation and open **Project settings**.
+
+Use separate Firebase projects for development, staging, and production.
 
 ---
 
-## step 2: enable firestore database
+## step 2: create the firestore database
 
-1. In Firebase Console, click **"Firestore Database"** in the left sidebar
-2. Click **"Create database"**
-3. Select **"Start in Production mode"** (security rules will be configured next)
-4. Choose a location close to your users (e.g., `us-central1`, `us-east1`)
-5. Click **"Enable"**
+1. In the Firebase Console, open **Firestore Database**.
+2. Select **Create database**.
+3. Choose **Start in production mode**. The repository rules are deployed in a later step.
+4. Pick the Firestore location closest to the operators and machines you manage.
+5. Select **Enable**.
+
+Do not manually create collections during setup. Owlette creates application documents through the dashboard, API routes, agents, and trusted server code.
 
 ---
 
 ## step 3: enable authentication
 
-1. Click **"Authentication"** in the left sidebar
-2. Click **"Get started"**
-3. Enable sign-in providers:
-    - **Email/Password** — Toggle on
-    - **Google** — Toggle on, configure OAuth consent screen
+1. Open **Authentication**.
+2. Select **Get started**.
+3. Enable these sign-in providers:
+   - **Email/Password**
+   - **Google**, if you want Google sign-in in the dashboard
+4. In **Authentication -> Settings -> Authorized domains**, add the production dashboard domain and any preview/staging domains that will host the web app.
+
+Passkeys use Firebase custom tokens created by the Owlette server; they do not require a separate Firebase provider toggle.
 
 ---
 
-## step 4: get web app configuration
+## step 4: enable firebase storage
 
-1. In Firebase Console → Project Settings (gear icon)
-2. Scroll to **"Your apps"**
-3. Click **"Add app"** → Select **Web** (&lt;/&gt; icon)
-4. Register the app (name: "owlette Dashboard")
-5. Copy the 6 configuration values:
+Firebase Storage is required for full Owlette functionality. The current web and agent flows use it for installer binaries, screenshots, chat images, and user avatars.
 
-```javascript
-const firebaseConfig = {
-  apiKey: "AIza...",
-  authDomain: "your-project.firebaseapp.com",
-  projectId: "your-project-id",
-  storageBucket: "your-project.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abc123"
-};
+1. Open **Storage**.
+2. Select **Get started**.
+3. Start in production mode.
+4. Keep the default bucket unless you have a deployment-specific reason to use another bucket.
+
+The bucket name becomes `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`. New Firebase projects commonly use `<project-id>.firebasestorage.app`; older projects may use `<project-id>.appspot.com`. Copy the exact value from the Firebase web app configuration in the next step.
+
+---
+
+## step 5: create a web app and copy client config
+
+1. Open **Project settings -> General**.
+2. Under **Your apps**, select **Add app -> Web**.
+3. Register the app, for example `owlette dashboard`.
+4. Copy the Firebase config values into the web deployment environment:
+
+```env
+NEXT_PUBLIC_FIREBASE_API_KEY=...
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-project-id
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789012
+NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789012:web:abc123
 ```
 
-These become your `NEXT_PUBLIC_FIREBASE_*` environment variables.
+These values are public browser configuration. Access control comes from Firebase Auth, Firestore rules, Storage rules, and server-side authorization.
 
 ---
 
-## step 5: generate service account key
+## step 6: create service account credentials
 
-The web dashboard's server-side API routes need a service account key for generating agent OAuth tokens.
+Owlette server routes use the Firebase Admin SDK for privileged operations such as verifying sessions, creating agent custom tokens, writing server-only collections, and coordinating Storage uploads.
 
-1. In Firebase Console → Project Settings → **"Service accounts"** tab
-2. Click **"Generate new private key"**
-3. Save the downloaded JSON file
+1. Open **Project settings -> Service accounts**.
+2. Select **Generate new private key**.
+3. Download the JSON file.
+4. Extract these three fields into separate server-side environment variables:
 
-!!! danger "Keep this secret"
-    Never commit the service account key to git. Store it as an environment variable (`FIREBASE_SERVICE_ACCOUNT_KEY`) in your deployment platform.
+| JSON field | environment variable |
+|------------|----------------------|
+| `project_id` | `FIREBASE_PROJECT_ID` |
+| `client_email` | `FIREBASE_CLIENT_EMAIL` |
+| `private_key` | `FIREBASE_PRIVATE_KEY` |
 
-The entire JSON content is set as a single environment variable. Railway and other platforms support multi-line values.
+```env
+FIREBASE_PROJECT_ID=your-project-id
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project-id.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+```
+
+!!! danger "Keep the service account private"
+    Never commit the downloaded JSON file or the extracted private key. In Railway and similar platforms, wrap `FIREBASE_PRIVATE_KEY` in double quotes and preserve the `\n` escape sequences.
+
+Do not set `FIREBASE_SERVICE_ACCOUNT_KEY`; the current web code reads the split variables above.
 
 ---
 
-## step 6: enable firebase storage (optional)
+## step 7: deploy rules and indexes
 
-Required for installer version management:
-
-1. Click **"Storage"** in the left sidebar
-2. Click **"Get started"**
-3. Start in Production mode
-4. Deploy storage rules from `storage.rules` in the repository
-
----
-
-## step 7: deploy security rules & indexes
-
-See [Firestore Rules](firestore-rules.md) for detailed deployment instructions.
-
-**Quick deploy with Firebase CLI:**
+Run these commands from the repository root so `firebase.json` can find `firestore.rules`, `firestore.indexes.json`, and `storage.rules`.
 
 ```bash
 npm install -g firebase-tools
 firebase login
-firebase use --add  # Select your project
-firebase deploy --only firestore:rules
-firebase deploy --only firestore:indexes
+firebase use --add
+firebase deploy --only firestore:rules,firestore:indexes
+firebase deploy --only storage
 ```
 
+Choose the Firebase project created in step 1 when `firebase use --add` prompts for a project. The deploy uses:
+
+| file | purpose |
+|------|---------|
+| `firestore.rules` | Firestore client access rules |
+| `firestore.indexes.json` | Composite indexes for chat, logs, audit logs, and webhook queries |
+| `storage.rules` | Firebase Storage access rules |
+
 !!! important "Indexes are required"
-    Composite indexes (defined in `firestore.indexes.json`) must be deployed for features like Cortex conversation history and autonomous event queries to work. Without them, queries will fail with a "requires an index" error.
+    Do not skip the `firestore:indexes` deploy. Features that query conversation history, autonomous events, logs, audit records, or webhooks can fail with a "requires an index" error until the composite indexes are live.
+
+See [Firestore Rules](firestore-rules.md) for rule architecture and testing guidance.
 
 ---
 
-## multi-user access control
+## step 8: deploy the web app with firebase env vars
 
-owlette enforces site-based access at the Firestore security rules level:
+Add every variable from steps 5 and 6 to the web app's production environment, then deploy the web app. The Firebase setup is not complete until the running web deployment has both:
+
+- the `NEXT_PUBLIC_FIREBASE_*` client variables
+- the `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY` server variables
+
+See [environment variables](environment-variables.md) and [web deployment](web-deployment.md) for the full production checklist, including session, email, rate-limit, cron, Cortex, and R2 variables.
+
+---
+
+## step 9: bootstrap the first superadmin
+
+New users are created as `member` with an empty `sites` array. The first platform operator must be promoted manually after signing in once.
+
+1. Open the deployed dashboard.
+2. Register or sign in with the first operator account.
+3. In Firebase Console, open **Firestore Database -> Data -> users -> {uid}** for that account.
+4. Change `role` from `"member"` to `"superadmin"`.
+5. Save the document, then sign out and sign back in to refresh the dashboard session.
+
+After the first superadmin exists, use **Admin Panel -> User Management** to promote other users or assign site access.
+
+---
+
+## access model summary
+
+Owlette enforces site-based access through Firestore rules and server-side API authorization.
 
 | role | access |
 |------|--------|
-| **Site creators** | Automatically assigned as owner with full access |
-| **Regular users** | Can only access sites in their `sites` array |
-| **Admins** | Can access all sites |
-| **Agents** | Scoped to single site + machine via custom token claims |
+| `member` | Reads assigned sites listed in `users/{uid}.sites[]` |
+| `admin` | Site-scoped write access for assigned sites |
+| `superadmin` | Platform admin access and implicit access to every site |
+| `agent` | Custom-token access to one site and one machine |
 
-Security rules check permissions on every read/write — no client-side bypass is possible.
+Client rules name the helpers `isSuperadmin()`, `isSiteAdmin(siteId)`, `canAccessSite(siteId)`, `isServiceAccount()`, and agent claim helpers. Trusted server APIs and the Admin SDK handle server-only collections and control-plane writes.
 
 ---
 
-## firestore data structure
+## firestore paths used by owlette
 
+This is the operational shape a fresh project should expect after users, sites, and agents start using the system:
+
+```text
+sites/{siteId}
+sites/{siteId}/machines/{machineId}
+sites/{siteId}/machines/{machineId}/commands/{commandDoc}
+sites/{siteId}/machines/{machineId}/screenshots/{screenshotId}
+sites/{siteId}/machines/{machineId}/installed_software/{softwareId}
+sites/{siteId}/machines/{machineId}/hardware/{docId}
+sites/{siteId}/machines/{machineId}/metrics_history/{bucketId}
+sites/{siteId}/roosts/{roostId}
+sites/{siteId}/roosts/{roostId}/target_state/{machineId}
+sites/{siteId}/roosts/{roostId}/versions/{versionId}
+sites/{siteId}/deployments/{deploymentId}
+sites/{siteId}/installer_templates/{templateId}
+sites/{siteId}/project_templates/{templateId}
+sites/{siteId}/webhooks/{webhookId}
+sites/{siteId}/logs/{logId}
+sites/{siteId}/audit_log/{entryId}
+config/{siteId}/machines/{machineId}
+config/{siteId}/schedule_presets/{presetId}
+config/{siteId}/reboot_presets/{presetId}
+config/{siteId}/project_distribution_presets/{presetId}
+users/{uid}
+users/{uid}/api_keys/{keyId}
+users/{uid}/settings/{settingId}
+users/{uid}/devicePrefs/{docId}
+chats/{chatId}/messages/{messageId}
+system_presets/{presetId}
+installer_metadata/{document}
+agent_tokens/{tokenId}
+agent_refresh_tokens/{tokenHash}
+device_codes/{phrase}
+api_keys/{keyHash}
 ```
-sites/{siteId}/
-  ├── name, createdAt, owner
-  └── machines/{machineId}/
-      ├── presence/    (heartbeat: 5s / 30s / 120s adaptive)
-      ├── status/      (metrics: same adaptive interval)
-      └── commands/    (pending/ + completed/)
 
-config/{siteId}/machines/{machineId}/
-  ├── version, processes[]
+Server-only paths such as `agent_tokens`, `agent_refresh_tokens`, `device_codes`, top-level `api_keys`, and most installer upload state are intentionally denied to normal client reads and writes. They are managed through trusted Owlette server routes.
 
-users/{userId}/
-  ├── email, role, sites[], createdAt
+---
 
-agent_tokens/{registrationCode}/
-agent_refresh_tokens/{tokenHash}/
-activity_logs/{logId}/
-installer_metadata/
-```
+## verification checklist
 
-!!! info "Complete schema"
-    See [Firestore Data Model](../reference/firestore-data-model.md) for all fields and types.
+- Email/password login works.
+- Google login works if the provider is enabled.
+- A signed-in user's `users/{uid}` document exists.
+- The first operator has `role: "superadmin"`.
+- `firebase deploy --only firestore:rules,firestore:indexes` completes successfully.
+- `firebase deploy --only storage` completes successfully.
+- The web deployment has all `NEXT_PUBLIC_FIREBASE_*` and Firebase Admin variables.
+- The dashboard can create or open a site without Firestore permission errors.
+- Installer upload, screenshot capture, chat image upload, and profile photo upload can access Firebase Storage.
 
 ---
 
 ## troubleshooting
 
-### can't find "rules" tab in firestore
+### cannot find the rules tab
 
-Make sure you've created the Firestore database first (Step 2). Look for tabs at the top: Data | Rules | Indexes | Usage.
+Create the Firestore database first. The Firestore console shows **Data**, **Rules**, **Indexes**, and **Usage** only after the database exists.
 
-### "permission denied" errors
+### permission denied in the dashboard
 
-1. Verify security rules are published (Step 7)
-2. Check that the user is authenticated
-3. Check the user has access to the site
-4. Review the Rules Playground in Firebase Console for specific test scenarios
+1. Confirm the user is signed in.
+2. Confirm `users/{uid}` exists.
+3. Confirm the user's `role` and `sites` array are correct.
+4. Confirm Firestore rules were deployed from `firestore.rules`.
+5. Use the Firebase Rules Playground with the same path and auth claims.
 
-### service account key not downloading
+### admin features fail but the app loads
 
-- Check your browser's download folder
-- Try a different browser (Chrome recommended)
-- Ensure pop-ups are not blocked
+Check the server-side Firebase Admin variables: `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY`. Admin routes can fail even when browser login works, because browser login only proves the `NEXT_PUBLIC_FIREBASE_*` client variables are present.
+
+### storage upload fails
+
+1. Confirm Firebase Storage is enabled.
+2. Confirm `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` matches the bucket in Firebase Console.
+3. Confirm `storage.rules` was deployed with `firebase deploy --only storage`.
+4. Confirm the caller has the expected role for the upload path.

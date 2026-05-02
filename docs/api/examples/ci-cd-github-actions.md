@@ -1,8 +1,8 @@
 # CI/CD with GitHub Actions
 
-Use GitHub Actions to build a project, publish the output directory as an Owlette Roost version, and deploy that exact version to the target fleet.
+Use GitHub Actions to build a project, publish the output directory as an Owlette roost version, and deploy that exact version to the target fleet.
 
-The recommended launch path is the reusable Owlette Roost Deploy action in `.github/actions/owlette-roost-deploy`. It uses the public `owlette` CLI instead of embedding raw chunk/upload API calls in every consumer repository.
+The recommended launch path is the reusable Owlette roost deploy action in `.github/actions/owlette-roost-deploy`. It uses the public `owlette` CLI instead of embedding raw chunk/upload API calls in every consumer repository.
 
 This is a Wave 5.4 launch asset. It becomes externally runnable after the Wave 5.3 `@owlette/cli@rc` publish gate is complete.
 
@@ -15,8 +15,8 @@ Configure these in the consumer repository under **Settings -> Secrets and varia
 | name | type | purpose |
 |---|---|---|
 | `OWLETTE_TOKEN` | secret | scoped Owlette API key |
-| `OWLETTE_SITE_ID` | variable | site id that owns the Roost |
-| `OWLETTE_ROOST_ID` | variable | Roost id to publish into |
+| `OWLETTE_SITE_ID` | variable | site id that owns the roost |
+| `OWLETTE_ROOST_ID` | variable | roost id to publish into |
 | `OWLETTE_API_URL` | variable | optional, defaults to `https://owlette.app` |
 
 Recommended key scope:
@@ -152,8 +152,8 @@ The key can then omit `deploy` and use `roost:<roost-id>:write` only.
 Before linking this workflow from public launch material:
 
 - confirm `@owlette/cli@rc` installs on a clean GitHub-hosted Ubuntu runner
-- run the workflow against a dev or staging Roost fixture
-- confirm the published version appears in the Roost version history with the Git tag as its description
+- run the workflow against a dev or staging roost fixture
+- confirm the published version appears in the roost version history with the Git tag as its description
 - confirm deployment either queues successfully or is deliberately disabled with `deploy: false`
 - confirm failures include the Owlette `requestId` and problem `code` in the job log
 

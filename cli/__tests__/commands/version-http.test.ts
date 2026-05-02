@@ -74,22 +74,13 @@ describe('owlette version', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe('https://dev.test/api/version');
     const headers = calls[0]!.init.headers as Record<string, string>;
-    expect(headers.Accept).toBe('application/json');
-    expect(headers.Authorization).toBe('Bearer owk_live_testtoken');
-    expect(headers['Roost-Version']).toBeUndefined();
+    expect(headers).toEqual({
+      Accept: 'application/json',
+      Authorization: 'Bearer owk_live_testtoken',
+    });
   });
 
-  it('forwards --api-version as the Roost-Version header', async () => {
-    const calls = installFetchStub(VERSION_RESPONSE);
-    const program = buildProgram();
-
-    await program.parseAsync(['version', '--api-version', '2026-02-15'], { from: 'user' });
-
-    const headers = calls[0]!.init.headers as Record<string, string>;
-    expect(headers['Roost-Version']).toBe('2026-02-15');
-  });
-
-  it('emits {cli, server, supportedVersions, minimumVersion, pinned} envelope in --json mode', async () => {
+  it('emits {cli, server, supportedVersions, minimumVersion} envelope in --json mode', async () => {
     installFetchStub(VERSION_RESPONSE);
     const writes: string[] = [];
     (process.stdout.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
@@ -98,47 +89,13 @@ describe('owlette version', () => {
     });
     const program = buildProgram();
 
-    await program.parseAsync(
-      ['--json', 'version', '--api-version', '2026-02-15'],
-      { from: 'user' },
-    );
+    await program.parseAsync(['--json', 'version'], { from: 'user' });
 
     const parsed = JSON.parse(writes.join('')) as Record<string, unknown>;
     expect(parsed.server).toBe('2026-04-22');
     expect(parsed.supportedVersions).toEqual(VERSION_RESPONSE.supported);
     expect(parsed.minimumVersion).toBe('2026-01-01');
-    expect(parsed.pinned).toBe('2026-02-15');
+    expect(parsed).not.toHaveProperty('pinned');
     expect(typeof parsed.cli).toBe('string');
-  });
-
-  it('warns to stderr when the pinned version is older than the server minimum', async () => {
-    installFetchStub(VERSION_RESPONSE);
-    const stderrWrites: string[] = [];
-    (process.stderr.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
-      stderrWrites.push(chunk);
-      return true;
-    });
-    const program = buildProgram();
-
-    await program.parseAsync(['version', '--api-version', '2020-01-01'], { from: 'user' });
-
-    const err = stderrWrites.join('');
-    expect(err).toContain('warning');
-    expect(err).toContain('2020-01-01');
-    expect(err).toContain('2026-01-01');
-  });
-
-  it('does NOT warn when the pinned version is at or above the server minimum', async () => {
-    installFetchStub(VERSION_RESPONSE);
-    const stderrWrites: string[] = [];
-    (process.stderr.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
-      stderrWrites.push(chunk);
-      return true;
-    });
-    const program = buildProgram();
-
-    await program.parseAsync(['version', '--api-version', '2026-04-22'], { from: 'user' });
-
-    expect(stderrWrites.join('')).not.toContain('warning');
   });
 });

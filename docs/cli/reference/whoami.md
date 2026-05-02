@@ -52,7 +52,7 @@ backing: `GET /api/whoami` with `Authorization: Bearer <token>`.
 
 ### human mode
 
-seven aligned key/value lines on stdout:
+eight aligned key/value lines on stdout:
 
 | field | source | meaning |
 |---|---|---|

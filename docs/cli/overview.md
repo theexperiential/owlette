@@ -7,7 +7,7 @@ hide:
 
 `owlette` is the command-line client for the [owlette.app](https://owlette.app) api. It runs on macOS, linux, and windows and lets you authenticate, push roosts, manage sites and machines, mint api keys, and inspect audit logs from your terminal or ci pipeline.
 
-This page is the 15-minute onboarding: install → log in → push your first roost. For per-noun reference (every flag, every example), jump to [docs/cli/reference/](reference/). For route/stub/deferred status across the whole CLI, see the [readiness matrix](readiness.md).
+This page is the 15-minute onboarding: install → log in → push your first roost. For per-command reference, start with [auth](reference/auth.md), [roost](reference/roost.md), [machine](reference/machine.md), [listen](reference/listen.md), or [trigger](reference/trigger.md). For route/stub/deferred status across the whole CLI, see the [readiness matrix](readiness.md).
 
 ---
 
@@ -34,10 +34,6 @@ owlette --version
 ```
 
 The `bin/owlette` launcher prefers the compiled `dist/` output but falls back to running the typescript source via `ts-node` so `node bin/owlette …` works without `npm run build`.
-
-### legacy `roost` binary
-
-Until 2026-10-01 the binary is also installed under the old name `roost` as a deprecation wrapper. It prints a one-line notice on stderr and forwards to `owlette`. After that date it will be removed; switch your scripts now.
 
 ---
 
@@ -109,8 +105,6 @@ Every config field follows the same first-wins ladder:
 5. built-in default   (api_url=https://owlette.app)
 ```
 
-Legacy `ROOST_*` env vars + `~/.config/roost/config.toml` are read as fallback through 2026-10-01 with a one-time deprecation warning per process.
-
 ### config file schema
 
 ```toml
@@ -142,7 +136,7 @@ Flags inherited by every command:
 | `-h, --help` | — | — | show help for the current command |
 | `-V, --version` | — | — | print cli version |
 
-`--json` mode is fully scriptable — every command emits a stable `{ ok, data }` (or `{ ok: false, error }`) envelope so you can pipe to `jq` and trust the shape.
+`--json` mode is scriptable, but the output shape is command-specific: newer commands use `{ ok, data }` or `{ ok: false, error }` wrappers, while legacy commands may return raw payloads or compatibility objects. Check the per-command page before scripting against a field.
 
 ---
 
@@ -158,7 +152,7 @@ Every command lives under one of these top-level groups. **`[ready]`** verbs hit
 | [`owlette auth status`](reference/auth.md) | ready | alias of `owlette whoami` |
 | [`owlette auth logout`](reference/auth.md) | ready | clear token from active profile |
 | [`owlette whoami`](reference/whoami.md) | ready | print server-resolved identity + scopes |
-| [`owlette version`](reference/version.md) | ready | print cli version, server version, supported `Roost-Version` values |
+| [`owlette version`](reference/version.md) | ready | print cli version, server version, and the supported API date catalog |
 
 ### operator nouns (site-scoped)
 
@@ -192,9 +186,9 @@ Every command lives under one of these top-level groups. **`[ready]`** verbs hit
 
 | command | description |
 |---|---|
-| `owlette rollback <roostId>` | top-level rollback helper for roost versions |
-| `owlette listen` | open the scoped SSE liveness stream and forward received events to a local url |
-| `owlette trigger <event>` | fire a synthetic webhook for local testing |
+| [`owlette rollback <roostId>`](reference/rollback.md) | top-level rollback helper for roost versions |
+| [`owlette listen`](reference/listen.md) | open the scoped SSE liveness stream and forward received events to a local url |
+| [`owlette trigger <event>`](reference/trigger.md) | fire a synthetic webhook for local testing |
 
 > **disambiguation**: `owlette deploy …` is the **classic installer** deploy group (silent exe pushes). `owlette roost deploy <roostId>` is the **content-addressed** deploy that ships per-version diffs to a fleet. Same word, different surfaces — the help text disambiguates.
 
@@ -215,23 +209,23 @@ Exit code `3` is intentionally distinct from `1` so ci can tell "the api will ne
 
 ---
 
-## json envelope schema
+## json output shapes
 
-every command with `--json` emits exactly one of these shapes on stdout:
+Commands that accept `--json` write one JSON document to stdout. Newer commands generally use the wrapper shapes below; legacy commands can return raw server payloads or command-specific objects, so the per-command reference is authoritative.
 
-**success**
+**wrapped success**
 ```json
 { "ok": true, "data": { /* command-specific payload */ } }
 ```
 
-Some commands (legacy: `roost list`, `whoami`) emit the payload directly without the `ok`/`data` wrapper for backward compatibility — see the per-noun reference for exact shapes. New commands always wrap.
+Examples in source include `roost list`, `key list`, `site list`, `machine list`, `whoami`, and `trigger`, which print raw payloads or command-specific objects rather than a universal `{ ok, data }` envelope.
 
-**failure (any non-zero exit)**
+**wrapped failure**
 ```json
 { "ok": false, "error": { "code": "<stable_string>", "message": "human-readable", "detail": { /* optional */ } } }
 ```
 
-stable `code` values match the api's problem+json codes (`scope_insufficient`, `token_expired`, `idempotency_key_mismatch`, `manifest_stale`, `rate_limited`, `unsupported_version`).
+When a command surfaces API problem+json details, stable `code` values match the API's codes (`scope_insufficient`, `token_expired`, `idempotency_key_mismatch`, `manifest_stale`, `rate_limited`, `unsupported_version`).
 
 **stub (exit 3 only)**
 ```json
@@ -242,6 +236,5 @@ stable `code` values match the api's problem+json codes (`scope_insufficient`, `
 
 ## next steps
 
-- [per-noun reference](reference/) — every verb, every flag, copy-paste examples
-- [migration from roost cli](migration-from-roost-cli.md) — what changed, deprecation timeline
-- [api docs](../api/) — the underlying http surface every cli command wraps
+- Command reference pages: [auth](reference/auth.md), [roost](reference/roost.md), [listen](reference/listen.md), and [trigger](reference/trigger.md)
+- [api reference](../api/reference.md) — the underlying http surface every cli command wraps

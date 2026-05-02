@@ -56,7 +56,7 @@ Upload a new installer binary. The CLI orchestrates the full three-step flow:
 
 1. `POST /api/installer/upload` requests a signed URL and reserves the version/storage path.
 2. `PUT <signedUrl>` uploads the bytes directly to Storage.
-3. `PUT /api/installer/upload` finalizes the upload, verifies the stored object checksum, writes installer metadata, and optionally flips the `latest` pointer.
+3. `PUT /api/installer/upload` finalizes the upload, verifies the stored object checksum, writes installer metadata, and flips the `latest` pointer unless the API request explicitly opts out.
 
 The same `Idempotency-Key` is sent on both server-side calls, so retries of the request/finalize API calls replay cleanly while the signed upload URL is still valid. The CLI computes local SHA-256 and the server recomputes SHA-256 from Storage before publishing metadata.
 
@@ -67,8 +67,10 @@ The same `Idempotency-Key` is sent on both server-side calls, so retries of the 
 | `<file>` | yes | path to the installer exe to upload |
 | `--version <semver>` | yes | semver of the installer being uploaded (`X.Y.Z`) |
 | `--release-notes <text>` | no | release notes shown on the dashboard |
-| `--set-latest` | no | mark this version as the new `latest` after upload |
+| `--set-latest` | no | mark this version as the new `latest` after upload; this is the default behavior |
 | `--idempotency-key <key>` | no | pin the `Idempotency-Key` used on both server calls |
+
+`--set-latest` defaults to `true`: omitting the flag leaves `setAsLatest` unset, and the upload API treats that as `true`. The current CLI does not accept `--no-set-latest` or `--set-latest=false`, so there is no direct CLI opt-out; use the upload API with `setAsLatest: false` if you need to upload without moving the `latest` pointer.
 
 ```bash
 owlette installer upload ./Owlette-Installer-v2.11.0.exe \

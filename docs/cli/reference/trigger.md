@@ -1,0 +1,183 @@
+---
+hide:
+  - navigation
+---
+
+# trigger
+
+`trigger` fires a synthetic webhook event for local receiver testing. It is a shipped top-level helper, not part of the planned `webhook` noun group. It has two delivery modes:
+
+- direct mode posts from the CLI straight to `--to`
+- server-probe mode, selected with `--via-api`, calls `/api/webhooks/probe?siteId=...` and lets the API send one probe delivery
+
+**synopsis** - `owlette trigger <event> --to <url> [--site <siteId>] [--via-api] [--signing-secret <secret>] [--payload <json> | --payload-file <path>] [--id <delivery-id>] [--json]`
+
+known canned events:
+
+- `version.published`
+- `deployment.started`
+- `deployment.completed`
+- `deployment.failed`
+- `version.rolled_back`
+- `chunk.garbage_collected`
+- `chunk.verify_failed`
+- `quota.warning`
+- `quota.exceeded`
+- `api_key.used`
+- `api_key.expired`
+- `machine.online`
+- `machine.offline`
+
+Unknown event names are allowed only when you provide `--payload` or `--payload-file`.
+
+| flag | type | required | description |
+|---|---|---|---|
+| `--site <siteId>` | string | required with `--via-api`; optional in direct mode | site id for the probe payload and the API probe query string. If the payload has `siteId: null`, the CLI fills it from this value |
+| `--to <url>` | string | yes | destination webhook URL. In direct mode the CLI posts to this URL itself; with `--via-api`, the API sends the probe to this URL |
+| `--via-api` | boolean | no | use `POST /api/webhooks/probe?siteId=<siteId>` instead of posting directly from the CLI |
+| `--signing-secret <secret>` | string | no | in direct mode, signs the request body as `Roost-Signature: t=<unix>,v1=<hmac_sha256_hex>`. With `--via-api`, the value is forwarded to the probe API as `signingSecret` |
+| `--payload <json>` | JSON string | no | inline payload object. Takes precedence over `--payload-file` if both are present |
+| `--payload-file <path>` | path | no | read a JSON payload object from a file |
+| `--id <delivery-id>` | string | no | direct-mode `Roost-Delivery` header value. Defaults to a random UUID. In server-probe mode the CLI logs this id locally, but the request body sent to the API does not include it |
+
+inherits global `--profile`, `--api-url`, and `--json`.
+
+---
+
+## direct mode
+
+Direct mode is the default when `--to` is present and `--via-api` is omitted. It bypasses Owlette's API, builds the event body locally, signs it when `--signing-secret` is present, and sends:
+
+```http
+POST <url>
+Content-Type: application/json
+Roost-Event: <event>
+Roost-Delivery: <delivery-id>
+Roost-Signature: t=<unix>,v1=<hmac_sha256_hex>
+```
+
+```bash
+# fire a canned version-published body at a local receiver
+owlette trigger version.published \
+  --site site-1 \
+  --to http://localhost:3000/hooks \
+  --signing-secret whsec_local
+```
+
+```bash
+# set a stable delivery id for receiver idempotency tests
+owlette trigger deployment.failed \
+  --to http://localhost:3000/hooks \
+  --id test-delivery-001 \
+  --signing-secret whsec_local
+```
+
+```bash
+# send a custom event with inline JSON
+owlette trigger custom.test \
+  --to http://localhost:3000/hooks \
+  --payload '{"siteId":"site-1","ok":true}'
+```
+
+In human mode, the CLI writes the request and response status to stderr. With global `--json`, stdout is:
+
+```json
+{
+  "mode": "direct",
+  "to": "http://localhost:3000/hooks",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json",
+    "Roost-Event": "version.published",
+    "Roost-Delivery": "test-delivery-001",
+    "Roost-Signature": "t=1714000000,v1=..."
+  },
+  "body": {
+    "siteId": "site-1"
+  },
+  "responseText": "ok"
+}
+```
+
+---
+
+## server-probe mode
+
+Server-probe mode is selected with `--via-api`. It requires an authenticated profile or `OWLETTE_TOKEN`, `--site <siteId>`, and `--to <url>`.
+
+```bash
+owlette trigger version.published \
+  --site site-1 \
+  --to https://example.com/hooks/owlette \
+  --via-api
+```
+
+```bash
+owlette --profile dev trigger machine.offline \
+  --site site-1 \
+  --to https://example.com/hooks/owlette \
+  --via-api \
+  --payload-file ./fixtures/machine-offline.json
+```
+
+backing: `POST /api/webhooks/probe?siteId=<siteId>` with:
+
+```json
+{
+  "url": "https://example.com/hooks/owlette",
+  "event": "version.published",
+  "payload": {
+    "siteId": "site-1"
+  },
+  "signingSecret": "optional"
+}
+```
+
+The request is sent with `Authorization: Bearer <token>` and `Content-Type: application/json`. If the API returns `404`, the CLI reports that `/api/webhooks/probe` is unavailable on that host and suggests omitting `--via-api` for local direct testing.
+
+With global `--json`, stdout is:
+
+```json
+{
+  "mode": "server-probe",
+  "status": 200,
+  "request": {
+    "url": "https://example.com/hooks/owlette",
+    "event": "version.published",
+    "payload": {
+      "siteId": "site-1"
+    }
+  },
+  "response": {}
+}
+```
+
+---
+
+## payloads
+
+Without `--payload` or `--payload-file`, the CLI starts from a canned payload for the known event. For canned payloads:
+
+- `siteId: null` is replaced with `--site` when provided
+- `machine.online` and `machine.offline` fill `lastHeartbeat` with the current timestamp when the canned value is null
+- `quota.exceeded` fills `blockedAt` with the current timestamp when the canned value is null
+- `api_key.expired` fills `expiresAt` with the current timestamp when the canned value is null
+
+`--payload` must be a JSON object string. `--payload-file` must point to a readable JSON file. Invalid JSON exits with code `2`.
+
+---
+
+## exit codes
+
+- `0` - request completed with a 2xx response
+- `1` - network failure, non-2xx response, or unavailable server-probe route
+- `2` - usage error: missing `--to`, missing token for `--via-api`, missing `--site` for `--via-api`, unknown event without a payload override, or invalid payload JSON
+
+---
+
+## notes
+
+- **scope**: direct mode is local-only and does not need a token. server-probe mode requires an authenticated profile; the API host enforces access for the requested site.
+- **headers**: direct mode sends `Roost-Event` and `Roost-Delivery` on every request. `Roost-Signature` is present only when `--signing-secret` is supplied.
+- **payload precedence**: `--payload` wins over `--payload-file`; otherwise the command uses a canned payload for known events.
+- **related**: [webhook](webhook.md) for the planned noun group, [overview](../overview.md) for global flags and JSON output policy.

@@ -60,7 +60,7 @@ These surfaces are safe for internal developer-preview consumers when accessed w
 | machines | list/detail/deployments, generic command queue, command polling, screenshots, reboot schedule, uninstall, agent-token metadata/revoke |
 | processes | process list/detail/create/update/delete plus start/stop/kill/schedule/launch-mode |
 | classic deployments | `/api/sites/{siteId}/deployments/**` create/list/detail/retry/cancel/uninstall/delete |
-| Roost and chunks | Roost CRUD, version publish/list/detail/files/diff, chunk check/upload/download/mount/referrers, deploy/rollback/resync |
+| roost and chunks | roost CRUD, version publish/list/detail/files/diff, chunk check/upload/download/mount/referrers, deploy/rollback/resync |
 | Cortex | canonical `/api/cortex/conversations/**`; `/api/chat/**` remains a compatibility alias, not the path to promote |
 | webhooks and events | webhook CRUD, delivery history/detail, manual retry, secret rotate, and `POST /api/webhooks/probe`; `/api/events/stream` liveness only |
 | quota, audit, logs | quota current/history, audit-log reads, site operational log read/detail/clear with documented admin controls |

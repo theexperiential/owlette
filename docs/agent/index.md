@@ -10,8 +10,7 @@ The owlette agent is a Python Windows service that runs in the background, monit
 |----------|-----------|-------------|
 | **Process monitoring** | Every 5s | Checks if configured processes are running, detects crashes and stalls |
 | **Auto-restart** | On crash | Restarts crashed processes using Task Scheduler or CreateProcessAsUser |
-| **Heartbeat** | Every 30s | Marks the machine as online in Firestore |
-| **Metrics** | Every 60s | Reports CPU, memory, disk, and GPU usage |
+| **Heartbeat + metrics** | Adaptive: ~5s with GUI open, 30s while processes are active, 120s idle | Marks the machine online and reports CPU, memory, disk, and GPU usage |
 | **Commands** | Event-driven | Listens for and executes commands from the dashboard |
 | **Config sync** | Event-driven | Syncs configuration changes between GUI, service, and cloud |
 
@@ -41,7 +40,7 @@ Spawned into user session by the service:
   ├── owlette_cortex.py (Local AI Agent)
   │     ├── cortex_firestore.py (Message Polling & Response Writing)
   │     ├── cortex_tools.py (MCP Tool Server for Agent SDK)
-  │     └── mcp_tools.py (19 Tool Implementations)
+  │     └── mcp_tools.py (Tool Implementations)
   ├── process_launcher.py (Application Launcher)
   └── session_exec.py (User Session Command Executor)
 
@@ -50,6 +49,8 @@ Launched on demand:
   ├── configure_site.py (Device Code Pairing)
   └── report_issue.py (Bug Report Dialog)
 ```
+
+See [Cortex tools reference](../reference/cortex-tools.md) for the current tool list.
 
 ---
 
@@ -103,8 +104,9 @@ The classifier depends only on `shared_utils` and stdlib — no Firebase, no log
 |------|----------|
 | `C:\ProgramData\Owlette\` | Installation root |
 | `C:\ProgramData\Owlette\agent\src\` | Python source code |
-| `C:\ProgramData\Owlette\agent\config\` | `config.json` and credentials |
+| `C:\ProgramData\Owlette\config\` | Agent configuration, including `config.json` |
 | `C:\ProgramData\Owlette\logs\` | Service and GUI log files |
 | `C:\ProgramData\Owlette\python\` | Embedded Python interpreter |
-| `C:\ProgramData\Owlette\nssm\` | NSSM service manager binary |
+| `C:\ProgramData\Owlette\.tokens.enc` | Encrypted OAuth tokens |
+| `C:\ProgramData\Owlette\tools\nssm.exe` | NSSM service manager binary |
 

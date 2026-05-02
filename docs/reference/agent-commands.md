@@ -1,304 +1,283 @@
 # agent commands reference
 
-Complete reference for all command types the agent accepts via Firestore.
+Operational reference for command records the web app writes and the agent
+executes through Firestore.
 
 ---
 
 ## command lifecycle
 
+Command queues are single Firestore documents whose fields are command IDs.
+They are not per-command subcollections.
+
 ```
-1. Dashboard/API writes to:
-   sites/{siteId}/machines/{machineId}/commands/pending/{commandId}
+1. Web/API writes one map entry to:
+   sites/{siteId}/machines/{machineId}/commands/pending
 
-2. Agent listener detects new document
+   {
+     "{commandId}": {
+       "type": "command_type",
+       "status": "pending",
+       ...command-specific fields
+     }
+   }
 
-3. Agent executes the command
+2. The agent listener reads the pending document and dispatches each unseen
+   command ID.
 
-4. Agent writes result to:
-   sites/{siteId}/machines/{machineId}/commands/completed/{commandId}
+3. Long-running commands can write partial records to:
+   sites/{siteId}/machines/{machineId}/commands/completed
 
-5. Dashboard listener sees completion, updates UI
+4. The agent writes the final record under the same command ID in the
+   completed document, then deletes the command ID field from pending.
 ```
+
+Server helpers that use `stampCommand` add `createdAt`, `expiresAt`, and
+optional `auditCorrelationId`. The public machine-command endpoint also stamps
+`siteId`, `machineId`, `timestamp`, `status`, and `queuedBy`.
 
 ---
 
 ## command document schema
 
-### pending
+### pending entry
 
 ```json
 {
-  "type": "command_type",
-  "timestamp": 1711234567890,
-  "status": "pending",
-  ...command-specific fields
+  "{commandId}": {
+    "type": "command_type",
+    "status": "pending",
+    "createdAt": "<server timestamp>",
+    "expiresAt": "<timestamp>",
+    "timestamp": "<server timestamp>",
+    "queuedBy": "user:uid-or-apiKey:keyId",
+    "...": "command-specific fields"
+  }
 }
 ```
 
-### completed (success)
+Legacy writers may use millisecond `timestamp` without `createdAt` or
+`expiresAt`; the agent accepts both shapes.
+
+### progress entry
+
+Long-running commands update the completed document before final completion.
 
 ```json
 {
-  "type": "command_type",
-  "result": "Human-readable result message",
-  "status": "completed",
-  "completedAt": 1711234567900
+  "{commandId}": {
+    "status": "downloading",
+    "updatedAt": "<server timestamp>",
+    "deployment_id": "deployment_123",
+    "progress": 45
+  }
 }
 ```
 
-### completed (failure)
+Progress writes are partial status records. They are throttled by the agent and
+can use command-specific statuses such as `downloading`, `installing`,
+`uninstalling`, or `extracting` before the final `completed`, `failed`, or
+`cancelled` record is written.
+
+### completed entry
 
 ```json
 {
-  "type": "command_type",
-  "result": "Error: description of what went wrong",
-  "status": "failed",
-  "completedAt": 1711234567900
+  "{commandId}": {
+    "type": "command_type",
+    "result": "Human-readable result message",
+    "status": "completed",
+    "completedAt": "<server timestamp>",
+    "deployment_id": "deployment_123"
+  }
+}
+```
+
+### failed entry
+
+Failed commands use `error`, not `result`.
+
+```json
+{
+  "{commandId}": {
+    "type": "command_type",
+    "error": "Error: description of what went wrong",
+    "status": "failed",
+    "completedAt": "<server timestamp>",
+    "deployment_id": "deployment_123"
+  }
+}
+```
+
+### cancelled entry
+
+```json
+{
+  "{commandId}": {
+    "type": "command_type",
+    "result": "Cancellation message",
+    "status": "cancelled",
+    "completedAt": "<server timestamp>",
+    "deployment_id": "deployment_123"
+  }
 }
 ```
 
 ---
 
-## process commands
+## public API command types
 
-### restart_process
+These are the command types accepted by the public machine-command action in
+`web/lib/actions/executeMachineCommand.server.ts`.
 
-Kill and relaunch a configured process.
+### process control
 
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"restart_process"` | |
-| `process_name` | string | Must match a configured process name |
+| type | fields | behavior |
+|------|--------|----------|
+| `restart_process` | `process_name` or `process_id`/`processId` | Kill and relaunch a configured process, or launch it if it is not already running. |
+| `start_process` | `process_name` or `process_id`/`processId` | Start a configured process. If it is scheduled and outside its window, the agent records a manual override. |
+| `stop_process` | `process_name` or `process_id`/`processId` | Gracefully terminate a running process and mark it `STOPPED`. |
+| `kill_process` | `process_name` or `process_id`/`processId` | Gracefully terminate a running process and mark it `KILLED`. |
+| `set_launch_mode` | `process_name`, `mode`, optional `schedules` | Set `mode` to `off`, `always`, or `scheduled`. The agent derives legacy `autolaunch` from the launch mode. |
 
----
+### machine power and reboot state
 
-### kill_process
+| type | fields | behavior |
+|------|--------|----------|
+| `reboot_machine` | none used | Schedule a Windows reboot in 30 seconds and set reboot visibility fields on the machine document. |
+| `shutdown_machine` | none used | Schedule a Windows shutdown in 30 seconds and set shutdown visibility fields on the machine document. |
+| `cancel_reboot` | none | Abort a pending reboot/shutdown with `shutdown /a` and clear local and Firestore reboot state. |
+| `dismiss_reboot_pending` | optional `process_name` | Clear a reboot-pending prompt and reset relaunch counters for the named process when present. |
 
-Terminate a running process.
+### screenshots and live view
 
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"kill_process"` | |
-| `process_name` | string | Must match a configured process name |
+| type | fields | behavior |
+|------|--------|----------|
+| `capture_screenshot` | optional `monitor` | Capture from the active user session. `0` means all monitors; positive values select a monitor index. |
+| `start_live_view` | optional `interval`, optional `duration` | Start repeated screenshot capture. `interval` is clamped to 5-60 seconds; `duration` is clamped to 60-1800 seconds. |
+| `stop_live_view` | none | Stop the live-view screenshot loop and clear the machine `liveView` flag. |
 
----
+### display topology
 
-### start_process
+| type | fields | behavior |
+|------|--------|----------|
+| `apply_display_topology` | `layout`, optional `applyId`/`apply_id` | Validate and apply a display layout, arm the revert watchdog, and require a matching acknowledgement before the deadline. |
+| `enumerate_display_modes` | none | Build and upload the supported display-mode catalogue when hardware changed. |
+| `ack_display_topology` | optional `applyId`/`apply_id` | Acknowledge the in-flight display apply and cancel auto-revert when the ID matches. |
+| `test_display_apply` | none | Run a read-only display helper smoke test without applying a topology change. |
 
-Start a stopped process (same as restart for stopped processes).
+### cortex and agent update
 
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"start_process"` | |
-| `process_name` | string | Must match a configured process name |
+| type | fields | behavior |
+|------|--------|----------|
+| `mcp_tool_call` | `tool_name`, `tool_params`, optional `chat_id`, optional `timeout_seconds` | Execute an agent-side MCP tool. `tool_params` is the payload object. |
+| `update_owlette` | `installer_url`, `checksum_sha256`, optional `target_version`, optional `deployment_id` | Download a verified agent installer and run it through Task Scheduler. `checksum_sha256` is required. |
 
----
-
-### set_launch_mode
-
-Set the launch mode for a process: off, always, or scheduled.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"set_launch_mode"` | |
-| `process_name` | string | Must match a configured process name |
-| `mode` | string | `"off"`, `"always"`, or `"scheduled"` |
-| `schedules` | array | Schedule blocks (required when mode is `"scheduled"`) |
-
----
-
-### capture_screenshot
-
-Capture a screenshot of the machine's desktop.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"capture_screenshot"` | |
-| `monitor` | number | `0` = all monitors (default), `1` = primary, `2` = second, etc. |
+`mcp_tool_call` returns JSON-encoded tool output in the final `result` field
+when the command completes successfully.
 
 ---
 
-## configuration commands
+## legacy dashboard and internal command types
 
-### update_config
+These commands are still registered in `agent/src/owlette_service.py` but are
+not all accepted by the public machine-command allowlist. They exist for
+dashboard flows, deployment workers, older configuration flows, or internal
+admin actions.
 
-Update process configuration from Firestore.
+### configuration and process compatibility
 
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"update_config"` | |
-| `processes` | array | New process configuration array |
+| type | fields | behavior |
+|------|--------|----------|
+| `update_config` | `config` | Replace local config while preserving the local Firebase auth section. |
+| `toggle_autolaunch` | `process_name`, `autolaunch` | Legacy compatibility path. Sets launch mode to `always` or `off` and updates derived `autolaunch`. |
+| `provision_cortex_key` | `api_key`, optional `provider` | Encrypt and store a local Cortex provider key in config. Defaults provider to `anthropic`. |
 
----
+### software deployment
 
-## deployment commands
+| type | fields | behavior |
+|------|--------|----------|
+| `install_software` | `installer_url`, optional `installer_name`, optional `silent_flags`, required `sha256_checksum`, optional `verify_path`, optional `timeout_seconds`, optional `deployment_id`, optional `parallel_install`, optional `close_processes`, optional `suppress_projects` | Download, checksum-verify, and run an installer in the interactive user session. Default timeout is 2400 seconds. |
+| `cancel_installation` | `installer_name`, optional `deployment_id` | Cancel an active installer process tree and mark the command `cancelled`. |
+| `uninstall_software` | `software_name`, `uninstall_command`, optional `silent_flags`, optional `installer_type`, optional `verify_paths`, optional `timeout_seconds`, optional `deployment_id` | Run an uninstall command, auto-detect silent flags when omitted, and verify registry/file cleanup. Default timeout is 1200 seconds. |
+| `cancel_uninstall` | `software_name` | Cancel an active uninstall tracked as `uninstall_<software_name>`. |
+| `refresh_software_inventory` | none | Force an immediate installed-software inventory sync. |
 
-### install_software
+### legacy project distribution
 
-Download and silently install software.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"install_software"` | |
-| `installer_url` | string | Direct HTTPS download URL |
-| `installer_name` | string | Filename (e.g., "setup.exe") |
-| `silent_flags` | string | Installation flags (e.g., "/VERYSILENT") |
-| `verify_path` | string | Path to check after installation (optional) |
-| `deployment_id` | string | Links to deployments collection |
-| `sha256_checksum` | string | Expected SHA256 hash for download verification (optional) |
-| `timeout_seconds` | number | Max time to wait for installation in seconds (default: 2400 = 40 min) |
-
-The agent downloads the installer to `%TEMP%\owlette_installers\`, optionally verifies the checksum, executes with the provided flags, and reports progress (`downloading` → `installing` → `completed`/`failed`). If `verify_path` is set, the agent confirms the file exists after installation.
-
----
-
-### cancel_installation
-
-Cancel an in-progress installation. Terminates the installer process tree (parent + children) and cleans up the temporary installer file.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"cancel_installation"` | |
-| `installer_name` | string | Filename of the installer to cancel (must match an active installation) |
-| `deployment_id` | string | Deployment to cancel |
+| type | fields | behavior |
+|------|--------|----------|
+| `distribute_project` | `project_url`, optional `project_name`, optional `extract_path`, optional `distribution_id` | Legacy ZIP distribution path. Prefer the roost v2 router commands for current project sync. |
+| `cancel_distribution` | `project_name` | Clean up the temporary ZIP file for an in-progress legacy distribution. |
 
 ---
 
-### uninstall_software
+## router-registered roost v2 command types
 
-Uninstall software from the machine using registry uninstall commands.
+These commands are registered in `agent/src/sync_commands.py` through
+`CommandRouter` and dispatch before the legacy if/elif chain.
+
+### sync_pull
+
+Pull an immutable roost version, download missing chunks, and assemble files at
+the target path.
 
 | field | type | description |
 |-------|------|-------------|
-| `type` | `"uninstall_software"` | |
-| `software_name` | string | Display name of the software |
-| `uninstall_command` | string | Registry uninstall string (from Windows Add/Remove Programs) |
-| `silent_flags` | string | Silent uninstall flags (optional — auto-detected if omitted) |
-| `installer_type` | string | Installer framework hint: `"nsis"`, `"inno"`, `"msi"` (optional) |
-| `deployment_id` | string | Links to deployment for status tracking (optional) |
-| `verify_paths` | array[string] | File paths to check are removed after uninstall (optional) |
-| `timeout_seconds` | number | Max time to wait for uninstall in seconds (default: 1200 = 20 min) |
+| `type` | `"sync_pull"` | |
+| `site_id` | string | Site that owns the roost and target machine. |
+| `roost_id` | string | roost to sync. |
+| `version_id` | string | Immutable version to materialize. |
+| `version_url` | string | Version manifest URL. The agent attempts to mint a fresh signed URL before fetching. |
+| `extract_root` | string | Destination directory for assembled files. |
 
-The agent parses the uninstall command, appends silent flags, executes the uninstaller, and checks exit codes (0 or 3010 = success). If `verify_paths` are provided, confirms those paths no longer exist.
+The handler reports target states `pending`, `downloading`, `assembling`,
+`committed`, `failed`, and `cancelled`.
+
+### cancel_sync
+
+Cancel an in-flight `sync_pull` for the same site, roost, and version.
+
+| field | type | description |
+|-------|------|-------------|
+| `type` | `"cancel_sync"` | |
+| `site_id` | string | Site that owns the sync. |
+| `roost_id` | string | roost being synced. |
+| `version_id` | string | Version being synced. |
+
+Cancellation is cooperative. The active download or file operation finishes its
+current step, then the handler records `cancelled`.
+
+### rollback_to_version
+
+Materialize an older roost version after the server-side rollback has already
+changed the current-version pointer. The payload matches `sync_pull`.
+
+| field | type | description |
+|-------|------|-------------|
+| `type` | `"rollback_to_version"` | |
+| `site_id` | string | Site that owns the roost and target machine. |
+| `roost_id` | string | roost to sync. |
+| `version_id` | string | Older immutable version to materialize. |
+| `version_url` | string | Version manifest URL. |
+| `extract_root` | string | Destination directory for assembled files. |
 
 ---
 
-### distribute_project
+## coverage checklist
 
-Download and extract a project ZIP.
+Dispatcher entries covered from `agent/src/owlette_service.py`:
 
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"distribute_project"` | |
-| `project_url` | string | Direct download URL |
-| `project_name` | string | ZIP filename |
-| `extract_path` | string | Target directory (optional, default: ~/Documents/OwletteProjects) |
-| `verify_files` | array[string] | Files to verify after extraction (optional) |
-| `distribution_id` | string | Links to project_distributions collection |
+`restart_process`, `start_process`, `kill_process`, `stop_process`,
+`toggle_autolaunch`, `set_launch_mode`, `update_config`, `install_software`,
+`update_owlette`, `cancel_installation`, `uninstall_software`,
+`cancel_uninstall`, `refresh_software_inventory`, `distribute_project`,
+`cancel_distribution`, `mcp_tool_call`, `capture_screenshot`,
+`reboot_machine`, `shutdown_machine`, `cancel_reboot`,
+`dismiss_reboot_pending`, `provision_cortex_key`, `start_live_view`,
+`stop_live_view`, `apply_display_topology`, `enumerate_display_modes`,
+`ack_display_topology`, and `test_display_apply`.
 
----
+Router entries covered from `agent/src/sync_commands.py`:
 
-## system commands
-
-### reboot_machine
-
-Reboot the Windows machine.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"reboot_machine"` | |
-| `delay` | number | Seconds before reboot (default: 0) |
-
----
-
-### shutdown_machine
-
-Shut down the Windows machine.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"shutdown_machine"` | |
-| `delay` | number | Seconds before shutdown (default: 0) |
-
----
-
-### update_owlette
-
-Self-update the agent.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"update_owlette"` | |
-| `installer_url` | string | URL to new installer |
-| `version` | string | Target version number |
-
----
-
-### cancel_reboot
-
-Cancel a scheduled reboot or shutdown.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"cancel_reboot"` | |
-
----
-
-### refresh_software_inventory
-
-Refresh the software inventory snapshot for this machine.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"refresh_software_inventory"` | |
-
----
-
-### cancel_distribution
-
-Cancel an in-progress project distribution.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"cancel_distribution"` | |
-| `distribution_id` | string | Distribution to cancel |
-
----
-
-### cancel_uninstall
-
-Cancel an in-progress software uninstall.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"cancel_uninstall"` | |
-| `deployment_id` | string | Deployment to cancel uninstall for |
-
----
-
-## ai/cortex commands
-
-### mcp_tool_call
-
-Execute an MCP tool call from Cortex.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"mcp_tool_call"` | |
-| `tool_name` | string | MCP tool name (e.g., "get_system_info") |
-| `arguments` | object | Tool-specific arguments |
-| `chat_id` | string | Chat session ID |
-
-**Result**: JSON-encoded tool response in the `result` field.
-
----
-
-### provision_cortex_key
-
-Provision an LLM API key for local Cortex (on-machine AI agent).
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | `"provision_cortex_key"` | |
-| `api_key` | string | Encrypted LLM API key |
-| `provider` | string | `"anthropic"` or `"openai"` |
+`sync_pull`, `cancel_sync`, and `rollback_to_version`.

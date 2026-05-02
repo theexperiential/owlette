@@ -135,9 +135,9 @@ full documentation is available at **[theexperiential.github.io/owlette](https:/
 - [agent guide](https://theexperiential.github.io/owlette/agent/) — installation, configuration, system tray, troubleshooting
 - [dashboard guide](https://theexperiential.github.io/owlette/dashboard/) — monitoring, process management, views
 - [remote deployment](https://theexperiential.github.io/owlette/dashboard/deployments/) — silent software installation across machines
-- [project distribution](https://theexperiential.github.io/owlette/dashboard/project-distribution/) — sync project files across your fleet
+- [project distribution](https://theexperiential.github.io/owlette/dashboard/roost/) — sync project files across your fleet
 - [cortex ai & tools](https://theexperiential.github.io/owlette/reference/cortex-tools/) — AI capabilities and tool reference
-- [API reference](https://theexperiential.github.io/owlette/reference/api/) — 63+ endpoints with OpenAPI docs
+- [API reference](https://theexperiential.github.io/owlette/api/reference/) — 63+ endpoints with OpenAPI docs
 - [architecture](https://theexperiential.github.io/owlette/architecture/) — system design and data flow
 - [authentication](https://theexperiential.github.io/owlette/reference/authentication/) — auth methods, device code pairing, tokens
 

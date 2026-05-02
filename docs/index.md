@@ -5,6 +5,8 @@ hide:
 
 # owlette
 
+## overview
+
 ### attention is all you need
 
 owlette is a cloud-connected Windows process management and remote deployment system. Built for managing TouchDesigner installations, digital signage, kiosks, and media servers — it keeps your machines running and your processes alive, from anywhere.
@@ -33,7 +35,7 @@ owlette is three things working together:
 
     ---
 
-    An AI-powered chat interface that connects to your machines through natural language. Query system info, restart processes, capture screenshots, and troubleshoot issues — all through conversation with 29 specialized tools. Autonomous mode auto-investigates crashes without human intervention.
+    An AI-powered chat interface that connects to your machines through natural language. Query system info, restart processes, capture screenshots, and troubleshoot issues through conversation. See the [cortex tools reference](reference/cortex-tools.md) for the current tool list. Autonomous mode auto-investigates crashes without human intervention.
 
     [:octicons-arrow-right-24: meet cortex](dashboard/cortex.md)
 
@@ -48,7 +50,7 @@ owlette is three things working together:
 | :material-restart: | **Auto-restart crashed processes** | Agent detects crashes within 10 seconds and restarts applications automatically |
 | :material-monitor: | **Monitor machines remotely** | Real-time CPU, memory, disk, and GPU metrics from any browser |
 | :material-download: | **Deploy software remotely** | Push installers to multiple machines with silent installation |
-| :material-folder-sync: | **Distribute project files** | Sync ZIP archives across your fleet using your own file hosting |
+| :material-folder-sync: | **Distribute roost versions** | Publish content-addressed, R2-backed project content as immutable versions across your fleet |
 | :material-chat: | **Talk to your machines** | Use Cortex AI to query, control, and troubleshoot via natural language |
 | :material-shield-account: | **Manage users and roles** | Admin panel for user management, site assignment, and access control |
 | :material-bell: | **Get alerted** | Email and webhook notifications when machines go offline or processes crash |
@@ -77,8 +79,8 @@ owlette is three things working together:
 ## requirements
 
 - **Agent**: Windows 10 or later
-- **Dashboard**: Any modern browser (deployed to Railway or self-hosted)
-- **Backend**: Firebase project (Firestore + Authentication)
+- **Dashboard**: Any modern browser (deployed to Railway or self-hosted with Node.js)
+- **Backend**: Firebase project (Firestore + Authentication) and Cloudflare R2 storage for roost content
 - **Optional**: Resend account for email alerts
 
 ---

@@ -1,652 +1,598 @@
 # firestore data model
 
-Complete schema for all Firestore collections and documents.
+This page maps the Firestore collections that Owlette currently reads or
+writes. The important split is access path:
 
----
+- **client/rules-visible** paths are covered by `firestore.rules` and can be
+  read or written by browser or agent Firebase clients when the rule allows it.
+- **server-only Admin SDK** paths are intentionally denied by rules, or fall
+  through to the deny-all rule. Route handlers, Cloud Functions, and server
+  workers use the Admin SDK for these paths.
+- **legacy** paths still exist for older dashboard, agent, or Cortex flows but
+  are not the model new docs should teach first.
+- **current public API** paths are the storage models behind public API routes.
+  API routes enforce auth and scope before touching Firestore.
 
-## collection hierarchy
+## client/rules-visible
+
+These paths are explicitly matched in `firestore.rules`.
 
 ```
 firestore/
-├── sites/{siteId}/
-│   ├── machines/{machineId}/
-│   │   ├── presence              (single document)
-│   │   ├── status                (single document)
-│   │   ├── commands/
-│   │   │   ├── pending/{cmdId}
-│   │   │   └── completed/{cmdId}
-│   │   ├── screenshots/{screenshotId}
-│   │   ├── installed_software/{softwareId}
-│   │   ├── metrics_history/{bucketId}   (YYYY-MM-DD daily buckets)
-│   │   ├── logs/{logId}                 (machine-level application logs)
-│   │   └── cortex/
-│   │       └── active-chat              (single document, local Cortex streaming)
-│   ├── deployments/{deployId}
-│   ├── project_distributions/{distId}
-│   ├── installer_templates/{tplId}
-│   ├── project_templates/{tplId}
-│   ├── logs/{logId}
-│   ├── webhooks/{webhookId}       (webhook notification configs)
-│   ├── settings/
-│   │   ├── llm                   (single document)
-│   │   └── cortex                (single document, autonomous config)
-│   ├── cortex-events/{eventId}   (autonomous investigation records)
-│   └── cortex-state/
-│       └── lock                  (single document, concurrency control)
-│
-├── config/{siteId}/
-│   ├── machines/{machineId}      (single document)
-│   └── schedule_presets/{presetId}
-│
-├── users/{userId}
-│   ├── passkeys/{credentialId}   (WebAuthn credentials)
-│   ├── api_keys/{keyId}
-│   └── settings/
-│       ├── llm
-│       └── preferences
-│
-├── chats/{chatId}                (cortex conversations)
-│   └── messages/{messageId}
-├── system_presets/{presetId}     (global deployment presets)
-├── api_keys/{keyHash}             (fast-lookup index for user API keys)
-├── agent_tokens/{registrationCode}
-├── agent_refresh_tokens/{tokenHash}
-├── device_codes/{phrase}         (device-code pairing)
-├── mfa_pending/{userId}
-├── webauthn_challenges/{challengeId}
-├── installer_uploads/{uploadId}  (temporary, during installer upload)
-├── bug_reports/{reportId}
-└── installer_metadata/
-    ├── latest                    (single document)
-    └── data/versions/{version}
+|-- sites/{siteId}
+|   |-- machines/{machineId}
+|   |   |-- commands/pending
+|   |   |-- commands/completed
+|   |   |-- screenshots/{screenshotId}
+|   |   |-- installed_software/{softwareId}
+|   |   |-- hardware/{docId}
+|   |   `-- metrics_history/{bucketId}
+|   |-- deployments/{deploymentId}
+|   |-- installer_templates/{templateId}
+|   |-- project_templates/{templateId}
+|   |-- project_distributions/{distributionId}
+|   |-- roosts/{roostId}
+|   |   |-- versions/{versionId}
+|   |   `-- target_state/{machineId}
+|   |-- webhooks/{webhookId}
+|   |-- logs/{logId}
+|   |-- audit_log/{entryId}
+|   `-- settings/{settingId}
+|-- config/{siteId}
+|   |-- machines/{machineId}
+|   |-- schedule_presets/{presetId}
+|   |-- reboot_presets/{presetId}
+|   `-- project_distribution_presets/{presetId}
+|-- users/{userId}
+|   |-- api_keys/{keyId}
+|   |-- settings/{settingId}
+|   `-- devicePrefs/{docId}
+|-- installer_metadata/{document=**}
+|-- system_presets/{presetId}
+|-- api_keys/{keyHash}
+|-- agent_tokens/{tokenId}
+|-- agent_refresh_tokens/{tokenHash}
+|-- device_codes/{phrase}
+`-- chats/{chatId}
+    `-- messages/{messageId}
 ```
 
----
+### `sites/{siteId}`
 
-## sites/{siteId}
+Top-level site document. Site reads require `canAccessSite(siteId)`. Direct
+create, update, and delete are service-account only.
 
-Top-level site document.
+| field | type | notes |
+| --- | --- | --- |
+| `name` | string | Site display name. |
+| `owner` | string | UID of the user who created or owns the site. |
+| `createdAt` | timestamp | Site creation time. |
+| `timezone` | string | IANA timezone used by site-scoped scheduling surfaces. |
+| `tier` / `plan` | string | Pricing or quota tier, depending on caller generation. |
+| `roostEnabled` | boolean | Site-level roost kill switch. Missing or `true` means enabled. |
 
-| field | type | description |
-|-------|------|-------------|
-| `name` | string | Display name (e.g., "NYC Office") |
-| `owner` | string | UID of the user who created the site |
-| `createdAt` | timestamp | When the site was created |
-| `roostEnabled` | boolean | Per-site Roost distribution kill switch. Absent/`true` = enabled; `false` pauses new Roost web and agent sync work for the site. |
+### `sites/{siteId}/machines/{machineId}`
 
----
+Machine presence, status, metrics, process status, reboot state, live-view
+state, and capability flags live on the machine document itself. There are no
+current `presence` or `status` child documents.
 
-## sites/{siteId}/machines/{machineId}/presence
+Agents can read and write only their own machine document. Site members can
+read machine documents for sites they can access. Control-plane writes from the
+web go through API routes.
 
-Agent heartbeat — updated at an adaptive interval (5s / 30s / 120s depending on activity).
+| field | type | notes |
+| --- | --- | --- |
+| `machineId` | string | Hostname / machine identifier. |
+| `siteId` | string | Owning site ID. |
+| `online` | boolean | Agent-reported online flag. The dashboard also checks heartbeat age. |
+| `lastHeartbeat` | timestamp | Updated with each heartbeat/metrics write. |
+| `agent_version` | string | Agent build version. |
+| `machine_timezone` | string | Legacy Windows timezone label. |
+| `machine_timezone_iana` | string | IANA timezone reported by newer agents. |
+| `cortexEnabled` | boolean | Per-machine Cortex delivery kill switch. Missing means enabled. |
+| `cortexStatus` | map | Local Cortex status and heartbeat fields. |
+| `rebooting`, `shuttingDown` | boolean | Current machine power-operation flags. |
+| `rebootScheduledAt`, `shutdownScheduledAt` | timestamp/number | Countdown anchors used by the dashboard. |
+| `rebootPending` | map | `{ active, processName, reason, timestamp }`. |
+| `rebootState` | map | Last fired schedule entry plus current reboot attempt. |
+| `lastScreenshot` | map/null | Latest screenshot pointer surfaced by live view. |
+| `liveView` | map | `{ active, interval, startedAt, expiresAt }` when live view is running. |
+| `capabilities` | map | Feature gates such as `displayRemoteApply`. |
+| `metrics` | map | Current metrics payload described below. |
 
-| field | type | description |
-|-------|------|-------------|
-| `online` | boolean | Whether the machine is connected |
-| `lastHeartbeat` | timestamp | Last heartbeat time (server timestamp) |
-| `agent_version` | string | Agent version (e.g., "2.1.8") |
-| `os` | string | OS description (e.g., "Windows 11 Pro 10.0.22631") |
-| `cortexEnabled` | boolean | Per-machine Cortex kill switch. When `false`, web + agent reject all LLM tool-call delivery (manual and autonomous). Absent/`true` = enabled. |
+Current metrics use schema version 2 and are nested on the machine document:
 
----
+| field | type | notes |
+| --- | --- | --- |
+| `metrics.schemaVersion` | number | Current value is `2`. |
+| `metrics.profileHash` | string/null | Matches `hardware/profile.signatureHash`. |
+| `metrics.timestamp` | timestamp | Metrics write time. |
+| `metrics.cpus` | map | CPU metrics keyed by profile ID. |
+| `metrics.memory` | map | Memory percent and used GB. |
+| `metrics.disks` | map | Disk usage keyed by profile ID. |
+| `metrics.diskio` | map | Per-volume IO metrics. |
+| `metrics.gpus` | map | GPU metrics keyed by profile ID. |
+| `metrics.nics` | map | Network interface throughput keyed by profile ID. |
+| `metrics.network` | map | Ping, packet loss, gateway, and network health fields. |
+| `metrics.primary` | map | Current primary CPU/disk/GPU/NIC IDs. |
+| `metrics.processes` | map | Runtime process status map from the agent. |
+| `metrics.displayDriftCount` | number | Count of monitors that drift from assigned topology. |
 
-## sites/{siteId}/machines/{machineId}/status
+Legacy singular `metrics.cpu`, `metrics.disk`, and `metrics.gpu` are deleted
+by current agents after writing v2 metrics. The dashboard still shims older
+cached shapes during rollout windows.
 
-System metrics — updated alongside each heartbeat (adaptive interval).
+### `sites/{siteId}/machines/{machineId}/commands/{commandDoc}`
 
-| field | type | description |
-|-------|------|-------------|
-| `cpu` | number | CPU usage percentage (0-100) |
-| `memory` | number | RAM usage percentage (0-100) |
-| `disk` | number | Primary disk usage percentage (0-100) |
-| `gpu` | number | GPU usage percentage (0-100) |
-| `cpu_model` | string | CPU model name |
-| `processes` | map | Per-process status map (see below) |
+Command queues use two singleton documents:
 
-### processes map
+- `commands/pending`
+- `commands/completed`
+
+Each document stores command IDs as top-level map fields. A pending document
+looks like this:
 
 ```json
 {
-  "TouchDesigner": {
-    "status": "RUNNING",
-    "pid": 12345,
-    "uptime": 3600
+  "restart_DESKTOP01_1712000000000": {
+    "type": "restart_process",
+    "status": "pending",
+    "createdAt": "<server timestamp>",
+    "expiresAt": "<timestamp>",
+    "auditCorrelationId": "optional",
+    "process_name": "TouchDesigner"
   }
 }
 ```
 
----
-
-## sites/{siteId}/machines/{machineId}/commands/pending/{commandId}
-
-Pending command from dashboard.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | string | Command type (see [Agent Commands](agent-commands.md)) |
-| `timestamp` | number | Unix timestamp (milliseconds) |
-| `status` | string | Always `"pending"` |
-| _...additional fields_ | varies | Command-specific data (e.g., `process_name`, `installer_url`) |
-
----
-
-## sites/{siteId}/machines/{machineId}/commands/completed/{commandId}
-
-Completed command result.
-
-| field | type | description |
-|-------|------|-------------|
-| `type` | string | Original command type |
-| `result` | string | Result message or error |
-| `status` | string | `"completed"` or `"failed"` |
-| `completedAt` | timestamp | When the command finished |
-
----
-
-## sites/{siteId}/machines/{machineId}/screenshots/{screenshotId}
-
-Screenshot captures from remote machines.
-
-| field | type | description |
-|-------|------|-------------|
-| `url` | string | Public Firebase Storage URL to the screenshot image |
-| `timestamp` | number | Capture time (Unix milliseconds) |
-| `sizeKB` | number | File size in kilobytes |
-
----
-
-## sites/{siteId}/machines/{machineId}/installed_software/{softwareId}
-
-Windows software inventory synced from the agent via registry scan.
-
-| field | type | description |
-|-------|------|-------------|
-| `name` | string | Display name from Windows registry |
-| `version` | string | Version string (may be empty) |
-| `publisher` | string | Publisher/manufacturer name |
-| `install_location` | string | Installation directory path |
-| `uninstall_command` | string | Uninstall command from registry |
-| `installer_type` | string | Detected type: `inno`, `nsis`, `msi`, `custom` |
-| `registry_key` | string | Registry subkey name for reference |
-| `detected_at` | timestamp | Server timestamp of detection |
-
----
-
-## sites/{siteId}/machines/{machineId}/metrics_history/{bucketId}
-
-Time-series metrics for sparkline charts. One document per day, keyed by `YYYY-MM-DD`.
-
-| field | type | description |
-|-------|------|-------------|
-| `samples` | array | Time-series metric samples (see below) |
-| `meta.lastSample` | timestamp | Last sample timestamp |
-| `meta.sampleCount` | number | Total samples in bucket |
-| `meta.resolution` | string | Aggregation resolution |
-
-### sample object
-
-```json
-{
-  "t": 1712000000000,
-  "c": 42.1,
-  "m": 61.3,
-  "d": 55.0,
-  "g": 12.4,
-  "ct": 68.0,
-  "gt": 54.0
-}
-```
-
-| key | description |
-|-----|-------------|
-| `t` | Timestamp (Unix ms) |
-| `c` | CPU usage (%) |
-| `m` | Memory usage (%) |
-| `d` | Disk usage (%) |
-| `g` | GPU usage (%) |
-| `ct` | CPU temperature (°C) |
-| `gt` | GPU temperature (°C) |
-
----
-
-## config/{siteId}/machines/{machineId}
-
-Process configuration synced between agent and dashboard.
-
-| field | type | description |
-|-------|------|-------------|
-| `version` | string | Config schema version |
-| `processes` | array | Array of process objects |
-
-### process object
-
-```json
-{
-  "name": "TouchDesigner",
-  "exe_path": "C:\\Program Files\\...",
-  "file_path": "",
-  "command_line_args": "",
-  "autolaunch": true,
-  "priority": "Normal",
-  "visibility": "Normal",
-  "launch_delay": 0,
-  "init_time": 10,
-  "relaunch_attempts": 5
-}
-```
-
----
-
-## config/{siteId}/schedule_presets/{presetId}
-
-Reusable process schedule presets scoped to a site.
-
-| field | type | description |
-|-------|------|-------------|
-| `name` | string | Preset display name |
-| `schedule.days` | array[string] | Days of week: `["mon", "tue", ...]` |
-| `schedule.time` | string | Time in `HH:MM` format |
-| `enabled` | boolean | Whether the preset is active |
-| `createdAt` | timestamp | Creation time |
-| `updatedAt` | timestamp | Last update time |
-
----
-
-## users/{userId}
-
-User account document.
-
-| field | type | description |
-|-------|------|-------------|
-| `email` | string | User's email address |
-| `displayName` | string | Full name (optional) |
-| `role` | string | `"member"`, `"admin"`, or `"superadmin"` — see [user management](../dashboard/admin/user-management.md#the-three-role-model) for capabilities per tier |
-| `sites` | array[string] | Assigned site IDs. Members get read-only access; admins get site-scoped write access. Superadmins ignore this array — they implicitly access every site. |
-| `createdAt` | timestamp | Registration date |
-| `mfaEnabled` | boolean | Whether 2FA is active |
-| `mfaSecret` | string | Encrypted TOTP secret (if MFA enabled) |
-| `mfaBackupCodes` | array[string] | Hashed backup codes |
-| `passkeyEnrolled` | boolean | Whether user has registered passkeys |
-
-### users/{userId}/passkeys/{credentialId}
-
-WebAuthn credential for passkey authentication.
-
-| field | type | description |
-|-------|------|-------------|
-| `credentialPublicKey` | string | Base64URL-encoded public key |
-| `counter` | number | Signature counter (for clone detection) |
-| `transports` | array[string] | `["internal", "usb", "ble", "nfc"]` |
-| `deviceType` | string | `"singleDevice"` or `"multiDevice"` |
-| `backedUp` | boolean | Whether credential is synced (e.g., iCloud Keychain) |
-| `friendlyName` | string | User-assigned label (e.g., "MacBook Pro") |
-| `createdAt` | timestamp | Registration date |
-| `lastUsedAt` | timestamp | Last authentication date |
-
-### users/{userId}/api_keys/{keyId}
-
-User-scoped API keys for external integrations.
-
-| field | type | description |
-|-------|------|-------------|
-| `name` | string | Human-readable label |
-| `keyHash` | string | SHA-256 hash of the actual key value |
-| `keyPrefix` | string | First 11 chars of key for display (e.g., `owk_abc1234`) |
-| `createdAt` | number | Creation timestamp (Unix ms) |
-| `lastUsedAt` | number\|null | Last usage timestamp (null if never used) |
-
-### users/{userId}/settings/preferences
-
-| field | type | description |
-|-------|------|-------------|
-| `temperatureUnit` | string | `"C"` or `"F"` (default: `"C"`) |
-| `timezone` | string | IANA timezone for the user (e.g. `America/New_York`). Default: browser-detected. Used when `timeDisplayMode === "user"` |
-| `timeFormat` | string | `"12h"` or `"24h"` (default: `"12h"`) |
-| `timeDisplayMode` | string | `"user"` / `"machine"` / `"site"` — which timezone actor to render absolute times in (default: `"machine"`). See [Timezones](../dashboard/timezones.md) |
-| `healthAlerts` | boolean | Receive machine offline emails (default: `true`) |
-| `processAlerts` | boolean | Receive process crash emails (default: `true`) |
-| `thresholdAlerts` | boolean | Receive emails when health metrics exceed thresholds (default: `true`) |
-| `cortexAlerts` | boolean | Receive emails when Cortex escalates unresolved issues (default: `true`) |
-| `mutedMachines` | string[] | Machine IDs to suppress all alerts for (default: `[]`) |
-| `alertCcEmails` | string[] | Additional CC recipients for alert emails (default: `[]`) |
-| `statsExpanded` | boolean | Whether stats section is expanded in card view (default: `false`) |
-| `processesExpanded` | boolean | Whether process list is expanded in card view (default: `false`) |
-
-### users/{userId}/settings/llm
-
-| field | type | description |
-|-------|------|-------------|
-| `provider` | string | `"anthropic"` or `"openai"` |
-| `encryptedApiKey` | string | AES-encrypted API key |
-| `model` | string | Model ID (optional) |
-| `updatedAt` | timestamp | Last update time |
-
----
-
-## api_keys/{keyHash}
-
-Fast-lookup index for API key authentication. Keyed by SHA-256 hash of the raw key.
-
-| field | type | description |
-|-------|------|-------------|
-| `userId` | string | Owner's user ID |
-| `keyId` | string | Reference to `users/{userId}/api_keys/{keyId}` |
-
-!!! warning "Server-only"
-    Not accessible from any client. Only the server API can read/write.
-
----
-
-## agent_tokens/{registrationCode}
-
-One-time registration code for agent OAuth.
-
-| field | type | description |
-|-------|------|-------------|
-| `siteId` | string | Target site |
-| `createdBy` | string | UID of admin who created it |
-| `createdAt` | timestamp | Creation time |
-| `expiresAt` | timestamp | Expiry (24 hours after creation) |
-| `used` | boolean | Whether the code has been exchanged |
-| `status` | string | `"pending"` |
-
-!!! warning "Server-only"
-    This collection is not accessible from any client (web or agent). Only the Admin SDK can read/write.
-
----
-
-## agent_refresh_tokens/{tokenHash}
-
-Hashed refresh tokens for agent authentication.
-
-| field | type | description |
-|-------|------|-------------|
-| `siteId` | string | Agent's site |
-| `machineId` | string | Agent's machine hostname |
-| `agentUid` | string | Firebase UID assigned to agent |
-| `version` | string | Agent version when token was created |
-| `createdAt` | timestamp | Token creation time |
-| `lastUsed` | timestamp | Last refresh time |
-
-!!! warning "Server-only"
-    This collection is not accessible from any client. Only the Admin SDK can read/write.
-
----
-
-## device_codes/{phrase}
-
-Device code pairing state for the 3-word phrase auth flow. Documents are **ephemeral** — they are created when the agent requests a pairing phrase and deleted atomically when the agent polls and consumes the tokens, or when the code expires.
-
-| field | type | description |
-|-------|------|-------------|
-| `deviceCodeHash` | string | SHA-256 hash of the opaque device code |
-| `machineId` | string\|null | Machine hostname (null for pre-authorized codes) |
-| `version` | string\|null | Agent version |
-| `status` | string | `"pending"` or `"authorized"` (document deleted on consumption or expiry) |
-| `createdAt` | timestamp | Creation time |
-| `expiresAt` | timestamp | Expiry (10 minutes) |
-| `siteId` | string\|null | Site ID (populated on authorization) |
-| `authorizedBy` | string\|null | Admin UID who authorized |
-| `authorizedAt` | timestamp\|null | Authorization timestamp |
-| `accessToken` | string\|null | Firebase access token (populated on authorization, never persisted — document deleted on poll) |
-| `refreshToken` | string\|null | Refresh token (populated on authorization, never persisted — document deleted on poll) |
-
-!!! warning "Server-only"
-    Not accessible from any client. Only the server API can read/write.
-
-!!! info "Lifecycle"
-    `pending` → `authorized` (tokens written) → **deleted** (agent polls and consumes tokens). Expired documents are also deleted on first access. No documents should persist in this collection long-term.
-
----
-
-## mfa_pending/{userId}
-
-Temporary MFA setup state.
-
-| field | type | description |
-|-------|------|-------------|
-| `secret` | string | TOTP secret (plaintext, temporary) |
-| `email` | string | User's email |
-| `createdAt` | timestamp | When setup was initiated |
-| `expiresAt` | timestamp | Expiry (10 minutes) |
-
----
-
-## webauthn_challenges/{challengeId}
-
-Temporary WebAuthn challenge for passkey registration or authentication.
-
-| field | type | description |
-|-------|------|-------------|
-| `challenge` | string | Base64URL-encoded challenge |
-| `userId` | string\|null | User ID (null for authentication, userId for registration) |
-| `type` | string | `"registration"` or `"authentication"` |
-| `createdAt` | timestamp | When challenge was generated |
-| `expiresAt` | timestamp | Expiry (10 minutes) |
-
-!!! warning "Single-use"
-    Challenges are deleted immediately after verification. Expired challenges are also rejected.
-
----
-
-## installer_uploads/{uploadId}
-
-Temporary document tracking an in-progress installer upload. Cleaned up after finalization.
-
-| field | type | description |
-|-------|------|-------------|
-| `version` | string | Semver version string (e.g., `"2.5.5"`) |
-| `fileName` | string | Installer filename (must end in `.exe`) |
-| `storagePath` | string | Firebase Storage destination path |
-| `userId` | string | Admin UID who initiated the upload |
-| `releaseNotes` | string\|null | Optional release notes |
-| `setAsLatest` | boolean | Whether to mark as latest on finalization |
-| `status` | string | `"pending"`, `"completed"`, or `"expired"` |
-| `createdAt` | number | Creation timestamp (Unix ms) |
-| `expiresAt` | number | Signed URL expiry timestamp |
-| `completedAt` | number | Finalization timestamp (added on completion) |
-| `file_size` | number | File size in bytes (added on finalization) |
-
----
-
-## installer_metadata/latest
-
-Current latest installer version.
-
-| field | type | description |
-|-------|------|-------------|
-| `version` | string | Version number (e.g., "2.1.8") |
-| `download_url` | string | Firebase Storage download URL |
-| `file_size` | number | File size in bytes |
-| `release_date` | timestamp | Upload date |
-| `checksum_sha256` | string | SHA-256 hash of the installer |
-| `release_notes` | string | Change description (optional) |
-| `uploaded_by` | string | Admin UID |
-
----
-
-## sites/{siteId}/deployments/{deploymentId}
-
-Software deployment record.
-
-| field | type | description |
-|-------|------|-------------|
-| `name` | string | Deployment name |
-| `installer_name` | string | Filename |
-| `installer_url` | string | Download URL |
-| `silent_flags` | string | Installation flags |
-| `verify_path` | string | Post-install verification path |
-| `targets` | array | `[{machineId, status, progress}]` |
-| `status` | string | `pending`, `in_progress`, `completed`, `failed` |
-| `createdBy` | string | UID |
-| `createdAt` | timestamp | Creation time |
-
----
-
-## sites/{siteId}/project_distributions/{distributionId}
-
-Project file distribution record.
-
-| field | type | description |
-|-------|------|-------------|
-| `name` | string | Distribution name |
-| `project_name` | string | ZIP filename (from URL) |
-| `project_url` | string | Download URL |
-| `extract_path` | string | Target extraction path |
-| `verify_files` | array[string] | Files to verify after extraction |
-| `targets` | array | `[{machineId, status, progress}]` |
-| `status` | string | `pending`, `in_progress`, `completed`, `failed`, `partial` |
-| `createdAt` | timestamp | Creation time |
-
----
-
-## sites/{siteId}/logs/{logId}
-
-Event log entries.
-
-| field | type | description |
-|-------|------|-------------|
-| `timestamp` | timestamp | Event time |
-| `action` | string | Event type (e.g., `process_crashed`) |
-| `level` | string | `info`, `warning`, `error` |
-| `machineId` | string | Source machine (optional) |
-| `processName` | string | Related process (optional) |
-| `details` | map | Additional context |
-
----
-
-## sites/{siteId}/webhooks/{webhookId}
-
-Webhook notification configurations.
-
-| field | type | description |
-|-------|------|-------------|
-| `url` | string | Webhook delivery URL (must be HTTPS) |
-| `name` | string | Display name |
-| `events` | array[string] | Subscribed events: `process.crashed`, `machine.offline`, etc. |
-| `enabled` | boolean | Whether the webhook is active |
-| `secret` | string | HMAC-SHA256 signing secret (hex-encoded) |
-| `createdAt` | timestamp | Creation time |
-| `createdBy` | string | Admin UID who created it |
-| `lastTriggered` | timestamp\|null | Last delivery attempt |
-| `lastStatus` | number | Last HTTP response status (0 if never fired) |
-| `failCount` | number | Consecutive delivery failures (auto-disables at 10) |
-
----
-
-## sites/{siteId}/settings/cortex
-
-Autonomous Cortex configuration. Created per-site, disabled by default.
-
-| field | type | description |
-|-------|------|-------------|
-| `autonomousEnabled` | boolean | Whether autonomous mode is active |
-| `directive` | string | Custom directive text (empty = use default) |
-| `maxTier` | number | Max tool tier (1=read-only, 2=+process mgmt, 3=+shell) |
-| `autonomousModel` | string\|null | Override LLM model for autonomous mode |
-| `maxEventsPerHour` | number | Incoming event throttle per site |
-| `cooldownMinutes` | number | Per machine+process cooldown between investigations |
-| `escalationEmail` | boolean | Email admins when Cortex escalates |
-| `updatedAt` | timestamp | Last update |
-
----
-
-## sites/{siteId}/cortex-events/{eventId}
-
-Autonomous investigation records — one per triggered event.
-
-| field | type | description |
-|-------|------|-------------|
-| `machineId` | string | Machine that triggered the event |
-| `machineName` | string | Machine display name |
-| `processName` | string | Process involved |
-| `eventType` | string | `process_crash` or `process_start_failed` |
-| `errorMessage` | string | Error details from agent |
-| `timestamp` | timestamp | When the event was received |
-| `chatId` | string | Links to `chats/{chatId}` |
-| `status` | string | `investigating`, `resolved`, `escalated`, `failed` |
-| `summary` | string | One-line outcome summary |
-| `actions` | array | Tool calls made: `[{tool, params, timestamp}]` |
-| `resolvedAt` | timestamp | When investigation completed |
-| `durationMs` | number | Total investigation time |
-
----
-
-## sites/{siteId}/cortex-state/lock
-
-Concurrency control for autonomous sessions.
-
-| field | type | description |
-|-------|------|-------------|
-| `activeSessions` | number | Currently running autonomous investigations |
-| `lastUpdated` | timestamp | Last lock update |
-
----
-
-## system_presets/{presetId}
-
-Global software deployment presets (e.g., Owlette Agent self-update, TouchDesigner). Admin-managed, read-only to users.
-
-| field | type | description |
-|-------|------|-------------|
-| `name` | string | Human-readable preset name |
-| `software_name` | string | Name of the software being deployed |
-| `category` | string | Software category |
-| `description` | string | Description of what the preset installs |
-| `installer_name` | string | Installer filename |
-| `installer_url` | string | Download URL (must be HTTPS) |
-| `silent_flags` | string | Silent installation flags |
-| `verify_path` | string\|null | Path to verify installation success |
-| `close_processes` | array[string] | Processes to close before installing |
-| `timeout_seconds` | number\|null | Installation timeout override |
-| `order` | number | Sort order in UI |
-| `createdAt` | timestamp | Creation time |
-
----
-
-## chats/{chatId}
-
-Cortex conversation records (both user-initiated and autonomous).
-
-| field | type | description |
-|-------|------|-------------|
-| `userId` | string | User who created the chat (absent for autonomous) |
-| `siteId` | string | Site context |
-| `targetType` | string | `machine` or `site` |
-| `targetMachineId` | string\|null | Target machine ID |
-| `machineName` | string\|null | Machine display name |
-| `title` | string | Conversation title (first message, truncated to 100 chars) |
-| `source` | string | `user` or `autonomous` |
-| `eventId` | string\|null | Links to `cortex-events/{eventId}` (autonomous only) |
-| `autonomousSummary` | string\|null | Quick outcome summary (autonomous only) |
-| `category` | string\|null | LLM-generated topic category |
-| `createdAt` | timestamp | When the chat started |
-| `updatedAt` | timestamp | Last activity |
-
-### chats/{chatId}/messages/{messageId}
-
-| field | type | description |
-|-------|------|-------------|
-| `role` | string | `"user"` or `"assistant"` |
-| `content` | string | Message text content |
-| `createdAt` | timestamp | Message creation time |
-
----
-
-## bug_reports/{reportId}
-
-Bug reports and feedback submissions from users and agents.
-
-| field | type | description |
-|-------|------|-------------|
-| `source` | string | `"agent"` or `"web"` |
-| `category` | string | `"bug"`, `"feature_request"`, `"other"`, `"compliment"`, `"rant"` |
-| `title` | string | Report title (max 200 chars) |
-| `description` | string | Full description (max 50,000 chars) |
-| `status` | string | `"new"` |
-| `createdAt` | timestamp | Submission time |
-| `userId` | string | Reporting user ID |
-| `userEmail` | string | User email (empty for agent reports) |
-| `browserUA` | string | Browser user agent string |
-| `pageUrl` | string | Page URL at time of report |
-| `appVersion` | string | App version at time of report |
+Completed, failed, cancelled, and in-progress states are written into
+`commands/completed` under the same command ID:
+
+| field | type | notes |
+| --- | --- | --- |
+| `status` | string | `completed`, `failed`, `cancelled`, or an intermediate status such as `downloading`. |
+| `result` | any | Present for successful or cancelled terminal states. |
+| `error` | string | Present for failed terminal states. |
+| `completedAt` | timestamp | Terminal completion time. |
+| `updatedAt` | timestamp | Progress update time. |
+| `progress` | number | Optional progress percentage. |
+| `deployment_id` | string | Optional deployment correlation. |
+| `type` | string | Original command type when supplied by the handler. |
+
+The server writes pending commands with `writeCommandFanOut()`. The agent
+listens to `commands/pending`, processes unseen map entries, writes the result
+to `commands/completed`, then deletes the command field from `commands/pending`.
+
+### `sites/{siteId}/machines/{machineId}/hardware/{docId}`
+
+Hardware profile documents are readable by site members and writable by the
+agent for its own machine.
+
+| doc ID | writer | notes |
+| --- | --- | --- |
+| `profile` | agent | Static CPU, disk, GPU, and NIC inventory. |
+| `display` | agent | Live display topology and assignment/drift data. |
+| `displayModes` | agent | On-demand display mode catalogue. |
+
+`hardware/profile` uses this shape:
+
+| field | type | notes |
+| --- | --- | --- |
+| `schemaVersion` | number | Hardware profile schema. |
+| `signatureHash` | string | Stable hash used by metrics joins. |
+| `capturedAt` | timestamp | Capture time. |
+| `agentVersion` | string | Agent version that captured the profile. |
+| `cpus`, `disks`, `gpus`, `nics` | array | Static device profile arrays. |
+
+### `sites/{siteId}/machines/{machineId}/screenshots/{screenshotId}`
+
+Screenshot history is written by server APIs after upload. Site members can
+read the history gallery.
+
+| field | type | notes |
+| --- | --- | --- |
+| `url` | string | Storage URL for the image. |
+| `timestamp` | timestamp/number | Capture time. |
+| `sizeKB` | number | Image size in KB. |
+| `storagePath` | string | Backing object path when present. |
+
+### `sites/{siteId}/machines/{machineId}/installed_software/{softwareId}`
+
+Agent-written software inventory from the Windows registry.
+
+| field | type | notes |
+| --- | --- | --- |
+| `name`, `version`, `publisher` | string | Registry metadata. |
+| `install_location` | string | Installation directory. |
+| `uninstall_command` | string | Uninstall command from registry. |
+| `installer_type` | string | Detected installer family. |
+| `registry_key` | string | Registry key reference. |
+| `detected_at` | timestamp | Inventory write time. |
+
+### `sites/{siteId}/machines/{machineId}/metrics_history/{bucketId}`
+
+Daily metric history buckets, keyed by `YYYY-MM-DD`, are written by Cloud
+Functions from machine metric updates.
+
+| field | type | notes |
+| --- | --- | --- |
+| `samples` | array | Time-series samples. |
+| `meta.lastSample` | timestamp | Last sample time. |
+| `meta.sampleCount` | number | Number of samples in the bucket. |
+| `meta.resolution` | string | Aggregation resolution. |
+
+### `sites/{siteId}/deployments/{deploymentId}`
+
+Installer deployment records. Site members can read them. Server APIs create,
+update, cancel, retry, uninstall, and delete them.
+
+| field | type | notes |
+| --- | --- | --- |
+| `name` | string | Deployment display name. |
+| `installer_name`, `installer_url` | string | Installer metadata. |
+| `silent_flags` | string | Optional installer flags. |
+| `verify_path` | string/null | Optional post-install check path. |
+| `close_processes` | array | Processes to close before install. |
+| `parallel_install` | boolean | Whether targets can install in parallel. |
+| `targets` | array | `{ machineId, status, progress, error? }` rows. |
+| `status` | string | `pending`, `in_progress`, `completed`, `failed`, `partial`, `cancelled`, or `uninstalled`. |
+| `createdBy`, `createdAt`, `updatedAt` | string/timestamp | Audit metadata. |
+
+Target status values include `pending`, `closing_processes`, `downloading`,
+`installing`, `completed`, `failed`, `cancelled`, and `uninstalled`.
+
+### `sites/{siteId}/installer_templates/{templateId}`
+
+Site-scoped deployment templates managed through server APIs and dashboard
+actions.
+
+| field | type | notes |
+| --- | --- | --- |
+| `name` | string | Template display name. |
+| `installer_name`, `installer_url` | string | Installer source. |
+| `silent_flags` | string | Suggested installer flags. |
+| `verify_path` | string/null | Optional verification path. |
+| `close_processes` | array | Process names to close before install. |
+| `timeout_seconds` | number/null | Optional install timeout. |
+| `createdAt`, `updatedAt` | timestamp | Timestamps. |
+
+### `sites/{siteId}/roosts/{roostId}`
+
+The v2 project distribution model. Site members can create roost shells and
+edit non-pointer metadata. Version pointer changes are server-mediated through
+API routes.
+
+| field | type | notes |
+| --- | --- | --- |
+| `schemaVersion` | number | Current roost schema is `2`. |
+| `name` | string | Display name. |
+| `targets` | string[] | Target machine IDs. |
+| `extractPath` | string | Destination root on target machines. |
+| `versionCounter` | number | Monotonic per-roost version number counter. |
+| `currentVersionId` | string/null | Current immutable version ID. |
+| `currentVersionNumber` | number/null | Denormalized current version number. |
+| `currentVersionDescription` | string/null | Denormalized current version description. |
+| `previousVersionId` | string/null | Previous head before the last publish/rollback. |
+| `versionUrl` | string/null | Unsigned R2 object URL for the current version body. |
+| `totalFiles`, `totalSize` | number | Current version summary. |
+| `createdAt`, `createdBy`, `updatedAt` | timestamp/string | Audit metadata. |
+
+Direct Firestore create requires `name`, `targets`, `createdAt`, and
+`schemaVersion: 2`, and forbids client-supplied version pointer fields. Direct
+update cannot change pointer fields or `schemaVersion`.
+
+### `sites/{siteId}/roosts/{roostId}/versions/{versionId}`
+
+Immutable version metadata. Version bodies live in R2, not in this document.
+Client-side create, update, and delete are denied by rules.
+
+| field | type | notes |
+| --- | --- | --- |
+| `versionId` | string | Content-addressed SHA-256 of the canonical version body. |
+| `versionNumber` | number | Monotonic, 1-indexed number within the roost. |
+| `description` | string | Publish description. |
+| `versionUrl` | string | R2 object URL for the version body. |
+| `createdAt`, `createdBy` | timestamp/string | Author metadata. |
+| `totalSize`, `totalFiles` | number | Version summary. |
+| `parentVersionId` | string/null | Head version before this publish. |
+
+### `sites/{siteId}/roosts/{roostId}/target_state/{machineId}`
+
+Agent-reported per-target reality for roost sync. The agent for the specific
+machine can create or update its own document; site members can read or delete
+stale documents.
+
+| field | type | notes |
+| --- | --- | --- |
+| `reportedVersionId` | string | Version the agent is syncing or has committed. |
+| `status` | string | `pending`, `downloading`, `assembling`, `committed`, `failed`, or `cancelled`. |
+| `updatedAt` | timestamp | Last report time. |
+| `error` | string | Truncated error message on failure. |
+| `chunks_fetched`, `chunks_total`, `chunks_dedup` | number | Download progress counters. |
+| `files_total`, `files_assembled`, `files_skipped` | number | Assembly progress counters. |
+
+### `sites/{siteId}/logs/{logId}`
+
+Site-level event logs. This is the current dashboard log collection. It is not
+under each machine document.
+
+| field | type | notes |
+| --- | --- | --- |
+| `timestamp` | timestamp | Event time. |
+| `action` | string | Event type, such as deployment or process action. |
+| `level` | string | `info`, `warning`, or `error`. |
+| `machineId`, `machineName` | string | Source machine. |
+| `processName` | string | Optional process. |
+| `details` | map/string | Optional details. |
+| `userId` | string | Optional initiating user. |
+| `screenshotUrl` | string | Optional screenshot pointer. |
+
+### `sites/{siteId}/audit_log/{entryId}`
+
+Security-boundary audit records. Site admins can read. Direct client writes are
+denied; server handlers write through audit helpers.
+
+### `sites/{siteId}/webhooks/{webhookId}`
+
+Site-scoped webhook configuration. Site members can read. All writes go
+through server APIs.
+
+| field | type | notes |
+| --- | --- | --- |
+| `url`, `name` | string | Delivery endpoint and label. |
+| `events` | string[] | Subscribed webhook events. |
+| `enabled` | boolean | Delivery enabled flag. |
+| `secret` | string | HMAC secret stored server-side. |
+| `createdAt`, `createdBy`, `updatedAt` | timestamp/string | Metadata. |
+| `lastTriggered`, `lastStatus`, `failCount` | timestamp/number | Delivery health fields. |
+
+Delivery history is stored under webhook subcollections by server APIs and is
+not directly covered by a client rules stanza.
+
+### `sites/{siteId}/settings/{settingId}`
+
+Site settings such as shared LLM/Cortex configuration. Site members can read;
+server APIs write.
+
+Known document IDs include:
+
+- `llm`
+- `cortex`
+
+### `config/{siteId}/machines/{machineId}`
+
+Process configuration and machine-level persistent settings. Agents can read
+and write their own config; server APIs also write config changes.
+
+| field | type | notes |
+| --- | --- | --- |
+| `version` | string | Config schema version. |
+| `processes` | array | Process config objects. |
+| `rebootSchedule` | map | Offline-capable scheduled reboot config. |
+| `displays` | map | Display assignment and auto-restore settings. |
+| `environment`, `sentry`, `watchdog` | map | User-editable top-level config sections. |
+
+Current process config uses `time_delay`, `time_to_init`, and
+`relaunch_attempts`.
+
+### config preset collections
+
+| path | purpose | direct access |
+| --- | --- | --- |
+| `config/{siteId}/schedule_presets/{presetId}` | Process schedule presets. | Site members read; server writes. |
+| `config/{siteId}/reboot_presets/{presetId}` | Reboot schedule presets. | Site members read; server writes. |
+| `config/{siteId}/project_distribution_presets/{presetId}` | Legacy distribution presets. | Site members read; server writes. |
+
+### `users/{userId}`
+
+User profile and access metadata. Users can read their own document;
+superadmins can read every user. Users can self-create only as `member`.
+Server APIs manage roles, site assignments, and deletion.
+
+| field | type | notes |
+| --- | --- | --- |
+| `email` | string | User email. |
+| `displayName` | string | Optional display name. |
+| `role` | string | `member`, `admin`, or `superadmin`. |
+| `sites` | string[] | Site IDs assigned to members/admins. |
+| `createdAt` | timestamp | Creation time. |
+| `mfaEnabled`, `mfaSecret`, `mfaBackupCodes` | boolean/string/array | MFA state. |
+| `passkeyEnrolled` | boolean | Whether passkeys exist. |
+
+### user subcollections
+
+| path | purpose | direct access |
+| --- | --- | --- |
+| `users/{userId}/api_keys/{keyId}` | User-visible API key inventory metadata. | User can read own keys; direct writes denied. |
+| `users/{userId}/settings/{settingId}` | User preferences and encrypted LLM settings. | User can read/write own settings. |
+| `users/{userId}/devicePrefs/{docId}` | Per-device UI preferences. | User can read/write own device preferences. |
+
+The raw API key hash lookup lives at top-level `api_keys/{keyHash}` and is
+server-only.
+
+### `installer_metadata/{document=**}`
+
+Publicly readable installer metadata. Server APIs write latest and version
+records.
+
+Common documents:
+
+- `installer_metadata/latest`
+- `installer_metadata/data/versions/{version}`
+
+### `system_presets/{presetId}`
+
+Platform-level deployment preset library. Authenticated users can read.
+Server APIs create, update, and delete.
+
+| field | type | notes |
+| --- | --- | --- |
+| `name`, `software_name`, `category`, `description` | string | Display metadata. |
+| `installer_name`, `installer_url` | string | Installer source. |
+| `silent_flags` | string | Suggested silent flags. |
+| `verify_path` | string/null | Optional install verification path. |
+| `close_processes` | string[] | Processes to close before installing. |
+| `timeout_seconds` | number/null | Optional timeout. |
+| `order` | number | Sort order. |
+| `createdAt`, `updatedAt` | timestamp | Timestamps. |
+
+## server-only Admin SDK
+
+These collections are written or read through server routes, Cloud Functions,
+or server workers. Direct browser and agent access is denied by explicit rules
+or by the catch-all deny rule.
+
+| path | purpose |
+| --- | --- |
+| `api_keys/{keyHash}` | Fast API-key lookup table with key hash, user, key ID, scopes, expiry, and revocation metadata. |
+| `agent_tokens/{tokenId}` | Legacy agent registration token state. |
+| `agent_refresh_tokens/{tokenHash}` | Hashed agent refresh tokens with site and machine binding. |
+| `device_codes/{phrase}` | 10-minute device-code pairing phrase state. Deleted after agent poll/consume or expiry. |
+| `mfa_pending/{userId}` | Temporary MFA setup secret and expiry. |
+| `webauthn_challenges/{challengeId}` | Single-use passkey registration/authentication challenge. |
+| `users/{userId}/passkeys/{credentialId}` | Passkey credentials and metadata, managed by passkey APIs. |
+| `installer_uploads/{uploadId}` | Temporary installer upload sessions. |
+| `bug_reports/{reportId}` | User/agent feedback and bug submissions. |
+| `global/security_config` | Platform security kill-switch config. |
+| `global/audit_log/entries/{entryId}` | Platform audit records for non-site-scoped actions. |
+| `siteChunks/{digest}` | Emulator/test chunk-presence rows used when R2 is not available. |
+
+### `siteChunks/{digest}`
+
+Production chunk bytes live in Cloudflare R2. In emulator/E2E mode,
+`hasChunk()` checks this top-level collection instead.
+
+| field | type | notes |
+| --- | --- | --- |
+| `siteId` | string | Site that owns the seeded chunk. |
+| `hash` | string | Bare 64-hex SHA-256 digest. |
+| `size` | number | Seeded size in bytes. |
+| `createdAt` | timestamp | Seed time. |
+
+## legacy
+
+These paths may still be present during migration windows. New integrations
+should use the current public API storage models and routes instead.
+
+### `sites/{siteId}/project_distributions/{distributionId}`
+
+Legacy project distribution records. They coexist with roost v2 during the
+cutover but are not the current project sync model.
+
+| field | type | notes |
+| --- | --- | --- |
+| `name` | string | Distribution name. |
+| `project_name`, `project_url` | string | Legacy package metadata. |
+| `extract_path` | string | Destination path. |
+| `targets` | array | Per-machine target rows. |
+| `status` | string | `pending`, `in_progress`, `completed`, `failed`, `partial`, or `cancelled`. |
+| `createdAt`, `createdBy`, `updatedAt` | timestamp/string | Metadata. |
+
+### `sites/{siteId}/project_templates/{templateId}`
+
+Legacy reusable project distribution templates. Current roost upload/publish
+flows do not depend on this path.
+
+### `config/{siteId}/project_distribution_presets/{presetId}`
+
+Legacy distribution preset library. It remains rules-visible for older UI
+flows and built-in preset overrides.
+
+### `chats/{chatId}` and `chats/{chatId}/messages/{messageId}`
+
+Legacy Cortex conversation storage. Rules still expose this collection to the
+owning user, and older Cortex categorization paths still read/write it.
+
+| field | type | notes |
+| --- | --- | --- |
+| `userId` | string | Conversation owner. |
+| `siteId` | string | Site context. |
+| `targetType` | string | `machine` or `site`. |
+| `targetMachineId`, `machineName` | string/null | Target context. |
+| `title`, `category` | string | Conversation label and LLM category. |
+| `source` | string | `user` or `autonomous`. |
+| `eventId`, `autonomousSummary` | string/null | Autonomous event linkage. |
+| `createdAt`, `updatedAt` | timestamp | Timestamps. |
+
+Messages under `messages/{messageId}` contain `role`, `content`, and
+`createdAt`.
+
+### legacy/local Cortex bridge paths
+
+Older local Cortex bridge code references these paths:
+
+- `sites/{siteId}/machines/{machineId}/cortex/active-chat`
+- `sites/{siteId}/cortex-events/{eventId}`
+- `sites/{siteId}/cortex-state/lock`
+
+They are not the current public chat API storage model. Treat them as legacy
+dashboard/agent internals unless the owning Cortex code is explicitly being
+updated.
+
+### machine-level log shipping
+
+The older log-shipping helper attempts to write
+`sites/{siteId}/machines/{machineId}/logs/{logId}`. Current rules do not
+define that subcollection, and current dashboard activity logs use
+`sites/{siteId}/logs/{logId}`.
+
+## current public API
+
+These storage models sit behind public API routes. Clients should call the API
+surface rather than reading or writing these collections directly.
+
+### public chat storage
+
+Current public Cortex chat APIs use `chat_conversations/{conversationId}`.
+The most recent messages are embedded on the conversation document; older
+messages spill to `chat_conversations/{conversationId}/chat_messages/{messageId}`
+after the embedded array reaches 200 entries.
+
+| field | type | notes |
+| --- | --- | --- |
+| `conversationId` | string | `conv_` plus random URL-safe ID. |
+| `title` | string | Normalized title, max 100 chars. |
+| `siteId` | string | Site context. |
+| `machineId` | string | Optional target machine. |
+| `ownerUid` | string | Conversation owner. |
+| `createdAt`, `updatedAt` | timestamp | Timestamps. |
+| `deletedAt` | timestamp | Soft-delete marker when present. |
+| `messages` | array | Embedded most-recent messages. |
+| `messageCount` | number | Lifetime message count, including spilled rows. |
+
+Embedded and spilled message rows contain:
+
+| field | type | notes |
+| --- | --- | --- |
+| `role` | string | `user`, `assistant`, or `system`. |
+| `content` | string | Message text. |
+| `timestamp` | timestamp | Message write time. |
+| `spilledAt` | timestamp | Present only on spilled rows. |
+
+### roost quota and usage
+
+Quota and usage storage is server-managed. Public routes such as
+`GET /api/sites/{siteId}/quota` and
+`GET /api/sites/{siteId}/quota/history` expose scoped views.
+
+| path | writer/reader | purpose |
+| --- | --- | --- |
+| `sites/{siteId}/roost/quota` | Cloud Functions and quota API | Current storage tier, used bytes, plan limit, alarm state, and reconciliation time. |
+| `sites/{siteId}/roost/quota/pending/{reservationId}` | quota pre-upload check | Temporary pending byte reservations. |
+| `sites/{siteId}/quota_alarms/{alarmId}` | quota reconciler | Alarm threshold crossings with `threshold` and `firedAt`. |
+| `sites/{siteId}/usage_events/{eventId}` | telemetry function | Raw usage events: `class_a_op`, `class_b_op`, `egress`, or `storage_snapshot`. |
+| `sites/{siteId}/usage_summaries/{yyyyMm}` | telemetry aggregator | Month-to-date counters and cost rollups. |
+
+### roost version bodies and chunk bytes
+
+Firestore stores roost metadata and pointers only. Actual version bodies and
+chunk bytes live in R2:
+
+| object | storage | key shape |
+| --- | --- | --- |
+| chunks | R2 content bucket | `project-content/{siteId}/{firstTwoHex}/{digest}` |
+| version bodies | R2 manifests bucket | `project-manifests/{siteId}/{roostId}/{versionId}.json` |
+
+The Firestore `roosts/{roostId}/versions/{versionId}` document records
+metadata and the R2 URL; it does not contain the full version body.

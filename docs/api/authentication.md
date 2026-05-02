@@ -61,7 +61,7 @@ This split is intentional: a leaked API key should not be able to mint a broader
 
 ## verifying identity
 
-`GET /api/whoami` returns the resolved caller, active key context, scope list, rate-limit summary, quota summary, and primary site when available.
+`GET /api/whoami` returns the resolved caller, active key context, scope list, rate-limit summary, quota summary, and primary site when available. The `rateLimit` block is a metadata hint, not the active enforcement counter. Use `RateLimit-*` response headers on actual API calls for enforced limits and live counters.
 
 ```bash
 curl -fsS "https://owlette.app/api/whoami" \
@@ -91,7 +91,7 @@ Representative API-key response:
   "rateLimit": {
     "tier": "api",
     "limitPerMinute": 600,
-    "note": "use RateLimit-* response headers on actual API calls for live counters"
+    "note": "metadata hint only; use RateLimit-* response headers on actual API calls for enforced limits and live counters"
   },
   "quota": {
     "siteId": "kiosk-fleet-01",
@@ -170,6 +170,11 @@ Every scoped key expires. Current defaults are:
 Rotate a key when the secret might have leaked or when your normal rotation schedule requires it. Rotation returns a new raw key once and leaves the key's scope policy intact.
 
 Revoke a key when the integration is retired or when rotation is not enough. Revocation is permanent; create a new key if access is needed again.
+
+Self-service lifecycle endpoints require a signed-in user session or Firebase ID token:
+
+- `POST /api/keys/{keyId}/rotate` issues a replacement key with the same scopes and environment, returns the new raw key once, and leaves the previous key valid only for the rotation grace window.
+- `DELETE /api/keys/{keyId}` revokes the key immediately by deleting its user record and lookup entry.
 
 ---
 

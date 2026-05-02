@@ -76,6 +76,8 @@ Rules:
 - Reapply the same filters when requesting the next page.
 - Stop when the next token is empty.
 
+`GET /api/roosts/{roostId}/versions/{versionRef}/files` currently uses an integer offset internally, so operators may see numeric-looking page tokens when debugging that route. Client code must still treat those tokens as opaque cursors: store and round-trip the returned token unchanged, and do not calculate, increment, or infer positions from it.
+
 ---
 
 ## compatibility exceptions

@@ -1,122 +1,137 @@
 # webhooks
 
-Send event notifications to external systems via HTTPS webhooks. Use webhooks to integrate owlette with Slack, Discord, PagerDuty, or any HTTP endpoint.
+Send site events to external systems over HTTPS. Use webhooks for Slack,
+Discord, PagerDuty, CI/CD, or any receiver that can validate a signed JSON
+POST.
 
-**Location**: Admin Panel → Webhooks
+**Locations**: admin panel -> webhooks, settings -> webhooks
 
 ---
 
-## overview
+## surfaces and access
 
-Webhooks fire when events occur in your site — process crashes, machines going offline, connection failures. Each webhook is configured with a URL and a set of subscribed events. owlette sends a signed HTTP POST to your URL with event details.
+| surface | route | who uses it | shipped controls |
+|---------|-------|-------------|------------------|
+| admin panel -> webhooks | `/admin/webhooks` | superadmins managing webhooks across sites | site selector, add webhook, enable/disable switch, edit, test, delete |
+| settings -> webhooks | `/settings/webhooks` | users managing webhooks for a site they can administer | create webhook, pause/resume, rotate secret, delete, delivery history, delivery retry |
+
+The admin panel is the cross-site control surface. If more than one site is
+available, choose the site first, then manage that site's webhook list.
+Members without webhook-management permission should treat the page as
+read-only; create, edit, delete, retry, and secret rotation require site write
+access.
 
 ---
 
 ## creating a webhook
 
-1. Navigate to **Admin Panel → Webhooks**
-2. Click **"Add Webhook"**
-3. Configure:
-    - **Name**: Descriptive label (e.g., "Slack Alerts")
-    - **URL**: Your endpoint (must be HTTPS)
-    - **Events**: Select which events trigger this webhook
-4. Click **Create**
+From the admin panel:
 
-owlette generates an **HMAC-SHA256 signing secret** — save this to verify webhook authenticity on your end.
+1. Open **admin panel -> webhooks**.
+2. Select the site, if the selector is shown.
+3. Click **add webhook**.
+4. Enter a name, an HTTPS URL, and at least one event.
+5. Click **create webhook**.
+6. Copy the signing secret from the **webhook created** dialog.
+
+From site settings:
+
+1. Open **settings -> webhooks**.
+2. Select the site, if prompted.
+3. Click **create webhook**.
+4. Enter an endpoint URL, optional description, and one or more events.
+5. Copy the signing secret from the banner shown after creation.
+
+Signing secrets are shown once when a webhook is created. They are not returned
+by the list, detail, or edit endpoints.
 
 ---
 
-## event types
+## event catalog
+
+The subscription UI accepts the current roost webhook event catalog:
 
 | event | description |
 |-------|-------------|
-| `process.crashed` | A configured process exited unexpectedly |
-| `machine.offline` | A machine's heartbeat went stale (3+ minutes) |
-| `connection_failure` | An agent lost connection to Firestore |
+| `version.published` | A roost version is published |
+| `version.rolled_back` | A roost version is rolled back |
+| `deployment.started` | A deployment rollout starts |
+| `deployment.completed` | A deployment rollout completes |
+| `deployment.failed` | A deployment rollout fails |
+| `machine.online` | A machine reports online again |
+| `machine.offline` | A machine is reported offline |
+| `chunk.garbage_collected` | Unused chunk data is removed |
+| `chunk.verify_failed` | Chunk verification fails |
+| `quota.warning` | Site usage approaches quota |
+| `quota.exceeded` | Site usage exceeds quota |
+| `api_key.used` | An API key is used |
+| `api_key.expired` | An API key expires |
+
+Older process and connection-failure alert names are not part of this
+subscription catalog.
 
 ---
 
-## payload format
+## delivery status
 
-Webhooks receive a JSON POST with this structure:
+Webhook cards show the endpoint URL, selected events, enabled or paused state,
+last delivery time, last delivery status, and failure count when available.
 
-```json
-{
-  "event": "process.crashed",
-  "timestamp": "2026-03-22T10:30:00Z",
-  "site": {
-    "id": "nyc-office",
-    "name": "NYC Office"
-  },
-  "data": {
-    "machineId": "DESKTOP-ABC123",
-    "machineName": "Gallery PC 1",
-    "processName": "TouchDesigner",
-    "errorMessage": "Process exited with code -1073741819"
-  }
-}
-```
+In the admin panel, the **test** action sends a synthetic test payload to the
+selected webhook and writes the result back to the card. Use it to check that
+the URL is reachable; it does not prove automatic roost event dispatch is
+enabled.
 
----
-
-## signature verification
-
-Every webhook request includes an `X-owlette-Signature` header containing an HMAC-SHA256 signature of the request body, using your webhook's secret as the key.
-
-**Verify in Node.js:**
-
-```javascript
-const crypto = require('crypto');
-
-function verifyWebhook(body, signature, secret) {
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(body)
-    .digest('hex');
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expected)
-  );
-}
-```
-
----
-
-## testing webhooks
-
-1. Find your webhook in the list
-2. Click **"Test"**
-3. owlette sends a test payload to your URL
-4. Check the response status (shown in the webhook list)
+In settings -> webhooks, expand a card to view recent deliveries. Delivery
+history is retained for 30 days. Failed or pending records can be retried from
+the expanded delivery list.
 
 ---
 
 ## managing webhooks
 
-| action | description |
-|--------|-------------|
-| **Enable/Disable** | Toggle a webhook on or off without deleting |
-| **Delete** | Remove a webhook permanently |
-| **Test** | Send a test payload |
+| action | admin panel | settings page |
+|--------|-------------|---------------|
+| Enable, disable, pause, or resume | switch on each row | pause/resume button |
+| Edit URL or event selection | pencil button | recreate or use API edit flows |
+| Test endpoint reachability | **test** button | use `/api/webhooks/probe` or the CLI trigger flow |
+| Rotate signing secret | not shown | rotate-secret button; the old secret remains valid for 24 hours |
+| View delivery history | not shown | expand the webhook card |
+| Retry a delivery | not shown | retry button in recent deliveries |
+| Delete | trash button, then confirm | trash button, then confirm |
+
+Deleted webhooks stop receiving deliveries. Delivery history is preserved for
+the 30-day audit window.
 
 ---
 
-## auto-disable
+## receiver verification
 
-If a webhook fails to deliver **10 consecutive times**, it is automatically disabled. The `failCount` and `lastStatus` fields in Firestore track delivery health.
+The current webhook API and probe flow sign requests with:
 
-To re-enable: fix the endpoint, then toggle the webhook back on.
+```text
+Roost-Signature: t=<unix-seconds>,v1=<hex>
+```
+
+Verify the signature against the exact raw request body and reject signatures
+outside the five-minute replay window. Use the receiver examples in
+[API webhooks](../../api/webhooks.md#signature-format) for implementation
+details.
+
+The admin panel's legacy **test** path may send generic test requests with an
+`X-owlette-Signature: sha256=<hex>` header. If you use that button while
+building a generic receiver, strip and validate the `sha256=` prefix before
+constant-time comparison.
 
 ---
 
-## webhook vs email alerts
+## preview limits
 
-| | email alerts | webhooks |
-|---|---|---|
-| **Setup** | Built-in, Resend API key only | Custom endpoint required |
-| **Speed** | 1-2 minutes | Near-instant |
-| **Integration** | Inbox only | Slack, Discord, PagerDuty, anything |
-| **Filtering** | Per-user preferences | Per-webhook event subscription |
-| **Verification** | N/A | HMAC-SHA256 signing |
+Subscription management, one-time secret display, secret rotation, delivery
+history, manual retry, and probe testing are live. Automatic production
+dispatch for the roost lifecycle event catalog is still being wired, so use
+probe or CLI trigger flows when validating a new receiver before relying on
+automatic event delivery.
 
-Use both — emails for humans, webhooks for automation.
+Use email alerts for human notification paths and webhooks for automation that
+can tolerate at-least-once delivery and deduplicate by delivery id.

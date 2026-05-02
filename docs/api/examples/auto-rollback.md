@@ -1,12 +1,12 @@
 # auto-rollback on deployment.failed webhook
 
-a small node/express webhook receiver that listens for `deployment.failed` events from roost, verifies the `Roost-Signature` hmac, calls `POST /api/roosts/{roostId}/rollback`, and notifies a slack channel. deploy it anywhere that can accept https requests — vercel, cloudflare workers, or a plain node server behind nginx. the same code shape runs in all three with minor entrypoint tweaks.
+a small node/express webhook receiver that listens for `deployment.failed` events from roost, verifies the `Roost-Signature` hmac, calls `POST /api/roosts/{roostId}/rollback`, and notifies a slack channel. automatic production delivery of `deployment.failed` is still future/launch-blocked; use this receiver with `POST /api/webhooks/probe` to test signature handling and keep real rollback execution operator-gated until event fanout is enabled. deploy it anywhere that can accept https requests - vercel, cloudflare workers, or a plain node server behind nginx. the same code shape runs in all three with minor entrypoint tweaks.
 
 ## required env vars
 
 - `ROOST_TOKEN` — api key with `roost:<id>:rollback` scope. if you want this receiver to cover every roost in a site, use `site:<id>:write` or a wildcard roost scope.
 - `ROOST_BASE` — `https://owlette.app` or `https://dev.owlette.app`.
-- `ROOST_SIGNING_SECRET` — the `signingSecret` returned from `POST /api/webhooks` when you subscribed to `deployment.failed`. store it once; never logged.
+- `ROOST_SIGNING_SECRET` — a 32+ character secret shared with `POST /api/webhooks/probe` while testing. when automatic dispatch is enabled, use the `signingSecret` returned from `POST /api/webhooks`. store it once; never logged.
 - `SLACK_WEBHOOK_URL` — incoming-webhook url from a slack app (`https://hooks.slack.com/services/...`).
 - `AUTO_ROLLBACK_SITE_IDS` — comma-separated allowlist of site ids this receiver is allowed to rollback for. guard against a key scoped too broadly.
 
@@ -15,7 +15,7 @@ a small node/express webhook receiver that listens for `deployment.failed` event
 ```js
 #!/usr/bin/env node
 // server.mjs — runs on any https-reachable node host.
-// POST /webhooks/roost  (configure this url when creating the webhook subscription)
+// POST /webhooks/roost  (point /api/webhooks/probe at this url while testing)
 
 import express from 'express';
 import crypto from 'node:crypto';
@@ -75,8 +75,13 @@ async function postSlack(blocks, fallbackText) {
   }
 }
 
-async function rollbackRoost(roostId, siteId, currentVersionId) {
-  const idem = `auto-rollback-${roostId}-${Date.now()}`;
+function autoRollbackIdempotencyKey(roostId, deliveryId, eventId) {
+  const stableId = deliveryId || eventId;
+  if (!stableId) return null;
+  return `auto-rollback-${roostId}-${stableId}`;
+}
+
+async function rollbackRoost(roostId, siteId, idempotencyKey) {
   // no targetVersion → the server rolls back to previousVersionId.
   // to go further back, pass { targetVersion: 3 } or { targetVersion: "first" }.
   const res = await fetch(`${ROOST_BASE}/api/roosts/${roostId}/rollback`, {
@@ -85,8 +90,7 @@ async function rollbackRoost(roostId, siteId, currentVersionId) {
       authorization: `Bearer ${ROOST_TOKEN}`,
       'roost-version': ROOST_VERSION,
       'content-type': 'application/json',
-      'idempotency-key': idem,
-      ...(currentVersionId ? { 'if-match': currentVersionId } : {}),
+      'idempotency-key': idempotencyKey,
     },
     body: JSON.stringify({ siteId }),
   });
@@ -109,8 +113,9 @@ app.post('/webhooks/roost', async (req, res) => {
   let payload;
   try { payload = JSON.parse(rawBody.toString('utf8')); }
   catch { return res.status(400).json({ error: 'invalid json' }); }
+  const eventId = typeof payload.id === 'string' ? payload.id : null;
 
-  // always 200 fast to avoid webhook retries while we do work; roost retries on non-2xx
+  // always 200 fast so probe/manual delivery records success while we do work.
   res.status(200).json({ received: true });
 
   if (event !== 'deployment.failed') {
@@ -118,9 +123,17 @@ app.post('/webhooks/roost', async (req, res) => {
     return;
   }
 
-  const { roostId, siteId, rolloutId, versionId, versionNumber, failureCount } = payload.data || {};
+  const {
+    roostId, siteId, rolloutId, versionNumber,
+    failureCount, failed, failedMachines,
+  } = payload.data || {};
   if (!roostId || !siteId) {
     console.warn(`malformed deployment.failed payload (delivery ${deliveryId})`);
+    return;
+  }
+  const idempotencyKey = autoRollbackIdempotencyKey(roostId, deliveryId, eventId);
+  if (!idempotencyKey) {
+    console.warn(`missing delivery/event id for idempotency (roost ${roostId})`);
     return;
   }
   if (!ALLOWED_SITES.has(siteId)) {
@@ -128,9 +141,10 @@ app.post('/webhooks/roost', async (req, res) => {
     return;
   }
 
-  console.log(`deployment.failed for roost ${roostId} v${versionNumber} (rollout ${rolloutId}, ${failureCount} machines) — rolling back`);
+  const failedCount = failureCount ?? failed ?? (Array.isArray(failedMachines) ? failedMachines.length : 'unknown');
+  console.log(`deployment.failed for roost ${roostId} v${versionNumber ?? 'unknown'} (rollout ${rolloutId}, ${failedCount} machines) — rolling back`);
 
-  const rollback = await rollbackRoost(roostId, siteId, versionId);
+  const rollback = await rollbackRoost(roostId, siteId, idempotencyKey);
 
   if (rollback.ok) {
     await postSlack([
@@ -139,7 +153,7 @@ app.post('/webhooks/roost', async (req, res) => {
         text: {
           type: 'mrkdwn',
           text: `:rewind: *auto-rollback* — roost \`${roostId}\`\n` +
-                `rollout \`${rolloutId}\` for v${versionNumber} failed on ${failureCount} machine(s); ` +
+                `rollout \`${rolloutId}\` for v${versionNumber ?? 'unknown'} failed on ${failedCount} machine(s); ` +
                 `rolled back to \`${rollback.body.currentVersionId || 'previous'}\`.`,
         },
       },
@@ -169,7 +183,9 @@ app.listen(parseInt(PORT, 10), () => {
 });
 ```
 
-the receiver mounts `express.raw()` (not `express.json()`) on the webhook path because reserialising the payload would change the bytes that `Roost-Signature` was computed over. after verifying the hmac and the 5-minute replay window, it acknowledges with a fast `200` so roost doesn't retry the delivery while the rollback is still in flight, then asynchronously calls `POST /api/roosts/{roostId}/rollback` with an `If-Match` header pinned to the failed rollout's `versionId`. that `If-Match` is the safety net: if someone manually published a fix between the failure and the webhook arriving, the rollback returns `412 version_stale` and the receiver posts a warning to slack rather than clobbering the new publish.
+the receiver mounts `express.raw()` (not `express.json()`) on the webhook path because reserialising the payload would change the bytes that `Roost-Signature` was computed over. after verifying the hmac and the 5-minute replay window, it acknowledges with a fast `200` so roost doesn't retry the delivery while the rollback is still in flight, then asynchronously calls `POST /api/roosts/{roostId}/rollback` with `siteId` in the body and a stable `Idempotency-Key` derived from `Roost-Delivery` or the event `id`.
+
+the rollback api does not currently expose a caller-supplied compare-and-swap guard. if someone publishes after the failed deploy but before this receiver calls rollback, the default `previous` target can roll back that newer publish. keep this as a launch-blocked automation pattern, or add your own operator approval/current-version check before calling `rollbackRoost()`.
 
 ## slack setup
 
@@ -207,7 +223,7 @@ vercel env add ROOST_BASE
 vercel --prod
 ```
 
-register the deployed url (e.g. `https://your-app.vercel.app/api/webhook`) via `POST /api/webhooks` with `events: ["deployment.failed"]`.
+automatic `deployment.failed` delivery is deferred. for now, use `POST /api/webhooks/probe` to send a signed synthetic event to the deployed url (e.g. `https://your-app.vercel.app/api/webhook`) and verify the receiver accepts the signature.
 
 ### option 2 — cloudflare worker
 
@@ -220,7 +236,7 @@ export default {
     if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
     const rawBody = new Uint8Array(await request.arrayBuffer());
     const sigHeader = request.headers.get('roost-signature');
-    // reuse verifySignature / rollbackRoost / postSlack logic, with env.ROOST_TOKEN etc.
+    // reuse verifySignature(), rollbackRoost(), and postSlack() logic, with env.ROOST_TOKEN etc.
     // use `crypto.subtle.importKey` + `crypto.subtle.sign` instead of node:crypto hmac.
     // return new Response(JSON.stringify({received:true}), {status:200});
   },
@@ -238,31 +254,30 @@ node server.mjs
 
 run behind nginx/caddy with a valid tls cert. for production, put it under a process supervisor (`systemd`, `pm2`) and front it with a load balancer if you expect more than one delivery per second.
 
-## register the webhook subscription
+## probe-test the receiver
 
-after deploying, register the endpoint:
+after deploying, fire a signed synthetic event. pass the same `ROOST_SIGNING_SECRET` value that the receiver uses:
 
 ```bash
-curl -fsS "$ROOST_BASE/api/webhooks" \
+curl -fsS "$ROOST_BASE/api/webhooks/probe?siteId=kiosk-fleet-01" \
   -H "Authorization: Bearer $ROOST_TOKEN" \
   -H "Roost-Version: 2026-04-22" \
   -H "Content-Type: application/json" \
-  -H "Idempotency-Key: $(uuidgen)" \
   -d '{
-    "siteId": "kiosk-fleet-01",
     "url": "https://your-app.example.com/webhooks/roost",
-    "events": ["deployment.failed"],
-    "description": "auto-rollback on failed deploy"
+    "event": "deployment.failed",
+    "signingSecret": "'"$ROOST_SIGNING_SECRET"'"
   }'
 ```
 
-the response includes `signingSecret` — copy it once into `ROOST_SIGNING_SECRET`. it's only shown on create; after that you'd have to `POST /api/webhooks/{id}/rotate-secret` to mint a new one.
+the response includes the exact request body, signature, delivery id, and receiver status. automatic subscription delivery should stay launch-blocked until production event fanout is enabled.
 
 ## error handling summary
 
-- signature verification failure → `401` and a warning log. roost treats this as a failed delivery and retries (5 attempts with exponential backoff) before marking the delivery `failed`. a persistent mismatch means your `ROOST_SIGNING_SECRET` is stale — rotate via the webhook's `rotate-secret` endpoint.
+- signature verification failure → `401` and a warning log. probe reports the status directly. once automatic dispatch is enabled, transient failures are retried until the dispatcher's 10-attempt budget is exhausted; most `4xx` responses are treated as permanent failures.
 - stale timestamp (>5min) → `401`. usually clock drift on the receiver host; sync ntp and re-register if needed.
-- rollback `412 version_stale` → someone published between the failure and this rollback. slack is told "manual intervention required" rather than retrying blindly.
-- rollback `409 conflict` (`no_previous_version`) → the failed version was the first ever published. nothing to roll back to; slack warning.
+- rollback race → a newer publish can land between the failed deploy and this rollback call because the rollback api has no caller-supplied current-version guard. keep automatic execution launch-blocked or add your own approval/current-version check.
+- rollback `400 rollback_no_op` → the target version is already current. nothing changed; slack warning.
+- rollback `404 version_not_found` → the requested previous/target version does not exist. nothing to roll back to; slack warning.
 - rollback `403 scope_insufficient` → receiver's key is missing `roost:<id>:rollback`. slack warning; fix the scope in the dashboard.
-- duplicate webhook deliveries (roost retries on non-2xx) → safe because `Idempotency-Key` is derived from `roostId + ms timestamp` which the 24h cache collapses to one rollback, and roost's `Roost-Delivery` header lets you dedupe in your own store if you want even stronger guarantees.
+- duplicate webhook deliveries → safe for identical rollback requests because `Idempotency-Key` is derived from `Roost-Delivery` or the payload `id`, so the 24h cache collapses repeated attempts. store `Roost-Delivery` in your own database if you want receiver-side dedupe before calling the api.

@@ -13,7 +13,7 @@ No registry publish should be run from a local shell unless a package owner expl
 | channel | package | target version | current status |
 |---|---|---:|---|
 | npm CLI | `@owlette/cli` | `1.0.0-rc.0` | metadata prepared; publish pending |
-| npm SDK | `@owlette/sdk` | `1.0.0-rc.0` | metadata prepared; publish pending |
+| npm SDK | `@owlette/sdk` | `1.0.0-rc.1` | metadata prepared; publish pending |
 | PyPI SDK | `owlette-sdk` | `1.0.0rc0` | metadata prepared; publish pending |
 | Homebrew | `owlette` | `1.0.0-rc.0` | blocked until release artifact URL and checksum exist |
 | Scoop | `owlette` | `1.0.0-rc.0` | blocked until release artifact URL and checksum exist |

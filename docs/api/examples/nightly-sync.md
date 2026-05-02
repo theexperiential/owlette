@@ -4,7 +4,7 @@ a node script that runs nightly on a build box, walks a local directory, diffs a
 
 ## required env vars
 
-- `ROOST_TOKEN` — api key with `roost:<id>:write` + `site:<id>:read` scope.
+- `ROOST_TOKEN` — api key with `roost=<id>:read,write` and `site=<id>:write` scopes.
 - `ROOST_BASE` — `https://owlette.app` (prod) or `https://dev.owlette.app`.
 - `ROOST_ID` — target roost id.
 - `ROOST_SITE_ID` — site id hosting the roost.
@@ -75,10 +75,13 @@ async function walk(dir) {
       out.push(...await walk(p));
     } else if (ent.isFile()) {
       const buf = await readFile(p);
+      const hash = createHash('sha256').update(buf).digest('hex');
+      const size = buf.length;
       out.push({
         path: path.relative(WATCH_DIR, p).replaceAll(path.sep, '/'),
-        hash: 'sha256:' + createHash('sha256').update(buf).digest('hex'),
-        size: buf.length,
+        hash,
+        size,
+        chunks: size > 0 ? [{ hash, size }] : [],
         abs: p,
       });
     }
@@ -109,7 +112,7 @@ async function emailAlert(subject, body) {
 
 function buildOciVersion(files) {
   const configBody = JSON.stringify({ syncedAt: new Date().toISOString(), source: WATCH_DIR });
-  const configDigest = 'sha256:' + createHash('sha256').update(configBody).digest('hex');
+  const configDigest = createHash('sha256').update(configBody).digest('hex');
   return {
     schemaVersion: 2,
     mediaType: 'application/vnd.owlette.version.v1+json',
@@ -118,20 +121,24 @@ function buildOciVersion(files) {
       digest: configDigest,
       size: Buffer.byteLength(configBody),
     },
-    layers: files.map(f => ({
-      mediaType: 'application/vnd.owlette.file.v1',
+    files: files.map(f => ({
       path: f.path,
-      digest: f.hash,
       size: f.size,
+      chunks: f.chunks.map(c => ({ hash: c.hash, size: c.size })),
     })),
   };
+}
+
+function fileSignature(file) {
+  return `${file.size}:${(file.chunks || []).map(c => `${c.hash}:${c.size}`).join(',')}`;
 }
 
 async function main() {
   log('info', 'nightly sync started', { watchDir: WATCH_DIR });
 
   // 1. fetch current roost head
-  const roost = await api(`/api/roosts/${ROOST_ID}`);
+  const siteQuery = `siteId=${encodeURIComponent(ROOST_SITE_ID)}`;
+  const roost = await api(`/api/roosts/${ROOST_ID}?${siteQuery}`);
   const currentVersionId = roost.currentVersionId;
 
   // 2. fetch current version file list (paginated) — use the "current" alias
@@ -140,9 +147,9 @@ async function main() {
   if (currentVersionId) {
     let pageToken = '';
     do {
-      const url = `/api/roosts/${ROOST_ID}/versions/current/files?page_size=1000${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''}`;
+      const url = `/api/roosts/${ROOST_ID}/versions/current/files?${siteQuery}&page_size=500${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''}`;
       const page = await api(url);
-      for (const f of page.items) currentMap.set(f.path, f.digest);
+      for (const f of page.files ?? page.items ?? []) currentMap.set(f.path, fileSignature(f));
       pageToken = page.next_page_token;
     } while (pageToken);
   }
@@ -150,8 +157,15 @@ async function main() {
   // 3. walk local tree + compute diff
   const local = await walk(WATCH_DIR);
   const localPaths = new Set(local.map(f => f.path));
-  const changed = local.filter(f => currentMap.get(f.path) !== f.hash);
+  const changed = local.filter(f => currentMap.get(f.path) !== fileSignature(f));
   const removed = [...currentMap.keys()].filter(p => !localPaths.has(p));
+
+  if (local.length === 0 && currentMap.size > 0) {
+    log('error', 'local tree is empty; refusing to publish an empty version', {
+      currentFiles: currentMap.size,
+    });
+    process.exit(1);
+  }
 
   if (changed.length === 0 && removed.length === 0) {
     log('info', 'no changes, skipping publish', {
@@ -164,7 +178,7 @@ async function main() {
   });
 
   // 4. dedup-check changed chunks (batches of 1000)
-  const changedHashes = [...new Set(changed.map(c => c.hash))];
+  const changedHashes = [...new Set(changed.flatMap(c => c.chunks.map(chunk => chunk.hash)))];
   const missing = [];
   for (let i = 0; i < changedHashes.length; i += 1000) {
     const batch = changedHashes.slice(i, i + 1000);
@@ -184,11 +198,10 @@ async function main() {
       const batch = missing.slice(i, i + 1000);
       const { urls } = await api('/api/chunks/upload-urls', {
         method: 'POST',
-        headers: { 'idempotency-key': randomUUID() },
         body: JSON.stringify({ siteId: ROOST_SITE_ID, hashes: batch }),
       });
       for (const h of batch) {
-        const file = changed.find(c => c.hash === h);
+        const file = changed.find(c => c.chunks.some(chunk => chunk.hash === h));
         const put = await fetch(urls[h], {
           method: 'PUT',
           headers: { 'content-type': 'application/octet-stream' },
@@ -207,7 +220,6 @@ async function main() {
     method: 'POST',
     headers: {
       'idempotency-key': randomUUID(),
-      ...(currentVersionId ? { 'if-match': currentVersionId } : {}),
     },
     body: JSON.stringify({
       siteId: ROOST_SITE_ID,

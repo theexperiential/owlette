@@ -2,32 +2,74 @@
 
 webhooks are how roost tells your systems that something happened — a new version published, a deploy failed, a machine dropped offline, a quota alarm tripped. instead of polling the api on a timer, you subscribe a url once and roost posts a signed json event to it when a matching event is dispatched.
 
-**developer preview status**: subscription management, delivery history, manual retry, and `POST /api/webhooks/probe` are public. automatic production event dispatch and SSE event fanout are still deferred; `owlette listen` is a scoped liveness stream for now. Receiver signature verification and probe flows are stable.
+**developer preview status**: subscription management, delivery history, manual retry, and `POST /api/webhooks/probe` are public. automatic production event dispatch and SSE event fanout are still deferred; `owlette listen` is a scoped liveness stream for now. The cloud-function dispatcher that exists today still uses a legacy event catalog and a legacy subscription store, so it is not yet aligned with subscriptions created by the public webhook api. Receiver signature verification and probe flows are stable.
 
 ---
 
 ## what webhooks are
 
-a webhook is an http `POST` that roost sends to a url you control whenever a subscribed event is dispatched for your site. the request body is a json envelope describing the event; the headers carry a signature you verify before trusting the payload. your endpoint returns any `2xx` status to acknowledge receipt — anything else (or a timeout) counts as a failed delivery and is retried once production dispatch is enabled, or when a manual/probe delivery is fired.
+a webhook is an http `POST` that roost sends to a url you control whenever a subscribed event is dispatched for your site. the request body is a json envelope describing the event; the headers carry a signature you verify before trusting the payload. your endpoint returns any `2xx` status to acknowledge receipt. for dispatcher and manual retry records, anything else follows the retry model below; `POST /api/webhooks/probe` reports the result but does not retry.
 
 the model is stripe/github shaped: one subscription per url, each scoped to a site and to an explicit list of event types. secrets are per-subscription, shown once at creation, and rotatable with a grace window.
 
 ---
 
-## event catalog
+## current delivery envelopes
 
-every delivery envelope has the shape:
+Owlette currently has two webhook delivery paths. They are documented separately because the public probe/subscription api and the production dispatcher are not aligned yet.
+
+### probe envelope
+
+`POST /api/webhooks/probe?siteId=<id>` validates the requested event against the public developer-preview catalog and sends a signed, one-shot `POST` to the supplied url. The current probe body includes both a top-level `siteId` and an event `id`:
 
 ```json
 {
   "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y0",
   "event": "version.published",
   "occurredAt": "2026-04-22T15:30:00Z",
+  "siteId": "kiosk-fleet-01",
   "data": { }
 }
 ```
 
-`id` is a ulid unique to the event (use it with `Roost-Delivery` for dedup). `event` is the stable event-type string. `occurredAt` is rfc 3339 utc. `data` is event-specific and documented below.
+`id` is unique to the probe event. `event` is the stable event-type string. `occurredAt` is rfc 3339 utc. `siteId` is the scoped site from the query string. `data` is event-specific and documented below.
+
+### production dispatcher envelope
+
+The current Cloud Functions dispatcher accepts and stores a different envelope:
+
+```json
+{
+  "event": "version.published",
+  "siteId": "kiosk-fleet-01",
+  "occurredAt": "2026-04-22T15:30:00Z",
+  "data": { }
+}
+```
+
+This dispatcher envelope has no top-level `id`. Delivery idempotency is carried by the `Roost-Delivery` header instead. The dispatcher also reads legacy subscription records from `sites/{siteId}/webhook_subscriptions`, while the public api creates subscriptions at `sites/{siteId}/webhooks`; automatic production dispatch to public api-created subscriptions is therefore deferred until those stores are aligned.
+
+---
+
+## event catalog
+
+The public subscription validator and probe endpoint currently accept these developer-preview event names:
+
+- `version.published`, `version.rolled_back`
+- `deployment.started`, `deployment.completed`, `deployment.failed`
+- `machine.online`, `machine.offline`
+- `chunk.garbage_collected`, `chunk.verify_failed`
+- `quota.warning`, `quota.exceeded`
+- `api_key.used`, `api_key.expired`
+
+The production dispatcher currently validates this legacy catalog instead:
+
+- `distribution.queued`, `distribution.started`, `distribution.succeeded`, `distribution.failed`
+- `chunk.uploaded`
+- `version.published`
+- `rollback.executed`
+
+Treat the dispatcher catalog as legacy until production dispatch is aligned with the public subscription api. The examples below show the public probe/subscription catalog and use the probe envelope shape.
 
 ### roost lifecycle
 
@@ -39,6 +81,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y0",
     "event": "roost.created",
     "occurredAt": "2026-04-22T15:30:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
@@ -54,6 +97,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y1",
     "event": "roost.updated",
     "occurredAt": "2026-04-22T15:30:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
@@ -69,6 +113,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y2",
     "event": "roost.deleted",
     "occurredAt": "2026-04-22T15:30:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
@@ -86,6 +131,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y3",
     "event": "version.published",
     "occurredAt": "2026-04-22T15:30:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
@@ -105,6 +151,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y4",
     "event": "version.rolled_back",
     "occurredAt": "2026-04-22T15:35:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
@@ -123,6 +170,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y5",
     "event": "deployment.started",
     "occurredAt": "2026-04-22T15:30:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "rolloutId": "rollout_01HYA8K3R2N7P9Q1S5T6U8V0W2",
       "roostId": "roost_lobby_td",
@@ -141,6 +189,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y6",
     "event": "deployment.completed",
     "occurredAt": "2026-04-22T15:34:12Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "rolloutId": "rollout_01HYA8K3R2N7P9Q1S5T6U8V0W2",
       "roostId": "roost_lobby_td",
@@ -161,6 +210,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y7",
     "event": "deployment.failed",
     "occurredAt": "2026-04-22T15:33:48Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "rolloutId": "rollout_01HYA8K3R2N7P9Q1S5T6U8V0W2",
       "roostId": "roost_lobby_td",
@@ -182,6 +232,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y8",
     "event": "machine.online",
     "occurredAt": "2026-04-22T15:30:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "machineId": "machine-a7f3",
       "siteId": "kiosk-fleet-01",
@@ -198,6 +249,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Y9",
     "event": "machine.offline",
     "occurredAt": "2026-04-22T14:02:12Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "machineId": "machine-a7f3",
       "siteId": "kiosk-fleet-01",
@@ -215,6 +267,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Z0",
     "event": "chunk.garbage_collected",
     "occurredAt": "2026-04-22T03:00:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "digest": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
       "siteId": "kiosk-fleet-01",
@@ -230,6 +283,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Z1",
     "event": "chunk.verify_failed",
     "occurredAt": "2026-04-22T04:15:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "digest": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
       "siteId": "kiosk-fleet-01",
@@ -248,6 +302,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Z2",
     "event": "quota.warning",
     "occurredAt": "2026-04-22T10:00:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "siteId": "kiosk-fleet-01",
       "tier": "pro",
@@ -264,6 +319,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Z3",
     "event": "quota.exceeded",
     "occurredAt": "2026-04-22T11:30:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "siteId": "kiosk-fleet-01",
       "tier": "pro",
@@ -283,6 +339,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Z4",
     "event": "api_key.used",
     "occurredAt": "2026-04-22T15:30:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "keyId": "key_01HXYZA7F3B2C1D0E9F8G7H6J5",
       "keyPrefix": "owk_live_kB8n3p",
@@ -299,6 +356,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "id": "evt_01HYCAM5T4P9R1S3U7V8W0X2Z5",
     "event": "api_key.expired",
     "occurredAt": "2026-07-21T15:30:00Z",
+    "siteId": "kiosk-fleet-01",
     "data": {
       "keyId": "key_01HXYZA7F3B2C1D0E9F8G7H6J5",
       "keyPrefix": "owk_live_kB8n3p",
@@ -459,23 +517,28 @@ echo "ok  delivery=${HTTP_ROOST_DELIVERY:-<none>}  event=$(jq -r '.event // empt
 
 ## delivery headers
 
-every webhook `POST` includes:
+Current delivery paths set slightly different headers.
+
+Probe deliveries include:
 
 - **`Content-Type: application/json`** — body is always a json envelope.
 - **`Roost-Event: <event.name>`** — redundant with the body's `event` field; useful for routing without parsing the body.
-- **`Roost-Delivery: <uuid>`** — unique per delivery attempt (manual retries get a new id; automatic retries of the same attempt do not). use this as your idempotency key on the receiver.
+- **`Roost-Delivery: <uuid>`** — random per probe firing. use this as your idempotency key on the receiver.
 - **`Roost-Signature: t=<unix>,v1=<hex>`** — see signature format above.
-- **`User-Agent: Owlette-Webhooks/1.0`** — stable user agent for allowlisting.
+- **`User-Agent: roost-probe/1.0`** — probe-specific user agent for receiver allowlisting.
+
+Production dispatcher deliveries currently include `Content-Type`, `Roost-Event`, `Roost-Delivery`, and `Roost-Signature`. The dispatcher does not currently set a `User-Agent` header. Its `Roost-Delivery` value is stable for the same event/body across automatic retries and manual retry records.
 
 ---
 
 ## delivery guarantees
 
-The guarantees below describe production event dispatch. In the current developer preview, they apply to manual retry/probe records and to stored delivery-history semantics; automatic event dispatch is deferred.
+The guarantees below describe the current Cloud Functions dispatcher and manual retry records. Automatic event dispatch to public api-created subscriptions is deferred; `POST /api/webhooks/probe` is a one-shot live POST and is not retried or stored in delivery history.
 
 - **at-least-once.** a delivery may arrive more than once if your receiver times out after processing but before returning `2xx`. dedup on `Roost-Delivery`.
-- **retries.** any non-2xx response (or transport error) triggers exponential backoff: 10s, 30s, 2m, 10m, 1h, 6h, 24h. each attempt gets a fresh `Roost-Signature` timestamp but the same `Roost-Delivery` id.
-- **dead letter.** after 10 failed attempts over ~24h the delivery is marked `failed`, the subscription records the failure in its delivery history, and the next fresh event still attempts delivery. 5 consecutive terminal failures pauses the subscription until a manual `PATCH /api/webhooks/{id}` sets `paused: false`.
+- **response handling.** `2xx` succeeds. network errors, `5xx`, `408`, `425`, and `429` are retried. other `4xx` responses are treated as permanent receiver failures and are not retried.
+- **retries.** retried deliveries use exponential backoff with 5s base delay, factor 3, 1h maximum delay, 20% jitter, and 10 total attempts. without jitter the retry delays after failed attempts are roughly 5s, 15s, 45s, 2m15s, 6m45s, 20m15s, then 1h until the attempt budget is exhausted. each attempt gets a fresh `Roost-Signature` timestamp but the same `Roost-Delivery` id.
+- **dead letter.** after the 10th failed attempt the delivery is marked `failed`. the dispatcher does not currently auto-pause or auto-disable the subscription from `attemptDelivery`; operators can still update `paused` explicitly via `PATCH /api/webhooks/{id}` on public webhook subscriptions.
 - **retention.** delivery history (request + response transcript) is retained for 30 days and is available via `GET /api/webhooks/{id}/deliveries`.
 - **ordering.** deliveries are not globally ordered. if you need to reason about order, use `occurredAt` in the payload; do not rely on the order deliveries arrive.
 
@@ -494,7 +557,7 @@ every operation on a webhook subscription - create, list, detail, update, delete
 - `POST /api/webhooks/{id}/deliveries/{deliveryId}/retry?siteId=<id>` - manually redeliver a past event.
 - `POST /api/webhooks/probe?siteId=<id>` - fire a signed synthetic event at a url without creating a subscription.
 
-scopes: list/detail/deliveries require `site:<siteId>:read`; create/update/delete/rotate/probe/retry require `site:<siteId>:write`.
+scopes: list/detail/deliveries require `site=<id>:read`; create/update/delete/rotate/probe/retry require `site=<id>:write`.
 
 ---
 

@@ -247,5 +247,4 @@ backing: `POST /api/roosts/{roostId}/deploy` with body `{ siteId, versionId?, ma
 - **tier**: `[ready]` — every endpoint is fully public
 - **rollback**: `owlette rollback <roostId> --site <siteId>` is a top-level helper that diffs the current version against the rollback target, prompts for confirmation, then flips the head pointer. see [rollback.md](rollback.md)
 - **chunk size**: 4 MiB content-addressed via sha-256; dedupe is global per site
-- **legacy `roost` binary**: the standalone `roost` exe forwards to `owlette` until 2026-10-01 — switch your scripts to `owlette` now
 - **related**: [overview](../overview.md) (config precedence, json envelope, exit codes), [site](site.md) (resolve site ids), [quota](quota.md) (storage usage)

@@ -16,7 +16,7 @@ Use the [public launch runbook](launch-runbook.md) to move from preview to launc
 
 - the landing page, pricing copy, docs links, signup path, and download path have been checked against the current product state
 - public API docs link to the launch-critical pages: quickstart, SDKs, CLI, status, load testing/SLOs, distribution, and examples
-- the GitHub Actions Roost deploy asset has a usage doc, a copyable workflow template, and a scoped-key recommendation
+- the GitHub Actions roost deploy asset has a usage doc, a copyable workflow template, and a scoped-key recommendation
 - Node and Python SDK examples are grouped into launch-ready workflows, not only internal fixtures
 - marketplace/listing copy is ready for npm, PyPI, and GitHub Actions
 - the launch ticket links the public launch runbook and records support, rollback, status-page, package, and load-test owners
@@ -50,7 +50,7 @@ Use the [public launch runbook](launch-runbook.md) to move from preview to launc
 | Node examples | `sdks/node/examples/*.ts` | executable SDK starters |
 | Python examples | `sdks/python/examples/*.py` | executable SDK starters |
 | GitHub Actions guide | `docs/api/examples/ci-cd-github-actions.md` | CI/CD setup docs |
-| reusable GitHub Action | `.github/actions/owlette-roost-deploy/` | publish/deploy Roost from CI |
+| reusable GitHub Action | `.github/actions/owlette-roost-deploy/` | publish/deploy roost from CI |
 | copyable workflow template | `examples/github-actions/roost-deploy.yml` | starter workflow for customer repos |
 
 External example repositories remain optional for the first launch if the in-repo templates above are linked from docs and verified against a clean checkout.
@@ -61,11 +61,11 @@ External example repositories remain optional for the first launch if the in-rep
 
 ### GitHub Action
 
-**Name**: Owlette Roost Deploy
+**Name**: Owlette roost deploy
 
-**Tagline**: Publish and deploy Owlette Roost versions from GitHub Actions.
+**Tagline**: Publish and deploy Owlette roost versions from GitHub Actions.
 
-**Description**: Build an artifact, publish the output directory as a content-addressed Owlette Roost version, and optionally deploy it to your fleet. The action uses `@owlette/cli`, scoped API keys, and public API routes.
+**Description**: Build an artifact, publish the output directory as a content-addressed Owlette roost version, and optionally deploy it to your fleet. The action uses `@owlette/cli`, scoped API keys, and public API routes.
 
 **Recommended categories/tags**: deployment, ci, release, automation, windows, signage.
 
@@ -101,4 +101,4 @@ External example repositories remain optional for the first launch if the in-rep
 
 ## current status
 
-The launch asset foundation is in-repo. External completion remains blocked until the public site is deployed with final pricing/signup decisions, package distribution is live, and at least one clean consumer workflow runs against a dev or staging Roost fixture.
+The launch asset foundation is in-repo. External completion remains blocked until the public site is deployed with final pricing/signup decisions, package distribution is live, and at least one clean consumer workflow runs against a dev or staging roost fixture.

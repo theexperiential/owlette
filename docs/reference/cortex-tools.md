@@ -1,6 +1,6 @@
 # cortex tools reference
 
-Complete reference for all 43 tools available in Cortex, organized by tier.
+Complete reference for all 43 public web Cortex tools from `web/lib/mcp-tools.ts`, organized by tier.
 
 ---
 
@@ -13,6 +13,60 @@ Complete reference for all 43 tools available in Cortex, organized by tier.
 | **3** | Privileged | Requires user confirmation | 11 |
 
 > **Server-side tools** (`get_site_logs`, `get_system_presets`, `deploy_software`) execute on the server and query Firestore directly — they do not route through the agent.
+
+---
+
+## execution-mode matrix
+
+Web Cortex chooses an execution path by tool name in `web/lib/cortex-utils.server.ts`. Server-side tools run in the Next.js server process. Legacy command tools write existing machine command types. Firestore tools create `mcp_tool_call` entries for the agent to execute. Local Agent SDK MCP is separate: `agent/src/cortex_tools.py` exposes only the tools returned by `_make_tier1_tools`, `_make_tier2_tools`, and `_make_tier3_tools`.
+
+| tool | tier | web Cortex execution | local Agent SDK MCP |
+|------|------|----------------------|---------------------|
+| `get_site_logs` | 1 | Server-side | Not exposed |
+| `get_system_info` | 1 | Firestore `mcp_tool_call` | Yes, direct |
+| `get_process_list` | 1 | Firestore `mcp_tool_call` | Yes, direct |
+| `get_running_processes` | 1 | Firestore `mcp_tool_call` | Yes, direct |
+| `get_gpu_processes` | 1 | Firestore `mcp_tool_call` | Defined, but not returned |
+| `get_network_info` | 1 | Firestore `mcp_tool_call` | Yes, direct |
+| `get_disk_usage` | 1 | Firestore `mcp_tool_call` | Yes, direct |
+| `get_event_logs` | 1 | Firestore `mcp_tool_call` | Yes, direct |
+| `get_service_status` | 1 | Firestore `mcp_tool_call` | Yes, direct |
+| `get_agent_config` | 1 | Firestore `mcp_tool_call` | Yes, direct |
+| `get_agent_logs` | 1 | Firestore `mcp_tool_call` | Yes, direct |
+| `get_agent_health` | 1 | Firestore `mcp_tool_call` | Yes, direct |
+| `get_system_presets` | 1 | Server-side | Not exposed |
+| `check_pending_reboot` | 1 | Firestore `mcp_tool_call` | Not exposed |
+| `restart_process` | 2 | Legacy command-mapped | Yes, IPC |
+| `kill_process` | 2 | Legacy command-mapped | Yes, IPC |
+| `start_process` | 2 | Legacy command-mapped | Yes, IPC |
+| `set_launch_mode` | 2 | Legacy command-mapped | Yes, IPC |
+| `capture_screenshot` | 2 | Firestore `mcp_tool_call` | Yes, IPC |
+| `manage_process` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `manage_windows_service` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `configure_gpu_tdr` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `manage_windows_update` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `manage_notifications` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `configure_power_plan` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `manage_scheduled_task` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `network_reset` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `registry_operation` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `clean_disk_space` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `get_event_logs_filtered` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `manage_windows_feature` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `show_notification` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `run_command` | 3 | Firestore `mcp_tool_call` | Yes, direct |
+| `run_powershell` | 3 | Firestore `mcp_tool_call` | Yes, direct |
+| `run_python` | 3 | Firestore `mcp_tool_call` | Not exposed |
+| `read_file` | 3 | Firestore `mcp_tool_call` | Yes, direct |
+| `write_file` | 3 | Firestore `mcp_tool_call` | Yes, direct |
+| `list_directory` | 3 | Firestore `mcp_tool_call` | Yes, direct |
+| `execute_script` | 3 | Firestore `mcp_tool_call` | Yes, direct |
+| `deploy_software` | 3 | Server-side | Not exposed |
+| `reboot_machine` | 3 | Legacy command-mapped | Not exposed |
+| `shutdown_machine` | 3 | Legacy command-mapped | Not exposed |
+| `cancel_reboot` | 3 | Legacy command-mapped | Not exposed |
+
+Local Agent SDK coverage is intentionally smaller than the web registry: at maximum tier it returns 21 tools, and at the default `max_tier=2` it returns 15. `agent/src/cortex_tools.py` defines a `get_gpu_processes` wrapper, but the function is omitted from the returned tier-1 list, so local Agent SDK Cortex does not expose it today. `agent/src/mcp_tools.py` also contains internal handlers that are not public web Cortex tools, including `get_display_layout` and `apply_display_topology`.
 
 ---
 
@@ -584,19 +638,24 @@ Cancel a pending reboot or shutdown. Must be called within the 30-second countdo
 
 ```
 LLM decides to call a tool
-    │
-    ├── Tier 1/2: Execute immediately
-    │     │
-    │     ├── Create mcp_tool_call command in Firestore
-    │     ├── Agent receives and executes
-    │     ├── Agent writes result to completed queue
-    │     └── API polls for result (1.5s intervals, 30s timeout)
-    │
-    └── Tier 3: Pause for confirmation
-          │
-          ├── Dashboard shows confirmation dialog
-          ├── User clicks Confirm → execute as above
-          └── User clicks Deny → tool returns "denied by user"
+  |
+  +-- Tier 3: pause for confirmation first
+  |     +-- User confirms: continue to the tool-name execution path
+  |     +-- User denies: return "denied by user"
+  |
+  +-- Server-side tools
+  |     +-- get_site_logs / get_system_presets query Firestore on the web server
+  |     +-- deploy_software creates deployment records and install commands server-side
+  |
+  +-- Legacy command-mapped tools
+  |     +-- Write existing command types such as restart_process or reboot_machine
+  |     +-- Agent handles the legacy command and writes completion state
+  |
+  +-- Firestore mcp_tool_call tools
+        +-- Create an mcp_tool_call command in Firestore
+        +-- Agent receives and executes the MCP tool
+        +-- Agent writes result to completed queue
+        +-- API polls for result (1.5s intervals, 30s timeout plus buffer)
 ```
 
 ### command allowlists

@@ -7,7 +7,9 @@ hide:
 
 manage the lifecycle of long-running processes on a single machine — register, update, delete, and queue start / stop / restart / kill commands, plus configure run-mode + schedule blocks. every verb is **machine-scoped** and requires both `--site <siteId>` and `--machine <machineId>`. all ten verbs are **tier A — ready** and hit the wave-2B public process api today.
 
-control verbs (`kill` / `restart` / `start` / `stop`) and `schedule` are queued through the agent command channel and return a `commandId` you can poll via `owlette machine` command-state endpoints. mutations auto-generate an `Idempotency-Key` (server caches the response for 24h on the same key).
+control verbs (`kill` / `restart` / `start` / `stop`) are queued through the agent command channel and return a `commandId` you can poll via `owlette machine` command-state endpoints.
+
+`schedule` writes process config through the `/schedule` api call and the cli prints completion once the mode is set. mutations auto-generate an `Idempotency-Key` (server caches the response for 24h on the same key).
 
 ---
 

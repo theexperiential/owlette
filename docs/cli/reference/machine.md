@@ -117,7 +117,7 @@ capture a screenshot from the machine and download it locally. this is a queue â
 | flag | required | purpose |
 |---|---|---|
 | `--site <siteId>` | yes | site id that owns the machine |
-| `--monitor <m>` | no | `all`, `primary`, or a non-negative integer index (default: agent's primary) |
+| `--monitor <m>` | no | `all`, `primary`, or a non-negative integer index. when omitted, the cli sends no monitor value and the agent defaults to `0` / all monitors. |
 | `--output <path>` | no | path to write the png (default: `screenshot-<machineId>-<timestamp>.png` in cwd) |
 
 ```bash

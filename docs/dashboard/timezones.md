@@ -46,9 +46,14 @@ When the primary source for the chosen mode is missing, Owlette falls back in a 
 
 ## schedule editor
 
-Schedule editors (launch windows on processes, scheduled reboots, etc.) are **unaffected** by the display mode. They always show and save times in the **machine's** local timezone, with an explicit `<TimezoneChip>` label above the editor.
+Schedule editors are **unaffected** by the user's display mode, but they do not all use the same timezone reference. Each scheduler uses the timezone that its feature expects:
 
-This is intentional: schedules are wall-clock configuration tied to the physical machine. "Start TouchDesigner at 09:00 Mon-Fri" has to mean 09:00 at the machine, not 09:00 in the user's home timezone — otherwise a support agent editing a kiosk from another timezone would accidentally shift the exhibit hours.
+| feature | timezone used | notes |
+|---------|---------------|-------|
+| **process launch windows** | Site timezone | The dashboard schedule editor receives the current site's timezone and labels/previews process windows with that site timezone. The agent evaluates scheduled process windows with the cached site timezone, so "09:00 Mon-Fri" means 09:00 in the site's configured timezone. |
+| **scheduled reboots** | Machine local timezone | The reboot dialog shows a machine timezone chip and the agent resolves each reboot entry against the machine's own Windows local timezone. A "03:00" reboot means 03:00 on that machine, even if the site or dashboard user is in another timezone. |
+
+Both behaviors are wall-clock schedules, not absolute UTC instants. Changing your dashboard display mode affects timestamp rendering only; it does not reinterpret saved schedule entries.
 
 ---
 

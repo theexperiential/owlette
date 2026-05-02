@@ -57,7 +57,7 @@ const owlette = new Owlette({
 
 **scope enforcement is server-side.** the sdk does not validate scopes locally — an over-broad call fails with `OwletteApiError.code === 'scope_insufficient'`. see [authentication.md](./authentication.md) for the full scope grammar.
 
-the sdk auto-generates an `Idempotency-Key` header on every mutating request (POST / PATCH / PUT) unless you pass one explicitly. transparent retries can't create duplicate rollouts, roosts, or keys. see [idempotency.md](./idempotency.md) for the replay window.
+the sdk auto-generates an `Idempotency-Key` header on every mutating request (POST / PATCH / PUT / DELETE) unless you pass one explicitly. replay caching is route-specific: it protects endpoints whose handlers implement idempotency caching, such as version publish/patch, rollback/deploy, webhook mutations, chat creation/rename/delete, installer deployment actions, and site/machine/process/user administration. it does not make roost create/update/delete, key create/rotate/revoke, or chunk upload-url calls replay-safe. see [idempotency.md](./idempotency.md) for the replay window.
 
 ---
 
@@ -184,7 +184,10 @@ most users never touch these; `roosts.push()` is the high-level wrapper. when yo
 
 ```ts
 // dedup-check — returns the hashes r2 is missing
-const missing = await owlette.chunks.check('site-1', ['sha256:ab12...', 'sha256:cd34...']);
+const missing = await owlette.chunks.check('site-1', [
+  'ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12',
+  'cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34',
+]);
 
 // mint signed r2 put urls (60 min ttl) — returns { urls, expiresAt }
 const { urls } = await owlette.chunks.uploadUrls('site-1', missing);
@@ -193,13 +196,23 @@ for (const [hash, url] of Object.entries(urls)) {
 }
 
 // mint signed r2 get urls (15 min ttl) — same { urls, expiresAt } shape
-const { urls: downloadUrls } = await owlette.chunks.downloadUrls('site-1', ['sha256:ab12...']);
+const { urls: downloadUrls } = await owlette.chunks.downloadUrls('site-1', [
+  'ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12',
+]);
 
 // mount an existing chunk from one roost into another (no re-upload)
-await owlette.chunks.mount('sha256:ab12...', 'site-1', 'rst_source', 'rst_target');
+await owlette.chunks.mount(
+  'ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12',
+  'site-1',
+  'rst_source',
+  'rst_target',
+);
 
 // which roosts reference this chunk?
-const refs = await owlette.chunks.referrers('sha256:ab12...', 'site-1');
+const refs = await owlette.chunks.referrers(
+  'ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12',
+  'site-1',
+);
 ```
 
 ### versions
@@ -338,29 +351,34 @@ interface PushOptions {
 }
 ```
 
-**retry on concurrent publish.** if another writer publishes between your `push()` starting and the version post, the sdk retries the final publish with the server-reported current version before surfacing `RoostApiError`. your chunk uploads never re-run — they're already addressed by hash.
+**retry on concurrent publish.** if another writer publishes between your `push()` starting and the version post, the sdk retries the final publish with the server-reported current version before surfacing `OwletteApiError`. your chunk uploads never re-run — they're already addressed by hash.
 
 ---
 
 ## webhook signature verification
 
-roost signs every webhook with `Roost-Signature: t=<unix_seconds>,v1=<hmac_sha256_hex>`. the sdk ships a verifier that enforces a 5-minute replay window and uses `crypto.timingSafeEqual`:
+roost signs every webhook with `Roost-Signature: t=<unix_seconds>,v1=<hmac_sha256_hex>`. the sdk ships a verifier that enforces a 5-minute replay window and uses `crypto.timingSafeEqual`. `verifySignature()` returns `{ ok, reason, timestamp }`; it does not parse or return the webhook event:
 
 ```ts
 import { verifySignature, isSignatureValid } from '@owlette/sdk';
 
 // in your raw-body webhook handler:
+const rawBody = req.rawBody;            // keep the original bytes/string
 const result = verifySignature(
   req.headers['roost-signature'],
-  req.rawBody,                         // MUST be the raw bytes, not parsed json
+  rawBody,                             // MUST be the raw bytes, not parsed json
   process.env.WEBHOOK_SECRET!,
 );
 if (!result.ok) {
-  console.log('rejected:', result.reason);  // 'missing_header' | 'malformed' | 'outside_tolerance' | 'bad_signature'
+  // 'missing_header' | 'malformed_header' | 'missing_timestamp' |
+  // 'missing_v1' | 'timestamp_out_of_tolerance' | 'bad_signature'
+  console.log('rejected:', result.reason);
   return res.status(401).json({ error: result.reason });
 }
-// safe to process — result.event is the parsed payload (e.g. event === 'version.published')
-handleEvent(result.event);
+// safe to parse and process after verification
+const bodyText = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
+const event = JSON.parse(bodyText);
+handleEvent(event);
 
 // boolean shortcut for quick paths
 if (!isSignatureValid(sig, raw, secret)) return res.status(401).end();
@@ -381,7 +399,7 @@ const sig = signBody(JSON.stringify({ event: 'version.published' }), 'whsec_...'
 
 ## errors
 
-every non-2xx response throws `RoostApiError` with structured fields pulled from the rfc 7807 problem+json body:
+every non-2xx response throws `OwletteApiError` with structured fields pulled from the rfc 7807 problem+json body:
 
 ```ts
 import { Owlette, OwletteApiError } from '@owlette/sdk';
@@ -391,7 +409,7 @@ try {
 } catch (err) {
   if (err instanceof OwletteApiError) {
     console.log(err.status);            // 404
-    console.log(err.code);              // 'roost_not_found' — stable, machine-readable
+    console.log(err.code);              // 'not_found' — stable, machine-readable
     console.log(err.requestId);         // for support tickets
     console.log(err.problem);           // full problem+json body
     console.log(err.problem.docsUrl);   // link to errors.md#<code>
@@ -400,7 +418,7 @@ try {
 }
 ```
 
-the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring the problem's `retryAfter` seconds field and the `Retry-After` header when present. `401`, `403`, `404`, `412`, `422`, and other 4xxs bubble immediately — retrying them will never succeed.
+the sdk auto-retries `429` and `5xx` with exponential backoff + jitter, honoring the problem body's `retryAfter` seconds field when present. `401`, `403`, `404`, `412`, `422`, and other 4xxs bubble immediately — retrying them will never succeed.
 
 **common codes** you'll hit early (full list: [errors.md](./errors.md)):
 
@@ -467,7 +485,7 @@ const owlette = new Owlette({
 - **[authentication](./authentication.md)** — scope grammar, presets, rotation, revocation.
 - **[webhooks](./webhooks.md)** — event catalog, retry model, signing secret lifecycle.
 - **[sdk workflow examples](./examples/sdk-workflows.md)** — executable Node/Python samples and dev fixture env.
-- **[examples/ci-cd-github-actions.md](./examples/ci-cd-github-actions.md)** — the sdk inside an actual workflow.
+- **[examples/ci-cd-github-actions.md](./examples/ci-cd-github-actions.md)** — GitHub Actions CLI/action workflow for publishing a roost from CI.
 - **[python sdk](./sdk-python.md)** — async python, same resource tree, same error codes.
 
 the reference openapi spec is at [`web/openapi.yaml`](../../web/openapi.yaml) — whatever curl can do, this sdk can do.

@@ -6,20 +6,21 @@ Add, configure, and control processes from the web dashboard. Changes sync to th
 
 ## adding a process
 
-1. Click on a machine in the dashboard
-2. Click **"Add Process"**
-3. Fill in the configuration:
-    - **Name**: Display name (e.g., "TouchDesigner")
-    - **Executable Path**: Full path to the `.exe` file
-    - **File Path** (optional): File to open with the executable (e.g., `.toe` project)
-    - **Arguments** (optional): Command-line arguments
-    - **Autolaunch**: Enable to auto-start and auto-restart
-    - **Priority**: Windows process priority
-    - **Visibility**: Normal or Hidden
-    - **Launch Delay**: Seconds to wait before starting
-    - **Init Time**: Seconds before monitoring responsiveness
-    - **Relaunch Attempts**: Max restarts before reboot prompt
-4. Click **Save**
+1. Click on a machine in the dashboard.
+2. Click **add process**.
+3. Fill in the current dialog fields:
+    - **name**: display name, such as `TouchDesigner`.
+    - **launch mode**: `off`, `always`, or `scheduled`. `off` leaves the process unmanaged, `always` keeps it running, and `scheduled` runs it only during configured schedule blocks.
+    - **executable path**: required path to the executable, such as `C:\Program Files\App\app.exe`.
+    - **file path / command arguments**: optional file to open or command-line arguments to pass to the executable.
+    - **working directory**: optional directory to run the process from.
+    - **task priority**: `low`, `normal`, `high`, or `realtime`.
+    - **window visibility**: `normal` or `hidden`; hidden is intended for console apps only.
+    - **launch delay (sec)**: seconds to wait before launching.
+    - **init timeout (sec)**: seconds to wait before responsiveness checks begin.
+    - **relaunch attempts**: crash-restart attempts before the process is treated as failed.
+    - **schedule configuration**: shown only when launch mode is `scheduled`; edit one or more blocks with days and start/stop ranges in the site's timezone.
+4. Click **create process**.
 
 The agent receives the new configuration and begins monitoring the process.
 
@@ -27,10 +28,10 @@ The agent receives the new configuration and begins monitoring the process.
 
 ## editing a process
 
-1. Click on a process in a machine card
-2. The **Process Dialog** opens with current settings
-3. Edit any fields
-4. Click **Save**
+1. Click **edit** on a process row or card.
+2. The **edit process** dialog opens with the current settings.
+3. Edit any fields.
+4. Click **save changes**.
 
 Changes propagate through Firestore to the agent immediately.
 
@@ -38,17 +39,20 @@ Changes propagate through Firestore to the agent immediately.
 
 ## process actions
 
-From the Process Dialog or machine card, you can:
+From the process row, machine card, or edit dialog, the dashboard exposes these actions:
 
 | action | description | requires |
 |--------|-------------|----------|
-| **Start** | Launch the process | Process must be stopped |
-| **Stop / Kill** | Terminate the process | Process must be running |
-| **Restart** | Kill and relaunch | Process must be running |
-| **Toggle Autolaunch** | Enable/disable auto-restart | Any state |
-| **Delete** | Remove from configuration | Any state |
+| **launch mode** | Set `off`, `always`, or `scheduled`. Enabling `always` or `scheduled` requires an executable path. | `MACHINE_CONFIG_WRITE` |
+| **configure schedule** | Edit scheduled-mode blocks, days, time ranges, and overnight windows. | `MACHINE_CONFIG_WRITE` |
+| **edit** | Open the process dialog and update paths, priority, visibility, timing, relaunch attempts, or schedule settings. | `MACHINE_CONFIG_WRITE` |
+| **restart** | Queue a `restart_process` command. The dashboard enables this for `RUNNING`, `LAUNCHING`, or `STALLED` processes. | `MACHINE_EXEC_COMMAND` |
+| **kill** | Queue a `kill_process` command. The dashboard enables this for `RUNNING`, `LAUNCHING`, or `STALLED` processes. | `MACHINE_EXEC_COMMAND` |
+| **delete** | Remove the process from the machine configuration. | `MACHINE_CONFIG_WRITE` |
 
-All actions send commands to the agent via Firestore and complete within seconds.
+Site admins on the site and superadmins have `MACHINE_CONFIG_WRITE` and `MACHINE_EXEC_COMMAND`. Members can view process state and configuration, but they are read-only for create, edit, delete, schedule, launch-mode, restart, and kill actions.
+
+Restart and kill actions send commands to the agent. Create, edit, delete, launch-mode, and schedule changes update the machine configuration that the agent watches.
 
 ---
 
@@ -56,26 +60,27 @@ All actions send commands to the agent via Firestore and complete within seconds
 
 | setting | type | default | description |
 |---------|------|---------|-------------|
-| **Name** | string | required | Display name for identification |
-| **Executable Path** | string | required | Full path to `.exe` (e.g., `C:\Program Files\App\app.exe`) |
-| **File Path** | string | `""` | File to open (e.g., `.toe`, `.py`, `.html`) |
-| **Command Line Args** | string | `""` | Additional arguments passed to the executable |
-| **Autolaunch** | boolean | `true` | Auto-start on service boot + auto-restart on crash |
-| **Priority** | enum | `Normal` | `Idle`, `Below Normal`, `Normal`, `Above Normal`, `High`, `Realtime` |
-| **Visibility** | enum | `Normal` | `Normal` (visible window) or `Hidden` (no window) |
-| **Launch Delay** | number | `0` | Seconds to wait before launching (for boot ordering) |
-| **Init Time** | number | `10` | Grace period before monitoring responsiveness |
-| **Relaunch Attempts** | number | `5` | Max crash-restarts before prompting for system reboot |
+| **name** | string | required | Display name for identification. |
+| **launch mode** | enum | `off` | `off`, `always`, or `scheduled`. This replaces the old separate autolaunch toggle in the dashboard UI. |
+| **executable path** | string | required | Full path to the executable, for example `C:\Program Files\App\app.exe`. |
+| **file path / command arguments** | string | `""` | File to open or arguments to pass to the executable. |
+| **working directory** | string | `""` | Directory used as the process working directory. |
+| **task priority** | enum | `normal` | `low`, `normal`, `high`, or `realtime`. |
+| **window visibility** | enum | `normal` | `normal` for a visible window, or `hidden` for console apps. |
+| **launch delay (sec)** | number | `0` | Seconds to wait before launching, useful for boot ordering. |
+| **init timeout (sec)** | number | `10` | Grace period before monitoring responsiveness. |
+| **relaunch attempts** | number | `3` | Crash-restart attempts before the process is treated as failed. |
+| **schedule configuration** | blocks | `null` | Scheduled mode uses blocks with days and start/stop ranges. When scheduled mode has no saved blocks, the editor displays a weekday 09:00-17:00 block to edit. |
 
 ---
 
 ## tips
 
 !!! tip "Launch ordering"
-    Use **Launch Delay** to control startup order. For example, set a database to 0s delay and the application that depends on it to 15s.
+    Use **launch delay** to control startup order. For example, set a database to 0s delay and the application that depends on it to 15s.
 
 !!! tip "Hidden processes"
-    Use **Hidden** visibility for background services like Node.js servers or Python scripts that don't need a window.
+    Use **hidden** visibility for background services like Node.js servers or Python scripts that don't need a window.
 
-!!! warning "Realtime priority"
-    Setting priority to **Realtime** can starve other processes and make the machine unresponsive. Use with extreme caution.
+!!! warning "realtime priority"
+    Setting priority to **realtime** can starve other processes and make the machine unresponsive. Use with extreme caution.

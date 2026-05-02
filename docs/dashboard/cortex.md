@@ -1,270 +1,208 @@
 # cortex (ai chat)
 
-Cortex is an AI-powered chat interface that lets you interact with your machines through natural language. Ask questions, run diagnostics, manage processes, and execute commands — all through conversation.
+Cortex is the dashboard chat surface for diagnosing and managing machines with an LLM. It supports Anthropic and OpenAI providers, can target either one machine or every online machine in a site, and routes tool calls through the safest available execution path for the current target.
+
+For the current tool inventory, parameters, tiers, and execution-mode notes, see the [cortex tools reference](../reference/cortex-tools.md).
 
 ---
 
 ## overview
 
-Cortex connects an LLM (Claude or OpenAI) to your machines via 29 specialized tools organized into three tiers:
+Cortex tools are grouped by risk:
 
-| tier | type | approval | tools |
-|------|------|----------|-------|
-| **Tier 1** | Read-only | Auto-approved | 13 tools — system info, process lists, logs, metrics, GPU, site logs, presets |
-| **Tier 2** | Process management | Auto-approved | 5 tools — restart, kill, start, set launch mode, screenshot |
-| **Tier 3** | Privileged | Requires confirmation | 11 tools — run commands/scripts, read/write files, deploy software, reboot/shutdown |
+| tier | type | approval |
+|------|------|----------|
+| **Tier 1** | Read-only diagnostics and site context | Auto-approved |
+| **Tier 2** | Process and machine management with validated parameters | Auto-approved |
+| **Tier 3** | Privileged shell, file, deployment, reboot, and shutdown actions | Requires confirmation |
+
+The available tier depends on the caller. Site admins and superadmins can use the full tool set. Members are limited to read-only tools. Chat API keys are also capped to read-only tools even if the key owner is an admin.
 
 ---
 
 ## setup
 
-### configure an llm provider
+### user-level key
 
-Cortex needs an API key from either **Anthropic (Claude)** or **OpenAI**.
+Cortex can use a personal LLM key from your account settings.
 
-#### user-level key
+1. Open the dashboard account menu.
+2. Select **account settings**.
+3. Open the **cortex** section.
+4. Choose **Anthropic (Claude)** or **OpenAI**.
+5. Select a model.
+6. Paste the provider API key and save it.
 
-1. In the dashboard, open Cortex
-2. Click the **settings gear** icon
-3. Select **Provider**: Anthropic or OpenAI
-4. Enter your **API key**
-5. Optionally select a **model** (defaults to the latest)
-6. Click **Save**
+The key is encrypted server-side and stored under your user settings. The raw key is not returned to the browser after it is saved.
 
-Your key is encrypted and stored in Firestore — it's never exposed to the client.
+### site-level key
 
-#### site-level key (admin)
+Cortex also checks for a site-level LLM key at `sites/{siteId}/settings/llm`. User keys take priority for normal chat, and the site key is the fallback when a user has not configured a personal key.
 
-Admins can set a shared API key for the entire site:
-
-1. In the dashboard, open Cortex
-2. Click the **settings gear** icon
-3. Switch to the **"Site Key"** tab
-4. Configure provider and key
-5. All users on this site can use Cortex without their own key
-
-**Priority**: User key takes precedence over site key.
+Autonomous Cortex uses the site-level key only. The shipped dashboard does not currently include site-level key management; site-level keys are managed through the admin/API surface (`/api/settings/site-llm-key`) until a dashboard UI is added.
 
 ---
 
 ## using cortex
 
-1. Open Cortex from the dashboard
-2. Select a **machine** to talk to
-3. Type a message in natural language
+1. Open **cortex** from the dashboard header.
+2. Choose a target from the selector at the top of the chat:
+   - **All Machines** targets every online machine in the selected site.
+   - An individual machine targets only that machine.
+3. Type a request in natural language.
+
+In single-machine mode, Cortex reports and acts on one machine. In **All Machines** mode, tool calls fan out to all online machines in the site and Cortex aggregates per-machine results. If no machines are online, tool calls are not delivered.
 
 ### example conversations
 
-**Check system health:**
-> "How's the system doing? Any issues?"
+**Check site health:**
+> "Which machines look unhealthy right now?"
 >
-> Cortex calls `get_system_info` and `get_agent_health`, then summarizes CPU, memory, disk usage, and connection status.
+> Cortex can read site logs and fan out diagnostics across online machines, then summarize differences by machine.
 
-**Manage processes:**
-> "Restart TouchDesigner"
+**Manage one process:**
+> "Restart TouchDesigner on this machine."
 >
-> Cortex calls `restart_process` with `process_name: "TouchDesigner"` and reports the result.
+> Cortex calls the process-management tool for the selected machine and reports the result.
 
-**Diagnose issues:**
-> "Why is the machine running slow?"
+**Diagnose a display issue:**
+> "Why is the output frozen?"
 >
-> Cortex calls `get_system_info`, `get_running_processes`, and `get_event_logs` to identify resource-heavy processes or recent errors.
+> Cortex can inspect process state, logs, GPU usage, and screenshots before suggesting or taking an action.
 
-**Run a command (Tier 3):**
-> "Check the network configuration"
+**Run a privileged command:**
+> "Check the detailed network configuration."
 >
-> Cortex requests confirmation to run `ipconfig /all`, then returns the output.
+> Cortex asks for confirmation before running a privileged shell or PowerShell command.
 
 ---
 
 ## tool tiers
 
-### tier 1: read-only (auto-approved)
+Tier 1 tools read machine or site state, such as system info, logs, process lists, disk usage, GPU state, agent health, and site deployment presets.
 
-These tools only read information and never modify anything:
+Tier 2 tools perform bounded management actions with validated parameters, such as restarting configured processes, capturing screenshots, managing selected Windows services or update settings, and changing safe machine configuration.
 
-| tool | description |
-|------|-------------|
-| `get_site_logs` | Activity logs across all machines in the site (server-side) |
-| `get_system_info` | CPU, memory, disk, GPU, hostname, OS, uptime, agent version |
-| `get_process_list` | All owlette-configured processes with status |
-| `get_running_processes` | All OS processes with CPU/memory usage (filterable) |
-| `get_gpu_processes` | Per-process GPU/VRAM usage, sorted by consumption |
-| `get_network_info` | Network interfaces, IP addresses, link status |
-| `get_disk_usage` | All drives with total/used/free space |
-| `get_event_logs` | Windows event logs (Application, System, Security) |
-| `get_service_status` | Status of any Windows service |
-| `get_agent_config` | owlette agent configuration (tokens stripped) |
-| `get_agent_logs` | Recent agent log entries (filterable by level) |
-| `get_agent_health` | Connection state, health probe results |
-| `get_system_presets` | System presets for software deployments (server-side) |
+Tier 3 tools can make broader changes, such as shell execution, file writes, deployment orchestration, reboots, and shutdowns. These require explicit user confirmation from the Cortex UI.
 
-### tier 2: process management (auto-approved)
-
-These wrap existing owlette commands:
-
-| tool | description |
-|------|-------------|
-| `restart_process` | Restart an owlette-configured process |
-| `kill_process` | Kill/stop a process |
-| `start_process` | Start a stopped process |
-| `set_launch_mode` | Set launch mode (off, always, scheduled) |
-| `capture_screenshot` | Capture a screenshot of the machine's desktop |
-
-### tier 3: privileged (requires confirmation)
-
-These tools require you to click **Confirm** before execution:
-
-| tool | description |
-|------|-------------|
-| `run_command` | Execute a shell command (allowlist enforced) |
-| `run_powershell` | Execute a PowerShell command (allowlist enforced) |
-| `run_python` | Execute a Python script on the machine |
-| `execute_script` | Execute a PowerShell script with no command restrictions |
-| `read_file` | Read a file on the machine (max 100KB) |
-| `write_file` | Write content to a file |
-| `list_directory` | List directory contents with file sizes and dates |
-| `deploy_software` | Install or uninstall software using a system preset |
-| `reboot_machine` | Reboot the Windows machine |
-| `shutdown_machine` | Shut down the Windows machine |
-| `cancel_reboot` | Cancel a scheduled reboot or shutdown |
-
-!!! info "Full tool reference"
-    See [Cortex Tools Reference](../reference/cortex-tools.md) for complete parameter documentation and allowed command lists.
+See the [cortex tools reference](../reference/cortex-tools.md) for the current tool list and parameter schemas.
 
 ---
 
 ## how it works
 
+Cortex has three execution paths.
+
+### single machine with local Cortex
+
+When the selected machine is online, local Cortex is healthy, and the caller is a site admin, the dashboard uses the local Cortex path:
+
+```text
+dashboard chat
+  -> POST /api/cortex
+  -> Firestore active-chat pending message
+  -> local Cortex on the agent runs the LLM and local tools
+  -> local Cortex writes response updates to Firestore
+  -> dashboard streams those updates back to the chat
 ```
-User types message
-    │
-    ▼
-POST /api/cortex (streaming)
-    │
-    ├── Resolve LLM config (user key → site key fallback)
-    ├── Send messages + tool definitions to LLM
-    │
-    ▼
-LLM decides to call a tool
-    │
-    ├── Tier 1/2: Auto-execute
-    │     │
-    │     ├── Write command to Firestore pending queue
-    │     ├── Poll for completion (1.5s intervals, 30s timeout)
-    │     └── Return result to LLM
-    │
-    └── Tier 3: Request user confirmation
-          │
-          ├── Dashboard shows confirmation dialog
-          ├── User clicks Confirm/Deny
-          └── If confirmed: execute and return result
+
+This keeps the active tool loop close to the machine while still using Firestore as the relay between the web app and agent.
+
+### single machine fallback
+
+If local Cortex is unavailable, or if the caller is not allowed to use the local admin path, the web app runs the LLM request directly:
+
+```text
+dashboard chat
+  -> POST /api/cortex
+  -> resolve user key, then site key fallback
+  -> web server calls the LLM provider
+  -> tool calls are relayed to the agent through Firestore commands
+  -> agent writes completed-command results
+  -> web server returns the result to the LLM and streams the answer
 ```
+
+Members use this path with a read-only tool tier cap.
+
+### site-wide mode
+
+When **All Machines** is selected, the web server runs the LLM request directly and fans out tool calls to every online machine in the site:
+
+```text
+dashboard chat
+  -> POST /api/cortex with machineId "__site__"
+  -> web server resolves online machines
+  -> web server calls the LLM provider
+  -> tools either run server-side or fan out through Firestore commands
+  -> per-machine results are aggregated for Cortex
+```
+
+Server-side tools such as site logs, system presets, and deployment orchestration query Firestore or create deployment records from the web server instead of routing through a single agent.
 
 ---
 
 ## autonomous mode
 
-Cortex can operate autonomously as a **cluster manager** — when a process crashes or fails to start, Cortex automatically investigates and attempts remediation without human intervention.
+Autonomous Cortex can investigate process crashes or process-start failures without a human starting a chat. It is triggered by the agent alert path, authenticated with `CORTEX_INTERNAL_SECRET`, and runs against one affected machine.
 
-### how it works
+### flow
 
-```
-Agent detects process crash
-    │
-    ▼
-POST /api/agent/alert (existing alert system)
-    │
-    ├── Email notifications (existing)
-    ├── Webhook notifications (existing)
-    │
-    └── Trigger autonomous Cortex (new)
-          │
-          ▼
-    POST /api/cortex/autonomous (internal)
-          │
-          ├── Check: autonomous enabled for site?
-          ├── Check: dedup/cooldown (same crash within 15 min?)
-          ├── Check: concurrency (max 3 active sessions per site)
-          │
-          ▼
-    generateText() with tool calling
-          │
-          ├── Read agent logs → look for errors
-          ├── Check process status → confirm crash
-          ├── Restart process → verify it's running
-          │
-          ▼
-    Save conversation + update event record
-          │
-          ├── Resolved → logged for review
-          └── Escalated → email admins
+```text
+agent alert
+  -> POST /api/agent/alert
+  -> internal POST /api/cortex/autonomous with x-cortex-secret
+  -> check site autonomous settings
+  -> deduplicate by machine/process cooldown and nonce
+  -> enforce per-site concurrency
+  -> run an LLM investigation with tier-capped tools
+  -> store the event and conversation for review
+  -> escalate by email when unresolved, offline, or disabled
 ```
 
-### the directive
+Autonomous conversations appear in the Cortex sidebar with an **auto** badge. Event records are stored at `sites/{siteId}/cortex-events/` with status, summary, tool-call actions, timestamps, and outcomes.
 
-Every autonomous investigation is guided by a **directive** — a customizable instruction that tells Cortex its mission. The default directive:
+### directive
 
-> *Keep all configured processes running and machines operational. When a process crashes, check agent logs and system event logs for errors, restart the process. If a restart fails twice, escalate to site admins.*
+Every autonomous investigation is guided by a directive. The default mission is to keep configured processes running and machines operational, investigate crashes through logs and process status, restart when appropriate, and escalate if repeated restart attempts fail.
 
-Custom directives can be set per-site in Firestore (`sites/{siteId}/settings/cortex` → `directive` field).
+Custom directives can be set in Firestore at `sites/{siteId}/settings/cortex` in the `directive` field.
 
 ### enabling autonomous mode
 
-1. **Set the internal secret**: Add `CORTEX_INTERNAL_SECRET` environment variable in Railway (see [Environment Variables](../setup/environment-variables.md))
-2. **Configure a site-level LLM key**: Autonomous mode uses the site key, not user keys (Cortex Settings → Site Key tab)
-3. **Enable per site** in Firestore Console:
-    - Navigate to `sites/{your-site-id}/settings/cortex`
-    - Set `autonomousEnabled` to `true`
+1. Set `CORTEX_INTERNAL_SECRET` in the web runtime environment.
+2. Configure a site-level LLM key at `sites/{siteId}/settings/llm`.
+3. Set `sites/{siteId}/settings/cortex.autonomousEnabled` to `true`.
 
 ### configuration options
 
 | setting | default | description |
 |---------|---------|-------------|
-| `autonomousEnabled` | `false` | Master switch — must be `true` for autonomous mode |
-| `directive` | *(see above)* | Custom mission text for the AI |
-| `maxTier` | `2` | Max tool tier (1=read-only, 2=+process management, 3=+shell commands) |
-| `autonomousModel` | `null` | Override LLM model (e.g., use a cheaper model for autonomous) |
-| `cooldownMinutes` | `15` | Wait time before re-investigating same machine+process |
-| `maxEventsPerHour` | `10` | Max incoming events processed per hour per site |
-| `escalationEmail` | `true` | Email site admins when Cortex escalates |
+| `autonomousEnabled` | `false` | Master switch for autonomous investigations |
+| `directive` | Default directive | Site-specific mission text for autonomous Cortex |
+| `maxTier` | `2` | Maximum tool tier for autonomous investigations |
+| `autonomousModel` | `null` | Optional site-level model override for autonomous work |
+| `cooldownMinutes` | `15` | Deduplication window for the same machine and process |
+| `escalationEmail` | `true` | Sends escalation email when Cortex cannot resolve the issue |
 
 ### guardrails
 
-Autonomous Cortex has multiple safety layers:
-
-- **Opt-in per site** — disabled by default, requires explicit admin action
-- **Event dedup** — same machine+process won't be investigated again within the cooldown window
-- **Concurrency cap** — max 3 simultaneous investigations per site
-- **Step limit** — max 15 tool-calling rounds per investigation
-- **Restart limit** — system prompt instructs max 2 restart attempts before escalating
-- **Tier restriction** — default Tier 2 (no shell commands unless admin overrides)
-- **Offline detection** — if the machine is offline, Cortex immediately escalates instead of wasting LLM calls
-
-### reviewing autonomous actions
-
-Autonomous conversations appear in the Cortex sidebar with a **⚡ auto** badge. Click to view exactly what Cortex investigated, which tools it called, and what actions it took.
-
-Event records are stored in Firestore at `sites/{siteId}/cortex-events/` with full audit trails including tool calls, timestamps, and outcome summaries.
-
-### escalation
-
-When Cortex can't resolve an issue (restart fails, unexpected errors, machine offline), it:
-
-1. Marks the event as **"escalated"**
-2. Sends an **escalation email** to site admins with:
-    - What happened (process name, machine, error)
-    - What Cortex investigated and attempted
-    - Why it's escalating
-3. Logs the full conversation for review in the Cortex UI
+- Autonomous mode is opt-in per site.
+- Events are deduplicated by machine and process for the configured cooldown window.
+- Duplicate nonces are rejected.
+- Each site can run only a limited number of active autonomous sessions at once.
+- Each investigation has a fixed step limit.
+- The default tier cap prevents shell commands unless the site explicitly raises `maxTier`.
+- The per-machine Cortex toggle blocks manual and autonomous tool execution for that machine.
+- Offline machines escalate instead of consuming LLM calls.
 
 ---
 
 ## security
 
-- **Allowlisted commands**: `run_command` and `run_powershell` only allow specific commands (e.g., `ipconfig`, `systeminfo`, `Get-Process`)
-- **File size limits**: `read_file` limited to 100KB
-- **Machine online check**: Cortex verifies the machine is online before executing
-- **Encrypted API keys**: LLM keys are encrypted at rest in Firestore
-- **No key exposure**: API keys never leave the server — streaming happens server-side
-- **Autonomous auth**: Internal endpoint authenticated by shared secret, not exposed to public
+- LLM keys are encrypted at rest and resolved only on the server.
+- User-level keys are preferred for normal chat; site-level keys are fallback and are required for autonomous mode.
+- Tier 3 tools require explicit confirmation in manual chat.
+- Server-side Cortex checks site access before every chat request.
+- Members and chat-scoped API keys are capped to read-only tools.
+- Tool calls to agents are delivered through Firestore command documents and return through completed-command records.
+- The autonomous endpoint uses `x-cortex-secret` and is not a public user-session endpoint.

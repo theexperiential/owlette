@@ -37,22 +37,34 @@ The tray icon communicates with the service through an **IPC status file**:
 C:\ProgramData\Owlette\tmp\service_status.json
 ```
 
-The service writes status updates to this file, and the tray reads it periodically (every 60 seconds) to display current state.
+The service attempts status updates from its main loop, but writes are throttled. It updates the file when service, Firebase, or health state changes, when the service is shutting down, or when unchanged content has reached the 30-second refresh floor. Unchanged content inside that floor is skipped.
 
 ### status file contents
 
 ```json
 {
-  "service_running": true,
-  "firebase_connected": true,
-  "firebase_state": "CONNECTED",
-  "site_id": "my-site",
-  "machine_id": "DESKTOP-ABC123",
-  "agent_version": "2.3.1",
+  "service": {
+    "running": true,
+    "last_update": 1777053600,
+    "version": "2.3.1"
+  },
+  "firebase": {
+    "enabled": true,
+    "connected": true,
+    "site_id": "my-site",
+    "last_heartbeat": 1777053595
+  },
   "health": {
-    "status": "healthy",
-    "last_check": "2026-03-24T10:00:00",
-    "details": {}
+    "status": "ok",
+    "error_code": null,
+    "error_message": null,
+    "checked_at": 1777053580,
+    "probe_results": {
+      "config_readable": true,
+      "firebase_section_present": true,
+      "token_store_accessible": true,
+      "network_reachable": true
+    }
   }
 }
 ```

@@ -148,7 +148,7 @@ node scripts/sync-versions.js 2.1.0
 ### 3. update changelog
 
 ```bash
-# Edit CHANGELOG.md
+# Edit docs/changelog.md
 ## [2.1.0] - 2025-MM-DD
 
 ### Added
@@ -165,7 +165,7 @@ node scripts/sync-versions.js 2.1.0
 
 ```bash
 # Commit version bump
-git add VERSION agent/VERSION web/package.json CHANGELOG.md
+git add VERSION agent/VERSION web/package.json docs/changelog.md
 git commit -m "chore: Bump version to 2.1.0"
 
 # Create release tag
@@ -308,9 +308,9 @@ git tag v2.0.5-agent
 
 ## related documentation
 
-- [CHANGELOG.md](../CHANGELOG.md) - Release history
-- [.claude/CLAUDE.md](../.claude/CLAUDE.md) - Development guide
-- [docs/firestore-rules-deployment.md](firestore-rules-deployment.md) - Security rules
+- [changelog](../changelog.md) - Release history
+- Development guide: root `.claude/CLAUDE.md`
+- [firestore security rules](../setup/firestore-rules.md) - Security rules
 
 ---
 

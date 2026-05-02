@@ -77,7 +77,7 @@ Move from `launch_ready` to `launched` only after the support owner confirms the
 
 - Run the final k6 launch suite or attach the approved report.
 - Run clean install smokes for the CLI and both SDKs.
-- Run the GitHub Actions Roost deploy example against the launch fixture.
+- Run the GitHub Actions roost deploy example against the launch fixture.
 - Review support macros and the required support payload below.
 - Put the launch ticket in `launch_ready` only if every gate is pass or waived.
 
@@ -116,7 +116,7 @@ Ask for this payload before triage unless the incident is already obvious:
 - `requestId` from the body and `X-Request-Id` from the response headers.
 - `RateLimit-*`, `Retry-After`, and `Roost-Rate-Limited-Reason` headers when present.
 - Package name and version for CLI, Node SDK, or Python SDK issues.
-- Base URL, key prefix only (`owk_live` or `owk_test`), site id, machine id, Roost id, version id, and workflow run URL when relevant.
+- Base URL, key prefix only (`owk_live` or `owk_test`), site id, machine id, roost id, version id, and workflow run URL when relevant.
 - Expected result, actual result, and whether retry changed the outcome.
 
 Never ask for full API keys, Firebase tokens, private package credentials, or customer secrets. If a secret is pasted into support, rotate it before continuing diagnosis.
@@ -133,12 +133,12 @@ Choose the narrowest containment path that protects customers without weakening 
 | CLI or SDK package regression | Pin examples to the last known good version and publish an advisory. | Move npm `rc` dist-tags, deprecate the broken version if needed, yank only if registry policy and impact justify it, and publish a fixed RC. |
 | GitHub Action workflow regression | Remove or annotate the template link and direct users to the raw CLI workflow. | Patch the composite action and tag a new release once verified. |
 | API 5xx, auth, or route regression | Pause onboarding, collect `requestId`s, and open a status incident when customer-visible. | Redeploy the previous web commit or revert the route commit. Revoke or rotate affected keys if exposure is possible. |
-| Site-specific Roost distribution incident | Pause new Roost work for the affected site if continuing rollout increases risk. | Use the [Roost kill switch](../ops/roost-kill-switch.md) for that site, then re-enable after publish/signed-URL and agent sync smokes pass. |
-| Capability or privileged rate-limit bug | Use the [security-boundary runbook](../ops/security-boundary-kill-switches.md) only for legitimate capability/rate-limit enforcement incidents. | Flip `capability_enforcement` or `rate_limit_enforcement` for the shortest possible window, with reason, owner, expiry, and follow-up fix. |
+| Site-specific roost distribution incident | Pause new roost work for the affected site if continuing rollout increases risk. | Ask an operator to apply the site distribution kill switch for that site, then re-enable after publish/signed-URL and agent sync smokes pass. |
+| Capability or privileged rate-limit bug | Use the internal security-boundary kill switch process only for legitimate capability/rate-limit enforcement incidents. | Flip `capability_enforcement` or `rate_limit_enforcement` for the shortest possible window, with reason, owner, expiry, and follow-up fix. |
 | Load or latency regression | Pause launch announcements and reduce onboarding volume. | Tune limits, roll back the deployment, or mark impacted components degraded while the fix is validated. |
 | Status-page vendor issue | Publish manual updates in the operator-approved channel. | Keep API behavior unchanged; do not hide incidents because the vendor is degraded. |
 
-The security-boundary kill switches do not bypass API-key scope, authentication, audit writes, or Firestore rules. The Roost kill switch is per-site distribution containment, not a global public API pause. Do not use either class of switch for missing scopes, bad credentials, broken docs, or package regressions.
+The security-boundary kill switches do not bypass API-key scope, authentication, audit writes, or Firestore rules. The roost kill switch is per-site distribution containment, not a global public API pause. Do not use either class of switch for missing scopes, bad credentials, broken docs, or package regressions.
 
 ---
 

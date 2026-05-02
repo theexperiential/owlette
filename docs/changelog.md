@@ -7,11 +7,33 @@ hide:
 
 All notable changes to owlette are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
-For the full version management workflow, see [Version Management](internal/version-management.md).
-
 ---
 
 ## [Unreleased]
+
+### added - post-2.11 updates
+
+- Site-tier billing now gates beta sites as `core` or `pro`, defaulting beta sites to `pro`.
+- Process control now includes `restart_process` end to end across the public API, CLI, and agent control surfaces.
+- Agent GUI `kill_process` actions now require a confirmation dialog before dispatch.
+
+### changed - post-2.11 updates
+
+- Landing and pricing pages were refreshed across the redesign, use-case, developer, proof, pricing, and GPU-label sections.
+- roost and webhooks UI surfaces are now labeled as developer preview.
+
+### fixed - post-2.11 updates
+
+- Metrics charts refresh their time window when a dashboard tab regains focus.
+- Streaming API responses no longer enter the idempotency cache.
+- Status page readiness checks are hardened against partial service readiness.
+
+### security - post-2.11 updates
+
+- Remote installer requests now require a SHA-256 checksum before an agent accepts the installer.
+- `getUsageSummaryHttp` now requires site-scoped auth before returning usage data.
+- Site-member and project-distribution routes now enforce their capability gates before mutations.
+- Chat routes now enforce conversation ownership before returning or mutating conversations.
 
 ### added - security-boundary migration prep
 
@@ -36,14 +58,14 @@ Promotes the internal admin-gated capabilities (machine commands, processes, cla
 - **`/api/sites/{siteId}/deployments/*`** — classic installer deploy CRUD + retry/cancel/uninstall/delete (7 verbs). Quota-enforced (max-targets-per-deploy=100, configurable via `sites/{id}.deployQuota`; 413 `over_quota`). Cancel actively purges queued commands so a stale entry can't be picked up. Uninstall requires `site=<id>:admin`.
 - **`/api/installer/*`** — agent-installer binary management (list, latest, 3-step upload, set-latest, delete). Superadmin-only (gated by new `requirePlatformAuthAndScope` helper that composes Wave-0 primitives + a defense-in-depth role check). Soft-delete protects the current latest version and enforces min-active-versions ≥ 2.
 - **`/api/sites/{siteId}/machines/{machineId}/commands/*`** — dispatch + status-poll for `reboot_machine` / `shutdown_machine` / `capture_screenshot`. Live-view streaming explicitly out of scope (deferred Wave-4 spike). Offline machine returns 409 `machine_offline` (not queued). Screenshot uses a 3-step CLI flow: dispatch → poll → download from 1-hour signed URL.
-- **`/api/sites/{siteId}/machines/{machineId}/processes/*`** — full process CRUD + control verbs (kill / start / stop / schedule). 9 verbs total. Race-safe via the new `withProcessLock()` helper — Firestore transaction enforces duplicate-name rejection (409 `duplicate_process_name`) inside the txn boundary; lazy backfill of `processId` UUIDs on legacy rows. Schedule verb writes through the lock (no command queue); the other three control verbs queue commands.
+- **`/api/sites/{siteId}/machines/{machineId}/processes/*`** — full process CRUD + control verbs (kill / restart / start / stop / schedule). 10 verbs total. Race-safe via the new `withProcessLock()` helper — Firestore transaction enforces duplicate-name rejection (409 `duplicate_process_name`) inside the txn boundary; lazy backfill of `processId` UUIDs on legacy rows. Schedule verb writes through the lock (no command queue); the other four control verbs queue commands.
 - **`/api/cortex/conversations/*`** — canonical Cortex conversation API (5 verbs: create, list, send+stream, soft-delete, rename). Reuses Cortex's dual-path streaming engine (local agent vs server-side LLM) via the extracted `cortexStream.server.ts` helper. Older `/api/chat/*` routes remain compatibility aliases. Conversations are stored at `chat_conversations/{id}` with embedded messages capped at 200; overflow splits into `chat_messages/{conversationId}/{messageId}` subcollection.
 - **`/api/users/*`** — platform user administration (7 verbs: list/get/promote/demote/assign-sites/remove-sites/delete). Superadmin-gated. Last-superadmin guard runs inside the demote transaction (409 `last_superadmin`). DELETE cascade with explicit failure modes: orphan-sites guard (409 `orphan_sites` if user owns sites and `successorUid` not provided); successor validation; api-key revocation across both subcollection + top-level lookup; background `setImmediate` command-cancel sweep.
 - **`/api/sites/{siteId}/members/*`** — site membership (3 verbs: list/add/remove). Site-admin-gated. Add with `role: 'admin'` against a member-tier user returns `roleHonored: false` rather than silently promoting globally — explicit promotion goes through `/api/users/{uid}/promote`.
 
-**owlette CLI** — promoted from `@owlette/roost-cli` (binary `roost`) → `@owlette/cli` (binary `owlette`) in a previous step, now prepared as v1.0.0-rc.0 with 6 promoted command groups: `chat` (5 verbs), `user` (7), `deploy` (classic installer; 7), `installer` (4), `process` (9), `machine` mutations (3 — reboot/shutdown/screenshot; live-view stays as the only C-tier stub). Plus `whoami`, `version`, `site`, `quota`, `audit-log`, `machine` reads from owlette-cli W2. Every mutation auto-generates `Idempotency-Key: cli-<noun>-<verb>-<uuid>`; stable error codes (`machine_offline`, `duplicate_process_name`, `over_quota`, `min_versions_violated`, `last_superadmin`, `orphan_sites`, `scope_insufficient`) get human-readable hints; destructive verbs honor `--yes`. Legacy `roost` binary + `ROOST_*` env vars + `~/.config/roost/` config path remain as deprecation wrappers through 2026-10-01 (one-time-per-process warnings).
+**owlette CLI** — `@owlette/cli` (binary `owlette`) prepared as v1.0.0-rc.0 with 6 promoted command groups: `chat` (5 verbs), `user` (7), `deploy` (classic installer; 7), `installer` (4), `process` (10), `machine` mutations (3 — reboot/shutdown/screenshot; live-view stays as the only C-tier stub). Plus `whoami`, `version`, `site`, `quota`, `audit-log`, `machine` reads from the prior cli wave. Every mutation auto-generates `Idempotency-Key: cli-<noun>-<verb>-<uuid>`; stable error codes (`machine_offline`, `duplicate_process_name`, `over_quota`, `min_versions_violated`, `last_superadmin`, `orphan_sites`, `scope_insufficient`) get human-readable hints; destructive verbs honor `--yes`.
 
-**Node + Python SDKs** — extended to the 1.0.0 RC package line: `@owlette/sdk@1.0.0-rc.0` and `owlette-sdk==1.0.0rc0` (PEP 440 spelling). Both add 6 new resource modules (`installerDeployments`/`installer_deployments`, `installer`, `processes`, `chat`, `users`, `members`) plus extension of `machines` with command-dispatch + screenshot orchestration (queue → poll → download). Both auto-generate `Idempotency-Key: sdk-<resource>-<verb>-<uuid>` if not supplied. Streaming `chat.send()` parses the AI-SDK v3 line protocol (`0:` deltas, `d:` end markers, `3:` errors) — Node exposes `{ deltas: AsyncIterable, complete: Promise }`; Python yields `async for delta in chat.send(...)`.
+**Node + Python SDKs** — extended to the 1.0.0 RC package line: `@owlette/sdk@1.0.0-rc.1` and `owlette-sdk==1.0.0rc0` (PEP 440 spelling). Both add 6 new resource modules (`installerDeployments`/`installer_deployments`, `installer`, `processes`, `chat`, `users`, `members`) plus extension of `machines` with command-dispatch + screenshot orchestration (queue → poll → download). Both auto-generate `Idempotency-Key: sdk-<resource>-<verb>-<uuid>` if not supplied. Streaming `chat.send()` parses the AI-SDK v3 line protocol (`0:` deltas, `d:` end markers, `3:` errors) — Node exposes `{ deltas: AsyncIterable, complete: Promise }`; Python yields `async for delta in chat.send(...)`.
 
 **scope grammar extended** — `ApiKeyResource` enum extended from 3 → 8 types: added `chat`, `deploy`, `process`, `user`, `installer`. New constants `ALL_RESOURCES` + `SUPERADMIN_ONLY_RESOURCES` exported from `web/lib/apiKeyTypes.ts` so route validators + the dashboard scope picker can't drift.
 
@@ -62,9 +84,6 @@ Promotes the internal admin-gated capabilities (machine commands, processes, cla
 
 ### deprecated
 
-- Legacy `roost` binary in the CLI package (use `owlette` instead — wrapper removed 2026-10-01).
-- `ROOST_*` env vars (use `OWLETTE_*` — fallback removed 2026-10-01).
-- `~/.config/roost/config.toml` (auto-migrates to `~/.config/owlette/config.toml` on first read).
 - Historical `/api/admin/*` docs are no longer the public contract. Use the scoped public equivalents (`/api/sites/{s}/deployments/*`, `/api/installer/*`, etc.); individual admin aliases may be internal, removed, or dashboard-only depending on the domain.
 
 ### removed
@@ -182,7 +201,7 @@ A content-addressed sync layer replacing v1's single-URL ZIP model. Turns roost 
 **server-side — web API surface (roost routes)**
 - New routes at clean paths (no `/v2/` prefix — deliberate decision): `POST /api/chunks/{check,upload-urls,download-urls}`, `GET/POST /api/roosts/{roostId}/manifests`, `POST /api/roosts/{roostId}/rollback`. All 6 currently return 501 `notImplementedYet` stubs pending R2 wiring.
 - RFC 7807 `application/problem+json` error envelope (`web/lib/apiErrors.ts`) — stable problem-type URIs, per-occurrence requestId for trace correlation, field-level error detail for 400/422. Replaces the legacy `{error: string}` shape for roost routes.
-- OpenAPI 3.1 spec extended (`web/openapi.yaml`) with Roost tag, all 6 paths, `ProblemDetails` + `OciManifest` + `ManifestSummary` schemas, reusable `Problem4xx` + `Problem501` responses, bearer-token scheme for firebase ID tokens. Live docs at `/docs/api` (Scalar renderer).
+- OpenAPI 3.1 spec extended (`web/openapi.yaml`) with roost tag, all 6 paths, `ProblemDetails` + `OciManifest` + `ManifestSummary` schemas, reusable `Problem4xx` + `Problem501` responses, bearer-token scheme for firebase ID tokens. Live docs at `/docs/api` (Scalar renderer).
 - Strict CI drift gate: `.github/workflows/openapi-validate.yml` runs on PR + push; any undocumented route under `/api/chunks/*` or `/api/roosts/*` hard-errors.
 
 **server-side — cloud functions**

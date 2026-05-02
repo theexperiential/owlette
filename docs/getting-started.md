@@ -39,9 +39,10 @@ Sites organize your machines — think of them as locations, departments, or pro
 
 1. Run the installer **as Administrator** on your target machine
 2. Follow the setup wizard
-3. A console window displays a **pairing phrase** (3 random words) and your browser opens automatically
-4. Select a site and click **"Authorize"**
-5. The agent receives credentials and connects — done
+3. A console window displays a **pairing phrase** (3 random words), the authorization URL, and the prompt **"open browser on this machine? [y/N]"**
+4. Enter `y` to open the local browser, then select a site and click **"Authorize"**
+5. Press Enter or choose `n` to authorize from a phone or another computer by opening the displayed URL and entering the pairing phrase
+6. The agent receives credentials and connects — done
 
 !!! tip "Bulk deployment"
     For deploying to many machines, use the `/ADD=` flag with a pre-authorized phrase from the dashboard. See [Installation → Silent Install](agent/installation.md#method-2-silent-install-with-add-bulk-deployment).
@@ -81,7 +82,7 @@ You're up and running. Here's what else you can do:
 
 - [**Configure process settings**](dashboard/process-management.md) — Priority, visibility, launch delay, crash limits
 - [**Deploy software remotely**](dashboard/deployments.md) — Push installers to machines without physical access
-- [**Distribute project files**](dashboard/project-distribution.md) — Sync ZIP archives across your fleet
+- [**Sync files with roost**](dashboard/roost.md) — Publish versioned files and sync them to target machines
 - [**Chat with your machines**](dashboard/cortex.md) — Use Cortex AI to query and control machines via natural language
 - [**Set up email alerts**](dashboard/admin/email-alerts.md) — Get notified when machines go offline or processes crash
 - [**Add more machines**](agent/installation.md) — Scale out to your full fleet
