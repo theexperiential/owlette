@@ -10,10 +10,8 @@ function readRepoFile(relativePath: string): string {
 describe('CLI readiness docs', () => {
   const docs = [
     'cli/README.md',
-    'cli/MIGRATION.md',
     'docs/cli/overview.md',
     'docs/cli/readiness.md',
-    'docs/cli/migration-from-roost-cli.md',
     'docs/cli/reference/chat.md',
     'docs/cli/reference/deploy.md',
     'docs/cli/reference/machine.md',

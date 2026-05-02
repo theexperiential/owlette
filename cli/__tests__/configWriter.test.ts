@@ -9,7 +9,7 @@ import {
 } from '../src/configWriter';
 
 function tmpPath(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'roost-cli-writer-'));
+  const dir = mkdtempSync(join(tmpdir(), 'owlette-cli-writer-'));
   return join(dir, 'config.toml');
 }
 

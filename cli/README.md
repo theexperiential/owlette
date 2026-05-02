@@ -41,8 +41,6 @@ owlette roost push ./my-project --to rst_my_project_id --site site-1
 
 full docs at [docs/cli/overview.md](https://github.com/owlette-app/owlette/tree/main/docs/cli/overview.md) (or owlette.app/docs/cli once published).
 
-migrating from the legacy roost cli? see [MIGRATION.md](./MIGRATION.md) - deprecation wrappers for binary, env vars, and config path remain through 2026-10-01.
-
 ## license
 
 FSL-1.1-Apache-2.0 - see LICENSE.

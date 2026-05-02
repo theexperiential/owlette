@@ -31,7 +31,7 @@ describe('buildVersion', () => {
       hostname: 'my-laptop',
       platform: 'darwin',
     });
-    expect(m.config.producer).toBe('roost-cli');
+    expect(m.config.producer).toBe('owlette-cli');
     expect(m.config.cliVersion).toBe('1.2.3');
     expect(m.config.hostname).toBe('my-laptop');
     expect(m.config.platform).toBe('darwin');

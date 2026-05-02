@@ -10,7 +10,7 @@ import {
 } from '../src/lib/chunker';
 
 function mkTree(): string {
-  const root = mkdtempSync(join(tmpdir(), 'roost-cli-chunker-'));
+  const root = mkdtempSync(join(tmpdir(), 'owlette-cli-chunker-'));
   writeFileSync(join(root, 'a.txt'), 'hello world');
   mkdirSync(join(root, 'sub'));
   writeFileSync(join(root, 'sub', 'b.txt'), 'nested');
@@ -50,7 +50,7 @@ describe('chunkOneFile', () => {
   });
 
   it('splits a file larger than CHUNK_SIZE_BYTES into multiple chunks', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'roost-cli-big-'));
+    const root = mkdtempSync(join(tmpdir(), 'owlette-cli-big-'));
     const path = join(root, 'big.bin');
     const buf = Buffer.alloc(CHUNK_SIZE_BYTES + 7);
     for (let i = 0; i < buf.length; i++) buf[i] = i % 256;

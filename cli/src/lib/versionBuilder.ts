@@ -39,7 +39,7 @@ export interface BuildVersionInput {
 
 export function buildVersion(input: BuildVersionInput): BuiltVersion {
   const config: Record<string, unknown> = {
-    producer: 'roost-cli',
+    producer: 'owlette-cli',
     cliVersion: input.cliVersion,
     createdAt: new Date().toISOString(),
   };
