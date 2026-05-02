@@ -9,6 +9,10 @@ const isDev = process.env.NODE_ENV === 'development';
 // true in prod builds.
 const isEmulatorBuild = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
 const e2eDistDir = process.env.OWLETTE_NEXT_DIST_DIR;
+const allowedDevOrigins = (process.env.NEXT_ALLOWED_DEV_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 const nextConfig: NextConfig = {
   reactStrictMode: false,
@@ -16,7 +20,7 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_APP_VERSION: version,
   },
-  allowedDevOrigins: ['http://100.64.45.42:3000'],
+  allowedDevOrigins,
   async headers() {
     return [
       {
