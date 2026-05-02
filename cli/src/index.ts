@@ -3,8 +3,7 @@
  * owlette CLI entrypoint — builds the commander program, wires sub-
  * commands, and dispatches argv. The `./bin/owlette` launcher exec's
  * `dist/index.js` (after `npm run build`) or `ts-node src/index.ts`
- * during development. The `./bin/roost` wrapper prints a deprecation
- * notice and forwards to this same entrypoint.
+ * during development.
  */
 
 import { Command } from 'commander';
