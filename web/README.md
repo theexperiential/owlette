@@ -20,7 +20,7 @@ Next.js 16 web portal for managing Windows processes via Owlette agents.
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - Firebase project with Firestore enabled
 - Firebase Authentication enabled (Email/Password + Google)
 - Upstash Redis account (free tier available - for rate limiting)

@@ -71,6 +71,7 @@ build/
 dist/
 /installer/
 agent/build/
+agent/build_log.txt
 agent/build_output.txt
 agent/dist/
 agent/downloads/

@@ -53,8 +53,9 @@
 #ifndef MyAppVersion
   #define MyAppVersion GetEnv("OWLETTE_VERSION")
   #if MyAppVersion == ""
-    #define MyAppVersion "2.4.0"
-    #pragma message "WARNING: Using fallback version 2.4.0 - VERSION file not found or OWLETTE_VERSION not set"
+    ; fallback should match /VERSION - bump on every release
+    #define MyAppVersion "2.11.0"
+    #pragma message "WARNING: Using fallback version 2.11.0 - VERSION file not found or OWLETTE_VERSION not set"
   #endif
 #endif
 
@@ -278,7 +279,7 @@ begin
       begin
         PairingSucceeded := False;
         Log('Pairing failed - skipping service install');
-        MsgBox('Agent pairing was not completed. The Owlette service will not start until you run the pairing flow again.' + #13#10 + #13#10 + 'You can re-pair by running:' + #13#10 + 'C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\configure_site.py', mbInformation, MB_OK);
+        MsgBox('Agent pairing was not completed. The Owlette service will not start until you run the pairing flow again.' + #13#10 + #13#10 + 'You can re-pair by running:' + #13#10 + ExpandConstant('{app}\python\python.exe {app}\agent\src\configure_site.py'), mbInformation, MB_OK);
       end;
     end;
 
@@ -431,7 +432,8 @@ begin
     Log('net stop returned with code: ' + IntToStr(ResultCode));
     ServiceWasStopped := True;
 
-    // Fallback: also tell NSSM directly in case net stop didn't fully clean up
+    // Fallback: also tell NSSM directly in case net stop didn't fully clean up.
+    // Keep the legacy path for upgrades from pre-ProgramData installs where NSSM may still live under C:\Owlette.
     if FileExists(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe')) then
       Exec(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe'), 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
     else if FileExists('C:\Owlette\tools\nssm.exe') then

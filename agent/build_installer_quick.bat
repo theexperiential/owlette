@@ -60,24 +60,35 @@ echo Files copied!
 echo.
 
 echo [4/4] Compiling installer...
-set "INNO_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if exist "%INNO_PATH%" (
-    echo Running Inno Setup compiler...
-    mkdir build\installer_output 2>nul
-    "%INNO_PATH%" owlette_installer.iss
-    if errorlevel 1 (
-        echo ERROR: Inno Setup compilation failed
-        pause
-        exit /b 1
+set "INNO_PATH="
+if defined ISCC (
+    if exist "%ISCC%" set "INNO_PATH=%ISCC%"
+)
+if not defined INNO_PATH (
+    for /f "delims=" %%i in ('where iscc.exe 2^>nul') do (
+        if not defined INNO_PATH set "INNO_PATH=%%i"
     )
-    echo.
-    echo SUCCESS! Installer created: Owlette-Installer-v%OWLETTE_VERSION%.exe
-    echo.
-) else (
-    echo ERROR: Inno Setup not found
+)
+if not defined INNO_PATH (
+    if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "INNO_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+)
+if not defined INNO_PATH (
+    echo ERROR: Inno Setup 6 not found. Set %%ISCC%% or install to default path.
     pause
     exit /b 1
 )
+
+echo Running Inno Setup compiler...
+mkdir build\installer_output 2>nul
+"%INNO_PATH%" owlette_installer.iss
+if errorlevel 1 (
+    echo ERROR: Inno Setup compilation failed
+    pause
+    exit /b 1
+)
+echo.
+echo SUCCESS! Installer created: Owlette-Installer-v%OWLETTE_VERSION%.exe
+echo.
 
 echo Build complete!
 pause

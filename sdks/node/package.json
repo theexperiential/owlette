@@ -1,6 +1,7 @@
 {
   "name": "@owlette/sdk",
   "version": "1.0.0-rc.1",
+  "packageManager": "npm@10.9.0",
   "description": "node sdk for the owlette public api (owlette.app)",
   "license": "FSL-1.1-Apache-2.0",
   "main": "./dist/index.js",
