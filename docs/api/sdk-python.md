@@ -28,7 +28,7 @@ import asyncio, os
 from roost import Roost, PushOptions
 
 async def main():
-    async with Roost(token=os.environ["ROOST_TOKEN"]) as client:
+    async with Roost(token=os.environ["OWLETTE_TOKEN"]) as client:
         identity = await client.account.whoami()
         site_id = identity.primary_site_id or "kiosk-fleet-01"
         result = await client.roosts.push(
@@ -55,7 +55,7 @@ every request needs an `owk_live_*` or `owk_test_*` key. mint one from the dashb
 from roost import Roost, RetryPolicy
 
 async with Roost(
-    token=os.environ["ROOST_TOKEN"],         # required — owk_live_* or owk_test_*
+    token=os.environ["OWLETTE_TOKEN"],         # required — owk_live_* or owk_test_*
     api_url="https://owlette.app",           # default
     environment="live",                      # optional — "live" | "test" metadata
     roost_version="2026-04-22",              # default — sent as Roost-Version header

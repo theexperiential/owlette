@@ -18,7 +18,7 @@ shape:
   "schemaVersion": 2,
   "mediaType": "application/vnd.owlette.version.v1+json",
   "config": {
-    "producer": "roost-cli",
+    "producer": "owlette-cli",
     "cliVersion": "1.0.0-rc.1",
     "createdAt": "2026-04-22T15:30:00.000Z",
     "hostname": "build-runner-01",
@@ -292,7 +292,7 @@ GET /api/roosts/{roostId}/versions/{versionRef}?siteId=site_kiosk_fleet
     "schemaVersion": 2,
     "mediaType": "application/vnd.owlette.version.v1+json",
     "config": {
-      "producer": "roost-cli",
+      "producer": "owlette-cli",
       "cliVersion": "1.0.0-rc.1",
       "createdAt": "2026-04-22T15:30:00.000Z",
       "hostname": "build-runner-01",

@@ -7,10 +7,10 @@ that terminates TLS.
 
 Required env vars::
 
-    ROOST_TOKEN            — roost:<id>:rollback scope
-    ROOST_SIGNING_SECRET   — whsec_* returned by webhooks.subscribe()
-    SLACK_WEBHOOK_URL      — slack incoming webhook
-    AUTO_ROLLBACK_SITE_IDS — comma-separated allowlist
+    OWLETTE_TOKEN            — roost:<id>:rollback scope
+    WEBHOOK_SIGNING_SECRET   — whsec_* returned by webhooks.subscribe()
+    SLACK_WEBHOOK_URL        — slack incoming webhook
+    AUTO_ROLLBACK_SITE_IDS   — comma-separated allowlist
 
 Install the extra dep::
 
@@ -37,15 +37,15 @@ def _require_env(*names: str) -> None:
 
 
 _require_env(
-    "ROOST_TOKEN", "ROOST_SIGNING_SECRET",
+    "OWLETTE_TOKEN", "WEBHOOK_SIGNING_SECRET",
     "SLACK_WEBHOOK_URL", "AUTO_ROLLBACK_SITE_IDS",
 )
 
-TOKEN = os.environ["ROOST_TOKEN"]
-SECRET = os.environ["ROOST_SIGNING_SECRET"]
+TOKEN = os.environ["OWLETTE_TOKEN"]
+SECRET = os.environ["WEBHOOK_SIGNING_SECRET"]
 SLACK_URL = os.environ["SLACK_WEBHOOK_URL"]
 ALLOWED_SITES = {s.strip() for s in os.environ["AUTO_ROLLBACK_SITE_IDS"].split(",") if s.strip()}
-API_URL = os.environ.get("ROOST_BASE", "https://owlette.app")
+API_URL = os.environ.get("OWLETTE_API_URL", "https://owlette.app")
 PORT = int(os.environ.get("PORT", "8080"))
 
 

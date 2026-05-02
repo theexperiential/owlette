@@ -5,7 +5,7 @@
  * with a single `owlette.roosts.push()` call.
  *
  * Required env vars:
- *   ROOST_TOKEN     api key with roost:<id>:write,deploy scope
+ *   OWLETTE_TOKEN   api key with roost:<id>:write,deploy scope
  *   ROOST_SITE_ID   site hosting the roost
  *   ROOST_ID        target roost id
  *   BUILD_DIR       directory to publish (defaults to ./build)
@@ -14,21 +14,21 @@
 import { Owlette, OwletteApiError } from '@owlette/sdk';
 
 const {
-  ROOST_TOKEN, ROOST_SITE_ID, ROOST_ID,
+  OWLETTE_TOKEN, ROOST_SITE_ID, ROOST_ID,
   BUILD_DIR = './build',
-  ROOST_BASE = 'https://owlette.app',
+  OWLETTE_API_URL = 'https://owlette.app',
   GITHUB_REF_NAME: VERSION = 'dev',
 } = process.env;
 
 async function main(): Promise<number> {
-  for (const k of ['ROOST_TOKEN', 'ROOST_SITE_ID', 'ROOST_ID']) {
+  for (const k of ['OWLETTE_TOKEN', 'ROOST_SITE_ID', 'ROOST_ID']) {
     if (!process.env[k]) {
       console.error(`fatal: missing env var ${k}`);
       return 1;
     }
   }
 
-  const owlette = new Owlette({ token: ROOST_TOKEN!, apiUrl: ROOST_BASE });
+  const owlette = new Owlette({ token: OWLETTE_TOKEN!, apiUrl: OWLETTE_API_URL });
 
   try {
     console.log(`[ci-cd] publishing ${BUILD_DIR} -> ${ROOST_ID} (version ${VERSION})`);

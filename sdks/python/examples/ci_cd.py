@@ -5,7 +5,7 @@ of curl + jq with a single ``client.roosts.push()`` call. Drop it into a
 GitHub Actions step that runs ``python ci_cd.py``.
 
 Required env vars:
-    ROOST_TOKEN     — api key with roost:<id>:write,deploy scope
+    OWLETTE_TOKEN   — api key with roost:<id>:write,deploy scope
     ROOST_SITE_ID   — site hosting the roost
     ROOST_ID        — target roost id
     BUILD_DIR       — directory to publish (defaults to ./build)
@@ -25,14 +25,14 @@ from roost import DeployOptions, PushOptions, Roost, RoostApiError
 
 
 async def main() -> int:
-    token = os.environ.get("ROOST_TOKEN")
+    token = os.environ.get("OWLETTE_TOKEN")
     site_id = os.environ.get("ROOST_SITE_ID")
     roost_id = os.environ.get("ROOST_ID")
     build_dir = os.environ.get("BUILD_DIR", "./build")
-    api_url = os.environ.get("ROOST_BASE", "https://owlette.app")
+    api_url = os.environ.get("OWLETTE_API_URL", "https://owlette.app")
     version = os.environ.get("GITHUB_REF_NAME", "dev")
 
-    for name, val in [("ROOST_TOKEN", token), ("ROOST_SITE_ID", site_id), ("ROOST_ID", roost_id)]:
+    for name, val in [("OWLETTE_TOKEN", token), ("ROOST_SITE_ID", site_id), ("ROOST_ID", roost_id)]:
         if not val:
             print(f"fatal: missing env var {name}", file=sys.stderr)
             return 1

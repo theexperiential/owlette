@@ -11,8 +11,8 @@ API-key callers are intentionally capped to read-only Cortex tools during stream
 ## list
 
 ```bash
-curl -fsS "$ROOST_BASE/api/cortex/conversations?siteId=$SITE_ID&page_size=20" \
-  -H "Authorization: Bearer $ROOST_TOKEN"
+curl -fsS "$OWLETTE_API_URL/api/cortex/conversations?siteId=$SITE_ID&page_size=20" \
+  -H "Authorization: Bearer $OWLETTE_TOKEN"
 ```
 
 Response:
@@ -31,8 +31,8 @@ Response:
 ## create
 
 ```bash
-curl -fsS -X POST "$ROOST_BASE/api/cortex/conversations" \
-  -H "Authorization: Bearer $ROOST_TOKEN" \
+curl -fsS -X POST "$OWLETTE_API_URL/api/cortex/conversations" \
+  -H "Authorization: Bearer $OWLETTE_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: $(uuidgen)" \
   -d "{\"siteId\":\"$SITE_ID\",\"machineId\":\"$MACHINE_ID\",\"title\":\"diagnostics\"}"
@@ -43,8 +43,8 @@ curl -fsS -X POST "$ROOST_BASE/api/cortex/conversations" \
 ## send
 
 ```bash
-curl -fsS -N -X POST "$ROOST_BASE/api/cortex/conversations/$CONVERSATION_ID" \
-  -H "Authorization: Bearer $ROOST_TOKEN" \
+curl -fsS -N -X POST "$OWLETTE_API_URL/api/cortex/conversations/$CONVERSATION_ID" \
+  -H "Authorization: Bearer $OWLETTE_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: $(uuidgen)" \
   -d '{"role":"user","content":"summarize the current machine health"}'
@@ -61,8 +61,8 @@ Public send accepts only `role` and `content`. To change machines, create a new 
 ## rename
 
 ```bash
-curl -fsS -X PATCH "$ROOST_BASE/api/cortex/conversations/$CONVERSATION_ID" \
-  -H "Authorization: Bearer $ROOST_TOKEN" \
+curl -fsS -X PATCH "$OWLETTE_API_URL/api/cortex/conversations/$CONVERSATION_ID" \
+  -H "Authorization: Bearer $OWLETTE_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: $(uuidgen)" \
   -d '{"title":"morning diagnostics"}'
@@ -73,8 +73,8 @@ Only `title` is mutable.
 ## delete
 
 ```bash
-curl -fsS -X DELETE "$ROOST_BASE/api/cortex/conversations/$CONVERSATION_ID" \
-  -H "Authorization: Bearer $ROOST_TOKEN" \
+curl -fsS -X DELETE "$OWLETTE_API_URL/api/cortex/conversations/$CONVERSATION_ID" \
+  -H "Authorization: Bearer $OWLETTE_TOKEN" \
   -H "Idempotency-Key: $(uuidgen)"
 ```
 

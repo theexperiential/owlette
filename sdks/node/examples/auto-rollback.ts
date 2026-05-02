@@ -7,27 +7,27 @@
  * vercel — the handler is framework-free on purpose.
  *
  * Required env vars:
- *   ROOST_TOKEN            — roost:<id>:rollback scope
- *   ROOST_SIGNING_SECRET   — whsec_* returned by webhooks.subscribe()
- *   SLACK_WEBHOOK_URL      — slack incoming webhook
- *   AUTO_ROLLBACK_SITE_IDS — comma-separated allowlist
+ *   OWLETTE_TOKEN            — roost:<id>:rollback scope
+ *   WEBHOOK_SIGNING_SECRET   — whsec_* returned by webhooks.subscribe()
+ *   SLACK_WEBHOOK_URL        — slack incoming webhook
+ *   AUTO_ROLLBACK_SITE_IDS   — comma-separated allowlist
  */
 
 import http from 'node:http';
 import { Owlette, OwletteApiError, verifySignature } from '@owlette/sdk';
 
 const {
-  ROOST_TOKEN, ROOST_SIGNING_SECRET, SLACK_WEBHOOK_URL, AUTO_ROLLBACK_SITE_IDS,
-  ROOST_BASE = 'https://owlette.app',
+  OWLETTE_TOKEN, WEBHOOK_SIGNING_SECRET, SLACK_WEBHOOK_URL, AUTO_ROLLBACK_SITE_IDS,
+  OWLETTE_API_URL = 'https://owlette.app',
   PORT = '8080',
 } = process.env;
 
-for (const k of ['ROOST_TOKEN', 'ROOST_SIGNING_SECRET', 'SLACK_WEBHOOK_URL', 'AUTO_ROLLBACK_SITE_IDS']) {
+for (const k of ['OWLETTE_TOKEN', 'WEBHOOK_SIGNING_SECRET', 'SLACK_WEBHOOK_URL', 'AUTO_ROLLBACK_SITE_IDS']) {
   if (!process.env[k]) { console.error(`fatal: missing env var ${k}`); process.exit(1); }
 }
 
 const allowedSites = new Set(AUTO_ROLLBACK_SITE_IDS!.split(',').map((s) => s.trim()));
-const owlette = new Owlette({ token: ROOST_TOKEN!, apiUrl: ROOST_BASE });
+const owlette = new Owlette({ token: OWLETTE_TOKEN!, apiUrl: OWLETTE_API_URL });
 
 async function slack(text: string): Promise<void> {
   await fetch(SLACK_WEBHOOK_URL!, {
@@ -46,7 +46,7 @@ http.createServer(async (req, res) => {
 
   const headerRaw = req.headers['roost-signature'];
   const header = Array.isArray(headerRaw) ? headerRaw[0] : headerRaw;
-  const verdict = verifySignature(header, raw, ROOST_SIGNING_SECRET!);
+  const verdict = verifySignature(header, raw, WEBHOOK_SIGNING_SECRET!);
   if (!verdict.ok) {
     console.warn(`[auto-rollback] rejected ${verdict.reason}`);
     res.statusCode = 401; res.end(verdict.reason ?? 'bad_signature'); return;

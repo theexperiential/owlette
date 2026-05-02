@@ -2,7 +2,7 @@
  * Bulk-create roosts from a CSV.
  *
  * Required env vars:
- *   ROOST_TOKEN - site:<id>:write scope on every site referenced in the CSV
+ *   OWLETTE_TOKEN - site:<id>:write scope on every site referenced in the CSV
  *
  * Usage:
  *   node bulk-create.js path/to/roosts.csv
@@ -15,7 +15,7 @@
 import { readFile } from 'node:fs/promises';
 import { Owlette, OwletteApiError } from '@owlette/sdk';
 
-const { ROOST_TOKEN, ROOST_BASE = 'https://owlette.app' } = process.env;
+const { OWLETTE_TOKEN, OWLETTE_API_URL = 'https://owlette.app' } = process.env;
 const csvPath = process.argv[2];
 
 interface Row {
@@ -42,12 +42,12 @@ function parseCsv(text: string): Row[] {
 }
 
 async function main(): Promise<number> {
-  if (!ROOST_TOKEN || !csvPath) {
-    console.error('usage: ROOST_TOKEN=... node bulk-create.js <roosts.csv>');
+  if (!OWLETTE_TOKEN || !csvPath) {
+    console.error('usage: OWLETTE_TOKEN=... node bulk-create.js <roosts.csv>');
     return 1;
   }
 
-  const owlette = new Owlette({ token: ROOST_TOKEN, apiUrl: ROOST_BASE });
+  const owlette = new Owlette({ token: OWLETTE_TOKEN, apiUrl: OWLETTE_API_URL });
   const rows = parseCsv(await readFile(csvPath, 'utf8'));
   const counts = { created: 0, failed: 0 };
 

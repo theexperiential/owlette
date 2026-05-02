@@ -5,21 +5,21 @@
  *   3. list machines for the selected site
  *
  * Required env:
- *   OWLETTE_TOKEN or ROOST_TOKEN
+ *   OWLETTE_TOKEN
  *
  * Optional:
- *   OWLETTE_API_URL or ROOST_BASE defaults to https://owlette.app
- *   OWLETTE_SITE_ID or ROOST_SITE_ID overrides the site selection
+ *   OWLETTE_API_URL defaults to https://owlette.app
+ *   OWLETTE_SITE_ID overrides the site selection
  */
 
 import { Owlette, OwletteApiError } from '@owlette/sdk';
 
-const token = process.env.OWLETTE_TOKEN ?? process.env.ROOST_TOKEN;
-const apiUrl = process.env.OWLETTE_API_URL ?? process.env.ROOST_BASE ?? 'https://owlette.app';
-const configuredSiteId = process.env.OWLETTE_SITE_ID ?? process.env.ROOST_SITE_ID;
+const token = process.env.OWLETTE_TOKEN;
+const apiUrl = process.env.OWLETTE_API_URL ?? 'https://owlette.app';
+const configuredSiteId = process.env.OWLETTE_SITE_ID;
 
 if (!token) {
-  console.error('missing env var: OWLETTE_TOKEN or ROOST_TOKEN');
+  console.error('missing env var: OWLETTE_TOKEN');
   process.exit(1);
 }
 

@@ -4,9 +4,9 @@ a small node/express webhook receiver that listens for `deployment.failed` event
 
 ## required env vars
 
-- `ROOST_TOKEN` — api key with `roost:<id>:rollback` scope. if you want this receiver to cover every roost in a site, use `site:<id>:write` or a wildcard roost scope.
-- `ROOST_BASE` — `https://owlette.app` or `https://dev.owlette.app`.
-- `ROOST_SIGNING_SECRET` — a 32+ character secret shared with `POST /api/webhooks/probe` while testing. when automatic dispatch is enabled, use the `signingSecret` returned from `POST /api/webhooks`. store it once; never logged.
+- `OWLETTE_TOKEN` — api key with `roost:<id>:rollback` scope. if you want this receiver to cover every roost in a site, use `site:<id>:write` or a wildcard roost scope.
+- `OWLETTE_API_URL` — `https://owlette.app` or `https://dev.owlette.app`.
+- `WEBHOOK_SIGNING_SECRET` — a 32+ character secret shared with `POST /api/webhooks/probe` while testing. when automatic dispatch is enabled, use the `signingSecret` returned from `POST /api/webhooks`. store it once; never logged.
 - `SLACK_WEBHOOK_URL` — incoming-webhook url from a slack app (`https://hooks.slack.com/services/...`).
 - `AUTO_ROLLBACK_SITE_IDS` — comma-separated allowlist of site ids this receiver is allowed to rollback for. guard against a key scoped too broadly.
 
@@ -21,12 +21,12 @@ import express from 'express';
 import crypto from 'node:crypto';
 
 const {
-  ROOST_TOKEN, ROOST_BASE, ROOST_SIGNING_SECRET,
+  OWLETTE_TOKEN, OWLETTE_API_URL, WEBHOOK_SIGNING_SECRET,
   SLACK_WEBHOOK_URL, AUTO_ROLLBACK_SITE_IDS,
   PORT = '8080',
 } = process.env;
 
-for (const k of ['ROOST_TOKEN', 'ROOST_BASE', 'ROOST_SIGNING_SECRET', 'SLACK_WEBHOOK_URL', 'AUTO_ROLLBACK_SITE_IDS']) {
+for (const k of ['OWLETTE_TOKEN', 'OWLETTE_API_URL', 'WEBHOOK_SIGNING_SECRET', 'SLACK_WEBHOOK_URL', 'AUTO_ROLLBACK_SITE_IDS']) {
   if (!process.env[k]) { console.error(`fatal: missing env var ${k}`); process.exit(1); }
 }
 
@@ -51,7 +51,7 @@ function verifySignature(sigHeader, rawBody) {
   if (ageSec > 300) return { ok: false, reason: `stale timestamp (${ageSec}s old)` };
 
   const expected = crypto
-    .createHmac('sha256', ROOST_SIGNING_SECRET)
+    .createHmac('sha256', WEBHOOK_SIGNING_SECRET)
     .update(`${t}.`)
     .update(rawBody)
     .digest('hex');
@@ -84,10 +84,10 @@ function autoRollbackIdempotencyKey(roostId, deliveryId, eventId) {
 async function rollbackRoost(roostId, siteId, idempotencyKey) {
   // no targetVersion → the server rolls back to previousVersionId.
   // to go further back, pass { targetVersion: 3 } or { targetVersion: "first" }.
-  const res = await fetch(`${ROOST_BASE}/api/roosts/${roostId}/rollback`, {
+  const res = await fetch(`${OWLETTE_API_URL}/api/roosts/${roostId}/rollback`, {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${ROOST_TOKEN}`,
+      authorization: `Bearer ${OWLETTE_TOKEN}`,
       'roost-version': ROOST_VERSION,
       'content-type': 'application/json',
       'idempotency-key': idempotencyKey,
@@ -215,11 +215,11 @@ export default app;
 then in your repo root:
 
 ```bash
-vercel env add ROOST_TOKEN
-vercel env add ROOST_SIGNING_SECRET
+vercel env add OWLETTE_TOKEN
+vercel env add WEBHOOK_SIGNING_SECRET
 vercel env add SLACK_WEBHOOK_URL
 vercel env add AUTO_ROLLBACK_SITE_IDS
-vercel env add ROOST_BASE
+vercel env add OWLETTE_API_URL
 vercel --prod
 ```
 
@@ -236,14 +236,14 @@ export default {
     if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
     const rawBody = new Uint8Array(await request.arrayBuffer());
     const sigHeader = request.headers.get('roost-signature');
-    // reuse verifySignature(), rollbackRoost(), and postSlack() logic, with env.ROOST_TOKEN etc.
+    // reuse verifySignature(), rollbackRoost(), and postSlack() logic, with env.OWLETTE_TOKEN etc.
     // use `crypto.subtle.importKey` + `crypto.subtle.sign` instead of node:crypto hmac.
     // return new Response(JSON.stringify({received:true}), {status:200});
   },
 };
 ```
 
-deploy with `wrangler deploy`; set secrets via `wrangler secret put ROOST_TOKEN` etc.
+deploy with `wrangler deploy`; set secrets via `wrangler secret put OWLETTE_TOKEN` etc.
 
 ### option 3 — plain node server
 
@@ -256,17 +256,17 @@ run behind nginx/caddy with a valid tls cert. for production, put it under a pro
 
 ## probe-test the receiver
 
-after deploying, fire a signed synthetic event. pass the same `ROOST_SIGNING_SECRET` value that the receiver uses:
+after deploying, fire a signed synthetic event. pass the same `WEBHOOK_SIGNING_SECRET` value that the receiver uses:
 
 ```bash
-curl -fsS "$ROOST_BASE/api/webhooks/probe?siteId=kiosk-fleet-01" \
-  -H "Authorization: Bearer $ROOST_TOKEN" \
+curl -fsS "$OWLETTE_API_URL/api/webhooks/probe?siteId=kiosk-fleet-01" \
+  -H "Authorization: Bearer $OWLETTE_TOKEN" \
   -H "Roost-Version: 2026-04-22" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://your-app.example.com/webhooks/roost",
     "event": "deployment.failed",
-    "signingSecret": "'"$ROOST_SIGNING_SECRET"'"
+    "signingSecret": "'"$WEBHOOK_SIGNING_SECRET"'"
   }'
 ```
 

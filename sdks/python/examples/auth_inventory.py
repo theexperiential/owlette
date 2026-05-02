@@ -1,11 +1,11 @@
 """Auth and inventory workflow.
 
 Required env:
-    OWLETTE_TOKEN or ROOST_TOKEN
+    OWLETTE_TOKEN
 
 Optional:
-    OWLETTE_API_URL or ROOST_BASE defaults to https://owlette.app
-    OWLETTE_SITE_ID or ROOST_SITE_ID overrides the site selection
+    OWLETTE_API_URL defaults to https://owlette.app
+    OWLETTE_SITE_ID overrides the site selection
 """
 
 from __future__ import annotations
@@ -17,21 +17,13 @@ import sys
 from roost import Roost, RoostApiError
 
 
-def _env(*names: str) -> str | None:
-    for name in names:
-        value = os.environ.get(name)
-        if value:
-            return value
-    return None
-
-
 async def main() -> int:
-    token = _env("OWLETTE_TOKEN", "ROOST_TOKEN")
-    api_url = _env("OWLETTE_API_URL", "ROOST_BASE") or "https://owlette.app"
-    configured_site_id = _env("OWLETTE_SITE_ID", "ROOST_SITE_ID")
+    token = os.environ.get("OWLETTE_TOKEN")
+    api_url = os.environ.get("OWLETTE_API_URL") or "https://owlette.app"
+    configured_site_id = os.environ.get("OWLETTE_SITE_ID")
 
     if not token:
-        print("missing env var: OWLETTE_TOKEN or ROOST_TOKEN", file=sys.stderr)
+        print("missing env var: OWLETTE_TOKEN", file=sys.stderr)
         return 1
 
     async with Roost(token=token, api_url=api_url) as client:

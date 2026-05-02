@@ -4,8 +4,8 @@ a node script that reads a csv of `siteId,roostName,targets` rows and calls `POS
 
 ## required env vars
 
-- `ROOST_TOKEN` - api key with `site:<id>:write` scope on every site referenced in the csv.
-- `ROOST_BASE` - `https://owlette.app` or `https://dev.owlette.app`.
+- `OWLETTE_TOKEN` - api key with `site:<id>:write` scope on every site referenced in the csv.
+- `OWLETTE_API_URL` - `https://owlette.app` or `https://dev.owlette.app`.
 
 ## sample input - `roosts.csv`
 
@@ -36,11 +36,11 @@ import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
 const ROOST_VERSION = '2026-04-22';
-const { ROOST_TOKEN, ROOST_BASE } = process.env;
+const { OWLETTE_TOKEN, OWLETTE_API_URL } = process.env;
 const csvPath = process.argv[2];
 
-if (!ROOST_TOKEN || !ROOST_BASE) {
-  console.error('error: ROOST_TOKEN and ROOST_BASE must be set');
+if (!OWLETTE_TOKEN || !OWLETTE_API_URL) {
+  console.error('error: OWLETTE_TOKEN and OWLETTE_API_URL must be set');
   process.exit(1);
 }
 if (!csvPath) {
@@ -49,7 +49,7 @@ if (!csvPath) {
 }
 
 const H = {
-  authorization: `Bearer ${ROOST_TOKEN}`,
+  authorization: `Bearer ${OWLETTE_TOKEN}`,
   'roost-version': ROOST_VERSION,
   'content-type': 'application/json',
 };
@@ -108,7 +108,7 @@ function rateLimitPaceMs(headers) {
 }
 
 async function readExistingRoost(row, attempt, postPaceMs) {
-  const url = `${ROOST_BASE}/api/roosts/${encodeURIComponent(row.roostId)}?siteId=${encodeURIComponent(row.siteId)}`;
+  const url = `${OWLETTE_API_URL}/api/roosts/${encodeURIComponent(row.roostId)}?siteId=${encodeURIComponent(row.siteId)}`;
   const res = await fetch(url, { headers: H });
   const responseBody = parseJsonMaybe(await res.text());
   const paceMs = Math.max(postPaceMs, rateLimitPaceMs(res.headers));
@@ -148,7 +148,7 @@ async function createRoost(row, { maxAttempts = 4 } = {}) {
   let attempt = 0;
   while (true) {
     attempt++;
-    const res = await fetch(`${ROOST_BASE}/api/roosts`, {
+    const res = await fetch(`${OWLETTE_API_URL}/api/roosts`, {
       method: 'POST',
       headers: H,
       body,

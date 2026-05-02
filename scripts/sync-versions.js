@@ -195,7 +195,7 @@ function syncVersions(newVersion) {
 
   console.log('\n✨ All versions synced!\n');
   console.log('⚠️  Remember to:');
-  console.log('   1. Update CHANGELOG.md with release notes');
+  console.log('   1. Update docs/changelog.md with release notes');
   console.log('   2. Commit changes: git commit -am "chore: Bump version to ' + newVersion + '"');
   console.log('   3. Create tag: git tag v' + newVersion);
   console.log('   4. Push with tags: git push origin main --tags\n');

@@ -4,8 +4,8 @@ a node script that runs nightly on a build box, walks a local directory, diffs a
 
 ## required env vars
 
-- `ROOST_TOKEN` — api key with `roost=<id>:read,write` and `site=<id>:write` scopes.
-- `ROOST_BASE` — `https://owlette.app` (prod) or `https://dev.owlette.app`.
+- `OWLETTE_TOKEN` — api key with `roost=<id>:read,write` and `site=<id>:write` scopes.
+- `OWLETTE_API_URL` — `https://owlette.app` (prod) or `https://dev.owlette.app`.
 - `ROOST_ID` — target roost id.
 - `ROOST_SITE_ID` — site id hosting the roost.
 - `WATCH_DIR` — absolute path to the local tree to sync (e.g. `/mnt/creative/latest`).
@@ -26,17 +26,17 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 const {
-  ROOST_TOKEN, ROOST_BASE, ROOST_ID, ROOST_SITE_ID, WATCH_DIR,
+  OWLETTE_TOKEN, OWLETTE_API_URL, ROOST_ID, ROOST_SITE_ID, WATCH_DIR,
   ALERT_EMAIL_TO, ALERT_EMAIL_FROM, MAIL_RELAY_URL,
 } = process.env;
 
-for (const k of ['ROOST_TOKEN', 'ROOST_BASE', 'ROOST_ID', 'ROOST_SITE_ID', 'WATCH_DIR']) {
+for (const k of ['OWLETTE_TOKEN', 'OWLETTE_API_URL', 'ROOST_ID', 'ROOST_SITE_ID', 'WATCH_DIR']) {
   if (!process.env[k]) { log('fatal', 'missing env var', { var: k }); process.exit(1); }
 }
 
 const ROOST_VERSION = '2026-04-22';
 const H = {
-  authorization: `Bearer ${ROOST_TOKEN}`,
+  authorization: `Bearer ${OWLETTE_TOKEN}`,
   'roost-version': ROOST_VERSION,
   'content-type': 'application/json',
 };
@@ -50,7 +50,7 @@ function log(level, msg, extra = {}) {
 }
 
 async function api(pathAndQuery, init = {}) {
-  const res = await fetch(`${ROOST_BASE}${pathAndQuery}`, {
+  const res = await fetch(`${OWLETTE_API_URL}${pathAndQuery}`, {
     ...init,
     headers: { ...H, ...(init.headers || {}) },
   });
@@ -246,7 +246,7 @@ try {
     await emailAlert(
       `[roost] quota exceeded on ${ROOST_SITE_ID}`,
       `the nightly sync for roost ${ROOST_ID} hit a storage/bandwidth quota limit.\n\n` +
-      `detail: ${e.detail}\nsite: ${ROOST_SITE_ID}\n\nsee ${ROOST_BASE}/sites/${ROOST_SITE_ID}/quota`,
+      `detail: ${e.detail}\nsite: ${ROOST_SITE_ID}\n\nsee ${OWLETTE_API_URL}/sites/${ROOST_SITE_ID}/quota`,
     );
     process.exit(2);
   }
@@ -300,7 +300,7 @@ Unit=roost-nightly-sync.service
 WantedBy=timers.target
 ```
 
-`EnvironmentFile=/etc/roost-sync.env` holds the `ROOST_TOKEN=...` etc. lock that file down to `chmod 0600`. `RandomizedDelaySec=15min` spreads load for operators running this on many boxes.
+`EnvironmentFile=/etc/roost-sync.env` holds the `OWLETTE_TOKEN=...` etc. lock that file down to `chmod 0600`. `RandomizedDelaySec=15min` spreads load for operators running this on many boxes.
 
 ## windows scheduled task (alternative)
 

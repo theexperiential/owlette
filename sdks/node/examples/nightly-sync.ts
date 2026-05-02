@@ -2,7 +2,7 @@
  * Nightly directory sync: publish only when content changed.
  *
  * Required env vars:
- *   ROOST_TOKEN, ROOST_SITE_ID, ROOST_ID, WATCH_DIR
+ *   OWLETTE_TOKEN, ROOST_SITE_ID, ROOST_ID, WATCH_DIR
  *
  * Optional:
  *   ALERT_WEBHOOK - Slack incoming webhook for quota alerts.
@@ -11,8 +11,8 @@
 import { Owlette, OwletteApiError } from '@owlette/sdk';
 
 const {
-  ROOST_TOKEN, ROOST_SITE_ID, ROOST_ID, WATCH_DIR,
-  ROOST_BASE = 'https://owlette.app',
+  OWLETTE_TOKEN, ROOST_SITE_ID, ROOST_ID, WATCH_DIR,
+  OWLETTE_API_URL = 'https://owlette.app',
   ALERT_WEBHOOK,
 } = process.env;
 
@@ -26,14 +26,14 @@ async function alert(text: string): Promise<void> {
 }
 
 async function main(): Promise<number> {
-  for (const k of ['ROOST_TOKEN', 'ROOST_SITE_ID', 'ROOST_ID', 'WATCH_DIR']) {
+  for (const k of ['OWLETTE_TOKEN', 'ROOST_SITE_ID', 'ROOST_ID', 'WATCH_DIR']) {
     if (!process.env[k]) {
       console.error(`fatal: missing env var ${k}`);
       return 1;
     }
   }
 
-  const owlette = new Owlette({ token: ROOST_TOKEN!, apiUrl: ROOST_BASE });
+  const owlette = new Owlette({ token: OWLETTE_TOKEN!, apiUrl: OWLETTE_API_URL });
 
   try {
     const before = await owlette.roosts.get(ROOST_ID!, { siteId: ROOST_SITE_ID! });

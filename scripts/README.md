@@ -39,7 +39,7 @@ This updates:
 - `web/package.json` - Web app version
 
 **The script will remind you to:**
-1. Update CHANGELOG.md with release notes
+1. Update docs/changelog.md with release notes
 2. Commit changes: `git commit -am "chore: Bump version to X.Y.Z"`
 3. Create tag: `git tag vX.Y.Z`
 4. Push with tags: `git push origin main --tags`
@@ -66,8 +66,8 @@ Firestore rules track security schema changes independently:
 **Normal release (sync all components):**
 ```bash
 node sync-versions.js 2.1.0
-# Update CHANGELOG.md
-git add VERSION agent/VERSION web/package.json CHANGELOG.md
+# Update docs/changelog.md
+git add VERSION agent/VERSION web/package.json docs/changelog.md
 git commit -m "chore: Bump version to 2.1.0"
 git tag v2.1.0
 git push origin main --tags
@@ -116,7 +116,7 @@ Run migration **before** pushing the updated `firestore.rules`. Reverse order wo
 
 - [docs/version-management.md](../docs/version-management.md) - Complete version management guide
 - [.claude/CLAUDE.md](../.claude/CLAUDE.md#version-management) - Developer workflow
-- [CHANGELOG.md](../CHANGELOG.md) - Release history
+- [docs/changelog.md](../docs/changelog.md) - Release history
 
 ---
 

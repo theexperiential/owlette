@@ -6,30 +6,30 @@
  *   4. publish BUILD_DIR as a new roost version
  *
  * Required env vars:
- *   OWLETTE_TOKEN or ROOST_TOKEN
- *   OWLETTE_SITE_ID or ROOST_SITE_ID
- *   OWLETTE_ROOST_ID or ROOST_ID
+ *   OWLETTE_TOKEN
+ *   OWLETTE_SITE_ID
+ *   OWLETTE_ROOST_ID
  *   BUILD_DIR defaults to ./dist
  *
  * Optional:
- *   OWLETTE_API_URL or ROOST_BASE defaults to https://owlette.app
+ *   OWLETTE_API_URL defaults to https://owlette.app
  *   OWLETTE_DEPLOY=1 queues a deploy after the publish
  */
 
 import { Owlette, OwletteApiError } from '@owlette/sdk';
 
-const token = process.env.OWLETTE_TOKEN ?? process.env.ROOST_TOKEN;
-const apiUrl = process.env.OWLETTE_API_URL ?? process.env.ROOST_BASE ?? 'https://owlette.app';
-const siteId = process.env.OWLETTE_SITE_ID ?? process.env.ROOST_SITE_ID;
-const roostId = process.env.OWLETTE_ROOST_ID ?? process.env.ROOST_ID;
+const token = process.env.OWLETTE_TOKEN;
+const apiUrl = process.env.OWLETTE_API_URL ?? 'https://owlette.app';
+const siteId = process.env.OWLETTE_SITE_ID;
+const roostId = process.env.OWLETTE_ROOST_ID;
 const buildDir = process.env.BUILD_DIR ?? './dist';
 const shouldDeploy = process.env.OWLETTE_DEPLOY === '1';
 
 async function main(): Promise<number> {
   for (const [name, value] of [
-    ['OWLETTE_TOKEN or ROOST_TOKEN', token],
-    ['OWLETTE_SITE_ID or ROOST_SITE_ID', siteId],
-    ['OWLETTE_ROOST_ID or ROOST_ID', roostId],
+    ['OWLETTE_TOKEN', token],
+    ['OWLETTE_SITE_ID', siteId],
+    ['OWLETTE_ROOST_ID', roostId],
   ]) {
     if (!value) {
       console.error(`missing env var: ${name}`);

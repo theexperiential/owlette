@@ -344,7 +344,7 @@ These lifecycle events are planned and are not accepted by the current developer
       "keyId": "key_01HXYZA7F3B2C1D0E9F8G7H6J5",
       "keyPrefix": "owk_live_kB8n3p",
       "ip": "203.0.113.42",
-      "userAgent": "roost-cli/0.1.0",
+      "userAgent": "owlette-cli/1.0.0-rc.0",
       "firstUseFromIp": true
     }
   }
