@@ -9,8 +9,7 @@ This is the canonical first-time path for a senior engineer cloning Owlette for 
 | Windows 10/11 64-bit | — | agent dev/build, installer | not portable to Mac/Linux yet |
 | Node.js | >=20.9.0 (see [/.nvmrc](../.nvmrc)) | web + cli + functions | [package.json engines field](../package.json) |
 | npm | >=10.0.0 | all js packages | [package.json](../package.json) |
-| Python | 3.11 with tkinter | agent build (full installer) | [agent/build_installer_full.bat](../agent/build_installer_full.bat) |
-| Python | >=3.10 | sdk dev | [sdks/python/pyproject.toml](../sdks/python/pyproject.toml) |
+| Python | 3.11 with tkinter | agent build (full installer) + SDK dev (SDK requires >=3.10, so 3.11 covers both) | [agent/build_installer_full.bat](../agent/build_installer_full.bat), [sdks/python/pyproject.toml](../sdks/python/pyproject.toml) |
 | JDK 21 (Temurin) | 21.x | Firebase emulators in e2e | [web/e2e/README.md](../web/e2e/README.md) |
 | firebase-tools | @13.x | emulators + rules deploy | [web/e2e/README.md](../web/e2e/README.md) |
 | Inno Setup | 6.2.x | installer build | [agent/build_installer_full.bat](../agent/build_installer_full.bat) (set `%ISCC%` or use default path) |
