@@ -71,6 +71,8 @@ agents                    cloud                     dashboard
 
 ## quick start
 
+For a new maintainer cloning this repo, start with the [maintainer quickstart](docs/maintainer-quickstart.md).
+
 ### hosted (fastest)
 
 1. create an account at [owlette.app](https://owlette.app)
