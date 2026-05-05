@@ -90,6 +90,18 @@ Promotes the internal admin-gated capabilities (machine commands, processes, cla
 
 Nothing. The api-sprint is purely additive — internal callers and existing public roost endpoints are unaffected.
 
+## [2.11.1] - 2026-05-05
+
+### fixed — display-helper IPC permission denied on non-admin console users
+
+`apply_display_topology`, `enumerate_display_modes`, and the related revert / self-test paths failed with `[Errno 13] Permission denied: 'C:\WINDOWS\TEMP\owlette_display_apply_*.req.json'` on any machine where the active console user wasn't a local admin. After 3 retries the auto-restore breaker latched and stopped attempting drift correction.
+
+**root cause**: the agent service (running as `LocalSystem` in Session 0) wrote helper request JSON via `tempfile.gettempdir()` — which resolves to `C:\Windows\Temp` for `LocalSystem` — then spawned the helper as the console user via `CreateProcessAsUser`. Default ACLs on `C:\Windows\Temp` deny standard-user reads of SYSTEM-owned files, so the helper couldn't open the request file the service had just written. Worked fine when the console user happened to be a local admin, which is why it didn't surface universally.
+
+**fix**: every cross-session display-helper IPC file (request, response, stderr) now lives under `%PROGRAMDATA%\Owlette\ipc\display\` via a new `_ipc_tempdir()` helper. The directory's DACL is set explicitly at first use — `SYSTEM:Full + Administrators:Full + console-user-SID:Modify`, with `PROTECTED_DACL` inheritance disabled so the installer's `users-modify` ACE on `ProgramData\Owlette` doesn't propagate down and let any interactive user tamper with IPC payloads between SYSTEM-write and helper-read.
+
+Also covers the two enumeration paths (`--enumerate-json`, `--enumerate-modes-json`) that had the same bug, sweeps stale `owlette_display_*.{req,out}.json` and `*.tmp` files >1h old at first use, and adds a distinct `DisplayErrorCode.IPC_FAILURE` so request-read / response-write / stderr-redirect failures stop getting bucketed as generic `bad_request` (which was the reason this took 3 retries to surface as something operators could diagnose).
+
 ## [2.11.0] - 2026-04-25
 
 ### added — display alert routing (Feature B)
