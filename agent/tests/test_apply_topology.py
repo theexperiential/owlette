@@ -63,6 +63,12 @@ def force_session_0(monkeypatch):
     monkeypatch.setattr(dm, '_is_session_0', lambda: True)
 
 
+@pytest.fixture(autouse=True)
+def isolate_display_ipc(monkeypatch, tmp_path):
+    """Keep service-side helper request/response files inside pytest temp."""
+    monkeypatch.setattr(dm, '_ipc_tempdir', lambda: str(tmp_path))
+
+
 @pytest.fixture
 def enable_remote_apply(monkeypatch):
     """Wire ``shared_utils.read_config`` so the kill switch (``displays.enabled``)

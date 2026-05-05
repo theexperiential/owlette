@@ -32,7 +32,6 @@ import json
 import logging
 import os
 import sys
-import tempfile
 import threading
 import time
 import uuid
@@ -51,6 +50,11 @@ class DisplayEnumerationError(Exception):
     list without raising. Callers should catch this to avoid conflating
     transient driver stalls with a genuinely empty topology.
     """
+    pass
+
+
+class DisplayIpcError(DisplayEnumerationError):
+    """Raised when display helper file IPC cannot be created or read."""
     pass
 
 
@@ -99,6 +103,7 @@ class DisplayErrorCode(str, enum.Enum):
 
     # Helper lifecycle
     HELPER_FAILED = 'helper_failed'
+    IPC_FAILURE = 'ipc_failure'
 
     # Ack lifecycle
     STALE_ACK = 'stale_ack'
@@ -253,6 +258,11 @@ _SENTINEL_PATH = None  # lazy-init via shared_utils.get_data_path('.display_reve
 _sentinel_lock = threading.Lock()
 _SENTINEL_SCHEMA_VERSION = 1  # bump when the on-disk sentinel shape changes
 
+_IPC_TEMP_DIR = None  # lazy-init via shared_utils.get_data_path('ipc/display')
+_IPC_TEMPDIR_LOCK = threading.Lock()
+_IPC_SWEEP_DONE = False
+_IPC_STALE_SECONDS = 60 * 60
+
 # Wave 5: deferred-revert state. When startup recovery finds a sentinel but
 # no console user is logged in, it cannot delegate to a user-session helper
 # (the entire write path requires Session 1+). Instead we set this flag,
@@ -278,6 +288,246 @@ def _get_sentinel_path():
         import shared_utils
         _SENTINEL_PATH = shared_utils.get_data_path('.display_revert_pending')
     return _SENTINEL_PATH
+
+
+def _ipc_tempdir() -> str:
+    """Return the display helper IPC directory, creating and hardening it.
+
+    The service runs as LocalSystem, so the process temp directory points at
+    ``C:\\Windows\\Temp`` and files created there are not readable by a standard
+    console user. Display helpers cross from Session 0 into that user session,
+    so they need a purpose-built directory with an explicit DACL.
+    """
+    global _IPC_TEMP_DIR, _IPC_SWEEP_DONE
+    with _IPC_TEMPDIR_LOCK:
+        if _IPC_TEMP_DIR is None:
+            import shared_utils
+            _IPC_TEMP_DIR = shared_utils.get_data_path(
+                os.path.join('ipc', 'display')
+            )
+        ipc_dir = _IPC_TEMP_DIR
+        try:
+            os.makedirs(ipc_dir, exist_ok=True)
+        except OSError as e:
+            raise DisplayIpcError(
+                f'display IPC directory unavailable {ipc_dir}: {e}'
+            ) from e
+
+        _ensure_ipc_dir_acl(ipc_dir)
+
+        if not _IPC_SWEEP_DONE:
+            _sweep_ipc_tempdir(ipc_dir)
+            _IPC_SWEEP_DONE = True
+        return ipc_dir
+
+
+def _sweep_ipc_tempdir(
+    ipc_dir: str,
+    max_age_s: int = _IPC_STALE_SECONDS,
+    now: Optional[float] = None,
+) -> None:
+    """Remove orphaned display IPC files older than ``max_age_s`` seconds."""
+    cutoff = (time.time() if now is None else now) - max_age_s
+    try:
+        filenames = os.listdir(ipc_dir)
+    except OSError as e:
+        logger.debug('display IPC sweep: could not list %s: %s', ipc_dir, e)
+        return
+
+    for filename in filenames:
+        if not (filename.startswith('owlette_display_') or filename.endswith('.tmp')):
+            continue
+        path = os.path.join(ipc_dir, filename)
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                os.remove(path)
+        except OSError as e:
+            logger.debug('display IPC sweep: could not remove %s: %s', path, e)
+
+
+def _ensure_ipc_dir_acl(ipc_dir: str) -> None:
+    """Apply the protected display IPC DACL on Windows.
+
+    Expected directory DACL:
+      - SYSTEM: Full
+      - Administrators: Full
+      - active console user: Modify, when a console user is detectable
+
+    The ACEs are inheritable so request, response, stderr, and ``*.tmp`` files
+    created under this directory receive the same access envelope. Parent
+    inheritance is disabled to avoid inheriting the installer-level
+    ``users-modify`` grant from ``C:\\ProgramData\\Owlette``.
+    """
+    if os.name != 'nt':
+        return
+
+    try:
+        import win32security as ws
+        import ntsecuritycon as ntcon
+    except ImportError as e:
+        raise DisplayIpcError(
+            f'pywin32 unavailable for display IPC DACL setup: {e}'
+        ) from e
+
+    try:
+        expected = _build_ipc_dacl_entries(ws, ntcon)
+        if _ipc_dir_dacl_matches(ipc_dir, expected, ws, ntcon):
+            return
+
+        dacl = ws.ACL()
+        for _label, access_mask, sid in expected:
+            dacl.AddAccessAllowedAceEx(
+                ws.ACL_REVISION,
+                _ipc_ace_inherit_flags(ntcon),
+                access_mask,
+                sid,
+            )
+
+        protected_dacl = getattr(
+            ws, 'PROTECTED_DACL_SECURITY_INFORMATION', None,
+        )
+        if protected_dacl is None:
+            protected_dacl = -2147483648  # 0x80000000 as signed C long
+        ws.SetNamedSecurityInfo(
+            ipc_dir,
+            ws.SE_FILE_OBJECT,
+            ws.DACL_SECURITY_INFORMATION | protected_dacl,
+            None,
+            None,
+            dacl,
+            None,
+        )
+    except DisplayIpcError:
+        raise
+    except Exception as e:
+        raise DisplayIpcError(
+            f'failed to apply display IPC DACL to {ipc_dir}: {e}'
+        ) from e
+
+
+def _build_ipc_dacl_entries(ws, ntcon) -> list:
+    """Build ``(label, mask, sid)`` entries for the display IPC DACL."""
+    system_sid, _, _ = ws.LookupAccountName('', 'SYSTEM')
+    admins_sid, _, _ = ws.LookupAccountName('', 'Administrators')
+    full = getattr(ntcon, 'FILE_ALL_ACCESS', ntcon.GENERIC_ALL)
+    modify = (
+        ntcon.FILE_GENERIC_READ
+        | ntcon.FILE_GENERIC_WRITE
+        | ntcon.FILE_GENERIC_EXECUTE
+        | ntcon.DELETE
+    )
+
+    entries = [
+        ('SYSTEM', full, system_sid),
+        ('Administrators', full, admins_sid),
+    ]
+    user_sid = _active_console_user_sid(ws)
+    if user_sid is not None:
+        entries.append(('ConsoleUser', modify, user_sid))
+    return entries
+
+
+def _ipc_ace_inherit_flags(ntcon) -> int:
+    return (
+        getattr(ntcon, 'OBJECT_INHERIT_ACE', 0x01)
+        | getattr(ntcon, 'CONTAINER_INHERIT_ACE', 0x02)
+    )
+
+
+def _active_console_user_sid(ws):
+    """Resolve the active console user's SID, or ``None`` if unavailable."""
+    try:
+        import win32ts
+    except ImportError:
+        return None
+
+    token = None
+    try:
+        session_id = win32ts.WTSGetActiveConsoleSessionId()
+        if session_id == 0xFFFFFFFF:
+            return None
+        try:
+            token = win32ts.WTSQueryUserToken(session_id)
+            token_user = ws.GetTokenInformation(token, ws.TokenUser)
+            return token_user[0] if isinstance(token_user, tuple) else token_user
+        except Exception as e:
+            logger.debug(
+                'display IPC: WTSQueryUserToken failed (%s); trying session name',
+                e,
+            )
+            return _active_console_user_sid_from_session_name(ws, win32ts, session_id)
+    finally:
+        if token is not None:
+            try:
+                token.Close()
+            except Exception as e:
+                logger.debug(
+                    'display IPC: console user token close failed: %s', e,
+                    exc_info=True,
+                )
+
+
+def _active_console_user_sid_from_session_name(ws, win32ts, session_id):
+    """Fallback SID lookup that works in non-LocalSystem test runs."""
+    try:
+        username = win32ts.WTSQuerySessionInformation(
+            None, session_id, win32ts.WTSUserName,
+        )
+        if not username:
+            return None
+        domain = win32ts.WTSQuerySessionInformation(
+            None, session_id, win32ts.WTSDomainName,
+        )
+        account = f'{domain}\\{username}' if domain else username
+        user_sid, _, _ = ws.LookupAccountName('', account)
+        return user_sid
+    except Exception as e:
+        logger.debug('display IPC: console user SID lookup failed: %s', e)
+        return None
+
+
+def _ipc_dir_dacl_matches(ipc_dir: str, expected: list, ws, ntcon) -> bool:
+    """Return True if ``ipc_dir`` already has the expected protected DACL."""
+    try:
+        sd = ws.GetNamedSecurityInfo(
+            ipc_dir, ws.SE_FILE_OBJECT, ws.DACL_SECURITY_INFORMATION,
+        )
+        control, _revision = sd.GetSecurityDescriptorControl()
+        se_dacl_protected = getattr(ws, 'SE_DACL_PROTECTED', 0x1000)
+        if not (control & se_dacl_protected):
+            return False
+        dacl = sd.GetSecurityDescriptorDacl()
+        if dacl is None or dacl.GetAceCount() != len(expected):
+            return False
+
+        expected_aces = {
+            (
+                _ipc_ace_inherit_flags(ntcon),
+                int(mask),
+                ws.ConvertSidToStringSid(sid),
+            )
+            for _label, mask, sid in expected
+        }
+        actual_aces = set()
+        access_allowed_ace_type = getattr(ws, 'ACCESS_ALLOWED_ACE_TYPE', 0)
+        for index in range(dacl.GetAceCount()):
+            ace = dacl.GetAce(index)
+            ace_header = ace[0]
+            ace_type = ace_header[0]
+            ace_flags = ace_header[1]
+            access_mask = ace[1]
+            sid = ace[-1]
+            if ace_type != access_allowed_ace_type:
+                return False
+            actual_aces.add((
+                int(ace_flags),
+                int(access_mask),
+                ws.ConvertSidToStringSid(sid),
+            ))
+        return actual_aces == expected_aces
+    except Exception as e:
+        logger.debug('display IPC: DACL comparison failed for %s: %s', ipc_dir, e)
+        return False
 
 # ---------------------------------------------------------------------------
 # ctypes structs
@@ -1040,7 +1290,7 @@ def _spawn_user_session_helper(
                     f'could not obtain console user token for session {session_id}'
                 )
 
-        tmp_dir = tempfile.gettempdir()
+        tmp_dir = _ipc_tempdir()
         stderr_path = os.path.join(
             tmp_dir, f'owlette_display_helper_{uuid.uuid4().hex}.stderr.log',
         )
@@ -1087,6 +1337,7 @@ def _spawn_user_session_helper(
             logger.debug('display helper: hThread.Close failed: %s', e, exc_info=True)
 
         timed_out = False
+        exit_code = None
         try:
             # Wait for the process to exit, bounded by `timeout`. WAIT_OBJECT_0
             # means the helper exited on its own; WAIT_TIMEOUT means we must
@@ -1099,6 +1350,14 @@ def _spawn_user_session_helper(
                 except Exception as term_err:
                     logger.debug(
                         'display helper: TerminateProcess failed: %s', term_err,
+                        exc_info=True,
+                    )
+            else:
+                try:
+                    exit_code = win32process.GetExitCodeProcess(hProcess)
+                except Exception as e:
+                    logger.debug(
+                        'display helper: GetExitCodeProcess failed: %s', e,
                         exc_info=True,
                     )
         finally:
@@ -1121,6 +1380,11 @@ def _spawn_user_session_helper(
                         stderr_content += f'\n[truncated — {dropped} bytes dropped]'
                     if stderr_content.strip():
                         logger.warning('display helper stderr:\n%s', stderr_content.rstrip())
+            else:
+                logger.warning(
+                    'display helper stderr redirect did not create log file: %s',
+                    stderr_path,
+                )
         except OSError as drain_err:
             logger.debug('display helper: stderr drain failed: %s', drain_err)
         finally:
@@ -1138,13 +1402,21 @@ def _spawn_user_session_helper(
         # Helper exited — atomic rename on the helper side means the file is
         # either fully present or absent; no partial-read retry needed.
         if not os.path.exists(out_path):
+            if exit_code == 2:
+                raise DisplayIpcError(
+                    f'display helper failed to write IPC response {out_path}'
+                )
             raise DisplayEnumerationError(
                 'display helper exited without writing response file'
             )
         try:
             with open(out_path, 'r', encoding='utf-8') as f:
                 payload = json.load(f)
-        except (OSError, ValueError) as e:
+        except OSError as e:
+            raise DisplayIpcError(
+                f'display helper response unreadable {out_path}: {e}'
+            ) from e
+        except ValueError as e:
             raise DisplayEnumerationError(
                 f'display helper response unreadable: {e}'
             ) from e
@@ -1182,7 +1454,7 @@ def _enumerate_monitors_via_user_session() -> list:
     Raises ``DisplayEnumerationError`` if no console user session is available
     or the helper fails / times out. Never returns partial data.
     """
-    tmp_dir = tempfile.gettempdir()
+    tmp_dir = _ipc_tempdir()
     out_path = os.path.join(tmp_dir, f'owlette_display_enum_{uuid.uuid4().hex}.json')
     try:
         payload = _spawn_user_session_helper(
@@ -1226,15 +1498,25 @@ def enumerate_modes_via_user_session() -> dict:
     helper (A3.2 will treat that as "skip upload, try next cycle") — distinct
     from a hard helper failure.
     """
-    tmp_dir = tempfile.gettempdir()
-    out_path = os.path.join(tmp_dir, f'owlette_display_modes_{uuid.uuid4().hex}.json')
+    out_path = None
     try:
+        tmp_dir = _ipc_tempdir()
+        out_path = os.path.join(tmp_dir, f'owlette_display_modes_{uuid.uuid4().hex}.json')
         try:
             payload = _spawn_user_session_helper(
                 helper_args=['--enumerate-modes-json', out_path],
                 out_path=out_path,
                 timeout=_ENUM_MODES_HELPER_TIMEOUT,
             )
+        except DisplayIpcError as e:
+            logger.warning(
+                'enumerate_modes_via_user_session: helper IPC failed: %s', e
+            )
+            return {
+                'ok': False,
+                'error': str(e),
+                'code': DisplayErrorCode.IPC_FAILURE,
+            }
         except Exception as e:
             logger.warning(
                 'enumerate_modes_via_user_session: helper spawn failed: %s', e
@@ -1262,9 +1544,18 @@ def enumerate_modes_via_user_session() -> dict:
             'byEdidHash': payload.get('byEdidHash', {}),
             'enumerationFailed': bool(payload.get('enumerationFailed', False)),
         }
+    except DisplayIpcError as e:
+        logger.warning(
+            'enumerate_modes_via_user_session: helper IPC setup failed: %s', e
+        )
+        return {
+            'ok': False,
+            'error': str(e),
+            'code': DisplayErrorCode.IPC_FAILURE,
+        }
     finally:
         try:
-            if os.path.exists(out_path):
+            if out_path and os.path.exists(out_path):
                 os.remove(out_path)
         except OSError:
             pass
@@ -2243,11 +2534,13 @@ def _apply_via_user_session(
     sentinel. The caller inspects ``ok`` and ``sentinel_written`` to decide
     whether a defensive revert is needed.
     """
-    tmp_dir = tempfile.gettempdir()
-    uid = uuid.uuid4().hex
-    req_path = os.path.join(tmp_dir, f'owlette_display_apply_{uid}.req.json')
-    out_path = os.path.join(tmp_dir, f'owlette_display_apply_{uid}.out.json')
+    req_path = None
+    out_path = None
     try:
+        tmp_dir = _ipc_tempdir()
+        uid = uuid.uuid4().hex
+        req_path = os.path.join(tmp_dir, f'owlette_display_apply_{uid}.req.json')
+        out_path = os.path.join(tmp_dir, f'owlette_display_apply_{uid}.out.json')
         _atomic_write_json(req_path, {
             'desired_layout': desired_layout,
             'sentinel_path': sentinel_path,
@@ -2260,12 +2553,20 @@ def _apply_via_user_session(
             timeout=_APPLY_HELPER_TIMEOUT,
         )
         return payload
+    except DisplayIpcError as e:
+        return {'ok': False, 'error': str(e), 'code': DisplayErrorCode.IPC_FAILURE}
+    except OSError as e:
+        return {
+            'ok': False,
+            'error': f'failed to write IPC request {req_path}: {e}',
+            'code': DisplayErrorCode.IPC_FAILURE,
+        }
     except DisplayEnumerationError as e:
         return {'ok': False, 'error': str(e), 'code': DisplayErrorCode.HELPER_FAILED}
     finally:
         for p in (req_path, out_path):
             try:
-                if os.path.exists(p):
+                if p and os.path.exists(p):
                     os.remove(p)
             except OSError:
                 pass
@@ -2283,11 +2584,13 @@ def _revert_via_user_session(
     """
     if snapshot is None and not sentinel_path:
         return {'ok': False, 'error': 'must supply snapshot or sentinel_path', 'code': DisplayErrorCode.BAD_REQUEST}
-    tmp_dir = tempfile.gettempdir()
-    uid = uuid.uuid4().hex
-    req_path = os.path.join(tmp_dir, f'owlette_display_revert_{uid}.req.json')
-    out_path = os.path.join(tmp_dir, f'owlette_display_revert_{uid}.out.json')
+    req_path = None
+    out_path = None
     try:
+        tmp_dir = _ipc_tempdir()
+        uid = uuid.uuid4().hex
+        req_path = os.path.join(tmp_dir, f'owlette_display_revert_{uid}.req.json')
+        out_path = os.path.join(tmp_dir, f'owlette_display_revert_{uid}.out.json')
         req = {}
         if snapshot is not None:
             req['snapshot'] = snapshot
@@ -2300,12 +2603,20 @@ def _revert_via_user_session(
             timeout=_APPLY_HELPER_TIMEOUT,
         )
         return payload
+    except DisplayIpcError as e:
+        return {'ok': False, 'error': str(e), 'code': DisplayErrorCode.IPC_FAILURE}
+    except OSError as e:
+        return {
+            'ok': False,
+            'error': f'failed to write IPC request {req_path}: {e}',
+            'code': DisplayErrorCode.IPC_FAILURE,
+        }
     except DisplayEnumerationError as e:
         return {'ok': False, 'error': str(e), 'code': DisplayErrorCode.HELPER_FAILED}
     finally:
         for p in (req_path, out_path):
             try:
-                if os.path.exists(p):
+                if p and os.path.exists(p):
                     os.remove(p)
             except OSError:
                 pass
@@ -2321,21 +2632,24 @@ def _self_test_via_user_session() -> dict:
     on a given machine before flipping the ``displays.remoteApplyEnabled``
     kill switch on. Never mutates display state.
     """
-    tmp_dir = tempfile.gettempdir()
-    uid = uuid.uuid4().hex
-    out_path = os.path.join(tmp_dir, f'owlette_display_selftest_{uid}.out.json')
+    out_path = None
     try:
+        tmp_dir = _ipc_tempdir()
+        uid = uuid.uuid4().hex
+        out_path = os.path.join(tmp_dir, f'owlette_display_selftest_{uid}.out.json')
         payload = _spawn_user_session_helper(
             helper_args=['--self-test', out_path],
             out_path=out_path,
             timeout=_APPLY_HELPER_TIMEOUT,
         )
         return payload
+    except DisplayIpcError as e:
+        return {'ok': False, 'error': str(e), 'code': DisplayErrorCode.IPC_FAILURE}
     except DisplayEnumerationError as e:
         return {'ok': False, 'error': str(e), 'code': DisplayErrorCode.HELPER_FAILED}
     finally:
         try:
-            if os.path.exists(out_path):
+            if out_path and os.path.exists(out_path):
                 os.remove(out_path)
         except OSError:
             pass
@@ -3182,7 +3496,11 @@ def _helper_self_test_to_json(resp_path: str) -> int:
             _atomic_write_json(resp_path, payload)
             return 0 if payload.get('ok') else 1
         except OSError as e:
-            sys.stderr.write('helper: failed to write response {0}: {1}\n'.format(resp_path, e))
+            sys.stderr.write(
+                'helper: failed to write IPC response {0}: {1}; code={2}\n'.format(
+                    resp_path, e, DisplayErrorCode.IPC_FAILURE.value,
+                )
+            )
             return 2
 
     try:
@@ -3269,14 +3587,28 @@ def _helper_apply_to_json(req_path: str, resp_path: str) -> int:
             _atomic_write_json(resp_path, payload)
             return 0 if payload.get('ok') else 1
         except OSError as e:
-            sys.stderr.write('helper: failed to write response {0}: {1}\n'.format(resp_path, e))
+            sys.stderr.write(
+                'helper: failed to write IPC response {0}: {1}; code={2}\n'.format(
+                    resp_path, e, DisplayErrorCode.IPC_FAILURE.value,
+                )
+            )
             return 2
 
     try:
         with open(req_path, 'r', encoding='utf-8') as f:
             req = json.load(f)
-    except (OSError, ValueError) as e:
-        return _respond({'ok': False, 'error': f'failed to read request: {e}', 'code': DisplayErrorCode.BAD_REQUEST})
+    except OSError as e:
+        return _respond({
+            'ok': False,
+            'error': f'failed to read IPC request {req_path}: {e}',
+            'code': DisplayErrorCode.IPC_FAILURE,
+        })
+    except ValueError as e:
+        return _respond({
+            'ok': False,
+            'error': f'failed to parse request {req_path}: {e}',
+            'code': DisplayErrorCode.BAD_REQUEST,
+        })
 
     desired_layout = req.get('desired_layout')
     sentinel_path = req.get('sentinel_path')
@@ -3314,14 +3646,28 @@ def _helper_revert_from_json(req_path: str, resp_path: str) -> int:
             _atomic_write_json(resp_path, payload)
             return 0 if payload.get('ok') else 1
         except OSError as e:
-            sys.stderr.write('helper: failed to write response {0}: {1}\n'.format(resp_path, e))
+            sys.stderr.write(
+                'helper: failed to write IPC response {0}: {1}; code={2}\n'.format(
+                    resp_path, e, DisplayErrorCode.IPC_FAILURE.value,
+                )
+            )
             return 2
 
     try:
         with open(req_path, 'r', encoding='utf-8') as f:
             req = json.load(f)
-    except (OSError, ValueError) as e:
-        return _respond({'ok': False, 'error': f'failed to read request: {e}', 'code': DisplayErrorCode.BAD_REQUEST})
+    except OSError as e:
+        return _respond({
+            'ok': False,
+            'error': f'failed to read IPC request {req_path}: {e}',
+            'code': DisplayErrorCode.IPC_FAILURE,
+        })
+    except ValueError as e:
+        return _respond({
+            'ok': False,
+            'error': f'failed to parse request {req_path}: {e}',
+            'code': DisplayErrorCode.BAD_REQUEST,
+        })
 
     snapshot = req.get('snapshot')
     if snapshot is None:
@@ -3362,8 +3708,10 @@ def _maybe_redirect_stderr(argv: list) -> list:
     path = argv[i + 1]
     try:
         sys.stderr = open(path, 'w', encoding='utf-8', buffering=1)
-    except OSError:
-        pass  # fall through; spawner will see empty stderr file
+    except OSError as e:
+        logger.warning(
+            'display helper: stderr redirect failed for %s: %s', path, e
+        )
     return argv[:i] + argv[i + 2:]
 
 

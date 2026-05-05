@@ -17,9 +17,12 @@ Run with:
     cd agent && pytest tests/test_display_helper.py -v
 """
 
+import inspect
 import json
 import os
 import sys
+import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -158,6 +161,114 @@ def _make_failing_sdc(validate_rc=None, apply_rc=None, observer=None):
 
 
 # ---------------------------------------------------------------------------
+# Display IPC directory helpers
+
+
+class TestDisplayIpcTempdir:
+    """Regression coverage for the Session 0 -> user-session IPC directory."""
+
+    @pytest.mark.parametrize('func_name', [
+        '_enumerate_monitors_via_user_session',
+        'enumerate_modes_via_user_session',
+        '_apply_via_user_session',
+        '_revert_via_user_session',
+        '_self_test_via_user_session',
+    ])
+    def test_helper_spawning_functions_use_ipc_tempdir(self, func_name):
+        source = inspect.getsource(getattr(dm, func_name))
+        assert '_ipc_tempdir()' in source
+        assert 'tempfile.gettempdir' not in source
+
+    def test_spawn_helper_stderr_uses_ipc_tempdir(self):
+        source = inspect.getsource(dm._spawn_user_session_helper)
+        assert '_ipc_tempdir()' in source
+        assert 'tempfile.gettempdir' not in source
+
+    def test_display_manager_has_no_tempfile_gettempdir_calls(self):
+        source = Path(dm.__file__).read_text(encoding='utf-8')
+        assert 'tempfile.gettempdir' not in source
+
+    def test_service_side_helpers_build_paths_under_ipc_tempdir(
+        self, monkeypatch, tmp_path,
+    ):
+        ipc_calls = []
+        spawn_calls = []
+
+        def _fake_ipc_tempdir():
+            ipc_calls.append(True)
+            return str(tmp_path)
+
+        def _fake_spawn(helper_args, out_path, timeout):
+            helper_args = list(helper_args)
+            spawn_calls.append(helper_args)
+            assert Path(out_path).parent == tmp_path
+            command = helper_args[0]
+
+            if command in ('--apply-json', '--revert-json'):
+                assert Path(helper_args[1]).parent == tmp_path
+                assert Path(helper_args[1]).exists()
+                assert Path(helper_args[2]).parent == tmp_path
+                assert out_path == helper_args[2]
+            else:
+                assert Path(helper_args[1]).parent == tmp_path
+                assert out_path == helper_args[1]
+
+            if command == '--enumerate-json':
+                return {'ok': True, 'monitors': []}
+            if command == '--enumerate-modes-json':
+                return {
+                    'ok': True,
+                    'schemaVersion': dm.SCHEMA_VERSION,
+                    'signatureHash': 'abc',
+                    'capturedAt': 123,
+                    'byEdidHash': {},
+                }
+            return {'ok': True}
+
+        monkeypatch.setattr(dm, '_ipc_tempdir', _fake_ipc_tempdir)
+        monkeypatch.setattr(dm, '_spawn_user_session_helper', _fake_spawn)
+
+        assert dm._enumerate_monitors_via_user_session() == []
+        assert dm.enumerate_modes_via_user_session()['ok'] is True
+        assert dm._apply_via_user_session(
+            {'monitors': []}, 'sentinel.json', apply_id='ipc-test',
+        )['ok'] is True
+        assert dm._revert_via_user_session(snapshot=SAMPLE_SNAPSHOT)['ok'] is True
+        assert dm._self_test_via_user_session()['ok'] is True
+
+        assert len(ipc_calls) == 5
+        assert [call[0] for call in spawn_calls] == [
+            '--enumerate-json',
+            '--enumerate-modes-json',
+            '--apply-json',
+            '--revert-json',
+            '--self-test',
+        ]
+
+    def test_sweeper_removes_only_stale_display_ipc_files(self, tmp_path):
+        now = time.time()
+        old = now - (2 * 60 * 60)
+
+        def _touch(name, mtime):
+            path = tmp_path / name
+            path.write_text('x', encoding='utf-8')
+            os.utime(path, (mtime, mtime))
+            return path
+
+        old_display = _touch('owlette_display_apply_old.req.json', old)
+        old_tmp = _touch('orphan.tmp', old)
+        fresh_display = _touch('owlette_display_apply_fresh.req.json', now)
+        old_unrelated = _touch('unrelated.json', old)
+
+        dm._sweep_ipc_tempdir(str(tmp_path), now=now)
+
+        assert not old_display.exists()
+        assert not old_tmp.exists()
+        assert fresh_display.exists()
+        assert old_unrelated.exists()
+
+
+# ---------------------------------------------------------------------------
 # _helper_apply_to_json — happy path
 
 
@@ -274,15 +385,15 @@ class TestHelperApplyFailures:
     """Failure surfaces use the DisplayErrorCode vocabulary so the dashboard
     can route on `code` rather than parsing free-text errors."""
 
-    def test_missing_request_file_returns_bad_request(self, resp_path, tmp_path):
+    def test_missing_request_file_returns_ipc_failure(self, resp_path, tmp_path):
         # Request path doesn't exist — the helper should NOT crash; it must
         # write a structured failure response and return non-zero.
         rc = dm._helper_apply_to_json(str(tmp_path / 'nope.json'), resp_path)
         assert rc == 1
         resp = _read_response(resp_path)
         assert resp['ok'] is False
-        assert resp['code'] == DisplayErrorCode.BAD_REQUEST
-        assert 'failed to read request' in resp['error']
+        assert resp['code'] == DisplayErrorCode.IPC_FAILURE
+        assert 'failed to read IPC request' in resp['error']
 
     def test_malformed_request_json_returns_bad_request(
         self, req_path, resp_path,
@@ -570,14 +681,14 @@ class TestHelperRevert:
         assert resp['code'] == DisplayErrorCode.UNEXPECTED
         assert 'RuntimeError' in resp['error']
 
-    def test_revert_missing_request_file_returns_bad_request(
+    def test_revert_missing_request_file_returns_ipc_failure(
         self, resp_path, tmp_path,
     ):
         rc = dm._helper_revert_from_json(str(tmp_path / 'nope.json'), resp_path)
         assert rc == 1
         resp = _read_response(resp_path)
         assert resp['ok'] is False
-        assert resp['code'] == DisplayErrorCode.BAD_REQUEST
+        assert resp['code'] == DisplayErrorCode.IPC_FAILURE
 
     def test_revert_missing_snapshot_and_sentinel_returns_bad_request(
         self, req_path, resp_path,

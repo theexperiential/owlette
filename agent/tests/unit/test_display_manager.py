@@ -71,6 +71,7 @@ class TestDisplayErrorCode:
         ('STALE_ACK', 'stale_ack'),
         ('NO_PENDING_APPLY', 'no_pending_apply'),
         ('HELPER_FAILED', 'helper_failed'),
+        ('IPC_FAILURE', 'ipc_failure'),
         ('UNEXPECTED', 'unexpected'),
         ('ZERO_PRIMARY', 'zero_primary'),
         ('MULTIPLE_PRIMARY', 'multiple_primary'),
