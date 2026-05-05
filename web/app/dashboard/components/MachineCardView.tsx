@@ -285,6 +285,7 @@ function MachineCard({
                 onCancelReboot={onCancelReboot}
                 onScreenshot={onScreenshot}
                 onLiveView={onLiveView}
+                onViewDisplays={onMetricClick ? () => onMetricClick('display') : undefined}
                 rebootSchedule={machine.rebootSchedule}
               />
             )}

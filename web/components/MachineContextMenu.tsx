@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { MoreVertical, Trash2, KeyRound, RotateCcw, Power, Camera, Settings2, Eye, BellOff, Bell, XCircle } from 'lucide-react';
+import { MoreVertical, Trash2, KeyRound, RotateCcw, Power, Camera, Settings2, Eye, BellOff, Bell, XCircle, Monitor } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -49,6 +49,7 @@ interface MachineContextMenuProps {
   onCancelReboot?: () => Promise<void>;
   onScreenshot?: () => void;
   onLiveView?: () => void;
+  onViewDisplays?: () => void;
   rebootSchedule?: RebootSchedule;
 }
 
@@ -67,6 +68,7 @@ export function MachineContextMenu({
   onCancelReboot,
   onScreenshot,
   onLiveView,
+  onViewDisplays,
   rebootSchedule,
 }: MachineContextMenuProps) {
   const [showRevokeDialog, setShowRevokeDialog] = useState(false);
@@ -287,8 +289,23 @@ export function MachineContextMenu({
                 <Eye className="mr-2 h-4 w-4" />
                 live view
               </DropdownMenuItem>
-              <DropdownMenuSeparator className="bg-accent" />
             </>
+          )}
+          {onViewDisplays && (
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewDisplays();
+              }}
+              data-testid="machine-context-menu-view-displays"
+              className="text-indigo-400 focus:bg-indigo-950/30 focus:text-indigo-300 cursor-pointer"
+            >
+              <Monitor className="mr-2 h-4 w-4" />
+              view displays
+            </DropdownMenuItem>
+          )}
+          {(isOnline || onViewDisplays) && (
+            <DropdownMenuSeparator className="bg-accent" />
           )}
           <DropdownMenuItem
             onClick={(e) => {
