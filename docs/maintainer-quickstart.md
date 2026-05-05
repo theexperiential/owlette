@@ -56,10 +56,20 @@ Treat [docs/internal/version-management.md](internal/version-management.md) and 
 ## known portability gaps (open work)
 
 - Code signing cert procedure not documented
-- No production deploy/hotfix runbook
+- Production deploy/hotfix runbooks now live in [/docs/runbooks/](runbooks/).
 - Live-looking Firebase service-account JSONs in `/agent/config/firebase-creds-*.json` should be rotated
 - Agent docs (`agent/README.md`, `agent/BUILD.md`) may still reference legacy OAuth / `C:\Owlette` in some sections
 - See [docs/changelog.md](changelog.md) for completed portability fixes
+
+## runbooks
+
+For specific operational procedures, see the dedicated runbooks:
+
+- [production-deploy.md](runbooks/production-deploy.md) - normal release flow for web + functions + rules + storage
+- [agent-installer-release.md](runbooks/agent-installer-release.md) - agent installer build + 3-step API upload
+- [hotfix-rollback.md](runbooks/hotfix-rollback.md) - emergency "prod is broken" procedures + rollback decision tree
+- [dev-to-prod-workflow.md](runbooks/dev-to-prod-workflow.md) - branching model, promotion patterns, version coordination
+- [runbooks/index.md](runbooks/index.md) - runbook directory
 
 ## further reading
 

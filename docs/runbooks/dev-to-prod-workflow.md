@@ -1,0 +1,404 @@
+# dev-to-prod workflow
+
+> **scope**: branching model, promotion patterns, version coordination, tag discipline. Per-surface deploy mechanics live in sibling runbooks.
+
+## the two-branch model
+
+Owlette uses a two-branch promotion model:
+
+- `dev` -> `dev.owlette.app`
+- `main` -> `owlette.app`
+
+Both branches auto-deploy through Railway on push.
+
+Each branch has its own Railway service:
+
+- the `dev` branch should deploy through the dev Railway service
+- the `main` branch should deploy through the prod Railway service
+
+The intended environment mapping is:
+
+| branch | web host | Firebase project | R2 buckets |
+|--------|----------|------------------|------------|
+| `dev` | `dev.owlette.app` | `owlette-dev-3838a` | `owlette-dev-content`, `owlette-dev-manifests` |
+| `main` | `owlette.app` | `owlette-prod-90a12` | `owlette-prod-content`, `owlette-prod-manifests` |
+
+Maintainers should verify Railway service env vars on the first prod deploy they own.
+The branch-to-service mapping is operationally real, but it is not pinned in repo.
+That means repo files alone cannot prove the production Railway service points at the
+prod Firebase project or prod R2 buckets.
+
+The safest assumption is:
+
+- `dev` is the integration branch
+- `main` is the production branch
+- Railway handles web deploys after branch pushes
+- Firebase Functions, Firestore rules, Storage rules, and docs site deploys remain manual
+
+Per-surface deploy mechanics live in sibling runbooks:
+
+- [production-deploy.md](production-deploy.md)
+- [agent-installer-release.md](agent-installer-release.md)
+- [hotfix-rollback.md](hotfix-rollback.md)
+
+## day-to-day: working on dev
+
+Normal development starts from `dev`.
+
+1. Branch from `dev`.
+2. Push work to a topic branch or directly to `dev`.
+3. Open a PR to `dev` or merge directly.
+4. Let Railway auto-deploy `dev` to `dev.owlette.app`.
+5. Verify the change in dev.
+6. When the release set is ready, merge `dev` into `main`.
+
+Current practice is permissive.
+Direct pushes and direct merges are part of the observed workflow.
+That does not mean every maintainer should prefer direct pushes.
+It means the repo history does not show a hard PR-only process.
+
+Recommended day-to-day hygiene:
+
+- keep feature work small enough to verify on `dev.owlette.app`
+- run local checks before pushing to `dev`
+- avoid mixing unrelated fixes in one release moment
+- note any manual deploy steps needed after the web deploy
+- update docs and changelog before promotion when user-visible behavior changes
+
+The dev environment exists to absorb integration risk.
+Use it before production promotion.
+
+## promoting dev -> main
+
+Current observed practice from git log:
+
+- promotions are manual merge commits
+- promotions are not squash merges
+- promotions are mostly not pull requests
+- a typical subject is `chore: merge dev for vX.Y.Z production release`
+
+Observed examples include:
+
+- `chore: merge dev for v2.6.0 production release`
+- `chore: merge dev - remove sparkline no data text`
+- `chore: Merge dev for production release - timezone and time format settings`
+
+Only one promotion PR was found:
+
+- `Merge pull request #6 from theexperiential/dev`
+
+The rest of the observed promotions are direct merge commits.
+
+Promotion frequency is not calendar-based.
+It usually happens once per release moment, with gaps varying from days to weeks.
+
+`dev` can run far ahead of `main`.
+At the time of the workflow audit, `dev` was about 391 commits ahead of `main`.
+That long-running divergence is normal for this repository.
+
+Basic promotion flow:
+
+1. Confirm `dev` is ready.
+2. Check out `main`.
+3. Pull the latest `main`.
+4. Merge `dev` using a regular merge commit.
+5. Resolve conflicts if any.
+6. Push `main`.
+7. Watch Railway production deploy.
+8. Run post-deploy smoke checks.
+
+Commands:
+
+```bash
+git checkout dev
+git pull
+
+git checkout main
+git pull
+
+git merge dev
+git push origin main
+```
+
+Do not use a squash merge for normal promotion.
+The historical model preserves the merge relationship between `dev` and `main`.
+
+Use a clear merge subject when Git opens the merge editor:
+
+```text
+chore: merge dev for vX.Y.Z production release
+```
+
+If there are conflicts, resolve them intentionally.
+Conflicts are expected to be rare, but they matter because `main` may contain
+hotfix or doc-only commits that are not in `dev`.
+
+After pushing `main`, Railway auto-deploys the production web service.
+That does not deploy Firebase Functions, Firestore rules, Storage rules, or the docs site.
+Use [production-deploy.md](production-deploy.md) for the full release procedure.
+
+## pre-promotion checklist
+
+Before merging `dev` into `main`, confirm the release has been verified.
+
+Recommended checks:
+
+- lint passes
+- smoke scripts pass
+- e2e tests pass when the change touches user flows
+- `dev.owlette.app` has been checked manually for the changed surface
+- changelog is updated for user-visible release content
+- version files are coordinated when this is a versioned release
+- installer version has been bumped before building, if an installer is included
+- manual deploy surfaces have an owner
+
+The repo has no automated post-merge smoke job today.
+Do not assume a green push to `main` means every production surface is healthy.
+
+## hotfix patterns
+
+There are three practical hotfix patterns.
+
+### forward-fix from dev
+
+This is the most common pattern.
+
+Use it when:
+
+- production is not immediately broken
+- the fix can wait for the next normal promotion
+- `dev` already contains the right direction of travel
+
+Flow:
+
+1. Fix the issue on `dev`.
+2. Verify on `dev.owlette.app`.
+3. Include the fix in the next `dev` -> `main` promotion.
+
+This keeps history simple and avoids special-case branch work.
+
+### fix-on-dev-then-merge-to-main-immediately
+
+Use this when production is broken and `dev` can safely be promoted.
+
+Flow:
+
+1. Fix on `dev`.
+2. Verify on `dev.owlette.app`.
+3. Confirm unrelated `dev` changes are acceptable for production.
+4. Merge `dev` into `main`.
+5. Push `main`.
+6. Run production smoke checks.
+
+This is still a normal merge promotion.
+The urgency is different; the mechanics are the same.
+
+### direct fix-on-main + back-merge to dev
+
+Use this only when `dev` cannot safely be promoted but production needs a fix now.
+
+Flow:
+
+1. Branch from `main`.
+2. Fix only the production issue.
+3. Merge or push the fix to `main`.
+4. Verify production.
+5. Back-merge or cherry-pick the fix into `dev`.
+
+At the time of audit, `main` had 38 commits not in `dev`.
+Those are likely cherry-picked hotfixes or doc-only main edits.
+Back-merge is the maintainer's responsibility.
+There is no automation that keeps `dev` caught up with direct `main` work.
+
+Full hotfix decision tree:
+
+- [hotfix-rollback.md](hotfix-rollback.md)
+
+## tags and releases
+
+Current state: tag discipline has lapsed.
+
+Only three tags exist:
+
+- `v2.0.43`
+- `v2.0.46`
+- `v2.0.47`
+
+Tagging stopped early in project history.
+Releases `2.6.0` through `2.11.0` are not tagged.
+
+The internal version-management doc still documents release tagging:
+
+- `/docs/internal/version-management.md:171` documents `git tag v2.1.0`
+
+Practice has diverged from that written process.
+
+Recommendation: resume tagging on every production release.
+
+Tagging matters because the CI installer build workflow is triggered by tag push:
+
+- `.github/workflows/build-installer.yml`
+
+That makes tags operationally meaningful, not just bookkeeping.
+
+Use a release tag that matches the coordinated application version:
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+If the release includes an agent installer, do not tag until the version and changelog are ready.
+The installer filename bakes in the version.
+
+## version coordination
+
+Owlette has multiple versioned surfaces.
+
+The coordinated app version is stored in:
+
+- `/VERSION`
+- `/agent/VERSION`
+- `/web/package.json`
+
+Use the sync script to bump them together:
+
+```bash
+node scripts/sync-versions.js X.Y.Z
+```
+
+The script updates:
+
+- root `VERSION`
+- agent `VERSION`
+- web `package.json`
+
+The script does not update:
+
+- `firestore.rules`
+
+Firestore rules are independently versioned.
+The Firestore rules schema version is a security-schema version, currently `v2.2.0`.
+Do not assume an app patch release implies a Firestore rules version bump.
+
+Default bump granularity is `PATCH` unless the user explicitly says otherwise.
+
+Critical release ordering:
+
+1. Pick the release version.
+2. Run `node scripts/sync-versions.js X.Y.Z`.
+3. Update the changelog.
+4. Build the agent installer.
+5. Tag the release when appropriate.
+
+Do not build the installer before bumping the version.
+The installer bakes the version into the EXE filename.
+
+## branch protection
+
+Maintainer input needed.
+
+No `.github/branch-protection*` config is visible in repo.
+Memory files note "don't push to main directly" as guidance, not enforcement.
+
+A direct merge commit exists in main history:
+
+- `fix: critical token revoke bug - merge from dev`
+
+That suggests there is no hard PR-only rule today.
+
+Branch protection is configured on GitHub, not in repo files.
+If stricter protection is needed, configure it on github.com:
+
+1. Open the repository on GitHub.
+2. Go to Settings.
+3. Go to Branches.
+4. Add a branch protection rule.
+5. Apply it to `main`.
+
+Recommended protection questions for maintainers:
+
+- should `main` require pull requests?
+- should `main` require passing checks?
+- should administrators be included?
+- should force pushes be disabled?
+- should release managers be the only direct push exception?
+
+Until those answers are explicit, treat branch protection as an operational unknown.
+
+## environment isolation
+
+Owlette has separate dev and production infrastructure.
+
+Firebase isolation:
+
+- dev project: `owlette-dev-3838a`
+- prod project: `owlette-prod-90a12`
+- mapping source: `.firebaserc`
+
+R2 isolation:
+
+- dev content bucket: `owlette-dev-content`
+- dev manifest bucket: `owlette-dev-manifests`
+- prod content bucket: `owlette-prod-content`
+- prod manifest bucket: `owlette-prod-manifests`
+
+Railway isolation:
+
+- dev branch has a dedicated Railway service
+- main branch has a dedicated Railway service
+- service env vars must be set correctly by maintainers
+
+Runtime environment detection:
+
+- code path: `web/lib/r2Client.server.ts`
+- function: `currentEnv()`
+- first source: `ROOST_ENV`
+- second source: `RAILWAY_ENVIRONMENT`
+- third source: `RAILWAY_PUBLIC_DOMAIN`
+- default: `dev`
+
+`ROOST_ENV` is authoritative when set.
+The default to `dev` is a fail-safe.
+
+Recommended Railway configuration:
+
+- set `ROOST_ENV=dev` on the dev Railway service
+- set `ROOST_ENV=prod` on the prod Railway service
+
+Set production explicitly.
+Do not rely on domain fallback when a single env var can remove ambiguity.
+
+## manual deploy boundaries
+
+The branch promotion model only explains web auto-deploy.
+
+These surfaces are manual:
+
+- Firebase Functions
+- Firestore rules
+- Storage rules
+- docs site
+- agent installer release
+
+Manual means a merge to `main` does not automatically publish them.
+For a normal release, use [production-deploy.md](production-deploy.md).
+For installer release, use [agent-installer-release.md](agent-installer-release.md).
+For emergency response, use [hotfix-rollback.md](hotfix-rollback.md).
+
+## known gaps in this workflow
+
+- Tag discipline lapsed. Restart with the next release.
+- Branch protection on `main` is GitHub-side, not pinned in repo.
+- Functions/rules/storage deploys are 100% manual. No CI automation pushes them on merge to `main`.
+- `main` has 38 commits not in `dev` (cherry-picked hotfixes or doc-only main edits). No back-merge automation.
+- No automated post-merge smoke job.
+- Cherry-pick/back-merge protocol not written down.
+
+## further reading
+
+- [production-deploy.md](production-deploy.md)
+- [agent-installer-release.md](agent-installer-release.md)
+- [hotfix-rollback.md](hotfix-rollback.md)
+- `/docs/internal/version-management.md`
+- `/CLAUDE.md` (Git Workflow section)
