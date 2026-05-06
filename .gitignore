@@ -23,6 +23,7 @@ agent/.venv/
 # Dev planning artifacts
 dev/completed/
 dev/active/
+dev/scratch/
 
 # One-shot codex/claude prompts and transcripts. Structured plan dirs (with
 # BRIEF.md, named-feature subfolders) and audit conclusions are committed
