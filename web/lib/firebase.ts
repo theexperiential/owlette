@@ -58,6 +58,10 @@ function parseEmulatorHost(value: string | undefined, fallbackHost: string, fall
   }
 }
 
+function makeIdempotencyKey(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 // Emulator wiring for Playwright E2E tests. Gated on NEXT_PUBLIC_USE_FIREBASE_EMULATOR
 // so production builds never connect to localhost. Called exactly once per app
 // instance (tracked on window to survive hot-reload re-execution of this module).
@@ -223,7 +227,10 @@ export async function sendOwletteUpdateCommand(
       `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/commands`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': makeIdempotencyKey(`update-owlette-${machineId}-${targetVersion}`),
+        },
         body: JSON.stringify({
           type: 'update_owlette',
           params,

@@ -104,7 +104,20 @@ export function useUninstall() {
           `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/uninstall`,
           {
             method: 'POST',
-            headers: { 'content-type': 'application/json' },
+            headers: {
+              'content-type': 'application/json',
+              'Idempotency-Key':
+                'machine-uninstall-' +
+                siteId +
+                '-' +
+                machineId +
+                '-' +
+                encodeURIComponent(softwareName) +
+                '-' +
+                Date.now() +
+                '-' +
+                Math.random().toString(36).slice(2),
+            },
             body: JSON.stringify({
               software_name: softwareName,
               ...(deploymentId ? { deployment_id: deploymentId } : {}),
@@ -143,7 +156,22 @@ export function useUninstall() {
     try {
       const response = await fetch(
         `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/uninstall?software_name=${encodeURIComponent(softwareName)}`,
-        { method: 'DELETE' },
+        {
+          method: 'DELETE',
+          headers: {
+            'Idempotency-Key':
+              'machine-cancel-uninstall-' +
+              siteId +
+              '-' +
+              machineId +
+              '-' +
+              encodeURIComponent(softwareName) +
+              '-' +
+              Date.now() +
+              '-' +
+              Math.random().toString(36).slice(2),
+          },
+        },
       );
       if (!response.ok) {
         throw new Error(await readApiError(response, 'Failed to cancel uninstall'));

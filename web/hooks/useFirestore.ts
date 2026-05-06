@@ -1272,7 +1272,10 @@ export function useMachines(siteId: string) {
         `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/processes/${encodeURIComponent(processId)}/launch-mode`,
         {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': makeIdempotencyKey(`process-launch-mode-${siteId}-${machineId}-${processId}`),
+          },
           body: JSON.stringify({
             mode,
             ...(cleanSchedules !== undefined ? { schedules: cleanSchedules } : {}),
@@ -1476,7 +1479,10 @@ export function useMachines(siteId: string) {
         `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/processes`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': makeIdempotencyKey(`process-create-${siteId}-${machineId}`),
+          },
           body: JSON.stringify(payload),
         },
       );

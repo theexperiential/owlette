@@ -33,7 +33,20 @@ export function useMachineOperations(siteId: string) {
     try {
       const response = await fetch(
         `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}`,
-        { method: 'DELETE' },
+        {
+          method: 'DELETE',
+          headers: {
+            'Idempotency-Key':
+              'machine-remove-' +
+              siteId +
+              '-' +
+              machineId +
+              '-' +
+              Date.now() +
+              '-' +
+              Math.random().toString(36).slice(2),
+          },
+        },
       );
       if (!response.ok) {
         throw new Error(await readApiError(response, 'Failed to remove machine'));
