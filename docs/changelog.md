@@ -11,6 +11,21 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ## [Unreleased]
 
+## [2.11.2] - 2026-05-06
+
+### fixed
+
+- Agent GUI process-details panel now stays in sync with external `launch_mode` changes. The dropdown and schedule label refresh immediately even while a text entry is focused; entry-field updates are deferred and retried after focus leaves so Firestore changes are no longer permanently dropped.
+- GUI `launch_mode` changes no longer trigger a brief command-prompt flash. `GPUtil.getGPUs()` (called transitively from the GUI's post-toggle metrics push) now spawns `nvidia-smi` with `CREATE_NO_WINDOW` via a Windows-only monkey-patch in `shared_utils._get_gputil()`.
+- `launch_mode` transitions originating from the GUI now run the same runtime cleanup as web-originated changes. The service maintains an in-memory snapshot of last-applied modes and diffs it on every main-loop tick, applying transitions through a single `_apply_launch_mode_transition` helper. Previously the GUI flow bypassed the smart-transition path because it wrote disk before uploading to Firestore, leaving stuck `killed`/cooldown markers that prevented relaunch.
+- `off → scheduled` transitions outside the schedule window now clear stale runtime markers on the transition itself, so a previously-killed process will launch when the schedule window next opens (was stuck before).
+- Cortex `set_launch_mode` IPC handler called `shared_utils.write_config(config)` with the wrong signature, so launch-mode changes from Cortex were silently not persisted. Now uses `save_config(config)`.
+- Cortex chat tool calls for `set_launch_mode` (and other Tier 2 tools dispatched through `executeExistingCommand`) now forward all LLM-supplied parameters — `mode`, `schedules`, `schedulePresetId`, etc. — to the agent. Previously only `process_name` was forwarded, so the agent's command handler defaulted `mode` to `off` regardless of what the user asked for.
+
+### changed
+
+- Firebase `set_launch_mode` / `toggle_autolaunch` command handler now matches by `process_id` first with a `process_name` fallback, making it robust to processes with duplicate names.
+
 ### added - post-2.11 updates
 
 - Site-tier billing now gates beta sites as `core` or `pro`, defaulting beta sites to `pro`.

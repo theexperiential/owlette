@@ -1,6 +1,6 @@
 {
   "name": "web",
-  "version": "2.11.1",
+  "version": "2.11.2",
   "private": true,
   "packageManager": "npm@10.9.0",
   "scripts": {
