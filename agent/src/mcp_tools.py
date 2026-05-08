@@ -448,6 +448,7 @@ def _get_gpu_totals():
     # Fallback to GPUtil
     try:
         import GPUtil
+        shared_utils._ensure_gputil_no_window_popen_patched()
         gpus_list = GPUtil.getGPUs()
         gpus = []
         for g in gpus_list:

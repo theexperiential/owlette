@@ -255,6 +255,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.active_installations = {} # Track active installer processes for cancellation
         self.install_locks = {}  # {process_config_id: deployment_id} - suppress relaunch during install
         self.manual_overrides = {} # Processes manually started outside their schedule window
+        self._last_seen_launch_modes = {} # Service-owned launch_mode snapshot for transition diffs
+        self._last_seen_launch_schedules = {} # Schedule signatures for scheduled-mode edit logging
         self._skip_launch_delay = set()  # Process IDs that should skip time_delay on next launch
         self._cached_site_timezone = None  # Cached from firebase_client
         # Reboot scheduler state — see reboot_state.py for the persisted source of truth.
@@ -1345,7 +1347,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 proc['launch_mode'] = mode
                 if mode == 'scheduled' and schedules:
                     proc['schedules'] = schedules
-                shared_utils.write_config(config)
+                shared_utils.save_config(config)
                 return {'status': 'completed', 'result': f'Launch mode set to {mode} for {process_name}'}
 
         return {'error': f'Process not found: {process_name}'}
@@ -2522,6 +2524,98 @@ class OwletteService(win32serviceutil.ServiceFramework):
         except Exception as e:
             logging.error(f"Error cleaning up stale tracking data: {e}")
 
+    def _get_process_launch_mode(self, process):
+        return process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+
+    def _get_schedule_signature(self, process):
+        return json.dumps(process.get('schedules'), sort_keys=True, default=str)
+
+    def _apply_launch_mode_transition(self, process_id, old_mode, new_mode, new_proc):
+        name = new_proc.get('name')
+
+        if old_mode == new_mode:
+            logging.info(f"Launch schedule changed for {name} - will re-evaluate on next tick")
+            return
+
+        old_active = old_mode in ('always', 'scheduled')
+        new_active = new_mode in ('always', 'scheduled')
+
+        if new_mode == 'off' and old_active:
+            logging.info(f"Launch mode set to off for {name} - stopping monitoring (process stays running)")
+            self.manual_overrides.pop(process_id, None)
+            return
+
+        if old_mode == 'off' and new_mode == 'always':
+            logging.info(f"Launch mode set to always for {name} - launching now")
+            self.last_started.pop(process_id, None)
+            self._skip_launch_delay.add(process_id)
+            self.relaunch_attempts.pop(name, None)
+            try:
+                self.handle_process(new_proc)
+            except Exception as e:
+                logging.error(f"Failed to immediately launch {name}: {e}")
+            return
+
+        if old_mode == 'off' and new_mode == 'scheduled':
+            self.last_started.pop(process_id, None)
+            self.relaunch_attempts.pop(name, None)
+            should_launch = shared_utils.is_within_schedule(new_proc.get('schedules'), self._cached_site_timezone)
+            if should_launch:
+                logging.info(f"Launch mode set to scheduled for {name} - launching now")
+                self._skip_launch_delay.add(process_id)
+                try:
+                    self.handle_process(new_proc)
+                except Exception as e:
+                    logging.error(f"Failed to immediately launch {name}: {e}")
+            else:
+                logging.info(f"Launch mode set to scheduled for {name} - outside schedule, will launch when window opens")
+            return
+
+        if old_active and new_active:
+            logging.info(f"Launch mode changed for {name}: {old_mode} -> {new_mode}")
+            return
+
+        logging.info(f"Launch mode changed for {name}: {old_mode} -> {new_mode}")
+
+    def _diff_and_apply_launch_modes(self, processes):
+        current_process_ids = set()
+
+        for process in processes or []:
+            process_id = process.get('id')
+            if not process_id:
+                continue
+
+            current_process_ids.add(process_id)
+            old_mode = self._last_seen_launch_modes.get(process_id)
+            new_mode = self._get_process_launch_mode(process)
+            new_schedule_signature = self._get_schedule_signature(process)
+
+            if old_mode is None:
+                self._last_seen_launch_modes[process_id] = new_mode
+                self._last_seen_launch_schedules[process_id] = new_schedule_signature
+                continue
+
+            old_schedule_signature = self._last_seen_launch_schedules.get(process_id)
+            schedules_changed = (
+                old_mode == new_mode == 'scheduled'
+                and old_schedule_signature != new_schedule_signature
+            )
+
+            if old_mode == new_mode:
+                if schedules_changed:
+                    self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
+                self._last_seen_launch_schedules[process_id] = new_schedule_signature
+                continue
+
+            self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
+            self._last_seen_launch_modes[process_id] = new_mode
+            self._last_seen_launch_schedules[process_id] = new_schedule_signature
+
+        stale_process_ids = set(self._last_seen_launch_modes.keys()) - current_process_ids
+        for process_id in stale_process_ids:
+            self._last_seen_launch_modes.pop(process_id, None)
+            self._last_seen_launch_schedules.pop(process_id, None)
+
     # Handle config updates from Firebase
     def handle_config_update(self, new_config):
         """
@@ -2677,35 +2771,24 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                         # Clean up tracking
                         del self.last_started[removed_id]
+                    self._last_seen_launch_modes.pop(removed_id, None)
+                    self._last_seen_launch_schedules.pop(removed_id, None)
 
                 # Check for launch_mode changes
                 for process_id, new_proc in new_process_map.items():
                     if process_id in old_process_map:
                         old_proc = old_process_map[process_id]
-                        old_mode = old_proc.get('launch_mode', 'always' if old_proc.get('autolaunch', False) else 'off')
-                        new_mode = new_proc.get('launch_mode', 'always' if new_proc.get('autolaunch', False) else 'off')
+                        old_mode = self._get_process_launch_mode(old_proc)
+                        new_mode = self._get_process_launch_mode(new_proc)
+                        schedules_changed = (
+                            old_mode == new_mode == 'scheduled'
+                            and self._get_schedule_signature(old_proc) != self._get_schedule_signature(new_proc)
+                        )
 
-                        if old_mode != new_mode:
-                            logging.info(f"Launch mode changed for {new_proc.get('name')}: {old_mode} -> {new_mode}")
-
-                        if new_mode == 'off' and old_mode != 'off':
-                            # Mode set to off - stop monitoring but keep process running
-                            logging.info(f"Launch mode set to off for {new_proc.get('name')} - stopping monitoring (process stays running)")
-                            self.manual_overrides.pop(process_id, None)
-                        elif new_mode in ('always', 'scheduled') and old_mode == 'off':
-                            # Mode enabled - clear any cooldown, launch immediately if appropriate
-                            should_launch = new_mode == 'always' or shared_utils.is_within_schedule(new_proc.get('schedules'), self._cached_site_timezone)
-                            if should_launch:
-                                logging.info(f"Launch mode set to {new_mode} for {new_proc.get('name')} - launching now")
-                                self._skip_launch_delay.add(new_proc.get('id'))
-                                self.last_started.pop(new_proc.get('id'), None)
-                                self.relaunch_attempts.pop(new_proc.get('name'), None)
-                                try:
-                                    self.handle_process(new_proc)
-                                except Exception as e:
-                                    logging.error(f"Failed to immediately launch {new_proc.get('name')}: {e}")
-                            else:
-                                logging.info(f"Launch mode set to {new_mode} for {new_proc.get('name')} - outside schedule, will launch when window opens")
+                        if old_mode != new_mode or schedules_changed:
+                            self._apply_launch_mode_transition(process_id, old_mode, new_mode, new_proc)
+                            self._last_seen_launch_modes[process_id] = new_mode
+                            self._last_seen_launch_schedules[process_id] = self._get_schedule_signature(new_proc)
 
                 # Log summary
                 logging.info(f"Config update complete - Processes: {len(old_processes)} -> {len(new_processes)}, Removed: {len(removed_process_ids)}")
@@ -2961,41 +3044,50 @@ class OwletteService(win32serviceutil.ServiceFramework):
             elif cmd_type in ('toggle_autolaunch', 'set_launch_mode'):
                 # Set launch mode for a specific process (also handles legacy toggle_autolaunch)
                 process_name = cmd_data.get('process_name')
+                process_id = cmd_data.get('process_id') or cmd_data.get('processId')
                 config = shared_utils.read_config()
                 processes = config.get('processes', [])
-                for process in processes:
-                    if process.get('name') == process_name:
-                        if cmd_type == 'set_launch_mode':
-                            new_mode = cmd_data.get('mode', 'off')
-                            new_schedules = cmd_data.get('schedules', None)
-                            process['launch_mode'] = new_mode
-                            if new_schedules is not None:
-                                process['schedules'] = new_schedules
-                        else:
-                            # Legacy toggle_autolaunch support
-                            new_autolaunch_value = cmd_data.get('autolaunch', False)
-                            process['launch_mode'] = 'always' if new_autolaunch_value else 'off'
-                        # Always derive autolaunch for backward compat
-                        process['autolaunch'] = process.get('launch_mode', 'off') != 'off'
-                        shared_utils.save_config(config)
-                        new_mode = process['launch_mode']
-                        logging.info(f"Launch mode for {process_name} set to {new_mode}")
+                process = None
+                if process_id:
+                    process = next((p for p in processes if p.get('id') == process_id), None)
+                if process is None and process_name:
+                    process = next((p for p in processes if p.get('name') == process_name), None)
 
-                        # Immediate launch when mode switches to always/scheduled
-                        if new_mode in ('always', 'scheduled'):
-                            process_id = process.get('id')
-                            should_launch = new_mode == 'always' or shared_utils.is_within_schedule(process.get('schedules'), self._cached_site_timezone)
-                            if should_launch and process_id:
-                                self._skip_launch_delay.add(process_id)
-                                self.last_started.pop(process_id, None)
-                                self.relaunch_attempts.pop(process_name, None)
-                                try:
-                                    self.handle_process(process)
-                                except Exception as e:
-                                    logging.error(f"Failed to immediately launch {process_name}: {e}")
+                if process:
+                    process_name = process.get('name') or process_name
+                    process_id = process.get('id')
+                    old_mode = self._get_process_launch_mode(process)
+                    old_schedule_signature = self._get_schedule_signature(process)
 
-                        return f"Launch mode for {process_name} set to {new_mode}"
-                return f"Process {process_name} not found in configuration"
+                    if cmd_type == 'set_launch_mode':
+                        new_mode = cmd_data.get('mode', 'off')
+                        new_schedules = cmd_data.get('schedules', None)
+                        process['launch_mode'] = new_mode
+                        if new_schedules is not None:
+                            process['schedules'] = new_schedules
+                    else:
+                        # Legacy toggle_autolaunch support
+                        new_autolaunch_value = cmd_data.get('autolaunch', False)
+                        process['launch_mode'] = 'always' if new_autolaunch_value else 'off'
+                    # Always derive autolaunch for backward compat
+                    process['autolaunch'] = process.get('launch_mode', 'off') != 'off'
+                    shared_utils.save_config(config)
+                    new_mode = process['launch_mode']
+                    new_schedule_signature = self._get_schedule_signature(process)
+                    logging.info(f"Launch mode for {process_name} set to {new_mode}")
+
+                    schedules_changed = (
+                        old_mode == new_mode == 'scheduled'
+                        and old_schedule_signature != new_schedule_signature
+                    )
+                    if old_mode != new_mode or schedules_changed:
+                        self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
+                        self._last_seen_launch_modes[process_id] = new_mode
+                        self._last_seen_launch_schedules[process_id] = new_schedule_signature
+
+                    return f"Launch mode for {process_name} set to {new_mode}"
+                target = process_id or process_name
+                return f"Process {target} not found in configuration"
 
             elif cmd_type == 'update_config':
                 # Update configuration from Firebase
@@ -6348,9 +6440,10 @@ with open(out_path, 'wb') as f:
                     self.results = {}
 
                 # Load in all processes in config json
-                processes = shared_utils.read_config(['processes'])
+                processes = shared_utils.read_config(['processes']) or []
+                self._diff_and_apply_launch_modes(processes)
                 for process in processes:
-                    mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+                    mode = self._get_process_launch_mode(process)
                     if mode == 'always':
                         self.handle_process(process)
                     elif mode == 'scheduled':

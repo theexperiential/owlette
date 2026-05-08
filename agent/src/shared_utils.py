@@ -8,6 +8,7 @@ from packaging import version
 import psutil
 import platform
 import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import winreg
@@ -1015,7 +1016,76 @@ RESULT_FILE_PATH = get_data_path('tmp/app_states.json')
 # import error during a driver update recovers on its own.
 _gputil_module = None
 _gputil_retry_after = 0.0  # monotonic seconds; 0 = retry immediately
+_gputil_popen_patched = False
 _GPUTIL_RETRY_BACKOFF = 300.0  # 5 min between retries after a failed import
+
+def _ensure_gputil_no_window_popen_patched():
+    global _gputil_popen_patched
+    if _gputil_popen_patched:
+        return
+    if sys.platform != 'win32':
+        _gputil_popen_patched = True
+        return
+
+    try:
+        import GPUtil.GPUtil as _gputil_impl
+
+        def _wrap_popen(original_popen):
+            if getattr(original_popen, '_owlette_create_no_window', False):
+                return original_popen
+
+            def _popen_no_window(*args, **kwargs):
+                kwargs['creationflags'] = (
+                    (kwargs.get('creationflags') or 0)
+                    | subprocess.CREATE_NO_WINDOW
+                )
+                return original_popen(*args, **kwargs)
+
+            _popen_no_window._owlette_create_no_window = True
+            _popen_no_window._owlette_original_popen = original_popen
+            return _popen_no_window
+
+        patched_targets = []
+
+        popen = getattr(_gputil_impl, 'Popen', None)
+        if popen is not None:
+            _gputil_impl.Popen = _wrap_popen(popen)
+            patched_targets.append('GPUtil.GPUtil.Popen')
+
+        gputil_subprocess = getattr(_gputil_impl, 'subprocess', None)
+        subprocess_popen = getattr(gputil_subprocess, 'Popen', None)
+        if subprocess_popen is not None:
+            class _SubprocessProxy:
+                def __init__(self, module, popen_wrapper):
+                    self._module = module
+                    self.Popen = popen_wrapper
+
+                def __getattr__(self, name):
+                    return getattr(self._module, name)
+
+            _gputil_impl.subprocess = _SubprocessProxy(
+                gputil_subprocess,
+                _wrap_popen(subprocess_popen),
+            )
+            patched_targets.append('GPUtil.GPUtil.subprocess.Popen')
+
+        if patched_targets:
+            logging.debug(
+                "Patched GPUtil Popen for hidden Windows launches: %s",
+                ", ".join(patched_targets),
+            )
+        else:
+            logging.debug(
+                "GPUtil Popen patch warning: no supported Popen reference found"
+            )
+    except Exception as e:
+        logging.debug(
+            "GPUtil Popen patch warning: failed to apply hidden Windows launch: %s",
+            e,
+            exc_info=True,
+        )
+    finally:
+        _gputil_popen_patched = True
 
 def _get_gputil():
     global _gputil_module, _gputil_retry_after
@@ -1025,6 +1095,7 @@ def _get_gputil():
         return None
     try:
         import GPUtil as _g
+        _ensure_gputil_no_window_popen_patched()
         _gputil_module = _g
         return _gputil_module
     except Exception:
