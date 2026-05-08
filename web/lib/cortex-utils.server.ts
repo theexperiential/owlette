@@ -21,6 +21,22 @@ const SERVER_SIDE_TOOLS = new Set(['get_site_logs', 'get_system_presets', 'deplo
 export const COMMAND_POLL_INTERVAL_MS = 1500;
 export const COMMAND_TIMEOUT_MS = 30000;
 
+const RESERVED_EXISTING_COMMAND_KEYS: ReadonlySet<string> = new Set<string>([
+  'type',
+  'process_name',
+  'timestamp',
+  'status',
+]);
+
+function stripReservedExistingCommandKeys(params: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (RESERVED_EXISTING_COMMAND_KEYS.has(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 export interface ResolveLlmConfigOptions {
   /** If true, skip user-level key and only read site-level config. */
   autonomous?: boolean;
@@ -344,9 +360,11 @@ export async function executeExistingCommand(
   siteId: string,
   machineId: string,
   commandType: string,
-  processName: string
+  processName: string,
+  extraParams: Record<string, unknown> = {}
 ): Promise<unknown> {
   const commandId = `${commandType}_${Date.now()}`;
+  const safeExtraParams = stripReservedExistingCommandKeys(extraParams);
 
   const pendingRef = db
     .collection('sites')
@@ -359,6 +377,7 @@ export async function executeExistingCommand(
   await pendingRef.set(
     {
       [commandId]: {
+        ...safeExtraParams,
         type: commandType,
         process_name: processName,
         timestamp: Date.now(),
@@ -774,8 +793,9 @@ export function buildExecutableTools(
               try {
                 const existingCmd = EXISTING_COMMAND_MAPPINGS[toolName];
                 if (existingCmd) {
-                  const processName = (params as Record<string, unknown>).process_name as string;
-                  const result = await executeExistingCommand(db, siteId, mid, existingCmd, processName);
+                  const toolParams = params as Record<string, unknown>;
+                  const processName = toolParams.process_name as string;
+                  const result = await executeExistingCommand(db, siteId, mid, existingCmd, processName, toolParams);
                   return { machine: mid, ...result as Record<string, unknown> };
                 }
                 const result = await executeToolOnAgent(db, siteId, mid, toolName, params as Record<string, unknown>, chatId);
@@ -791,8 +811,9 @@ export function buildExecutableTools(
         // Single machine mode
         const existingCmd = EXISTING_COMMAND_MAPPINGS[toolName];
         if (existingCmd) {
-          const processName = (params as Record<string, unknown>).process_name as string;
-          return executeExistingCommand(db, siteId, machineId, existingCmd, processName);
+          const toolParams = params as Record<string, unknown>;
+          const processName = toolParams.process_name as string;
+          return executeExistingCommand(db, siteId, machineId, existingCmd, processName, toolParams);
         }
 
         return executeToolOnAgent(db, siteId, machineId, toolName, params as Record<string, unknown>, chatId);
