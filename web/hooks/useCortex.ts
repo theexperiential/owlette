@@ -56,15 +56,29 @@ interface UseChatOptions {
   siteId: string;
   machineId: string;
   machineName: string;
+  onChatPersisted?: (chatId: string) => void;
 }
 
-export function useOwletteChat({ siteId, machineId, machineName }: UseChatOptions) {
+export type ChatLoadError = 'not_found';
+
+export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted }: UseChatOptions) {
   const { user } = useAuth();
   const [chatId, setChatId] = useState<string>(() => generateChatId());
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [inputValue, setInputValue] = useState('');
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [chatLoadError, setChatLoadError] = useState<ChatLoadError | null>(null);
+  const loadChatRequestRef = useRef(0);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      loadChatRequestRef.current += 1;
+    };
+  }, []);
 
   // Pagination state
   const [loadingMore, setLoadingMore] = useState(false);
@@ -81,10 +95,12 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
   const machineIdRef = useRef(machineId);
   const machineNameRef = useRef(machineName);
   const chatIdRef = useRef(chatId);
+  const onChatPersistedRef = useRef(onChatPersisted);
   siteIdRef.current = siteId;
   machineIdRef.current = machineId;
   machineNameRef.current = machineName;
   chatIdRef.current = chatId;
+  onChatPersistedRef.current = onChatPersisted;
 
   const transport = useMemo(
     () =>
@@ -142,7 +158,8 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
       // Persist conversation metadata + messages after assistant response
       if (user && db) {
         try {
-          const chatRef = doc(db, 'chats', chatId);
+          const persistedChatId = chatIdRef.current;
+          const chatRef = doc(db, 'chats', persistedChatId);
           const firstUserMsg = chat.messages.find((m) => m.role === 'user');
           const firstTextPart = firstUserMsg?.parts?.find((p) => p.type === 'text');
           const userMessage = firstTextPart && 'text' in firstTextPart
@@ -179,13 +196,14 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
             },
             { merge: true }
           );
+          onChatPersistedRef.current?.(persistedChatId);
 
           // Auto-title + categorize new conversations (fire-and-forget)
           if (isNewConversation && userMessage) {
             fetch('/api/cortex/categorize', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chatId, message: userMessage, siteId }),
+              body: JSON.stringify({ chatId: persistedChatId, message: userMessage, siteId }),
             }).catch(() => { /* silent — best-effort */ });
           }
         } catch (error) {
@@ -305,11 +323,13 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
   }, [user, siteId]);
 
   const startNewChat = useCallback((overrides?: { machineId?: string; machineName?: string }) => {
+    loadChatRequestRef.current += 1;
     const newId = generateChatId();
     setChatId(newId);
     chat.setMessages([]);
     setInputValue('');
     setPendingImages([]);
+    setChatLoadError(null);
 
     // Use overrides if provided (handles race condition when machine selector changes in same handler)
     const effectiveMachineId = overrides?.machineId ?? machineIdRef.current;
@@ -432,21 +452,35 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
 
   const loadChat = useCallback(
     async (conversationId: string) => {
+      const requestId = loadChatRequestRef.current + 1;
+      loadChatRequestRef.current = requestId;
       setChatId(conversationId);
       setInputValue('');
+      setChatLoadError(null);
+      chat.setMessages([]);
 
       // Fetch persisted messages from Firestore
       if (db) {
         try {
           const chatDoc = await getDoc(doc(db, 'chats', conversationId));
+          if (!isMountedRef.current || requestId !== loadChatRequestRef.current) return;
+          if (!chatDoc.exists()) {
+            setChatLoadError('not_found');
+            chat.setMessages([]);
+            return;
+          }
+
           const data = chatDoc.data();
+          setChatLoadError(null);
           if (data?.messages && Array.isArray(data.messages)) {
             chat.setMessages(data.messages as UIMessage[]);
           } else {
             chat.setMessages([]);
           }
         } catch (error) {
+          if (!isMountedRef.current || requestId !== loadChatRequestRef.current) return;
           console.error('Failed to load chat messages:', error);
+          setChatLoadError('not_found');
           chat.setMessages([]);
         }
       }
@@ -456,6 +490,8 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
 
   const deleteChat = useCallback(
     async (conversationId: string) => {
+      loadChatRequestRef.current += 1;
+
       // Check if this is an unpersisted "new conversation" (no messages sent yet)
       const isEmptyNew = conversations.find(
         (c) => c.id === conversationId && c.title === 'new conversation'
@@ -471,6 +507,7 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
           setChatId(newId);
           chat.setMessages([]);
           setInputValue('');
+          setChatLoadError(null);
         } else {
           startNewChat();
         }
@@ -527,6 +564,7 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
     }
     setInputValue('');
     setPendingImages([]);
+    setChatLoadError(null);
   }, [inputValue, pendingImages, chat]);
 
   const handlePasteImage = useCallback(
@@ -606,6 +644,7 @@ export function useOwletteChat({ siteId, machineId, machineName }: UseChatOption
 
     // Conversation management
     chatId,
+    chatLoadError,
     conversations: displayedConversations,
     loadingConversations,
     startNewChat,
