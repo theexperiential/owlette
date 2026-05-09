@@ -36,6 +36,9 @@ const EXPECTED_TIER2 = [
   'kill_process',
   'start_process',
   'set_launch_mode',
+  'update_process',
+  'add_process',
+  'delete_process',
   'capture_screenshot',
   // Wave 1
   'manage_process',
@@ -247,6 +250,12 @@ describe('mcp-tools: required parameters', () => {
     expect(tool.parameters.required).toContain('process_name');
   });
 
+  it('process CRUD tools require the correct identifiers', () => {
+    expect(getToolByName('update_process')!.parameters.required).toEqual(['process_name']);
+    expect(getToolByName('add_process')!.parameters.required).toEqual(['name', 'exe_path']);
+    expect(getToolByName('delete_process')!.parameters.required).toEqual(['process_name']);
+  });
+
   it('deploy_software requires software_name', () => {
     const tool = getToolByName('deploy_software')!;
     expect(tool.parameters.required).toContain('software_name');
@@ -299,11 +308,49 @@ describe('mcp-tools: agent parity', () => {
   });
 
   // Server-side tools (executed on web server, not relayed to agent)
-  const SERVER_SIDE_TOOLS = ['get_site_logs', 'get_system_presets', 'deploy_software'];
+  const SERVER_SIDE_TOOLS = [
+    'get_site_logs',
+    'get_system_presets',
+    'deploy_software',
+    'update_process',
+    'add_process',
+    'delete_process',
+  ];
 
   it('server-side tools have web definitions', () => {
     for (const name of SERVER_SIDE_TOOLS) {
       expect(getToolByName(name)).toBeDefined();
+    }
+  });
+});
+
+describe('mcp-tools: process CRUD schemas', () => {
+  it('update_process exposes every supported patch field', () => {
+    const tool = getToolByName('update_process')!;
+    expect(Object.keys(tool.parameters.properties)).toEqual(
+      expect.arrayContaining([
+        'process_name',
+        'name',
+        'exe_path',
+        'file_path',
+        'cwd',
+        'priority',
+        'visibility',
+        'time_delay',
+        'time_to_init',
+        'relaunch_attempts',
+        'launch_mode',
+        'schedules',
+        'schedulePresetId',
+      ]),
+    );
+  });
+
+  it('add_process and update_process share process config field schemas', () => {
+    const add = getToolByName('add_process')!;
+    const update = getToolByName('update_process')!;
+    for (const field of Object.keys(add.parameters.properties)) {
+      expect(update.parameters.properties[field]).toEqual(add.parameters.properties[field]);
     }
   });
 });

@@ -91,7 +91,17 @@ export async function runCortexStream(
     }
     return {
       ok: true,
-      response: handleSiteWideMode(db, userId, siteId, messages, chatId, maxToolTier, onlineMachines, req.onAssistantText),
+      response: handleSiteWideMode(
+        db,
+        userId,
+        siteId,
+        messages,
+        chatId,
+        maxToolTier,
+        onlineMachines,
+        access.role,
+        req.onAssistantText,
+      ),
     };
   }
 
@@ -133,7 +143,18 @@ export async function runCortexStream(
 
   return {
     ok: true,
-    response: handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, maxToolTier, req.onAssistantText),
+    response: handleServerSideLLM(
+      db,
+      userId,
+      siteId,
+      machineId,
+      machineName,
+      messages,
+      chatId,
+      maxToolTier,
+      access.role,
+      req.onAssistantText,
+    ),
   };
 }
 
@@ -356,10 +377,11 @@ function handleServerSideLLM(
   messages: ModelMessage[],
   chatId: string,
   maxToolTier: ToolTier,
+  userRole: string | null,
   onAssistantText?: (text: string) => Promise<void> | void,
 ): Response {
   return wrapWithAssistantTap(
-    runServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, maxToolTier),
+    runServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, maxToolTier, userRole),
     onAssistantText,
   );
 }
@@ -373,6 +395,7 @@ async function runServerSideLLM(
   messages: ModelMessage[],
   chatId: string,
   maxToolTier: ToolTier,
+  userRole: string | null,
 ): Promise<Response> {
   const [llmConfig, processes] = await Promise.all([
     resolveLlmConfig(db, userId, siteId),
@@ -388,6 +411,7 @@ async function runServerSideLLM(
     toolDefs,
     false,
     [],
+    { userId, userRole },
   );
 
   const model = createModel(llmConfig);
@@ -411,10 +435,11 @@ function handleSiteWideMode(
   chatId: string,
   maxToolTier: ToolTier,
   onlineMachines: string[],
+  userRole: string | null,
   onAssistantText?: (text: string) => Promise<void> | void,
 ): Response {
   return wrapWithAssistantTap(
-    runSiteWideMode(db, userId, siteId, messages, chatId, maxToolTier, onlineMachines),
+    runSiteWideMode(db, userId, siteId, messages, chatId, maxToolTier, onlineMachines, userRole),
     onAssistantText,
   );
 }
@@ -427,6 +452,7 @@ async function runSiteWideMode(
   chatId: string,
   maxToolTier: ToolTier,
   onlineMachines: string[],
+  userRole: string | null,
 ): Promise<Response> {
   const llmConfig = await resolveLlmConfig(db, userId, siteId);
   const toolDefs = getToolsByTier(maxToolTier);
@@ -438,6 +464,7 @@ async function runSiteWideMode(
     toolDefs,
     true,
     onlineMachines,
+    { userId, userRole },
   );
 
   const model = createModel(llmConfig);

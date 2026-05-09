@@ -14,9 +14,21 @@ import {
   type ToolTier,
 } from '@/lib/mcp-tools';
 import type { LlmConfig } from '@/lib/llm';
+import { createProcess, ActionInputError, type ActionContext } from '@/lib/actions/createProcess.server';
+import { updateProcess } from '@/lib/actions/updateProcess.server';
+import { deleteProcess } from '@/lib/actions/deleteProcess.server';
+import { ProcessConfigError, type PublicProcessConfig } from '@/lib/processConfig.server';
+import type { Actor, Role } from '@/lib/capabilities';
 
 /** Tools that are executed server-side (query Firestore directly, not relayed to agent). */
-const SERVER_SIDE_TOOLS = new Set(['get_site_logs', 'get_system_presets', 'deploy_software']);
+const SERVER_SIDE_TOOLS = new Set([
+  'get_site_logs',
+  'get_system_presets',
+  'deploy_software',
+  'update_process',
+  'add_process',
+  'delete_process',
+]);
 
 export const COMMAND_POLL_INTERVAL_MS = 1500;
 export const COMMAND_TIMEOUT_MS = 30000;
@@ -35,6 +47,63 @@ function stripReservedExistingCommandKeys(params: Record<string, unknown>): Reco
     out[key] = value;
   }
   return out;
+}
+
+export interface BuildExecutableToolsOptions {
+  userId?: string;
+  userRole?: string | null;
+}
+
+type ProcessToolResult = Record<string, unknown>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeActorRole(role: string | null | undefined): Role {
+  return role === 'member' || role === 'admin' || role === 'superadmin' ? role : 'admin';
+}
+
+function actionContextForCortex(
+  siteId: string,
+  options: BuildExecutableToolsOptions,
+): ActionContext {
+  const userId = options.userId || 'unknown';
+  const actor: Actor = {
+    type: 'user',
+    userId,
+    role: normalizeActorRole(options.userRole),
+    sites: [siteId],
+  };
+  return {
+    siteId,
+    actor,
+    auditActor: `cortex:user_${userId}`,
+  };
+}
+
+function actionErrorResult(error: unknown): ProcessToolResult {
+  if (error instanceof ActionInputError) {
+    return {
+      ok: false,
+      error: error.code,
+      detail: error.message,
+      status: error.status,
+    };
+  }
+  if (error instanceof ProcessConfigError) {
+    return {
+      ok: false,
+      error: error.code || 'process_config_error',
+      detail: error.message,
+      status: error.status,
+    };
+  }
+  return {
+    ok: false,
+    error: 'internal_error',
+    detail: error instanceof Error ? error.message : 'Unknown error',
+  };
 }
 
 export interface ResolveLlmConfigOptions {
@@ -734,6 +803,226 @@ async function executeDeploySoftware(
   };
 }
 
+async function resolveProcessIdByName(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  machineId: string,
+  params: Record<string, unknown>,
+): Promise<{ ok: true; processId: string; processName: string } | { ok: false; result: ProcessToolResult }> {
+  const processName = params.process_name;
+  if (typeof processName !== 'string' || processName.trim().length === 0) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        error: 'missing_process_name',
+        detail: 'process_name is required.',
+        status: 400,
+      },
+    };
+  }
+
+  let configDoc: FirebaseFirestore.DocumentSnapshot;
+  try {
+    configDoc = await db
+      .collection('config')
+      .doc(siteId)
+      .collection('machines')
+      .doc(machineId)
+      .get();
+  } catch (error) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        error: 'config_lookup_failed',
+        detail: error instanceof Error ? error.message : 'Failed to read process configuration.',
+        status: 500,
+      },
+    };
+  }
+
+  if (!configDoc.exists) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        error: 'config_not_found',
+        detail: `Configuration not found for machine ${machineId}.`,
+        status: 404,
+      },
+    };
+  }
+
+  const processes = configDoc.data()?.processes;
+  if (!Array.isArray(processes)) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        error: 'invalid_config',
+        detail: `Configuration for machine ${machineId} does not contain a valid processes array.`,
+        status: 500,
+      },
+    };
+  }
+
+  const process = processes.find((candidate: unknown) =>
+    isRecord(candidate) && candidate.name === processName
+  );
+  if (!isRecord(process)) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        error: 'process_not_found',
+        detail: `Process "${processName}" was not found on machine ${machineId}.`,
+        status: 404,
+      },
+    };
+  }
+
+  const processId =
+    typeof process.processId === 'string'
+      ? process.processId
+      : typeof process.id === 'string'
+        ? process.id
+        : '';
+  if (!processId) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        error: 'process_id_missing',
+        detail: `Process "${processName}" does not have a processId or legacy id.`,
+        status: 500,
+      },
+    };
+  }
+
+  return { ok: true, processId, processName };
+}
+
+function patchFromProcessParams(params: Record<string, unknown>): Partial<PublicProcessConfig> {
+  const patch: Record<string, unknown> = { ...params };
+  delete patch.process_name;
+  return patch as Partial<PublicProcessConfig>;
+}
+
+async function executeProcessToolForMachines(
+  machineIds: string[],
+  handler: (machineId: string) => Promise<ProcessToolResult>,
+): Promise<unknown> {
+  if (machineIds.length === 0) {
+    return {
+      ok: false,
+      error: 'no_target_machines',
+      detail: 'No target machines available.',
+      status: 404,
+    };
+  }
+
+  if (machineIds.length === 1) {
+    return handler(machineIds[0]);
+  }
+
+  const machines = await Promise.all(
+    machineIds.map(async (machineId) => ({
+      machine: machineId,
+      ...(await handler(machineId)),
+    })),
+  );
+  return { machines };
+}
+
+async function executeUpdateProcessTool(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  machineIds: string[],
+  params: Record<string, unknown>,
+  options: BuildExecutableToolsOptions,
+): Promise<unknown> {
+  return executeProcessToolForMachines(machineIds, async (machineId) => {
+    const lookup = await resolveProcessIdByName(db, siteId, machineId, params);
+    if (!lookup.ok) return lookup.result;
+
+    try {
+      const result = await updateProcess(
+        actionContextForCortex(siteId, options),
+        {
+          machineId,
+          processId: lookup.processId,
+          patch: patchFromProcessParams(params),
+        },
+      );
+      return {
+        ok: true,
+        processId: result.processId,
+        process_name: lookup.processName,
+      };
+    } catch (error) {
+      return actionErrorResult(error);
+    }
+  });
+}
+
+async function executeAddProcessTool(
+  siteId: string,
+  machineIds: string[],
+  params: Record<string, unknown>,
+  options: BuildExecutableToolsOptions,
+): Promise<unknown> {
+  return executeProcessToolForMachines(machineIds, async (machineId) => {
+    try {
+      const result = await createProcess(
+        actionContextForCortex(siteId, options),
+        {
+          machineId,
+          ...params,
+        } as Parameters<typeof createProcess>[1],
+      );
+      return {
+        ok: true,
+        processId: result.processId,
+        name: params.name ?? null,
+      };
+    } catch (error) {
+      return actionErrorResult(error);
+    }
+  });
+}
+
+async function executeDeleteProcessTool(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  machineIds: string[],
+  params: Record<string, unknown>,
+  options: BuildExecutableToolsOptions,
+): Promise<unknown> {
+  return executeProcessToolForMachines(machineIds, async (machineId) => {
+    const lookup = await resolveProcessIdByName(db, siteId, machineId, params);
+    if (!lookup.ok) return lookup.result;
+
+    try {
+      const result = await deleteProcess(
+        actionContextForCortex(siteId, options),
+        {
+          machineId,
+          processId: lookup.processId,
+        },
+      );
+      return {
+        ok: true,
+        processId: result.processId,
+        process_name: lookup.processName,
+        alreadyDeleted: result.alreadyDeleted,
+      };
+    } catch (error) {
+      return actionErrorResult(error);
+    }
+  });
+}
+
 /**
  * Execute a server-side tool (not relayed to agent).
  */
@@ -742,7 +1031,8 @@ async function executeServerSideTool(
   siteId: string,
   machineIds: string[],
   toolName: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  options: BuildExecutableToolsOptions,
 ): Promise<unknown> {
   switch (toolName) {
     case 'get_site_logs':
@@ -751,6 +1041,12 @@ async function executeServerSideTool(
       return executeGetSystemPresets(db, params);
     case 'deploy_software':
       return executeDeploySoftware(db, siteId, machineIds, params);
+    case 'update_process':
+      return executeUpdateProcessTool(db, siteId, machineIds, params, options);
+    case 'add_process':
+      return executeAddProcessTool(siteId, machineIds, params, options);
+    case 'delete_process':
+      return executeDeleteProcessTool(db, siteId, machineIds, params, options);
     default:
       return { error: `Unknown server-side tool: ${toolName}` };
   }
@@ -767,7 +1063,8 @@ export function buildExecutableTools(
   chatId: string,
   toolDefs: McpToolDefinition[],
   siteMode: boolean = false,
-  onlineMachines: string[] = []
+  onlineMachines: string[] = [],
+  options: BuildExecutableToolsOptions = {},
 ) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: Record<string, any> = {};
@@ -784,7 +1081,14 @@ export function buildExecutableTools(
         if (SERVER_SIDE_TOOLS.has(toolName)) {
           // For deploy_software in site mode, target all online machines
           const targetMachineIds = siteMode ? onlineMachines : [machineId];
-          return executeServerSideTool(db, siteId, targetMachineIds, toolName, params as Record<string, unknown>);
+          return executeServerSideTool(
+            db,
+            siteId,
+            targetMachineIds,
+            toolName,
+            params as Record<string, unknown>,
+            options,
+          );
         }
 
         if (siteMode) {

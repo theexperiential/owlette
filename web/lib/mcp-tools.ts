@@ -20,7 +20,7 @@ export interface McpToolDefinition {
   parameters: {
     type: 'object';
     properties: Record<string, {
-      type: string;
+      type: string | string[];
       description: string;
       enum?: string[];
       default?: unknown;
@@ -236,6 +236,85 @@ const tier1Tools: McpToolDefinition[] = [
 
 // ─── Tier 2: Process Management ─────────────────────────────────────────────
 
+const processScheduleBlocksSchema = {
+  type: 'object',
+  properties: {
+    days: {
+      type: 'array',
+      items: { type: 'string', enum: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] },
+      description: 'Days this block applies to.',
+    },
+    ranges: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          start: { type: 'string', description: 'Start time in HH:MM format.' },
+          stop: { type: 'string', description: 'Stop time in HH:MM format.' },
+        },
+        required: ['start', 'stop'],
+      },
+      description: 'Time windows within those days.',
+    },
+  },
+  required: ['days', 'ranges'],
+};
+
+const processConfigFields: McpToolDefinition['parameters']['properties'] = {
+  name: {
+    type: 'string',
+    description: 'Display name for the process.',
+  },
+  exe_path: {
+    type: 'string',
+    description: 'Full path to the executable.',
+  },
+  file_path: {
+    type: 'string',
+    description: 'Project file path or command arguments passed to the executable.',
+  },
+  cwd: {
+    type: 'string',
+    description: 'Working directory for the process.',
+  },
+  priority: {
+    type: 'string',
+    enum: ['Low', 'Normal', 'High', 'Realtime'],
+    description: 'Process priority.',
+  },
+  visibility: {
+    type: 'string',
+    enum: ['Normal', 'Hidden'],
+    description: 'Window visibility.',
+  },
+  time_delay: {
+    type: 'string',
+    description: 'Launch delay in seconds, stored as a string.',
+  },
+  time_to_init: {
+    type: 'string',
+    description: 'Initialization timeout in seconds, stored as a string.',
+  },
+  relaunch_attempts: {
+    type: 'string',
+    description: 'Number of crash relaunch attempts, stored as a string.',
+  },
+  launch_mode: {
+    type: 'string',
+    enum: ['off', 'always', 'scheduled'],
+    description: 'Launch management mode: "off", "always", or "scheduled".',
+  },
+  schedules: {
+    type: 'array',
+    description: 'Schedule blocks for scheduled mode. Each block has days and time ranges.',
+    items: processScheduleBlocksSchema,
+  },
+  schedulePresetId: {
+    type: ['string', 'null'],
+    description: 'Named schedule preset id, or null to clear.',
+  },
+};
+
 const tier2Tools: McpToolDefinition[] = [
   {
     name: 'restart_process',
@@ -327,6 +406,47 @@ const tier2Tools: McpToolDefinition[] = [
         },
       },
       required: ['process_name', 'mode'],
+    },
+  },
+  {
+    name: 'update_process',
+    description: 'Update an Owlette-configured process\'s configuration fields. Accepts a partial set of fields to change - only fields you provide are updated; others are left unchanged. Available fields: name (display name), exe_path (full path to the executable), file_path (project file or command arguments), cwd (working directory, optional), priority (\'Low\' | \'Normal\' | \'High\' | \'Realtime\'), visibility (\'Normal\' | \'Hidden\'), time_delay (launch delay seconds), time_to_init (init timeout seconds), relaunch_attempts (number of crash relaunches), launch_mode (\'off\' | \'always\' | \'scheduled\'), schedules (array of {days, ranges} blocks for scheduled mode), schedulePresetId (named preset id, or null to clear). Use this when the user asks to rename a process, fix a stale path, change priority/visibility, tune timing, or adjust the schedule.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        process_name: {
+          type: 'string',
+          description: 'The current configured process name to update.',
+        },
+        ...processConfigFields,
+      },
+      required: ['process_name'],
+    },
+  },
+  {
+    name: 'add_process',
+    description: 'Create a new Owlette-managed process on a machine. Required fields: name, exe_path. Optional fields: file_path, cwd, priority, visibility, time_delay, time_to_init, relaunch_attempts, launch_mode, schedules, schedulePresetId. The new process is added with launch_mode=\'off\' by default; set explicitly to \'always\' or \'scheduled\' to enable management.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: processConfigFields,
+      required: ['name', 'exe_path'],
+    },
+  },
+  {
+    name: 'delete_process',
+    description: 'Delete an Owlette-configured process by name. The process is removed from the machine\'s config. If the process is currently running, it remains running (the agent stops managing it but does not terminate). Use kill_process first if you want to actually stop the running process.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        process_name: {
+          type: 'string',
+          description: 'The configured process name to delete.',
+        },
+      },
+      required: ['process_name'],
     },
   },
   {

@@ -21,6 +21,47 @@ jest.mock('firebase-admin/firestore', () => ({
   FieldValue: { delete: jest.fn(() => '__FIELD_DELETE__') },
 }));
 
+const mockCreateProcess = jest.fn();
+const mockUpdateProcess = jest.fn();
+const mockDeleteProcess = jest.fn();
+
+jest.mock('@/lib/actions/createProcess.server', () => {
+  class ActionInputError extends Error {
+    status: number;
+    code: string;
+    constructor(status: number, code: string, message: string) {
+      super(message);
+      this.status = status;
+      this.code = code;
+    }
+  }
+  return {
+    ActionInputError,
+    createProcess: (...args: unknown[]) => mockCreateProcess(...args),
+  };
+});
+
+jest.mock('@/lib/actions/updateProcess.server', () => ({
+  updateProcess: (...args: unknown[]) => mockUpdateProcess(...args),
+}));
+
+jest.mock('@/lib/actions/deleteProcess.server', () => ({
+  deleteProcess: (...args: unknown[]) => mockDeleteProcess(...args),
+}));
+
+jest.mock('@/lib/processConfig.server', () => {
+  class ProcessConfigError extends Error {
+    status: number;
+    code?: string;
+    constructor(status: number, message: string, code?: string) {
+      super(message);
+      this.status = status;
+      this.code = code;
+    }
+  }
+  return { ProcessConfigError };
+});
+
 // ─── Mock Firestore ─────────────────────────────────────────────────────────
 // Path: sites/{s}/machines/{m}/commands/pending|completed
 
@@ -68,6 +109,32 @@ function getCommandId(pendingDoc: { set: jest.Mock }): string {
   return Object.keys(firstCallArg)[0] || '';
 }
 
+function createProcessConfigDb(processes: unknown[]) {
+  const configDoc = {
+    get: jest.fn(async () => ({
+      exists: true,
+      data: () => ({ processes }),
+    })),
+  };
+
+  const db = {
+    collection: jest.fn((collectionName: string) => {
+      if (collectionName !== 'config') {
+        return { doc: jest.fn(() => ({ collection: jest.fn() })) };
+      }
+      return {
+        doc: jest.fn(() => ({
+          collection: jest.fn(() => ({
+            doc: jest.fn(() => configDoc),
+          })),
+        })),
+      };
+    }),
+  } as unknown as FirebaseFirestore.Firestore;
+
+  return { db, configDoc };
+}
+
 import {
   executeToolOnAgent,
   executeExistingCommand,
@@ -78,6 +145,12 @@ import {
 } from '@/lib/cortex-utils.server';
 
 import { allTools } from '@/lib/mcp-tools';
+
+beforeEach(() => {
+  mockCreateProcess.mockReset();
+  mockUpdateProcess.mockReset();
+  mockDeleteProcess.mockReset();
+});
 
 // ─── executeToolOnAgent ─────────────────────────────────────────────────────
 
@@ -214,6 +287,67 @@ describe('buildExecutableTools', () => {
   it('site mode creates tools for fan-out execution', () => {
     const tools = buildExecutableTools({} as unknown as FirebaseFirestore.Firestore, 's1', '', 'c1', allTools, true, ['m1', 'm2']);
     expect(Object.keys(tools)).toHaveLength(allTools.length);
+  });
+
+  it('executes update_process server-side and resolves process_name to processId', async () => {
+    mockUpdateProcess.mockResolvedValue({ processId: 'proc-1' });
+    const { db } = createProcessConfigDb([
+      { id: 'proc-1', processId: 'proc-1', name: 'TouchDesigner' },
+    ]);
+    const toolDef = allTools.find((tool) => tool.name === 'update_process')!;
+    const tools = buildExecutableTools(
+      db,
+      's1',
+      'm1',
+      'c1',
+      [toolDef],
+      false,
+      [],
+      { userId: 'uid_alice', userRole: 'admin' },
+    );
+
+    const result = await tools.update_process.execute({
+      process_name: 'TouchDesigner',
+      launch_mode: 'always',
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      processId: 'proc-1',
+      process_name: 'TouchDesigner',
+    });
+    expect(mockUpdateProcess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        siteId: 's1',
+        auditActor: 'cortex:user_uid_alice',
+      }),
+      {
+        machineId: 'm1',
+        processId: 'proc-1',
+        patch: { launch_mode: 'always' },
+      },
+    );
+  });
+
+  it('returns structured update_process error when process_name is not found', async () => {
+    const { db } = createProcessConfigDb([
+      { id: 'proc-1', processId: 'proc-1', name: 'TouchDesigner' },
+    ]);
+    const toolDef = allTools.find((tool) => tool.name === 'update_process')!;
+    const tools = buildExecutableTools(db, 's1', 'm1', 'c1', [toolDef]);
+
+    const result = await tools.update_process.execute({
+      process_name: 'Missing',
+      name: 'Renamed',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'process_not_found',
+      detail: 'Process "Missing" was not found on machine m1.',
+      status: 404,
+    });
+    expect(mockUpdateProcess).not.toHaveBeenCalled();
   });
 });
 

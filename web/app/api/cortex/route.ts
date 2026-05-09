@@ -380,7 +380,7 @@ async function handleServerSideLLM(
   const toolDefs = getToolsByTier(resolveCortexMaxTier(access));
   const executableTools = buildExecutableTools(
     db, siteId, machineId, chatId, toolDefs,
-    false, [],
+    false, [], { userId, userRole: access.role },
   );
 
   const model = createModel(llmConfig);
@@ -421,7 +421,7 @@ async function handleSiteWideMode(
   const toolDefs = getToolsByTier(resolveCortexMaxTier(access));
   const executableTools = buildExecutableTools(
     db, siteId, SITE_TARGET_ID, chatId, toolDefs,
-    true, onlineMachines,
+    true, onlineMachines, { userId, userRole: access.role },
   );
 
   const model = createModel(llmConfig);
