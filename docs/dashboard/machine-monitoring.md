@@ -133,7 +133,7 @@ Each machine card shows its configured processes with status badges:
 | Green | RUNNING | Process is alive and responding |
 | Yellow | STALLED | Process exists but not responding |
 | Red | KILLED | Process was terminated |
-| Grey | STOPPED | Process not running, autolaunch off |
+| Grey | STOPPED | Process not running because launch mode is `off` or scheduled mode is outside its window |
 | Grey (dim) | INACTIVE | Executable not found |
 
 Click a process to open the [Process Dialog](process-management.md) for management and configuration.

@@ -36,9 +36,11 @@ Both documents store command IDs as top-level map fields. A successful terminal 
 | `start_process` | Start a configured process | `{process_name?, process_id?}` |
 | `stop_process` | Stop a configured process | `{process_name?, process_id?}` |
 | `kill_process` | Terminate a process | `{process_name?, process_id?}` |
-| `set_launch_mode` | Set launch mode (`off`, `always`, or `scheduled`) | `{process_name, mode, schedules?}` |
-| `toggle_autolaunch` | Toggle launch-on-service-start behavior | `{process_name, autolaunch}` |
+| `set_launch_mode` | Set launch mode (`off`, `always`, or `scheduled`) | `{process_name?, process_id?, processId?, mode, schedules?}` |
+| `toggle_autolaunch` | Legacy launch-mode toggle | `{process_name?, process_id?, processId?, autolaunch}` |
 | `capture_screenshot` | Capture desktop screenshot | `{monitor}` (0=all, 1=primary, etc.) |
+
+For `set_launch_mode` and `toggle_autolaunch`, the agent matches `process_id` / `processId` first and falls back to `process_name`. `set_launch_mode` persists the requested `mode` and any supplied `schedules`.
 
 ### configuration
 

@@ -138,7 +138,9 @@ These are the command types accepted by the public machine-command action in
 | `start_process` | `process_name` or `process_id`/`processId` | Start a configured process. If it is scheduled and outside its window, the agent records a manual override. |
 | `stop_process` | `process_name` or `process_id`/`processId` | Gracefully terminate a running process and mark it `STOPPED`. |
 | `kill_process` | `process_name` or `process_id`/`processId` | Gracefully terminate a running process and mark it `KILLED`. |
-| `set_launch_mode` | `process_name`, `mode`, optional `schedules` | Set `mode` to `off`, `always`, or `scheduled`. The agent derives legacy `autolaunch` from the launch mode. |
+| `set_launch_mode` | `process_name` or `process_id`/`processId`, `mode`, optional `schedules` | Set `mode` to `off`, `always`, or `scheduled`. The agent matches process id first, falls back to name, and derives legacy `autolaunch` from the launch mode. |
+
+The public route shim still requires `process_name` for `set_launch_mode`; direct Firestore command writers and the agent handler accept `process_id` / `processId` as the preferred identifier.
 
 ### machine power and reboot state
 
@@ -190,7 +192,7 @@ admin actions.
 | type | fields | behavior |
 |------|--------|----------|
 | `update_config` | `config` | Replace local config while preserving the local Firebase auth section. |
-| `toggle_autolaunch` | `process_name`, `autolaunch` | Legacy compatibility path. Sets launch mode to `always` or `off` and updates derived `autolaunch`. |
+| `toggle_autolaunch` | `process_name` or `process_id`/`processId`, `autolaunch` | Legacy compatibility path. Matches process id first, falls back to name, then sets launch mode to `always` or `off` and updates derived `autolaunch`. |
 | `provision_cortex_key` | `api_key`, optional `provider` | Encrypt and store a local Cortex provider key in config. Defaults provider to `anthropic`. |
 
 ### software deployment

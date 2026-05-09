@@ -18,6 +18,10 @@ Owlette sends email notifications for machine health, process, threshold, Cortex
 
 Display email delivery is not enabled for every display event. The current email-routed events are `display_monitor_removed`, `display_apply_failed`, `display_auto_revert_fired`, and `display_sync_lost`. `display_monitor_removed` and `display_auto_revert_fired` bypass the digest queue and send immediately; other routed display emails are drained by `GET /api/cron/display-alerts`.
 
+The agent alert route also accepts `exe_missing` events. These are not email-routed today; they are written to `sites/{siteId}/logs` with `action: "exe_missing"` and drive the dashboard executable-missing toast.
+
+`POST /api/agent/alert` accepts both the legacy flat process-alert body and the generic `{ "eventType": "...", "data": { ... } }` shape used by current agents.
+
 ---
 
 ## threshold alert rules

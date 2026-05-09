@@ -6,7 +6,7 @@ The activity logs page shows a site-scoped timeline for agent, process, command,
 
 ## event types
 
-The action filter is built from the current dashboard action list:
+Common stored action values include:
 
 | action | label | typical level |
 |--------|-------|---------------|
@@ -16,6 +16,8 @@ The action filter is built from the current dashboard action list:
 | `process_killed` | process killed | warning |
 | `process_crash` | process crashed | error |
 | `process_start_failed` | start failed | error |
+| `process_launch_failed` | launch failed | error |
+| `exe_missing` | executable missing | error |
 | `command_executed` | command executed | info |
 | `deployment_completed` | deployment completed | info |
 | `deployment_failed` | deployment failed | error |
@@ -32,7 +34,7 @@ Select **show filters** to narrow the timeline.
 
 | filter | options |
 |--------|---------|
-| **action type** | all actions, or one action from the table above |
+| **action type** | all actions, or a dashboard-supported action value |
 | **machine** | all machines, or a machine present in the loaded logs |
 | **level** | all levels, info, warning, error |
 | **date range** | all time, last hour, last 24 hours, today, yesterday, last 7 days, last 30 days, this week, this month, last month, custom range |
@@ -83,7 +85,7 @@ GET /api/sites/{siteId}/logs?action=process_crash&machineId=machine-1&level=erro
 
 Supported API query filters are `action`, `machineId`, `level`, `since`, `until`, `page_size`, and `page_token`.
 
-Stored log entries may include `timestamp`, `action`, `level`, `machineId`, `machineName`, `processName`, `details`, `userId`, and `screenshotUrl`.
+Stored log entries may include `timestamp`, `action`, `level`, `machineId`, `machineName`, `processName`, `processId`, `details`, `userId`, `screenshotUrl`, `eventType`, `exePath`, and `suggestedPaths`.
 
 ---
 

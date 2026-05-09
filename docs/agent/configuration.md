@@ -4,6 +4,8 @@ The agent can be configured locally via the GUI, remotely from the web dashboard
 
 Changes from the GUI, service, and dashboard sync through Firestore within roughly 1-2 seconds.
 
+When the GUI is open, launch mode and schedule labels refresh from external dashboard or service changes. Text fields that are actively focused defer remote refresh until focus leaves.
+
 ---
 
 ## configuration gui
@@ -116,6 +118,7 @@ Each process in the `processes` array uses the current process keys. The generat
 ```json
 {
     "id": "b8f1a4d2-8b1e-4df9-b7ff-7d4c3c10f9f1",
+    "processId": "b8f1a4d2-8b1e-4df9-b7ff-7d4c3c10f9f1",
     "name": "TouchDesigner",
     "exe_path": "C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe",
     "file_path": "C:\\Projects\\MyProject.toe",
@@ -127,7 +130,8 @@ Each process in the `processes` array uses the current process keys. The generat
     "relaunch_attempts": "5",
     "launch_mode": "always",
     "autolaunch": true,
-    "schedules": null
+    "schedules": null,
+    "schedulePresetId": null
 }
 ```
 
@@ -136,6 +140,7 @@ Each process in the `processes` array uses the current process keys. The generat
 | field | type | description |
 |-------|------|-------------|
 | `id` | string | Stable UUID for the process entry. |
+| `processId` | string | Public/API process id. Current server write paths keep it in lockstep with `id`; legacy local entries may omit it until normalized. |
 | `name` | string | Display name for the process. |
 | `exe_path` | string | Full path to the executable. |
 | `file_path` | string | File to open with the executable, or command-line arguments when the value is not a file on disk. |
@@ -148,6 +153,8 @@ Each process in the `processes` array uses the current process keys. The generat
 | `launch_mode` | string | `off`, `always`, or `scheduled`. |
 | `autolaunch` | boolean | Backward-compatible flag derived from `launch_mode`. Keep it aligned with `launch_mode != "off"`. |
 | `schedules` | array or null | Schedule blocks for `launch_mode: "scheduled"`. Null means no schedule is configured. |
+| `schedule` | object or null | Legacy/API schedule wrapper with `mode` and optional `blocks`; current dashboard writes use `launch_mode` plus `schedules`. |
+| `schedulePresetId` | string or null | Optional site schedule preset id associated with the saved schedule. |
 
 ### visibility options
 

@@ -46,11 +46,23 @@ Cross-cutting troubleshooting guide for common issues across the entire owlette 
 
 ## processes not auto-restarting
 
-1. Verify `autolaunch` is `true` for the process
+1. Verify `launch_mode` is `always`, or `scheduled` with the current time inside a configured schedule window
 2. Check if `relaunch_attempts` limit was reached (reboot prompt should appear)
-3. Verify `exe_path` exists on the machine (INACTIVE state means file not found)
+3. Verify `exe_path` exists on the machine (`INACTIVE` state means file not found)
 4. Check agent logs for launch errors
 5. Verify the service is running and the main loop is executing (look for periodic log entries)
+
+---
+
+## process won't launch after an app upgrade
+
+**Symptoms**: A managed process shows `INACTIVE`, or the dashboard shows an executable-missing toast after software was upgraded or installed side-by-side.
+
+1. Open the dashboard toast or activity log entry with action `exe_missing`.
+2. Review the suggested paths. The agent scans nearby sibling directories for executables with the same filename.
+3. Use the toast's **use path** action, or open the process edit dialog manually and update **executable path**.
+4. Save the process. If launch mode is `always`, the agent should launch it on the next monitoring pass. If launch mode is `scheduled`, it launches when the next matching schedule window opens.
+5. If no suggestion appears, browse the machine for the new executable path and update the process manually.
 
 ---
 

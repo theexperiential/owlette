@@ -65,6 +65,11 @@ In single-machine mode, Cortex reports and acts on one machine. In **All Machine
 >
 > Cortex calls the process-management tool for the selected machine and reports the result.
 
+**Update process configuration:**
+> "Fix the TouchDesigner executable path to C:\Program Files\Derivative\TouchDesigner.2025\bin\TouchDesigner.exe."
+>
+> Cortex can update configured process fields, add a new process, or delete a process through the same validated server actions used by the dashboard.
+
 **Diagnose a display issue:**
 > "Why is the output frozen?"
 >
@@ -81,7 +86,7 @@ In single-machine mode, Cortex reports and acts on one machine. In **All Machine
 
 Tier 1 tools read machine or site state, such as system info, logs, process lists, disk usage, GPU state, agent health, and site deployment presets.
 
-Tier 2 tools perform bounded management actions with validated parameters, such as restarting configured processes, capturing screenshots, managing selected Windows services or update settings, and changing safe machine configuration.
+Tier 2 tools perform bounded management actions with validated parameters, such as restarting configured processes, adding/editing/deleting process config, capturing screenshots, managing selected Windows services or update settings, and changing safe machine configuration.
 
 Tier 3 tools can make broader changes, such as shell execution, file writes, deployment orchestration, reboots, and shutdowns. These require explicit user confirmation from the Cortex UI.
 
@@ -137,7 +142,7 @@ dashboard chat
   -> per-machine results are aggregated for Cortex
 ```
 
-Server-side tools such as site logs, system presets, and deployment orchestration query Firestore or create deployment records from the web server instead of routing through a single agent.
+Server-side tools such as site logs, system presets, deployment orchestration, and process config changes run in the web server instead of routing through a single agent. Process create/update/delete tools call the existing validated process actions directly; the agent applies the resulting config through its normal Firestore listener.
 
 ---
 
@@ -204,5 +209,5 @@ Custom directives can be set in Firestore at `sites/{siteId}/settings/cortex` in
 - Tier 3 tools require explicit confirmation in manual chat.
 - Server-side Cortex checks site access before every chat request.
 - Members and chat-scoped API keys are capped to read-only tools.
-- Tool calls to agents are delivered through Firestore command documents and return through completed-command records.
+- Agent-routed tool calls are delivered through Firestore command documents and return through completed-command records. Server-side tools run in the web process and write their own records or config changes.
 - The autonomous endpoint uses `x-cortex-secret` and is not a public user-session endpoint.

@@ -1,6 +1,6 @@
 # cortex tools reference
 
-Complete reference for all 43 public web Cortex tools from `web/lib/mcp-tools.ts`, organized by tier.
+Complete reference for all 46 public web Cortex tools from `web/lib/mcp-tools.ts`, organized by tier.
 
 ---
 
@@ -9,10 +9,10 @@ Complete reference for all 43 public web Cortex tools from `web/lib/mcp-tools.ts
 | tier | type | approval | count |
 |------|------|----------|-------|
 | **1** | Read-only | Auto-approved | 14 |
-| **2** | Process & machine management | Auto-approved | 18 |
+| **2** | Process & machine management | Auto-approved | 21 |
 | **3** | Privileged | Requires user confirmation | 11 |
 
-> **Server-side tools** (`get_site_logs`, `get_system_presets`, `deploy_software`) execute on the server and query Firestore directly — they do not route through the agent.
+> **Server-side tools** (`get_site_logs`, `get_system_presets`, `deploy_software`, `update_process`, `add_process`, `delete_process`) execute in the Next.js server process. They do not route through the agent command queue.
 
 ---
 
@@ -40,6 +40,9 @@ Web Cortex chooses an execution path by tool name in `web/lib/cortex-utils.serve
 | `kill_process` | 2 | Legacy command-mapped | Yes, IPC |
 | `start_process` | 2 | Legacy command-mapped | Yes, IPC |
 | `set_launch_mode` | 2 | Legacy command-mapped | Yes, IPC |
+| `update_process` | 2 | Server-side | Not exposed |
+| `add_process` | 2 | Server-side | Not exposed |
+| `delete_process` | 2 | Server-side | Not exposed |
 | `capture_screenshot` | 2 | Firestore `mcp_tool_call` | Yes, IPC |
 | `manage_process` | 2 | Firestore `mcp_tool_call` | Not exposed |
 | `manage_windows_service` | 2 | Firestore `mcp_tool_call` | Not exposed |
@@ -226,7 +229,7 @@ Detect whether a system reboot is currently pending (from Windows Update, Compon
 
 ## tier 2: process & machine management tools
 
-These execute immediately without user confirmation. Owlette-configured process tools (`restart_process`, `kill_process`, `start_process`, `set_launch_mode`) wrap existing commands; the rest are purpose-built with validated parameters and narrower blast radius than raw shell scripts.
+These execute immediately without user confirmation. Owlette-configured process control tools (`restart_process`, `kill_process`, `start_process`, `set_launch_mode`) wrap existing commands. Process config tools (`update_process`, `add_process`, `delete_process`) run server-side through the same validated action functions as the dashboard. The rest are purpose-built with validated parameters and narrower blast radius than raw shell scripts.
 
 ### restart_process
 
@@ -278,6 +281,59 @@ Set the launch mode for a process.
   ]
 }
 ```
+
+---
+
+### update_process
+
+Update an owlette-configured process by name. Only fields provided in the tool call are changed. Runs server-side through `updateProcess`; the agent picks up the config change through the existing config listener and launch-mode diff.
+
+| parameter | type | required | description |
+|-----------|------|----------|-------------|
+| `process_name` | string | **Yes** | Current configured process name |
+| `name` | string | No | New display name |
+| `exe_path` | string | No | Full path to the executable |
+| `file_path` | string | No | Project file path or command arguments |
+| `cwd` | string | No | Working directory |
+| `priority` | string | No | `Low`, `Normal`, `High`, or `Realtime` |
+| `visibility` | string | No | `Normal` or `Hidden` |
+| `time_delay` | string | No | Launch delay in seconds, stored as a string |
+| `time_to_init` | string | No | Initialization timeout in seconds, stored as a string |
+| `relaunch_attempts` | string | No | Crash relaunch attempt count, stored as a string |
+| `launch_mode` | string | No | `off`, `always`, or `scheduled` |
+| `schedules` | array | When setting `launch_mode=scheduled` | Schedule blocks with `days` and time `ranges` |
+| `schedulePresetId` | string or null | No | Named schedule preset id, or null to clear |
+
+---
+
+### add_process
+
+Create a new owlette-managed process on the target machine. Runs server-side through `createProcess`; the new process defaults to `launch_mode: "off"` unless a launch mode is supplied.
+
+| parameter | type | required | description |
+|-----------|------|----------|-------------|
+| `name` | string | **Yes** | Display name for the process |
+| `exe_path` | string | **Yes** | Full path to the executable |
+| `file_path` | string | No | Project file path or command arguments |
+| `cwd` | string | No | Working directory |
+| `priority` | string | No | `Low`, `Normal`, `High`, or `Realtime` |
+| `visibility` | string | No | `Normal` or `Hidden` |
+| `time_delay` | string | No | Launch delay in seconds, stored as a string |
+| `time_to_init` | string | No | Initialization timeout in seconds, stored as a string |
+| `relaunch_attempts` | string | No | Crash relaunch attempt count, stored as a string |
+| `launch_mode` | string | No | `off`, `always`, or `scheduled` |
+| `schedules` | array | When setting `launch_mode=scheduled` | Schedule blocks with `days` and time `ranges` |
+| `schedulePresetId` | string or null | No | Named schedule preset id, or null to clear |
+
+---
+
+### delete_process
+
+Delete an owlette-configured process by name. Runs server-side through `deleteProcess`. Deleting a process removes it from the machine config; it does not terminate an already-running OS process. Use `kill_process` first when the running process should also be stopped.
+
+| parameter | type | required | description |
+|-----------|------|----------|-------------|
+| `process_name` | string | **Yes** | Configured process name to delete |
 
 ---
 
@@ -646,6 +702,7 @@ LLM decides to call a tool
   +-- Server-side tools
   |     +-- get_site_logs / get_system_presets query Firestore on the web server
   |     +-- deploy_software creates deployment records and install commands server-side
+  |     +-- update_process / add_process / delete_process call process action functions server-side
   |
   +-- Legacy command-mapped tools
   |     +-- Write existing command types such as restart_process or reboot_machine
@@ -670,7 +727,7 @@ Tier 2 tools enforce per-tool blocklists to prevent self-inflicted outages:
 - `registry_operation` — SAM, SECURITY, and Cryptography hives are unreachable; only an allowlist of safe key prefixes is permitted
 - `manage_windows_feature` — core Windows features Owlette depends on (NetFx4, WMI-\*, PowerShell\*) cannot be removed
 
-All Tier 2 tools emit structured `[MCP-AUDIT]` log entries for each invocation.
+Agent-executed Tier 2 tools emit structured `[MCP-AUDIT]` log entries for each invocation. Server-side process config tools use the process mutation audit path with actor `cortex:user_<userId>`.
 
 ### agent-side limits
 

@@ -1,6 +1,6 @@
 # process monitoring
 
-The agent monitors configured processes every 5 seconds, detecting crashes, stalls, and exits. When a process goes down, the agent automatically restarts it (if autolaunch is enabled).
+The agent monitors configured processes every 5 seconds, detecting crashes, stalls, and exits. When a managed process goes down, the agent automatically restarts it when its launch mode is active (`always`, or `scheduled` inside a matching schedule window).
 
 ---
 
@@ -20,7 +20,7 @@ Every configured process is in one of five states:
     └──────────┘   ┌──────────┐   └──────────┘
          ▲         │ STALLED  │        │
          │         │          │        │ auto-restart
-         │         └──────────┘        │ (if autolaunch)
+         │         └──────────┘        │ (if launch mode active)
          │              │              │
          │         kill after confirm  │
          └──────────────┘◀─────────────┘
@@ -33,7 +33,7 @@ Every configured process is in one of five states:
 | **RUNNING** | Process is alive and responsive | Green |
 | **STALLED** | Process exists but is not responding (hang detected) | Yellow |
 | **KILLED** | Process was terminated (manually or by agent) | Red |
-| **STOPPED** | Process is not running, autolaunch disabled | Grey |
+| **STOPPED** | Process is not running because launch mode is `off` or scheduled mode is outside its window | Grey |
 | **INACTIVE** | Process is configured but its executable was not found | Grey (dimmed) |
 
 ---
@@ -73,7 +73,7 @@ The agent does not kill on the first failed check; it waits until the process ha
 
 ### 4. auto-restart
 
-When a crash is detected and `autolaunch` is enabled:
+When a crash is detected and launch mode is active:
 
 1. Agent increments the **relaunch counter**
 2. If under the limit (`relaunch_attempts`), restart the process
@@ -82,6 +82,8 @@ When a crash is detected and `autolaunch` is enabled:
 5. If at the limit, show a **reboot prompt** to the user
 
 If PID detection fails after launch, retry attempts wait for at least `time_to_init`, with a 60-second minimum cooldown for slow-starting applications.
+
+If the configured `exe_path` does not exist, the agent does not attempt to launch the process. On the transition into that failed state, it scans nearby sibling directories for executable paths with the same basename, sends an `exe_missing` alert with suggested paths, and writes a `process_launch_failed` log event. The alert is rate-limited by the same failed-launch marker so it does not repeat every monitoring tick.
 
 ---
 
@@ -118,7 +120,7 @@ When the service restarts, it doesn't re-launch processes that are already runni
 
 1. For each configured process, scan running processes for matching `exe_path`
 2. If found, adopt the PID — mark as RUNNING without relaunching
-3. If not found and autolaunch is enabled, start the process
+3. If not found and launch mode is active, start the process
 
 This prevents duplicate instances after service restarts or crashes.
 
@@ -134,7 +136,7 @@ Each process has a configurable `relaunch_attempts` limit (default: 3). When the
 4. The relaunch counter resets after a successful process start or manual intervention
 
 !!! tip "Crash alerts"
-    When a process crashes, the agent reports the event to the web dashboard via the alert API. If email alerts are configured for the site, the dashboard sends a **process crash alert** email including the process name, machine name, and error details. Webhooks are also triggered if configured.
+    When a process crashes, the agent reports the event to the web dashboard via the alert API. Agent code uses `firebase_client.send_alert(event_type, data)` as the canonical alert sender; older process/display helpers delegate to it. Failed sends are queued in memory and retried after reconnect, capped at 100 pending alerts. If email alerts are configured for the site, the dashboard sends a **process crash alert** email including the process name, machine name, and error details. Webhooks are also triggered if configured.
 
 ---
 

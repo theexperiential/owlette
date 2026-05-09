@@ -324,9 +324,12 @@ under each machine document.
 | `level` | string | `info`, `warning`, or `error`. |
 | `machineId`, `machineName` | string | Source machine. |
 | `processName` | string | Optional process. |
+| `processId` | string | Optional process id. |
 | `details` | map/string | Optional details. |
 | `userId` | string | Optional initiating user. |
 | `screenshotUrl` | string | Optional screenshot pointer. |
+| `eventType` | string | Optional agent alert event type. |
+| `exePath`, `suggestedPaths` | string/array | Present on `exe_missing` entries when the agent found missing executable context. |
 
 ### `sites/{siteId}/audit_log/{entryId}`
 
@@ -373,8 +376,10 @@ and write their own config; server APIs also write config changes.
 | `displays` | map | Display assignment and auto-restore settings. |
 | `environment`, `sentry`, `watchdog` | map | User-editable top-level config sections. |
 
-Current process config uses `time_delay`, `time_to_init`, and
-`relaunch_attempts`.
+Current process config uses `id`/`processId`, `name`, `exe_path`, `file_path`,
+`cwd`, `priority`, `visibility`, `time_delay`, `time_to_init`,
+`relaunch_attempts`, `launch_mode`, derived `autolaunch`, `schedules`, and
+optional `schedulePresetId`.
 
 ### config preset collections
 

@@ -111,7 +111,7 @@ If pairing fails before authorization completes, check `C:\ProgramData\Owlette\l
 
 **Check**:
 
-1. Verify the process launch mode is not `off` and `autolaunch` is enabled for legacy entries.
+1. Verify `launch_mode` is `always`, or `scheduled` with the current time inside a configured schedule window.
 2. Check if the `relaunch_attempts` limit has been reached. The counter resets on manual restart.
 3. Verify the `exe_path` exists and is correct.
 4. Check `service.log` for launch errors.
@@ -123,6 +123,8 @@ If pairing fails before authorization completes, check `C:\ProgramData\Owlette\l
 - **Relaunch limit reached**: The reboot prompt should have appeared.
 - **Permission error**: Service may not have access to the executable path.
 - **Task Scheduler issues**: The agent falls back to CreateProcessAsUser when possible.
+
+When the executable is missing, the service logs `process_launch_failed` and sends an `exe_missing` alert with suggested sibling paths when it can find likely replacements. The dashboard toast can open the process edit dialog with a suggested path pre-filled.
 
 ---
 

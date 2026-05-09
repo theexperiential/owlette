@@ -54,6 +54,10 @@ Site admins on the site and superadmins have `MACHINE_CONFIG_WRITE` and `MACHINE
 
 Restart and kill actions send commands to the agent. Create, edit, delete, launch-mode, and schedule changes update the machine configuration that the agent watches.
 
+When a process is changed from `off` to `scheduled`, the agent clears stale killed/cooldown markers immediately. If the current time is outside the schedule window, the process stays stopped until the next matching window, then launches normally.
+
+If the configured executable path no longer exists, the process can show as `INACTIVE` and the dashboard shows an error toast. When the agent finds likely sibling executable paths, the toast lists up to two suggestions and the **use path** action opens the edit dialog with that path pre-filled.
+
 ---
 
 ## process settings reference

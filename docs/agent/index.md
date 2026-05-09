@@ -83,7 +83,7 @@ The classifier depends only on `shared_utils` and stdlib — no Firebase, no log
 ### main loop (every 5 seconds)
 
 1. Check all configured processes — detect crashes, stalls, exits
-2. Auto-restart any crashed processes (if autolaunch enabled)
+2. Auto-restart crashed processes when launch mode is active
 3. Process any pending commands from Firestore
 4. Ensure Cortex is running (if enabled)
 5. Process Cortex IPC commands (Tier 2 tool calls)

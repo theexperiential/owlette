@@ -168,7 +168,7 @@ configure run-mode + schedule blocks for a process. writes through process-confi
 |---|---|---|
 | `--site <siteId>` | yes | site id that owns the machine |
 | `--machine <machineId>` | yes | machine id that owns the process |
-| `--mode <mode>` | yes | `off` (never autolaunch) \| `always` (always-on) \| `scheduled` (run inside `--blocks`) |
+| `--mode <mode>` | yes | `off` (not managed) \| `always` (always-on) \| `scheduled` (run inside `--blocks`) |
 | `--blocks <json>` | conditionally | inline json array of schedule blocks; required when `--mode=scheduled` |
 
 ```bash

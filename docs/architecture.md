@@ -474,7 +474,7 @@ canary cohort selection is deterministic (FNV-1a hash of `machineId + versionId`
 
 ### current agent support
 
-The current checked-in agent version is `2.11.0`, and that agent registers the roost v2 handlers `sync_pull`, `cancel_sync`, and `rollback_to_version`. The v2 sync path does not use a `project_url` fallback; legacy v1 project-distribution records can coexist in Firestore during migration, but roost v2 deploys are consumed by agents with the v2 sync handlers.
+The current checked-in agent version is `2.11.3`, and that agent registers the roost v2 handlers `sync_pull`, `cancel_sync`, and `rollback_to_version`. The v2 sync path does not use a `project_url` fallback; legacy v1 project-distribution records can coexist in Firestore during migration, but roost v2 deploys are consumed by agents with the v2 sync handlers.
 
 ---
 
