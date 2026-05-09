@@ -10,6 +10,7 @@ import { useSchedulePresets } from '@/hooks/useSchedulePresets';
 import { useDeployments } from '@/hooks/useDeployments';
 import { useMachineOperations } from '@/hooks/useMachineOperations';
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
+import { useAgentAlertToasts, type ExeMissingToastAlert } from '@/hooks/useAgentAlertToasts';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -525,6 +526,26 @@ export default function DashboardPage() {
     });
     setProcessDialogOpen(true);
   };
+
+  const handleUseSuggestedExePath = (alert: ExeMissingToastAlert, suggestedPath: string) => {
+    const machine = machines.find((m) => m.machineId === alert.machineId);
+    const process = machine?.processes?.find(
+      (p) => p.id === alert.processId || p.name === alert.processName,
+    );
+
+    if (!machine || !process) {
+      void navigator.clipboard?.writeText(suggestedPath);
+      toast.success('suggested path copied');
+      return;
+    }
+
+    openEditProcessDialog(alert.machineId, {
+      ...process,
+      exe_path: suggestedPath,
+    });
+  };
+
+  useAgentAlertToasts(currentSiteId, handleUseSuggestedExePath);
 
   const handleSaveProcess = async () => {
     // Validation

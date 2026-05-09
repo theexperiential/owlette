@@ -2147,20 +2147,73 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self._write_cortex_event(process_name, f'Failed to kill and restart PID {pid}: {str(e)}', 'process_crash')
                 return None
 
+    @staticmethod
+    def _find_sibling_executables(exe_path, max_depth=4, max_results=5):
+        """Find likely replacement executables near a missing configured path."""
+        exe_name = os.path.basename(exe_path)
+        if not exe_name:
+            return []
+
+        search_root = os.path.dirname(os.path.abspath(exe_path))
+        while search_root and not os.path.isdir(search_root):
+            parent = os.path.dirname(search_root)
+            if parent == search_root:
+                return []
+            search_root = parent
+
+        if not search_root or not os.path.isdir(search_root):
+            return []
+
+        candidates = []
+
+        def _scan(directory, depth_remaining):
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        try:
+                            if entry.is_file(follow_symlinks=False) and entry.name == exe_name:
+                                candidates.append((entry.stat(follow_symlinks=False).st_mtime, entry.path))
+                            elif depth_remaining > 0 and entry.is_dir(follow_symlinks=False):
+                                _scan(entry.path, depth_remaining - 1)
+                        except (OSError, PermissionError):
+                            continue
+            except (OSError, PermissionError):
+                return
+
+        _scan(search_root, max_depth)
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return [path for _, path in candidates[:max_results]]
+
     # Attempt to launch the process if not running
     def handle_process_launch(self, process):
         # Validate executable path before attempting launch
+        process_id = process.get('id', '')
         exe_path = process.get('exe_path', '').strip()
         if not exe_path:
             process_name = Util.get_process_name(process)
             logging.error(f"Cannot launch '{process_name}': Executable path is not set. Please configure a valid exe_path and set launch mode to Always On or Scheduled.")
-            self.last_started[process.get('id', '')] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
+            self.last_started[process_id] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
             return None
 
         if not os.path.isfile(exe_path):
             process_name = Util.get_process_name(process)
             logging.error(f"Cannot launch '{process_name}': Executable path does not exist: {exe_path}")
-            self.last_started[process.get('id', '')] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
+            last_info = self.last_started.get(process_id, {})
+            if not last_info.get('failed') and self.firebase_client:
+                suggested_paths = self._find_sibling_executables(exe_path)
+                self.firebase_client.send_alert('exe_missing', {
+                    'process_name': process_name,
+                    'process_id': process_id,
+                    'exe_path': exe_path,
+                    'suggested_paths': suggested_paths,
+                })
+                self.firebase_client.log_event(
+                    'process_launch_failed',
+                    'error',
+                    process_name=process_name,
+                    details=f'executable not found: {exe_path}'
+                )
+            self.last_started[process_id] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
             return None
 
         # Ensure process has not exceeded maximum relaunch attempts
@@ -2178,7 +2231,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if last_time is None or (last_time is not None and (self.current_time - last_time).total_seconds() >= (time_to_init or TIME_TO_INIT)):
                 # Skip delay on first launch (delay is for crash recovery spacing,
                 # not fresh starts) and on manual mode changes
-                if last_time is None or process_list_id in self._skip_launch_delay:
+                if last_time is None or last_info.get('failed') or process_list_id in self._skip_launch_delay:
                     self._skip_launch_delay.discard(process_list_id)
                 elif delay:
                     time.sleep(delay)
@@ -2443,10 +2496,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         logging.info(f"[OK] Adopted already-running '{Util.get_process_name(process)}' (PID {existing_pid})")
                         new_pid = None
                     else:
-                        # Clear stale tracking so handle_process_launch sees
-                        # last_time=None and skips time_delay (delay is for
-                        # crash recovery spacing, handled by time_to_init)
-                        self.last_started.pop(process_list_id, None)
+                        # Preserve failed markers so missing-exe alerts fire
+                        # only on transition. For non-failed stale entries,
+                        # clear tracking so handle_process_launch treats the
+                        # relaunch as fresh and skips time_delay.
+                        if last_info.get('failed'):
+                            self._skip_launch_delay.add(process_list_id)
+                        else:
+                            self.last_started.pop(process_list_id, None)
                         # Launch the process again if it isn't running
                         new_pid = self.handle_process_launch(process)
         

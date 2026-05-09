@@ -40,8 +40,9 @@ import { apiError } from '@/lib/apiErrorResponse';
  * - errorCode: string (for connection_failure)
  * - errorMessage: string
  * - agentVersion: string
- * - eventType: 'connection_failure' | 'process_crash' | 'process_start_failed' (default: 'connection_failure')
- * - processName: string (required for process events)
+ * - eventType: string (default: 'connection_failure')
+ * - data: object (generic alert payload)
+ * - processName: string (required for process events unless data.process_name is set)
  *
  * Rate limited: connection failures at 5/hr per IP, process alerts at 3/hr per machineId:processName.
  */
@@ -73,6 +74,20 @@ function buildAlertEmail(
   return wrapEmailLayout(content, { unsubscribeUrl });
 }
 
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
 export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
@@ -98,22 +113,42 @@ export const POST = withRateLimit(
       }
 
       // Parse body
-      const body = await request.json();
-      const { siteId, machineId, errorCode, errorMessage, agentVersion, eventType, processName, data } = body;
+      const body = await request.json() as Record<string, unknown>;
+      const siteId = readString(body.siteId);
+      const machineId = readString(body.machineId);
+      const errorCode = readString(body.errorCode);
+      const errorMessage = readString(body.errorMessage);
+      const agentVersion = readString(body.agentVersion);
+      const eventType = readString(body.eventType);
+      const processName = readString(body.processName);
+      const alertData = readRecord(body.data);
+      const resolvedProcessName =
+        processName ||
+        readString(alertData.process_name) ||
+        readString(alertData.processName);
+      const resolvedErrorMessage =
+        errorMessage ||
+        readString(alertData.error_message) ||
+        readString(alertData.errorMessage);
 
       // Determine event type (default to connection_failure for backward compat)
       const resolvedEventType = eventType || 'connection_failure';
       const isProcessEvent = resolvedEventType === 'process_crash' || resolvedEventType === 'process_start_failed';
+      const isExeMissingEvent = resolvedEventType === 'exe_missing';
       // [B3.1] Display events route through `DISPLAY_EVENT_ROUTING` rather
       // than the legacy email-immediate / process-digest branches.
       const isDisplayEvent =
         typeof resolvedEventType === 'string' &&
         resolvedEventType.startsWith('display_') &&
         isDisplayEventType(resolvedEventType);
+      const isGenericDataEvent =
+        !!eventType &&
+        !isProcessEvent &&
+        !isDisplayEvent &&
+        !isExeMissingEvent &&
+        Object.keys(alertData).length > 0;
       const displayData: Record<string, unknown> =
-        isDisplayEvent && data && typeof data === 'object'
-          ? (data as Record<string, unknown>)
-          : {};
+        isDisplayEvent ? alertData : {};
 
       // Validate required fields
       if (!siteId || !machineId) {
@@ -123,14 +158,14 @@ export const POST = withRateLimit(
         );
       }
 
-      if (!isProcessEvent && !isDisplayEvent && !errorCode) {
+      if (!isProcessEvent && !isDisplayEvent && !isExeMissingEvent && !isGenericDataEvent && !errorCode) {
         return NextResponse.json(
           { error: 'Missing required field: errorCode (for connection_failure events)' },
           { status: 400 }
         );
       }
 
-      if (isProcessEvent && !processName) {
+      if (isProcessEvent && !resolvedProcessName) {
         return NextResponse.json(
           { error: 'Missing required field: processName (for process events)' },
           { status: 400 }
@@ -147,7 +182,7 @@ export const POST = withRateLimit(
 
       // Per-process rate limiting for process events (separate from the IP-based limiter)
       if (isProcessEvent && processAlertRateLimit) {
-        const processRateLimitKey = `process_alert:${machineId}:${processName}`;
+        const processRateLimitKey = `process_alert:${machineId}:${resolvedProcessName}`;
         const processRateResult = await checkRateLimit(processAlertRateLimit, processRateLimitKey);
         if (!processRateResult.success) {
           console.warn(`[agent/alert] Process alert rate limited: ${processRateLimitKey}`);
@@ -254,6 +289,67 @@ export const POST = withRateLimit(
         });
       }
 
+      if (isExeMissingEvent) {
+        const exePath =
+          readString(alertData.exe_path) ||
+          readString(alertData.exePath) ||
+          resolvedErrorMessage;
+        if (!exePath) {
+          return NextResponse.json(
+            { error: 'Missing required field: data.exe_path (for exe_missing events)' },
+            { status: 400 },
+          );
+        }
+
+        const processId =
+          readString(alertData.process_id) ||
+          readString(alertData.processId);
+        const suggestedPaths = [
+          ...readStringArray(alertData.suggested_paths),
+          ...readStringArray(alertData.suggestedPaths),
+        ].slice(0, 5);
+
+        const logPayload: Record<string, unknown> = {
+          timestamp: FieldValue.serverTimestamp(),
+          action: 'exe_missing',
+          level: 'error',
+          machineId,
+          machineName: machineId,
+          processName: resolvedProcessName || 'unknown process',
+          details: exePath,
+          eventType: resolvedEventType,
+          exePath,
+          suggestedPaths,
+          agentVersion,
+        };
+        if (processId) logPayload.processId = processId;
+
+        await db.collection('sites').doc(siteId).collection('logs').add(logPayload);
+
+        console.log(
+          `[agent/alert] Executable missing for ${resolvedProcessName || processId || 'unknown process'} ` +
+          `on ${machineId} (${siteId})`,
+        );
+        return NextResponse.json({ success: true, logged: true });
+      }
+
+      if (isGenericDataEvent) {
+        await db.collection('sites').doc(siteId).collection('logs').add({
+          timestamp: FieldValue.serverTimestamp(),
+          action: resolvedEventType,
+          level: 'error',
+          machineId,
+          machineName: machineId,
+          details: resolvedErrorMessage || readString(alertData.message),
+          eventType: resolvedEventType,
+          data: alertData,
+          agentVersion,
+        });
+
+        console.log(`[agent/alert] Generic ${resolvedEventType} on ${machineId} (${siteId})`);
+        return NextResponse.json({ success: true, logged: true });
+      }
+
       // Determine webhook event type (used by both process and connection paths)
       const webhookEvent = resolvedEventType === 'process_crash' ? 'process.crashed'
         : resolvedEventType === 'process_start_failed' ? 'process.restarted'
@@ -265,21 +361,21 @@ export const POST = withRateLimit(
         await db.collection('pending_process_alerts').add({
           siteId,
           machineId,
-          processName,
-          errorMessage: errorMessage || 'Process exited unexpectedly',
-          agentVersion: agentVersion || '',
+          processName: resolvedProcessName,
+          errorMessage: resolvedErrorMessage || 'Process exited unexpectedly',
+          agentVersion,
           eventType: resolvedEventType,
           timestamp: FieldValue.serverTimestamp(),
         });
 
-        console.log(`[agent/alert] Queued process alert: ${resolvedEventType} - ${processName} on ${machineId} (${siteId})`);
+        console.log(`[agent/alert] Queued process alert: ${resolvedEventType} - ${resolvedProcessName} on ${machineId} (${siteId})`);
 
         // Fire webhooks immediately (non-blocking)
         const siteDoc = await db.collection('sites').doc(siteId).get();
         const siteName = siteDoc.data()?.name || siteId;
         fireWebhooks(siteId, siteName, webhookEvent, {
           machine: { id: machineId, name: machineId },
-          process: { name: processName, error: errorMessage || '' },
+          process: { name: resolvedProcessName, error: resolvedErrorMessage || '' },
         }).catch(console.error);
 
         // Trigger autonomous Cortex investigation immediately (non-blocking)
@@ -292,9 +388,9 @@ export const POST = withRateLimit(
             machineId,
             machineName: machineId,
             eventType: resolvedEventType,
-            processName: processName || '',
-            errorMessage: errorMessage || '',
-            agentVersion: agentVersion || '',
+            processName: resolvedProcessName,
+            errorMessage: resolvedErrorMessage || '',
+            agentVersion,
           }).catch(err => console.error('[agent/alert] Cortex trigger failed:', err));
         }
 
@@ -328,7 +424,7 @@ export const POST = withRateLimit(
             ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
             : undefined;
 
-          const html = buildAlertEmail(siteId, machineId, errorCode, errorMessage || '', agentVersion || '', unsubscribeUrl, tz);
+          const html = buildAlertEmail(siteId, machineId, errorCode, errorMessage || '', agentVersion, unsubscribeUrl, tz);
 
           const result = await resendClient.emails.send({
             from: FROM_EMAIL,

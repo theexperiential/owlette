@@ -202,18 +202,17 @@ class FirebaseClient:
         self._last_primary: Optional[Dict] = None
         self._profile_hash_path: str = shared_utils.get_data_path('tmp/profile_hash.json')
 
-        # [B2.3] Display-alert pending queue. Network drops at the exact
-        # moment a display event fires (e.g. a power outage that takes a
-        # monitor down also takes the agent's network down) would silently
-        # lose the most operator-critical alerts without a buffer. Send-
-        # failures append here; the connection-state listener drains the
-        # buffer when ConnectionState transitions back to CONNECTED.
+        # Alert pending queue. Network drops at the exact moment an
+        # operator-critical event fires would silently lose a fire-and-forget
+        # API call without a buffer. Send failures append here; the
+        # connection-state listener drains the buffer when ConnectionState
+        # transitions back to CONNECTED.
         # In-memory only — service restart wipes the queue. Cap of 100
         # prevents unbounded growth during a long outage; oldest entries
         # are dropped first when full.
-        self._pending_display_alerts: list = []
-        self._pending_display_alerts_lock = threading.Lock()
-        self._PENDING_DISPLAY_ALERTS_MAX = 100
+        self._pending_alerts: list = []
+        self._pending_alerts_lock = threading.Lock()
+        self._PENDING_ALERTS_MAX = 100
 
         # Display profile state (schemaVersion 1). Mirrors the hardware-profile
         # cache: rate-limited rebuild, signature-hashed uploads, on-disk hash
@@ -344,11 +343,11 @@ class FirebaseClient:
             # Machine may have been removed from site
             self._handle_fatal_error(event.reason)
         elif event.new_state == ConnectionState.CONNECTED:
-            # [B2.3] Drain any display alerts that failed to send while we
-            # were offline. Runs on a daemon thread so a slow drain doesn't
-            # block the connection-state listener (other listeners would
-            # otherwise queue behind this one).
-            self._drain_pending_display_alerts_async()
+            # Drain any alerts that failed to send while we were offline.
+            # Runs on a daemon thread so a slow drain doesn't block the
+            # connection-state listener (other listeners would otherwise
+            # queue behind this one).
+            self._drain_pending_alerts_async()
 
     def _handle_fatal_error(self, reason: str):
         """
@@ -2108,46 +2107,26 @@ class FirebaseClient:
             return None
 
     def send_process_alert(self, process_name, error_message, event_type='process_crash'):
-        """Send process alert to web API. Non-blocking (fire and forget)."""
-        def _send():
-            try:
-                token = self.auth_manager.get_valid_token()
-                api_base = shared_utils.get_api_base_url()
-                import requests
-                requests.post(
-                    f"{api_base}/agent/alert",
-                    json={
-                        'siteId': self.site_id,
-                        'machineId': self.machine_id,
-                        'eventType': event_type,
-                        'processName': process_name,
-                        'errorMessage': error_message or 'Process exited unexpectedly',
-                        'agentVersion': shared_utils.APP_VERSION,
-                    },
-                    headers={'Authorization': f'Bearer {token}'},
-                    timeout=10
-                )
-                self.logger.info(f"[ALERT] Process alert sent: {event_type} - {process_name}")
-            except Exception as e:
-                self.logger.warning(f"Failed to send process alert: {e}")
-
-        thread = threading.Thread(target=_send, daemon=True)
-        thread.start()
+        """Backward-compatible wrapper for process alerts."""
+        self.send_alert(event_type, {
+            'process_name': process_name,
+            'error_message': error_message or 'Process exited unexpectedly',
+        })
 
     def send_display_alert(self, event_type: str, data: dict):
-        """[B2.3] Send a display-event alert to the web API.
+        """Backward-compatible wrapper for display alerts."""
+        self.send_alert(event_type, data)
 
-        Mirrors ``send_process_alert`` shape but with two key differences:
+    def send_alert(self, event_type: str, data: dict):
+        """Send a generic agent alert to the web API.
+
+        Carries arbitrary alert data in the canonical API shape:
 
           1. Carries an arbitrary ``data`` dict rather than fixed fields
-             (display events have heterogenous payloads — `display_drift`
-             has `changes[]`, `display_apply_failed` has `error`, etc.).
-          2. On send failure, queues into ``_pending_display_alerts`` so the
+             (alert payloads are event-specific).
+          2. On send failure, queues into ``_pending_alerts`` so the
              connection-state listener can drain on reconnect. Critical
-             because the most operator-relevant display events
-             (``display_monitor_removed``, ``display_auto_revert_fired``)
-             often coincide with the very network outage that would lose
-             a fire-and-forget call.
+             so operator-relevant events survive transient network outages.
 
         Non-blocking: spawns a daemon thread for the actual POST.
         """
@@ -2169,53 +2148,53 @@ class FirebaseClient:
                     timeout=10
                 )
                 response.raise_for_status()
-                self.logger.info(f"[ALERT] Display alert sent: {event_type}")
+                self.logger.info(f"[ALERT] Alert sent: {event_type}")
             except Exception as e:
                 self.logger.warning(
-                    f"Failed to send display alert ({event_type}); queueing for retry: {e}"
+                    f"Failed to send alert ({event_type}); queueing for retry: {e}"
                 )
-                self._enqueue_pending_display_alert(event_type, data)
+                self._enqueue_pending_alert(event_type, data)
 
         thread = threading.Thread(target=_send, daemon=True)
         thread.start()
 
-    def _enqueue_pending_display_alert(self, event_type: str, data: dict):
-        """Append a failed display alert to the in-memory pending queue.
+    def _enqueue_pending_alert(self, event_type: str, data: dict):
+        """Append a failed alert to the in-memory pending queue.
         Drops the oldest entry when the queue hits its cap so a long
         outage can't OOM the agent. The drain runs on the next
         ConnectionState.CONNECTED transition.
         """
-        with self._pending_display_alerts_lock:
-            if len(self._pending_display_alerts) >= self._PENDING_DISPLAY_ALERTS_MAX:
-                dropped = self._pending_display_alerts.pop(0)
+        with self._pending_alerts_lock:
+            if len(self._pending_alerts) >= self._PENDING_ALERTS_MAX:
+                dropped = self._pending_alerts.pop(0)
                 self.logger.warning(
-                    f"[ALERT] Pending display-alert queue full; dropped oldest "
+                    f"[ALERT] Pending alert queue full; dropped oldest "
                     f"({dropped.get('event_type')})"
                 )
-            self._pending_display_alerts.append({
+            self._pending_alerts.append({
                 'event_type': event_type,
                 'data': data,
             })
 
-    def _drain_pending_display_alerts_async(self):
-        """Spawn a daemon thread to retry queued display alerts. Called by
+    def _drain_pending_alerts_async(self):
+        """Spawn a daemon thread to retry queued alerts. Called by
         the connection-state listener on transition to CONNECTED.
         """
-        with self._pending_display_alerts_lock:
-            pending = list(self._pending_display_alerts)
-            self._pending_display_alerts.clear()
+        with self._pending_alerts_lock:
+            pending = list(self._pending_alerts)
+            self._pending_alerts.clear()
         if not pending:
             return
 
         def _drain():
             self.logger.info(
-                f"[ALERT] Draining {len(pending)} pending display alerts after reconnect"
+                f"[ALERT] Draining {len(pending)} pending alerts after reconnect"
             )
             for entry in pending:
-                # Re-route through send_display_alert so a second outage
+                # Re-route through send_alert so a second outage
                 # mid-drain re-enqueues each failure cleanly. No back-off
                 # needed — connection_manager already tracks reachability.
-                self.send_display_alert(entry['event_type'], entry['data'])
+                self.send_alert(entry['event_type'], entry['data'])
 
         threading.Thread(target=_drain, daemon=True).start()
 
