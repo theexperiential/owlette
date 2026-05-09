@@ -11,6 +11,22 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ## [Unreleased]
 
+## [2.11.3] - 2026-05-08
+
+### added
+
+- New Cortex Tier 2 tools `update_process`, `add_process`, and `delete_process` bring the chat to feature parity with the GUI/web for process management. The tools accept the full set of process config fields (name, exe_path, file_path, cwd, priority, visibility, time_delay, time_to_init, relaunch_attempts, launch_mode, schedules, schedulePresetId) and execute server-side via the existing validated action functions — no agent relay, no command-queue latency.
+- Agent now surfaces missing-executable failures as dashboard toast notifications with up to two suggested alternative paths (sibling versions discovered by walking up from the missing path). The toast offers a one-click "use path" action that opens the process edit dialog with the suggested path pre-filled.
+- New canonical `firebase_client.send_alert(event_type, data)` method with retry-on-failure queueing (drains on reconnect, capped at 100 pending alerts). The previous `send_process_alert` and `send_display_alert` are now thin wrappers that delegate to it.
+
+### changed
+
+- `/api/agent/alert` route now accepts both the new generic `{eventType, data}` shape and the legacy flat process-alert shape, so older agent callers keep working unchanged while new event types (`exe_missing`, etc.) flow through cleanly.
+
+### fixed
+
+- Missing-executable failures (e.g. when a process's configured `exe_path` no longer exists after an app upgrade) are now surfaced to the operator instead of silently failing every tick. Previously the agent only logged the error to its local log file, leaving operators with no signal that a managed process couldn't launch. Rate-limited so it fires once per failed-state transition, not every 5-second main-loop tick.
+
 ## [2.11.2] - 2026-05-06
 
 ### fixed
