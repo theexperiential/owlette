@@ -126,13 +126,13 @@ function TierCard({ name, price, unit, features, highlighted = false, preludeNot
 
 export function PricingSection() {
   return (
-    <section id="pricing" className="pt-16 sm:pt-24 pb-32 sm:pb-48 px-4 sm:px-6">
+    <section id="pricing" className="pt-16 sm:pt-24 pb-32 sm:pb-48 px-4 sm:px-6 -scroll-mt-8 sm:-scroll-mt-16">
       <div className="max-w-5xl mx-auto">
         <div className="text-center max-w-3xl mx-auto">
           <h2 className="section-headline text-foreground mb-4">
             simple, transparent pricing.
           </h2>
-          <p className="section-subheadline mb-10">
+          <p className="section-subheadline mb-12">
             two tiers. no hidden fees. pay only for what you run.
           </p>
         </div>

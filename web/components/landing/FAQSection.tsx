@@ -26,6 +26,10 @@ const faqs: { q: string; a: React.ReactNode }[] = [
     a: "cortex is owlette's ai fleet assistant — ask it the questions you ask yourself every day: \"which nvidia driver are we running?\", \"restart the media server on node 3\", \"what crashed at 3am?\" it translates natural language into real commands across your fleet. you bring your own api key (openai, anthropic, or any compatible provider).",
   },
   {
+    q: "what's roost?",
+    a: "roost is owlette's project sync. point it at a folder — a TouchDesigner project, a content drop, a build output — and it ships only the bytes that changed to every machine on the site, atomically: a machine gets the whole new version or stays on the old one, never a half-copied mess. every deploy is versioned, so you can roll back to any of the last 50 for up to 30 days. it's part of the pro tier and includes 1 TB of storage per site ($0.05/GB after that). no more zipping a folder and RDP-ing into ten machines at 2am.",
+  },
+  {
     q: "is my data secure?",
     a: "agents connect over tls, credentials are encrypted on-device using a machine-bound key, and oauth tokens are never logged or stored in plaintext. access is managed through firebase auth with optional passkey and two-factor authentication.",
   },
@@ -38,8 +42,24 @@ const faqs: { q: string; a: React.ReactNode }[] = [
 export function FAQSection() {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
+  // Matches the grid-template-rows collapse transition (0.3s) + a small buffer.
+  const COLLAPSE_MS = 320;
+
+  const toggle = (i: number, el: HTMLElement | null) => {
+    if (openIndex === i) {
+      setOpenIndex(null);
+      return;
+    }
+    // If an item above is open, let its panel finish collapsing before anchoring.
+    // (block: 'start' honours the global scroll-padding-top, so it clears the header.)
+    const delay = openIndex !== null && openIndex < i ? COLLAPSE_MS : 0;
+    setOpenIndex(i);
+    if (!el) return;
+    setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), delay);
+  };
+
   return (
-    <section className="pt-16 sm:pt-24 pb-32 sm:pb-48 px-4 sm:px-6">
+    <section id="faq" className="pt-16 sm:pt-24 pb-32 sm:pb-48 px-4 sm:px-6 -scroll-mt-8 sm:-scroll-mt-16">
       <div className="max-w-3xl mx-auto">
         <div className="text-center mb-10 sm:mb-14">
           <h2 className="section-headline text-foreground mb-4">
@@ -58,7 +78,7 @@ export function FAQSection() {
                 }`}
               >
                 <button
-                  onClick={() => setOpenIndex(isOpen ? null : i)}
+                  onClick={(e) => toggle(i, e.currentTarget)}
                   className="w-full flex items-center justify-between gap-4 py-7 text-left cursor-pointer"
                   aria-expanded={isOpen}
                 >

@@ -24,12 +24,12 @@ const suffixWords = [
 
 export function HeroSection() {
   return (
-    <section className="relative h-[100dvh] flex flex-col pt-16 overflow-hidden">
+    <section className="relative sm:h-[100dvh] flex flex-col pt-16 overflow-hidden">
       {/* Interactive mouse-reactive background */}
       <InteractiveBackground />
 
       {/* Content wrapper — headline pinned to vertical center, eye grows upward, CTA grows downward */}
-      <div className="relative z-10 w-full max-w-5xl mx-auto px-4 sm:px-6 text-center flex flex-col items-center flex-1 justify-center -mt-[18vh]">
+      <div className="relative z-10 w-full max-w-5xl mx-auto px-4 sm:px-6 text-center flex flex-col items-center flex-1 justify-center py-12 sm:py-0 sm:-mt-[18vh]">
         {/* The Eye */}
         <div className="relative flex items-center justify-center mb-6 sm:mb-8">
           <div

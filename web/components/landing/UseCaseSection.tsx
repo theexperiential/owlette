@@ -70,8 +70,21 @@ export function UseCaseSection() {
   const lightboxOpen = lightboxIndex !== null;
   const lightboxSrc = lightboxOpen ? capabilities[lightboxIndex].preview : null;
 
-  const toggle = (i: number) => {
-    setOpenIndex(openIndex === i ? null : i);
+  // Matches the expanded-panel collapse transition (duration-500) + a small buffer.
+  const COLLAPSE_MS = 520;
+
+  const toggle = (i: number, el: HTMLElement | null) => {
+    if (openIndex === i) {
+      setOpenIndex(null);
+      return;
+    }
+    // If a card above this one is open, its panel must finish collapsing before
+    // the layout above settles — wait for that, otherwise anchor immediately.
+    // (block: 'start' honours the global scroll-padding-top, so it clears the header.)
+    const delay = openIndex !== null && openIndex < i ? COLLAPSE_MS : 0;
+    setOpenIndex(i);
+    if (!el) return;
+    setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), delay);
   };
 
   const closeLightbox = useCallback(() => {
@@ -186,7 +199,7 @@ export function UseCaseSection() {
   const activePreview = openIndex !== null ? capabilities[openIndex].preview : undefined;
 
   return (
-    <section className="pt-24 sm:pt-32 pb-20 sm:pb-32 px-4 sm:px-6 relative">
+    <section id="capabilities" className="pt-24 sm:pt-32 pb-20 sm:pb-32 px-4 sm:px-6 relative -scroll-mt-16 sm:-scroll-mt-24">
       <div className="max-w-5xl mx-auto relative">
 
         {/* Mobile: single-column accordion — each card owns its expanded content */}
@@ -194,7 +207,7 @@ export function UseCaseSection() {
           {capabilities.map((cap, i) => (
             <div key={cap.label}>
               <button
-                onClick={() => toggle(i)}
+                onClick={(e) => toggle(i, e.currentTarget)}
                 className={`w-full text-center group cursor-pointer rounded-lg p-4 transition-all duration-300 border ${openIndex === i ? 'bg-card/60 border-border' : 'border-transparent hover:bg-card/50'}`}
               >
                 <cap.icon className={`w-8 h-8 mx-auto mb-3 transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-muted-foreground group-hover:text-accent-cyan'}`} />
@@ -258,7 +271,7 @@ export function UseCaseSection() {
                     return (
                       <button
                         key={cap.label}
-                        onClick={() => toggle(i)}
+                        onClick={(e) => toggle(i, e.currentTarget)}
                         className={`text-center group cursor-pointer rounded-lg p-4 transition-all duration-300 border ${openIndex === i ? 'bg-card/60 border-border' : 'border-transparent hover:bg-card/50'}`}
                       >
                         <cap.icon className={`w-8 h-8 mx-auto mb-3 transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-muted-foreground group-hover:text-accent-cyan'}`} />

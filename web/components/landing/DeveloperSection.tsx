@@ -59,7 +59,7 @@ export function DeveloperSection() {
   const [activeTab, setActiveTab] = useState<TabId>('curl');
 
   return (
-    <section id="developers" className="py-16 sm:py-24 px-4 sm:px-6 relative">
+    <section id="developers" className="py-16 sm:py-24 px-4 sm:px-6 relative -scroll-mt-8 sm:-scroll-mt-16">
       <div className="max-w-5xl mx-auto">
         <div className="text-center mb-12 sm:mb-16">
           <h2 className="section-headline text-foreground mb-4 leading-tight">

@@ -193,6 +193,8 @@
   html {
     @apply bg-background text-foreground;
     scroll-behavior: smooth;
+    /* Keep #-anchor jumps clear of the fixed landing header (h-16 = 4rem) plus a little air. */
+    scroll-padding-top: 5rem;
   }
 
   /* Respect the user's OS-level motion preference. Disables both
