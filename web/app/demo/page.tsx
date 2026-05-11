@@ -107,6 +107,15 @@ export default function DemoPage() {
     });
   }, [machines]);
 
+  // Switch the open metrics panel to another machine, keeping the current metric.
+  const handleSwitchMachine = useCallback((machineId: string) => {
+    setDetailPanel(prev => {
+      if (!prev || prev.metric === 'display') return prev;
+      const machine = machines.find(m => m.machineId === machineId);
+      return { machineId, machineName: machine?.machineId || machineId, metric: prev.metric };
+    });
+  }, [machines]);
+
   const sites = useMemo(() => [DEMO_SITE], []);
   const onlineMachines = machines.filter(m => m.online).length;
   const totalProcesses = machines.reduce((acc, m) => {
@@ -216,6 +225,8 @@ export default function DemoPage() {
                     siteId={DEMO_SITE_ID}
                     initialMetric={heldDetailPanel.metric}
                     onClose={() => setDetailPanel(null)}
+                    machines={machines}
+                    onSwitchMachine={handleSwitchMachine}
                   />
                 )
               )}

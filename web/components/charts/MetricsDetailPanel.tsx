@@ -8,7 +8,7 @@
  * Supports per-NIC network metrics with TX/RX utilization lines.
  */
 
-import { Fragment, useState, useMemo, useEffect, useCallback } from 'react';
+import { Fragment, useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   LineChart,
   Line,
@@ -26,7 +26,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { X, ToggleLeft, ToggleRight, Monitor, HardDrive, ArrowDownUp, ArrowUp, ArrowDown, Thermometer } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Input } from '@/components/ui/input';
+import { X, ToggleLeft, ToggleRight, Monitor, HardDrive, ArrowDownUp, ArrowUp, ArrowDown, Thermometer, ChevronDown, Check } from 'lucide-react';
 import { TimeRangeSelector, type TimeRange } from './TimeRangeSelector';
 import { ChartTooltip, metricConfig, type MetricType } from './ChartTooltip';
 import {
@@ -36,6 +38,7 @@ import {
   type TabSelection,
 } from './metricsTabs';
 import { useHistoricalMetrics } from '@/hooks/useHistoricalMetrics';
+import { useDemoContext } from '@/contexts/DemoContext';
 import { getNicColors, getDiskColors, getGpuColors, formatThroughput } from '@/lib/networkUtils';
 import { DISK_IO_COLORS, formatDiskIO, isDiskIOKey, parseDiskIOKey, computeNiceByteTicks } from '@/lib/diskIOUtils';
 import { useAuth } from '@/contexts/AuthContext';
@@ -52,6 +55,121 @@ interface MetricsDetailPanelProps {
    *  names in toggle labels, chart lines, stats grid, and tooltip while
    *  keeping the UUID as the stable chart-data key. */
   gpus?: ReadonlyArray<{ id: string; name?: string }>;
+  /** All machines in the current site. When provided and the count exceeds
+   *  MACHINE_SWITCHER_MIN, the panel title becomes a dropdown so the user can
+   *  jump between machines without scrolling down to the machines list. */
+  machines?: ReadonlyArray<{ machineId: string; online: boolean }>;
+  /** Invoked when a different machine is picked from the title dropdown. */
+  onSwitchMachine?: (machineId: string) => void;
+}
+
+// The title-bar machine switcher only appears once a site has more than this
+// many machines — with just a handful, scrolling to the machines list is no
+// burden and the plain-text title stays out of the way.
+const MACHINE_SWITCHER_MIN = 5;
+// Past this count the switcher dropdown grows a filter input so a long fleet
+// can be narrowed by typing instead of scrolled.
+const MACHINE_SWITCHER_FILTER_MIN = 8;
+
+/** Title-bar dropdown for jumping between machines in the open detail panel.
+ *  Rendered in place of the plain machine name when a site has enough
+ *  machines that scrolling the page list to switch becomes tedious. */
+function MachineSwitcher({
+  currentId,
+  label,
+  machines,
+  onSelect,
+}: {
+  currentId: string;
+  label: string;
+  machines: ReadonlyArray<{ machineId: string; online: boolean }>;
+  onSelect: (machineId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState('');
+  const showFilter = machines.length > MACHINE_SWITCHER_FILTER_MIN;
+
+  const sorted = useMemo(
+    () => [...machines].sort((a, b) =>
+      a.machineId.localeCompare(b.machineId, undefined, { sensitivity: 'base' }),
+    ),
+    [machines],
+  );
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    return q ? sorted.filter((m) => m.machineId.toLowerCase().includes(q)) : sorted;
+  }, [sorted, filter]);
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        // Clear stale filter text on close so the dropdown reopens fresh.
+        if (!next) setFilter('');
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="switch machine"
+          className="flex items-center gap-2 text-xl font-semibold text-foreground shrink-0 -ml-1.5 px-1.5 py-0.5 rounded-md cursor-pointer hover:bg-accent/40 transition-colors outline-hidden focus-visible:ring-2 focus-visible:ring-primary/40"
+        >
+          <Monitor className="h-5 w-5 text-muted-foreground" />
+          {label}
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="p-0 w-64">
+        {showFilter && (
+          <div className="border-b border-border p-2">
+            <Input
+              autoFocus
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="filter machines…"
+              className="h-8 text-sm"
+            />
+          </div>
+        )}
+        <div className="max-h-72 overflow-y-auto py-1">
+          {filtered.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-muted-foreground">no machines match</div>
+          ) : (
+            filtered.map((m) => {
+              const isCurrent = m.machineId === currentId;
+              return (
+                <button
+                  key={m.machineId}
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    if (!isCurrent) onSelect(m.machineId);
+                  }}
+                  className={cn(
+                    'flex w-full items-center gap-2 px-3 py-1.5 text-sm text-left cursor-pointer transition-colors',
+                    isCurrent
+                      ? 'bg-accent text-foreground'
+                      : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground',
+                  )}
+                >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'h-1.5 w-1.5 rounded-full shrink-0',
+                      m.online ? 'bg-green-500' : 'bg-muted-foreground/40',
+                    )}
+                  />
+                  <span className="truncate">{m.machineId}</span>
+                  {isCurrent && <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-primary" />}
+                </button>
+              );
+            })
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 // Pure tab-state helpers (serializeTabs / deserializeTabs / initialMetricToState)
@@ -139,10 +257,22 @@ export function MetricsDetailPanel({
   initialMetric = 'cpu',
   onClose,
   gpus,
+  machines,
+  onSwitchMachine,
 }: MetricsDetailPanelProps) {
 
   const { userPreferences, updateUserPreferences } = useAuth();
-  const graphTabs = userPreferences.graphTabs;
+
+  // On /demo the panel is self-contained: it must NOT read the signed-in
+  // user's persisted graph tabs / time range (those reference their real
+  // machines, not the demo's synthetic ones — and a stale entry would seed an
+  // empty selection and blank the chart) nor write back to them (which would
+  // pollute real preferences with demo machine ids, or throw a "must be signed
+  // in" toast for logged-out visitors). All selection + range state stays
+  // local. Outside demo mode (`demo` is null — no provider) this is a no-op.
+  const demo = useDemoContext();
+  const isDemo = demo != null;
+  const graphTabs = isDemo ? undefined : userPreferences.graphTabs;
 
   // Seed from persisted selection on first render so there's no flash between
   // the default and the restored selection. The dashboard click handler writes
@@ -164,7 +294,7 @@ export function MetricsDetailPanel({
     () => resolveSelection(graphTabs?.[machineId], initialMetric).diskIO,
   );
   const [timeRange, setTimeRangeState] = useState<TimeRange>(
-    () => userPreferences.graphTimeRange || '1h',
+    () => (isDemo ? undefined : userPreferences.graphTimeRange) || '1h',
   );
 
   // When the user hovers a stat card, the matching line in the chart stays at
@@ -173,17 +303,21 @@ export function MetricsDetailPanel({
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
 
   // Keep local state in sync if another tab/device updates the preference.
+  // Skipped in demo mode — the range is local-only there, so an external
+  // preference change must not yank the demo chart's window.
   useEffect(() => {
+    if (isDemo) return;
     const next = userPreferences.graphTimeRange || '1h';
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTimeRangeState((prev) => (prev === next ? prev : next));
-  }, [userPreferences.graphTimeRange]);
+  }, [userPreferences.graphTimeRange, isDemo]);
 
   const setTimeRange = useCallback((range: TimeRange) => {
     setTimeRangeState(range);
+    if (isDemo) return;
     updateUserPreferences({ graphTimeRange: range }, { silent: true })
       .catch(() => { /* fire-and-forget; matches statsExpanded pattern */ });
-  }, [updateUserPreferences]);
+  }, [updateUserPreferences, isDemo]);
 
   const { data, loading, error } = useHistoricalMetrics(siteId, machineId, timeRange);
 
@@ -311,6 +445,39 @@ export function MetricsDetailPanel({
     setSelectedDiskIO((prev) => (sameStringArray(prev, next.diskIO) ? prev : next.diskIO));
   }, [machineId, initialMetric, graphTabs]);
 
+  // Opening the panel on a generic 'disk' / 'gpu' metric for a machine that has
+  // per-device history: expand to every per-device line once chart data lands,
+  // so the chart isn't blank. (The generic 'disk' / 'gpu' line is filtered out
+  // of the toggle row — see `effectiveMetrics` / `availableMetrics` — when
+  // per-device data exists, so without this nothing would be selected.) The
+  // dashboard's click handler pre-seeds graphTabs with the per-device ids, so
+  // this is a no-op there; it covers callers like /demo that pass
+  // `initialMetric` without writing graphTabs. One-shot per (machine, metric):
+  // never overrides a persisted selection or a subsequent user toggle, but
+  // re-arms when the panel switches machines (title switcher) or metrics so the
+  // new context expands fresh instead of inheriting the prior selection.
+  const didExpandInitialDevice = useRef(false);
+  // Re-arm on machine / metric change only — NOT on graphTabs, or a deliberate
+  // user deselect (which writes graphTabs) would get clobbered by a re-expand.
+  // Declared before the expand effect so the reset lands first on the render
+  // where machineId/initialMetric changes.
+  useEffect(() => {
+    didExpandInitialDevice.current = false;
+  }, [machineId, initialMetric]);
+  useEffect(() => {
+    if (didExpandInitialDevice.current) return;
+    if (graphTabs?.[machineId] !== undefined) return; // persisted selection is authoritative
+    if (chartData.length === 0) return;               // wait for data to derive device ids
+    if (initialMetric === 'disk' && diskNames.length > 0) {
+      didExpandInitialDevice.current = true;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedDisks((prev) => (prev.length > 0 ? prev : diskNames));
+    } else if (initialMetric === 'gpu' && gpuNames.length > 0) {
+      didExpandInitialDevice.current = true;
+      setSelectedGpus((prev) => (prev.length > 0 ? prev : gpuNames));
+    }
+  }, [chartData, graphTabs, machineId, initialMetric, diskNames, gpuNames]);
+
   // Generic 'disk' / 'gpu' / 'gpuTemp' are hidden from the toggle UI when
   // per-device data exists, but they may still be present in selectedMetrics
   // (from old persisted state or click intent). Filter at render time so they
@@ -380,6 +547,7 @@ export function MetricsDetailPanel({
     effectiveMetrics.length + selectedNics.length + selectedDisks.length + selectedGpus.length + effectiveDiskIO.length * 2;
 
   const persistSelections = useCallback((sel: Partial<TabSelection>) => {
+    if (isDemo) return; // demo selections are local-only — never touch real prefs
     const merged: TabSelection = {
       metrics: sel.metrics ?? selectedMetrics,
       nics: sel.nics ?? selectedNics,
@@ -392,7 +560,7 @@ export function MetricsDetailPanel({
       { graphTabs: { ...(graphTabs || {}), [machineId]: ids } },
       { silent: true },
     ).catch(() => { /* fire-and-forget; matches statsExpanded pattern */ });
-  }, [selectedMetrics, selectedNics, selectedDisks, selectedGpus, selectedDiskIO, graphTabs, machineId, updateUserPreferences]);
+  }, [isDemo, selectedMetrics, selectedNics, selectedDisks, selectedGpus, selectedDiskIO, graphTabs, machineId, updateUserPreferences]);
 
   // Toggle a base metric together with its optional temperature sibling. When
   // clicking the CPU button, both `cpu` and `cpuTemp` flip together so the
@@ -885,10 +1053,19 @@ export function MetricsDetailPanel({
       <CardContent className="p-4">
         {/* Title row */}
         <div className="flex items-center gap-3 mb-3">
-          <span className="flex items-center gap-2 text-xl font-semibold text-foreground shrink-0">
-            <Monitor className="h-5 w-5 text-muted-foreground" />
-            {machineName || machineId}
-          </span>
+          {onSwitchMachine && machines && machines.length > MACHINE_SWITCHER_MIN ? (
+            <MachineSwitcher
+              currentId={machineId}
+              label={machineName || machineId}
+              machines={machines}
+              onSelect={onSwitchMachine}
+            />
+          ) : (
+            <span className="flex items-center gap-2 text-xl font-semibold text-foreground shrink-0">
+              <Monitor className="h-5 w-5 text-muted-foreground" />
+              {machineName || machineId}
+            </span>
+          )}
           <div className="flex-1" />
           <Button
             variant="ghost"

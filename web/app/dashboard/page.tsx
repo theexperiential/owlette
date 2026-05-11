@@ -667,6 +667,14 @@ export default function DashboardPage() {
     return !!currentSiteId && !machinesLoading && machines.length === 0;
   }, [sitesLoading, sites.length, currentSiteId, machinesLoading, machines.length]);
 
+  // Lightweight machine list for the detail panel's in-header switcher — only
+  // the id + online status it needs, memoized so the heavy panel doesn't
+  // re-render on every dashboard paint.
+  const switcherMachines = useMemo(
+    () => machines.map((m) => ({ machineId: m.machineId, online: m.online })),
+    [machines],
+  );
+
   // Handle metric click to open detail panel (persisted).
   // Each click SWAPS the panel's selection to the clicked metric — overwriting
   // any existing graphTabs for this machine — rather than merging, so clicking
@@ -711,6 +719,13 @@ export default function DashboardPage() {
       },
       { silent: true },
     ).catch(() => { /* fire-and-forget, matches graphTabs pattern */ });
+  };
+
+  // Switch the open detail panel to a different machine, keeping the current
+  // metric (re-expanded for the new machine's devices via handleMetricClick).
+  const handleSwitchMachine = (machineId: string) => {
+    if (!heldDetailPanel || heldDetailPanel.metric === 'display') return;
+    handleMetricClick(machineId, heldDetailPanel.metric);
   };
 
   // Close detail panel and return to stats cards
@@ -891,6 +906,8 @@ export default function DashboardPage() {
                   initialMetric={heldDetailPanel.metric}
                   onClose={handleCloseDetailPanel}
                   gpus={machines.find((m) => m.machineId === heldDetailPanel.machineId)?.devices?.gpus}
+                  machines={switcherMachines}
+                  onSwitchMachine={handleSwitchMachine}
                 />
               )
             )}
