@@ -4,7 +4,7 @@ import { test, expect } from '@playwright/test';
 test.use({ storageState: { cookies: [], origins: [] } });
 
 test.describe('landing faq + footer', () => {
-  test('renders exactly seven faq items and excludes the cut mayonnaise question', async ({ page }) => {
+  test('renders exactly eight faq items and excludes the cut mayonnaise question', async ({ page }) => {
     await page.goto('/');
 
     // FAQ heading anchors the section so we can scope all assertions to it.
@@ -13,7 +13,7 @@ test.describe('landing faq + footer', () => {
 
     const faqSection = page.locator('section').filter({ has: faqHeading });
     const questionButtons = faqSection.locator('button[aria-expanded]');
-    await expect(questionButtons).toHaveCount(7);
+    await expect(questionButtons).toHaveCount(8);
 
     // Regression check — the joke FAQ was cut and must not come back.
     await expect(page.getByText(/is mayonnaise an instrument/i)).toHaveCount(0);
