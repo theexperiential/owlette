@@ -178,15 +178,40 @@ function postAudit(url: string, body: unknown, label: string): void {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AUDIT_TIMEOUT_MS);
 
+  // The `recordAuditEvent` cloud function requires `x-internal-secret`
+  // (Wave 1A — see functions/src/lib/requireInternalSecret.ts). Without
+  // it the cloud function returns 401, fetch resolves successfully (not
+  // a network error), and the .catch() below would never fire — so audit
+  // events would silently disappear. We pass the secret in the header
+  // here AND check response.ok below to fail loudly on misconfiguration.
+  const internalSecret = process.env.CORTEX_INTERNAL_SECRET;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (internalSecret) {
+    headers['x-internal-secret'] = internalSecret;
+  }
+
   fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
     signal: controller.signal,
   })
+    .then((response) => {
+      // Audit log failures must NOT propagate. We log loudly so ops sees
+      // the outage; an unnoticed silent audit-gap is worse than a noisy
+      // log line because it breaks compliance + forensics.
+      if (!response.ok) {
+        console.warn(
+          `[auditLogClient] ${label} emit returned ${response.status} — audit event was DROPPED. ` +
+            (internalSecret
+              ? 'Check x-internal-secret matches the cloud function env.'
+              : 'CORTEX_INTERNAL_SECRET is not set in this web env.'),
+        );
+      }
+    })
     .catch((err) => {
-      // Audit log failures must NOT propagate. Log at warn so ops can see
-      // the outage without spiking error rates.
       console.warn(
         `[auditLogClient] ${label} emit failed: ${(err as Error).message}`,
       );

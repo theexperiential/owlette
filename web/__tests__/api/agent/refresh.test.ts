@@ -440,7 +440,26 @@ describe('parseAgentVersion + shouldRotateRefreshToken', () => {
       expect(route.parseAgentVersion(input)).toEqual(expected);
     });
 
-    it.each([null, undefined, '', '2', 'abc', '2.x.0', '-1.0.0'])(
+    it.each([
+      null,
+      undefined,
+      '',
+      '2',
+      'abc',
+      '2.x.0',
+      '-1.0.0',
+      // Number.parseInt-tolerant inputs that MUST be rejected by the
+      // strict regex check (otherwise '0junk' parses as 0 and rotation
+      // would activate on a malformed version header):
+      '2.12.0junk',
+      '2.12beta',
+      '2.12.0 ',         // trailing space
+      ' 2.12.0',         // leading space
+      '2..0',            // empty segment
+      '2.12.',           // trailing empty segment
+      '2.12.0.1.2',      // too many segments
+      '0x12.0.0',        // hex-style prefix
+    ])(
       'returns null for malformed input %j',
       (input) => {
         expect(route.parseAgentVersion(input)).toBeNull();

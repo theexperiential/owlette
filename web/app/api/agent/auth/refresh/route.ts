@@ -63,10 +63,16 @@ export function parseAgentVersion(
 ): [number, number, number] | null {
   if (!version || typeof version !== 'string') return null;
   const stripped = version.split(/[-+]/)[0];
-  const parts = stripped.split('.').map((p) => Number.parseInt(p, 10));
-  if (parts.length < 2 || parts.some((n) => !Number.isInteger(n) || n < 0)) {
-    return null;
-  }
+  // Each segment MUST be a non-empty pure-digit string. Number.parseInt
+  // is too permissive — parseInt('0junk', 10) returns 0, which would let
+  // strings like '2.12.0junk' or '2.12beta' parse as [2,12,0] and enable
+  // rotation on an unsupported agent. The whole point of this gate is to
+  // be conservative; reject anything that isn't strictly digits-and-dots.
+  const parts = stripped
+    .split('.')
+    .map((p) => (/^\d+$/.test(p) ? Number.parseInt(p, 10) : NaN));
+  if (parts.length < 2 || parts.length > 4) return null;
+  if (parts.some((n) => !Number.isInteger(n) || n < 0)) return null;
   return [parts[0], parts[1], parts[2] ?? 0];
 }
 

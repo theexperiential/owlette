@@ -63,6 +63,27 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     const db = getAdminDb();
 
+    // SECURITY: refuse to overwrite existing MFA state via this route.
+    // Without this guard, an attacker with a captured session who has
+    // already passed primary auth (but NOT MFA — `/api/*` routes are not
+    // gated by the proxy MFA check) could call /api/mfa/setup to mint a
+    // new pending secret, then call this route to overwrite the victim's
+    // mfaSecret+backupCodes with the attacker's, and even mark the
+    // session mfaVerified — full MFA bypass. Re-enrollment must go
+    // through /api/mfa/disable first (which requires proof of current
+    // factor possession), and only then through setup+verify-setup.
+    const userDocPre = await db.collection('users').doc(userId).get();
+    if (userDocPre.exists && userDocPre.data()?.mfaEnrolled === true) {
+      return NextResponse.json(
+        {
+          error:
+            'MFA is already enrolled. Disable it via /api/mfa/disable (which requires proof of your current factor) before re-enrolling.',
+          code: 'mfa_already_enrolled',
+        },
+        { status: 409 },
+      );
+    }
+
     // Get pending setup
     const pendingDoc = await db.collection('mfa_pending').doc(userId).get();
     if (!pendingDoc.exists) {

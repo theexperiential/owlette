@@ -485,9 +485,33 @@ service cloud.firestore {
       match /cortex-events/{eventId} {
         allow read: if canAccessSite(siteId) ||
                        isServiceAccount();
+
+        // Create: agent must claim its own machineId on the doc (or omit
+        // it entirely — server-mediated paths set machineId via admin
+        // SDK and bypass rules). Previously the rule only checked
+        // site_id, which let an agent for machine A write events
+        // claiming to be machine B in the same site.
         allow create: if isServiceAccount() ||
-                         (isAgent() && request.auth.token.site_id == siteId);
-        allow update, delete: if isServiceAccount();
+                         (isAgent() &&
+                          request.auth.token.site_id == siteId &&
+                          (!('machineId' in request.resource.data) ||
+                           request.resource.data.machineId == request.auth.token.machine_id));
+
+        // Update: agents need to update events they created (mark
+        // resolved/escalated/failed, set escalation flags). Previously
+        // updates were server-only, so the agent's status-update writes
+        // were silently denied and events got stuck at initial status.
+        // Constraints:
+        //   - calling machine must match the existing event's machineId
+        //   - machineId must NOT change on update (no reassignment)
+        allow update: if isServiceAccount() ||
+                         (isAgent() &&
+                          request.auth.token.site_id == siteId &&
+                          resource.data.machineId == request.auth.token.machine_id &&
+                          request.resource.data.machineId == resource.data.machineId);
+
+        // Delete is still server-mediated only.
+        allow delete: if isServiceAccount();
       }
 
       // ----------------------------------------

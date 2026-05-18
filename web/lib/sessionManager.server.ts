@@ -124,22 +124,28 @@ async function resolveMfaStateForUser(userId: string): Promise<{
   mfaRequired: boolean;
   mfaVerified: boolean;
 }> {
-  try {
-    const db = getAdminDb();
-    const snap = await db.collection('users').doc(userId).get();
-    if (!snap.exists) {
-      return { mfaRequired: false, mfaVerified: true };
-    }
-    const data = snap.data();
-    const enrolled = data?.mfaEnrolled === true;
-    if (enrolled) {
-      return { mfaRequired: true, mfaVerified: false };
-    }
-    return { mfaRequired: false, mfaVerified: true };
-  } catch (err) {
-    console.error('[Session] resolveMfaStateForUser failed for', userId, err);
+  // Note: the previous version of this function fail-opened on Firestore
+  // errors (returned mfaRequired:false). An attacker who could induce
+  // even a transient Firestore failure during their session creation
+  // could thereby bypass MFA. We now THROW on error; callers decide how
+  // to handle (createSession lets it propagate; evaluateSessionMfa
+  // catches and forces a challenge — fail-CLOSED).
+  //
+  // The doc-not-exists case is still fail-soft for legitimate reasons:
+  // first-login users may hit evaluateSessionMfa before /api/users/bootstrap
+  // has run. Those users can't have MFA enrolled (they have no doc), so
+  // mfaRequired=false is correct.
+  const db = getAdminDb();
+  const snap = await db.collection('users').doc(userId).get();
+  if (!snap.exists) {
     return { mfaRequired: false, mfaVerified: true };
   }
+  const data = snap.data();
+  const enrolled = data?.mfaEnrolled === true;
+  if (enrolled) {
+    return { mfaRequired: true, mfaVerified: false };
+  }
+  return { mfaRequired: false, mfaVerified: true };
 }
 
 /**
@@ -271,18 +277,40 @@ export async function evaluateSessionMfa(
 
   // Migrate pre-Wave-2 sessions: no `mfaRequired` field means the session
   // was issued before this feature shipped. Upgrade in place.
+  //
+  // If the Firestore lookup throws (transient outage), we DO NOT cache a
+  // result — we force `challenge` for this request and leave the session
+  // unmodified so a retry can complete the upgrade later. This is the
+  // fail-CLOSED path (previously fail-open, which let an attacker bypass
+  // MFA by exploiting a transient Firestore failure).
   if (typeof session.mfaRequired !== 'boolean') {
-    const { mfaRequired, mfaVerified } = await resolveMfaStateForUser(
-      session.userId
-    );
-    session.mfaRequired = mfaRequired;
-    session.mfaVerified = mfaVerified;
     try {
-      await session.save();
+      const { mfaRequired, mfaVerified } = await resolveMfaStateForUser(
+        session.userId,
+      );
+      session.mfaRequired = mfaRequired;
+      session.mfaVerified = mfaVerified;
+      try {
+        await session.save();
+      } catch (err) {
+        // If we can't persist the upgrade, still honor the freshly-evaluated
+        // values for this request — better to enforce than to no-op.
+        console.error(
+          '[Session] failed to persist MFA upgrade for',
+          session.userId,
+          err,
+        );
+      }
     } catch (err) {
-      // If we can't persist the upgrade, still honor the freshly-evaluated
-      // values for this request — better to enforce than to no-op.
-      console.error('[Session] failed to persist MFA upgrade for', session.userId, err);
+      console.error(
+        '[Session] MFA upgrade lookup failed for',
+        session.userId,
+        '— forcing challenge (fail-closed)',
+        err,
+      );
+      // Force the challenge path so we don't fail-OPEN. The session is
+      // unmodified; the next request will retry the upgrade.
+      return { outcome: 'challenge', userId: session.userId };
     }
   }
 
