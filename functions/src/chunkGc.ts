@@ -34,6 +34,8 @@ import {
   type TombstoneRecord,
 } from './lib/chunkGcLogic';
 
+const FIRESTORE_BATCH_LIMIT = 400;
+
 /* --------------------------------------------------------------------- */
 /*  Dependency interfaces (injectable for tests + deploy wiring)         */
 /* --------------------------------------------------------------------- */
@@ -336,14 +338,23 @@ function getDefaultTombstoneStore(): TombstoneStore {
       }));
     },
     async create(siteId: string, hashes: string[], now: Date) {
-      const batch = db.batch();
+      let batch = db.batch();
+      let opsInBatch = 0;
       for (const hash of hashes) {
         batch.set(col(siteId).doc(hash), {
           tombstonedAt: FieldValue.serverTimestamp(),
           plannedDeleteAfter: new Date(now.getTime() + TOMBSTONE_TTL_MS),
         });
+        opsInBatch += 1;
+        if (opsInBatch >= FIRESTORE_BATCH_LIMIT) {
+          await batch.commit();
+          batch = db.batch();
+          opsInBatch = 0;
+        }
       }
-      await batch.commit();
+      if (opsInBatch > 0) {
+        await batch.commit();
+      }
     },
     async clear(siteId: string, hashes: string[]) {
       const batch = db.batch();

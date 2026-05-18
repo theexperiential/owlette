@@ -21,7 +21,8 @@ export const POST = withRateLimit(async () => {
   try {
     const options = await generateAuthenticationOptions({
       rpID: getRpId(),
-      userVerification: 'preferred',
+      // Require user verification (PIN/biometric) — single-touch FIDO keys aren't sufficient for full account access.
+      userVerification: 'required',
     });
 
     // Generate random challenge ID (no user known yet)

@@ -33,3 +33,5 @@ export { exportSecurityBoundaryAuditDevDaily } from './securityBoundaryAuditExpo
 export { emitWebhook, processRetryQueue } from './webhookDispatch';
 export { sweepExpiredApiKeysDaily } from './apiKeyExpire';
 export { sweepExpiredIdempotencyCacheDaily } from './idempotencyCleanup';
+export { reconcileDeploymentStatus } from './reconcileDeploymentStatus';
+export { reconcileDistributionStatus } from './reconcileDistributionStatus';

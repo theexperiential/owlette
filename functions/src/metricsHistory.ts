@@ -9,13 +9,22 @@
  *
  * Data flow:
  * 1. Agent writes to: sites/{siteId}/machines/{machineId} (metrics data)
- * 2. This function triggers and writes to: sites/{siteId}/machines/{machineId}/metrics_history/{date}
+ * 2. This function triggers and writes to: sites/{siteId}/machines/{machineId}/metrics_history/{bucket}
  * 3. Evaluates threshold alert rules from sites/{siteId}/settings/alerts
  * 4. If threshold breached + not in cooldown, calls /api/alerts/trigger
  *
  * Rate limiting:
  * - Checks last sample timestamp to avoid duplicate samples within 55 seconds
  * - Uses Firestore FieldValue.arrayUnion for atomic append (no read-modify-write)
+ *
+ * History bucket schema:
+ * - Legacy docs used one daily bucket: metrics_history/{YYYY-MM-DD}
+ * - New writes use hourly UTC buckets: metrics_history/{YYYY-MM-DD-HH}
+ *
+ * The samples/meta shape is unchanged. Splitting the daily array into 24 hourly
+ * docs keeps rich 30-second telemetry well below Firestore's 1MiB document
+ * limit while leaving existing daily docs available for readers that support
+ * both shapes.
  */
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
@@ -152,7 +161,7 @@ interface MetricsSample {
 
 /**
  * Triggered when a machine document is written (created or updated).
- * Extracts metrics and appends to the daily history bucket.
+ * Extracts metrics and appends to the hourly history bucket.
  */
 export const onMetricsWrite = onDocumentWritten(
   'sites/{siteId}/machines/{machineId}',
@@ -176,9 +185,11 @@ export const onMetricsWrite = onDocumentWritten(
     // Get current timestamp
     const now = Math.floor(Date.now() / 1000);
 
-    // Get today's date in UTC for bucket ID
-    const today = new Date();
-    const bucketId = today.toISOString().split('T')[0]; // YYYY-MM-DD
+    // Get current UTC hour for bucket ID
+    const sampleDate = new Date(now * 1000);
+    const bucketId = hourlyBucketId(sampleDate);
+    const previousBucketId = hourlyBucketId(new Date(sampleDate.getTime() - 60 * 60 * 1000));
+    const legacyDayBucketId = dailyBucketId(sampleDate);
 
     // Path to history document
     const historyRef = db
@@ -189,19 +200,33 @@ export const onMetricsWrite = onDocumentWritten(
       .collection('metrics_history')
       .doc(bucketId);
 
-    // Check if we should rate limit (avoid duplicate samples within 55 seconds)
+    // Check if we should rate limit (avoid duplicate samples within 55 seconds).
+    // For the first write into a new hour bucket, also consult the previous hour
+    // and legacy daily bucket metadata so hour-boundary/deploy-boundary writes
+    // don't accidentally bypass the old daily-doc rate limit.
     try {
-      const historyDoc = await historyRef.get();
-      if (historyDoc.exists) {
-        const meta = historyDoc.data()?.meta;
-        if (meta?.lastSampleTime) {
-          const lastSampleTime = meta.lastSampleTime;
-          if (now - lastSampleTime < 55) {
-            // Too soon since last sample, skip
-            console.log(`Rate limiting: last sample was ${now - lastSampleTime}s ago for ${machineId}`);
-            return;
-          }
-        }
+      const lastSampleTime = await readLastSampleTime(
+        historyRef,
+        db
+          .collection('sites')
+          .doc(siteId)
+          .collection('machines')
+          .doc(machineId)
+          .collection('metrics_history')
+          .doc(previousBucketId),
+        db
+          .collection('sites')
+          .doc(siteId)
+          .collection('machines')
+          .doc(machineId)
+          .collection('metrics_history')
+          .doc(legacyDayBucketId),
+      );
+
+      if (lastSampleTime && now - lastSampleTime < 55) {
+        // Too soon since last sample, skip
+        console.log(`Rate limiting: last sample was ${now - lastSampleTime}s ago for ${machineId}`);
+        return;
       }
     } catch (err) {
       // If we can't check, proceed anyway
@@ -352,6 +377,37 @@ export const onMetricsWrite = onDocumentWritten(
  */
 function round(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function hourlyBucketId(date: Date): string {
+  return date.toISOString().slice(0, 13).replace('T', '-'); // YYYY-MM-DD-HH
+}
+
+function dailyBucketId(date: Date): string {
+  return date.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+async function readLastSampleTime(
+  currentHourRef: FirebaseFirestore.DocumentReference,
+  previousHourRef: FirebaseFirestore.DocumentReference,
+  legacyDayRef: FirebaseFirestore.DocumentReference,
+): Promise<number | null> {
+  const currentHourDoc = await currentHourRef.get();
+  const currentLastSample = currentHourDoc.data()?.meta?.lastSampleTime;
+  if (typeof currentLastSample === 'number') return currentLastSample;
+
+  const [previousHourDoc, legacyDayDoc] = await Promise.all([
+    previousHourRef.get(),
+    legacyDayRef.get(),
+  ]);
+
+  const previousLastSample = previousHourDoc.data()?.meta?.lastSampleTime;
+  const legacyLastSample = legacyDayDoc.data()?.meta?.lastSampleTime;
+  const candidates = [previousLastSample, legacyLastSample].filter(
+    (value): value is number => typeof value === 'number',
+  );
+
+  return candidates.length > 0 ? Math.max(...candidates) : null;
 }
 
 /* ------------------------------------------------------------------ */

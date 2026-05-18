@@ -13,7 +13,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { collection, getDocs, query, where, documentId } from 'firebase/firestore';
+import { collection, getDocs, query, where, documentId, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useDemoContext } from '@/contexts/DemoContext';
 import type { TimeRange } from '@/components/charts';
@@ -120,8 +120,30 @@ function getStartDate(range: TimeRange): Date {
   }
 }
 
+const DAY_BUCKET_ID_RE = /^\d{4}-\d{2}-\d{2}$/;
+const HOUR_BUCKET_ID_RE = /^\d{4}-\d{2}-\d{2}-\d{2}$/;
+const FIRESTORE_IN_LIMIT = 30;
+const MAX_FETCHED_SAMPLES = 5000;
+const MAX_DAY_BUCKET_IN_QUERIES = 24;
+
+function formatDayBucketId(date: Date): string {
+  return date.toISOString().split('T')[0];
+}
+
+function formatHourBucketId(date: Date): string {
+  return date.toISOString().slice(0, 13).replace('T', '-');
+}
+
+function chunkArray<T>(items: T[], chunkSize: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += chunkSize) {
+    chunks.push(items.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
+
 /**
- * Get list of date bucket IDs to query (YYYY-MM-DD format)
+ * Get list of date bucket IDs to query (YYYY-MM-DD format).
  */
 function getBucketIds(start: Date, end: Date): string[] {
   const ids: string[] = [];
@@ -129,8 +151,8 @@ function getBucketIds(start: Date, end: Date): string[] {
   current.setUTCHours(0, 0, 0, 0);
 
   while (current <= end) {
-    ids.push(current.toISOString().split('T')[0]);
-    current.setDate(current.getDate() + 1);
+    ids.push(formatDayBucketId(current));
+    current.setUTCDate(current.getUTCDate() + 1);
   }
 
   return ids;
@@ -252,14 +274,11 @@ export function useHistoricalMetrics(
       const now = new Date();
       const startDate = getStartDate(timeRange);
       const startTimestamp = Math.floor(startDate.getTime() / 1000);
+      const endTimestamp = Math.floor(now.getTime() / 1000);
 
-      // Get bucket IDs to query
+      // Get bucket IDs to query.
       const bucketIds = getBucketIds(startDate, now);
 
-      // Fetch only the buckets we need. For short ranges (hour/day) this is
-      // 1-2 docs vs. potentially dozens when fetching the whole collection.
-      // Firestore allows up to 30 values per `in` clause; for longer ranges
-      // we fall back to fetching the whole collection and filtering.
       const historyRef = collection(
         db,
         'sites',
@@ -270,23 +289,66 @@ export function useHistoricalMetrics(
       );
 
       const allSamples: ChartDataPoint[] = [];
+      const bucketDocs = new Map<string, { id: string; data: () => Record<string, unknown> }>();
+      const fromDayId = formatDayBucketId(startDate);
+      const toDayId = formatDayBucketId(now);
+      const fromHourId = formatHourBucketId(startDate);
+      const toHourId = formatHourBucketId(now);
 
-      const snapshot = bucketIds.length > 0 && bucketIds.length <= 30
-        ? await getDocs(query(historyRef, where(documentId(), 'in', bucketIds)))
-        : await getDocs(historyRef);
+      // Day buckets are sparse enough to fetch by exact IDs for normal ranges,
+      // avoiding the old unbounded collection read and also avoiding reads of
+      // interleaved hour-bucket docs. Very large "all" windows use a bounded
+      // documentId range instead of issuing hundreds of `in` queries.
+      if (bucketIds.length > 0 && bucketIds.length <= FIRESTORE_IN_LIMIT * MAX_DAY_BUCKET_IN_QUERIES) {
+        for (const bucketChunk of chunkArray(bucketIds, FIRESTORE_IN_LIMIT)) {
+          const daySnap = await getDocs(query(historyRef, where(documentId(), 'in', bucketChunk)));
+          daySnap.forEach((docSnap) => {
+            if (DAY_BUCKET_ID_RE.test(docSnap.id)) {
+              bucketDocs.set(docSnap.id, docSnap);
+            }
+          });
+        }
+      } else {
+        const daySnap = await getDocs(query(
+          historyRef,
+          where(documentId(), '>=', fromDayId),
+          where(documentId(), '<=', toDayId),
+          orderBy(documentId(), 'asc'),
+        ));
+        daySnap.forEach((docSnap) => {
+          if (DAY_BUCKET_ID_RE.test(docSnap.id)) {
+            bucketDocs.set(docSnap.id, docSnap);
+          }
+        });
+      }
 
-      snapshot.forEach((doc) => {
+      // Wave 3B stores hourly buckets as YYYY-MM-DD-HH. Query that shape too so
+      // migrated machines render without falling back to a collection scan.
+      const hourSnap = await getDocs(query(
+        historyRef,
+        where(documentId(), '>=', fromHourId),
+        where(documentId(), '<=', toHourId),
+        orderBy(documentId(), 'asc'),
+      ));
+      hourSnap.forEach((docSnap) => {
+        if (HOUR_BUCKET_ID_RE.test(docSnap.id)) {
+          bucketDocs.set(docSnap.id, docSnap);
+        }
+      });
+
+      const sortedBucketDocs = Array.from(bucketDocs.values())
+        .sort((a, b) => a.id.localeCompare(b.id));
+
+      for (const doc of sortedBucketDocs) {
         const bucketId = doc.id;
-
-        // For the fallback (unfiltered) fetch, drop buckets outside range.
-        if (!bucketIds.includes(bucketId)) return;
+        if (!DAY_BUCKET_ID_RE.test(bucketId) && !HOUR_BUCKET_ID_RE.test(bucketId)) continue;
 
         const docData = doc.data();
         const samples = docData.samples || [];
 
         // Filter samples within time range and convert to chart format
         for (const sample of samples as MetricsSample[]) {
-          if (sample.t >= startTimestamp) {
+          if (sample.t >= startTimestamp && sample.t <= endTimestamp) {
             const point: ChartDataPoint = {
               time: sample.t * 1000, // Convert to milliseconds
               cpu: sample.c,
@@ -348,9 +410,14 @@ export function useHistoricalMetrics(
             }
 
             allSamples.push(point);
+
+            if (allSamples.length > MAX_FETCHED_SAMPLES * 2) {
+              allSamples.sort((a, b) => a.time - b.time);
+              allSamples.splice(0, allSamples.length, ...downsampleForDisplay(allSamples, MAX_FETCHED_SAMPLES));
+            }
           }
         }
-      });
+      }
 
       // Sort by timestamp
       allSamples.sort((a, b) => a.time - b.time);

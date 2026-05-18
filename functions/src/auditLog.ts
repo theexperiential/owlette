@@ -26,6 +26,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import * as admin from 'firebase-admin';
+import { requireInternalSecret } from './lib/requireInternalSecret';
 import {
   AUDIT_RETENTION_DAYS,
   buildAuditRecord,
@@ -196,6 +197,7 @@ export const recordAuditEvent = onRequest(
       res.status(405).json({ error: 'method_not_allowed' });
       return;
     }
+    if (!requireInternalSecret(req, res)) return;
     const result = await appendAudit(
       (req.body ?? {}) as Partial<AuditEvent>,
       { store: getDefaultStore() },
@@ -213,6 +215,7 @@ export const recordAuditEvent = onRequest(
 export const verifyAuditChain = onRequest(
   { timeoutSeconds: 30, memory: '512MiB' },
   async (req, res) => {
+    if (!requireInternalSecret(req, res)) return;
     const siteId = String(req.query.siteId ?? '');
     if (!siteId) {
       res.status(400).json({ error: 'siteId_required' });

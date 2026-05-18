@@ -17,10 +17,12 @@ import {
   problemValidation,
   ProblemType,
 } from '@/lib/apiErrors';
+import { getAdminDb } from '@/lib/firebase-admin';
 import { getVersionBody } from '@/lib/r2Client.server';
 import { diffVersions, summariseDiff } from '@/lib/versionDiff';
 import type { VersionFileEntry } from '@/lib/chunking';
 import { resolveVersion, ResolveVersionError } from '@/lib/resolveVersion';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import {
   applyAuthDeprecations,
   requireRoostAuthAndScope,
@@ -30,6 +32,11 @@ import {
 
 interface RouteParams {
   params: Promise<{ roostId: string; versionRef: string }>;
+}
+
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -57,6 +64,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'read');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     // Resolve both refs. Run in parallel — they're independent lookups
     // against the same roost. Any failure short-circuits with the

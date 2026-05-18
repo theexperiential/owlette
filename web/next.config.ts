@@ -2,12 +2,6 @@ import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
 import { version } from "./package.json";
 
-const isDev = process.env.NODE_ENV === 'development';
-// Emulator mode — signaled at build time by the e2e npm script. When true,
-// the CSP is widened to allow http://127.0.0.1:* + ws://127.0.0.1:* so the
-// Firebase Auth + Firestore + Storage emulators can reach the browser. Never
-// true in prod builds.
-const isEmulatorBuild = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
 const e2eDistDir = process.env.OWLETTE_NEXT_DIST_DIR;
 const allowedDevOrigins = (process.env.NEXT_ALLOWED_DEV_ORIGINS ?? '')
   .split(',')
@@ -21,6 +15,9 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_APP_VERSION: version,
   },
   allowedDevOrigins,
+  images: {
+    formats: ['image/avif', 'image/webp'],
+  },
   async headers() {
     return [
       {
@@ -34,7 +31,12 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        // Apply security headers to all routes
+        // Apply static security headers to all routes.
+        // CSP is emitted from proxy.ts instead of next.config.ts because it
+        // needs a fresh per-request nonce. Production script/style inline
+        // execution must use that nonce (and script-src strict-dynamic) rather
+        // than 'unsafe-inline'. A scoped style-src-attr exception remains in
+        // proxy.ts until the remaining React style={{ ... }} attrs are migrated.
         source: '/:path*',
         headers: [
           {
@@ -68,36 +70,6 @@ const nextConfig: NextConfig = {
             // Enforce HTTPS for 1 year — prevents downgrade/MITM attacks
             key: 'Strict-Transport-Security',
             value: 'max-age=31536000; includeSubDomains',
-          },
-          {
-            // Content Security Policy - controls what resources can be loaded
-            // Note: 'unsafe-inline' in style-src is required by Tailwind CSS
-            // Note: 'unsafe-inline' in script-src is required by Google OAuth sign-in popups
-            // TODO: Replace with nonce-based CSP via Next.js middleware for stronger XSS protection
-            key: 'Content-Security-Policy',
-            value: [
-              "default-src 'self'",
-              // 'unsafe-eval' is added in DEV ONLY — Next.js Fast Refresh
-              // hot-reload runtime calls eval() to hot-swap modules. production
-              // builds do NOT use eval, so prod CSP stays fully hardened.
-              //
-              // History: commit 9d0ffa2 (2025-11-17) removed 'unsafe-eval'
-              // claiming "not required by Next.js 13+ App Router" — that's
-              // true for the production runtime only. dev-mode Fast Refresh
-              // broke silently; restored as a dev-conditional on 2026-04-19.
-              // do NOT remove this without testing `npm run dev` afterward.
-              `script-src 'self' 'unsafe-inline' ${isDev ? "'unsafe-eval' " : ''}https://accounts.google.com https://apis.google.com https://*.gstatic.com`, // Google OAuth requires inline scripts
-              "style-src 'self' 'unsafe-inline'", // Tailwind CSS requires unsafe-inline
-              `img-src 'self' data: blob: https:${isEmulatorBuild ? ' http://127.0.0.1:*' : ''}`,
-              "font-src 'self' data:",
-              `connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com https://*.ingest.sentry.io https://*.r2.cloudflarestorage.com${isEmulatorBuild ? ' http://127.0.0.1:* ws://127.0.0.1:*' : ''}`, // Firebase endpoints + Google OAuth + R2 presigned chunk uploads/downloads (wave 3.1) (+ Firebase emulator hosts in E2E mode)
-              "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com", // Allow Google OAuth popup and Firebase auth
-              "frame-ancestors 'none'", // Equivalent to X-Frame-Options: DENY
-              "base-uri 'self'",
-              "form-action 'self'",
-              "object-src 'none'", // Prevent plugin-based attacks (Flash, Java applets)
-              ...(isDev ? [] : ["upgrade-insecure-requests"]), // Force HTTPS for all resources (skip in dev for LAN access)
-            ].join('; '),
           },
         ],
       },

@@ -6,7 +6,7 @@ import { Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { OwletteEyeIcon } from './OwletteEye';
 
-type NavLinkDef = { label: string; href: string; external?: boolean };
+type NavLinkDef = { label: string; href: string; external?: boolean; prefetch?: boolean };
 
 // Section anchors, in page order.
 const SECTION_LINKS: NavLinkDef[] = [
@@ -18,7 +18,7 @@ const SECTION_LINKS: NavLinkDef[] = [
 // External / account links.
 const UTIL_LINKS: NavLinkDef[] = [
   { label: 'docs', href: 'https://theexperiential.github.io/owlette/', external: true },
-  { label: 'download', href: '/download' },
+  { label: 'download', href: '/download', prefetch: false },
   { label: 'sign in', href: '/login' },
 ];
 
@@ -38,7 +38,7 @@ function linkEl(link: NavLinkDef, className?: string, onClick?: () => void) {
     );
   }
   return (
-    <Link key={link.label} href={link.href} className={className} onClick={onClick}>
+    <Link key={link.label} href={link.href} prefetch={link.prefetch} className={className} onClick={onClick}>
       {link.label}
     </Link>
   );

@@ -13,6 +13,7 @@ import {
   problemValidation,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import {
   collectFilteredPage,
   parsePagination,
@@ -33,6 +34,11 @@ const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 const VALID_STAGES = new Set(['scheduled', 'canary', 'complete', 'aborted']);
 
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
+}
+
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { roostId } = await params;
@@ -50,6 +56,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'read');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     const parsedPagination = parsePagination(request.nextUrl.searchParams, {
       defaultPageSize: DEFAULT_LIMIT,

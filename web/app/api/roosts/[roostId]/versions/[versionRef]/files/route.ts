@@ -15,12 +15,14 @@ import {
   problemValidation,
   ProblemType,
 } from '@/lib/apiErrors';
+import { getAdminDb } from '@/lib/firebase-admin';
 import {
   parsePagination,
   withPaginationFields,
 } from '@/lib/pagination';
 import { getVersionBody } from '@/lib/r2Client.server';
 import { resolveVersion, ResolveVersionError } from '@/lib/resolveVersion';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import {
   applyAuthDeprecations,
   requireRoostAuthAndScope,
@@ -41,6 +43,11 @@ interface VersionFile {
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
 
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
+}
+
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { roostId, versionRef } = await params;
@@ -59,6 +66,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'read');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     const parsedPagination = parsePagination(request.nextUrl.searchParams, {
       defaultPageSize: DEFAULT_LIMIT,

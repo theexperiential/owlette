@@ -49,7 +49,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       excludeCredentials,
       authenticatorSelection: {
         residentKey: 'preferred',
-        userVerification: 'preferred',
+        // Require user verification (PIN/biometric) — single-touch FIDO keys aren't sufficient for full account access.
+        userVerification: 'required',
       },
     });
 

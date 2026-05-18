@@ -26,6 +26,7 @@ Usage:
     token = auth.get_valid_token()
 """
 
+import base64
 import requests
 import time
 import socket
@@ -33,6 +34,11 @@ import logging
 import json
 import threading
 from typing import Optional, Dict, Any
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
 from secure_storage import SecureStorage, get_storage
 import shared_utils
 
@@ -40,6 +46,79 @@ logger = logging.getLogger(__name__)
 
 # Default token refresh buffer (refresh 5 minutes before expiry)
 TOKEN_REFRESH_BUFFER_SECONDS = 5 * 60
+
+# Wrap version emitted by web/lib/deviceCodeCrypto.ts. Bump in lockstep
+# if the crypto parameters ever change.
+DEVICE_CODE_WRAP_VERSION = 'v1'
+_DEVICE_CODE_HKDF_INFO = b'owlette-device-code-v1'
+_DEVICE_CODE_KEY_LENGTH = 32  # AES-256
+_DEVICE_CODE_IV_LENGTH = 12   # AES-GCM standard nonce
+_DEVICE_CODE_TAG_LENGTH = 16  # AES-GCM authentication tag
+
+
+def _derive_device_code_key(device_code: str, doc_id: str) -> bytes:
+    """
+    Derive the per-document AES-256 key for unwrapping a device-code
+    credential bundle.
+
+    Must produce the identical key as the typescript
+    `deriveDeviceCodeKey` helper in web/lib/deviceCodeCrypto.ts —
+    HKDF-SHA256 with the deviceCode as the input keying material, the
+    pair phrase (doc id) as the salt, and the literal info string
+    'owlette-device-code-v1'.
+    """
+    if not device_code:
+        raise AuthenticationError('device code required for credential decryption')
+    if not doc_id:
+        raise AuthenticationError('doc id required for credential decryption')
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=_DEVICE_CODE_KEY_LENGTH,
+        salt=doc_id.encode('utf-8'),
+        info=_DEVICE_CODE_HKDF_INFO,
+    )
+    return hkdf.derive(device_code.encode('utf-8'))
+
+
+def _decrypt_device_code_credentials(
+    encrypted_blob: str,
+    device_code: str,
+    doc_id: str,
+) -> Dict[str, Any]:
+    """
+    Decrypt an `encryptedCredentials` blob returned by the v1 device-code
+    poll response. The blob is base64(iv || authTag || ciphertext).
+
+    The HKDF inputs are pinned to match web/lib/deviceCodeCrypto.ts. Any
+    mismatch (wrong device code, tampered ciphertext) will raise an
+    `InvalidTag` from `cryptography`, which we rewrap as
+    `AuthenticationError`.
+    """
+    try:
+        raw = base64.b64decode(encrypted_blob, validate=True)
+    except (ValueError, base64.binascii.Error) as exc:
+        raise AuthenticationError(f'malformed encrypted credentials: {exc}')
+
+    minimum = _DEVICE_CODE_IV_LENGTH + _DEVICE_CODE_TAG_LENGTH + 1
+    if len(raw) < minimum:
+        raise AuthenticationError('encrypted credentials blob too short')
+
+    iv = raw[:_DEVICE_CODE_IV_LENGTH]
+    auth_tag = raw[_DEVICE_CODE_IV_LENGTH:_DEVICE_CODE_IV_LENGTH + _DEVICE_CODE_TAG_LENGTH]
+    ciphertext = raw[_DEVICE_CODE_IV_LENGTH + _DEVICE_CODE_TAG_LENGTH:]
+
+    key = _derive_device_code_key(device_code, doc_id)
+    aesgcm = AESGCM(key)
+    # AESGCM.decrypt expects ciphertext || tag concatenated.
+    try:
+        plaintext = aesgcm.decrypt(iv, ciphertext + auth_tag, None)
+    except Exception as exc:  # InvalidTag and friends
+        raise AuthenticationError(f'failed to decrypt credentials: {exc}')
+
+    try:
+        return json.loads(plaintext.decode('utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AuthenticationError(f'decrypted credentials are not valid json: {exc}')
 
 
 class AuthenticationError(Exception):
@@ -291,12 +370,36 @@ class AuthManager:
                     continue
 
                 if response.status_code == 200:
-                    # Authorized — extract and store tokens
+                    # Authorized — extract and store tokens. The server
+                    # may return either:
+                    #   - the v1 encrypted shape: { wrapVersion: 'v1',
+                    #     encryptedCredentials, phrase } — preferred,
+                    #     never carries plaintext over the wire.
+                    #   - the legacy plaintext shape: { accessToken,
+                    #     refreshToken, expiresIn, siteId } — retained
+                    #     so old pre-authorised codes still resolve
+                    #     during the deploy migration window.
                     data = response.json()
-                    access_token = data.get('accessToken')
-                    refresh_token = data.get('refreshToken')
-                    expires_in = data.get('expiresIn', 3600)
-                    site_id = data.get('siteId')
+
+                    if data.get('wrapVersion') == DEVICE_CODE_WRAP_VERSION:
+                        encrypted_blob = data.get('encryptedCredentials')
+                        phrase = data.get('phrase')
+                        if not encrypted_blob or not phrase:
+                            raise AuthenticationError(
+                                'Invalid v1 response (missing encryptedCredentials or phrase)'
+                            )
+                        bundle = _decrypt_device_code_credentials(
+                            encrypted_blob, device_code, phrase
+                        )
+                        access_token = bundle.get('accessToken')
+                        refresh_token = bundle.get('refreshToken')
+                        expires_in = bundle.get('expiresIn', 3600)
+                        site_id = bundle.get('siteId')
+                    else:
+                        access_token = data.get('accessToken')
+                        refresh_token = data.get('refreshToken')
+                        expires_in = data.get('expiresIn', 3600)
+                        site_id = data.get('siteId')
 
                     if not access_token or not refresh_token or not site_id:
                         raise AuthenticationError("Invalid response (missing tokens)")
@@ -408,12 +511,31 @@ class AuthManager:
                 raise TokenRefreshError(f"Invalid JSON response from server: {e}")
             access_token = data.get('accessToken')
             expires_in = data.get('expiresIn', 3600)
+            # Server rotates the refresh token on every refresh (web wave 2C —
+            # 5-minute grace window on the old token after rotation). Persist
+            # the new refresh token so we use it on the next refresh; otherwise
+            # we'd keep sending the original token and lose auth ~5 min after
+            # the first rotation event. Field is optional for back-compat with
+            # older server versions that don't rotate.
+            new_refresh_token = data.get('refreshToken')
 
             if not access_token:
                 raise TokenRefreshError("Invalid response from server (missing token)")
 
             # Calculate expiry timestamp
             expiry_timestamp = time.time() + expires_in
+
+            # Persist rotated refresh token FIRST. If save_access_token fails
+            # afterward, the next refresh will still work because we hold the
+            # current refresh token and the old one is still in the 5-min grace
+            # window server-side.
+            if new_refresh_token:
+                save_ok = self.storage.save_refresh_token(new_refresh_token)
+                if not save_ok:
+                    logger.warning(
+                        "Token refresh: server rotated refresh token but persist failed; "
+                        "next refresh may fail after grace window expires"
+                    )
 
             # Update cached token
             self.storage.save_access_token(access_token, expiry_timestamp)

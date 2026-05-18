@@ -34,6 +34,7 @@ import {
 } from '@/lib/apiErrors';
 import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
   auditActorIdentifier,
@@ -53,6 +54,11 @@ interface RouteParams {
   params: Promise<{ roostId: string }>;
 }
 
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
+}
+
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const { roostId } = await params;
@@ -68,6 +74,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'deploy');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     const db = getAdminDb();
     const roostRef = db

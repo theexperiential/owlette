@@ -5,20 +5,26 @@
  *
  * Client sends `{ deviceCode }` from the /device-code response. While the
  * phrase is pending, returns 202. Once the user authorises via the
- * browser, returns 200 with the owk_* api key (shown ONCE — the firestore
- * doc is deleted atomically in the same transaction). Expired codes
- * return 410.
+ * browser, returns 200 with the credentials (the firestore doc is deleted
+ * atomically in the same transaction). Expired codes return 410.
  *
  * Response shapes:
  *   202 { status: 'pending' }
- *   200 { apiKey, keyId, name, scopes, environment, expiresAt, siteId }
+ *   200 v1   { wrapVersion: 'v1', encryptedCredentials, phrase }
+ *   200 legacy { apiKey, keyId, name, scopes, environment, expiresAt, siteId }
  *   410 { error: 'expired' }
  *   404 { error: 'invalid device code' }
+ *
+ * v1 callers decrypt `encryptedCredentials` locally with
+ * `HKDF-SHA256(deviceCode, salt=phrase, info='owlette-device-code-v1')`
+ * → AES-256-GCM. See lib/deviceCodeCrypto.ts for the canonical
+ * implementation and the matching python in agent/src/auth_manager.py.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
+import { DEVICE_CODE_WRAP_VERSION } from '@/lib/deviceCodeCrypto';
 
 export const POST = withRateLimit(
   async (request: NextRequest) => {
@@ -63,20 +69,41 @@ export const POST = withRateLimit(
           return { body: { status: 'pending' as const }, status: 202 } as const;
         }
 
-        if (data.status === 'authorized' && typeof data.rawKey === 'string') {
-          tx.delete(docRef);
-          return {
-            body: {
-              apiKey: data.rawKey,
-              keyId: data.keyId ?? null,
-              name: data.name ?? null,
-              scopes: data.scopes ?? null,
-              environment: data.environment ?? null,
-              expiresAt: data.keyExpiresAt ?? null,
-              siteId: data.siteId ?? null,
-            },
-            status: 200,
-          } as const;
+        if (data.status === 'authorized') {
+          const isV1 =
+            data.wrapVersion === DEVICE_CODE_WRAP_VERSION &&
+            typeof data.encryptedCredentials === 'string' &&
+            data.encryptedCredentials.length > 0;
+
+          if (isV1) {
+            tx.delete(docRef);
+            return {
+              body: {
+                wrapVersion: DEVICE_CODE_WRAP_VERSION,
+                encryptedCredentials: data.encryptedCredentials as string,
+                phrase: docRef.id,
+              },
+              status: 200,
+            } as const;
+          }
+
+          if (typeof data.rawKey === 'string') {
+            // Legacy plaintext fallback for docs created before this
+            // deploy. New cli builds prefer the encrypted path.
+            tx.delete(docRef);
+            return {
+              body: {
+                apiKey: data.rawKey,
+                keyId: data.keyId ?? null,
+                name: data.name ?? null,
+                scopes: data.scopes ?? null,
+                environment: data.environment ?? null,
+                expiresAt: data.keyExpiresAt ?? null,
+                siteId: data.siteId ?? null,
+              },
+              status: 200,
+            } as const;
+          }
         }
 
         return { error: 'invalid device code state', status: 400 } as const;

@@ -180,6 +180,13 @@ export const POST = withRateLimit(
         return NextResponse.json({ error: 'site_id mismatch' }, { status: 403 });
       }
 
+      if (decodedToken.machine_id !== machineId) {
+        console.warn(
+          `[agent/alert] machine_id mismatch: token=${decodedToken.machine_id}, body=${machineId}`
+        );
+        return NextResponse.json({ error: 'machine_id_mismatch' }, { status: 403 });
+      }
+
       // Per-process rate limiting for process events (separate from the IP-based limiter)
       if (isProcessEvent && processAlertRateLimit) {
         const processRateLimitKey = `process_alert:${machineId}:${resolvedProcessName}`;
@@ -519,7 +526,7 @@ async function triggerAutonomousCortex(
   if (!settingsDoc.exists || !settingsDoc.data()?.autonomousEnabled) return;
 
   // Build internal URL for the autonomous endpoint
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://owlette.app';
 
   // Fire and forget — don't await the response
   fetch(`${baseUrl}/api/cortex/autonomous`, {

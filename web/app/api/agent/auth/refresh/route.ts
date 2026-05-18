@@ -1,8 +1,38 @@
+/**
+ * Refresh tokens rotate on every successful refresh.
+ * Superseded token docs remain readable for a 5-minute grace window so
+ * clients can retry after a lost response without losing their session.
+ */
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import logger from '@/lib/logger';
+
+const REFRESH_TOKEN_GRACE_MS = 5 * 60 * 1000;
+
+function timestampToMillis(value: unknown): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (typeof value === 'number') {
+    return value;
+  }
+
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  if (typeof value === 'object' && 'toMillis' in value) {
+    const maybeTimestamp = value as { toMillis?: () => number };
+    if (typeof maybeTimestamp.toMillis === 'function') {
+      return maybeTimestamp.toMillis();
+    }
+  }
+
+  return undefined;
+}
 
 /**
  * POST /api/agent/auth/refresh
@@ -16,6 +46,7 @@ import logger from '@/lib/logger';
  *
  * Response (200 OK):
  * - accessToken: string - New OAuth 2.0 access token for Firestore API (1 hour expiry)
+ * - refreshToken: string - New rotated refresh token
  * - expiresIn: number - Access token expiry in seconds (3600)
  *
  * Errors:
@@ -47,11 +78,16 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const refreshTokenHash = crypto.createHash('sha256')
       .update(refreshToken)
       .digest('hex');
+    const newRefreshToken = crypto.randomBytes(64).toString('base64url');
+    const newRefreshTokenHash = crypto.createHash('sha256')
+      .update(newRefreshToken)
+      .digest('hex');
 
-    // Validate refresh token and update lastUsed atomically via transaction.
+    // Validate refresh token and rotate it atomically via transaction.
     // This prevents concurrent refresh requests from creating inconsistent state.
     const adminDb = getAdminDb();
     const tokenRef = adminDb.collection('agent_refresh_tokens').doc(refreshTokenHash);
+    const newTokenRef = adminDb.collection('agent_refresh_tokens').doc(newRefreshTokenHash);
 
     let siteId: string;
     let version: string;
@@ -60,20 +96,31 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     try {
       const result = await adminDb.runTransaction(async (transaction) => {
         const tokenDoc = await transaction.get(tokenRef);
+        const newTokenDoc = await transaction.get(newTokenRef);
 
         if (!tokenDoc.exists) {
           return { error: 'Invalid refresh token', status: 401 } as const;
+        }
+
+        if (newTokenDoc.exists) {
+          throw new Error('Refresh token hash collision');
         }
 
         const tokenData = tokenDoc.data();
 
         // Check expiry (tokens without expiresAt never expire — by design for long-duration installations)
         const now = Date.now();
-        const expiresAt = tokenData?.expiresAt?.toMillis();
+        const expiresAt = timestampToMillis(tokenData?.expiresAt);
 
         if (expiresAt && expiresAt < now) {
           transaction.delete(tokenRef);
           return { error: 'Refresh token expired. Please re-authenticate.', status: 401 } as const;
+        }
+
+        const retiresAt = timestampToMillis(tokenData?.retiresAt);
+        const isSuperseded = Boolean(tokenData?.supersededAt || tokenData?.supersededBy);
+        if (isSuperseded && (!retiresAt || now >= retiresAt)) {
+          return { error: 'Invalid refresh token', status: 401 } as const;
         }
 
         // Verify machine ID matches (prevent token theft)
@@ -88,14 +135,28 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         const txSiteId = tokenData?.siteId as string;
         const txVersion = tokenData?.version as string;
         const txAgentUid = tokenData?.agentUid as string;
+        const txCreatedBy = tokenData?.createdBy as string;
 
-        if (!txSiteId || !txVersion || !txAgentUid) {
+        if (!txSiteId || !txVersion || !txAgentUid || !txCreatedBy) {
           return { error: 'Invalid refresh token data', status: 401 } as const;
         }
 
-        // Atomically update lastUsed inside the transaction
-        transaction.update(tokenRef, {
+        if (!isSuperseded) {
+          transaction.update(tokenRef, {
+            supersededAt: FieldValue.serverTimestamp(),
+            supersededBy: newRefreshTokenHash,
+            retiresAt: Timestamp.fromMillis(now + REFRESH_TOKEN_GRACE_MS),
+          });
+        }
+
+        transaction.set(newTokenRef, {
+          siteId: txSiteId,
+          machineId,
+          version: txVersion,
+          createdBy: txCreatedBy,
+          createdAt: FieldValue.serverTimestamp(),
           lastUsed: FieldValue.serverTimestamp(),
+          agentUid: txAgentUid,
         });
 
         return { siteId: txSiteId, version: txVersion, agentUid: txAgentUid } as const;
@@ -160,13 +221,14 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const authData = await authResponse.json();
     const idToken = authData.idToken; // This token now has the custom claims
 
-    // lastUsed was already updated atomically inside the transaction above.
+    // Refresh token rotation was already completed atomically inside the transaction above.
 
     logger.info(`Token refreshed: site=${siteId}, machine=${machineId}`);
 
     return NextResponse.json(
       {
         accessToken: idToken,
+        refreshToken: newRefreshToken,
         expiresIn: 3600, // 1 hour in seconds
       },
       { status: 200 }

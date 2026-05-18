@@ -264,7 +264,7 @@ function checkInMemoryRateLimit(identifier: string): {
 }
 
 // Periodically clean up expired entries to prevent memory leaks
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of inMemoryStore) {
     if (now >= entry.resetAt) {
@@ -272,6 +272,9 @@ setInterval(() => {
     }
   }
 }, 60_000);
+if (typeof cleanupTimer.unref === 'function') {
+  cleanupTimer.unref();
+}
 
 /**
  * Check rate limit and return result

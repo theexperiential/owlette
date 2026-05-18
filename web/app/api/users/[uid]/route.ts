@@ -212,6 +212,7 @@ export const DELETE = authorizedPlatformHandler<RouteParams>({
             deletedAt: result.deletedAt,
             transferredSites: result.transferredSites,
             revokedKeyIds: result.revokedKeyIds,
+            authDisabled: result.authDisabled,
           }),
           ctx.scopeCheck,
         );

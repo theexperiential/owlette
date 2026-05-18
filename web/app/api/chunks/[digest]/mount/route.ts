@@ -24,6 +24,7 @@ import {
 import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { hasChunk } from '@/lib/r2Client.server';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import {
   auditActorIdentifier,
   applyAuthDeprecations,
@@ -44,6 +45,11 @@ interface MountBody {
 }
 
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
+}
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
@@ -100,6 +106,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     // Zero-byte check: the chunk must already exist under this site. Mount
     // never moves/copies bytes.

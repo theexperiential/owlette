@@ -61,7 +61,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeActorRole(role: string | null | undefined): Role {
-  return role === 'member' || role === 'admin' || role === 'superadmin' ? role : 'admin';
+  return role === 'member' || role === 'admin' || role === 'superadmin' ? role : 'member';
 }
 
 function actionContextForCortex(

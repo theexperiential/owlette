@@ -18,12 +18,19 @@
  *      to the user's currently-assigned sites + owned sites.
  *   4. Set `users/{uid}.deletedAt`. The user doc is preserved (audit /
  *      historical reads still work) but excluded from default list reads.
+ *   5. Revoke the user's Firebase Auth refresh tokens AND disable the
+ *      Auth user record. The user can no longer mint new ID tokens, and
+ *      any outstanding tokens are invalidated within the standard
+ *      revocation window. We DON'T `deleteUser()` here — soft-delete
+ *      semantics imply auditability, and keeping the Auth record around
+ *      preserves the email→uid mapping for forensic queries. Hard-delete
+ *      via the Auth admin SDK is reserved for the self-delete path.
  *
  * Returns a structured result so the route handler can emit the right
  * audit attributes + http response.
  */
 
-import { getAdminDb } from '@/lib/firebase-admin';
+import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 
 export type UserDeleteOutcome =
   | { kind: 'already_deleted'; deletedAt: number }
@@ -41,6 +48,13 @@ export type UserDeleteOutcome =
       deletedAt: number;
       revokedKeyIds: string[];
       transferredSites: string[];
+      /**
+       * Whether the Firebase Auth user was successfully revoked + disabled.
+       * Best-effort: a transient Auth API failure does NOT roll back the
+       * Firestore soft-delete (the rules already gate access via
+       * `deletedAt`), but the flag surfaces to the caller for audit.
+       */
+      authDisabled: boolean;
     };
 
 /**
@@ -209,11 +223,63 @@ export async function performUserDeleteCascade(
     deletedBy: 'superadmin', // route handler doesn't pass actor here; auditLog has it
   });
 
+  // 8. Revoke + disable the Firebase Auth user. The Firestore rules
+  //    (`isNotDeletedUser`) gate session reads on `deletedAt`, but
+  //    outstanding ID tokens remain technically valid until their natural
+  //    expiry (~1h) unless we explicitly revoke. `disabled: true` blocks
+  //    new sign-ins and short-circuits any custom-token mint flows.
+  //    Best-effort: we don't roll back the Firestore soft-delete on Auth
+  //    failure — the Firestore flag is already authoritative for
+  //    authorization, and the Auth disable can be retried separately.
+  let authDisabled = false;
+  try {
+    const adminAuth = getAdminAuth();
+    try {
+      await adminAuth.revokeRefreshTokens(uid);
+    } catch (err) {
+      const code = (err as { code?: string } | null)?.code;
+      if (code !== 'auth/user-not-found') {
+        console.warn(
+          `[userDeleteCascade] revokeRefreshTokens failed for ${uid}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
+    try {
+      await adminAuth.updateUser(uid, { disabled: true });
+      authDisabled = true;
+    } catch (err) {
+      const code = (err as { code?: string } | null)?.code;
+      if (code === 'auth/user-not-found') {
+        // No Auth record (e.g. user was hard-deleted via self-delete path
+        // earlier); treat as success — there's nothing to disable.
+        authDisabled = true;
+      } else {
+        console.warn(
+          `[userDeleteCascade] updateUser(disabled=true) failed for ${uid}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
+  } catch (err) {
+    // getAdminAuth() can throw if env vars are missing (test mode without
+    // mocks). Treat as soft failure — the Firestore soft-delete already
+    // gates access via rules.
+    console.warn(
+      `[userDeleteCascade] admin auth unavailable for ${uid}: ${
+        (err as Error).message
+      }`,
+    );
+  }
+
   return {
     kind: 'deleted',
     deletedAt,
     revokedKeyIds,
     transferredSites,
+    authDisabled,
   };
 }
 

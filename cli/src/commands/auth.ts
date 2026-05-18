@@ -12,6 +12,7 @@
 
 import { Command } from 'commander';
 import { exec } from 'child_process';
+import { createDecipheriv, hkdfSync } from 'crypto';
 import { platform } from 'os';
 import {
   _resetConfigCache,
@@ -26,6 +27,49 @@ import {
   type WriteCredentialResult,
 } from '../credentialStore';
 import { runWhoami } from './whoami';
+
+const DEVICE_CODE_WRAP_VERSION = 'v1';
+const DEVICE_CODE_HKDF_INFO = 'owlette-device-code-v1';
+const DEVICE_CODE_IV_LENGTH = 12;
+const DEVICE_CODE_TAG_LENGTH = 16;
+const DEVICE_CODE_KEY_LENGTH = 32;
+
+/**
+ * Decrypt the v1 `encryptedCredentials` blob returned by
+ * /api/cli/device-code/poll. Must use exactly the same HKDF inputs as
+ * web/lib/deviceCodeCrypto.ts — any drift breaks pairing silently.
+ */
+function decryptCredentials(
+  blob: string,
+  deviceCode: string,
+  phrase: string,
+): Record<string, unknown> {
+  const raw = Buffer.from(blob, 'base64');
+  if (raw.length < DEVICE_CODE_IV_LENGTH + DEVICE_CODE_TAG_LENGTH + 1) {
+    throw new Error('encrypted credentials blob too short');
+  }
+  const iv = raw.subarray(0, DEVICE_CODE_IV_LENGTH);
+  const authTag = raw.subarray(
+    DEVICE_CODE_IV_LENGTH,
+    DEVICE_CODE_IV_LENGTH + DEVICE_CODE_TAG_LENGTH,
+  );
+  const ciphertext = raw.subarray(DEVICE_CODE_IV_LENGTH + DEVICE_CODE_TAG_LENGTH);
+
+  const key = Buffer.from(
+    hkdfSync(
+      'sha256',
+      Buffer.from(deviceCode, 'utf8'),
+      Buffer.from(phrase, 'utf8'),
+      Buffer.from(DEVICE_CODE_HKDF_INFO, 'utf8'),
+      DEVICE_CODE_KEY_LENGTH,
+    ),
+  );
+
+  const decipher = createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(authTag);
+  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  return JSON.parse(plaintext.toString('utf8')) as Record<string, unknown>;
+}
 
 const POLL_INTERVAL_MS = 5_000;
 const MAX_POLL_DURATION_MS = 10 * 60 * 1000;
@@ -47,6 +91,12 @@ interface PollAuthorizedResponse {
   environment: 'live' | 'test' | null;
   expiresAt: number | null;
   siteId: string | null;
+}
+
+interface PollEncryptedResponse {
+  wrapVersion: 'v1';
+  encryptedCredentials: string;
+  phrase: string;
 }
 
 function tryOpenBrowser(url: string): void {
@@ -126,14 +176,39 @@ export function registerAuthCommands(program: Command): void {
       const deadline = Date.now() + Math.min(expiresIn * 1000, MAX_POLL_DURATION_MS);
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, pollMs));
-        const pollRes = await post<PollAuthorizedResponse & { status?: string; error?: string }>(
-          apiUrl,
-          '/api/cli/device-code/poll',
-          { deviceCode },
-        );
+        const pollRes = await post<
+          PollAuthorizedResponse &
+            Partial<PollEncryptedResponse> & { status?: string; error?: string }
+        >(apiUrl, '/api/cli/device-code/poll', { deviceCode });
         if (pollRes.status === 202) {
           process.stdout.write('.');
           continue;
+        }
+        // v1 encrypted response — decrypt locally and unwrap.
+        if (
+          pollRes.status === 200 &&
+          pollRes.data.wrapVersion === DEVICE_CODE_WRAP_VERSION &&
+          typeof pollRes.data.encryptedCredentials === 'string' &&
+          typeof pollRes.data.phrase === 'string'
+        ) {
+          let bundle: PollAuthorizedResponse;
+          try {
+            bundle = decryptCredentials(
+              pollRes.data.encryptedCredentials,
+              deviceCode,
+              pollRes.data.phrase,
+            ) as unknown as PollAuthorizedResponse;
+          } catch (err) {
+            process.stderr.write(
+              `\nowlette: failed to decrypt authorised credentials: ${
+                err instanceof Error ? err.message : String(err)
+              }\n`,
+            );
+            process.exitCode = 1;
+            return;
+          }
+          // Reuse the legacy success path with the decrypted bundle.
+          pollRes.data = { ...pollRes.data, ...bundle };
         }
         if (pollRes.status === 200 && pollRes.data.apiKey) {
           process.stdout.write('\nowlette: authorised — storing credential...\n');

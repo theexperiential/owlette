@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { validateSessionFromRequest } from '@/lib/sessionManager.server';
+import { evaluateSessionMfa } from '@/lib/sessionManager.server';
 import { CURRENT_SECURITY_VERSION, SECURITY_VERSION_HEADER } from '@/lib/securityVersion';
 
 /**
@@ -18,16 +18,100 @@ import { CURRENT_SECURITY_VERSION, SECURITY_VERSION_HEADER } from '@/lib/securit
  * - Uses encrypted, HTTPOnly session cookies (iron-session)
  * - Validates session expiration on every request
  * - Cannot be bypassed via JavaScript/XSS attacks
+ * - Enforces MFA on protected paths: an authenticated session whose
+ *   `mfaRequired && !mfaVerified` is redirected to `/verify-2fa` and
+ *   cannot reach `/dashboard`, `/admin`, etc. until the challenge is
+ *   completed via `/api/mfa/verify-login` (which marks the cookie verified).
  */
+
+// Protected page routes. These all require an authenticated session AND
+// a satisfied MFA challenge (when MFA is enrolled).
+const PROTECTED_PATHS = [
+  '/dashboard',
+  '/deployments',
+  '/admin',
+  '/roosts',
+  '/setup',
+  '/add',
+  '/cortex',
+] as const;
+
+// The MFA challenge page itself. Reachable for authenticated users whose
+// MFA is still pending — otherwise they could never complete it.
+const MFA_CHALLENGE_PATH = '/verify-2fa';
+const isDev = process.env.NODE_ENV === 'development';
+const isEmulatorBuild = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
+
+function createCspNonce() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes));
+}
+
+function buildContentSecurityPolicy(nonce: string) {
+  return [
+    "default-src 'self'",
+    // Next.js reads this request CSP before render and applies the nonce to
+    // framework inline bootstrap/RSC scripts. `strict-dynamic` lets trusted
+    // nonce-bearing scripts load their own children in modern browsers, while
+    // the host allowlist remains as a fallback for older CSP implementations.
+    // Dev keeps unsafe-eval for Fast Refresh only; production omits it and
+    // does not allow unsafe-inline for scripts.
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' ${isDev ? "'unsafe-eval' " : ''}https://accounts.google.com https://apis.google.com https://*.gstatic.com`,
+    `style-src 'self' 'nonce-${nonce}'`,
+    `style-src-elem 'self' 'nonce-${nonce}'`,
+    // TODO: Migrate remaining React `style={{ ... }}` attributes to classes
+    // or other non-inline styling, then remove this exception.
+    "style-src-attr 'unsafe-inline'",
+    `img-src 'self' data: blob: https:${isEmulatorBuild ? ' http://127.0.0.1:*' : ''}`,
+    "font-src 'self' data:",
+    `connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com https://*.ingest.sentry.io https://*.r2.cloudflarestorage.com${isEmulatorBuild ? ' http://127.0.0.1:* ws://127.0.0.1:*' : ''}`,
+    "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+    ...(isDev ? [] : ["upgrade-insecure-requests"]),
+  ].join('; ');
+}
+
+function setCspHeader(response: NextResponse, csp: string) {
+  response.headers.set('Content-Security-Policy', csp);
+  return response;
+}
+
+function nextWithCsp(request: NextRequest, csp: string, nonce: string) {
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('Content-Security-Policy', csp);
+  requestHeaders.set('x-nonce', nonce);
+
+  return setCspHeader(
+    NextResponse.next({
+      request: {
+        headers: requestHeaders,
+      },
+    }),
+    csp
+  );
+}
+
+function redirectWithCsp(url: URL, csp: string, status?: number) {
+  return setCspHeader(
+    status ? NextResponse.redirect(url, status) : NextResponse.redirect(url),
+    csp
+  );
+}
 
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
+  const nonce = createCspNonce();
+  const csp = buildContentSecurityPolicy(nonce);
 
   // Legacy redirect: /api/folders/* → /api/roosts/* (folders→roosts rename).
   // Remove 30 days after external users migrated (added 2026-04-22).
   if (pathname.startsWith('/api/folders/') || pathname === '/api/folders') {
     const rewritten = pathname.replace(/^\/api\/folders/, '/api/roosts');
-    return NextResponse.redirect(new URL(rewritten + search, request.url), 308);
+    return redirectWithCsp(new URL(rewritten + search, request.url), csp, 308);
   }
 
   // Stamp every `/api/*` response with the current security version so
@@ -35,65 +119,106 @@ export async function proxy(request: NextRequest) {
   // client and prompt the user to reload. UX nudge only — never a
   // security boundary; see `lib/securityVersion.ts` for rationale.
   if (pathname.startsWith('/api/')) {
-    const response = NextResponse.next();
+    const response = nextWithCsp(request, csp, nonce);
     response.headers.set(SECURITY_VERSION_HEADER, String(CURRENT_SECURITY_VERSION));
     return response;
   }
 
-  // Define protected routes
-  const protectedPaths = ['/dashboard', '/deployments', '/admin', '/roosts', '/setup', '/add', '/cortex'];
+  const isProtectedPath = PROTECTED_PATHS.some(path => pathname.startsWith(path));
+  const isMfaChallengePath = pathname === MFA_CHALLENGE_PATH || pathname.startsWith(`${MFA_CHALLENGE_PATH}/`);
 
-  // Check if current path is protected
-  const isProtectedPath = protectedPaths.some(path =>
-    pathname.startsWith(path)
-  );
+  // Evaluate session + MFA state in one pass. This may persist a one-time
+  // migration write for pre-Wave-2 sessions (see `evaluateSessionMfa`).
+  const { outcome, userId } = await evaluateSessionMfa(request);
+  const isAuthenticated = outcome !== 'unauthenticated';
 
-  // Validate session using encrypted, HTTPOnly cookies
-  const userId = await validateSessionFromRequest(request);
-  const isAuthenticated = userId !== null;
-
-  // If accessing a protected route
+  // Protected pages: require auth AND a satisfied MFA gate.
   if (isProtectedPath) {
-    // If not authenticated, redirect to login
     if (!isAuthenticated) {
       const loginUrl = new URL('/login', request.url);
-      // Save the intended destination so we can redirect after login
       loginUrl.searchParams.set('redirect', pathname);
 
       if (process.env.NODE_ENV === 'development') {
         console.log('[Proxy] Redirecting to login from:', pathname);
       }
 
-      return NextResponse.redirect(loginUrl);
+      return redirectWithCsp(loginUrl, csp);
     }
 
-    // User is authenticated, allow access
+    if (outcome === 'challenge') {
+      const verifyUrl = new URL(MFA_CHALLENGE_PATH, request.url);
+      // Preserve the originally-requested destination so the verify page
+      // can bounce the user back after a successful challenge. We use
+      // `redirect` to match the login page contract; verify-2fa accepts
+      // both `redirect` and the historical `return` param.
+      verifyUrl.searchParams.set('redirect', pathname);
+
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[Proxy] MFA required — redirecting to verify-2fa from:', pathname);
+      }
+
+      return redirectWithCsp(verifyUrl, csp);
+    }
+
     if (process.env.NODE_ENV === 'development') {
       console.log('[Proxy] Allowing access to protected route:', pathname, 'userId:', userId);
     }
   }
 
-  // If logged in user tries to access login/register, redirect to dashboard
+  // The MFA challenge page itself must remain reachable for an
+  // authenticated-but-unverified user — otherwise they can never complete
+  // the challenge. Two policies for the rest of the cases:
+  //   - Unauthenticated user lands on /verify-2fa: bounce to /login.
+  //   - Authenticated AND already-verified user lands on /verify-2fa:
+  //     bounce to /dashboard so they don't re-challenge unnecessarily.
+  if (isMfaChallengePath) {
+    if (!isAuthenticated) {
+      const loginUrl = new URL('/login', request.url);
+      return redirectWithCsp(loginUrl, csp);
+    }
+    if (outcome === 'pass') {
+      const redirectParam = request.nextUrl.searchParams.get('redirect')
+        ?? request.nextUrl.searchParams.get('return');
+      if (
+        redirectParam &&
+        redirectParam.startsWith('/') &&
+        !redirectParam.startsWith('//') &&
+        PROTECTED_PATHS.some(p => redirectParam.startsWith(p))
+      ) {
+        return redirectWithCsp(new URL(redirectParam, request.url), csp);
+      }
+      return redirectWithCsp(new URL('/dashboard', request.url), csp);
+    }
+    // outcome === 'challenge' — let the page render so the user can submit
+    // their TOTP / backup code.
+  }
+
+  // If logged in user tries to access login/register, redirect to
+  // dashboard (only when MFA is satisfied — if it's still pending, send
+  // them to the challenge instead so they don't get stuck on login).
   if (pathname === '/login' || pathname === '/register') {
     if (isAuthenticated) {
-      // Check if there's a redirect parameter
+      if (outcome === 'challenge') {
+        return redirectWithCsp(new URL(MFA_CHALLENGE_PATH, request.url), csp);
+      }
+
       const redirectParam = request.nextUrl.searchParams.get('redirect');
 
       if (redirectParam &&
           redirectParam.startsWith('/') &&
           !redirectParam.startsWith('//') &&
-          protectedPaths.some(path => redirectParam.startsWith(path))) {
+          PROTECTED_PATHS.some(path => redirectParam.startsWith(path))) {
         // Only allow redirects to known protected paths (prevents open redirect attacks)
-        return NextResponse.redirect(new URL(redirectParam, request.url));
+        return redirectWithCsp(new URL(redirectParam, request.url), csp);
       }
 
       // Default redirect to dashboard
-      return NextResponse.redirect(new URL('/dashboard', request.url));
+      return redirectWithCsp(new URL('/dashboard', request.url), csp);
     }
   }
 
   // Allow the request to proceed
-  return NextResponse.next();
+  return nextWithCsp(request, csp, nonce);
 }
 
 /**

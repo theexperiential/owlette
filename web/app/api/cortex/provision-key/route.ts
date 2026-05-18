@@ -20,11 +20,12 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { verifyUserSiteAccess } from '@/lib/cortex-utils.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { getUserIdFromSession, withRateLimit } from '@/lib/withRateLimit';
 
 const COMMAND_TIMEOUT_MS = 15_000;
 const POLL_INTERVAL_MS = 1_000;
 
-export async function POST(request: NextRequest) {
+export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     const userId = await requireSession(request);
     const body = await request.json();
@@ -119,4 +120,4 @@ export async function POST(request: NextRequest) {
   } catch (error: unknown) {
     return apiError(error, 'cortex/provision-key');
   }
-}
+}, { strategy: 'user', identifier: 'user', getUserId: getUserIdFromSession });

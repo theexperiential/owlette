@@ -29,6 +29,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import * as admin from 'firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { requireInternalSecret } from './lib/requireInternalSecret';
 import {
   aggregateCounters,
   buildEmptyRecord,
@@ -41,6 +42,8 @@ import {
   type UsageEvent,
   type UsageEventKind,
 } from './lib/telemetryLogic';
+
+const FIRESTORE_BATCH_LIMIT = 400;
 
 /* --------------------------------------------------------------------- */
 /*  Dependency interfaces                                                */
@@ -329,6 +332,7 @@ export const recordUsageEvent = onRequest(
       res.status(405).json({ error: 'method_not_allowed' });
       return;
     }
+    if (!requireInternalSecret(req, res)) return;
     const result = await recordEvent(
       (req.body ?? {}) as Partial<UsageEvent>,
       { store: getDefaultEventStore() },
@@ -453,9 +457,20 @@ function getDefaultEventStore(): EventStore {
         .where('timestamp', '<', Timestamp.fromMillis(cutoffMs))
         .get();
       if (snap.empty) return 0;
-      const batch = db.batch();
-      for (const d of snap.docs) batch.delete(d.ref);
-      await batch.commit();
+      let batch = db.batch();
+      let opsInBatch = 0;
+      for (const d of snap.docs) {
+        batch.delete(d.ref);
+        opsInBatch += 1;
+        if (opsInBatch >= FIRESTORE_BATCH_LIMIT) {
+          await batch.commit();
+          batch = db.batch();
+          opsInBatch = 0;
+        }
+      }
+      if (opsInBatch > 0) {
+        await batch.commit();
+      }
       return snap.size;
     },
   };

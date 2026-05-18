@@ -10,11 +10,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Fingerprint } from 'lucide-react';
 import { toast } from 'sonner';
 import { sanitizeError } from '@/lib/errorHandler';
-import { doc, getDoc } from 'firebase/firestore';
 import { signInWithCustomToken } from 'firebase/auth';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
-import { auth as firebaseAuth, db } from '@/lib/firebase';
-import { isDeviceTrusted, setMfaVerifiedForSession } from '@/lib/mfaSession';
+import { auth as firebaseAuth } from '@/lib/firebase';
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser';
 import { LoadingWord } from '@/components/LoadingWord';
 
@@ -35,41 +33,42 @@ function LoginForm() {
     }
   }, [searchParams]);
 
-  // Helper function to check MFA status and determine redirect
+  // Decide where to send the user after a successful Firebase sign-in.
+  //
+  // The authoritative MFA gate is server-side (the proxy enforces it), so
+  // this function is purely a UX hint — it queries the freshly-minted
+  // session via GET /api/auth/session and, if the server reports MFA is
+  // required and not yet satisfied, pushes to /verify-2fa with the
+  // original destination preserved in the `redirect` param.
+  //
+  // We poll briefly: the createSessionCookie call in AuthContext fires
+  // off the POST as soon as onAuthStateChanged sees the user, but it is
+  // not awaited here. A short retry loop avoids the race without making
+  // the user wait the full retry budget in the common case.
   const checkMfaAndRedirect = async (): Promise<string> => {
-    try {
-      if (!firebaseAuth?.currentUser || !db) {
-        return redirectUrl;
-      }
-
-      const userId = firebaseAuth.currentUser.uid;
-
-      // Check if device is trusted (skip MFA for 30 days)
-      if (isDeviceTrusted(userId)) {
-        setMfaVerifiedForSession(userId);
-        return redirectUrl;
-      }
-
-      // Get user document to check MFA enrollment
-      const userDocRef = doc(db, 'users', userId);
-      const userDocSnap = await getDoc(userDocRef);
-
-      if (userDocSnap.exists()) {
-        const userData = userDocSnap.data();
-
-        // If MFA is enrolled, redirect to verification
-        if (userData.mfaEnrolled) {
-          return `/verify-2fa?return=${encodeURIComponent(redirectUrl)}`;
+    const maxAttempts = 5;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        const res = await fetch('/api/auth/session', { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.authenticated === true) {
+            if (data.mfaRequired === true && data.mfaVerified !== true) {
+              return `/verify-2fa?redirect=${encodeURIComponent(redirectUrl)}`;
+            }
+            return redirectUrl;
+          }
         }
+      } catch (err) {
+        // Network blip — fall through to the retry.
+        console.warn('[Login] session probe failed (will retry):', err);
       }
-
-      // No MFA needed, mark session as verified and proceed
-      setMfaVerifiedForSession(userId);
-      return redirectUrl;
-    } catch (error) {
-      console.error('Error checking MFA status:', error);
-      return redirectUrl; // Fallback to normal redirect
+      await new Promise((resolve) => setTimeout(resolve, 150));
     }
+    // If we never saw an authenticated session after all retries, just
+    // attempt the original target. The proxy will redirect to /login or
+    // /verify-2fa as appropriate — it is the authoritative gate.
+    return redirectUrl;
   };
 
   const handleEmailLogin = async (e: React.FormEvent) => {
@@ -157,18 +156,22 @@ function LoginForm() {
         throw new Error(data.error || 'Passkey authentication failed');
       }
 
-      const { customToken, userId } = await verifyRes.json();
+      const { customToken } = await verifyRes.json();
 
       // Step 4: Sign in with Firebase custom token
       if (firebaseAuth) {
         await signInWithCustomToken(firebaseAuth, customToken);
       }
 
-      // Step 5: Mark MFA as verified (passkey IS the second factor)
-      setMfaVerifiedForSession(userId);
-
+      // The passkey verify route already minted a server-side session.
+      // Passkey is intended to count as a second factor — if the user
+      // also has TOTP MFA enrolled, the server-side session will still
+      // mark `mfaRequired: true` and the proxy will redirect to
+      // /verify-2fa. This is fail-safe behaviour pending a Wave 3 change
+      // that marks passkey sign-in as MFA-satisfying server-side.
       toast.success('signed in with passkey!');
-      router.push(redirectUrl);
+      const redirectPath = await checkMfaAndRedirect();
+      router.push(redirectPath);
     } catch (error) {
       if (error instanceof Error && error.name === 'NotAllowedError') {
         toast.error('passkey authentication was cancelled');

@@ -15,6 +15,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
 import { createCheapModel } from '@/lib/llm';
 import { resolveLlmConfig, verifyUserSiteAccess } from '@/lib/cortex-utils.server';
+import { getUserIdFromSession, withRateLimit } from '@/lib/withRateLimit';
 
 const CATEGORIES = [
   'Performance',
@@ -35,7 +36,7 @@ function parseCategory(text: string): Category {
   ) || 'General';
 }
 
-export async function POST(request: NextRequest) {
+export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     const userId = await requireSession(request);
     const body = await request.json();
@@ -166,4 +167,4 @@ Performance`,
   } catch (error) {
     return apiError(error, 'cortex/categorize');
   }
-}
+}, { strategy: 'user', identifier: 'user', getUserId: getUserIdFromSession });

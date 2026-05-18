@@ -32,6 +32,10 @@ import {
 } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
+  DEVICE_CODE_WRAP_VERSION,
+  encryptDeviceCodeCredentials,
+} from '@/lib/deviceCodeCrypto';
+import {
   ALL_RESOURCES,
   type ApiKeyEnvironment,
   type ApiKeyLookup,
@@ -275,21 +279,67 @@ export const POST = withRateLimit(
           };
           transaction.set(db.collection('api_keys').doc(keyHash), lookup);
 
-          // Stash the raw key in the device-code doc for the cli's /poll to
-          // read + delete atomically. This is the only time the raw key leaves
-          // the mint path unhashed.
-          transaction.update(codeRef, {
-            status: 'authorized',
-            authorizedBy: userId,
-            authorizedAt: FieldValue.serverTimestamp(),
-            keyId,
-            name,
-            scopes,
-            environment,
-            keyExpiresAt,
-            siteId: primarySite,
-            rawKey,
-          });
+          // Encrypt the raw key (and the bundle of metadata the cli
+          // expects on its /poll response) under a key derived from the
+          // cli's polling deviceCode. The cleartext deviceCode is wiped
+          // from the doc in the same write so the only path from the
+          // doc-at-rest back to the api key requires the cli's process
+          // memory.
+          //
+          // Legacy fallback: if the doc lacks wrapVersion v1 (e.g. it was
+          // created against an older deploy whose start endpoint hadn't
+          // shipped this change yet), we cannot encrypt — there is no
+          // deviceCode on the doc. In that case we store the rawKey in
+          // cleartext as before and let the legacy poll path return it.
+          const supportsEncryption =
+            codeData.wrapVersion === DEVICE_CODE_WRAP_VERSION &&
+            typeof codeData.deviceCode === 'string' &&
+            codeData.deviceCode.length > 0;
+
+          if (supportsEncryption) {
+            const encryptedCredentials = encryptDeviceCodeCredentials(
+              {
+                apiKey: rawKey,
+                keyId,
+                name,
+                scopes,
+                environment,
+                expiresAt: keyExpiresAt,
+                siteId: primarySite,
+              },
+              codeData.deviceCode,
+              code,
+            );
+            transaction.update(codeRef, {
+              status: 'authorized',
+              authorizedBy: userId,
+              authorizedAt: FieldValue.serverTimestamp(),
+              keyId,
+              name,
+              scopes,
+              environment,
+              keyExpiresAt,
+              siteId: primarySite,
+              wrapVersion: DEVICE_CODE_WRAP_VERSION,
+              encryptedCredentials,
+              // Wipe key material from the doc at rest.
+              deviceCode: FieldValue.delete(),
+              rawKey: FieldValue.delete(),
+            });
+          } else {
+            transaction.update(codeRef, {
+              status: 'authorized',
+              authorizedBy: userId,
+              authorizedAt: FieldValue.serverTimestamp(),
+              keyId,
+              name,
+              scopes,
+              environment,
+              keyExpiresAt,
+              siteId: primarySite,
+              rawKey,
+            });
+          }
 
           return { ok: true, keyId, keyPrefix };
         },

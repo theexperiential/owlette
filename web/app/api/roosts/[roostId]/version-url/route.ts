@@ -31,6 +31,7 @@ import {
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { presignGetVersion, GET_URL_TTL_SECONDS } from '@/lib/r2Client.server';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import {
   parseJsonBody,
   validateResourceId,
@@ -40,6 +41,11 @@ import {
 
 interface RouteParams {
   params: Promise<{ roostId: string }>;
+}
+
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
@@ -57,6 +63,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireAgentOrSiteScope(request, site.siteId);
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     if (typeof body.versionId !== 'string') {
       return problemValidation('versionId must be a string', {

@@ -13,7 +13,6 @@ import {
   updatePassword as firebaseUpdatePassword,
   reauthenticateWithCredential,
   EmailAuthProvider,
-  deleteUser,
 } from 'firebase/auth';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -864,8 +863,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error(await readApiError(response, 'Failed to delete account data'));
       }
 
-      // Delete Firebase Auth account
-      await deleteUser(auth.currentUser);
+      // Firebase Auth user revocation + deletion is performed server-side
+      // by the action core (see web/lib/actions/deleteOwnAccount.server.ts).
+      // The client used to call auth.deleteUser() here, but that race window
+      // is now closed: the server has already revoked tokens and deleted
+      // the Auth record before this response returns. Calling it again
+      // would either no-op with `auth/user-not-found` or fail with
+      // `auth/user-token-expired`. Just sign the local session out.
 
       // Destroy server-side session
       await destroySessionCookie();

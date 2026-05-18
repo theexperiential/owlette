@@ -1,3 +1,4 @@
+// REQUIRES composite index on (expiresAt ASC, expiredMarkedAt ASC) — see firestore.indexes.json
 /**
  * Scheduled daily sweep of expired api keys (roost public api wave 2.6).
  *
@@ -46,6 +47,7 @@ export async function sweepExpiredApiKeys(now = Date.now()): Promise<SweepSummar
   const expired = await db
     .collectionGroup('api_keys')
     .where('expiresAt', '<', now)
+    .where('expiredMarkedAt', '==', null)
     .get();
 
   let batch = db.batch();

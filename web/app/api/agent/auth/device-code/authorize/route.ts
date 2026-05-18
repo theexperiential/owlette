@@ -5,6 +5,10 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, assertUserHasSiteAccess, requireSession } from '@/lib/apiAuth.server';
 import { normalizePairPhrase } from '@/lib/pairPhrases';
 import { apiError } from '@/lib/apiErrorResponse';
+import {
+  DEVICE_CODE_WRAP_VERSION,
+  encryptDeviceCodeCredentials,
+} from '@/lib/deviceCodeCrypto';
 import logger from '@/lib/logger';
 
 /**
@@ -167,17 +171,74 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         agentUid,
       });
 
-      // Update device code document with tokens and authorization info
-      transaction.update(docRef, {
-        status: 'authorized',
-        siteId,
-        authorizedBy: userId,
-        authorizedAt: FieldValue.serverTimestamp(),
+      // Update device code document with tokens and authorization info.
+      //
+      // For v1 docs (interactive pairing) we encrypt the credential
+      // bundle with a key derived from the deviceCode the polling agent
+      // holds, then wipe the cleartext deviceCode from the doc in the
+      // same write. The doc at rest then contains only the ciphertext
+      // and the deviceCodeHash — neither of which is useful without the
+      // agent's in-memory secret.
+      //
+      // For pre-v1 docs (no wrapVersion, i.e. created before the deploy
+      // that introduced this code path) or pre-authorised codes whose
+      // deviceCode has already been discarded (Generate Code on the
+      // dashboard), we fall back to storing the credentials in
+      // plaintext. The legacy poll path still supports plaintext for
+      // those documents only.
+      const supportsEncryption =
+        data.wrapVersion === DEVICE_CODE_WRAP_VERSION &&
+        typeof data.deviceCode === 'string' &&
+        data.deviceCode.length > 0;
+
+      const credentialBundle = {
         accessToken: finalIdToken,
         refreshToken,
-      });
+        expiresIn: 3600,
+        siteId,
+      };
 
-      logger.info(`Device code authorized: phrase=${pairPhrase}, site=${siteId}, machine=${machineId}, by=${userId}`);
+      if (supportsEncryption) {
+        const encryptedCredentials = encryptDeviceCodeCredentials(
+          credentialBundle,
+          data.deviceCode,
+          pairPhrase,
+        );
+        transaction.update(docRef, {
+          status: 'authorized',
+          siteId,
+          authorizedBy: userId,
+          authorizedAt: FieldValue.serverTimestamp(),
+          encryptedCredentials,
+          wrapVersion: DEVICE_CODE_WRAP_VERSION,
+          // Wipe the deviceCode and any legacy plaintext fields so the
+          // doc at rest cannot leak credentials or key material.
+          deviceCode: FieldValue.delete(),
+          accessToken: FieldValue.delete(),
+          refreshToken: FieldValue.delete(),
+        });
+      } else {
+        // Legacy / pre-authorised flow — plaintext credentials are the
+        // only option because no client holds an HKDF key. Poll-by-phrase
+        // is restricted to this path.
+        transaction.update(docRef, {
+          status: 'authorized',
+          siteId,
+          authorizedBy: userId,
+          authorizedAt: FieldValue.serverTimestamp(),
+          accessToken: finalIdToken,
+          refreshToken,
+          // Mark preauthorized=true so the poll-by-phrase fallback can
+          // distinguish this from an interactive doc whose deviceCode
+          // was simply missing (defence-in-depth).
+          preauthorized: true,
+        });
+      }
+
+      logger.info(
+        `Device code authorized: phrase=${pairPhrase}, site=${siteId}, machine=${machineId}, ` +
+          `by=${userId}, wrap=${supportsEncryption ? DEVICE_CODE_WRAP_VERSION : 'plaintext'}`,
+      );
 
       return { success: true, machineId: data.machineId || null } as const;
     });

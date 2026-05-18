@@ -9,7 +9,9 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { problemFromError } from '@/lib/apiErrors';
+import { getAdminDb } from '@/lib/firebase-admin';
 import { missingChunks } from '@/lib/r2Client.server';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import {
   applyAuthDeprecations,
   parseJsonBody,
@@ -17,6 +19,11 @@ import {
   validateHashList,
   validateSiteIdBody,
 } from '../../_shared';
+
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,6 +36,9 @@ export async function POST(request: NextRequest) {
 
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     const validated = validateHashList(body.hashes, 'hashes');
     if (!validated.ok) return validated.response;

@@ -58,6 +58,7 @@ export async function deleteUser(
         successorUid: input.successorUid ?? null,
         transferredSites: result.transferredSites,
         revokedKeyCount: result.revokedKeyIds.length,
+        authDisabled: result.authDisabled,
       },
     });
   }

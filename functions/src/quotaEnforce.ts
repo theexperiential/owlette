@@ -23,6 +23,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { requireInternalSecret } from './lib/requireInternalSecret';
 import {
   admitUpload,
   ALARM_LEVELS,
@@ -301,6 +302,7 @@ export const preUploadCheck = onRequest(
       res.status(405).json({ error: 'method_not_allowed' });
       return;
     }
+    if (!requireInternalSecret(req, res)) return;
     const body = req.body as Partial<PreUploadRequest> | undefined;
     const result = await runPreUploadCheck(
       {

@@ -41,6 +41,7 @@ import {
 } from '@/lib/apiErrors';
 import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import {
   resolveVersion,
   ResolveVersionError,
@@ -60,6 +61,11 @@ interface RouteParams {
 }
 
 const DEFAULT_TARGET = 'previous';
+
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
+}
 
 /**
  * Map a resolver error to an RFC 7807 response. Mirrors the helper in
@@ -106,6 +112,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       'rollback',
     );
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     // Idempotency replay support — matches the PATCH pattern in
     // versions/[versionRef]/route.ts so retries (operator hits the button

@@ -28,6 +28,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { generatePairPhrase } from '@/lib/pairPhrases';
 import { apiError } from '@/lib/apiErrorResponse';
+import { DEVICE_CODE_WRAP_VERSION } from '@/lib/deviceCodeCrypto';
 
 export const POST = withRateLimit(
   async (request: NextRequest) => {
@@ -61,8 +62,14 @@ export const POST = withRateLimit(
 
       const expiresAt = Timestamp.fromDate(new Date(Date.now() + 10 * 60 * 1000));
 
+      // `deviceCode` is the CLI's polling secret — held in CLI process
+      // memory only and never shown to the dashboard user. Stored on the
+      // doc only until authorize encrypts the api key under a key
+      // derived from it, at which point authorize wipes the field.
       await db.collection('cli_device_codes').doc(pairPhrase).set({
         deviceCodeHash,
+        deviceCode, // consumed and wiped by authorize
+        wrapVersion: DEVICE_CODE_WRAP_VERSION,
         status: 'pending',
         createdAt: FieldValue.serverTimestamp(),
         expiresAt,
@@ -71,9 +78,9 @@ export const POST = withRateLimit(
         authorizedAt: null,
         siteId: null,
         keyId: null,
-        // Populated ONCE — poll deletes the doc on read, so the secret
-        // can't hang around.
-        rawKey: null,
+        // Encrypted credential bundle (HKDF + AES-256-GCM). The raw api
+        // key never lives on the doc in cleartext.
+        encryptedCredentials: null,
       });
 
       return NextResponse.json({

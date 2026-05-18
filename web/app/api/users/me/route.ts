@@ -290,6 +290,40 @@ export async function DELETE(request: NextRequest) {
     return problemFromError(err, 'users/me:DELETE');
   }
 
+  // 4a. Refuse if any site needs a successor — the user is owner AND
+  //     other members exist. The user must transfer ownership before
+  //     self-delete. Audit as a deny so the refusal is logged.
+  if (result.kind === 'needs_successor') {
+    void writeSelfDeleteAudit(
+      {
+        correlationId,
+        actor: { type: 'user', userId, role },
+        capability: Capability.USER_SELF_DELETE,
+        target: { kind: 'user', id: userId },
+        outcome: 'deny',
+        denyReason: 'needs_successor',
+        metadata: {
+          route: request.nextUrl.pathname,
+          method: 'DELETE',
+          ownedSharedSites: result.ownedSharedSites,
+          operationId,
+        },
+        enforcementBypassed,
+      },
+      false,
+    );
+    return problem({
+      type: ProblemType.Conflict,
+      title: 'cannot delete: account owns shared sites',
+      status: 409,
+      detail:
+        'you own one or more sites with other members; transfer ownership to another admin before deleting your account',
+      instance: request.nextUrl.pathname,
+      code: 'needs_successor',
+      ownedSharedSites: result.ownedSharedSites,
+    });
+  }
+
   // ── 5. Allow audit (blocking) ──────────────────────────────────────────
   // Audit row carries per-path delete counts so post-mortem analysis can
   // verify what was actually removed. Recorded BEFORE the response so a
@@ -310,6 +344,8 @@ export async function DELETE(request: NextRequest) {
           alreadyCompleted: result.alreadyCompleted,
           deletedCounts: result.deletedCounts,
           siteCount: result.sites.length,
+          siteClassification: result.siteClassification,
+          authRevoked: result.authRevoked,
         },
         enforcementBypassed,
       },
@@ -341,7 +377,9 @@ export async function DELETE(request: NextRequest) {
     alreadyCompleted: result.alreadyCompleted,
     dryRun: result.dryRun,
     sites: result.sites,
+    siteClassification: result.siteClassification,
     deletedCounts: result.deletedCounts,
+    authRevoked: result.authRevoked,
     // For dry-runs, return the full would-delete path list so the caller
     // can preview. For live runs, return only the head (the action core
     // truncates the persisted slice the same way).

@@ -16,6 +16,7 @@ import {
   ProblemType,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import {
   applyAuthDeprecations,
   requireRoostAuthAndScope,
@@ -32,6 +33,11 @@ interface MachineStatus {
   status: string;
   reportedVersionId: string | null;
   reportedAt: string | null;
+}
+
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -53,6 +59,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'read');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     const db = getAdminDb();
     const roostRef = db

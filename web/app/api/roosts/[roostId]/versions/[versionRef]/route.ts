@@ -24,8 +24,10 @@ import {
   problemValidation,
   ProblemType,
 } from '@/lib/apiErrors';
+import { getAdminDb } from '@/lib/firebase-admin';
 import { getVersionBody } from '@/lib/r2Client.server';
 import { checkIdempotency, saveIdempotency } from '@/lib/idempotency';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import {
   resolveVersion,
   ResolveVersionError,
@@ -39,6 +41,11 @@ import {
 } from '../../../../_shared';
 
 const MAX_DESCRIPTION_LENGTH = 500;
+
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
+}
 
 /**
  * Map a resolver error to an RFC 7807 response. Called from every route
@@ -78,6 +85,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'read');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     // Resolve the ref to a concrete version doc — accepts vrs_* ids,
     // numbers (3 / #3 / v3), and aliases (current/previous/first).
@@ -169,6 +179,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'write');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     // Reject any body field other than siteId/description up front. Makes
     // the immutability guarantee explicit to the caller — they'd otherwise

@@ -11,7 +11,9 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { problemFromError, problemValidation } from '@/lib/apiErrors';
+import { getAdminDb } from '@/lib/firebase-admin';
 import { GET_URL_TTL_SECONDS, presignGetChunk } from '@/lib/r2Client.server';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import type { ScopeCheckResult } from '@/lib/apiAuth.server';
 import {
   applyAuthDeprecations,
@@ -20,6 +22,11 @@ import {
   validateHashList,
   validateSiteIdBody,
 } from '../../_shared';
+
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
+}
 
 async function mintDownloadUrls(
   siteId: string,
@@ -52,6 +59,9 @@ export async function GET(request: NextRequest) {
     const auth = await requireAgentOrSiteAuthAndScope(request, site.siteId, 'read');
     if (!auth.ok) return auth.response;
 
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
+
     const params = request.nextUrl.searchParams.getAll('hash');
     const validated = validateHashList(params, 'hash');
     if (!validated.ok) return validated.response;
@@ -73,6 +83,9 @@ export async function POST(request: NextRequest) {
 
     const auth = await requireAgentOrSiteAuthAndScope(request, site.siteId, 'read');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     const validated = validateHashList(body.hashes, 'hashes');
     if (!validated.ok) return validated.response;

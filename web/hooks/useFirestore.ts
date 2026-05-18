@@ -535,8 +535,36 @@ function shimLegacyMachine(machine: Machine): Machine {
  * metric keys with no matching profile entry are appended as orphans.
  */
 function joinMachineDevices(machine: Machine): Machine {
-  const profile = machine.profile;
   const metrics = machine.metrics;
+  const profile = machine.profile ?? (
+    metrics
+      ? {
+          schemaVersion: 0,
+          signatureHash: 'metric-only',
+          capturedAt: 0,
+          agentVersion: machine.agent_version ?? 'unknown',
+          cpus: Object.keys(metrics.cpus ?? {}).map((id, index) => ({
+            id,
+            model: id,
+            physicalCores: 0,
+            logicalCores: 0,
+            socketIndex: index,
+          })),
+          disks: [],
+          gpus: Object.keys(metrics.gpus ?? {}).map((id) => ({
+            id,
+            name: id,
+            vramTotalGb: 0,
+            pciBus: null,
+          })),
+          nics: Object.keys(metrics.nics ?? {}).map((id) => ({
+            id,
+            mac: null,
+            linkSpeedMbps: 0,
+          })),
+        } satisfies HardwareProfile
+      : undefined
+  );
   if (!profile) return machine;
 
   const buildBucket = <P extends { id: string }, M>(
@@ -808,6 +836,45 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
 // useMachines' loadedSiteId doesn't match `siteId`, which would otherwise
 // churn consumers' memo/effect deps.
 const EMPTY_MACHINES: Machine[] = [];
+const PROFILE_LISTENER_LIMIT = 50;
+
+export function useMachineHardware(siteId: string | null, machineId: string | null) {
+  const requestedKey = db && siteId && machineId ? `${siteId}/${machineId}` : null;
+  const [state, setState] = useState<{
+    key: string | null;
+    profile: HardwareProfile | null;
+    error: string | null;
+  }>({ key: null, profile: null, error: null });
+
+  useEffect(() => {
+    if (!db || !siteId || !machineId || !requestedKey) return;
+
+    const profileRef = doc(db, 'sites', siteId, 'machines', machineId, 'hardware', 'profile');
+    const unsubscribe = onSnapshot(
+      profileRef,
+      (profileSnap) => {
+        setState({
+          key: requestedKey,
+          profile: profileSnap.exists() ? profileSnap.data() as HardwareProfile : null,
+          error: null,
+        });
+      },
+      (e) => {
+        console.debug(`Profile listener error for ${machineId}:`, e);
+        setState({ key: requestedKey, profile: null, error: e.message });
+      },
+    );
+
+    return () => unsubscribe();
+  }, [siteId, machineId, requestedKey]);
+
+  const hasFreshState = requestedKey !== null && state.key === requestedKey;
+  return {
+    profile: hasFreshState ? state.profile : null,
+    loading: requestedKey !== null && !hasFreshState,
+    error: !db ? 'Firebase not configured' : (hasFreshState ? state.error : null),
+  };
+}
 
 export function useMachines(siteId: string) {
   const [machines, setMachines] = useState<Machine[]>([]);
@@ -818,9 +885,9 @@ export function useMachines(siteId: string) {
   const [loadedSiteId, setLoadedSiteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(db ? null : 'Firebase not configured');
 
-  // Per-machine hardware/profile listeners. Keyed by machineId; opened lazily
-  // when a machine appears in the snapshot and torn down when it disappears
-  // or when siteId changes / the hook unmounts.
+  // Supplementary hardware/profile listeners. Kept capped because one listener
+  // per machine pushes large sites into Firebase's soft client listener ceiling;
+  // machines beyond the cap still get metric-only `devices` derived below.
   const profileListenersRef = useRef<Record<string, Unsubscribe>>({});
 
   // Config doc overrides: authoritative launch_mode/schedules from config collection
@@ -974,14 +1041,32 @@ export function useMachines(siteId: string) {
         // and the 30s interval still catches silent crashes.
         const isFromCache = snapshot.metadata.fromCache;
 
-        // Reconcile per-machine hardware/profile listeners with the current
-        // set of machines. Open a listener for any newly appearing machine;
-        // tear down listeners for machines that disappeared.
+        // Reconcile capped hardware/profile listeners with the current set of
+        // machines. The first N IDs are deterministic because the collection is
+        // later sorted by machineId; detail views can use useMachineHardware for
+        // an uncapped single-machine profile listener.
         const currentMachineIds = new Set<string>();
         snapshot.forEach((d) => currentMachineIds.add(d.id));
+        const profiledMachineIds = Array.from(currentMachineIds)
+          .sort((a, b) => a.localeCompare(b))
+          .slice(0, PROFILE_LISTENER_LIMIT);
+        const profiledMachineIdSet = new Set(profiledMachineIds);
 
-        // Open listeners for new machines
-        for (const machineId of currentMachineIds) {
+        // Tear down listeners for machines no longer selected by the cap.
+        for (const machineId of Object.keys(profileListenersRef.current)) {
+          if (profiledMachineIdSet.has(machineId)) continue;
+          profileListenersRef.current[machineId]();
+          delete profileListenersRef.current[machineId];
+          setProfiles((prev) => {
+            if (!(machineId in prev)) return prev;
+            const next = { ...prev };
+            delete next[machineId];
+            return next;
+          });
+        }
+
+        // Open listeners for newly selected machines.
+        for (const machineId of profiledMachineIds) {
           if (profileListenersRef.current[machineId]) continue;
           const profileRef = doc(db!, 'sites', siteId, 'machines', machineId, 'hardware', 'profile');
           profileListenersRef.current[machineId] = onSnapshot(
@@ -1004,19 +1089,6 @@ export function useMachines(siteId: string) {
               console.debug(`Profile listener error for ${machineId}:`, e);
             },
           );
-        }
-
-        // Tear down listeners for machines no longer present
-        for (const machineId of Object.keys(profileListenersRef.current)) {
-          if (currentMachineIds.has(machineId)) continue;
-          profileListenersRef.current[machineId]();
-          delete profileListenersRef.current[machineId];
-          setProfiles((prev) => {
-            if (!(machineId in prev)) return prev;
-            const next = { ...prev };
-            delete next[machineId];
-            return next;
-          });
         }
 
         setMachines(prevMachines => {
@@ -1181,8 +1253,8 @@ export function useMachines(siteId: string) {
 
     return () => {
       unsubscribe();
-      // Tear down every per-machine profile listener opened by this effect
-      // instance. Next effect run (new siteId or remount) will re-open them.
+      // Tear down every capped profile listener opened by this effect instance.
+      // Next effect run (new siteId or remount) will reconcile the cap again.
       for (const machineId of Object.keys(profileListenersRef.current)) {
         profileListenersRef.current[machineId]();
       }

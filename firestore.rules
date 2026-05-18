@@ -1,8 +1,8 @@
 rules_version = '2';
 
 // Owlette Firestore Security Rules
-// Version: 2.4.0 - Roost pointer field rename (manifest -> version)
-// Last Updated: 2026-04-28
+// Version: 2.5.0 - User-doc field allowlist, deletedAt gating, cortex/per-machine-logs rules
+// Last Updated: 2026-05-17
 //
 // Security Model:
 // - Role-based access control (RBAC): user | admin | agent
@@ -70,9 +70,25 @@ service cloud.firestore {
              request.auth.token.machine_id is string;
     }
 
-    // Check if user owns a site (direct ownership)
+    // Check the calling user is NOT soft-deleted.
+    // Admin soft-deletes set `deletedAt` on users/{uid}; once set the user
+    // must lose dashboard access immediately even if they still hold a
+    // valid Firebase session token. Returns true when the user doc is
+    // missing OR present-but-not-deleted (graceful handling for new users
+    // who haven't bootstrapped a users/{uid} doc yet).
+    function isNotDeletedUser() {
+      return isAuthenticated() &&
+             (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+              !('deletedAt' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data) ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.deletedAt == null);
+    }
+
+    // Check if user owns a site (direct ownership).
+    // Also gated on `deletedAt` so admin-soft-deleted owners lose access
+    // even if they still hold a Firebase session token.
     function isSiteOwner(siteId) {
       return isAuthenticated() &&
+             isNotDeletedUser() &&
              get(/databases/$(database)/documents/sites/$(siteId)).data.owner == request.auth.uid;
     }
 
@@ -96,8 +112,12 @@ service cloud.firestore {
     //   - superadmins (platform god-mode — every site, regardless of sites[] membership)
     //   - any user whose role is 'member' or 'admin' AND has siteId in their sites[] array
     // Returns false if user document doesn't exist (graceful handling for new users).
+    // Soft-deleted users (users/{uid}.deletedAt != null) are denied: admin
+    // disables are immediately enforced even while a session token is still
+    // valid. isSiteOwner() also checks isNotDeletedUser() so this stays
+    // consistent across the owner path.
     function canAccessSite(siteId) {
-      return isAuthenticated() && (
+      return isAuthenticated() && isNotDeletedUser() && (
         isSiteOwner(siteId) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin' ||
@@ -212,6 +232,39 @@ service cloud.firestore {
                          agentCanAccessMachine(siteId, machineId);
           allow write: if isServiceAccount() ||
                           agentCanAccessMachine(siteId, machineId);
+        }
+
+        // ----------------------------------------
+        // Cortex Subcollection (per-machine chat state)
+        // ----------------------------------------
+        // Holds the per-machine active-chat doc that the local Cortex
+        // process polls + streams responses into (see
+        // agent/src/cortex_firestore.py). The web dashboard reads it to
+        // render the chat panel; the agent writes status / response chunks.
+        // OAuth agents can ONLY access their own machine's cortex docs.
+        match /cortex/{docId} {
+          allow read: if canAccessSite(siteId) ||
+                         isServiceAccount() ||
+                         agentCanAccessMachine(siteId, machineId);
+          allow write: if isServiceAccount() ||
+                          agentCanAccessMachine(siteId, machineId);
+        }
+
+        // ----------------------------------------
+        // Per-Machine Logs Subcollection
+        // ----------------------------------------
+        // Distinct from sites/{siteId}/logs/{logId} (site-scoped event
+        // logs). This collection captures per-machine log shipping from
+        // firebase_client._ship_log_entries — verbose process / service
+        // output that's filtered per machine for the dashboard's log view.
+        // Agents append-only; deletion / retention is server-mediated.
+        match /logs/{logId} {
+          allow read: if canAccessSite(siteId) ||
+                         isServiceAccount() ||
+                         agentCanAccessMachine(siteId, machineId);
+          allow create: if isServiceAccount() ||
+                           agentCanAccessMachine(siteId, machineId);
+          allow update, delete: if isServiceAccount();
         }
 
         // ----------------------------------------
@@ -421,6 +474,23 @@ service cloud.firestore {
       }
 
       // ----------------------------------------
+      // Cortex Events Subcollection (site-scoped)
+      // ----------------------------------------
+      // Autonomous-investigation event log written by the local Cortex
+      // process (see agent/src/cortex_firestore.write_autonomous_event).
+      // Site-scoped (not machine-scoped) because the dashboard cross-cuts
+      // events across every machine in a site for the activity feed.
+      // Agents can only create events for their own site (token claim).
+      // Updates / deletes are server-mediated.
+      match /cortex-events/{eventId} {
+        allow read: if canAccessSite(siteId) ||
+                       isServiceAccount();
+        allow create: if isServiceAccount() ||
+                         (isAgent() && request.auth.token.site_id == siteId);
+        allow update, delete: if isServiceAccount();
+      }
+
+      // ----------------------------------------
       // Audit Log Subcollection
       // ----------------------------------------
 
@@ -482,20 +552,50 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (request.auth.uid == userId || isSuperadmin());
 
       // Users can create their own document (on first login).
-      // Role is pinned to 'member' on self-create — privilege elevation must go
-      // through a trusted server path (isServiceAccount). Without this guard, a
-      // newly-signed-up user could write `role: 'superadmin'` and own the platform.
+      // Every sensitive field is pinned to a safe default — privilege /
+      // identity elevation MUST go through a trusted server path
+      // (isServiceAccount). Without these guards, a newly-signed-up user
+      // could write `role: 'superadmin'`, `sites: ['victim-site']`,
+      // `email: 'admin@owlette.app'`, or `mfaEnrolled: false` and either
+      // own the platform or sidestep MFA on self-bootstrap.
+      //
+      // Each clause uses the absent-OR-equals pattern so the server can
+      // omit the field at create time while still blocking client-supplied
+      // alternate values.
       allow create: if request.auth.uid == userId &&
                        (!('role' in request.resource.data) ||
-                        request.resource.data.role == 'member');
+                        request.resource.data.role == 'member') &&
+                       (!('sites' in request.resource.data) ||
+                        request.resource.data.sites == []) &&
+                       (!('email' in request.resource.data) ||
+                        request.resource.data.email == request.auth.token.email) &&
+                       (!('mfaEnrolled' in request.resource.data) ||
+                        request.resource.data.mfaEnrolled == false) &&
+                       (!('requiresMfaSetup' in request.resource.data) ||
+                        request.resource.data.requiresMfaSetup == true) &&
+                       (!('passkeyEnrolled' in request.resource.data) ||
+                        request.resource.data.passkeyEnrolled == false);
 
-      // Users can update their own sites array (when creating sites)
-      // Users can update MFA fields (mfaEnrolled, mfaSecret, backupCodes, requiresMfaSetup)
-      // But cannot change their role or other sensitive fields
+      // Self-update is restricted to an explicit allowlist of safe profile
+      // fields. Sensitive fields (role, email, sites, MFA state, passkey
+      // state, secrets) MUST go through a trusted server path so a user
+      // with a session token cannot e.g. disable their own MFA from the
+      // browser console.
+      //
+      // diff().affectedKeys() returns only the keys whose values changed
+      // between resource.data and request.resource.data, so a no-op write
+      // that re-sends the entire user doc with the same values is allowed
+      // (only changed keys appear in the affectedKeys set).
       allow update: if request.auth.uid == userId &&
-                       request.resource.data.role == resource.data.role &&
-                       request.resource.data.email == resource.data.email &&
-                       request.resource.data.sites == resource.data.sites;
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly([
+                           'preferences',
+                           'displayName',
+                           'photoURL',
+                           'timezone',
+                           'lastSiteId',
+                           'lastMachineIds'
+                         ]);
 
       // Trusted server APIs manage user roles, site assignments, and deletion.
       allow write: if isServiceAccount();

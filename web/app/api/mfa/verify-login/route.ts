@@ -19,9 +19,9 @@ import { verifyTOTP, verifyBackupCode } from '@/lib/totp';
 import { decrypt, isEncryptionConfigured } from '@/lib/encryption.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
-import admin from 'firebase-admin';
 import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { markSessionMfaVerified } from '@/lib/sessionManager.server';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -53,9 +53,10 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     await requireSessionUser(request, userId);
 
     const db = getAdminDb();
+    const userRef = db.collection('users').doc(userId);
 
     // Get user's MFA configuration
-    const userDoc = await db.collection('users').doc(userId).get();
+    const userDoc = await userRef.get();
     if (!userDoc.exists) {
       return NextResponse.json(
         { error: 'User not found' },
@@ -84,22 +85,45 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     if (isBackupCode) {
       // Verify backup code
-      const backupCodes = userData.backupCodes || [];
       const normalizedCode = code.toUpperCase().trim();
 
-      const matchingCodeIndex = backupCodes.findIndex((hash: string) =>
-        verifyBackupCode(normalizedCode, hash)
-      );
+      const consumed = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(userRef);
+        if (!snap.exists) {
+          return { ok: false, reason: 'no_user' as const };
+        }
 
-      if (matchingCodeIndex !== -1) {
-        isValid = true;
-        backupCodeUsed = true;
+        const data = snap.data() ?? {};
+        const codes: string[] = Array.isArray(data.backupCodes) ? data.backupCodes : [];
+        const matchingCodeIndex = codes.findIndex((hash) =>
+          verifyBackupCode(normalizedCode, hash)
+        );
 
-        // Remove used backup code
-        await db.collection('users').doc(userId).update({
-          backupCodes: admin.firestore.FieldValue.arrayRemove(backupCodes[matchingCodeIndex]),
-        });
+        if (matchingCodeIndex === -1) {
+          return { ok: false, reason: 'no_match' as const };
+        }
+
+        const remaining = codes.filter((_, index) => index !== matchingCodeIndex);
+        tx.update(userRef, { backupCodes: remaining });
+        return { ok: true, remaining: remaining.length } as const;
+      });
+
+      if (!consumed.ok) {
+        if (consumed.reason === 'no_user') {
+          return NextResponse.json(
+            { error: 'User not found' },
+            { status: 404 }
+          );
+        }
+
+        return NextResponse.json(
+          { error: 'Invalid verification code' },
+          { status: 400 }
+        );
       }
+
+      isValid = true;
+      backupCodeUsed = true;
     } else {
       // Verify TOTP code
       const encryptedSecret = userData.mfaSecret;
@@ -138,6 +162,13 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         { status: 400 }
       );
     }
+
+    // Successful TOTP / backup-code verification flips the session-cookie
+    // MFA gate so the proxy will allow protected paths through. This is
+    // the authoritative server-side state — prior to Wave 2, this flag
+    // lived in client sessionStorage and could be set without any
+    // server-side check.
+    await markSessionMfaVerified();
 
     return NextResponse.json({
       success: true,

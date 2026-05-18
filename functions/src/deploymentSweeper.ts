@@ -10,6 +10,14 @@
  * - Targets at "downloading" or "installing" for > 30 minutes → marked "failed"
  * - Recalculates overall deployment status after updating targets
  * - Only writes if something actually changed
+ *
+ * Scale guard:
+ * - Steady state only scans sites whose site doc has
+ *   lastDeploymentActivityAt within the last 30 minutes.
+ * - While this bookkeeping rolls out, sites missing that field are included for
+ *   a 7-day legacy grace window. When the sweeper finds active deployments, it
+ *   refreshes lastDeploymentActivityAt so future sweeps keep scanning that site
+ *   until the deployment has been quiet for 30 minutes.
  */
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
@@ -30,6 +38,17 @@ const PENDING_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 /** How long a target can sit at "downloading"/"installing" before we fail it (ms). */
 const ACTIVE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
+/** Sites without deployment activity in this window are skipped. */
+const RECENT_DEPLOYMENT_ACTIVITY_MS = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * Seven-day grace window from the performance hardening deploy date
+ * (2026-05-18 UTC). During this window, legacy sites missing
+ * lastDeploymentActivityAt are still scanned so active deployments can seed
+ * the new marker.
+ */
+const LEGACY_SITE_SCAN_GRACE_UNTIL_MS = Date.parse('2026-05-25T00:00:00.000Z');
+
 /**
  * Scheduled function that sweeps stale deployments.
  * Runs every 5 minutes via Cloud Scheduler.
@@ -40,10 +59,9 @@ export const sweepStaleDeployments = onSchedule(
     const now = Date.now();
     let totalUpdated = 0;
 
-    // Get all sites
-    const sitesSnap = await db.collection('sites').get();
+    const sitesToSweep = await getSitesToSweep(now);
 
-    for (const siteDoc of sitesSnap.docs) {
+    for (const siteDoc of sitesToSweep) {
       const siteId = siteDoc.id;
 
       // Query non-terminal deployments for this site
@@ -53,6 +71,13 @@ export const sweepStaleDeployments = onSchedule(
         .collection('deployments')
         .where('status', 'in', ['pending', 'in_progress'])
         .get();
+
+      if (!deploymentsSnap.empty) {
+        await siteDoc.ref.set(
+          { lastDeploymentActivityAt: FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+      }
 
       for (const deploymentDoc of deploymentsSnap.docs) {
         const data = deploymentDoc.data();
@@ -132,3 +157,36 @@ export const sweepStaleDeployments = onSchedule(
     }
   }
 );
+
+async function getSitesToSweep(
+  nowMs: number,
+): Promise<FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[]> {
+  const cutoff = Timestamp.fromMillis(nowMs - RECENT_DEPLOYMENT_ACTIVITY_MS);
+
+  // TODO(index): firestore.indexes.json currently has no explicit composite
+  // index for sites.lastDeploymentActivityAt. Add it before deploy if the
+  // target Firestore project requires one for this activity-window query.
+  const recentSitesSnap = await db
+    .collection('sites')
+    .where('lastDeploymentActivityAt', '>=', cutoff)
+    .get();
+
+  const sitesById = new Map<
+    string,
+    FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>
+  >();
+  for (const siteDoc of recentSitesSnap.docs) {
+    sitesById.set(siteDoc.id, siteDoc);
+  }
+
+  if (nowMs < LEGACY_SITE_SCAN_GRACE_UNTIL_MS) {
+    const allSitesSnap = await db.collection('sites').get();
+    for (const siteDoc of allSitesSnap.docs) {
+      if (siteDoc.data().lastDeploymentActivityAt == null) {
+        sitesById.set(siteDoc.id, siteDoc);
+      }
+    }
+  }
+
+  return [...sitesById.values()];
+}

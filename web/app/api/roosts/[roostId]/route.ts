@@ -23,6 +23,7 @@ import {
   ProblemType,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import {
   auditActorIdentifier,
   applyAuthDeprecations,
@@ -41,6 +42,11 @@ const MAX_NAME_LENGTH = 200;
 const MAX_TARGETS = 500;
 const MAX_EXTRACT_PATH_LENGTH = 500;
 
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
+}
+
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { roostId } = await params;
@@ -58,6 +64,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'read');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     const db = getAdminDb();
     const roostRef = db
@@ -140,6 +149,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'write');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     const updates: Record<string, unknown> = {};
 
@@ -250,6 +262,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'write');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     const db = getAdminDb();
     const roostRef = db

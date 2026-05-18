@@ -20,6 +20,7 @@ import {
 } from '@/lib/apiErrors';
 import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import { FieldValue } from 'firebase-admin/firestore';
 import { timestampToIso } from '@/lib/firestoreTime.server';
 import {
@@ -53,6 +54,11 @@ const DEFAULT_LIST_LIMIT = 20;
 const MAX_LIST_LIMIT = 100;
 const MAX_DESCRIPTION_LENGTH = 500;
 
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
+}
+
 /* --------------------------------------------------------------------- */
 /*  GET — list version history                                           */
 /* --------------------------------------------------------------------- */
@@ -74,6 +80,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'read');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     const parsedPagination = parsePagination(request.nextUrl.searchParams, {
       defaultPageSize: DEFAULT_LIST_LIMIT,
@@ -186,6 +195,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'write');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     const idem = await checkIdempotency(
       request,

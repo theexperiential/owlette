@@ -19,7 +19,7 @@
  * any tab open at deploy time prompts the user to reload.
  */
 
-export const CURRENT_SECURITY_VERSION = 1;
+export const CURRENT_SECURITY_VERSION = 2;
 
 /**
  * Response header name used by the proxy and read by the client hook.

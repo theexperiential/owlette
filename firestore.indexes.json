@@ -134,6 +134,22 @@
         { "fieldPath": "enabled", "order": "ASCENDING" },
         { "fieldPath": "events", "arrayConfig": "CONTAINS" }
       ]
+    },
+    {
+      "collectionGroup": "webhook_deliveries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "api_keys",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "expiresAt", "order": "ASCENDING" },
+        { "fieldPath": "expiredMarkedAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

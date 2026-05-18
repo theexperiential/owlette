@@ -1,7 +1,11 @@
 import Link from 'next/link';
 import { ArrowRight, Check, Eye, Layers, RotateCcw, AlertTriangle } from 'lucide-react';
 
-export function DisplaySection() {
+interface DisplaySectionProps {
+  nonce?: string;
+}
+
+export function DisplaySection({ nonce }: DisplaySectionProps) {
   return (
     <section className="py-16 sm:py-24 px-4 sm:px-6 relative">
       <div className="max-w-5xl mx-auto">
@@ -207,7 +211,7 @@ export function DisplaySection() {
           glowing slightly; otherwise it sits at rest. The drift frame's
           displaced monitors (2, 3) animate into their off-baseline position
           during the drift phase only. */}
-      <style>{`
+      <style nonce={nonce}>{`
         @keyframes display-section-pulse {
           0%, 100% { opacity: 1; }
           50%      { opacity: 0.35; }

@@ -23,6 +23,7 @@ import {
   ProblemType,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { gateOrProceed } from '@/lib/roostKillSwitch';
 import {
   collectFilteredPage,
   parsePagination,
@@ -43,6 +44,11 @@ const MAX_NAME_LENGTH = 200;
 const MAX_EXTRACT_PATH_LENGTH = 500;
 const ROOST_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
+async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
+  const snap = await getAdminDb().collection('sites').doc(siteId).get();
+  return snap.exists ? (snap.data() ?? null) : null;
+}
+
 /* --------------------------------------------------------------------- */
 /*  GET — list roosts                                                    */
 /* --------------------------------------------------------------------- */
@@ -60,6 +66,9 @@ export async function GET(request: NextRequest) {
 
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'read');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     const parsedPagination = parsePagination(request.nextUrl.searchParams, {
       defaultPageSize: DEFAULT_LIST_LIMIT,
@@ -147,6 +156,9 @@ export async function POST(request: NextRequest) {
 
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
     if (!auth.ok) return auth.response;
+
+    const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
+    if (gateRes) return gateRes;
 
     if (typeof body.name !== 'string' || body.name.trim().length === 0) {
       return problem({

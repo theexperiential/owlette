@@ -66,6 +66,10 @@ export const POST = withRateLimit(
         return NextResponse.json({ error: 'site_id mismatch' }, { status: 403 });
       }
 
+      if (decodedToken.machine_id !== machineId) {
+        return NextResponse.json({ error: 'machine_id_mismatch' }, { status: 403 });
+      }
+
       // Decode base64 to buffer
       const imageBuffer = Buffer.from(screenshot, 'base64');
       const sizeKB = Math.round(imageBuffer.length / 1024);

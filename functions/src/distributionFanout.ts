@@ -17,6 +17,16 @@
  * by unit tests. Handlers below are thin: load firestore state, feed
  * to logic, write decisions.
  *
+ * Fleet promotion flow:
+ * - The target_state trigger transaction reads the current wave and writes
+ *   only the rollout state transition. It marks fleet promotions with
+ *   pendingCommandsDispatched: false.
+ * - After the transaction commits, fleet sync commands are written in
+ *   idempotent WriteBatch chunks capped at 400 ops. The rollout flips to
+ *   pendingCommandsDispatched: true only after every chunk commits.
+ * - If any chunk fails, a later target_state trigger can see the false flag
+ *   and retry the same merge-set command writes without duplicating commands.
+ *
  * **Why not all-at-once?** The cloudflare 2025-11-18 config push that
  * took down the fleet globally is the standing reminder: canary first.
  */
@@ -35,6 +45,7 @@ import {
 import { buildSyncPullCommand, syncPullCommandId } from './lib/syncPullCommand';
 
 const db = admin.firestore();
+const FLEET_COMMAND_BATCH_SIZE = 400;
 
 /* --------------------------------------------------------------------- */
 /*  Types                                                                */
@@ -59,10 +70,21 @@ interface RolloutDoc {
   extractRoot: string;
   canary: string[];
   fleet: string[];
+  pendingCommandsDispatched?: boolean;
   startedAt?: FirebaseFirestore.Timestamp;
   completedAt?: FirebaseFirestore.Timestamp;
   abortedAt?: FirebaseFirestore.Timestamp;
   abortReason?: string;
+}
+
+interface FleetDispatchPlan {
+  rolloutRef: FirebaseFirestore.DocumentReference;
+  siteId: string;
+  roostId: string;
+  versionId: string;
+  versionUrl: string;
+  extractRoot: string;
+  machineIds: string[];
 }
 
 /* --------------------------------------------------------------------- */
@@ -168,16 +190,33 @@ export const onTargetStateWritten = onDocumentWritten(
     // transaction: read rollout, evaluate wave, write transition atomically.
     // prevents two concurrent target_state writes from both trying to
     // promote canary → fleet.
-    await db.runTransaction(async (tx) => {
+    const fleetDispatchPlan = await db.runTransaction<FleetDispatchPlan | null>(async (tx) => {
       const snap = await tx.get(rolloutRef);
-      if (!snap.exists) return; // no rollout for this version — ignore
+      if (!snap.exists) return null; // no rollout for this version — ignore
 
       const rollout = snap.data() as RolloutDoc;
-      if (rollout.stage === 'complete' || rollout.stage === 'aborted') return;
+      if (rollout.stage === 'complete' || rollout.stage === 'aborted') return null;
+
+      const extractRoot = rollout.extractRoot || DEFAULT_EXTRACT_ROOT;
+
+      if (rollout.stage === 'fleet' && rollout.pendingCommandsDispatched === false) {
+        console.warn(
+          `[fanout] ${siteId}/${roostId}/${reportedVersionId}: retrying pending fleet command dispatch`,
+        );
+        return buildFleetDispatchPlan(
+          rolloutRef,
+          siteId,
+          roostId,
+          reportedVersionId,
+          rollout.versionUrl,
+          extractRoot,
+          rollout.fleet,
+        );
+      }
 
       const waveIds =
         rollout.stage === 'canary' ? rollout.canary : rollout.fleet;
-      if (!waveIds.includes(machineId)) return; // not part of current wave
+      if (!waveIds.includes(machineId)) return null; // not part of current wave
 
       // pull reported status for every machine in the current wave
       const waveStates = await readWaveStates(
@@ -190,32 +229,29 @@ export const onTargetStateWritten = onDocumentWritten(
 
       const evaluation = evaluateWave(waveStates);
       const transition = nextStage(rollout.stage, evaluation);
-      if (!transition) return; // still in flight
+      if (!transition) return null; // still in flight
 
       if (transition.stage === 'fleet') {
-        // promote: fire fleet commands in the same transaction.
-        // Older rollout docs predate the `extractRoot` field; fall back
-        // to the default so a mid-flight promotion still completes.
-        const extractRoot = rollout.extractRoot || DEFAULT_EXTRACT_ROOT;
-        for (const mid of rollout.fleet) {
-          queueSyncCommand(
-            tx,
-            siteId,
-            mid,
-            roostId,
-            reportedVersionId,
-            rollout.versionUrl,
-            extractRoot,
-          );
-        }
+        // promote: commit rollout state first; command batches happen after
+        // the transaction so large fleets don't hit Firestore's transaction
+        // write ceiling.
         tx.update(rolloutRef, {
           stage: 'fleet',
           fleetStartedAt: FieldValue.serverTimestamp(),
+          pendingCommandsDispatched: false,
         });
         console.log(
-          `[fanout] ${siteId}/${roostId}/${reportedVersionId}: ${transition.reason}; fleet wave dispatched`,
+          `[fanout] ${siteId}/${roostId}/${reportedVersionId}: ${transition.reason}; fleet wave ready for dispatch`,
         );
-        return;
+        return buildFleetDispatchPlan(
+          rolloutRef,
+          siteId,
+          roostId,
+          reportedVersionId,
+          rollout.versionUrl,
+          extractRoot,
+          rollout.fleet,
+        );
       }
 
       if (transition.stage === 'aborted') {
@@ -227,7 +263,7 @@ export const onTargetStateWritten = onDocumentWritten(
         console.error(
           `[fanout] ${siteId}/${roostId}/${reportedVersionId}: ABORTED — ${transition.reason}`,
         );
-        return;
+        return null;
       }
 
       if (transition.stage === 'complete') {
@@ -238,9 +274,15 @@ export const onTargetStateWritten = onDocumentWritten(
         console.log(
           `[fanout] ${siteId}/${roostId}/${reportedVersionId}: ${transition.reason}`,
         );
-        return;
+        return null;
       }
+
+      return null;
     });
+
+    if (fleetDispatchPlan) {
+      await dispatchFleetCommands(fleetDispatchPlan);
+    }
   },
 );
 
@@ -265,6 +307,88 @@ interface Writable {
     ref: FirebaseFirestore.DocumentReference,
     data: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData>,
   ): unknown;
+}
+
+function buildFleetDispatchPlan(
+  rolloutRef: FirebaseFirestore.DocumentReference,
+  siteId: string,
+  roostId: string,
+  versionId: string,
+  versionUrl: string,
+  extractRoot: string,
+  machineIds: string[],
+): FleetDispatchPlan {
+  return {
+    rolloutRef,
+    siteId,
+    roostId,
+    versionId,
+    versionUrl,
+    extractRoot,
+    machineIds: [...machineIds],
+  };
+}
+
+async function dispatchFleetCommands(plan: FleetDispatchPlan): Promise<void> {
+  try {
+    const chunks = chunk(plan.machineIds, FLEET_COMMAND_BATCH_SIZE);
+    await Promise.all(
+      chunks.map(async (machineIds) => {
+        const batch = db.batch();
+        for (const machineId of machineIds) {
+          queueSyncCommand(
+            batch,
+            plan.siteId,
+            machineId,
+            plan.roostId,
+            plan.versionId,
+            plan.versionUrl,
+            plan.extractRoot,
+          );
+        }
+        await batch.commit();
+      }),
+    );
+
+    await plan.rolloutRef.set(
+      {
+        pendingCommandsDispatched: true,
+        pendingCommandsDispatchedAt: FieldValue.serverTimestamp(),
+        pendingCommandsDispatchError: FieldValue.delete(),
+        pendingCommandsDispatchFailedAt: FieldValue.delete(),
+      },
+      { merge: true },
+    );
+
+    console.log(
+      `[fanout] ${plan.siteId}/${plan.roostId}/${plan.versionId}: fleet wave dispatched to ` +
+        `${plan.machineIds.length} machine(s)`,
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await plan.rolloutRef.set(
+      {
+        pendingCommandsDispatched: false,
+        pendingCommandsDispatchError: message,
+        pendingCommandsDispatchFailedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    console.error(
+      `[fanout] ${plan.siteId}/${plan.roostId}/${plan.versionId}: fleet command dispatch failed; ` +
+        `will retry on the next target_state trigger`,
+      err,
+    );
+    throw err;
+  }
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
 }
 
 /**

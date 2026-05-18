@@ -31,11 +31,11 @@ export class ApiAuthError extends Error {
 
 export interface ApiKeyContext {
   keyId: string;
-  /** null for legacy pre-scoping keys (scopes field missing/empty). */
+  /** Empty when a temporarily allowlisted legacy key has no explicit scopes. */
   scopes: ApiKeyScope[] | null;
   environment: ApiKeyEnvironment | null;
   expiresAt: number | null;
-  /** True when the stored key has no scopes[] field — bypasses scope check with deprecation signal. */
+  /** Deprecated marker retained for older callers; resolved keys no longer bypass scope checks. */
   isLegacy: boolean;
   retiresAt?: number;
 }
@@ -47,10 +47,51 @@ export interface ResolvedAuth {
 }
 
 export interface ScopeCheckResult {
-  /** True when the check was bypassed because the key is a legacy (pre-scoping) key. */
+  /** True when the caller should receive a legacy-key deprecation advisory. */
   isLegacy: boolean;
   /** True when the request omitted Roost-Version. Caller should set X-Roost-Version-Missing. */
   missingVersion?: boolean;
+}
+
+// Module-level memos to log each deprecated key path only once per process.
+const LEGACY_LOGGED = new Set<string>();
+const QUERY_LOGGED = new Set<string>();
+
+function hashApiKey(rawKey: string): string {
+  return crypto.createHash('sha256').update(rawKey).digest('hex');
+}
+
+function isLegacyKeyAllowed(keyHash: string): boolean {
+  if (process.env.LEGACY_API_KEY_BYPASS_ENABLED !== 'true') return false;
+  const allow = (process.env.LEGACY_API_KEY_ALLOW_HASH_LIST ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return allow.includes(keyHash);
+}
+
+function warnLegacyOnce(keyHash: string): void {
+  if (LEGACY_LOGGED.has(keyHash)) return;
+  LEGACY_LOGGED.add(keyHash);
+  console.warn(
+    `[apiAuth] DEPRECATED: API key ${keyHash.slice(0, 8)}... has empty/missing scopes. ` +
+      'This key bypassed scope enforcement before security wave; backfill scopes or revoke. ' +
+      `Currently ${
+        isLegacyKeyAllowed(keyHash)
+          ? 'permitted via LEGACY_API_KEY_BYPASS_ENABLED'
+          : 'REJECTED'
+      }.`,
+  );
+}
+
+function warnQueryStringKeyOnce(keyHash: string): void {
+  if (QUERY_LOGGED.has(keyHash)) return;
+  QUERY_LOGGED.add(keyHash);
+  console.warn(
+    `[apiAuth] DEPRECATED: API key ${keyHash.slice(0, 8)}... supplied via query string. ` +
+      'Migrate to Authorization: Bearer or x-api-key header. ' +
+      'Query-string keys leak via logs, referrers, browser history.',
+  );
 }
 
 export async function requireSession(request: NextRequest): Promise<string> {
@@ -103,11 +144,16 @@ function extractBearer(request: NextRequest): string | null {
 }
 
 function extractApiKey(request: NextRequest): string | null {
-  const queryOrHeader =
-    request.nextUrl.searchParams.get('api_key') ||
-    request.headers.get('x-api-key') ||
-    null;
-  if (queryOrHeader && queryOrHeader.startsWith('owk_')) return queryOrHeader;
+  const queryKey = request.nextUrl.searchParams.get('api_key');
+  if (queryKey) {
+    if (queryKey.startsWith('owk_')) {
+      warnQueryStringKeyOnce(hashApiKey(queryKey));
+      return queryKey;
+    }
+  } else {
+    const headerKey = request.headers.get('x-api-key');
+    if (headerKey && headerKey.startsWith('owk_')) return headerKey;
+  }
 
   const bearer = extractBearer(request);
   if (bearer && bearer.startsWith('owk_')) return bearer;
@@ -124,7 +170,7 @@ async function resolveApiKeyContext(
   rawKey: string,
   options: { updateLastUsed?: boolean } = {},
 ): Promise<{ userId: string; keyContext: ApiKeyContext }> {
-  const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+  const keyHash = hashApiKey(rawKey);
   const db = getAdminDb();
 
   const lookupDoc = await db.collection('api_keys').doc(keyHash).get();
@@ -136,9 +182,14 @@ async function resolveApiKeyContext(
   const data = lookupDoc.data() as Partial<ApiKeyLookup> & {
     userId: string;
     keyId: string;
+    revokedAt?: unknown;
   };
 
   const now = Date.now();
+
+  if (data.revokedAt) {
+    throw new ApiAuthError(401, 'Unauthorized: Invalid API key');
+  }
 
   // Rotation grace: the old key's lookup entry carries `retiresAt` after
   // rotation. After retiresAt, treat as invalid.
@@ -146,8 +197,7 @@ async function resolveApiKeyContext(
     throw new ApiAuthError(401, 'Unauthorized: Invalid API key');
   }
 
-  // Expiration: every scoped key has a hard `expiresAt`. Legacy pre-scoping
-  // keys have no expiresAt — those pass through to the legacy-bypass path.
+  // Expiration: every scoped key has a hard `expiresAt`.
   if (typeof data.expiresAt === 'number' && now >= data.expiresAt) {
     throw new ApiAuthError(
       401,
@@ -159,15 +209,23 @@ async function resolveApiKeyContext(
     );
   }
 
-  const scopes = Array.isArray(data.scopes) ? (data.scopes as ApiKeyScope[]) : null;
-  const isLegacy = !scopes || scopes.length === 0;
+  const hasLegacyScopes =
+    !data.scopes || (Array.isArray(data.scopes) && data.scopes.length === 0);
+  if (hasLegacyScopes) {
+    warnLegacyOnce(keyHash);
+    if (!isLegacyKeyAllowed(keyHash)) {
+      throw new ApiAuthError(401, 'Unauthorized: Invalid API key');
+    }
+  }
+
+  const scopes = Array.isArray(data.scopes) ? (data.scopes as ApiKeyScope[]) : [];
 
   const keyContext: ApiKeyContext = {
     keyId: data.keyId,
-    scopes: isLegacy ? null : scopes,
+    scopes,
     environment: (data.environment as ApiKeyEnvironment) ?? null,
     expiresAt: typeof data.expiresAt === 'number' ? data.expiresAt : null,
-    isLegacy,
+    isLegacy: false,
     ...(typeof data.retiresAt === 'number' ? { retiresAt: data.retiresAt } : {}),
   };
 
@@ -245,8 +303,6 @@ export async function resolveAuth(request: NextRequest): Promise<ResolvedAuth> {
  *
  * - Session / ID-token auth (no API key): bypassed. Dashboard users operate
  *   with full own access; per-resource access is enforced elsewhere.
- * - Legacy API key (no scopes[]): bypassed with a deprecation signal.
- *   Caller should add `X-Roost-Deprecation: legacy-key-scope-missing`.
  * - Scoped API key: requires a matching (resource, id, permission) entry.
  *   Wildcard id '*' in the stored scope matches any requested id.
  *
@@ -262,11 +318,10 @@ export function requireScope(
     return { isLegacy: false };
   }
 
-  if (auth.keyContext.isLegacy || !auth.keyContext.scopes) {
-    return { isLegacy: true };
-  }
-
-  if (scopeMatches(auth.keyContext.scopes, resource, id, permission)) {
+  if (
+    Array.isArray(auth.keyContext.scopes) &&
+    scopeMatches(auth.keyContext.scopes, resource, id, permission)
+  ) {
     return { isLegacy: false };
   }
 

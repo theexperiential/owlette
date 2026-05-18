@@ -21,6 +21,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { markSessionMfaVerified } from '@/lib/sessionManager.server';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -117,6 +118,13 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     // Delete pending setup
     await db.collection('mfa_pending').doc(userId).delete();
+
+    // The user just proved possession of the new factor — promote the
+    // session straight to MFA-verified so they don't get bounced to the
+    // verify-2fa page on the next protected-path navigation. From this
+    // point on, `users/{uid}.mfaEnrolled === true` so every subsequent
+    // session-create will require a fresh challenge.
+    await markSessionMfaVerified();
 
     return NextResponse.json({
       success: true,

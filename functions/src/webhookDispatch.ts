@@ -25,6 +25,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import * as admin from 'firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { requireInternalSecret } from './lib/requireInternalSecret';
 import {
   canonicalJson,
   classifyResponse,
@@ -323,6 +324,7 @@ export const emitWebhook = onRequest(
       res.status(405).json({ error: 'method_not_allowed' });
       return;
     }
+    if (!requireInternalSecret(req, res)) return;
     const body = (req.body ?? {}) as Partial<WebhookPayload> & {
       data?: Record<string, unknown>;
     };
@@ -413,11 +415,11 @@ function getDefaultDeliveryStore(): DeliveryStore {
 
 function getDefaultSubscriptionStore(): SubscriptionStore {
   const db = admin.firestore();
-  // per-site subscriptions at sites/{siteId}/webhook_subscriptions/{id}.
+  // per-site subscriptions at sites/{siteId}/webhooks/{id}.
   // keeping them site-scoped is the right isolation story; listAll
   // collectionGroup-queries across sites so emit() can filter by siteId
   // without knowing the whole site list.
-  const group = db.collectionGroup('webhook_subscriptions');
+  const group = db.collectionGroup('webhooks');
   return {
     async listAll() {
       const snap = await group.get();

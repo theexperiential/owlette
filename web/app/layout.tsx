@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import "./globals.css";
 import { LazyAuthProvider } from "@/components/LazyAuthProvider";
 import { Toaster } from "@/components/ui/sonner";
@@ -60,11 +61,14 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Reading request headers opts the app into per-request rendering so the
+  // proxy CSP nonce can be applied to Next.js framework inline scripts.
+  await headers();
   // Validate Firebase environment variables
   // In development: logs warnings
   // In production: throws error if misconfigured
