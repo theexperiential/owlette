@@ -11,6 +11,53 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-05-17
+
+### security
+
+- **Five unauthenticated Cloud Functions hardened**: `emitWebhook`, `recordAuditEvent`, `verifyAuditChain`, `preUploadCheck`, `recordUsageEvent` all now require an `x-internal-secret` header matching `CORTEX_INTERNAL_SECRET`. Previously these `onRequest` functions defaulted to `invoker: 'public'` and could be called by anyone with the project ID, allowing webhook forgery (signed events to customer subscribers), audit-log injection, quota DoS, and billing-data poisoning. Shared helper `functions/src/lib/requireInternalSecret.ts` uses `crypto.timingSafeEqual` for constant-time comparison.
+- **MFA is now server-enforced.** Previously MFA enforcement lived in browser sessionStorage + a client-side `router.push('/verify-2fa')` that could be bypassed by navigating directly to `/dashboard`. Iron-session `SessionData` now carries `mfaRequired` + `mfaVerified` flags baked at session-create time from `users/{uid}.mfaEnrolled`. The proxy gates protected paths when `mfaRequired && !mfaVerified` and redirects to `/verify-2fa`. Successful TOTP / backup-code / MFA-setup flips `mfaVerified` server-side. Pre-deploy sessions are upgraded lazily on first protected-page hit. New `/api/mfa/disable` route is the only way to disable MFA — requires current TOTP or backup code, writes audit log, re-mints the session.
+- **Firestore rules tightened to block client-side privilege escalation.** User-doc create rule now constrains `sites[]` to `[]`, `email` to the auth token email, `mfaEnrolled`/`passkeyEnrolled` to `false`, `requiresMfaSetup` to `true`. User-doc update switched from value-equality checks to a `diff().affectedKeys().hasOnly([allowlist])` policy — sensitive fields (role/email/sites/MFA state) must go through trusted server routes. `canAccessSite()` and `isSiteOwner()` now check `users/{uid}.deletedAt` so admin-soft-deleted users immediately lose dashboard access. Rules version bumped to 2.5.0.
+- **Three new rule blocks plug agent silent-failure paths**: `sites/{s}/machines/{m}/cortex/{docId}` (local Cortex active-chat state), `sites/{s}/machines/{m}/logs/{logId}` (per-machine log shipping), and `sites/{s}/cortex-events/{eventId}` (autonomous-event log) now have explicit rules matching `agentCanAccessMachine()` / `isAgent() && site_id`. Previously these writes fell to the deny-all fallback and the entire local-Cortex feature was silently broken end-to-end.
+- **API key revocation now actually revokes.** `apiAuth.server.ts` now checks `revokedAt` before retiresAt/expiresAt. Previously the admin "revoke key" button and the user-delete cascade's revocation were no-ops.
+- **Legacy unscoped API keys rejected by default.** Pre-scope-system keys with empty/missing `scopes` arrays now fail authentication unless explicitly opted in via `LEGACY_API_KEY_BYPASS_ENABLED=true` + `LEGACY_API_KEY_ALLOW_HASH_LIST`, and even allowlisted legacy keys can't pass `requireScope()` (they resolve to `scopes: []`).
+- **Cross-machine token isolation** on `/api/agent/screenshot` and `/api/agent/alert`. Routes now verify `decodedToken.machine_id === machineId` (not just `site_id`), preventing a compromised agent token for machine A from spoofing reports for machine B in the same site.
+- **Webhook delivery pipeline reconciled.** Cloud Functions dispatcher was reading `collectionGroup('webhook_subscriptions')` while the web API was writing `sites/{siteId}/webhooks/{id}` — async roost-event webhook delivery emitted zero deliveries. Now both ends use the `webhooks` collection.
+- **Passkey login now requires user verification** (`userVerification: 'required'`, previously `'preferred'`). Single-touch FIDO keys without PIN/biometric no longer suffice for full account access.
+- **Backup code single-use guaranteed.** Backup-code verification in `/api/mfa/verify-login` now runs inside a Firestore transaction that re-reads the array before removing the matching code, preventing two concurrent same-code requests from both passing.
+- **Agent refresh tokens rotate on every refresh.** `/api/agent/auth/refresh` now generates a new refresh token, marks the old one superseded with a 5-minute grace window, and returns the new token to the agent. Captured tokens no longer grant indefinite access. Agents receive the new `refreshToken` in the response and must persist it on every refresh.
+- **Roost kill switch is now wired into web API routes** (17 `/api/roosts/*` + `/api/chunks/*` handlers). Flipping `sites/{siteId}.roostEnabled=false` now actually halts uploads, not just agent sync work.
+- **Account self-deletion no longer wipes shared sites.** Previously the cascade hard-deleted every site in the user's `sites[]` array including sites where the user was just a member — wiping out the entire site for the owner. Now classified per-site: sole-owner sites are hard-deleted (existing behavior); shared owned sites refuse with `409 needs_successor`; member sites have only `arrayRemove(uid)`. Cascade also drains previously-missed subcollections (`passkeys`, `api_keys`, top-level `api_keys/{hash}` lookups, `mfa_pending`, `agent_refresh_tokens`, `chats`, Firebase Storage avatar) and revokes + deletes the Firebase Auth user server-side rather than relying on the client.
+- **Admin soft-delete also revokes Firebase Auth tokens.** Previously `deletedAt` was written on the user doc but Firebase Auth was untouched; the user could keep using their session until the ID token expired. Now the admin cascade calls `revokeRefreshTokens` + `updateUser({disabled: true})` immediately.
+- **`x-owlette-security-version` header bumped to 2** so dashboard tabs open at deploy time will surface a reload nudge.
+- **LLM cost endpoints rate-limited.** `/api/cortex/categorize` and `/api/cortex/provision-key` are now wrapped in `withRateLimit({strategy: 'user'})` so a captured session cookie can't burn through LLM credits.
+- **Unsafe role fallback removed.** `cortex-utils.server.ts` previously defaulted unknown roles to `'admin'` (site-scoped privileged); now defaults to `'member'` (least-privileged).
+- **`/api/agent/alert` localhost fallback fixed.** When `NEXT_PUBLIC_BASE_URL` is unset, autonomous-Cortex callbacks now fall back to `https://owlette.app` (matching the email-templates pattern) instead of `http://localhost:${PORT}`.
+
+### changed
+
+- **Cloud Functions reconcilers now exported.** `reconcileDeploymentStatus` and `reconcileDistributionStatus` were defined but missing from `functions/src/index.ts`. With the rules lockdown live, deployment/distribution status writes would have been silently dropped. Both are now exported and deploy.
+- **Scheduled-function batch sizes capped at 400.** `chunkGc.tombstoneStore.create` and `aggregateTelemetry.trimOlderThan` previously committed all matched docs in a single batch, which fails past Firestore's 500-op limit. Now chunked.
+- **`apiKeyExpire` query bounded.** Added `.where('expiredMarkedAt', '==', null)` filter so the daily scan doesn't grow linearly with historical expired-key count.
+- **Rate limiter `setInterval` no longer leaks Jest workers.** `web/lib/rateLimit.ts` cleanup timer now calls `.unref()` so test processes exit cleanly.
+
+### added
+
+- New composite Firestore index `webhook_deliveries(state, nextAttemptAt)` for the retry-queue pump.
+- New composite Firestore index `api_keys(expiresAt, expiredMarkedAt)` for the bounded `apiKeyExpire` query.
+- One-shot deprecation warnings for legacy API keys with empty scopes and for API keys passed via query string. Both log a keyHash prefix once per process so operators can identify which integrations need to migrate.
+
+### required env vars (new)
+
+- `CORTEX_INTERNAL_SECRET` — must be set on Cloud Functions (in `functions/.env`) for the 5 internal-only HTTPS functions to operate. Without it, all 5 return 503.
+- Optional `LEGACY_API_KEY_BYPASS_ENABLED` + `LEGACY_API_KEY_ALLOW_HASH_LIST` — emergency-only allowlist for legacy unscoped keys during the migration window.
+
+### migration notes
+
+- **Agents on 2.11.x and earlier**: still compatible. Refresh tokens are issued under the new rotation scheme on next `/api/agent/auth/refresh` call; older tokens stay valid until first refresh.
+- **CLI clients on 1.0.0-rc and earlier**: still compatible. No CLI behavior changes in 2.12.0.
+- **Pre-deploy iron-session cookies**: lazily upgraded on first protected-page hit (one Firestore read per cookie). After the upgrade the cookie carries the new MFA flags. Cookies expire naturally within 7 days.
+
 ## [2.11.3] - 2026-05-08
 
 ### added
